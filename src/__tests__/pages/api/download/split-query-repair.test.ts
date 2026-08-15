@@ -14,24 +14,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const {
-  mockFindUnique,
   mockGetServerAuthSession,
   mockGetFileForModelVersion,
   mockHasExceededLimit,
   mockIncrement,
   mockLogToAxiom,
 } = vi.hoisted(() => ({
-  mockFindUnique: vi.fn(),
   mockGetServerAuthSession: vi.fn(),
   mockGetFileForModelVersion: vi.fn(),
   mockHasExceededLimit: vi.fn(),
   mockIncrement: vi.fn(),
   mockLogToAxiom: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { keyValue: { findUnique: mockFindUnique } },
-  dbWrite: { keyValue: { findUnique: mockFindUnique } },
 }));
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -74,6 +67,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 import handler from '~/pages/api/download/models/[modelVersionId]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+// The handler reads the blocklist from the REPLICA only (`dbRead.keyValue.findUnique` in
+// the route). The old fixture aliased dbRead and dbWrite to one spy, so a read routed to
+// the primary would have satisfied it silently; binding dbRead alone makes that
+// distinguishable.
+const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
 const REDIRECT_URL = 'https://example.invalid/signed/model.safetensors';
 

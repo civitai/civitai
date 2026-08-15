@@ -32,13 +32,11 @@ const {
   mockGetDailyCompensation,
   mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
-  mockRedis,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockDailyBoostApply,
   mockDailyBoostGetDetails,
   mockGetUserBuzzAccounts,
-  mockSysRedis,
   mockResolveCanGenerateForVersions,
   mockGetResourceData,
   mockGetHighestTierSubscription,
@@ -72,26 +70,8 @@ const {
   // exposes keeps ANY redis path — the limiter or a transitive cache read — from
   // crashing with `redis.<fn> is not a function` in the preview (get/set alone
   // was the gap the pr-preview surfaced).
-  mockRedis: {
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    incr: vi.fn(async () => 1),
-    incrBy: vi.fn(async () => 1),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-    exists: vi.fn(async () => 0),
-  },
   // sysRedis surface used by the cumulative Buzz-cap (audit A7). Default to an
   // empty window (get → null) so the cap is non-binding unless a test seeds it.
-  mockSysRedis: {
-    get: vi.fn(async () => null),
-    incrBy: vi.fn(async () => 0),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-  },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   // Developer soft-launch (Phase B): the runtime AUTHZ gate now checks the
   // `appBlocksAuthor` capability against the token subject (was: isModerator).
@@ -389,12 +369,6 @@ const { completeKeys } = vi.hoisted(() => {
   return { completeKeys };
 });
 
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: completeKeys({ BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } }),
-  REDIS_SYS_KEYS: completeKeys({ BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } }),
-}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
@@ -483,6 +457,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 // W13 — the submit path fires recordScopeInvocation (detached) with a structured
@@ -502,6 +477,19 @@ import { createModelSubstitutionCollector } from '~/shared/data-graph/generation
 import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.incr.mockImplementation(async () => 1);
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.decrBy.mockImplementation(async () => 0);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => -1);
+redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.expire.mockImplementation(async () => true);
+redisMock.sysRedis.ttl.mockImplementation(async () => -1);
 const mockDbRead = dbMock.dbRead;
 const mockDbWriteUserFindUnique = dbMock.dbWrite.user.findUnique;
 const mockLogToAxiom = loggingMock.logToAxiom;
@@ -2138,6 +2126,21 @@ describe('blocks.submitWorkflow', () => {
   // = 5000) INSTEAD OF the ordinary 50k/day cap. This is invariant #6: a low
   // per-call budget alone cannot bound a hostile app looping sub-budget calls.
   describe('run-for-real aggregate Buzz cap (#2831)', () => {
+    // Golden value, and deliberately separate from the behavioural assertion below.
+    //
+    // The two guard different failures and neither subsumes the other. Naming the CONSTANT
+    // in the behavioural test stops it re-inventing a key — the class that made this file's
+    // old assertion match its own fixture's placeholder. Pinning the LITERAL here makes a
+    // rename of the key loud: the wire value addresses live Redis entries written by
+    // deployed code, so changing it orphans whatever is under the old name, and that should
+    // be a deliberate decision rather than something a test silently follows. (archer's
+    // argument, against his own preferred version.)
+    it('pins the wire value of the review-session key', () => {
+      expect(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP).toBe(
+        'system:blocks:review-run-for-real-buzz-cap'
+      );
+    });
+
     // Run-for-real tokens are dev:true (signDevScopedPageToken) + carry the pubreq
     // id as appBlockId. dev:true also skips the G8 per-app reserve (synthetic id).
     const runForRealClaims = () =>
@@ -2165,9 +2168,12 @@ describe('blocks.submitWorkflow', () => {
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
       expect(result.snapshot.workflowId).toBe('wf_real');
       const incrKey = String(mockSysRedis.incrBy.mock.calls[0][0]);
-      // The review-session key (auto-vivified REDIS_SYS_KEYS placeholder) — bound to
-      // the pubreq id and NOT the ordinary daily buzz-cap key.
-      expect(incrKey).toContain('REVIEW_RUN_FOR_REAL_BUZZ_CAP');
+      // The review-session key — bound to the pubreq id and NOT the ordinary daily
+      // buzz-cap key. This asserted the literal string `REVIEW_RUN_FOR_REAL_BUZZ_CAP`
+      // while the file supplied its own placeholder REDIS_SYS_KEYS, so expected and actual
+      // were both the fixture's invention. Named through the constant rather than as a
+      // literal, so it cannot drift again.
+      expect(incrKey).toContain(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP);
       expect(incrKey).toContain('pubreq_ABC');
       expect(incrKey).not.toContain('system:blocks:buzz-cap');
     });

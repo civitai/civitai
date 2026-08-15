@@ -9,29 +9,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * has to be one they cannot select.
  */
 
-const {
-  mockFindUnique,
-  mockGetVaultWithStorage,
-  mockHasEntityAccess,
-  mockVaultItemFindUnique,
-  mockModelVersionFindUnique,
-  mockResolveDownloadUrl,
-} = vi.hoisted(() => ({
-  mockFindUnique: vi.fn(),
+const { mockGetVaultWithStorage, mockHasEntityAccess, mockResolveDownloadUrl } = vi.hoisted(() => ({
   mockGetVaultWithStorage: vi.fn(),
   mockHasEntityAccess: vi.fn(),
-  mockVaultItemFindUnique: vi.fn(),
-  mockModelVersionFindUnique: vi.fn(),
   mockResolveDownloadUrl: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    keyValue: { findUnique: mockFindUnique },
-    vaultItem: { findUnique: mockVaultItemFindUnique },
-    modelVersion: { findUnique: mockModelVersionFindUnique },
-  },
-  dbWrite: { keyValue: { findUnique: mockFindUnique } },
 }));
 
 vi.mock('~/server/services/vault.service', () => ({
@@ -56,6 +37,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 import handler from '~/pages/api/download/vault/[vaultItemId]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+// All three reads are on the REPLICA in the route. The old fixture aliased dbRead's keyValue
+// spy onto dbWrite as well, so a read routed to the primary satisfied it silently.
+const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
+const mockVaultItemFindUnique = dbMock.dbRead.vaultItem.findUnique;
+const mockModelVersionFindUnique = dbMock.dbRead.modelVersion.findUnique;
 
 const BLOCKED = '203.0.113.7';
 // The address a caller puts in the forwarding headers. Asserted inert.

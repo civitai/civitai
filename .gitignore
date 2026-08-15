@@ -172,3 +172,6 @@ docs/superpowers/
 # vitest JSON report written by the Package unit tests CI job
 packages-report.json
 /.opencode
+
+# test-perf measurement artifacts (multi-MB inventories, run reports, traces)
+.test-perf/

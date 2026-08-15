@@ -7,7 +7,6 @@ const {
   mockBustCachesForPosts,
   mockLogToAxiom,
   mockSafeError,
-  mockSysRedis,
   mockGetJobDate,
 } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(),
@@ -19,7 +18,6 @@ const {
     message: (e as Error).message,
     stack: (e as Error).stack,
   })),
-  mockSysRedis: { get: vi.fn() },
   mockGetJobDate: vi.fn(),
 }));
 
@@ -34,10 +32,6 @@ vi.mock('~/server/services/post.service', () => ({
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: mockLogToAxiom,
   safeError: mockSafeError,
-}));
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: mockSysRedis,
-  REDIS_SYS_KEYS: { SYSTEM: { DELETED_USER_IMAGE_PURGE_LIMIT: 'k' } },
 }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
@@ -54,6 +48,8 @@ import {
   BACKLOG_CURSOR_KEY as BACKLOG_KEY,
 } from '~/server/jobs/remove-deleted-user-images';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockSysRedis = redisMock.sysRedis;
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 

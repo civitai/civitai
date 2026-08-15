@@ -29,6 +29,17 @@ export const CANONICAL_SPECIFIERS = [
  * No canonical mock yet. Counted, not enforced: with nothing to migrate to, enforcing would
  * only push every new test file onto the allowlist, which measures churn rather than work.
  *
+ * 🔴 THIS LIST IS A FLOOR, NOT AN INVENTORY. It was assembled from the most-mocked specifiers
+ * in a static scan, and specifiers keep arriving from the other direction — as failures in a
+ * `--no-isolate` run of files that are residual-clean for everything listed. `flipt/client`
+ * arrived that way. `~/server/middleware/block-scope.middleware` (27 files) is a live
+ * candidate found the same way and is deliberately NOT added here without someone verifying
+ * the mechanism.
+ *
+ * So the remaining work is DISCOVERED, not known, and any estimate built on the count below
+ * is a lower bound. The way to find the next one is to migrate a set clean for everything
+ * listed, run it under `--no-isolate`, and read what still fails.
+ *
  * Ordered by remaining sites. `~/env/server` is the one to do first — all 114 of its mocks
  * are partial, and it is ALREADY globally mocked in `setup.ts` with a Proxy, so the canonical
  * shape exists and the work is per-file behaviour plus a reset rather than a new design.

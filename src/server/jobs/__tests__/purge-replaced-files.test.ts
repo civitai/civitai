@@ -4,11 +4,12 @@ const { mockDeleteObj } = vi.hoisted(() => ({
   mockDeleteObj: vi.fn(),
 }));
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObject: mockDeleteObj }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: () => ({ catch: () => {} }) }));
 vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: unknown) => fn }));
 
 import { buildReplacedFilesQuery, processReplacedFiles } from '~/server/jobs/purge-replaced-files';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+loggingMock.logToAxiom.mockImplementation(() => ({ catch: () => {} }));
 const mockDbWrite = dbMock.dbWrite;
 
 beforeEach(() => vi.clearAllMocks());

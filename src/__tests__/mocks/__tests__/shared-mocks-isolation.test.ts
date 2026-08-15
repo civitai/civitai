@@ -15,6 +15,17 @@ describe('shared-module mocks: per-file reset', () => {
     expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
   });
 
+  it('starts with no inherited ASSIGNED data property', async () => {
+    // shared-mocks.test.ts sets `sysRedis.isReady = false`. That is not mock state, so
+    // `mockReset()` does not touch it — without the node tracking assignments separately it
+    // would land on the underlying `vi.fn` and outlive the file that set it for the whole
+    // worker.
+    // An unset property vivifies to a node by design, so the invariant is not "undefined" —
+    // it is that the previous file's VALUE is gone.
+    const { redisMock } = await import('~/__tests__/mocks/redis.mock');
+    expect((redisMock.sysRedis as unknown as { isReady?: boolean }).isReady).not.toBe(false);
+  });
+
   it('starts with no inherited implementation', async () => {
     // shared-mocks.test.ts sets `{ value: 'declared' }` on this exact node. Seeing that
     // value here would mean the reset ran once per worker instead of once per file.

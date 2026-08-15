@@ -73,6 +73,16 @@ why nothing in the repo would ever surface them.
 the hand-written copy.** A test that goes red was hardcoding an expectation string against
 its own fixture instead of asserting behaviour. That redness is the finding.
 
+⚠️ **And expect most of them NOT to go red, which is the worse case.** In one slice, nine
+invented constants were replaced and none produced a failure — no affected test named them
+outside its own factory, so both sides of any comparison were the fixture's invention. A
+drifted constant nothing asserts on is invisible in both directions: it cannot fail, and it
+cannot be reviewed. Six of those nine were `new-order` keys whose fixture name was a
+*plausible* variant of the real one (`new-order:sanity-check-failures` against a real
+`new-order:sanity-failures`), which is precisely how they survive a reading. The only thing
+that surfaces them is swapping the real value in — so log what the codemod reports as
+drifted, even when the suite stays green.
+
 ### `local "mockDb" aliases dbMock.dbRead and dbMock.dbWrite`
 
 One spy served both clients, so a `dbWrite` call satisfied a `dbRead` assertion. Split it and
@@ -139,6 +149,20 @@ failures in one file, with a symptom that points nowhere near the cause. The can
 implements `defineProperty` / `set` / `deleteProperty` / `getOwnPropertyDescriptor`
 consistently; keep it that way if you extend it.
 
+### Some env tests cannot be migrated, and that is a property of the flag not a gap in the mock
+
+A boolean that tests set **both ways** at module scope — `IS_BUILD`, `IS_DATAPACKET` — cannot
+be varied per file under `isolate: false` by any mechanism. The module reading it is
+evaluated once per worker, so only the first file's value is ever visible. That is not a
+shortcoming of the canonical env mock; a per-file `vi.mock` factory has the identical
+problem, and so would any future one.
+
+Those tests exist precisely to exercise build-vs-runtime and datapacket-vs-not behaviour, so
+the options are to stop testing it through `env` — mock the consuming module's exported
+result instead — or to leave those files isolated. **Treat them as a permanent exclusion, not
+as remaining work**, and do not let an unmigrated count that includes them read as progress
+still to be made.
+
 ## 3. Fix the two assertion shapes that stop working
 
 **Absence assertions.** A test may prove a code path by the fixture LACKING a method:
@@ -157,6 +181,28 @@ expect(dbMock.dbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
 Stronger, not weaker: it still fails if the read is routed to the replica, including after
 another file has populated that method. Worked example in
 `src/server/jobs/__tests__/purge-review-snapshots.test.ts`.
+
+**`toBeUndefined()` on a node is wrong about the design, while looking like the obvious
+check.** An unset property still vivifies to a node, so the assertion fails with
+`expected [Function Mock] to be undefined`. When you mean "the previous file's value did not
+survive", say that: `expect(node.isReady).not.toBe(false)`. Assigned data properties are
+tracked and cleared per file — `sysRedis.isReady = false` is the real case — but "cleared"
+means the assignment is gone, not that the property reads as absent.
+
+**Asserting on a key: name the constant, and pin the wire value ONCE.**
+
+```ts
+expect(incrKey).toContain(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP);
+expect(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP)
+  .toBe('system:blocks:review-run-for-real-buzz-cap');
+```
+
+They guard different failures and neither subsumes the other. Naming the constant in the
+behavioural assertion stops the test re-inventing a key — the class that produced fourteen
+invented values in one day. The golden value makes a rename loud: a key's wire value
+addresses live Redis entries written by deployed code, so changing it orphans whatever sits
+under the old name, and that should be a deliberate decision rather than something a test
+silently follows.
 
 **Redundant `mockReset()` in `beforeEach`.** Harmless, but the global setup already reset
 every node before the file was imported. Delete it when you are in the file anyway; note that
@@ -229,11 +275,19 @@ node scripts/test-perf/compare-runs.mjs flip-control flip-candidate
 Pass conditions, all of them:
 
 - **zero files collected fewer tests** than the control;
+- **every file the branch ADDS collects at least one test**;
 - **the total matches exactly** — not "no new failures", not "no regressions", an equal count;
 - run **whole-suite**, not per slice;
 - run **immediately before the flip**, not once during the migration.
 
-The last two are the point, and each has a reason.
+**The added-file condition exists because the first one has a hole**, and the hole was found by
+running the gate rather than by reasoning about it. A file the branch adds has nothing on the
+control to lose against, so it can collect **zero** tests and diff perfectly clean. That is how
+this project's own migration guard shipped inert: it threw during collection in every
+full-suite run, contributed no tests, and passed whenever it was invoked as a named file —
+which is how it was checked all day.
+
+The last two conditions are the point, and each has a reason.
 
 **Whole-suite, because per-slice verification is sound and insufficient at the same time.**
 Every slice owner diffing per-file collected counts over their own files is correct practice
@@ -268,6 +322,38 @@ migration presented that way, and none of them looked like an error:
 
 `compare-runs.mjs` exists because of this. It prints collected-count regressions **before**
 failures and exits non-zero on a count regression even at zero failures.
+
+### The canonical three do not bound the silent class
+
+A wholesale `vi.mock` of **any** multi-export module causes it. One test mocked
+`~/server/utils/server-domain` — 14 exports — with a single-key factory; under
+`--no-isolate` that froze the module for the worker, and a later file whose consumer reached
+one of the other 13 died at module scope and collected zero tests. It took out a *different*
+file at each worker count, which is why it presented as flakiness rather than as one broken
+file.
+
+So when a migrated set still has zero-collects, **grep the `--no-isolate` log for
+`No "<export>" export is defined on the`** — the message names the poisoned module, and it is
+usually not one of the three. A scan for wholesale mocks of multi-export modules across a
+migrated set is the cheap preventative.
+
+### What the gate does NOT catch
+
+Collected counts and `residual-mocks.mjs` detect **absence** — a file that lost its tests, a
+specifier still mocked directly. Neither can see a test that still runs, still passes, and no
+longer asserts anything real.
+
+That is not hypothetical either. A codemod shape that dropped a factory's
+`withSysReadDeadline` left two fail-open legs of `session-verifier.test.ts` passing while
+asserting nothing, because the export the test had replaced with a spy was how it injected
+the timeout. Another wrapped a whole client object as a leaf spy: every method vanished, the
+calls returned empty instead of throwing, and a test asserting "nothing was deleted" would
+have gone **green**. Both files converted with zero refusals, kept every test, and read clean
+on residuals.
+
+What caught them was **a control pair at assertion level, on a small set, run by someone who
+did not write the tool**. Keep doing that alongside the gate; it is the half the gate cannot
+do.
 
 ### And the general form, which outlives this migration
 

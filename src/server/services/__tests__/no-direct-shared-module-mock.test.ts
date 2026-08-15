@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import path from 'path';
 import { globSync } from 'fs';
 import { describe, expect, it } from 'vitest';
@@ -32,6 +32,16 @@ import {
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const ALLOWLIST_PATH = path.join(REPO_ROOT, 'src/__tests__/mocks/direct-mock-allowlist.json');
 
+/**
+ * 🔴 Called from INSIDE the tests, never at module scope.
+ *
+ * It used to run in the `describe` body, so anything it threw was a COLLECTION failure: the
+ * file contributed zero tests, the suite's failure count did not move, and the guard was
+ * absent from every full-suite run while passing whenever invoked as a named file — which is
+ * how it was checked all day. A control that is present and inert is worse than one that is
+ * missing, because the reviewer stops looking. Thrown from inside a test, the same fault is a
+ * red test with a stack.
+ */
 function scan() {
   // `{ts,tsx}` so a `.browser.test.tsx` cannot add a direct mock the guard is structurally
   // unable to see. Detection only — the codemod stays `.ts`, since the canonical mocks are
@@ -39,17 +49,24 @@ function scan() {
   const files = globSync('src/**/*.test.{ts,tsx}', { cwd: REPO_ROOT });
   const canonical: Record<string, string[]> = {};
   const pending: Record<string, string[]> = {};
+  let scanned = 0;
   for (const rel of files) {
     const file = rel.replace(/\\/g, '/');
     // The canonical mocks' own tests necessarily talk about these specifiers.
     if (file.startsWith('src/__tests__/mocks/')) continue;
-    const src = readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+    // A full-suite run can create directories under `src/` while this walk is happening, and
+    // one whose name matches the glob reaches `readFileSync` as EISDIR. Skip anything that is
+    // not a regular file rather than assuming the walk only ever yields files.
+    const abs = path.join(REPO_ROOT, rel);
+    if (!statSync(abs, { throwIfNoEntry: false })?.isFile()) continue;
+    scanned++;
+    const src = readFileSync(abs, 'utf8');
     const hitCanonical = CANONICAL_SPECIFIERS.filter((s) => mockPattern(s).test(src));
     const hitPending = PENDING_SPECIFIERS.filter((s) => mockPattern(s).test(src));
     if (hitCanonical.length) canonical[file] = hitCanonical;
     if (hitPending.length) pending[file] = hitPending;
   }
-  return { canonical, pending };
+  return { canonical, pending, scanned };
 }
 
 const allowlist = existsSync(ALLOWLIST_PATH)
@@ -57,9 +74,18 @@ const allowlist = existsSync(ALLOWLIST_PATH)
   : { files: [], pendingFiles: [] };
 
 describe('no-direct-shared-module-mock', () => {
-  const { canonical, pending } = scan();
+  // POSITIVE CONTROL. Everything below is a claim about a set of files; if the walk returns
+  // nothing, or a fraction of the tree, every one of those claims is vacuously true and the
+  // guard reports success while checking nothing. The floor is well under the real count
+  // (~1,200) so ordinary growth never trips it.
+  it('actually scanned the test tree', () => {
+    const { scanned } = scan();
+    expect(scanned).toBeGreaterThan(800);
+  });
+
 
   it('adds no new direct mock of a module that has a canonical mock', () => {
+    const { canonical } = scan();
     const added = Object.keys(canonical).filter((f) => !(allowlist.files ?? []).includes(f));
     expect(
       added,
@@ -70,6 +96,7 @@ describe('no-direct-shared-module-mock', () => {
   });
 
   it('keeps the allowlist honest — a migrated file must be removed from it', () => {
+    const { canonical } = scan();
     // Without this the list would stop being a progress bar: entries for files that no
     // longer mock anything would pad the count and hide the remaining work. This is the
     // direction that caught the merge resolution.
@@ -82,6 +109,7 @@ describe('no-direct-shared-module-mock', () => {
   });
 
   it('keeps the PENDING count current, so the remaining scope is never understated', () => {
+    const { pending } = scan();
     // Counted, not enforced — but the recorded count has to match reality, or the dashboard
     // reports a finish line that does not exist.
     expect(Object.keys(pending).length).toBe((allowlist.pendingFiles ?? []).length);

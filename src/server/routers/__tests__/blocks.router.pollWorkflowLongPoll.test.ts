@@ -31,8 +31,6 @@ const {
   mockGetUserById,
   mockGetSessionUser,
   mockCheckBlockCatalogRateLimit,
-  mockRedis,
-  mockSysRedis,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockUpdateBlockWorkflowStatus,
@@ -48,24 +46,6 @@ const {
   mockGetUserById: vi.fn(),
   mockGetSessionUser: vi.fn(),
   mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
-  mockRedis: {
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    incr: vi.fn(async () => 1),
-    incrBy: vi.fn(async () => 1),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-    exists: vi.fn(async () => 0),
-  },
-  mockSysRedis: {
-    get: vi.fn(async () => null),
-    incrBy: vi.fn(async () => 0),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-  },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsAppBlocksAuthorEnabled: vi.fn(async () => true),
   mockUpdateBlockWorkflowStatus: vi.fn(async () => undefined),
@@ -123,12 +103,6 @@ const { completeKeys } = vi.hoisted(() => {
     });
   return { completeKeys };
 });
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: completeKeys({ BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } }),
-  REDIS_SYS_KEYS: completeKeys({ BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } }),
-}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
@@ -146,6 +120,19 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MAX_BLOCK_POLL_WAIT_SECONDS } from '~/server/services/blocks/workflow.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.incr.mockImplementation(async () => 1);
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.decrBy.mockImplementation(async () => 0);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => -1);
+redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.expire.mockImplementation(async () => true);
+redisMock.sysRedis.ttl.mockImplementation(async () => -1);
 const mockDbRead = dbMock.dbRead;
 
 // 🔴 PAIRWISE-DISTINCT FIXTURE FIELDS. Every workflow below differs in id,

@@ -50,6 +50,12 @@ for (const file of Object.keys(a)) {
   if (before.failed > 0 && after.failed === 0) fixed.push({ file, was: before.failed });
 }
 const added = Object.keys(b).filter((f) => !a[f]);
+// 🔴 A file the candidate ADDS cannot appear in "files losing tests" — it has nothing on the
+// control to lose against. So a branch can add a test file that collects ZERO and diff
+// perfectly clean. That is not hypothetical: it is how this project's own migration guard
+// shipped inert, throwing during collection in every full-suite run while passing whenever it
+// was invoked as a named file.
+const addedEmpty = added.filter((f) => collected(b[f]) === 0);
 
 const totals = (run) => ({
   files: run.files.length,
@@ -73,10 +79,15 @@ report(
   'FILES WITH MORE FAILURES',
   newFailures.map((x) => `  ${x.before} -> ${x.after}  ${x.file}`)
 );
+report(
+  'FILES ADDED BY THE CANDIDATE THAT COLLECT ZERO TESTS',
+  addedEmpty.map((f) => `  ${f}`)
+);
 report('FILES FIXED', fixed.map((x) => `  was ${x.was}  ${x.file}`));
-if (added.length) report('FILES ONLY IN CANDIDATE', added.map((f) => `  ${f}`));
+if (added.length) report('FILES ONLY IN CANDIDATE', added.map((f) => `  ${f}  (${collected(b[f])} tests)`));
 
-const clean = !missing.length && !lostTests.length && !newFailures.length && tb.tests >= ta.tests;
+const clean =
+  !missing.length && !lostTests.length && !newFailures.length && !addedEmpty.length && tb.tests >= ta.tests;
 console.log(`\n${clean ? 'CLEAN' : 'REGRESSION'}: ${tb.tests}/${ta.tests} tests collected, ${tb.failed} failed`);
 process.exit(clean ? 0 : 1);
 
