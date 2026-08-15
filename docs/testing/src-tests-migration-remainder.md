@@ -5,14 +5,24 @@
 These four are not, with the reason each refused. All are ordinary hand-work; none needs a
 different owner, and none is blocked on `~/env/server`.
 
-Verify with `node scripts/test-perf/residual-mocks.mjs <list>` — it names exactly these four today.
+**The slice's residual state is known-good, not assumed.** `node scripts/test-perf/residual-mocks.mjs`
+over **all 25 files** (not a subset) reports:
 
-| file | specifier | codemod refusal |
-|---|---|---|
-| `api/v1/model-versions/id-file-download-url.test.ts` | `~/server/db/client` | `factory replaces "dbKV" with behaviour — it is a canonical export` |
-| `api/internal/blocks/git-push.gate.test.ts` | `~/server/db/client` | `local "mockPubReqFindFirst" aliases dbMock.dbRead.appBlockPublishRequest.findFirst` |
-| `server/utils/apps-catalog-rate-limit.test.ts` | `~/server/redis/client` | `no module-scope declaration found for "mockSysRedis"` |
-| `api/v1/blocks/withdraw.test.ts` | `~/server/redis/client` | `hoisted entry "mockSysRedis" is not a bare vi.fn()` |
+```
+  2  ~/server/db/client       id-file-download-url, git-push.gate
+  2  ~/server/redis/client    apps-catalog-rate-limit, withdraw
+  0  ~/server/logging/client
+```
+
+Exactly the four below and nothing else. Re-run it over the full 25 after each conversion, and say
+which set you ran it over — see the first warning at the bottom.
+
+| file                                                 | specifier               | codemod refusal                                                                      |
+| ---------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------ |
+| `api/v1/model-versions/id-file-download-url.test.ts` | `~/server/db/client`    | `factory replaces "dbKV" with behaviour — it is a canonical export`                  |
+| `api/internal/blocks/git-push.gate.test.ts`          | `~/server/db/client`    | `local "mockPubReqFindFirst" aliases dbMock.dbRead.appBlockPublishRequest.findFirst` |
+| `server/utils/apps-catalog-rate-limit.test.ts`       | `~/server/redis/client` | `no module-scope declaration found for "mockSysRedis"`                               |
+| `api/v1/blocks/withdraw.test.ts`                     | `~/server/redis/client` | `hoisted entry "mockSysRedis" is not a bare vi.fn()`                                 |
 
 ## What the two redis ones will need
 
