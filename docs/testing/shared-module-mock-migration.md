@@ -309,6 +309,20 @@ migration presented that way, and none of them looked like an error:
 `compare-runs.mjs` exists because of this. It prints collected-count regressions **before**
 failures and exits non-zero on a count regression even at zero failures.
 
+### The canonical three do not bound the silent class
+
+A wholesale `vi.mock` of **any** multi-export module causes it. One test mocked
+`~/server/utils/server-domain` — 14 exports — with a single-key factory; under
+`--no-isolate` that froze the module for the worker, and a later file whose consumer reached
+one of the other 13 died at module scope and collected zero tests. It took out a *different*
+file at each worker count, which is why it presented as flakiness rather than as one broken
+file.
+
+So when a migrated set still has zero-collects, **grep the `--no-isolate` log for
+`No "<export>" export is defined on the`** — the message names the poisoned module, and it is
+usually not one of the three. A scan for wholesale mocks of multi-export modules across a
+migrated set is the cheap preventative.
+
 ### What the gate does NOT catch
 
 Collected counts and `residual-mocks.mjs` detect **absence** — a file that lost its tests, a
