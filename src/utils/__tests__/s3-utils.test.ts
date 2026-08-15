@@ -51,9 +51,15 @@ vi.mock('~/server/db/client', () => ({
 
 // Capture deleteObject / deleteManyObjects calls so we can assert which
 // (bucket, key) tuples actually reach the S3 client.
+// 🔴 `importOriginal` does NOT cover the interop case, which is why this file needs the same
+// `default` key as the hand-listed factories: the spread copies the original's NAMED exports
+// and does not synthesise a `default`. Pre-bundling wraps this CJS dep for interop, so the
+// consumer resolves through `default`; without one it gets undefined, and the file collects
+// almost no tests instead of going red. This file is 66 of the six files' 106 tests, so its
+// count is worth asserting on its own rather than through the total.
 vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@aws-sdk/client-s3')>();
-  return {
+  const mocked = {
     ...actual,
     S3Client: class {
       send = vi.fn(
@@ -78,6 +84,7 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
       );
     },
   };
+  return { ...mocked, default: mocked };
 });
 
 import {
