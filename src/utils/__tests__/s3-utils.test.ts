@@ -38,17 +38,6 @@ const mocks = vi.hoisted(() => {
   return { findManyMock, deleteObjectCalls, deleteManyObjectsCalls };
 });
 
-// Refcount check inside deleteModelFileObject(s) hits dbWrite.modelFile.findMany.
-// Default: 0 referenced rows → all URLs are "safe to delete".
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    modelFile: {
-      findMany: mocks.findManyMock,
-    },
-  },
-  dbRead: {},
-}));
-
 // Capture deleteObject / deleteManyObjects calls so we can assert which
 // (bucket, key) tuples actually reach the S3 client.
 // 🔴 `importOriginal` does NOT cover the interop case, which is why this file needs the same
@@ -98,6 +87,10 @@ import {
   objectExists,
 } from '~/utils/s3-utils';
 import { env } from '~/env/server';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbWrite.modelFile.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.findManyMock as (...a: unknown[]) => unknown)(...args)
+);
 
 beforeEach(() => {
   mocks.deleteObjectCalls.length = 0;

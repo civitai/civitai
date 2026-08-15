@@ -44,22 +44,16 @@ import { resolveClientIpOrNull } from '~/server/utils/client-ip';
  * be vacuous.
  */
 
-const { mockHSetWithTTL, mockHGet, capturedHandler } = vi.hoisted(() => {
+const { mockHSetWithTTL, capturedHandler } = vi.hoisted(() => {
   const captured: { handler: ((arg: unknown) => Promise<unknown>) | null } = { handler: null };
   return {
     mockHSetWithTTL: vi.fn(),
-    mockHGet: vi.fn(),
     capturedHandler: captured,
   };
 });
 
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: mockHSetWithTTL }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: { packed: { hGet: mockHGet } },
-  REDIS_KEYS: { TRPC: { LIMIT: { BASE: 'trpc:rate-limit' } } },
-}));
 
 vi.mock('~/server/trpc', () => ({
   middleware: (fn: (arg: unknown) => Promise<unknown>) => {
@@ -101,6 +95,8 @@ vi.mock('~/env/client', () => ({
 
 import { rateLimit } from '../middleware.trpc';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockHGet = redisMock.redis.packed.hGet;
 
 beforeEach(() => {
   vi.clearAllMocks();

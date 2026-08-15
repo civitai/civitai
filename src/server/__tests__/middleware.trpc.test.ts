@@ -23,12 +23,11 @@ import { TRPCError } from '@trpc/server';
  * at request time without the full pipeline.
  */
 
-const { mockHSetWithTTL, mockLogSysRedisFailOpen, mockHGet, capturedHandler } = vi.hoisted(() => {
+const { mockHSetWithTTL, mockLogSysRedisFailOpen, capturedHandler } = vi.hoisted(() => {
   const captured: { handler: ((arg: unknown) => Promise<unknown>) | null } = { handler: null };
   return {
     mockHSetWithTTL: vi.fn(),
     mockLogSysRedisFailOpen: vi.fn(),
-    mockHGet: vi.fn(),
     capturedHandler: captured,
   };
 });
@@ -39,17 +38,6 @@ vi.mock('~/server/redis/atomic', () => ({
 
 vi.mock('~/server/redis/fail-open-log', () => ({
   logSysRedisFailOpen: mockLogSysRedisFailOpen,
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: {
-      hGet: mockHGet,
-    },
-  },
-  REDIS_KEYS: {
-    TRPC: { LIMIT: { BASE: 'trpc:rate-limit' } },
-  },
 }));
 
 // Capture the inner handler the rateLimit factory passes to `middleware(...)`.
@@ -110,6 +98,8 @@ vi.mock('~/env/client', () => ({
 
 import { rateLimit } from '../middleware.trpc';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockHGet = redisMock.redis.packed.hGet;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -211,8 +201,12 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     // key is namespaced by principal kind (`user:` / `ip:`) so the two key
     // spaces cannot collide — see middleware.trpc.ts and the dedicated bucket-key
     // suite in `middleware.trpc.rate-limit-key.test.ts`.
+    // `packed:trpc:limit` is the REAL `REDIS_KEYS.TRPC.LIMIT.BASE`. This asserted
+    // `trpc:rate-limit:` for as long as the file supplied its own copy of the constant —
+    // both sides of the comparison were the fixture's invention, so it could never fail and
+    // never matched production.
     expect(extra).toMatchObject({
-      cacheKey: expect.stringContaining('trpc:rate-limit:'),
+      cacheKey: expect.stringContaining('packed:trpc:limit:'),
       hashKey: 'user:42',
     });
   });

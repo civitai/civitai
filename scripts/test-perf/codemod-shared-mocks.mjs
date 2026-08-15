@@ -61,7 +61,9 @@ function main() {
   // A hand-written constant that DIFFERS from the real one is a test asserting against a
   // key production never emits. Printed separately because it is a finding, not a blocker.
   const drifted = results.flatMap((r) =>
-    r.refusals.filter((x) => x.mismatches).map((x) => ({ file: path.relative(repoRoot, r.file), ...x }))
+    [...r.refusals, ...(r.findings ?? [])]
+      .filter((x) => x.mismatches)
+      .map((x) => ({ file: path.relative(repoRoot, r.file), ...x }))
   );
   if (drifted.length) {
     console.log(`\nCONSTANTS THAT DRIFTED FROM THE REAL VALUE (${drifted.length})`);
@@ -172,9 +174,22 @@ function listTestFiles() {
   return globSync('src/**/*.test.ts', { cwd: repoRoot }).map((f) => path.join(repoRoot, f));
 }
 
+/** Behaviour assignments to emit for the file currently being converted. Module-level
+ * because `convert` is not reentrant and threading it through every helper buried the shape
+ * of the walk. Reset at the top of each call. */
+let lifts = [];
+/** A file that resets implementations between tests cannot carry a module-scope lift: the
+ * assignment would be wiped before the first test runs. `clearAllMocks` is fine — it clears
+ * calls, not implementations. */
+let liftingAllowed = true;
+
 function convert(file, text) {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  lifts = [];
+  liftingAllowed = !/(resetAllMocks|restoreAllMocks)/.test(text);
   const refusals = [];
+  /** Reported alongside the conversion rather than blocking it. */
+  const findings = [];
   const convertedTargets = [];
   /** identifier name -> Set of canonical expressions it was bound to */
   const bindings = new Map();
@@ -220,29 +235,39 @@ function convert(file, text) {
       // redundant WHEN IT MATCHES — and when it does not, the test has been asserting
       // against a key production never emits, which is a finding rather than an obstacle.
       if (CONSTANT_EXPORTS[root]) {
+        // The canonical registration spreads `@civitai/redis/client`, where both tables are
+        // defined — so the factory's copy is redundant and can be DELETED rather than
+        // translated. Proving the literal equals the real constant was the wrong question:
+        // it is unanswerable for a call expression like `completeKeys({ … })`, and it is not
+        // what decides safety. What decides safety is whether the test asserts on a key
+        // string, and a test that never names the constant cannot. (arabella, taxonomy §2.)
+        if (new RegExp(`\b${root}\b`).test(text.replace(prop.getText(), ''))) {
+          refusals.push({ target, reason: `${root} is referenced outside the factory — check what it asserts` });
+          ok = false;
+          break;
+        }
         const literal = staticValue(prop.initializer);
-        if (literal === UNKNOWN) {
-          refusals.push({ target, reason: `${root} in the factory is not a plain literal` });
-          ok = false;
-          break;
-        }
-        const mismatches = subsetMismatches(literal, realConstants()[root], root);
-        if (mismatches.length) {
-          refusals.push({
-            target,
-            reason: `${root} literal DIFFERS from the real constant`,
-            mismatches,
-          });
-          ok = false;
-          break;
-        }
-        continue; // provably redundant — drop it
+        const mismatches =
+          literal === UNKNOWN ? [] : subsetMismatches(literal, realConstants()[root], root);
+        // Reported, not refused: a divergent copy is a test asserting against a key
+        // production never emits, and the redness when the real value swaps in IS the
+        // finding.
+        if (mismatches.length) findings.push({ target, reason: `${root} differed from the real constant`, mismatches });
+        continue;
       }
 
+      // Any export other than the client roots is already supplied by the registration,
+      // which spreads the whole package (`safeError`, `withSysReadDeadline`, the key
+      // tables). The factory only declared it because replacing the module wholesale meant
+      // it had to. Same safety question as the constants: droppable unless the test names it
+      // outside the factory, in which case it may be asserting on the stub.
       if (!spec.roots.includes(root)) {
-        ok = false;
-        refusals.push({ target, reason: `factory declares an export the canonical mock does not own: ${root}` });
-        break;
+        if (new RegExp(`\b${root}\b`).test(text.replace(prop.getText(), ''))) {
+          refusals.push({ target, reason: `factory declares "${root}", and the test references it — check what it asserts` });
+          ok = false;
+          break;
+        }
+        continue;
       }
       if (spec.flat) {
         if (!collect(prop.initializer, `${spec.mock}.${root}`, local, refusals, target)) ok = false;
@@ -284,7 +309,7 @@ function convert(file, text) {
     importsNeeded.add(target);
   }
 
-  if (!convertedTargets.length) return { file, text, converted: [], refusals };
+  if (!convertedTargets.length) return { file, text, converted: [], refusals, findings };
 
   // A local bound to two canonical paths is the dbRead/dbWrite aliasing case: one spy
   // served both clients, so a write satisfied a read assertion. There is no mechanical
@@ -296,14 +321,14 @@ function convert(file, text) {
   for (const [name, exprs] of bindings) {
     if (exprs.size > 1) {
       refusals.push({ target: 'multiple', reason: `local "${name}" aliases ${[...exprs].join(' and ')} — needs a human`, alias: [...exprs] });
-      return { file, text, converted: [], refusals };
+      return { file, text, converted: [], refusals, findings };
     }
     const expr = [...exprs][0];
     const decl = findDeclaration(sf, name);
     if (decl) {
       if (!isPlainSpyInitializer(decl.initializer, expr)) {
         refusals.push({ target: 'multiple', reason: `declaration of "${name}" is not a bare vi.fn()/vi.hoisted(() => vi.fn())` });
-        return { file, text, converted: [], refusals };
+        return { file, text, converted: [], refusals, findings };
       }
       edits.push({ start: decl.initializer.getStart(sf), end: decl.initializer.getEnd(), replacement: expr });
       continue;
@@ -315,11 +340,11 @@ function convert(file, text) {
     const hoisted = findHoistedBinding(sf, name);
     if (!hoisted) {
       refusals.push({ target: 'multiple', reason: `no module-scope declaration found for "${name}"` });
-      return { file, text, converted: [], refusals };
+      return { file, text, converted: [], refusals, findings };
     }
     if (!isPlainSpyInitializer(hoisted.initializer, expr)) {
       refusals.push({ target: 'multiple', reason: `hoisted entry "${name}" is not a bare vi.fn()` });
-      return { file, text, converted: [], refusals };
+      return { file, text, converted: [], refusals, findings };
     }
     hoistedRemovals.push(hoisted);
     lifted.push(`const ${name} = ${expr};`);
@@ -392,7 +417,7 @@ function convert(file, text) {
     .map((t) => TARGETS[t])
     .map((s) => (alias[s.mock] === s.mock ? `import { ${s.mock} } from '${s.from}';` : `import { ${s.mock} as ${alias[s.mock]} } from '${s.from}';`))
     .filter((line) => !text.includes(line));
-  const inserted = [...importLines, ...lifted.map(reprefix)];
+  const inserted = [...importLines, ...lifted.map(reprefix), ...lifts.map(reprefix)];
   if (inserted.length) {
     const lastImport = [...sf.statements].reverse().find((s) => ts.isImportDeclaration(s));
     const at = lastImport ? lastImport.getEnd() : 0;
@@ -403,7 +428,7 @@ function convert(file, text) {
   let out = text;
   for (const e of edits) out = out.slice(0, e.start) + reprefix(e.replacement) + out.slice(e.end);
 
-  return { file, text: out, converted: convertedTargets, refusals };
+  return { file, text: out, converted: convertedTargets, refusals, findings };
 }
 
 /** Record `name -> canonicalExpr` for an identifier value; accept a bare `vi.fn()` (the
@@ -428,8 +453,53 @@ function collect(init, expr, local, refusals, target) {
     local.push([passthrough, expr]);
     return true;
   }
+  // Behaviour the canonical default does not cover. It does not have to be refused — it is
+  // already an expression, so it can be LIFTED onto the canonical node as an explicit
+  // assignment. Callers decide whether lifting is safe for this file (see liftGuard).
+  const lift = liftingAllowed ? liftedAssignment(init, expr) : null;
+  if (lift) {
+    lifts.push(lift);
+    return true;
+  }
   refusals.push({ target, reason: `inline behaviour at ${expr} (${init.getText().slice(0, 60)})` });
   return false;
+}
+
+/**
+ * Rewrite a factory leaf's behaviour as an assignment on the canonical node.
+ *
+ *   findMany: vi.fn(async () => [1])          ->  node.mockImplementation(async () => [1])
+ *   get: vi.fn().mockResolvedValue(null)      ->  node.mockResolvedValue(null)
+ *   findUnique: mocks.userFindUnique          ->  node.mockImplementation((...a) => mocks.userFindUnique(...a))
+ *
+ * The last form keeps the test's own spy in the call path, so `expect(mocks.userFindUnique)
+ * .toHaveBeenCalled()` still holds — the assertions do not move.
+ */
+function liftedAssignment(init, expr) {
+  // `vi.fn(fn)` / `vi.fn(async function* () {})`
+  if (isBareViFnWithArgs(init) && init.arguments.length === 1)
+    return `${expr}.mockImplementation(${init.arguments[0].getText()});`;
+
+  // `vi.fn().mockResolvedValue(v)` and the other single-call configurators.
+  if (
+    ts.isCallExpression(init) &&
+    ts.isPropertyAccessExpression(init.expression) &&
+    /^mock(ResolvedValue|RejectedValue|ReturnValue|Implementation)$/.test(init.expression.name.text) &&
+    isBareViFn(init.expression.expression) &&
+    init.arguments.length === 1
+  )
+    return `${expr}.${init.expression.name.text}(${init.arguments[0].getText()});`;
+
+  // A bare function the factory used directly as the export.
+  if (ts.isArrowFunction(init) || ts.isFunctionExpression(init))
+    return `${expr}.mockImplementation(${init.getText()});`;
+
+  // A spy reached through an object — `mocks.findMany`, `h.get`. Wrapped rather than
+  // rebound, because the test asserts on that object's property, not on this node.
+  if (ts.isPropertyAccessExpression(init) && ts.isIdentifier(init.expression))
+    return `${expr}.mockImplementation((...args: unknown[]) => (${init.getText()} as (...a: unknown[]) => unknown)(...args));`;
+
+  return null;
 }
 
 /**
@@ -485,6 +555,16 @@ function isEquivalentClientLiteral(node, canonicalExpr) {
     const init = prop.initializer;
     if (isBareViFn(init) || isDefaultEquivalent(childExpr, init)) continue;
     if (isEquivalentClientLiteral(init, childExpr)) continue;
+    // A leaf carrying behaviour does not disqualify the literal — the behaviour lifts onto
+    // the canonical node. `$executeRaw: vi.fn().mockResolvedValue(undefined)` beside four
+    // bare spies was the whole reason these clients refused. (arabella, taxonomy §3.)
+    if (liftingAllowed) {
+      const lift = liftedAssignment(init, childExpr);
+      if (lift) {
+        lifts.push(lift);
+        continue;
+      }
+    }
     return false;
   }
   return node.properties.length > 0;
@@ -749,11 +829,13 @@ function factoryObject(node) {
     let returned = null;
     for (const stmt of body.statements) {
       if (ts.isVariableStatement(stmt)) {
-        for (const d of stmt.declarationList.declarations) {
+        // A local that IS the original gets remembered, so the return's `...actual` is
+        // recognised. Any other local — a `make()` key-proxy helper, a shared spy — is left
+        // alone rather than refused: the whole factory is being deleted, so its locals go
+        // with it and their role does not need to be knowable.
+        for (const d of stmt.declarationList.declarations)
           if (ts.isIdentifier(d.name) && d.initializer && isOriginalCall(d.initializer, originalNames))
             originalNames.add(d.name.text);
-          else return null; // some other local — its role is not knowable here
-        }
         continue;
       }
       if (ts.isReturnStatement(stmt) && stmt.expression) {
