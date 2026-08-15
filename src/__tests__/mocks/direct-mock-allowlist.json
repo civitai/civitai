@@ -19,15 +19,15 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 330,
+    "canonicalFiles": 328,
     "pendingFiles": 390,
     "allFiles": 508,
-    "canonicalSites": 472,
+    "canonicalSites": 470,
     "pendingSites": 853
   },
   "bySpecifier": {
     "~/server/db/client": 233,
-    "~/server/redis/client": 139,
+    "~/server/redis/client": 137,
     "~/server/logging/client": 100,
     "~/env/server": 106,
     "~/server/services/buzz.service": 98,
@@ -236,8 +236,6 @@
     "src/server/services/__tests__/set-model-minor.service.test.ts",
     "src/server/services/__tests__/signals.service.test.ts",
     "src/server/services/__tests__/strike.service.test.ts",
-    "src/server/services/__tests__/system-cache.memoize.test.ts",
-    "src/server/services/__tests__/system-cache.sysredis-soft.test.ts",
     "src/server/services/__tests__/tag.service.security.test.ts",
     "src/server/services/__tests__/tag.service.unlisted.test.ts",
     "src/server/services/__tests__/training-status.sysredis-soft.test.ts",

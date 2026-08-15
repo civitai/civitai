@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Mock the redis + db layers so we can assert how often the underlying redis
 // GET actually fires for the memoized global blobs. Defined via vi.hoisted so
@@ -12,35 +13,18 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // COLLAPSE within the TTL, per-key isolation, and FAIL-OPEN (a rejected read is
 // never cached, so the next call retries). Each test re-imports the module after
 // vi.resetModules() so it starts from a FRESH (empty) memo slate.
-const { packedGet, packedSet, redisGet, redisSet,  } = vi.hoisted(() => ({
-  packedGet: vi.fn(),
-  packedSet: vi.fn(),
-  redisGet: vi.fn(),
-  redisSet: vi.fn(),
-  
-}));
 const tagFindMany = dbMock.dbWrite.tag.findMany;
 const queryRaw = dbMock.dbWrite.$queryRaw;
 
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: packedGet, set: packedSet },
-    get: redisGet,
-    set: redisSet,
-  },
-  sysRedis: { get: vi.fn(), set: vi.fn() },
-  withSysReadDeadline: (p: Promise<unknown>) => p,
-  REDIS_KEYS: {
-    SYSTEM: {
-      MODERATED_TAGS: 'system:moderated-tags',
-      TAG_RULES: 'system:tag-rules',
-      SYSTEM_TAGS: 'system:system-tags',
-      CATEGORIES: 'system:categories',
-    },
-    LIVE_NOW: 'live-now',
-  },
-  REDIS_SYS_KEYS: { SYSTEM: {}, CLIENT: 'client' },
-}));
+const packedGet = redisMock.redis.packed.get;
+const packedSet = redisMock.redis.packed.set;
+const redisGet = redisMock.redis.get;
+const redisSet = redisMock.redis.set;
+
+// Pass-through, not the canonical default. The default is the REAL deadline wrapper, which
+// races these reads against a wall-clock timeout the mocked client cannot lose on its own —
+// and what this file measures is how often a read fires, not whether it beat a clock.
+redisMock.withSysReadDeadline.mockImplementation((p: Promise<unknown>) => p);
 
 vi.mock('~/server/redis/fail-open-log', () => ({
   logSysRedisFailOpen: vi.fn(),
@@ -111,9 +95,7 @@ describe('system-cache in-proc memoize', () => {
   it('getCategoryTags memoizes per type independently', async () => {
     const { getCategoryTags } = await loadSystemCache();
     // Redis hit path: return a JSON array so the getter never touches the DB.
-    redisGet.mockImplementation(async (key: string) =>
-      JSON.stringify([{ id: 1, name: `${key}` }])
-    );
+    redisGet.mockImplementation(async (key: string) => JSON.stringify([{ id: 1, name: `${key}` }]));
 
     await getCategoryTags('image');
     await getCategoryTags('image'); // collapsed for 'image'

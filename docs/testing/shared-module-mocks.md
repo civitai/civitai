@@ -295,3 +295,30 @@ remaining 7 were a different class — so that pair shares at least one more poi
 specifier that nobody has named yet. 13 → 7 is the dangerous shape: it reads as progress and
 is not completion. A set is done when its `--no-isolate` failures reach zero, not when the
 specifier you were working on stops appearing.
+
+## A canonical mock cannot statically import anything that reads mocked env at module scope
+
+`setup.ts` loads the canonical mock modules, and `vi.mock` calls are hoisted **above** that. So a
+canonical mock is evaluated **earlier than every factory `setup.ts` registers**, including the
+`~/env/server` one.
+
+A static `import … from '~/server/redis/sys-read-deadline'` inside `redis.mock.ts` therefore
+evaluates that module — and its `import { env }` — before the env mock's factory has initialised.
+The file dies with `Cannot access '__vi_import_4__' before initialization`, **collects ZERO tests,
+and reports as one failed suite.**
+
+Resolve it with a **lazy import inside the seam**, so the module is loaded on first call rather than
+at registration:
+
+```ts
+let realModule: typeof import('~/server/redis/sys-read-deadline') | undefined;
+withSysReadDeadline: async (...args) => {
+  realModule ??= await import('~/server/redis/sys-read-deadline');
+  return realModule.withSysReadDeadline(...args);
+},
+```
+
+⚠️ **The failure signature is the one this project keeps meeting** — zero collected, one suite
+reported failed — so it reads as an ordinary broken test rather than as a load-order problem. If a
+canonical mock change makes exactly one suite fail, check what it imports before reading the
+assertion.

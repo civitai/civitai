@@ -29,25 +29,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * demand cross-module-instance reference identity that resetModules precludes).
  */
 
-const { mockGet, mockWithSysReadDeadline, mockLogSysRedisFailOpen } = vi.hoisted(() => ({
-  mockGet: vi.fn(),
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
-  mockLogSysRedisFailOpen: vi.fn(),
-}));
+const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({ mockLogSysRedisFailOpen: vi.fn() }));
 
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { get: mockGet },
-  redis: { get: vi.fn(), set: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-  REDIS_KEYS: { SYSTEM: {}, LIVE_NOW: 'live-now' },
-  REDIS_SYS_KEYS: {
-    SYSTEM: {
-      BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
-      CREATION_BLOCKED_TAGS: 'system:creation-blocked-tags',
-      LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
-    },
-  },
-  withSysReadDeadline: mockWithSysReadDeadline,
-}));
+const mockGet = redisMock.sysRedis.get;
+// The seam itself, which is what these tests drive: the canonical default is the REAL wrapper,
+// and `beforeEach` below replaces it with a transparent one so each test can choose.
+const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
