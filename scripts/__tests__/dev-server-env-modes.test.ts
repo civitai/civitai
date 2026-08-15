@@ -218,6 +218,17 @@ describe('the summary and the session comparison', () => {
     );
   });
 
+  it('refuses when a group named on a flag is one the session never had', () => {
+    // Leniency about an unknown group is only defensible when nobody asked for it. `--dev search`
+    // against a session predating [search.*] would otherwise report search=dev while it runs on the
+    // base .env — production Meilisearch.
+    const running = resolve().modes;
+    const requested = { ...running, search: { mode: 'dev' } };
+    expect(sameResolvedModes(running, requested)).toBe(true);
+    expect(sameResolvedModes(running, requested, ['search'])).toBe(false);
+    expect(sameResolvedModes(running, requested, ['db'])).toBe(true);
+  });
+
   it('does not match a session that resolved nothing against one that resolved groups', () => {
     // A session that came up before env-modes.local existed is running the base .env. Once the file
     // appears, a bare start resolves real modes — the two are not the same session.

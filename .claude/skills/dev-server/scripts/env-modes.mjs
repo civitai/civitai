@@ -131,12 +131,18 @@ export function parseGroupList(value) {
 // the definitions file went missing or that section was removed, and the request resolved to
 // nothing while the session runs on production. Matching an empty request against anything is the
 // fail-open half of "compare the overlap", so it is not allowed.
-export function sameResolvedModes(running = {}, requested = {}) {
+// `required` is the groups the caller named on a flag. Leniency about a group the session has never
+// heard of is only defensible when nobody asked for it: `--dev search` against a session that
+// predates [search.*] must NOT come back as the same session, or the caller is told search is on dev
+// while it runs on the base .env — production.
+export function sameResolvedModes(running = {}, requested = {}, required = []) {
   const modeOf = (choice) => choice?.mode ?? choice;
   // A session that resolved NOTHING came up before env-modes.local existed and is running the base
   // .env — production for everything it does not override. `every` over no keys is vacuously true,
   // so without this the first bare start after the file appears would be told its dev modes hold.
   if (!Object.keys(running).length) return !Object.keys(requested).length;
+  const named = required.filter((g) => g !== 'all');
+  if (!named.every((group) => group in running)) return false;
   return Object.keys(running).every(
     (group) => group in requested && modeOf(running[group]) === modeOf(requested[group])
   );

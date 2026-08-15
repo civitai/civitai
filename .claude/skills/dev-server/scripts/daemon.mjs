@@ -2144,7 +2144,12 @@ async function main() {
         if (existing && sessionIsBusy(existing)) {
           // Handing back a live session while quietly ignoring the modes just asked for is how an
           // agent ends up believing it is on dev. Refuse instead of answering a different question.
-          if (!sameResolvedModes(existing.pendingModes ?? existing.modes, requestedModes)) {
+          if (
+            !sameResolvedModes(existing.pendingModes ?? existing.modes, requestedModes, [
+              ...modeOverrides.prod,
+              ...modeOverrides.dev,
+            ])
+          ) {
             res.writeHead(409);
             res.end(JSON.stringify({
               error:
@@ -2201,6 +2206,12 @@ async function main() {
 
           const reusedStatus = existing.getStatus();
           if (reusedStatus.status === 'error') {
+            // start() reports a mode failure by setting status and RETURNING, so the catch above
+            // never sees it. Without this the failed request's --prod set stays pinned, and the
+            // dashboard's restart key would bring the session up on production off a start the
+            // CLI reported as failed.
+            existing.modeOverrides = previousOverrides;
+            existing.defaultProdGroups = previousDefaults;
             res.writeHead(500);
             res.end(JSON.stringify({
               error: lastErrorLog(existing) ?? 'Session failed to restart',

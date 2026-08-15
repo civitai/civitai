@@ -542,7 +542,10 @@ async function cmdDashboard(initialWorktree) {
         .filter(([, mode]) => mode !== 'dev')
         .map(([group, mode]) => (mode === 'prod' ? group : `${group}(${mode})`));
       const modeStr = prodGroups.length ? `  ${C.ylw}prod:${prodGroups.join(',')}${C.r}` : '';
-      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}${modeStr}`;
+      // Sticky, not a 3s flash: this says the session is NOT what the dashboard asked to start, and
+      // after the flash cleared a mismatched dashboard looked exactly like a healthy one.
+      const noticeStr = attachNotice ? `  ${C.ylw}!env${C.r}` : '';
+      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}${modeStr}${noticeStr}`;
     }
     // Session counter, top-right. `n/N` so you know where you are in the rotation.
     if (allSessions.length) {
