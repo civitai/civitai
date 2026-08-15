@@ -377,3 +377,60 @@ is much cheaper to write while looking identical in a doc. I filed three files a
 unresolvable that resolved on a second reading — in the same commit as a section warning against the
 mistake I was making. **Every "blocked", "permanent" and "cannot be measured" in this handover
 deserves that question asked of it once more, including the ones I still believe.**
+
+---
+
+## Landing state — read this first if you are inheriting the slice (liz, 2026-08-15)
+
+**The work is on a branch and in a PR. Nothing is half-applied anywhere.**
+
+```
+branch  perf/services-a-m-mock-migration @ 632a3da432   (pushed)
+PR      #3973, base perf/test-mock-system — DELIBERATELY NOT main
+base    perf/test-mock-system @ 935de0e909 at the time of the rebase
+        27 commits, 134 files, +2658 / -3372
+```
+
+⚠️ **The stale remote `perf/test-mock-migration-services-a-m` @ `19e95f05b5` was left alone.** It
+predates the rebase and its history diverges from the PR branch. A `--force-with-lease` would have
+been harmless — no PR was ever opened on it — but a new branch was preferred because
+**non-destructive beats harmless**. Do not assume the two branches are related by fast-forward.
+
+**Two of the files in this slice are ALSO on `perf/test-mock-system` directly**, at `e0b3546a61`:
+`model-file.deregister.service` and `storage-resolver.deregisterByFile`. They arrived in #3959's
+merge base rather than from here, they were blocking that PR, and sky took those two files only —
+deliberately not the branch, because pulling 134 files of unreviewed slice work into a PR reviewed at
+a different scope would be a different PR wearing a reviewed one's clothes. **So expect those two to
+appear on both sides; that is intentional, not a double-apply.**
+
+### 🔴 `storage-resolver.deregisterByFile` is a RECORDED REFUSAL, not an unfinished job
+
+It is converted for `~/server/logging/client` and **stops there on purpose**. Its `~/env/server`
+mock stays because **the tests MUTATE `envValues` per case** — lifting it would leave the local alive
+and disconnected, and every later assignment would write to an object nothing reads. That is the
+class where converting further is the mistake and **no run can see the difference either way**: when
+this was first found, four of six such files were mutation-affected and the run caught two; the other
+two went green while silently exercising the opposite branch.
+
+`~/env/server` is a **pending** specifier, so this does not hold the canonical gate. Anyone reading
+the allowlist later will see the file listed for env. **Do not "finish" it.**
+
+The logging half is the *fix* for that family rather than a risk to it, and it was verified rather
+than argued: pointing `logToAxiom` at an unrelated `vi.fn()` reds **7 of 13**, which proves the
+module calls the canonical node instead of a spy bound by per-file re-instantiation. **The file was
+green before the conversion and green after, and neither green was informative — the mutation is the
+entire result.**
+
+### What is NOT established
+
+**Nothing in this slice has been adversarially reviewed.** Every verification in this document is the
+author's own, of the author's own work. It should not merge onward to `main` on that basis, and #3973
+says so in its own body.
+
+### The two that remain, and what unblocks them
+
+`model-version.blue-buzz-purchase` and `model-version.purge-by-hash`. Both reach `getDbWithoutLag`,
+and `REPLICATION_LAG_DELAY` is a zod `.default(0)` key **absent from `TEST_ENV_DEFAULTS`**, so the
+canonical env reads `undefined` and `undefined <= 0` is `false` where `0 <= 0` is `true`. Checked
+against the base on 2026-08-15, not inherited: `TEST_ENV_DEFAULTS` is still hand-enumerated, so the
+seeding fix has not landed. **When it does, these two become ordinary entry-point conversions.**
