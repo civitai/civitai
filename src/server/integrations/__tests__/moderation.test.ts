@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Tests for the external-moderation client (moderation.ts).
@@ -11,17 +12,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * (observed ~194s api-primary tail). The fix adds `AbortSignal.timeout(...)`.
  */
 
-// Mutable env mock so each test can set the timeout / endpoint. `vi.hoisted` so it
-// exists before the hoisted `vi.mock` factory references it.
-const env = vi.hoisted(() => ({
-  EXTERNAL_MODERATION_ENDPOINT: 'https://moderation.example/v1/moderations' as string,
-  EXTERNAL_MODERATION_TOKEN: 'tok' as string,
-  EXTERNAL_MODERATION_THRESHOLD: 0.5,
-  EXTERNAL_MODERATION_TIMEOUT_MS: 5000,
-  EXTERNAL_MODERATION_CATEGORIES: undefined as Record<string, string> | undefined,
-}));
-vi.mock('~/env/server', () => ({ env }));
-
 import { extModeration } from '~/server/integrations/moderation';
 
 const okResponse = (flagged: boolean) => ({
@@ -31,13 +21,21 @@ const okResponse = (flagged: boolean) => ({
   }),
 });
 
+// Restated per test: per-file overrides are cleared between FILES, not between
+// tests, so a case that varies one of these would otherwise leak into the next.
+beforeEach(() => {
+  setEnv({
+    EXTERNAL_MODERATION_ENDPOINT: 'https://moderation.example/v1/moderations',
+    EXTERNAL_MODERATION_TOKEN: 'tok',
+    EXTERNAL_MODERATION_THRESHOLD: 0.5,
+    EXTERNAL_MODERATION_TIMEOUT_MS: 5000,
+    EXTERNAL_MODERATION_CATEGORIES: undefined,
+  });
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-  env.EXTERNAL_MODERATION_ENDPOINT = 'https://moderation.example/v1/moderations';
-  env.EXTERNAL_MODERATION_TOKEN = 'tok';
-  env.EXTERNAL_MODERATION_TIMEOUT_MS = 5000;
-  env.EXTERNAL_MODERATION_CATEGORIES = undefined;
 });
 
 describe('extModeration.moderatePrompt', () => {
@@ -51,7 +49,7 @@ describe('extModeration.moderatePrompt', () => {
   });
 
   it('aborts (rejects) when the gateway hangs past the timeout — caller then fails soft', async () => {
-    env.EXTERNAL_MODERATION_TIMEOUT_MS = 25;
+    setEnv({ EXTERNAL_MODERATION_TIMEOUT_MS: 25 });
     // fetch that never resolves on its own — only rejects when the abort fires.
     vi.stubGlobal('fetch', (_url: string, opts: RequestInit) => {
       return new Promise((_resolve, reject) => {
@@ -78,13 +76,18 @@ describe('extModeration.moderatePrompt', () => {
   it('throws on a non-ok response (503) so the caller fails soft', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({ ok: false, status: 503, statusText: 'Service Unavailable', text: async () => 'upstream connect error' }))
+      vi.fn(async () => ({
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+        text: async () => 'upstream connect error',
+      }))
     );
     await expect(extModeration.moderatePrompt('x')).rejects.toThrow(/503/);
   });
 
   it('short-circuits (no fetch) when endpoint/token are not configured', async () => {
-    env.EXTERNAL_MODERATION_ENDPOINT = '' as unknown as string;
+    setEnv({ EXTERNAL_MODERATION_ENDPOINT: '' as unknown as string });
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     const r = await extModeration.moderatePrompt('x');
@@ -93,7 +96,10 @@ describe('extModeration.moderatePrompt', () => {
   });
 
   it('returns flagged:false for clean content', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => okResponse(false)));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => okResponse(false))
+    );
     const r = await extModeration.moderatePrompt('a serene landscape');
     expect(r.flagged).toBe(false);
   });

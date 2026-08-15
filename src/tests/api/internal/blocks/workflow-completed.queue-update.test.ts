@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -19,6 +20,7 @@ const mockExpire = redisMock.redis.expire;
  */
 
 const JOB_TOKEN = 'test-job-token';
+
 const BLOCK_INSTANCE_ID = 'bki_0123456789ABCDEFGHJKMNPQRS';
 const WORKFLOW_ID = 'wf_test_123';
 
@@ -26,15 +28,6 @@ const mockFindUnique = dbMock.dbRead.blockUserSubscription.findUnique;
 const mockExecuteRaw = dbMock.dbWrite.$executeRaw;
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/env/server', () => ({
-  env: new Proxy({ JOB_TOKEN } as Record<string, unknown>, {
-    get(t, p: string) {
-      if (p in t) return t[p];
-      if (p === 'LOGGING') return '';
-      return undefined;
-    },
-  }),
-}));
 // Pipeline flag hard-ON — this file is about the (un-gated) queue update, not the gate.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) => flag === 'app-blocks-pipeline-enabled'),
@@ -43,7 +36,12 @@ function makeReq(bodyOver: Record<string, unknown> = {}, over: Partial<NextApiRe
   return {
     method: 'POST',
     headers: { 'x-civitai-internal-token': JOB_TOKEN },
-    body: { workflowId: WORKFLOW_ID, blockInstanceId: BLOCK_INSTANCE_ID, buzzSpent: 0, ...bodyOver },
+    body: {
+      workflowId: WORKFLOW_ID,
+      blockInstanceId: BLOCK_INSTANCE_ID,
+      buzzSpent: 0,
+      ...bodyOver,
+    },
     ...over,
   } as unknown as NextApiRequest;
 }
@@ -76,6 +74,10 @@ async function invoke(req: NextApiRequest, res: NextApiResponse) {
 function updateArgs(call: unknown[]): { status: unknown; workflowId: unknown } {
   return { status: call[1], workflowId: call[2] };
 }
+
+// Stated rather than inherited: JOB_TOKEN's canonical default happens to equal this
+// value, and a test whose precondition is invisible is one nobody can vary safely.
+beforeEach(() => setEnv({ JOB_TOKEN }));
 
 describe('workflow-completed — G6 queue read-model update', () => {
   beforeEach(() => {

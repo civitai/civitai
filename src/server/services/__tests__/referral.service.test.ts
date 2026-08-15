@@ -49,7 +49,6 @@ const { mockDbWrite, mockDbRead } = vi.hoisted(() => {
   return { mockDbWrite: writeClient, mockDbRead: readClient };
 });
 
-vi.mock('~/env/server', () => ({ env: {} }));
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite, dbRead: mockDbRead }));
 vi.mock('~/utils/signal-client', () => ({
   signalClient: { send: vi.fn().mockResolvedValue(undefined) },
@@ -928,8 +927,7 @@ describe('buzz account routing (central bank 0)', () => {
     // back to Pending. Pre-fix, a real bank would have thrown insufficient-funds
     // from account -1 and triggered exactly this revert path.
     const reverted = (mockDbWrite.referralReward.update as any).mock.calls.some(
-      (c: any) =>
-        c[0]?.data?.status === ReferralRewardStatus.Pending && c[0]?.data?.revokedReason
+      (c: any) => c[0]?.data?.status === ReferralRewardStatus.Pending && c[0]?.data?.revokedReason
     );
     expect(reverted).toBe(false);
   });

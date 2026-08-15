@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -20,25 +21,15 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  */
 
 const JOB_TOKEN = 'test-job-token';
+
 const BLOCK_INSTANCE_ID = 'bki_0123456789ABCDEFGHJKMNPQRS';
 const WORKFLOW_ID = 'wf_test_123';
 
-const { mockFlag,   } = vi.hoisted(() => ({
+const { mockFlag } = vi.hoisted(() => ({
   mockFlag: { enabled: true },
-  
-  
 }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/env/server', () => ({
-  env: new Proxy({ JOB_TOKEN } as Record<string, unknown>, {
-    get(t, p: string) {
-      if (p in t) return t[p];
-      if (p === 'LOGGING') return '';
-      return undefined;
-    },
-  }),
-}));
 // Per-key Flipt mock: only the pipeline key reflects mockFlag.enabled.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) =>
@@ -87,6 +78,10 @@ async function invoke(req: NextApiRequest, res: NextApiResponse) {
   const handler = (await import('~/pages/api/internal/blocks/workflow-completed')).default;
   await handler(req, res);
 }
+
+// Stated rather than inherited: JOB_TOKEN's canonical default happens to equal this
+// value, and a test whose precondition is invisible is one nobody can vary safely.
+beforeEach(() => setEnv({ JOB_TOKEN }));
 
 describe('workflow-completed webhook — pipeline flag gate (Decision 1)', () => {
   beforeEach(() => {

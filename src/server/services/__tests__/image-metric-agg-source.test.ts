@@ -16,11 +16,11 @@ import { describe, it, expect, vi } from 'vitest';
 // passed into MetricService. That provider is gone: the submodule hardcodes v2,
 // so the provider arg was dropped from every `new MetricService(...)`.)
 
-// client.ts's transitive import graph reads `~/env/server` at module load (which
-// validates all prod env in test and throws), and pulls the flipt SDK + axiom
-// logger. Stub the smallest seams so importing it is side-effect-free; the
-// function under test reads NONE of these — it's plain string building.
-vi.mock('~/env/server', () => ({ env: new Proxy({}, { get: () => undefined }) }));
+// client.ts builds a flipt client at module load and pulls the flipt SDK + axiom
+// logger; the function under test reads none of it — it is plain string building.
+// The canonical env registration covers the env side. `createFliptClient` resolves
+// its connection lazily inside getInstance(), so a real FLIPT_URL default here
+// still opens no socket.
 vi.mock('@flipt-io/flipt-client-js', () => ({ FliptClient: class {} }));
 
 import { buildEntityMetricPerDaySource } from '~/server/flipt/client';

@@ -20,16 +20,16 @@
   ],
   "totals": {
     "canonicalFiles": 343,
-    "pendingFiles": 346,
-    "allFiles": 502,
+    "pendingFiles": 344,
+    "allFiles": 500,
     "canonicalSites": 491,
-    "pendingSites": 780
+    "pendingSites": 775
   },
   "bySpecifier": {
     "~/server/db/client": 244,
     "~/server/redis/client": 144,
     "~/server/logging/client": 103,
-    "~/env/server": 33,
+    "~/env/server": 28,
     "~/server/services/buzz.service": 98,
     "~/server/services/image.service": 88,
     "~/server/clickhouse/client": 77,
@@ -446,7 +446,6 @@
     "src/server/games/new-order/__tests__/counter-getall-buffer.test.ts",
     "src/server/games/new-order/__tests__/counter-reset.test.ts",
     "src/server/games/new-order/__tests__/sanity-check-buffer.test.ts",
-    "src/server/integrations/__tests__/moderation.test.ts",
     "src/server/jobs/__tests__/apply-tag-rules.test.ts",
     "src/server/jobs/__tests__/audit-bitdex-consistency.test.ts",
     "src/server/jobs/__tests__/challenge-activation.notify.test.ts",
@@ -592,7 +591,6 @@
     "src/server/services/__tests__/image-cacher-invalidate-scope.test.ts",
     "src/server/services/__tests__/image-feed-clickhouse-failsoft.test.ts",
     "src/server/services/__tests__/image-hide-challenges-exclusion.test.ts",
-    "src/server/services/__tests__/image-metric-agg-source.test.ts",
     "src/server/services/__tests__/image-metrics-timeout.test.ts",
     "src/server/services/__tests__/image-search.client-ip.test.ts",
     "src/server/services/__tests__/leaderboard-domain-visibility.test.ts",
