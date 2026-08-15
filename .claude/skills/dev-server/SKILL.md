@@ -87,6 +87,11 @@ service is unreliable:
 DEVSERVER_PROD_GROUPS=buzz
 ```
 
+Editing that line does not move a session that is already up — a session pins the defaults it was
+created with, so no branch switch or crash restart can quietly relocate it. The cost is that until
+those sessions are restarted, a bare `start` against one of them is refused as a mode mismatch,
+which is accurate rather than convenient: a bare start would now resolve to something else.
+
 A `--prod` / `--dev` flag beats that, and the flag applies to that start only — a bare start after
 a `--prod` start is back on dev, including when it reuses a dead session. Asking for different
 modes while a session is already running that worktree is refused rather than silently answered

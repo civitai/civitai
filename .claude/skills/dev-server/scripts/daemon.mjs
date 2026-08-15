@@ -2181,7 +2181,14 @@ async function main() {
           // serving on the OLD env for the length of the port wait. `modes` stays true to what is
           // running; `pendingModes` is what the next run will be, and the mismatch check reads it.
           existing.pendingModes = requestedModes;
-          await existing.restart((s) => claimPortForReuse(s));
+          try {
+            await existing.restart((s) => claimPortForReuse(s));
+          } finally {
+            // start() clears this on the way through, but a restart that throws — no port left in
+            // the range, a failing stop() — never reaches it, and the session would then advertise
+            // pending modes forever and compare the 409 guard against an env that will never exist.
+            existing.pendingModes = null;
+          }
 
           const reusedStatus = existing.getStatus();
           if (reusedStatus.status === 'error') {

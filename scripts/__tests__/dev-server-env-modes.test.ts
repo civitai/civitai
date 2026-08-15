@@ -164,4 +164,29 @@ describe('the summary and the session comparison', () => {
     const afterEdit = { ...running, mongo: { mode: 'dev' } };
     expect(sameResolvedModes(running, afterEdit)).toBe(true);
   });
+
+  it('refuses to match a request that lost a group the session has', () => {
+    // The other direction is the dangerous one: env-modes.local gone (an atomic-rename save mid
+    // flight, a git clean) resolves the request to nothing, and an empty request matching a
+    // production session is exactly the answer the guard exists to prevent.
+    const running = resolve({ prod: ['db'] }).modes;
+    expect(sameResolvedModes(running, {})).toBe(false);
+    expect(sameResolvedModes(running, resolve({ prod: ['db'] }).modes)).toBe(true);
+  });
+
+  it('keeps warning about the auth hub even if someone defines it as a group', () => {
+    // Defining [auth-hub.*] cannot move the hub — it is a separate process reading its own .env —
+    // so the warning must not be deletable by a config edit.
+    const hub = defs(['[auth-hub.dev]', 'X=1', '[auth-hub.prod]', 'X=2'].join('\n'));
+    const summary = formatModeSummary(
+      resolveSessionModes({ definitions: hub, prod: [], dev: [] }).modes
+    );
+    expect(summary).toMatch(/always prod \(no dev target\):.*auth-hub/);
+  });
+
+  it('says which groups "all" could not move', () => {
+    const withGap = defs(['[only.dev]', 'K=v', '[db.dev]', 'D=1', '[db.prod]', 'D=2'].join('\n'));
+    const { notes } = resolveSessionModes({ definitions: withGap, prod: ['all'], dev: [] });
+    expect(notes.join(' ')).toMatch(/"all" skipped only/);
+  });
 });

@@ -30,10 +30,15 @@ export const PROD_ONLY_GROUPS = [
   'auth-hub',
 ];
 
+// Groups that cannot be moved by an overlay AT ALL, whatever anyone writes in env-modes.local: the
+// hub is a separate process reading its own .env, so defining [auth-hub.dev] would delete the
+// warning without changing where the login goes.
+const UNMOVABLE_GROUPS = ['auth-hub'];
+
 // A group someone has actually defined is not prod-only any more, whatever this list says. Naming
 // it in both halves of the same summary line would make the line unreadable rather than cautious.
 function prodOnlyExcluding(definedGroups) {
-  return PROD_ONLY_GROUPS.filter((g) => !definedGroups.includes(g));
+  return PROD_ONLY_GROUPS.filter((g) => UNMOVABLE_GROUPS.includes(g) || !definedGroups.includes(g));
 }
 
 function stripQuotes(value) {
@@ -110,14 +115,18 @@ export function parseGroupList(value) {
 // the same session, and a bare start is not the same session it was before someone edited
 // DEVSERVER_PROD_GROUPS.
 //
-// Only groups BOTH sides resolved are compared. Adding a section to env-modes.local otherwise makes
-// every running session disagree with every new bare start, and `start` — which is meant to be
-// idempotent — starts failing everywhere until each session is restarted. A group only one side
-// knows about is a definitions edit, not two agents wanting different environments.
-export function sameResolvedModes(a = {}, b = {}) {
+// Asymmetric on purpose. `running` is the session that exists; `requested` is what the caller asked
+// for. A group the request knows about and the session does not is an ADDED section — harmless, or
+// `start` would stop being idempotent for every live worktree the moment someone edits
+// env-modes.local. A group the SESSION has and the request lost is the dangerous direction: it means
+// the definitions file went missing or that section was removed, and the request resolved to
+// nothing while the session runs on production. Matching an empty request against anything is the
+// fail-open half of "compare the overlap", so it is not allowed.
+export function sameResolvedModes(running = {}, requested = {}) {
   const modeOf = (choice) => choice?.mode ?? choice;
-  const shared = Object.keys(a).filter((group) => group in b);
-  return shared.every((group) => modeOf(a[group]) === modeOf(b[group]));
+  return Object.keys(running).every(
+    (group) => group in requested && modeOf(running[group]) === modeOf(requested[group])
+  );
 }
 
 // Resolve one session's modes. Every defined group defaults to dev; the skill's own .env can move
@@ -170,6 +179,22 @@ export function resolveSessionModes({ definitions, prod = [], dev = [], defaultP
       : named;
   const explicitProd = new Set(expand(prod, namedProd, namedDev, 'prod'));
   const explicitDev = new Set(expand(dev, namedDev, namedProd, 'dev'));
+
+  for (const [list, other, mode, chosen] of [
+    [prod, namedDev, 'prod', explicitProd],
+    [dev, namedProd, 'dev', explicitDev],
+  ]) {
+    if (!list.includes('all')) continue;
+    // Every other unhonourable request here throws or leaves a note. A group `all` could not take
+    // because it has no section for that mode should not be the one silent case — that is how you
+    // add [search.dev], forget [search.prod], and read `--prod all` as having moved search.
+    const skipped = defined.filter(
+      (g) => !chosen.has(g) && !other.includes(g) && !definitions.groups[g][mode]
+    );
+    if (skipped.length) {
+      notes.push(`"all" skipped ${skipped.join(', ')} — no [<group>.${mode}] section defined`);
+    }
+  }
 
   // A group named alongside `all` still has to be honoured by name — `--prod all,db` where db has
   // no prod block is a request that cannot be met, not one to drop on the floor.

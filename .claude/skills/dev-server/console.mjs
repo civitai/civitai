@@ -205,6 +205,10 @@ async function cmdDashboard(initialWorktree) {
       if (startResult.data?.error) log(`${C.dim}${startResult.data.error}${C.r}`);
       process.exit(1);
     }
+    // The start was refused — a malformed env-modes.local carries no session in the body — and the
+    // session found here predates that edit. Repainting a healthy dashboard over it would read as
+    // the edit having taken effect.
+    if (startResult.data?.error) attachNotice = startResult.data.error;
   }
 
   const write = (s) => process.stdout.write(s);
