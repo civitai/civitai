@@ -101,7 +101,6 @@ const TXT2IMG_IDS = [
   ECO.HiDreamO1,
   ECO.NanoBanana,
   ECO.OpenAI,
-  ECO.Imagen4,
   ECO.Seedream,
   ECO.PonyV7,
   ECO.ZImageTurbo,
