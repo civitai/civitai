@@ -20,7 +20,7 @@ export function ManageStats({
   resaleStats?: CreatorShopResaleStats;
 }) {
   return (
-    <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="md">
+    <SimpleGrid cols={{ base: 2, sm: 3, lg: 4 }} spacing="md">
       <StatCard
         label="Published"
         value={stats.published}
