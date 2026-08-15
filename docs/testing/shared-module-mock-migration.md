@@ -484,6 +484,26 @@ and `services/__tests__/image-cacher-invalidate-scope` are both the one-hop shap
 at module scope on the next line. Whoever teaches the scan to follow a module-scope call into
 a same-file function should delete both entries and re-run the pair.
 
+### A key can be in our table, in the schema, and still be answered by something else
+
+Three workspace packages parse their **own** zod schema from `process.env` rather than reading
+`~/env/server`: `packages/civitai-db/src/env.ts`, `packages/civitai-redis/src/env.ts`, and the
+same pattern elsewhere. A key declared in `server-schema.ts` *and* present in
+`TEST_ENV_DEFAULTS` can still be resolved by one of those, in which case the canonical mock
+never reaches it and changing our value changes nothing.
+
+`DATABASE_CONNECTION_TIMEOUT` is the worked example, and it is worth keeping because the
+reasoning that flagged it was sound and the conclusion was still wrong. The schema defaults it
+to `0`, the test table sets `5000`, and a hang is the one failure a runner cannot report — so it
+looked like the dangerous member of a three-key disagreement. It cannot bite, for two
+independent reasons: `civitai-db` parses it from its own schema and feeds the pool directly, and
+the landing site is `connectionTimeoutMillis || 5000`, so the falsy `0` resolves to the table's
+value regardless.
+
+**A disagreement between two tables is a fact about tables. Whether it is a fact about behaviour
+needs the consumer read** — a source-text comparison can tell you the values differ and can
+never tell you whether anything downstream observes the difference.
+
 ### `env.X` and `process.env.X` are different variables here
 
 The canonical mock replaces `~/env/server`. **Code that reads `process.env.X` directly never
