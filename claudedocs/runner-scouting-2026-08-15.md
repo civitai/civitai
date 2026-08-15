@@ -4,7 +4,7 @@ Recorded 2026-08-15. Measurement and a recommendation; no migration was attempte
 
 **Recommendation: stay on vitest — but the reason overturns the cost model we had been optimising
 against.** The per-module constant is *not* inherent to our module graph. On files all three runtimes
-can load, a runner without vite-node is two to three orders of magnitude cheaper per module.
+can load, a runner without vite-node loads the same graph ~1600x faster.
 
 ## The measurement
 
@@ -51,9 +51,10 @@ error: ... node_modules/use-sidecar@1.1.3/node_modules/use-sidecar/package.json:
 ```
 
 `blocks.router` and `cosmetic-phash.service` both fail this way. So the table above is measured on the
-**light stratum only** — of 1065 files, 383 have no infra dependency and the largest of those has an
-86-module closure. Every file above ~1000 modules pulls Prisma, Redis, AWS or sharp. That is exactly
-the flattering-slice trap: the runner whose win is startup was measured only where startup dominates.
+**light stratum only** — 383 of 1065 files have no infra dependency. That is exactly the
+flattering-slice trap: the runner whose win is startup was measured only where startup dominates.
+⚠️ The stratum sizes came from the same retracted artifact, so treat them as indicative; "bun cannot
+load these files" is a hard failure observed directly and does not rest on a count.
 
 **Module-scope env aborts the import under every runtime.** `~/env/server` validates at module scope,
 so a bare import throws `Invalid environment variables` under bun *and* node. Satisfying it with a
