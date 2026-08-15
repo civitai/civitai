@@ -212,6 +212,66 @@ own copy. Fixing the default is what made those hand-written declarations remova
 Same shape as the `REDIS_KEYS` drift: when a value is hand-copied per file, the copies diverge and
 the divergence is invisible precisely because the copy is what the test compares against.
 
+### Where `~/env/server` stands, and what is left
+
+60 of 106 sites converted. The codemod is **exhausted** — it nominates nothing further, so
+every remaining file needs a person. The three labels matter more than the counts, because
+they need different work and different amounts of nerve:
+
+| n | class | kind | what it needs |
+|---|---|---|---|
+| 20 | key read at module scope in production | **correct-but-inapplicable**, mostly | read the file: is the key one *this test's assertions* depend on? |
+| 13 | the env table is mutated at runtime | **hand-convertible** | move each mutation into a `setEnv` inside the case that needs it |
+| 5 | no keys the scan can find | **hand** | read it; the shape is not one the extractor knows |
+| 4 | env table local is not a self-contained literal | **hand** | the table references something; inline it or leave it |
+| 2 | a run proved it unsafe (`KNOWN_UNSAFE`) | **tool-fixable** | retire the entry when one-hop reachability lands |
+| 2 | value not statically evaluable | **hand** | the value is computed |
+
+**The 13 mutation-class files are the largest tractable block.** The shape is always the same:
+
+```ts
+const mockEnv = { DATABASE_IS_PROD: true, … };
+vi.mock('~/env/server', () => ({ env: mockEnv }));
+…
+it('…when the database is not prod', () => { mockEnv.DATABASE_IS_PROD = false; …
+```
+
+The canonical `env` proxy implements `set`, so `setEnv({ DATABASE_IS_PROD: false })` inside
+that one case is the conversion. The codemod declines it because lifting the *initial* values
+and deleting the `vi.mock` leaves the local alive but disconnected — a rewrite, not a lift.
+
+🔴 **Do not batch these on a green run alone.** Of four mutation-affected files in one batch,
+the pair caught two; the other two went green because nothing downstream of the mutated key
+was asserted, and they would have shipped as tests that no longer test their own names.
+
+**The `KNOWN_UNSAFE` entries and when they can go.** `cloudflare/__tests__/client.purgeCache`
+and `services/__tests__/image-cacher-invalidate-scope` are both the one-hop shape:
+`cloudflare/client.ts` reads `env.CF_API_TOKEN` inside `getClient()` and calls `getClient()`
+at module scope on the next line. Whoever teaches the scan to follow a module-scope call into
+a same-file function should delete both entries and re-run the pair.
+
+### `env.X` and `process.env.X` are different variables here
+
+The canonical mock replaces `~/env/server`. **Code that reads `process.env.X` directly never
+sees it**, and several services do. Two consequences:
+
+- A key added to `TEST_ENV_DEFAULTS` will appear to be ignored by those code paths. It is not
+  a mock bug.
+- A test can declare a key in its env mock that the code under test never reads, which makes
+  the declaration inert — and makes a refusal *about that key* correct but irrelevant. Three
+  `publish-request.*` files were exactly this: refused on `NEXTAUTH_URL`, which their service
+  reads from `process.env`, and they converted by simply dropping it.
+
+### The perf yardstick is not a coverage instrument
+
+`bench.mjs`'s 90-file subset is a **cost** sample, stratified by closure size. Nothing makes
+it representative of any behavioural population. Concretely: 17 test files exercise
+`allowedOrigins` / `Access-Control-Allow-Origin`, and **2** are in the subset — so verifying a
+change to an origin-affecting default against the yardstick alone would cover 15% of the files
+that could break, and origin changes flip *behaviourally* with no string literal for a grep to
+find. Build the verification set from the change; do not reach for the yardstick because it is
+already written down.
+
 ## 3. Fix the two assertion shapes that stop working
 
 **Absence assertions.** A test may prove a code path by the fixture LACKING a method:
