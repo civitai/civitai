@@ -16,8 +16,18 @@ export function ItemResellersPopover({ shopItemId, count }: { shopItemId: number
     { enabled: opened }
   );
 
+  // The theme defaults every Popover to withinPortal={false}, and this one opens
+  // inside the manage table's scroll container (overflow: hidden), which clips the
+  // dropdown. Portalling is the only escape — no z-index can leave that clip.
   return (
-    <Popover width={280} position="bottom-start" withArrow opened={opened} onChange={setOpened}>
+    <Popover
+      width={280}
+      position="bottom-start"
+      withArrow
+      withinPortal
+      opened={opened}
+      onChange={setOpened}
+    >
       <Popover.Target>
         <Anchor component="button" type="button" size="xs" onClick={() => setOpened((o) => !o)}>
           {count} {count === 1 ? 'creator resells' : 'creators resell'} this
