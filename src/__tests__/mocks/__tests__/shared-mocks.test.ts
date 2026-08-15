@@ -48,19 +48,22 @@ describe('shared-module mocks', () => {
   });
 
   it('applies read-shaped defaults so an undeclared path degrades instead of throwing', async () => {
-    await expect(dbRead.user.findMany({})).resolves.toEqual([]);
-    await expect(dbRead.user.findUnique({})).resolves.toBeNull();
-    await expect(dbRead.user.count({})).resolves.toBe(0);
-    await expect(dbRead.$queryRaw`select 1`).resolves.toEqual([]);
-    await expect(dbWrite.$executeRaw`update x`).resolves.toBe(0);
-    await expect(redis.get('k')).resolves.toBeNull();
-    await expect(sysRedis.hGetAll('k')).resolves.toEqual({});
+    // Called through the canonical nodes rather than the re-exported Prisma/Redis types.
+    // They are the same objects (asserted above); the typed surfaces demand real
+    // `where`/key arguments, which would make this a test about argument shapes.
+    await expect(dbMock.dbRead.user.findMany({})).resolves.toEqual([]);
+    await expect(dbMock.dbRead.user.findUnique({})).resolves.toBeNull();
+    await expect(dbMock.dbRead.user.count({})).resolves.toBe(0);
+    await expect(dbMock.dbRead.$queryRaw`select 1`).resolves.toEqual([]);
+    await expect(dbMock.dbWrite.$executeRaw`update x`).resolves.toBe(0);
+    await expect(redisMock.redis.get('k')).resolves.toBeNull();
+    await expect(redisMock.sysRedis.hGetAll('k')).resolves.toEqual({});
   });
 
   it('runs the $transaction callback against the same client', async () => {
     // Returning undefined here would make every transactional path a silent no-op — a
     // test that passes because nothing ran.
-    const seen = await dbWrite.$transaction(async (tx: typeof dbWrite) => {
+    const seen = await dbMock.dbWrite.$transaction(async (tx: typeof dbMock.dbWrite) => {
       await tx.image.update({ where: { id: 1 } });
       return 'done';
     });
@@ -71,7 +74,7 @@ describe('shared-module mocks', () => {
 
   it('lets a declared behaviour override the default', async () => {
     dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ value: 'declared' });
-    await expect(dbRead.keyValue.findUnique({})).resolves.toEqual({ value: 'declared' });
+    await expect(dbMock.dbRead.keyValue.findUnique({})).resolves.toEqual({ value: 'declared' });
   });
 
   it('reports call counts scoped to this file', () => {

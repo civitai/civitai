@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { dbRead } from '~/server/db/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -19,11 +18,11 @@ describe('shared-module mocks: per-file reset', () => {
   it('starts with no inherited implementation', async () => {
     // shared-mocks.test.ts sets `{ value: 'declared' }` on this exact node. Seeing that
     // value here would mean the reset ran once per worker instead of once per file.
-    await expect(dbRead.keyValue.findUnique({})).resolves.toBeNull();
+    await expect(dbMock.dbRead.keyValue.findUnique({})).resolves.toBeNull();
   });
 
   it('drives the shared nodes, so the companion file can prove the same thing', async () => {
-    await dbRead.keyValue.findUnique({});
+    await dbMock.dbRead.keyValue.findUnique({});
     await dbMock.dbWrite.image.update({ where: { id: 2 } });
     expect(dbMock.dbRead.keyValue.findUnique).toHaveBeenCalledTimes(2);
   });
