@@ -123,14 +123,15 @@ describe('capture fires with explicit consent', () => {
     expect(html2canvas.mock.calls[0][0]).toBe(document.body);
   });
 
-  it('captures only the viewport, not the whole scrollable document', async () => {
-    // The privacy half of the posture: anything the reporter scrolled past is not
-    // drawn. Asserted as literals against a pinned window, not read back from the
-    // call.
+  const pinWindow = () => {
     vi.spyOn(window, 'scrollX', 'get').mockReturnValue(120);
     vi.spyOn(window, 'scrollY', 'get').mockReturnValue(340);
     vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(800);
     vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(600);
+  };
+
+  it('crops to the viewport, not the whole scrollable document', async () => {
+    pinWindow();
 
     await captureConsentedScreenshot({ consented: true, loader });
 
@@ -140,6 +141,54 @@ describe('capture fires with explicit consent', () => {
       width: 800,
       height: 600,
       allowTaint: false,
+    });
+  });
+
+  /**
+   * 🔴 REGRESSION GUARD — `scrollX`/`scrollY` must be ABSENT.
+   *
+   * This is the one shape a `toMatchObject` crop assertion cannot see: it only says
+   * the listed keys are right, never that an EXTRA key is absent. `scrollX: 0,
+   * scrollY: 0` looks like it belongs beside `x`/`y` and shipped in the first draft.
+   * html2canvas adds those values to every cloned element's viewport-relative rect
+   * to recover document coordinates; forcing them to 0 relocates `position:
+   * fixed`/`sticky` elements to document y=0, outside the crop, so the app's sticky
+   * header disappears from every capture and the feed behind it is drawn instead.
+   * The defaults (`pageXOffset`/`pageYOffset`) are correct.
+   *
+   * Asserted as an EXACT key set rather than two `toBeUndefined()`s, so any future
+   * option that shifts the coordinate space also has to be looked at.
+   */
+  it('omits scrollX/scrollY so fixed and sticky elements keep their real position', async () => {
+    pinWindow();
+
+    await captureConsentedScreenshot({ consented: true, loader });
+
+    const options = html2canvas.mock.calls[0][1] as Record<string, unknown>;
+    expect(options).not.toHaveProperty('scrollX');
+    expect(options).not.toHaveProperty('scrollY');
+    expect(Object.keys(options).sort()).toEqual([
+      'allowTaint',
+      'height',
+      'logging',
+      'scale',
+      'useCORS',
+      'width',
+      'windowHeight',
+      'windowWidth',
+      'x',
+      'y',
+    ]);
+  });
+
+  it('reports the window size to html2canvas as the real viewport', async () => {
+    pinWindow();
+
+    await captureConsentedScreenshot({ consented: true, loader });
+
+    expect(html2canvas.mock.calls[0][1]).toMatchObject({
+      windowWidth: 800,
+      windowHeight: 600,
     });
   });
 

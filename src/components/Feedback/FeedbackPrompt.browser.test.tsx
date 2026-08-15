@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as CaptureModule from '~/components/Feedback/captureScreenshot';
 import type * as TrpcModule from '~/utils/trpc';
+import { constants } from '~/server/common/constants';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
@@ -101,6 +102,21 @@ const CAPTURED_JPEG = new Blob(['captured-pixels'], { type: 'image/jpeg' });
 
 const imageFile = (name = 'screen.png') => new File(['png-bytes'], name, { type: 'image/png' });
 
+/**
+ * A File that reports a size over `constants.mediaUpload.maxImageFileSize` without
+ * allocating 50 MB in the browser. `size` is a read-only accessor on File, so it is
+ * redefined on the instance — allocating the real bytes would make the suite
+ * memory-bound for no extra coverage.
+ */
+const oversizedFile = (name: string) => {
+  const file = imageFile(name);
+  Object.defineProperty(file, 'size', {
+    value: constants.mediaUpload.maxImageFileSize + 1,
+    configurable: true,
+  });
+  return file;
+};
+
 const renderPrompt = () =>
   renderWithProviders(
     <FeedbackPrompt
@@ -136,8 +152,53 @@ const fileInputEl = () =>
     return el;
   });
 
+/**
+ * Pick files, preserving each File instance.
+ *
+ * `userEvent.upload` rebuilds the FileList and DROPS an instance property redefined
+ * on a File — which silently turned `oversizedFile()` back into a small one, so the
+ * size test passed the oversized file straight through and read as the cap not
+ * working. Assigning `files` + dispatching `change` is exactly what the browser does
+ * on a real pick, and it keeps the objects.
+ *
+ * 🔴 The size assertion below is the instrument check: if a future runtime copies the
+ * File again, this fails loudly instead of quietly testing a small file.
+ */
+const pickFiles = async (files: File[]) => {
+  const input = await fileInputEl();
+  const transfer = new DataTransfer();
+  for (const file of files) transfer.items.add(file);
+  input.files = transfer.files;
+  for (let i = 0; i < files.length; i++)
+    expect(
+      input.files[i].size,
+      `the picked File lost its size — this test would prove nothing (${files[i].name})`
+    ).toBe(files[i].size);
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+};
+
 const consentCheckbox = () =>
   page.getByRole('checkbox', { name: 'Attach a screenshot of this page' });
+
+const sendButton = () => page.getByRole('button', { name: 'Send feedback' });
+
+/**
+ * Hold a capture open so the in-flight window can be inspected. Returns the resolver
+ * — the capture does not settle until it is called, which is how the "user presses
+ * Send while the capture is still running" race is made deterministic rather than
+ * timing-dependent.
+ */
+const deferCapture = () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  mocks.html2canvas.mockImplementation(async () => {
+    await gate;
+    return canvasYielding(CAPTURED_JPEG);
+  });
+  return release;
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -263,6 +324,73 @@ describe('capture happens on consent, and the user sees it first', () => {
   });
 });
 
+/**
+ * 🔴 Sending while a capture is still in flight.
+ *
+ * `handleSubmit` reads `screenshot`, which is still `null` until the capture
+ * resolves. Before `capturing` was folded into `busy`, a user could tick the box,
+ * type, and press Send inside that window: the report went out with NO screenshot,
+ * the panel switched to "Got it, thanks", and the capture landed afterwards on a
+ * hidden panel. The user believes they attached a screenshot and did not — a silent
+ * mismatch between what was assembled and what was sent.
+ */
+describe('🔴 Send is blocked while a capture is in flight', () => {
+  test('the Send button is disabled until the capture resolves, then sends WITH it', async () => {
+    const releaseCapture = deferCapture();
+    await openPrompt();
+    await typeMessage();
+
+    await userEvent.click(consentCheckbox());
+    // In-flight: a non-empty message would otherwise leave Send enabled.
+    await expect.element(page.getByText('Capturing the page…')).toBeInTheDocument();
+    await expect.element(sendButton()).toBeDisabled();
+
+    releaseCapture();
+
+    await expect
+      .element(page.getByAltText('Preview of the page screenshot that will be sent'))
+      .toBeInTheDocument();
+    await expect.element(sendButton()).toBeEnabled();
+
+    await send();
+    // The capture the user asked for is the one that shipped.
+    expect(submittedContext().screenshotId).toBe('cf-page-capture.jpg');
+  });
+
+  test('clicking Send mid-capture submits nothing at all', async () => {
+    const releaseCapture = deferCapture();
+    await openPrompt();
+    await typeMessage();
+    await userEvent.click(consentCheckbox());
+    await expect.element(page.getByText('Capturing the page…')).toBeInTheDocument();
+
+    // A real click on the disabled control. The claim is about the OUTCOME — no
+    // submission — not about the word "disabled" appearing in the markup.
+    await userEvent.click(sendButton(), { force: true });
+
+    expect(mocks.createMutate).not.toHaveBeenCalled();
+    expect(mocks.uploadToCF).not.toHaveBeenCalled();
+    // And the panel has not switched to the success state behind the user's back.
+    await expect.element(page.getByText(/Got it, thanks/)).not.toBeInTheDocument();
+
+    releaseCapture();
+    await expect
+      .element(page.getByAltText('Preview of the page screenshot that will be sent'))
+      .toBeInTheDocument();
+  });
+
+  test('Send stays available when no capture was ever requested', async () => {
+    // The other half of the branch: `busy` must not disable Send for everyone just
+    // because the capture path exists.
+    await openPrompt();
+    await typeMessage();
+
+    await expect.element(sendButton()).toBeEnabled();
+    await send();
+    expect(submittedContext()).not.toHaveProperty('screenshotId');
+  });
+});
+
 describe('image attachments', () => {
   test('attaching a file previews it locally without uploading', async () => {
     await openPrompt();
@@ -330,6 +458,53 @@ describe('image attachments', () => {
 
     expect(submittedContext().images).toEqual(['cf-one.png']);
     expect(submittedContext().screenshotId).toBe('cf-page-capture.jpg');
+  });
+
+  /**
+   * The size cap reaching the real picker. `selectAttachments.test.ts` pins the rule
+   * exhaustively in the gating `unit` tier; these two pin that the component actually
+   * CALLS it — a correct rule nobody invokes is the same bug as no rule.
+   */
+  test('an oversized file is refused, named, and never uploaded', async () => {
+    await openPrompt();
+    await typeMessage();
+
+    await pickFiles([oversizedFile('enormous.png'), imageFile('small.png')]);
+
+    await expect.element(page.getByAltText('Attached image small.png')).toBeInTheDocument();
+    await expect.element(page.getByAltText('Attached image enormous.png')).not.toBeInTheDocument();
+    expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.showErrorNotification.mock.calls[0][0]).toMatchObject({
+      title: 'Image too large',
+    });
+    // The filename has to be in the message or the user cannot tell which one lost.
+    expect(
+      (mocks.showErrorNotification.mock.calls[0][0] as { error: Error }).error.message
+    ).toContain('enormous.png');
+
+    await send();
+    // Only the acceptable file was ever uploaded.
+    expect(mocks.uploadToCF).toHaveBeenCalledTimes(1);
+    expect(submittedContext().images).toEqual(['cf-small.png']);
+  });
+
+  test('an oversized file does not consume one of the three slots', async () => {
+    await openPrompt();
+
+    await pickFiles([
+      oversizedFile('enormous.png'),
+      imageFile('a.png'),
+      imageFile('b.png'),
+      imageFile('c.png'),
+    ]);
+
+    await expect.element(page.getByText('3 of 3 attached')).toBeInTheDocument();
+    await expect.element(page.getByAltText('Attached image c.png')).toBeInTheDocument();
+    // Size only — the count cap was never reached, so no second notification.
+    expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.showErrorNotification.mock.calls[0][0]).toMatchObject({
+      title: 'Image too large',
+    });
   });
 });
 

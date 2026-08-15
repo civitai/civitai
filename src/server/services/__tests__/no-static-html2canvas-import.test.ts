@@ -120,13 +120,37 @@ describe(`🔴 ${DEPENDENCY} is code-split out of the main bundle`, () => {
   it('is still reached dynamically — the gate is not passing because the dependency vanished', () => {
     // Without this, deleting the feature would leave the file above green forever
     // while claiming to protect a split that no longer exists.
-    const dynamicUsers = files.filter((file) =>
-      dynamicReference.test(stripComments(readFileSync(file, 'utf8')))
-    );
+    //
+    // An EXACT set, not a `toContain`. Both entries are deliberate and each has a
+    // different reason to exist, so a third one should have to be justified:
+    //   - captureScreenshot.ts — the production lazy load. This is the one the split
+    //     is about.
+    //   - captureScreenshot.render.browser.test.ts(x) — the render-seam test's
+    //     NEGATIVE CONTROL, which drives html2canvas directly with the historical
+    //     `scrollX/scrollY: 0` defect to prove the fixture discriminates. Test files
+    //     are not in the app bundle, so this costs a user nothing; it is listed
+    //     rather than filtered out so the set stays honest about what the scan saw.
+    const dynamicUsers = files
+      .filter((file) => dynamicReference.test(stripComments(readFileSync(file, 'utf8'))))
+      .map((f) => path.relative(SRC, f))
+      .sort();
 
-    expect(dynamicUsers.map((f) => path.relative(SRC, f))).toEqual([
-      path.join('components', 'Feedback', 'captureScreenshot.ts'),
-    ]);
+    expect(dynamicUsers).toEqual(
+      [
+        path.join('components', 'Feedback', 'captureScreenshot.render.browser.test.tsx'),
+        path.join('components', 'Feedback', 'captureScreenshot.ts'),
+      ].sort()
+    );
+  });
+
+  it('the PRODUCTION module is one of them (not just the test)', () => {
+    // Guards the set above from being "satisfied" by test files alone if the
+    // production lazy load were ever deleted or made static.
+    const production = path.join(SRC, 'components', 'Feedback', 'captureScreenshot.ts');
+    const source = stripComments(readFileSync(production, 'utf8'));
+
+    expect(dynamicReference.test(source)).toBe(true);
+    expect(staticReference.test(source)).toBe(false);
   });
 });
 

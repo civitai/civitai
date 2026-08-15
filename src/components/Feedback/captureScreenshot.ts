@@ -100,6 +100,20 @@ export async function captureConsentedScreenshot({
   // is drawn. `allowTaint` stays false so a cross-origin image without CORS headers
   // is dropped from the capture rather than tainting the canvas and making
   // `toBlob` throw.
+  //
+  // 🔴 DO NOT ADD `scrollX: 0, scrollY: 0`. They look like they belong beside the
+  // `x`/`y` crop and they are actively wrong. html2canvas builds `windowBounds` from
+  // those two options and ADDS it to every cloned element's `getBoundingClientRect()`
+  // to recover document coordinates, while separately scrolling the clone iframe to
+  // the same values. The two cancel for in-flow content — which is why the mistake is
+  // invisible in a static fixture — but NOT for `position: fixed`/`sticky` elements,
+  // whose rect is viewport-relative by definition. Forcing both to 0 places the app's
+  // sticky header at document y=0, outside the `y: window.scrollY` crop: the header
+  // silently vanishes from every capture and the feed content it was covering is
+  // drawn instead. That makes the checkbox's "Only what's on screen is captured"
+  // false in BOTH directions. The defaults (`pageXOffset`/`pageYOffset`) are correct.
+  // Pinned by `omits scrollX/scrollY` in captureScreenshot.test.ts and by the real
+  // render fixture in captureScreenshot.render.browser.test.ts.
   const canvas = await html2canvas(element, {
     logging: false,
     useCORS: true,
@@ -111,8 +125,6 @@ export async function captureConsentedScreenshot({
     y: window.scrollY,
     width: window.innerWidth,
     height: window.innerHeight,
-    scrollX: 0,
-    scrollY: 0,
     windowWidth: window.innerWidth,
     windowHeight: window.innerHeight,
   });

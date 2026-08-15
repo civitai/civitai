@@ -15,8 +15,10 @@ import { IconAlertTriangle, IconPaperclip, IconX } from '@tabler/icons-react';
 import type { CSSProperties } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { captureConsentedScreenshot } from '~/components/Feedback/captureScreenshot';
+import { selectAttachments } from '~/components/Feedback/selectAttachments';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackArea } from '~/shared/constants/feedback.constants';
 import {
@@ -25,7 +27,20 @@ import {
 } from '~/shared/constants/feedback.constants';
 import { getFaroSessionId } from '~/utils/faro/getFaroSessionId';
 import { showErrorNotification } from '~/utils/notifications';
+import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * Ceiling on a file the USER chose, as distinct from `SCREENSHOT_MAX_BYTES`, which
+ * bounds the capture this feature generates. Taken from the shared upload constant
+ * that nine other upload surfaces in this repo already enforce
+ * (ImageDropzone, SimpleImageUpload, ProfileImageUpload, ImageUpload, …), rather
+ * than a number invented here — the point is to stop being the one picker that
+ * silently accepts a 40-megapixel phone photo at full size, not to introduce a
+ * different limit for feedback. Note there is NO server backstop: the presigned PUT
+ * from `/api/v1/image-upload` carries no size condition, so this is the only check.
+ */
+const FEEDBACK_ATTACHMENT_MAX_BYTES = constants.mediaUpload.maxImageFileSize;
 
 const cardStyle: CSSProperties = {
   background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
@@ -148,16 +163,32 @@ export function FeedbackPrompt({
 
   const handleFilesSelected = (selected: File[] | null) => {
     if (!selected?.length) return;
-    const remaining = FEEDBACK_IMAGE_MAX_COUNT - attachments.length;
-    if (remaining <= 0) return;
-    // Silently taking the first N would look like the extras failed to attach, so
-    // say the cap out loud and still take what fits.
-    if (selected.length > remaining)
+    const { accepted, rejectedForSize, rejectedForCount } = selectAttachments({
+      selected,
+      alreadyAttached: attachments.length,
+      maxCount: FEEDBACK_IMAGE_MAX_COUNT,
+      maxBytes: FEEDBACK_ATTACHMENT_MAX_BYTES,
+    });
+
+    // Both rejections are said out loud, and separately. Silently dropping a file
+    // looks like the picker failed; collapsing the two reasons into one message
+    // sends the user to fix the wrong thing.
+    if (rejectedForSize.length)
+      showErrorNotification({
+        title: 'Image too large',
+        error: new Error(
+          `${rejectedForSize.map((file) => file.name).join(', ')} — images must be under ` +
+            `${formatBytes(FEEDBACK_ATTACHMENT_MAX_BYTES)}.`
+        ),
+      });
+    if (rejectedForCount.length)
       showErrorNotification({
         title: 'Too many images',
         error: new Error(`You can attach up to ${FEEDBACK_IMAGE_MAX_COUNT} images.`),
       });
-    const added = selected.slice(0, remaining).map((file) => ({
+    if (!accepted.length) return;
+
+    const added = accepted.map((file) => ({
       key: nextAttachmentKey(),
       file,
       objectUrl: trackObjectUrl(URL.createObjectURL(file)),
@@ -269,7 +300,15 @@ export function FeedbackPrompt({
     }
   };
 
-  const busy = uploading || createFeedback.isPending;
+  // 🔴 `capturing` belongs here, not only on the checkbox's own `disabled`. A capture
+  // is async, and `handleSubmit` reads `screenshot` — which is still null while it is
+  // in flight. Without this, a user who ticks the box, types, and presses Send before
+  // the capture resolves gets "Got it, thanks" for a submission with NO screenshot,
+  // while the capture completes onto a panel that is already hidden. They believe
+  // they attached a screenshot and did not. Blocking Send is the honest resolution:
+  // the button is briefly unavailable and says so via its spinner, rather than
+  // silently sending something other than what the user assembled.
+  const busy = uploading || capturing || createFeedback.isPending;
   const canAddMore = attachments.length < FEEDBACK_IMAGE_MAX_COUNT;
 
   return (
@@ -386,7 +425,9 @@ export function FeedbackPrompt({
             <Checkbox
               size="xs"
               checked={screenshotConsent}
-              disabled={busy || capturing}
+              // `busy` now subsumes `capturing` (see its definition); kept as one
+              // term so the two cannot drift apart again.
+              disabled={busy}
               onChange={(event) => void handleScreenshotConsentChange(event.currentTarget.checked)}
               label="Attach a screenshot of this page"
               description="We'll show it to you before anything is sent. Only what's on screen is captured."
