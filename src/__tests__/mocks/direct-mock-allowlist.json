@@ -20,16 +20,16 @@
   ],
   "totals": {
     "canonicalFiles": 343,
-    "pendingFiles": 347,
+    "pendingFiles": 346,
     "allFiles": 502,
     "canonicalSites": 491,
-    "pendingSites": 781
+    "pendingSites": 780
   },
   "bySpecifier": {
     "~/server/db/client": 244,
     "~/server/redis/client": 144,
     "~/server/logging/client": 103,
-    "~/env/server": 34,
+    "~/env/server": 33,
     "~/server/services/buzz.service": 98,
     "~/server/services/image.service": 88,
     "~/server/clickhouse/client": 77,
@@ -646,7 +646,6 @@
     "src/server/services/blocks/__tests__/apps-pipeline.triggerBuild.test.ts",
     "src/server/services/blocks/__tests__/block-image-upload.persist.test.ts",
     "src/server/services/blocks/__tests__/block-image-upload.service.test.ts",
-    "src/server/services/blocks/__tests__/dev-tunnel.service.test.ts",
     "src/server/services/blocks/__tests__/listing-asset-integrity-logging.test.ts",
     "src/server/services/blocks/__tests__/listing-asset-upload-integrity.test.ts",
     "src/server/services/blocks/__tests__/listing-meta.datauri-raster.integration.test.ts",

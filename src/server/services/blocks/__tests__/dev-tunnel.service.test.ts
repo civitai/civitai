@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -13,7 +14,6 @@ const {
   mockWaitForApplyJob,
   mockRecordTeardown,
   sysRedis,
-  mockEnv,
   mockNewId,
 } = vi.hoisted(() => {
   const store = new Map<string, string>();
@@ -30,49 +30,34 @@ const {
     // don't poll; the failure test overrides it.
     mockWaitForApplyJob: vi.fn(async () => 'succeeded' as const),
     mockRecordTeardown: vi.fn(),
-      sysRedis: {
-        _store: store,
-        get: vi.fn(async (k: string) => store.get(k) ?? null),
-        set: vi.fn(async (k: string, v: string) => {
-          store.set(k, v);
-          return 'OK';
-        }),
-        del: vi.fn(async (k: string) => {
-          store.delete(k);
-          return 1;
-        }),
-        incrBy: vi.fn(async (k: string, n: number) => {
-          const cur = Number(store.get(k) ?? '0') + n;
-          store.set(k, String(cur));
-          return cur;
-        }),
-        decrBy: vi.fn(async (k: string, n: number) => {
-          const cur = Number(store.get(k) ?? '0') - n;
-          store.set(k, String(cur));
-          return cur;
-        }),
-        expire: vi.fn(async () => 1),
-        ttl: vi.fn(async () => 100),
-      },
-    mockEnv: {
-      APPS_DOMAIN: 'civit.ai',
-      APPS_KUBE_NAMESPACE: 'civitai-apps',
-      NEXTAUTH_URL: 'https://civitai.com',
-      APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:80',
-      APPS_DEV_TUNNEL_ROUTE_NAMESPACE: 'apps-dev-tunnel',
-      APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.1' as string | undefined,
-      APPS_DEV_TUNNEL_FORWARDAUTH_URL: undefined as string | undefined,
-      APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: 'ssh-ed25519 AAAAC3NzaHostKeyExample sish-host' as
-        | string
-        | undefined,
-      APPS_DEV_TUNNEL_CF_API_TOKEN: undefined as string | undefined,
-      APPS_DEV_TUNNEL_CF_ZONE_ID: undefined as string | undefined,
+    sysRedis: {
+      _store: store,
+      get: vi.fn(async (k: string) => store.get(k) ?? null),
+      set: vi.fn(async (k: string, v: string) => {
+        store.set(k, v);
+        return 'OK';
+      }),
+      del: vi.fn(async (k: string) => {
+        store.delete(k);
+        return 1;
+      }),
+      incrBy: vi.fn(async (k: string, n: number) => {
+        const cur = Number(store.get(k) ?? '0') + n;
+        store.set(k, String(cur));
+        return cur;
+      }),
+      decrBy: vi.fn(async (k: string, n: number) => {
+        const cur = Number(store.get(k) ?? '0') - n;
+        store.set(k, String(cur));
+        return cur;
+      }),
+      expire: vi.fn(async () => 1),
+      ttl: vi.fn(async () => 100),
     },
     mockNewId: vi.fn(() => 'bki_testsession'),
   };
 });
 
-vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   getDp1Target: (...a: unknown[]) => mockGetDp1Target(...(a as [])),
   k8sFetch: (...a: unknown[]) => mockK8sFetch(...(a as [])),
@@ -124,15 +109,25 @@ beforeEach(() => {
   mockK8sFetch.mockResolvedValue(okRes());
   mockGetDp1Target.mockResolvedValue({ server: 'https://k8s', token: 't' });
   mockWaitForApplyJob.mockResolvedValue('succeeded');
-  mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = undefined;
-  mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = undefined;
+  // The whole table, every test. Per-file overrides do NOT reset between tests,
+  // so a case that varies a key would otherwise leak into the next one.
+  setEnv({
+    APPS_DOMAIN: 'civit.ai',
+    APPS_KUBE_NAMESPACE: 'civitai-apps',
+    NEXTAUTH_URL: 'https://civitai.com',
+    APPS_DEV_TUNNEL_SISH_BACKEND: 'http://sish-http.apps-dev-tunnel.svc.cluster.local:80',
+    APPS_DEV_TUNNEL_ROUTE_NAMESPACE: 'apps-dev-tunnel',
+    APPS_DEV_TUNNEL_INGRESS_TARGET: '192.0.2.1',
+    APPS_DEV_TUNNEL_FORWARDAUTH_URL: undefined,
+    APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: 'ssh-ed25519 AAAAC3NzaHostKeyExample sish-host',
+    APPS_DEV_TUNNEL_CF_API_TOKEN: undefined,
+    APPS_DEV_TUNNEL_CF_ZONE_ID: undefined,
+  });
   __resetDevTunnelDnsCacheForTest();
 });
 afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
-  mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = undefined;
-  mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = undefined;
 });
 
 describe('manifest builders (SSRF-safe, server-derived host)', () => {
@@ -245,7 +240,8 @@ describe('startDevTunnel', () => {
     expect(posts[0][1]).toContain('/namespaces/civitai-apps/jobs');
     const job = JSON.parse((posts[0][2] as { body: string }).body);
     const envVal = (name: string) =>
-      job.spec.template.spec.containers[0].env.find((e: { name: string }) => e.name === name)?.value;
+      job.spec.template.spec.containers[0].env.find((e: { name: string }) => e.name === name)
+        ?.value;
     const appliedIr = JSON.parse(envVal('INGRESSROUTE_JSON'));
     const appliedMw = JSON.parse(envVal('MIDDLEWARE_JSON'));
     expect(appliedIr.metadata.namespace).toBe('apps-dev-tunnel');
@@ -268,29 +264,27 @@ describe('startDevTunnel', () => {
   });
 
   it('R1: returns an EMPTY host pubkey when the env is unset (CLI fails closed)', async () => {
-    mockEnv.APPS_DEV_TUNNEL_SSH_HOST_PUBKEY = undefined;
-    try {
-      const result = await startDevTunnel({ userId: 5, blockId: 'a', sshPublicKey: PUBKEY });
-      expect(result.sshHostPublicKey).toBe('');
-    } finally {
-      mockEnv.APPS_DEV_TUNNEL_SSH_HOST_PUBKEY = 'ssh-ed25519 AAAAC3NzaHostKeyExample sish-host';
-    }
+    setEnv({ APPS_DEV_TUNNEL_SSH_HOST_PUBKEY: undefined });
+    const result = await startDevTunnel({ userId: 5, blockId: 'a', sshPublicKey: PUBKEY });
+    expect(result.sshHostPublicKey).toBe('');
   });
 
   it('F1: a FAILED route-apply Job aborts the mint — nothing is persisted', async () => {
     mockWaitForApplyJob.mockResolvedValueOnce('failed');
-    await expect(
-      startDevTunnel({ userId: 9, blockId: 'b', sshPublicKey: PUBKEY })
-    ).rejects.toThrow(/apply Job failed/);
+    await expect(startDevTunnel({ userId: 9, blockId: 'b', sshPublicKey: PUBKEY })).rejects.toThrow(
+      /apply Job failed/
+    );
     // render threw before persist → no dev-tunnel keys left behind
-    const keys = [...sysRedis._store.keys()].filter((k) => k.startsWith('system:blocks:dev-tunnel'));
+    const keys = [...sysRedis._store.keys()].filter((k) =>
+      k.startsWith('system:blocks:dev-tunnel')
+    );
     expect(keys).toEqual([]);
   });
 
   it('rejects an invalid SSH public key before touching k8s/redis', async () => {
-    await expect(
-      startDevTunnel({ userId: 1, blockId: 'a', sshPublicKey: 'junk' })
-    ).rejects.toThrow(/invalid SSH public key/);
+    await expect(startDevTunnel({ userId: 1, blockId: 'a', sshPublicKey: 'junk' })).rejects.toThrow(
+      /invalid SSH public key/
+    );
     expect(mockK8sFetch).not.toHaveBeenCalled();
     expect(sysRedis.set).not.toHaveBeenCalled();
   });
@@ -364,9 +358,9 @@ describe('startDevTunnel', () => {
     });
     const s = readSession();
     expect(s.declaredScopes).toEqual(['ai:write:budgeted']); // trimmed, deduped, junk removed
-    expect(s.declaredScopes.every((x: unknown) => typeof x === 'string' && (x as string).length <= 64)).toBe(
-      true
-    );
+    expect(
+      s.declaredScopes.every((x: unknown) => typeof x === 'string' && (x as string).length <= 64)
+    ).toBe(true);
     expect(s.grantedScopes).toEqual(['ai:write:budgeted', 'user:read:self']);
   });
 
@@ -440,7 +434,9 @@ describe('stopDevTunnel (ownership-checked)', () => {
   it('the owner tears down: deletes route + all keys', async () => {
     await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
     expect(await stopDevTunnel(555, 'bki_testsession')).toBe(true);
-    const remaining = [...sysRedis._store.keys()].filter((k) => k.startsWith('system:blocks:dev-tunnel'));
+    const remaining = [...sysRedis._store.keys()].filter((k) =>
+      k.startsWith('system:blocks:dev-tunnel')
+    );
     expect(remaining).toEqual([]);
   });
 });
@@ -487,10 +483,7 @@ describe('touchDevTunnelActivity (F3 — idle refresh on gate entry)', () => {
       sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!
     );
     before.lastActivityAt = 1000;
-    sysRedis._store.set(
-      'system:blocks:dev-tunnel:session:bki_testsession',
-      JSON.stringify(before)
-    );
+    sysRedis._store.set('system:blocks:dev-tunnel:session:bki_testsession', JSON.stringify(before));
 
     await touchDevTunnelActivity(host);
 
@@ -556,10 +549,7 @@ describe('chargeDevSessionOverage (divergence correction, third reservation)', (
 describe('reapExpiredDevTunnels (server-authoritative, idle + hardened)', () => {
   const NOW = Math.floor(Date.now() / 1000);
 
-  function seedSession(
-    sessionId: string,
-    over: Partial<Record<string, unknown>> = {}
-  ) {
+  function seedSession(sessionId: string, over: Partial<Record<string, unknown>> = {}) {
     sysRedis._store.set(
       `system:blocks:dev-tunnel:session:${sessionId}`,
       JSON.stringify({
@@ -733,7 +723,10 @@ function cfEnvelope(result: unknown, ok = true, status = 200) {
 }
 
 /** Route CF fetch by URL + method: zone lookup, per-name record list, deletes. */
-function routeCfFetch(recordsByName: Record<string, Array<{ id: string }>>, zoneResult = [{ id: 'zone-1' }]) {
+function routeCfFetch(
+  recordsByName: Record<string, Array<{ id: string }>>,
+  zoneResult = [{ id: 'zone-1' }]
+) {
   return vi.fn(async (url: string, init?: any) => {
     const method = init?.method ?? 'GET';
     if (String(url).includes('/zones?name=')) return cfEnvelope(zoneResult);
@@ -749,8 +742,7 @@ function routeCfFetch(recordsByName: Record<string, Array<{ id: string }>>, zone
 
 describe('deleteDevTunnelDns (best-effort orphan CF DNS cleanup)', () => {
   beforeEach(() => {
-    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = 'cf-token';
-    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = undefined;
+    setEnv({ APPS_DEV_TUNNEL_CF_API_TOKEN: 'cf-token', APPS_DEV_TUNNEL_CF_ZONE_ID: undefined });
     __resetDevTunnelDnsCacheForTest();
   });
 
@@ -764,10 +756,12 @@ describe('deleteDevTunnelDns (best-effort orphan CF DNS cleanup)', () => {
     // zone looked up by the registrable (last-two-label) domain of the host
     expect(urls.some((u) => u.includes('/zones?name=civit.ai'))).toBe(true);
     // both name forms queried (A record + external-dns TXT-registry forms)
-    expect(urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent(CF_DEV_HOST)}`))).toBe(true);
-    expect(urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent('a-' + CF_DEV_HOST)}`))).toBe(
-      true
-    );
+    expect(
+      urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent(CF_DEV_HOST)}`))
+    ).toBe(true);
+    expect(
+      urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent('a-' + CF_DEV_HOST)}`))
+    ).toBe(true);
     // one DELETE per returned record id
     const deletes = fetchMock.mock.calls
       .filter((c) => (c[1] as any)?.method === 'DELETE')
@@ -777,7 +771,7 @@ describe('deleteDevTunnelDns (best-effort orphan CF DNS cleanup)', () => {
   });
 
   it('uses APPS_DEV_TUNNEL_CF_ZONE_ID directly when set (no zone lookup)', async () => {
-    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = 'zone-env';
+    setEnv({ APPS_DEV_TUNNEL_CF_ZONE_ID: 'zone-env' });
     const fetchMock = routeCfFetch({ [CF_DEV_HOST]: [{ id: 'r1' }], [`a-${CF_DEV_HOST}`]: [] });
     await deleteDevTunnelDns(CF_DEV_HOST, fetchMock as unknown as typeof fetch);
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
@@ -789,12 +783,15 @@ describe('deleteDevTunnelDns (best-effort orphan CF DNS cleanup)', () => {
     const fetchMock = vi.fn();
     await deleteDevTunnelDns('civitai.com', fetchMock as unknown as typeof fetch);
     await deleteDevTunnelDns('dev-notenoughhex.civit.ai', fetchMock as unknown as typeof fetch);
-    await deleteDevTunnelDns('evil-dev-0123456789abcdef.civit.ai', fetchMock as unknown as typeof fetch);
+    await deleteDevTunnelDns(
+      'evil-dev-0123456789abcdef.civit.ai',
+      fetchMock as unknown as typeof fetch
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('is a no-op when the CF token is unset (feature off — no fetch)', async () => {
-    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = undefined;
+    setEnv({ APPS_DEV_TUNNEL_CF_API_TOKEN: undefined });
     const fetchMock = vi.fn();
     await deleteDevTunnelDns(CF_DEV_HOST, fetchMock as unknown as typeof fetch);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -847,8 +844,7 @@ describe('orphan-DNS GC wiring (teardown + reap call the CF deleter, best-effort
   }
 
   it('deleteDevTunnelRoute deletes the orphan CF record for the route host', async () => {
-    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = 'cf-token';
-    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = 'zone-1';
+    setEnv({ APPS_DEV_TUNNEL_CF_API_TOKEN: 'cf-token', APPS_DEV_TUNNEL_CF_ZONE_ID: 'zone-1' });
     listRouteWithHost('bki_wire', CF_DEV_HOST);
     const cf: Array<[string, string]> = [];
     vi.stubGlobal(
@@ -861,12 +857,13 @@ describe('orphan-DNS GC wiring (teardown + reap call the CF deleter, best-effort
     );
     await deleteDevTunnelRoute('bki_wire');
     // the CF deleter was invoked with the route host and DELETEd its record
-    expect(cf.some(([m, u]) => m === 'DELETE' && u.endsWith('/zones/zone-1/dns_records/rec-1'))).toBe(true);
+    expect(
+      cf.some(([m, u]) => m === 'DELETE' && u.endsWith('/zones/zone-1/dns_records/rec-1'))
+    ).toBe(true);
   });
 
   it('a CF failure does NOT break teardown (route + keys still deleted)', async () => {
-    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = 'cf-token';
-    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = 'zone-1';
+    setEnv({ APPS_DEV_TUNNEL_CF_API_TOKEN: 'cf-token', APPS_DEV_TUNNEL_CF_ZONE_ID: 'zone-1' });
     sysRedis._store.set(
       'system:blocks:dev-tunnel:session:bki_wire2',
       JSON.stringify({
@@ -897,8 +894,7 @@ describe('orphan-DNS GC wiring (teardown + reap call the CF deleter, best-effort
   });
 
   it('reapExpiredDevTunnels GCs CF DNS for a reaped session; a CF failure does not change counts', async () => {
-    mockEnv.APPS_DEV_TUNNEL_CF_API_TOKEN = 'cf-token';
-    mockEnv.APPS_DEV_TUNNEL_CF_ZONE_ID = 'zone-1';
+    setEnv({ APPS_DEV_TUNNEL_CF_API_TOKEN: 'cf-token', APPS_DEV_TUNNEL_CF_ZONE_ID: 'zone-1' });
     const sessionId = 'bki_reapdns';
     // hard-expired session record
     sysRedis._store.set(
