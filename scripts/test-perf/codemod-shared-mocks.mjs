@@ -182,11 +182,16 @@ let lifts = [];
  * assignment would be wiped before the first test runs. `clearAllMocks` is fine — it clears
  * calls, not implementations. */
 let liftingAllowed = true;
+/** Names declared at the top level of the file being converted. A lifted expression may only
+ * reference these: anything else was declared inside the factory or the `vi.hoisted` block,
+ * both of which the conversion deletes. */
+let topLevel = new Set();
 
 function convert(file, text) {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   lifts = [];
   liftingAllowed = !/(resetAllMocks|restoreAllMocks)/.test(text);
+  topLevel = topLevelNames(sf);
   const refusals = [];
   /** Reported alongside the conversion rather than blocking it. */
   const findings = [];
@@ -262,6 +267,20 @@ function convert(file, text) {
       // it had to. Same safety question as the constants: droppable unless the test names it
       // outside the factory, in which case it may be asserting on the stub.
       if (!spec.roots.includes(root)) {
+        // 🔴 Available is not the same as redundant. The registration does supply the REAL
+        // export — but a factory that replaces it with a SPY is using it as a control
+        // surface, and dropping that silently removes the test's ability to drive the
+        // behaviour it is checking. `session-verifier.test.ts` injected a timeout through
+        // `withSysReadDeadline`; with the spy gone the deadline never fired and two fail-open
+        // legs asserted nothing while still passing. (archer's probe.)
+        //
+        // So only plain DATA drops. Anything with behaviour — a spy, an identifier, a
+        // function — is refused.
+        if (staticValue(prop.initializer) === UNKNOWN) {
+          refusals.push({ target, reason: `factory replaces "${root}" with behaviour — it is a control surface, not a redundant re-export` });
+          ok = false;
+          break;
+        }
         if (new RegExp(`\b${root}\b`).test(text.replace(prop.getText(), ''))) {
           refusals.push({ target, reason: `factory declares "${root}", and the test references it — check what it asserts` });
           ok = false;
@@ -270,7 +289,7 @@ function convert(file, text) {
         continue;
       }
       if (spec.flat) {
-        if (!collect(prop.initializer, `${spec.mock}.${root}`, local, refusals, target)) ok = false;
+        if (!collect(prop.initializer, `${spec.mock}.${root}`, local, refusals, target, spec.flat === true)) ok = false;
       } else if (ts.isObjectLiteralExpression(prop.initializer)) {
         for (const modelProp of prop.initializer.properties) {
           if (!ts.isPropertyAssignment(modelProp) || !ts.isIdentifier(modelProp.name)) {
@@ -293,7 +312,7 @@ function convert(file, text) {
             ok = false;
           }
         }
-      } else if (!collect(prop.initializer, `${spec.mock}.${root}`, local, refusals, target)) {
+      } else if (!collect(prop.initializer, `${spec.mock}.${root}`, local, refusals, target, spec.flat === true)) {
         ok = false;
       }
       if (!ok) break;
@@ -443,7 +462,7 @@ function convert(file, text) {
 
 /** Record `name -> canonicalExpr` for an identifier value; accept a bare `vi.fn()` (the
  * canonical node already covers it); refuse anything carrying its own behaviour. */
-function collect(init, expr, local, refusals, target) {
+function collect(init, expr, local, refusals, target, allowLift = true) {
   if (ts.isIdentifier(init)) {
     local.push([init.text, expr]);
     return true;
@@ -466,7 +485,12 @@ function collect(init, expr, local, refusals, target) {
   // Behaviour the canonical default does not cover. It does not have to be refused — it is
   // already an expression, so it can be LIFTED onto the canonical node as an explicit
   // assignment. Callers decide whether lifting is safe for this file (see liftGuard).
-  const lift = liftingAllowed ? liftedAssignment(init, expr) : null;
+  // 🔴 Only a METHOD position may be lifted. At a client ROOT (`redis`, `dbRead`) the value
+  // is a whole client OBJECT, and wrapping an object as a spy's implementation silently
+  // loses every method on it — `scanIterator` yields nothing, `del` is gone, and a test
+  // asserting "nothing was deleted" goes GREEN. Found by archer's five-file probe; the file
+  // converted with zero refusals and lost eight assertions.
+  const lift = liftingAllowed && allowLift ? liftedAssignment(init, expr) : null;
   if (lift) {
     lifts.push(lift);
     return true;
@@ -486,6 +510,12 @@ function collect(init, expr, local, refusals, target) {
  * .toHaveBeenCalled()` still holds — the assertions do not move.
  */
 function liftedAssignment(init, expr) {
+  // 🔴 The expression is moving to MODULE scope, out of the factory (and possibly out of a
+  // `vi.hoisted` block body) that the conversion deletes. If it references a name declared
+  // in there, the lifted line is a `ReferenceError` at import — which collects zero tests.
+  // `$queryRaw: vi.fn(queryRaw)` where `queryRaw` was a const inside the hoisted body is the
+  // real case. (arabella's run.) Same shape as the `resetAllMocks` precondition, one scope in.
+  if (!referencesOnlyTopLevel(init)) return null;
   // `vi.fn(fn)` / `vi.fn(async function* () {})`
   if (isBareViFnWithArgs(init) && init.arguments.length === 1)
     return `${expr}.mockImplementation(${init.arguments[0].getText()});`;
@@ -602,6 +632,53 @@ function isDefaultEquivalent(canonicalExpr, node) {
   while (ts.isParenthesizedExpression(returned) || ts.isAsExpression(returned)) returned = returned.expression;
   return returned.getText().replace(/\s+/g, '') === expected.replace(/\s+/g, '');
 }
+
+/** True when every free identifier in `node` is declared at the file's top level. Locally
+ * bound names (a parameter, a local const) are fine — they travel with the expression. */
+function referencesOnlyTopLevel(node) {
+  const bound = new Set();
+  let ok = true;
+  const declare = (name) => {
+    if (!name) return;
+    if (ts.isIdentifier(name)) bound.add(name.text);
+    else if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name))
+      for (const el of name.elements) if (ts.isBindingElement(el)) declare(el.name);
+  };
+  const walk = (n) => {
+    if (!ok) return;
+    // Types are erased before this code runs, so an identifier in an annotation is not a
+    // runtime reference. Walking them refused `vi.fn(async (a: { data: any }) => …)` for
+    // naming `any`.
+    if (ts.isTypeNode(n) || ts.isTypeParameterDeclaration(n)) return;
+    if (ts.isFunctionLike(n)) for (const p of n.parameters) declare(p.name);
+    if (ts.isVariableDeclaration(n)) declare(n.name);
+    // The `.b` of `a.b` is a property, not a reference; only the leftmost is.
+    if (ts.isPropertyAccessExpression(n)) {
+      walk(n.expression);
+      return;
+    }
+    if (ts.isPropertyAssignment(n) && ts.isIdentifier(n.name)) {
+      walk(n.initializer);
+      return;
+    }
+    if (ts.isIdentifier(n)) {
+      const name = n.text;
+      if (!bound.has(name) && !topLevel.has(name) && !GLOBALS.has(name)) ok = false;
+      return;
+    }
+    n.forEachChild(walk);
+  };
+  walk(node);
+  return ok;
+}
+
+/** Ambient names a lifted expression may legitimately reference. */
+const GLOBALS = new Set([
+  'undefined', 'null', 'true', 'false', 'Promise', 'Array', 'Object', 'String', 'Number',
+  'Boolean', 'Date', 'Math', 'JSON', 'Error', 'Symbol', 'Map', 'Set', 'RegExp', 'BigInt',
+  'console', 'process', 'globalThis', 'vi', 'expect', 'unknown', 'any', 'void', 'never',
+  'Record', 'Partial', 'Awaited', 'ReturnType', 'Buffer', 'AbortController',
+]);
 
 /** `(...args) => ident(...args)`, including the `(...(args as X))` cast spelling. */
 function passthroughTarget(node) {
