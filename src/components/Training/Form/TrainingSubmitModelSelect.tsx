@@ -17,7 +17,7 @@ import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
+import { blockedCustomModels } from '~/shared/constants/training.constants';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { trpc } from '~/utils/trpc';
 import type {

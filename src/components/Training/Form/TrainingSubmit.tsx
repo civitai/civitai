@@ -42,11 +42,8 @@ import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/generation_v
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import {
-  blockedCustomModels,
-  goBack,
-  minsToHours,
-} from '~/components/Training/Form/TrainingCommon';
+import { goBack, minsToHours } from '~/components/Training/Form/TrainingCommon';
+import { blockedCustomModels } from '~/shared/constants/training.constants';
 import {
   type NumberTrainingSettingsType,
   trainingSettings,
