@@ -323,7 +323,14 @@ async function cmdDashboard(initialWorktree) {
       case 'r':
         flash('Restarting session...');
         try {
-          await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
+          // daemonRequest resolves for every response, so a refusal arrives here as ok:false.
+          // Reporting it as a restart would clear the log pane as confirmation of something that
+          // did not happen — pressing `r` during a restart is exactly when that reads as damage.
+          const restart = await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
+          if (!restart.ok) {
+            flash(restart.data?.error || `Restart refused (${restart.status})`);
+            break;
+          }
           logCursor = -1;
           logLines = [];
           flash('Session restarted');
