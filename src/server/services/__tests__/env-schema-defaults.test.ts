@@ -36,12 +36,29 @@ function defaultedKeysFromSource(): string[] {
   return [...keys].sort();
 }
 
-describe('TEST_ENV_DEFAULTS covers the schema defaults', () => {
-  const keys = defaultedKeysFromSource();
+// 🔴 Caught rather than thrown, because this runs in the describe BODY — at registration time,
+// not at test time. A throw here registers nothing, the file collects ZERO tests, and a
+// zero-collect is the one failure shape a diff-based gate cannot see: "no file collected fewer
+// tests" is satisfied forever by a file that never collected any. Catching it and rethrowing
+// inside a test means registration always succeeds, so a moved or renamed schema becomes a
+// named red test instead of silence.
+//
+// This is the limit of "put the positive control inside the guard": a control can only fire if
+// it exists, and collection is what makes it exist. Worked example of the failure mode:
+// generation-surface-wiring.test.ts, whose own vacuity guard is unreachable for this reason.
+let keys: string[] = [];
+let setupError: unknown;
+try {
+  keys = defaultedKeysFromSource();
+} catch (e) {
+  setupError = e;
+}
 
+describe('TEST_ENV_DEFAULTS covers the schema defaults', () => {
   // Positive control for the extractor itself: an empty list would make every assertion below
   // vacuous and the suite would still be green.
   it('finds a plausible number of defaulted keys in the schema source', () => {
+    if (setupError) throw setupError;
     expect(keys.length).toBeGreaterThan(50);
     expect(keys).toContain('REPLICATION_LAG_DELAY');
   });

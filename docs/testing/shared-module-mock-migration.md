@@ -336,6 +336,27 @@ decision, plus two files that need a specific shape rather than a lift:
   branch reachable — deleting the mock leaves the file green, the same size, passing residual
   checks, and covering the S3 call zero times.
 
+**Reproducing the measurements above.** The runs behind the drift findings, so they can be
+re-taken rather than believed:
+
+```bash
+# clique bistability — 3 control repeats, convert, 3 candidate, restore, 1 control (A-B-A)
+node scripts/test-perf/run-pilot.mjs --label <l> --workers 4 --no-isolate --list .test-perf/clique6.txt
+
+# the intermittent zero-collect, escalating scale: solo, then its 24-file family
+node node_modules/vitest/vitest.mjs run --project unit --no-isolate --max-workers=4 \
+  src/server/routers/__tests__/blocks.router.getMyForgejoCloneInfo.test.ts     # x5, 10/10 every time
+node scripts/test-perf/run-pilot.mjs --label <l> --workers 4 --no-isolate --list .test-perf/routers24.txt
+
+# full-suite halves (label via TESTPERF_LABEL; note --project unit is NOT the whole suite)
+node node_modules/vitest/vitest.mjs run --project unit --max-workers=4 --no-isolate \
+  --reporter=default --reporter=scripts/test-perf/reporter.mjs
+```
+
+⚠️ **Take the control repeat before reading any candidate**, and check the tree state *after* a
+run rather than trusting the label you typed — a control accidentally containing the candidate
+runs clean, diffs clean, and reads as a stronger confirmation than the real experiment.
+
 **And the largest open item: `TEST_ENV_DEFAULTS` does not reproduce the schema's zod DEFAULTS.**
 The comment at `env.mock.ts:46` — *"absent means absent"* — is true for an **optional** key and
 false for a **defaulted** one, because production `env` is the parsed object. 73 keys carry a
@@ -359,6 +380,33 @@ Two design notes for whoever does it, both learned the hard way elsewhere in thi
 Expect this one to turn tests **green→red and red→green at the same time**, and report those as
 two lists rather than as a net: a test that has been taking a branch production never takes was
 passing for the wrong reason.
+
+### A control can only fire if it EXISTS, and collection is what makes it exist
+
+The rule *"put the positive control inside the guard"* assumes registration succeeded. A
+computation in a `describe` **body** runs at registration time, so if it throws, nothing is
+registered, the file collects zero, and the control written to catch exactly that case is never
+reached. `generation-surface-wiring.test.ts` has a correct vacuity guard — `it('finds the call
+sites at all')` — that cannot fire, because the enumeration above it throws first.
+
+**The class fix: never let a describe-body computation throw. Catch it, and rethrow inside a
+test.**
+
+```ts
+let keys: string[] = [];
+let setupError: unknown;
+try { keys = defaultedKeysFromSource(); } catch (e) { setupError = e; }
+
+it('reads the schema at all', () => {
+  if (setupError) throw setupError;
+  expect(keys.length).toBeGreaterThan(50);
+});
+```
+
+Registration then always succeeds, so the file always collects, and a moved or renamed input
+becomes a **named red test** instead of a silent zero — converting the one failure shape the gate
+cannot see into the one it reads best. Applied in `env-schema-defaults.test.ts`, which had the
+same exposure.
 
 ### What licenses DELETING an env mock
 
@@ -665,6 +713,50 @@ mock was added, which is what the guard exists to stop.
 `src/server/services/__tests__/no-direct-shared-module-mock.test.ts` also fails on entries
 that no longer mock anything, so the list cannot be padded. Its length is the migration's
 remaining work.
+
+## 🔴 The flip gate's own instrument moves on an unchanged tree — measured, and it changes the plan
+
+Everything below describes the gate as designed. **It does not currently work as written**, and
+the measurements are here rather than in the section itself because the section is still the
+right *intent*.
+
+Full suite, `--project unit`, 4 workers, `--no-isolate`, 1069 files, **two runs of the identical
+tree, back to back, same tenancy**:
+
+```
+control2   collected 16872   failed 1813
+control3   collected 16862   failed 2047      46 files red->green, 59 green->red
+```
+
+**105 files changed pass/fail with no diff at all**, and one file —
+`blocks.router.getMyForgejoCloneInfo.test.ts` — went **10 → 0**. A candidate measured against
+that control moved 121 files, which is inside the noise. **A single `--no-isolate` pair is the
+wrong instrument for any change whose expected effect is dozens of files moving in both
+directions**, because that is the exact shape the floor mimics.
+
+**The zero-collect is not a defect in that file.** Escalating scale deliberately: five solo runs
+collected 10/10 every time; three runs of its own 24-file `blocks.router.*` family collected 649
+every time with the target at 10 and no zero-collect anywhere. **It took the full 1069.** So the
+gate's pass condition — *zero files permitted to lose tests* — can fail with no defect to find
+and no file to repair.
+
+**Where the instruments stop working:**
+
+| instrument | holds | breaks |
+|---|---|---|
+| collected counts | up to at least 649 tests / 24 files | somewhere below 16,872 / 1069 |
+| failure counts | nowhere measured | 96 / 379 / 121 on the same 24-file tree, back to back |
+
+That 4x failure swing on an unchanged tree is a different order from the 31.8–90.1% this
+document records for a 40-file set, which suggests the earlier characterisations were of
+unusually well-behaved sets rather than of the regime.
+
+**Two consequences for whoever plans the flip.** The exit criterion needs re-designing before it
+can gate anything — repeats, or a quieter regime, or an absolute rather than diff-based reading.
+And **a permanent zero-collect is invisible to a diff-based gate by construction**: it is only
+visible to an absolute reading. `generation-surface-wiring.test.ts` collected zero in *every*
+full-suite run here — its `execFileSync('grep', …)` throws `ENOENT` on Windows during the
+describe body, so nothing registers. Read zero-collect across runs, not only in the diff.
 
 ## The flip gate — a whole-suite collected-count diff, immediately before flipping
 
