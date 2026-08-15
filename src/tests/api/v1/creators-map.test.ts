@@ -12,7 +12,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (fn: unknown) => fn,
 }));
-vi.mock('~/server/createContext', () => ({ publicApiContext2: vi.fn() }));
+vi.mock('~/server/public-api-context', () => ({ publicApiContext2: vi.fn() }));
 vi.mock('~/server/utils/pagination-helpers', () => ({ getPaginationLinks: vi.fn() }));
 vi.mock('~/server/utils/errorHandling', () => ({ isClientAbortError: () => false }));
 // getEdgeUrl reaches into client-only modules (react hooks, providers) at import;
