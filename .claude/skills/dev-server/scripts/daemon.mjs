@@ -17,6 +17,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirS
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
+import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -451,6 +452,9 @@ class DevSession {
     this.branchWatchTimer = null;
     this.branchSwitchTimer = null;
     this.switching = false;
+    this.removed = false;
+    this.busyDepth = 0;
+    this.lifecycleLock = Promise.resolve();
     this.prewarming = false;
     this.lockHash = null;
     this.schemaHash = null;
@@ -502,6 +506,14 @@ class DevSession {
   }
 
   async start() {
+    // A session removed while a branch switch was mid-install would otherwise reach its start and
+    // spawn a dev server nothing tracks, on a port nothing reserves — the one state the whole
+    // reservation model cannot see.
+    if (this.removed) {
+      this.addLog('info', 'Start abandoned — this session has been removed');
+      return this.getStatus();
+    }
+
     // Re-read the skill .env each start so edits to PREWARM_ROUTES et al. take effect
     // on the next branch switch instead of needing a daemon restart. Mutated in place
     // because healthCheckConfig aliases this object.
@@ -592,6 +604,28 @@ class DevSession {
       status: this.status,
       ready: this.ready,
     };
+  }
+
+  // Everything that stops or starts this session runs through here, one at a time. Two restarts
+  // overlapping would have the second probe the port the first had just bound, read it as taken,
+  // and move the session off a port it had only just been given.
+  // `fn` must not re-enter lifecycle() on this session: it would wait on a lock it is itself
+  // holding, and the session would then report busy forever with DELETE the only way out.
+  lifecycle(fn) {
+    // Counted, not a boolean: each queued op chains its own clear onto the lock, so with a plain
+    // flag the first op's clear runs before the second op's body and the session reads idle while
+    // a restart is still going. That fails in the pile-up case the flag exists for.
+    this.busyDepth++;
+    const done = () => {
+      this.busyDepth--;
+    };
+    const run = this.lifecycleLock.then(fn, fn);
+    this.lifecycleLock = run.then(done, done);
+    return run;
+  }
+
+  get busy() {
+    return this.busyDepth > 0;
   }
 
   // Anything still attached when a new process is about to take its place is a process this
@@ -724,6 +758,15 @@ class DevSession {
   }
 
   async finishBranchSwitch() {
+    return this.lifecycle(() => this.runBranchSwitch());
+  }
+
+  async runBranchSwitch() {
+    // A DELETE that lands after this was queued would otherwise spend minutes on an install for a
+    // session nobody tracks — against a worktree `wt rm` may have just deleted — before start()
+    // refuses at the end of it.
+    if (this.removed) return;
+
     this.branchSwitchTimer = null;
     this.switching = true;
     const head = readHeadRef(this.headPath);
@@ -971,14 +1014,16 @@ class DevSession {
   // `claimPort` runs between the stop and the start, which is the only moment the session's own
   // process is gone and a probe of its port says something about anyone else.
   async restart(claimPort) {
-    await this.stop();
-    this.restartCount++;
-    this.logs = [];
-    this.logIndex = 0;
-    this.ready = false;
-    this.readyAt = null;
-    if (claimPort) await claimPort(this);
-    return this.start();
+    return this.lifecycle(async () => {
+      await this.stop();
+      this.restartCount++;
+      this.logs = [];
+      this.logIndex = 0;
+      this.ready = false;
+      this.readyAt = null;
+      if (claimPort) await claimPort(this);
+      return this.start();
+    });
   }
 
   getStatus() {
@@ -989,6 +1034,7 @@ class DevSession {
       envPath: this.envPath,
       distDir: this.distDir,
       switching: this.switching,
+      busy: this.busy,
       prewarming: this.prewarming,
       port: this.port,
       status: this.status,
@@ -1444,6 +1490,19 @@ function getUsedPorts() {
 const PORT_RELEASE_TIMEOUT = 8000;
 const PORT_RELEASE_POLL = 250;
 
+// Anything already under way owns this session, and a second request must report that rather than
+// start a competing one. `status` alone is not enough: a restart waiting out its port reads
+// `stopped` with no process for as long as the wait lasts — and a start that seems to hang is
+// exactly what makes an agent run it again.
+function sessionIsBusy(session) {
+  return (
+    session.status === 'running' ||
+    session.status === 'starting' ||
+    session.switching ||
+    session.busy
+  );
+}
+
 async function claimPortForReuse(session, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? PORT_RELEASE_TIMEOUT;
   const intervalMs = opts.intervalMs ?? PORT_RELEASE_POLL;
@@ -1487,13 +1546,92 @@ function findSessionByWorktree(worktree) {
   return null;
 }
 
-function listSessions() {
-  // A session whose worktree has been deleted still holds its port and cannot be started again,
-  // and this listing is where someone hunting a reserved port actually looks.
-  return Array.from(sessions.values()).map((s) => ({
-    ...s.getStatus(),
-    worktreeMissing: !existsSync(s.worktree),
-  }));
+// A session whose worktree has been deleted still holds its port and cannot be started again, and
+// this listing is where someone hunting a reserved port actually looks. The check is async because
+// this runs on the daemon's only thread and the TUI polls it twice a second: a synchronous
+// existsSync against a path that has gone unreachable — a network share, a dropped VPN, a stale
+// reparse point — took 21s in one measurement, and every other agent's request queues behind it.
+async function listSessions() {
+  return Promise.all(
+    Array.from(sessions.values()).map(async (s) => {
+      const { exists, timedOut } = await checkPath(s.worktree);
+      return {
+        ...s.getStatus(),
+        worktreeMissing: !exists,
+        ...(timedOut && { worktreeCheckTimedOut: true }),
+      };
+    })
+  );
+}
+
+// `access` runs on libuv's 4-slot threadpool, and one unreachable path takes 21s there — four of
+// them starve every other filesystem call on the process, including the healthy worktrees in the
+// same listing. Racing a timeout bounds the caller's wait but NOT the slot: the loser of a race
+// keeps running. So a path gets at most one probe in flight at a time, and a settled answer is
+// reused briefly — without that, the TUI polling twice a second injects two 21s jobs per second
+// into a four-slot pool and it never drains.
+//
+// A timeout reports the worktree as present: "slow" is not evidence of deletion, and calling a
+// live tree missing is the more damaging wrong answer. The caller is told the check timed out so
+// it can say "could not tell" rather than "fine".
+const WORKTREE_CHECK_TIMEOUT = 250;
+const WORKTREE_CHECK_TTL = 2000;
+const WORKTREE_CHECK_MAX_ENTRIES = 64;
+
+const worktreeChecks = new Map();
+
+function probePath(path) {
+  const cached = worktreeChecks.get(path);
+  if (cached && (cached.pending || Date.now() - cached.settledAt < WORKTREE_CHECK_TTL)) {
+    return cached;
+  }
+
+  if (worktreeChecks.size >= WORKTREE_CHECK_MAX_ENTRIES) {
+    for (const [key, entry] of worktreeChecks) {
+      if (!entry.pending && Date.now() - entry.settledAt >= WORKTREE_CHECK_TTL) {
+        worktreeChecks.delete(key);
+      }
+    }
+  }
+
+  const entry = { pending: true, exists: true, settledAt: 0 };
+  entry.probe = access(path).then(
+    () => true,
+    () => false
+  );
+  entry.probe.then((exists) => {
+    entry.exists = exists;
+    entry.pending = false;
+    // A miss is never slow — ENOENT comes back in microseconds — so caching one protects nothing
+    // and makes a worktree created seconds after a failed start read as still missing, with the
+    // error naming the path and sending the reader after the wrong thing.
+    entry.settledAt = exists ? Date.now() : 0;
+    if (!exists) worktreeChecks.delete(path);
+  });
+  worktreeChecks.set(path, entry);
+  return entry;
+}
+
+async function checkPath(path) {
+  const entry = probePath(path);
+  if (!entry.pending) return { exists: entry.exists, timedOut: false };
+
+  let timer;
+  try {
+    const timedOut = await Promise.race([
+      entry.probe.then(() => false),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(true), WORKTREE_CHECK_TIMEOUT);
+      }),
+    ]);
+    return timedOut ? { exists: true, timedOut: true } : { exists: entry.exists, timedOut: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function pathExists(path) {
+  return (await checkPath(path)).exists;
 }
 
 // HTTP request body reader
@@ -1549,7 +1687,7 @@ async function main() {
           status: 'running',
           pid: process.pid,
           uptime: process.uptime(),
-          sessions: listSessions(),
+          sessions: await listSessions(),
         }));
         return;
       }
@@ -1561,7 +1699,7 @@ async function main() {
           status: 'running',
           pid: process.pid,
           uptime: process.uptime(),
-          sessions: listSessions(),
+          sessions: await listSessions(),
           rgbProxy: rgbProxy.getStatus(),
           authHub: authHub.getStatus(),
           projectRoot,
@@ -1714,7 +1852,7 @@ async function main() {
       if (path === '/sessions' && req.method === 'GET') {
         res.writeHead(200);
         res.end(JSON.stringify({
-          sessions: listSessions(),
+          sessions: await listSessions(),
         }));
         return;
       }
@@ -1744,8 +1882,10 @@ async function main() {
 
         const resolvedWorktree = resolve(worktree);
 
-        // Check if worktree exists
-        if (!existsSync(resolvedWorktree)) {
+        // Async for the same reason listSessions is: a synchronous stat on a path that has gone
+        // unreachable blocks the daemon's only thread, and `cli start` is not worth freezing every
+        // other agent's requests for.
+        if (!(await pathExists(resolvedWorktree))) {
           // A tree deleted out from under its session leaves that session holding a port with no
           // way to reach it through this endpoint, so name the session rather than only the tree.
           const orphaned = findSessionByWorktree(resolvedWorktree);
@@ -1762,10 +1902,7 @@ async function main() {
 
         // Check if already running for this worktree
         const existing = findSessionByWorktree(resolvedWorktree);
-        if (
-          existing &&
-          (existing.status === 'running' || existing.status === 'starting' || existing.switching)
-        ) {
+        if (existing && sessionIsBusy(existing)) {
           res.writeHead(200);
           res.end(JSON.stringify({
             existing: true,
@@ -1814,7 +1951,11 @@ async function main() {
         const worktreeEnvPath = resolve(resolvedWorktree, '.env');
         const resolvedEnvPath = envPath
           ? resolve(envPath)
-          : existsSync(worktreeEnvPath)
+          : // "Present" is the safe answer for the worktree and the unsafe one here: picking a
+            // file that may not exist over a known-good fallback starts the server with no env at
+            // all — no DATABASE_URL, no secrets — failing in a way that looks nothing like a slow
+            // filesystem. So an unknown answer falls back to the main .env.
+            await checkPath(worktreeEnvPath).then((r) => r.exists && !r.timedOut)
             ? worktreeEnvPath
             : mainEnvPath;
 
@@ -1875,6 +2016,18 @@ async function main() {
 
         // POST /sessions/:id/restart - Restart session
         if (subPath === '/restart' && req.method === 'POST') {
+          // Queueing behind an op that never finishes hangs this request forever — the CLI's fetch
+          // has no timeout either — so refuse instead. POST /sessions already short-circuits on
+          // the same predicate.
+          if (session.busy) {
+            res.writeHead(409);
+            res.end(JSON.stringify({
+              error: `Session ${session.id} is busy — a start, restart or branch switch is already running.`,
+              session: session.getStatus(),
+            }));
+            return;
+          }
+
           await session.restart((s) => claimPortForReuse(s));
 
           res.writeHead(200);
@@ -1886,6 +2039,9 @@ async function main() {
 
         // DELETE /sessions/:id - Stop session
         if (subPath === '' && req.method === 'DELETE') {
+          // Set before stopping: a branch switch already past its own stop would otherwise start
+          // a server for a session this request is in the middle of removing.
+          session.removed = true;
           await session.stop();
 
           // A process winding down still answers, so a single busy read means nothing — only a
@@ -2034,4 +2190,13 @@ if (invokedDirectly) {
   });
 }
 
-export { claimPortForReuse, DevSession, findSessionByWorktree, getUsedPorts, sessions };
+export {
+  checkPath,
+  claimPortForReuse,
+  DevSession,
+  findSessionByWorktree,
+  getUsedPorts,
+  listSessions,
+  sessionIsBusy,
+  sessions,
+};

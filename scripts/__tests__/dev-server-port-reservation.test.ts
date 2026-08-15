@@ -1,6 +1,8 @@
 import type * as ChildProcess from 'child_process';
+import type * as FsPromises from 'fs/promises';
 import { EventEmitter } from 'events';
 import { tmpdir } from 'os';
+import { resolve } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Nothing in this file may reach a real process. The mock is on the module rather than on
@@ -12,6 +14,12 @@ vi.mock('child_process', async (importOriginal) => ({
   spawn: spawnMock,
 }));
 
+const accessMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof FsPromises>()),
+  access: accessMock,
+}));
+
 const isPortFreeMock = vi.hoisted(() => vi.fn(async () => true));
 vi.mock('../../.claude/skills/dev-server/scripts/port-probe.mjs', () => ({
   isPortFree: isPortFreeMock,
@@ -21,17 +29,21 @@ vi.mock('../../.claude/skills/dev-server/scripts/port-probe.mjs', () => ({
 // imported by path the way its port probe already is. Importing it does not start a daemon —
 // `main()` runs only when the file is the entry point.
 import {
+  checkPath,
   claimPortForReuse,
   DevSession,
   findSessionByWorktree,
   getUsedPorts,
+  listSessions,
+  sessionIsBusy,
   sessions,
 } from '../../.claude/skills/dev-server/scripts/daemon.mjs';
 
-// Short waits so a test that must observe the wait does not spend the real 8s doing it, and a
-// scan base above the default 3000 so these cases cannot be satisfied by a port a real session
-// would be using.
-const FAST_CLAIM = { timeoutMs: 60, intervalMs: 10, baseDevPort: 3100 };
+// A 1ms poll with a generous deadline keeps every case below count-bound rather than clock-bound:
+// the probe mocks decide the outcome, so a slow box cannot turn a pass into the very failure these
+// tests exist to detect. The scan base sits above the default 3000 so no case can be satisfied by
+// a port a real session would be using.
+const FAST_CLAIM = { timeoutMs: 5000, intervalMs: 1, baseDevPort: 3100 };
 
 const ENV_PATH = '/nonexistent/.env'; // only read by start(), which no test here calls
 
@@ -43,6 +55,8 @@ afterEach(() => {
   spawnMock.mockClear();
   isPortFreeMock.mockReset();
   isPortFreeMock.mockResolvedValue(true);
+  accessMock.mockReset();
+  accessMock.mockResolvedValue(undefined);
 });
 
 function makeSession(id: string, port: number) {
@@ -174,22 +188,199 @@ describe('dev-server restart wiring', () => {
     expect(order).toEqual(['claim-after-stop', 'start']);
   });
 
+  // Two restarts overlapping would have the second probe the port the first had just bound, read
+  // it as taken, and move the session off a port it had only just been given.
+  it('serializes overlapping restarts', async () => {
+    const session = makeSession('serial', 3141);
+    const order: string[] = [];
+    let releaseFirst: (() => void) | null = null;
+
+    session.start = vi.fn(async () => session.getStatus());
+    const first = session.restart(async () => {
+      order.push('first-in');
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      order.push('first-out');
+    });
+    const second = session.restart(async () => {
+      order.push('second-in');
+    });
+
+    // The lock defers through a promise chain, so let the queue drain before reading it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(order).toEqual(['first-in']);
+    releaseFirst?.();
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(['first-in', 'first-out', 'second-in']);
+  });
+
+  // A session removed while a branch switch was mid-install would otherwise reach its start and
+  // spawn a dev server nothing tracks, on a port nothing reserves.
+  it('refuses to start a session that has been removed', async () => {
+    const session = makeSession('removed', 3151);
+    session.removed = true;
+
+    // Returns a usable stand-in, so a start that wrongly proceeds fails on the assertion below
+    // rather than on a mock that handed it undefined.
+    spawnMock.mockImplementation(() => fakeProcess(7171));
+
+    await session.start();
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(session.process).toBe(null);
+  });
+
   // Two starts can interleave — a branch switch restarting while a request takes the session
   // over. Without this the loser keeps running, unreachable and holding the port, for the
   // daemon's lifetime, and the exit guard then discards even its exit.
   it('kills a process still attached before replacing it', () => {
     const session = makeSession('replacing', 3121);
-    const doomed = fakeProcess(6161);
-    session.process = doomed;
+    session.process = fakeProcess(6161);
+    // The module-level spawn mock only covers the win32 branch. Off Windows the kill is
+    // `process.kill(-pid)`, and CI runs this suite as root, so an unspied call would send a real
+    // SIGKILL to whatever holds process group 6161 in the container.
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
 
-    session.detachRunningProcess();
+    try {
+      session.detachRunningProcess();
 
-    expect(session.process).toBe(null);
-    if (process.platform === 'win32') {
-      expect(spawnMock).toHaveBeenCalledWith('taskkill', ['/pid', '6161', '/f', '/t'], {
-        shell: true,
-      });
+      expect(session.process).toBe(null);
+      if (process.platform === 'win32') {
+        expect(spawnMock).toHaveBeenCalledWith('taskkill', ['/pid', '6161', '/f', '/t'], {
+          shell: true,
+        });
+      } else {
+        expect(killSpy).toHaveBeenCalledWith(-6161, 'SIGKILL');
+      }
+    } finally {
+      killSpy.mockRestore();
     }
+  });
+});
+
+describe('dev-server session busy reporting', () => {
+  // A restart waiting out its port reads `stopped` with no process for as long as the wait lasts,
+  // and a start that seems to hang is exactly what makes an agent run it again. Reporting the
+  // session as busy is what stops that second call booting a competing server.
+  it.each([
+    ['a running session', { status: 'running' }],
+    ['a starting session', { status: 'starting' }],
+    ['a session mid branch switch', { status: 'stopped', switching: true }],
+    ['a session waiting on its own restart', { status: 'stopped', busyDepth: 1 }],
+  ])('reports %s as busy', (_label, state) => {
+    const session = makeSession(`busy-${_label}`, 3161);
+    Object.assign(session, state);
+
+    expect(sessionIsBusy(session)).toBe(true);
+  });
+
+  // The cases above set the flag by hand, so they pin how it is read and nothing about how it is
+  // maintained. With a plain boolean the first queued op's clear runs before the second op's body,
+  // so the session reads idle while a restart is still running — it fails in exactly the pile-up
+  // the flag exists for, and every hand-set case stays green.
+  it('still reports busy while a second queued restart is running', async () => {
+    const session = makeSession('queued', 3163);
+    session.status = 'stopped';
+    const seen: boolean[] = [];
+    let releaseFirst: (() => void) | null = null;
+
+    session.start = vi.fn(async () => session.getStatus());
+    const first = session.restart(async () => {
+      seen.push(sessionIsBusy(session));
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+    });
+    const second = session.restart(async () => {
+      seen.push(sessionIsBusy(session));
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst?.();
+    await Promise.all([first, second]);
+
+    expect(seen).toEqual([true, true]);
+    expect(sessionIsBusy(session)).toBe(false);
+  });
+
+  // The negative control. Without it, a predicate hardwired to true would pass every case above
+  // and no session could ever be taken over.
+  it('reports a plain dead session as free to take over', () => {
+    const session = makeSession('idle', 3162);
+    session.status = 'crashed';
+
+    expect(sessionIsBusy(session)).toBe(false);
+  });
+});
+
+describe('dev-server worktree checks', () => {
+  // Racing a timeout bounds the caller's wait, not the libuv slot the loser keeps — so without
+  // dedupe the TUI polling twice a second injects two 21s jobs per second into a four-slot pool
+  // and it never drains. One probe in flight per path is what actually bounds it.
+  it('runs one probe at a time for a path', async () => {
+    accessMock.mockImplementation(() => new Promise(() => undefined));
+
+    const first = checkPath('/slow/worktree');
+    const second = checkPath('/slow/worktree');
+
+    expect(await first).toEqual({ exists: true, timedOut: true });
+    expect(await second).toEqual({ exists: true, timedOut: true });
+    expect(accessMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Slow is not evidence of deletion, and calling a live worktree missing is the more damaging
+  // wrong answer — but the caller is told the check never landed, so a listing can say "could not
+  // tell" instead of "fine".
+  it('reports a worktree that will not answer as present, and says so', async () => {
+    accessMock.mockImplementation(() => new Promise(() => undefined));
+
+    expect(await checkPath('/unreachable/worktree')).toEqual({ exists: true, timedOut: true });
+  });
+
+  it('reports a missing worktree as missing', async () => {
+    accessMock.mockRejectedValue(new Error('ENOENT'));
+
+    expect(await checkPath('/deleted/worktree')).toEqual({ exists: false, timedOut: false });
+  });
+
+  // A miss is never slow, so caching one protects nothing and makes a worktree created seconds
+  // after a failed start read as still missing — with an error naming the path, which sends the
+  // reader after the wrong thing entirely.
+  it('re-probes a path that was missing rather than trusting the last answer', async () => {
+    accessMock.mockRejectedValueOnce(new Error('ENOENT'));
+    expect(await checkPath('/worktree/created/late')).toEqual({ exists: false, timedOut: false });
+
+    accessMock.mockResolvedValue(undefined);
+    expect(await checkPath('/worktree/created/late')).toEqual({ exists: true, timedOut: false });
+  });
+
+  // The other half: a settled hit IS reused, which is what collapses the TUI's twice-a-second
+  // polling into one probe.
+  it('reuses a settled hit within the cache window', async () => {
+    expect(await checkPath('/worktree/present')).toEqual({ exists: true, timedOut: false });
+    expect(await checkPath('/worktree/present')).toEqual({ exists: true, timedOut: false });
+
+    expect(accessMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('dev-server session listing', () => {
+  // Where someone hunting a permanently-reserved port actually looks: a session whose worktree has
+  // been deleted still holds its port and can never be started again.
+  it('marks a session whose worktree is gone', async () => {
+    const gone = resolve(tmpdir(), 'wt-that-does-not-exist');
+    makeSession('present', 3171);
+    makeSession('vanished', 3172).worktree = gone;
+    accessMock.mockImplementation(async (path: string) => {
+      if (path === gone) throw new Error('ENOENT');
+    });
+
+    const listed = await listSessions();
+
+    expect(listed.find((s) => s.id === 'present')?.worktreeMissing).toBe(false);
+    expect(listed.find((s) => s.id === 'vanished')?.worktreeMissing).toBe(true);
   });
 });
 
