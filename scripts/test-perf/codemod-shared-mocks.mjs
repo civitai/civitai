@@ -157,6 +157,20 @@ function staticValue(node) {
   return UNKNOWN;
 }
 
+/**
+ * A divergent test value that was obviously never meant to be a real key: it shares no
+ * `:`-delimited segment with the real one, or is a stub of four characters or fewer, or is
+ * explicitly namespaced `test:`. Reporting these buries the handful that read as plausible
+ * real keys, which are the ones a human should look at.
+ */
+function isPlaceholder(actual, expected) {
+  if (typeof actual !== 'string' || typeof expected !== 'string') return false;
+  if (actual.length <= 4) return true;
+  if (actual.startsWith('test:')) return true;
+  const segments = new Set(expected.split(':'));
+  return !actual.split(':').some((seg) => segments.has(seg));
+}
+
 /** Every path where `candidate` is not a value-identical subset of `real`. */
 function subsetMismatches(candidate, real, prefix) {
   if (candidate === UNKNOWN || real === undefined)
@@ -257,7 +271,14 @@ function convert(file, text) {
         // Reported, not refused: a divergent copy is a test asserting against a key
         // production never emits, and the redness when the real value swaps in IS the
         // finding.
-        if (mismatches.length) findings.push({ target, reason: `${root} differed from the real constant`, mismatches });
+        // Two kinds of divergence, and only one is a finding. A PLACEHOLDER the test never
+        // meant as a real key ("rl", "kill", "test:paid-access") is noise. A value that
+        // reads as a plausible real key and is wrong is the thing worth someone's attention.
+        // Encoded as a rule rather than as a list, so a placeholder invented next month is
+        // also covered. (ivy's Class A / Class B split, as the discriminator she derived.)
+        const substantive = mismatches.filter((m) => !isPlaceholder(m.actual, m.expected));
+        if (substantive.length)
+          findings.push({ target, reason: `${root} differed from the real constant`, mismatches: substantive });
         continue;
       }
 

@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ServerDomain from '~/server/utils/server-domain';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -33,16 +34,34 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(),
 }));
-vi.mock('~/server/utils/server-domain', () => ({ getAllServerHosts: () => [] }));
+// Spread the original: `~/server/utils/server-domain` has 14 exports, and a wholesale mock
+// freezes the module for the whole worker under `isolate: false`. Any later file whose
+// consumer reaches one of the other 13 — `serverDomainPrimaryMap` is the one that bit — then
+// dies at MODULE scope, so it collects zero tests instead of failing. It took out a different
+// file at each worker count (tag-with-model-count-cache at 4, bitdex-model3did at 12), which
+// is why it read as flakiness rather than as one broken file. (Found by ivy.)
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerDomain>()),
+  getAllServerHosts: () => [],
+}));
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const CANONICAL_PATH = path.join(REPO_ROOT, 'public/schemas/app-block/v1.json');
 
 function makeReq(): NextApiRequest {
-  return { method: 'GET', url: '/api/blocks/manifest-schema', query: {}, headers: {} } as unknown as NextApiRequest;
+  return {
+    method: 'GET',
+    url: '/api/blocks/manifest-schema',
+    query: {},
+    headers: {},
+  } as unknown as NextApiRequest;
 }
 
-function makeRes(): NextApiResponse & { _status: number; _body: unknown; _headers: Record<string, unknown> } {
+function makeRes(): NextApiResponse & {
+  _status: number;
+  _body: unknown;
+  _headers: Record<string, unknown>;
+} {
   const res = {
     _status: 0,
     _body: null as unknown,
@@ -88,7 +107,9 @@ describe('GET /api/blocks/manifest-schema', () => {
     // The served body carries the canonical `$id` (schemas/app-block/v1.json),
     // not the old `/api/blocks/manifest-schema` identity — the endpoint is now a
     // CORS alias for the canonical document.
-    expect((res._body as { $id: string }).$id).toBe('https://civitai.com/schemas/app-block/v1.json');
+    expect((res._body as { $id: string }).$id).toBe(
+      'https://civitai.com/schemas/app-block/v1.json'
+    );
   });
 
   it('sets CORS + public-cache headers', async () => {
