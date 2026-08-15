@@ -36,11 +36,11 @@ file that was traced. Three separate reasons:
 
 Union of first-party modules the suite actually builds, all three ways, at the head of this branch:
 
-| view | modules |
-| --- | --- |
-| static, dynamic imports followed, mocks ignored | 3,317 |
-| mocks honoured | 2,237 |
-| mocks honoured and `import()` treated as lazy | 1,320 |
+| view                                            | modules |
+| ----------------------------------------------- | ------- |
+| static, dynamic imports followed, mocks ignored | 3,317   |
+| mocks honoured                                  | 2,237   |
+| mocks honoured and `import()` treated as lazy   | 1,320   |
 
 ### Externals are paid per FILE
 
@@ -51,16 +51,16 @@ cache is per process, so each file re-imports each external package cold.
 Cost is therefore `cold import ms x files that reach it`, measured the way the suite pays it (one
 `import()` in a brand-new node process). Top of the table as it stood before the fixes below:
 
-| package | files | cold ms |
-| --- | --- | --- |
-| lodash-es | 309 | 923 |
-| googleapis | 94 | 2592 |
-| redis | 198 | 910 |
-| @tiptap/html | 96 | 1497 |
-| @axiomhq/axiom-node | 215 | 508 |
-| @aws-sdk/client-s3 | 123 | 772 |
-| instantsearch.js | 103 | 676 |
-| @tabler/icons-react | 135 | 499 |
+| package             | files | cold ms |
+| ------------------- | ----- | ------- |
+| lodash-es           | 309   | 923     |
+| googleapis          | 94    | 2592    |
+| redis               | 198   | 910     |
+| @tiptap/html        | 96    | 1497    |
+| @axiomhq/axiom-node | 215   | 508     |
+| @aws-sdk/client-s3  | 123   | 772     |
+| instantsearch.js    | 103   | 676     |
+| @tabler/icons-react | 135   | 499     |
 
 The columns do not add up to a saving: the cold times overlap on shared transitive deps, so cutting
 one package off a file that still reaches its dependencies another way refunds only part of it.
@@ -73,17 +73,17 @@ only 13 files reach it. Fan-in decides, not weight.
 Each of these is a module that mixed two audiences, so a consumer that wanted the cheap half was
 paying for the expensive half.
 
-| edge | fix |
-| --- | --- |
-| ~40 server modules imported `getEdgeUrl` from `~/client-utils/cf-images-utils`, which also defines `useEdgeUrl` — so they reached `useCurrentUser` -> the session provider -> the onboarding and buzz-purchase trees | import from `~/client-utils/edge-url`, where the pure builder already lived |
-| `server/schema/model-version.schema.ts` imported two donation-goal numbers from `components/Model/ModelVersions/model-version.utils` (a hooks module) | `shared/constants/donation-goal.constants.ts`; schema closure 605 -> 45 modules |
-| `server/schema/training.schema.ts` imported `blockedCustomModels` from `components/Training/Form/TrainingCommon` | `shared/constants/training.constants.ts`; schema closure 607 -> 17 modules |
-| `server/services/post.service.ts` imported `isMadeOnSite`, a one-line delegate, from a generation-form util | call `isImageMetaOnSite` in `server/utils/image-onsite` directly |
-| `server/createContext.ts` held `publicApiContext2`, the only thing in it needing `appRouter` — putting the entire tRPC router in the graph of everything importing the file | split to `server/public-api-context.ts` |
-| `shared/constants/currency.constants.ts` embeds the icon COMPONENTS in `CurrencyConfig`, so its one non-component consumer dragged in `@tabler/icons-react` | colours/css/classNames to `currency-theme.constants.ts`; `currency.constants` re-attaches the icons on top, so the 92 UI call sites are untouched |
-| `app-settings-bootstrap.test.ts` imported `~/pages/_app` to test `_app.getInitialProps`, loading the whole provider and layout tree | extracted to `~/utils/app-initial-props`; `_app.tsx` assigns it, so it still ships in both bundles and still runs on client navigations |
-| `utils/array-helpers.ts` imported `uniq` from `instantsearch.js/es/lib/utils` for a function that is one `.filter()` | inlined, same first-index-wins semantics; 103 files -> 0 |
-| `collection.service.ts` imported the youtube client, and therefore `googleapis`, for one mod-only function | moved `enableCollectionYoutubeSupport` to `collection-youtube.service.ts`; 94 files -> 1 |
+| edge                                                                                                                                                                                                                 | fix                                                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ~40 server modules imported `getEdgeUrl` from `~/client-utils/cf-images-utils`, which also defines `useEdgeUrl` — so they reached `useCurrentUser` -> the session provider -> the onboarding and buzz-purchase trees | import from `~/client-utils/edge-url`, where the pure builder already lived                                                                       |
+| `server/schema/model-version.schema.ts` imported two donation-goal numbers from `components/Model/ModelVersions/model-version.utils` (a hooks module)                                                                | `shared/constants/donation-goal.constants.ts`; schema closure 605 -> 45 modules                                                                   |
+| `server/schema/training.schema.ts` imported `blockedCustomModels` from `components/Training/Form/TrainingCommon`                                                                                                     | `shared/constants/training.constants.ts`; schema closure 607 -> 17 modules                                                                        |
+| `server/services/post.service.ts` imported `isMadeOnSite`, a one-line delegate, from a generation-form util                                                                                                          | call `isImageMetaOnSite` in `server/utils/image-onsite` directly                                                                                  |
+| `server/createContext.ts` held `publicApiContext2`, the only thing in it needing `appRouter` — putting the entire tRPC router in the graph of everything importing the file                                          | split to `server/public-api-context.ts`                                                                                                           |
+| `shared/constants/currency.constants.ts` embeds the icon COMPONENTS in `CurrencyConfig`, so its one non-component consumer dragged in `@tabler/icons-react`                                                          | colours/css/classNames to `currency-theme.constants.ts`; `currency.constants` re-attaches the icons on top, so the 92 UI call sites are untouched |
+| `app-settings-bootstrap.test.ts` imported `~/pages/_app` to test `_app.getInitialProps`, loading the whole provider and layout tree                                                                                  | extracted to `~/utils/app-initial-props`; `_app.tsx` assigns it, so it still ships in both bundles and still runs on client navigations           |
+| `utils/array-helpers.ts` imported `uniq` from `instantsearch.js/es/lib/utils` for a function that is one `.filter()`                                                                                                 | inlined, same first-index-wins semantics; 103 files -> 0                                                                                          |
+| `collection.service.ts` imported the youtube client, and therefore `googleapis`, for one mod-only function                                                                                                           | moved `enableCollectionYoutubeSupport` to `collection-youtube.service.ts`; 94 files -> 1                                                          |
 
 ## Result
 
@@ -121,7 +121,7 @@ for the three reasons above: a static edge that never executed costs the suite n
   uses S3; separating them is a real refactor, not an accidental edge.
 - **`@tiptap/html` through `article.service`** (96 files, 1.5s cold). Used in one line, and
   `collection.service -> article.service` is legitimate. The available cuts are a lazy `await
-  import()` — which moves a 1.2s load onto the first article render in production — or splitting
+import()` — which moves a 1.2s load onto the first article render in production — or splitting
   `getArticleById`. Not a trade worth making for test time.
 - **`lodash-es`** (309 files). `lodash-es/chunk.js` is 22ms against 923ms for the barrel, so
   per-symbol imports would pay well, but it is hundreds of import statements across files other work
