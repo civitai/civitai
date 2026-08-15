@@ -92,7 +92,6 @@ describe('no-direct-shared-module-mock', () => {
     expect(scanned).toBeGreaterThan(800);
   });
 
-
   it('adds no new direct mock of a module that has a canonical mock', () => {
     const { canonical } = scan();
     const added = Object.keys(canonical).filter((f) => !(readAllowlist().files ?? []).includes(f));

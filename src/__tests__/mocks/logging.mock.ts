@@ -17,9 +17,7 @@ import { hybridNode, registerDefaults, type HybridNode } from './hybrid';
  *   expect(loggingMock.logToAxiom).toHaveBeenCalledWith(expect.objectContaining({ … }));
  */
 
-registerDefaults((path) =>
-  path === 'logToAxiom' ? () => Promise.resolve(undefined) : undefined
-);
+registerDefaults((path) => (path === 'logToAxiom' ? () => Promise.resolve(undefined) : undefined));
 
 export const loggingMock: { logToAxiom: HybridNode } = {
   logToAxiom: hybridNode('logToAxiom'),

@@ -23,7 +23,10 @@ const flag = (name, fallback) => {
 const label = flag('label', 'pilot');
 const workers = flag('workers', '4');
 const listPath = path.join(repoRoot, flag('list', '.test-perf/pilot.txt'));
-const files = readFileSync(listPath, 'utf8').split('\n').map((s) => s.trim()).filter(Boolean);
+const files = readFileSync(listPath, 'utf8')
+  .split('\n')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 // Spawned as `node node_modules/vitest/vitest.mjs`, NOT through the `.bin` shim with
 // `shell: true`. A few hundred file paths overrun cmd.exe's 8191-character command line
@@ -49,5 +52,10 @@ const res = spawnSync(bin, args, {
   stdio: ['ignore', 'inherit', 'inherit'],
   env: { ...process.env, TESTPERF_LABEL: label },
 });
-console.log(`\n[pilot] ${label} (${files.length} files) exited ${res.status} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+console.log(
+  `\n[pilot] ${label} (${files.length} files) exited ${res.status} in ${(
+    (Date.now() - started) /
+    1000
+  ).toFixed(1)}s`
+);
 process.exit(res.status ?? 1);

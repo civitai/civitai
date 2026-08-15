@@ -21,7 +21,9 @@ const files = readFileSync(path.resolve(repoRoot, listPath), 'utf8')
 
 const SPECIFIERS = ['~/server/db/client', '~/server/redis/client', '~/server/logging/client'];
 const pattern = (spec) =>
-  new RegExp(String.raw`vi\.mock\(\s*['"\`]` + spec.replace(/[/~]/g, (c) => `\\${c}`) + String.raw`['"\`]`);
+  new RegExp(
+    String.raw`vi\.mock\(\s*['"\`]` + spec.replace(/[/~]/g, (c) => `\\${c}`) + String.raw`['"\`]`
+  );
 
 const residual = {};
 for (const spec of SPECIFIERS) residual[spec] = [];
@@ -31,5 +33,8 @@ for (const file of files) {
 }
 
 for (const spec of SPECIFIERS) console.log(`${String(residual[spec].length).padStart(4)}  ${spec}`);
-writeFileSync(path.resolve(repoRoot, '.test-perf/residual-mocks.json'), JSON.stringify(residual, null, 2));
+writeFileSync(
+  path.resolve(repoRoot, '.test-perf/residual-mocks.json'),
+  JSON.stringify(residual, null, 2)
+);
 console.log(`\n${files.length} files scanned -> .test-perf/residual-mocks.json`);

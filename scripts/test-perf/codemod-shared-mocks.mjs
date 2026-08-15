@@ -21,9 +21,22 @@ import ts from 'typescript';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 const TARGETS = {
-  '~/server/db/client': { roots: ['dbRead', 'dbWrite'], mock: 'dbMock', from: '~/__tests__/mocks/db.mock' },
-  '~/server/redis/client': { roots: ['redis', 'sysRedis'], mock: 'redisMock', from: '~/__tests__/mocks/redis.mock' },
-  '~/server/logging/client': { roots: ['logToAxiom'], mock: 'loggingMock', from: '~/__tests__/mocks/logging.mock', flat: true },
+  '~/server/db/client': {
+    roots: ['dbRead', 'dbWrite'],
+    mock: 'dbMock',
+    from: '~/__tests__/mocks/db.mock',
+  },
+  '~/server/redis/client': {
+    roots: ['redis', 'sysRedis'],
+    mock: 'redisMock',
+    from: '~/__tests__/mocks/redis.mock',
+  },
+  '~/server/logging/client': {
+    roots: ['logToAxiom'],
+    mock: 'loggingMock',
+    from: '~/__tests__/mocks/logging.mock',
+    flat: true,
+  },
 };
 
 const argv = process.argv.slice(2);
@@ -33,7 +46,10 @@ const listPath = argv.includes('--list') ? argv[argv.indexOf('--list') + 1] : nu
 const only = [
   ...argv.filter((a) => !a.startsWith('--') && a !== reportPath && a !== listPath),
   ...(listPath
-    ? readFileSync(path.resolve(repoRoot, listPath), 'utf8').split('\n').map((s) => s.trim()).filter(Boolean)
+    ? readFileSync(path.resolve(repoRoot, listPath), 'utf8')
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
     : []),
 ];
 
@@ -42,7 +58,11 @@ function main() {
 
   for (const file of only.length ? only.map((f) => path.resolve(repoRoot, f)) : listTestFiles()) {
     const src = readFileSync(file, 'utf8');
-    if (!Object.keys(TARGETS).some((t) => src.includes(`vi.mock('${t}'`) || src.includes(`vi.mock("${t}"`)))
+    if (
+      !Object.keys(TARGETS).some(
+        (t) => src.includes(`vi.mock('${t}'`) || src.includes(`vi.mock("${t}"`)
+      )
+    )
       continue;
 
     const outcome = convert(file, src);
@@ -52,9 +72,12 @@ function main() {
 
   const converted = results.filter((r) => r.converted.length);
   const refused = results.filter((r) => r.refusals.length);
-  console.log(`${results.length} candidate files | ${converted.length} convertible | ${refused.length} with refusals`);
+  console.log(
+    `${results.length} candidate files | ${converted.length} convertible | ${refused.length} with refusals`
+  );
   const byReason = {};
-  for (const r of refused) for (const x of r.refusals) byReason[x.reason] = (byReason[x.reason] ?? 0) + 1;
+  for (const r of refused)
+    for (const x of r.refusals) byReason[x.reason] = (byReason[x.reason] ?? 0) + 1;
   for (const [reason, n] of Object.entries(byReason).sort((a, b) => b[1] - a[1]))
     console.log(`  ${String(n).padStart(4)}  ${reason}`);
 
@@ -70,7 +93,9 @@ function main() {
     for (const d of drifted) {
       console.log(`  ${d.file.replace(/\\/g, '/')}`);
       for (const m of d.mismatches)
-        console.log(`    ${m.path}: real ${JSON.stringify(m.expected)} vs test ${JSON.stringify(m.actual)}`);
+        console.log(
+          `    ${m.path}: real ${JSON.stringify(m.expected)} vs test ${JSON.stringify(m.actual)}`
+        );
     }
   }
 
@@ -78,7 +103,11 @@ function main() {
     writeFileSync(
       path.resolve(repoRoot, reportPath),
       JSON.stringify(
-        results.map((r) => ({ file: path.relative(repoRoot, r.file).replace(/\\/g, '/'), converted: r.converted, refusals: r.refusals })),
+        results.map((r) => ({
+          file: path.relative(repoRoot, r.file).replace(/\\/g, '/'),
+          converted: r.converted,
+          refusals: r.refusals,
+        })),
         null,
         2
       )
@@ -174,14 +203,18 @@ function isPlaceholder(actual, expected) {
 /** Every path where `candidate` is not a value-identical subset of `real`. */
 function subsetMismatches(candidate, real, prefix) {
   if (candidate === UNKNOWN || real === undefined)
-    return [{ path: prefix, expected: real, actual: candidate === UNKNOWN ? '<not literal>' : candidate }];
+    return [
+      { path: prefix, expected: real, actual: candidate === UNKNOWN ? '<not literal>' : candidate },
+    ];
   if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate))
     return candidate === real || JSON.stringify(candidate) === JSON.stringify(real)
       ? []
       : [{ path: prefix, expected: real, actual: candidate }];
   if (typeof real !== 'object' || real === null)
     return [{ path: prefix, expected: real, actual: candidate }];
-  return Object.entries(candidate).flatMap(([k, v]) => subsetMismatches(v, real[k], `${prefix}.${k}`));
+  return Object.entries(candidate).flatMap(([k, v]) =>
+    subsetMismatches(v, real[k], `${prefix}.${k}`)
+  );
 }
 
 function listTestFiles() {
@@ -233,7 +266,10 @@ function convert(file, text) {
 
     const obj = factoryObject(call.arguments[1]);
     if (!obj) {
-      refusals.push({ target, reason: 'factory is not a plain object literal (importOriginal / block body)' });
+      refusals.push({
+        target,
+        reason: 'factory is not a plain object literal (importOriginal / block body)',
+      });
       continue;
     }
 
@@ -244,7 +280,10 @@ function convert(file, text) {
       if (isOriginalSpread(prop, originalNames)) continue;
       if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) {
         ok = false;
-        refusals.push({ target, reason: 'non-literal property in factory (spread or computed key)' });
+        refusals.push({
+          target,
+          reason: 'non-literal property in factory (spread or computed key)',
+        });
         break;
       }
       const root = prop.name.text;
@@ -261,7 +300,10 @@ function convert(file, text) {
         // what decides safety. What decides safety is whether the test asserts on a key
         // string, and a test that never names the constant cannot. (arabella, taxonomy §2.)
         if (new RegExp(`\\b${root}\\b`).test(text.replace(prop.getText(), ''))) {
-          refusals.push({ target, reason: `${root} is referenced outside the factory — check what it asserts` });
+          refusals.push({
+            target,
+            reason: `${root} is referenced outside the factory — check what it asserts`,
+          });
           ok = false;
           break;
         }
@@ -278,7 +320,11 @@ function convert(file, text) {
         // also covered. (ivy's Class A / Class B split, as the discriminator she derived.)
         const substantive = mismatches.filter((m) => !isPlaceholder(m.actual, m.expected));
         if (substantive.length)
-          findings.push({ target, reason: `${root} differed from the real constant`, mismatches: substantive });
+          findings.push({
+            target,
+            reason: `${root} differed from the real constant`,
+            mismatches: substantive,
+          });
         continue;
       }
 
@@ -298,19 +344,35 @@ function convert(file, text) {
         // So only plain DATA drops. Anything with behaviour — a spy, an identifier, a
         // function — is refused.
         if (staticValue(prop.initializer) === UNKNOWN) {
-          refusals.push({ target, reason: `factory replaces "${root}" with behaviour — it is a control surface, not a redundant re-export` });
+          refusals.push({
+            target,
+            reason: `factory replaces "${root}" with behaviour — it is a control surface, not a redundant re-export`,
+          });
           ok = false;
           break;
         }
         if (new RegExp(`\\b${root}\\b`).test(text.replace(prop.getText(), ''))) {
-          refusals.push({ target, reason: `factory declares "${root}", and the test references it — check what it asserts` });
+          refusals.push({
+            target,
+            reason: `factory declares "${root}", and the test references it — check what it asserts`,
+          });
           ok = false;
           break;
         }
         continue;
       }
       if (spec.flat) {
-        if (!collect(prop.initializer, `${spec.mock}.${root}`, local, refusals, target, spec.flat === true)) ok = false;
+        if (
+          !collect(
+            prop.initializer,
+            `${spec.mock}.${root}`,
+            local,
+            refusals,
+            target,
+            spec.flat === true
+          )
+        )
+          ok = false;
       } else if (ts.isObjectLiteralExpression(prop.initializer)) {
         for (const modelProp of prop.initializer.properties) {
           if (!ts.isPropertyAssignment(modelProp) || !ts.isIdentifier(modelProp.name)) {
@@ -326,14 +388,33 @@ function convert(file, text) {
                 refusals.push({ target, reason: 'non-literal property inside a model object' });
                 break;
               }
-              if (!collect(m.initializer, `${spec.mock}.${root}.${name}.${m.name.text}`, local, refusals, target))
+              if (
+                !collect(
+                  m.initializer,
+                  `${spec.mock}.${root}.${name}.${m.name.text}`,
+                  local,
+                  refusals,
+                  target
+                )
+              )
                 ok = false;
             }
-          } else if (!collect(modelProp.initializer, `${spec.mock}.${root}.${name}`, local, refusals, target)) {
+          } else if (
+            !collect(modelProp.initializer, `${spec.mock}.${root}.${name}`, local, refusals, target)
+          ) {
             ok = false;
           }
         }
-      } else if (!collect(prop.initializer, `${spec.mock}.${root}`, local, refusals, target, spec.flat === true)) {
+      } else if (
+        !collect(
+          prop.initializer,
+          `${spec.mock}.${root}`,
+          local,
+          refusals,
+          target,
+          spec.flat === true
+        )
+      ) {
         ok = false;
       }
       if (!ok) break;
@@ -360,7 +441,11 @@ function convert(file, text) {
   const lifted = [];
   for (const [name, exprs] of bindings) {
     if (exprs.size > 1) {
-      refusals.push({ target: 'multiple', reason: `local "${name}" aliases ${[...exprs].join(' and ')} — needs a human`, alias: [...exprs] });
+      refusals.push({
+        target: 'multiple',
+        reason: `local "${name}" aliases ${[...exprs].join(' and ')} — needs a human`,
+        alias: [...exprs],
+      });
       return { file, text, converted: [], refusals, findings };
     }
     const expr = [...exprs][0];
@@ -371,12 +456,19 @@ function convert(file, text) {
         // node rather than blocking the file.
         const lift = liftingAllowed ? liftedAssignment(decl.initializer, expr) : null;
         if (!lift) {
-          refusals.push({ target: 'multiple', reason: `declaration of "${name}" is not a bare vi.fn()/vi.hoisted(() => vi.fn())` });
+          refusals.push({
+            target: 'multiple',
+            reason: `declaration of "${name}" is not a bare vi.fn()/vi.hoisted(() => vi.fn())`,
+          });
           return { file, text, converted: [], refusals, findings };
         }
         lifts.push(lift);
       }
-      edits.push({ start: decl.initializer.getStart(sf), end: decl.initializer.getEnd(), replacement: expr });
+      edits.push({
+        start: decl.initializer.getStart(sf),
+        end: decl.initializer.getEnd(),
+        replacement: expr,
+      });
       continue;
     }
 
@@ -385,13 +477,19 @@ function convert(file, text) {
     // so only this name's binding and property come out; the rest of the object stays.
     const hoisted = findHoistedBinding(sf, name);
     if (!hoisted) {
-      refusals.push({ target: 'multiple', reason: `no module-scope declaration found for "${name}"` });
+      refusals.push({
+        target: 'multiple',
+        reason: `no module-scope declaration found for "${name}"`,
+      });
       return { file, text, converted: [], refusals, findings };
     }
     if (!isPlainSpyInitializer(hoisted.initializer, expr)) {
       const lift = liftingAllowed ? liftedAssignment(hoisted.initializer, expr) : null;
       if (!lift) {
-        refusals.push({ target: 'multiple', reason: `hoisted entry "${name}" is not a bare vi.fn()` });
+        refusals.push({
+          target: 'multiple',
+          reason: `hoisted entry "${name}" is not a bare vi.fn()`,
+        });
         return { file, text, converted: [], refusals, findings };
       }
       lifts.push(lift);
@@ -409,7 +507,10 @@ function convert(file, text) {
   }
   for (const [stmt, removals] of byStatement) {
     const { pattern, object } = removals[0];
-    if (removals.length === object.properties.length && removals.length === pattern.elements.length) {
+    if (
+      removals.length === object.properties.length &&
+      removals.length === pattern.elements.length
+    ) {
       // Keep any comment above it: a comment over a `vi.hoisted` block usually explains the
       // TEST, not the spy declarations, so taking it with the statement loses real prose. A
       // comment over a `vi.mock` is about the mock and goes with it.
@@ -459,13 +560,18 @@ function convert(file, text) {
   }
   const reprefix = (line) =>
     Object.entries(alias).reduce(
-      (acc, [from, to]) => (from === to ? acc : acc.replace(new RegExp(`\\b${from}\\.`, 'g'), `${to}.`)),
+      (acc, [from, to]) =>
+        from === to ? acc : acc.replace(new RegExp(`\\b${from}\\.`, 'g'), `${to}.`),
       line
     );
 
   const importLines = [...importsNeeded]
     .map((t) => TARGETS[t])
-    .map((s) => (alias[s.mock] === s.mock ? `import { ${s.mock} } from '${s.from}';` : `import { ${s.mock} as ${alias[s.mock]} } from '${s.from}';`))
+    .map((s) =>
+      alias[s.mock] === s.mock
+        ? `import { ${s.mock} } from '${s.from}';`
+        : `import { ${s.mock} as ${alias[s.mock]} } from '${s.from}';`
+    )
     .filter((line) => !text.includes(line));
   const inserted = [...importLines, ...lifted.map(reprefix), ...lifts.map(reprefix)];
   if (inserted.length) {
@@ -545,7 +651,9 @@ function liftedAssignment(init, expr) {
   if (
     ts.isCallExpression(init) &&
     ts.isPropertyAccessExpression(init.expression) &&
-    /^mock(ResolvedValue|RejectedValue|ReturnValue|Implementation)$/.test(init.expression.name.text) &&
+    /^mock(ResolvedValue|RejectedValue|ReturnValue|Implementation)$/.test(
+      init.expression.name.text
+    ) &&
     isBareViFn(init.expression.expression) &&
     init.arguments.length === 1
   )
@@ -650,7 +758,8 @@ function isDefaultEquivalent(canonicalExpr, node) {
     returned = node.arguments[0];
   }
   if (!returned) return false;
-  while (ts.isParenthesizedExpression(returned) || ts.isAsExpression(returned)) returned = returned.expression;
+  while (ts.isParenthesizedExpression(returned) || ts.isAsExpression(returned))
+    returned = returned.expression;
   return returned.getText().replace(/\s+/g, '') === expected.replace(/\s+/g, '');
 }
 
@@ -695,15 +804,48 @@ function referencesOnlyTopLevel(node) {
 
 /** Ambient names a lifted expression may legitimately reference. */
 const GLOBALS = new Set([
-  'undefined', 'null', 'true', 'false', 'Promise', 'Array', 'Object', 'String', 'Number',
-  'Boolean', 'Date', 'Math', 'JSON', 'Error', 'Symbol', 'Map', 'Set', 'RegExp', 'BigInt',
-  'console', 'process', 'globalThis', 'vi', 'expect', 'unknown', 'any', 'void', 'never',
-  'Record', 'Partial', 'Awaited', 'ReturnType', 'Buffer', 'AbortController',
+  'undefined',
+  'null',
+  'true',
+  'false',
+  'Promise',
+  'Array',
+  'Object',
+  'String',
+  'Number',
+  'Boolean',
+  'Date',
+  'Math',
+  'JSON',
+  'Error',
+  'Symbol',
+  'Map',
+  'Set',
+  'RegExp',
+  'BigInt',
+  'console',
+  'process',
+  'globalThis',
+  'vi',
+  'expect',
+  'unknown',
+  'any',
+  'void',
+  'never',
+  'Record',
+  'Partial',
+  'Awaited',
+  'ReturnType',
+  'Buffer',
+  'AbortController',
 ]);
 
 /** `(...args) => ident(...args)`, including the `(...(args as X))` cast spelling. */
 function passthroughTarget(node) {
-  const fn = ts.isCallExpression(node) && isBareViFnWithArgs(node) && node.arguments.length === 1 ? node.arguments[0] : node;
+  const fn =
+    ts.isCallExpression(node) && isBareViFnWithArgs(node) && node.arguments.length === 1
+      ? node.arguments[0]
+      : node;
   if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return null;
   if (fn.parameters.length !== 1 || !fn.parameters[0].dotDotDotToken) return null;
   const param = fn.parameters[0].name;
@@ -716,7 +858,8 @@ function passthroughTarget(node) {
   const arg = body.arguments[0];
   if (!ts.isSpreadElement(arg)) return null;
   let spread = arg.expression;
-  while (ts.isParenthesizedExpression(spread) || ts.isAsExpression(spread)) spread = spread.expression;
+  while (ts.isParenthesizedExpression(spread) || ts.isAsExpression(spread))
+    spread = spread.expression;
   if (!ts.isIdentifier(spread) || spread.text !== param.text) return null;
   return body.expression.text;
 }
@@ -764,7 +907,8 @@ function dropListItem(item, list, text) {
   if (index < list.length - 1) {
     while (end < text.length && text[end] !== ',') end++;
     end++; // the comma
-    while (end < text.length && (text[end] === ' ' || text[end] === '\r' || text[end] === '\n')) end++;
+    while (end < text.length && (text[end] === ' ' || text[end] === '\r' || text[end] === '\n'))
+      end++;
   } else {
     // Last item: eat the PRECEDING comma instead, or a trailing one if present.
     if (text[end] === ',') end++;
@@ -782,7 +926,8 @@ function topLevelNames(sf) {
       for (const el of node.elements) if (ts.isBindingElement(el)) add(el.name);
   };
   for (const stmt of sf.statements) {
-    if (ts.isVariableStatement(stmt)) for (const d of stmt.declarationList.declarations) add(d.name);
+    if (ts.isVariableStatement(stmt))
+      for (const d of stmt.declarationList.declarations) add(d.name);
     else if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) add(stmt.name);
     else if (ts.isImportDeclaration(stmt) && stmt.importClause) {
       add(stmt.importClause.name);
@@ -834,7 +979,8 @@ function findHoistedBinding(sf, name) {
       if (!ts.isObjectLiteralExpression(body)) continue;
 
       const element = d.name.elements.find(
-        (e) => ts.isIdentifier(e.name) && e.name.text === name && !e.propertyName && !e.dotDotDotToken
+        (e) =>
+          ts.isIdentifier(e.name) && e.name.text === name && !e.propertyName && !e.dotDotDotToken
       );
       const property = body.properties.find(
         (p) => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === name
@@ -848,12 +994,21 @@ function findHoistedBinding(sf, name) {
       let localStatement = null;
       if (ts.isIdentifier(initializer) && locals.has(initializer.text)) {
         const local = locals.get(initializer.text);
-        const uses = (fn.getText().match(new RegExp(`\\b${initializer.text}\\b`, 'g')) ?? []).length;
+        const uses = (fn.getText().match(new RegExp(`\\b${initializer.text}\\b`, 'g')) ?? [])
+          .length;
         if (uses === 2) localStatement = local.statement;
         initializer = local.declaration.initializer;
       }
 
-      return { statement: stmt, pattern: d.name, object: body, element, property, initializer, localStatement };
+      return {
+        statement: stmt,
+        pattern: d.name,
+        object: body,
+        element,
+        property,
+        initializer,
+        localStatement,
+      };
     }
   }
   return null;
@@ -904,7 +1059,9 @@ function asViMockCall(stmt) {
 }
 
 function literalText(node) {
-  return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : null;
+  return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
+    ? node.text
+    : null;
 }
 
 /**
@@ -942,7 +1099,11 @@ function factoryObject(node) {
         // alone rather than refused: the whole factory is being deleted, so its locals go
         // with it and their role does not need to be knowable.
         for (const d of stmt.declarationList.declarations)
-          if (ts.isIdentifier(d.name) && d.initializer && isOriginalCall(d.initializer, originalNames))
+          if (
+            ts.isIdentifier(d.name) &&
+            d.initializer &&
+            isOriginalCall(d.initializer, originalNames)
+          )
             originalNames.add(d.name.text);
         continue;
       }

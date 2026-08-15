@@ -41,7 +41,9 @@ const testFiles = globSync('src/**/*.test.{ts,tsx}', { cwd: repoRoot })
 
 const files = [];
 const pendingFiles = [];
-const bySpecifier = Object.fromEntries([...CANONICAL_SPECIFIERS, ...PENDING_SPECIFIERS].map((s) => [s, 0]));
+const bySpecifier = Object.fromEntries(
+  [...CANONICAL_SPECIFIERS, ...PENDING_SPECIFIERS].map((s) => [s, 0])
+);
 
 for (const file of testFiles) {
   const src = readFileSync(path.join(repoRoot, file), 'utf8');
@@ -95,8 +97,12 @@ const out = {
 writeFileSync(OUT, `${JSON.stringify(out, null, 2)}\n`);
 
 const delta = previousFiles ? ` (${previousFiles.length - files.length} migrated)` : '';
-console.log(`canonical ${previousFiles ? `${previousFiles.length} -> ` : ''}${files.length} files${delta}`);
-console.log(`pending   ${pendingFiles.length} files across ${PENDING_SPECIFIERS.length} specifiers`);
+console.log(
+  `canonical ${previousFiles ? `${previousFiles.length} -> ` : ''}${files.length} files${delta}`
+);
+console.log(
+  `pending   ${pendingFiles.length} files across ${PENDING_SPECIFIERS.length} specifiers`
+);
 console.log(`sites     canonical ${out.totals.canonicalSites}, pending ${out.totals.pendingSites}`);
 
 function readSpecifiers() {
@@ -117,6 +123,7 @@ function readSpecifiers() {
     }
   }
   for (const name of ['CANONICAL_SPECIFIERS', 'PENDING_SPECIFIERS'])
-    if (!found[name]) throw new Error(`Could not read ${name} from ${SPECIFIERS_SRC} — refusing to guess.`);
+    if (!found[name])
+      throw new Error(`Could not read ${name} from ${SPECIFIERS_SRC} — refusing to guess.`);
   return found;
 }
