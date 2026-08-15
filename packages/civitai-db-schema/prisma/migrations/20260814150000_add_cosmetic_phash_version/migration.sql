@@ -16,14 +16,18 @@
 -- orchestrator originally returned (verified against live `mediaHash` output for
 -- cosmetics 107 and 870), so no row needs re-hashing to adopt the new columns.
 --
+-- `pHashFailedAt` records when hashing last FAILED, and is cleared on success.
+-- Three cosmetics point at dead CDN objects and can never be hashed; without this
+-- they match the sweep's predicate on every tick forever, ahead of rows that would
+-- have succeeded. It deliberately does NOT record successful attempts: a
+-- success-stamped timestamp combined with the sweep's retry window would suppress
+-- the re-hash of every recently-hashed row for a day after a lane change, which is
+-- exactly when the drain needs to run.
+--
 -- Applied manually per environment; re-runnable.
--- `pHashCheckedAt` records when the sweep last TRIED, success or failure. Without
--- it, artwork that can never be hashed (three cosmetics point at dead CDN objects)
--- matches the sweep's predicate forever and is retried every tick ahead of rows
--- that would succeed.
 ALTER TABLE "Cosmetic" ADD COLUMN IF NOT EXISTS "pHashHex" TEXT;
 ALTER TABLE "Cosmetic" ADD COLUMN IF NOT EXISTS "pHashVersion" TEXT;
-ALTER TABLE "Cosmetic" ADD COLUMN IF NOT EXISTS "pHashCheckedAt" TIMESTAMP(3);
+ALTER TABLE "Cosmetic" ADD COLUMN IF NOT EXISTS "pHashFailedAt" TIMESTAMP(3);
 
 UPDATE "Cosmetic"
 SET "pHashHex" = lpad(to_hex("pHash"), 16, '0'),

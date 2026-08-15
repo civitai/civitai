@@ -2048,7 +2048,7 @@ export type Cosmetic = {
   pHashUrl: string | null;
   pHashHex: string | null;
   pHashVersion: string | null;
-  pHashCheckedAt: Timestamp | null;
+  pHashFailedAt: Timestamp | null;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;

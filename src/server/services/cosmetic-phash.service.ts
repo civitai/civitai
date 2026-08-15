@@ -71,19 +71,21 @@ export async function storeCosmeticPerceptualHash({
       pHashHex: normalized,
       pHashUrl: url,
       pHashVersion: COSMETIC_PHASH_LANE.version,
-      pHashCheckedAt: new Date(),
+      // Cleared, never stamped. `pHashFailedAt` suppresses re-attempts for a day,
+      // and a row that just succeeded must not be suppressed — a lane change makes
+      // every recently-hashed row due for re-hashing immediately.
+      pHashFailedAt: null,
     },
   });
 }
 
 /**
- * Record that hashing was ATTEMPTED and produced nothing, without touching the
- * hash itself. Artwork whose url no longer resolves can never be hashed, and
- * without this it matches the sweep's predicate on every tick forever, ahead of
- * rows that would have succeeded.
+ * Record that hashing FAILED, without touching the hash itself. Artwork whose url
+ * no longer resolves can never be hashed, and without this it matches the sweep's
+ * predicate on every tick forever, ahead of rows that would have succeeded.
  */
-export async function markCosmeticHashAttempted(id: number) {
-  await dbWrite.cosmetic.update({ where: { id }, data: { pHashCheckedAt: new Date() } });
+export async function markCosmeticHashFailed(id: number) {
+  await dbWrite.cosmetic.update({ where: { id }, data: { pHashFailedAt: new Date() } });
 }
 
 /**
@@ -105,7 +107,7 @@ export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: stri
   getPerceptualHash(url, COSMETIC_PHASH_LANE.hashType)
     .then(async (hex) => {
       if (hex === undefined) {
-        await markCosmeticHashAttempted(id).catch(() => null);
+        await markCosmeticHashFailed(id).catch(() => null);
         await logToAxiom({
           type: 'warning',
           name: 'cosmetic-phash',

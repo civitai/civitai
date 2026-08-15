@@ -26,6 +26,7 @@ import {
   COSMETIC_PHASH_LANE,
   getSimilarCosmetics,
   hammingDistanceHex,
+  markCosmeticHashFailed,
   normalizeCosmeticHashHex,
   storeCosmeticPerceptualHash,
 } from '../cosmetic-phash.service';
@@ -82,9 +83,28 @@ describe('storeCosmeticPerceptualHash', () => {
     expect(data.pHashHex).toBe('a6e0c4c4cce8a4b6');
     expect(data.pHashUrl).toBe('artwork-7');
     expect(data.pHashVersion).toBe(LANE);
-    // Without this the sweep cannot tell "never tried" from "tried and failed",
-    // and permanently-dead artwork is retried ahead of everything else forever.
-    expect(data.pHashCheckedAt).toBeInstanceOf(Date);
+  });
+
+  // The sweep skips any row whose `pHashFailedAt` is inside the 24h retry window.
+  // Stamping it on SUCCESS would therefore suppress every recently-hashed row for
+  // a day — and the rows a lane change most needs re-hashed are exactly the ones
+  // hashed most recently. Nothing else in the suite would notice: the sweep still
+  // "works", it just silently declines to drain for 24 hours after the bump.
+  it('CLEARS the failure stamp on success rather than setting it', async () => {
+    await storeCosmeticPerceptualHash({ id: 7, url: 'artwork-7', hex: 'a6e0c4c4cce8a4b6' });
+
+    const { data } = mocks.cosmeticUpdate.mock.calls[0][0];
+    expect(data.pHashFailedAt).toBeNull();
+  });
+
+  it('stamps the failure time when hashing failed, so dead artwork is suppressed', async () => {
+    await markCosmeticHashFailed(240);
+
+    const { where, data } = mocks.cosmeticUpdate.mock.calls[0][0];
+    expect(where).toEqual({ id: 240 });
+    expect(data.pHashFailedAt).toBeInstanceOf(Date);
+    // Only the stamp — a failure must not blank a hash the row already had.
+    expect(Object.keys(data)).toEqual(['pHashFailedAt']);
   });
 });
 

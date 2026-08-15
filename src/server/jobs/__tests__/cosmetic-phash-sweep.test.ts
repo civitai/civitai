@@ -6,7 +6,7 @@ const { mocks } = vi.hoisted(() => ({
     queryRaw: vi.fn(),
     getPerceptualHash: vi.fn(),
     storeCosmeticPerceptualHash: vi.fn(),
-    markCosmeticHashAttempted: vi.fn(),
+    markCosmeticHashFailed: vi.fn(),
   },
 }));
 
@@ -17,7 +17,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
 vi.mock('~/server/services/cosmetic-phash.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CosmeticPhashService>()),
   storeCosmeticPerceptualHash: mocks.storeCosmeticPerceptualHash,
-  markCosmeticHashAttempted: mocks.markCosmeticHashAttempted,
+  markCosmeticHashFailed: mocks.markCosmeticHashFailed,
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
@@ -28,7 +28,7 @@ describe('sweepCosmeticPerceptualHashes', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.storeCosmeticPerceptualHash.mockResolvedValue(undefined);
-    mocks.markCosmeticHashAttempted.mockResolvedValue(undefined);
+    mocks.markCosmeticHashFailed.mockResolvedValue(undefined);
   });
 
   it('stores what it hashed, in the lane it asked for', async () => {
@@ -56,7 +56,7 @@ describe('sweepCosmeticPerceptualHashes', () => {
     mocks.getPerceptualHash.mockResolvedValue(undefined);
 
     expect(await sweepCosmeticPerceptualHashes()).toEqual({ scanned: 1, hashed: 0, failed: 1 });
-    expect(mocks.markCosmeticHashAttempted).toHaveBeenCalledWith(240);
+    expect(mocks.markCosmeticHashFailed).toHaveBeenCalledWith(240);
     expect(mocks.storeCosmeticPerceptualHash).not.toHaveBeenCalled();
   });
 
@@ -72,7 +72,7 @@ describe('sweepCosmeticPerceptualHashes', () => {
       .mockResolvedValueOnce('0000000000000003');
 
     expect(await sweepCosmeticPerceptualHashes()).toEqual({ scanned: 3, hashed: 2, failed: 1 });
-    expect(mocks.markCosmeticHashAttempted).toHaveBeenCalledWith(2);
+    expect(mocks.markCosmeticHashFailed).toHaveBeenCalledWith(2);
   });
 
   it('selects on the version as well as the url, which is what drains a lane upgrade', async () => {
@@ -84,8 +84,26 @@ describe('sweepCosmeticPerceptualHashes', () => {
     const sql = (strings as unknown as string[]).join('?');
     expect(sql).toContain('"pHashVersion" IS DISTINCT FROM');
     expect(sql).toContain('"pHashUrl" IS DISTINCT FROM');
-    expect(sql).toContain('"pHashCheckedAt" ASC NULLS FIRST');
+    expect(sql).toContain('"pHashFailedAt" ASC NULLS FIRST');
     expect(values).toContain(COSMETIC_PHASH_LANE.version);
+  });
+
+  // The retry window and the lane predicate are ANDed, so the window is capable of
+  // blocking the very drain a lane bump is meant to start. It doesn't, only because
+  // `pHashFailedAt` is written on failure alone. This pins the suppression to the
+  // failure column, so a future "stamp every attempt" change has to come past a
+  // named assertion rather than silently costing a day of drain.
+  it('gates the retry window on the FAILURE column, not on when a row was last hashed', async () => {
+    mocks.queryRaw.mockResolvedValue([]);
+
+    await sweepCosmeticPerceptualHashes();
+
+    const sql = (mocks.queryRaw.mock.calls[0][0] as unknown as string[]).join('?');
+    const beforeInterval = sql.slice(0, sql.indexOf('INTERVAL'));
+    const window = beforeInterval.slice(beforeInterval.lastIndexOf('AND ('));
+    expect(window).toContain('"pHashFailedAt"');
+    expect(window).not.toContain('"pHashVersion"');
+    expect(window).not.toContain('"pHashHex"');
   });
 
   it('does no work and reports none when the corpus is complete', async () => {

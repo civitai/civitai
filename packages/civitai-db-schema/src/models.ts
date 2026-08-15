@@ -2960,7 +2960,7 @@ export interface Cosmetic {
   pHashUrl: string | null;
   pHashHex: string | null;
   pHashVersion: string | null;
-  pHashCheckedAt: Date | null;
+  pHashFailedAt: Date | null;
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];

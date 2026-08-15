@@ -2,7 +2,7 @@ import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   COSMETIC_PHASH_LANE,
-  markCosmeticHashAttempted,
+  markCosmeticHashFailed,
   storeCosmeticPerceptualHash,
 } from '~/server/services/cosmetic-phash.service';
 import { getPerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
@@ -21,11 +21,12 @@ import { createJob } from './job';
  *    now asks for. Raising `COSMETIC_PHASH_LANE.version` therefore drains the
  *    whole corpus on its own, one batch per tick, with no separate backfill.
  *
- * Rows are taken oldest-attempt-first and every attempt stamps `pHashCheckedAt`
- * whether or not it produced a hash. Artwork that can never be hashed (dead CDN
- * objects) otherwise matches the predicate forever and starves the rows behind
- * it — the retry interval is what bounds how often it is re-tried, not the
- * absence of an error.
+ * `pHashFailedAt` is stamped on FAILURE ONLY and cleared on success, and that
+ * asymmetry is load-bearing. Artwork that can never be hashed (dead CDN objects)
+ * would otherwise match the predicate forever and starve the rows behind it, so
+ * failures need suppressing — but stamping successes too would make the retry
+ * window suppress every recently-hashed row for a day, which is precisely the
+ * population a lane change needs re-hashed first.
  */
 
 // One tick's worth. The 2026-08-01 run measured ~10.5 hashes/s at this
@@ -55,10 +56,10 @@ export async function sweepCosmeticPerceptualHashes({
         OR "pHashUrl" IS DISTINCT FROM data->>'url'
       )
       AND (
-        "pHashCheckedAt" IS NULL
-        OR "pHashCheckedAt" < NOW() - (${RETRY_AFTER_HOURS} * INTERVAL '1 hour')
+        "pHashFailedAt" IS NULL
+        OR "pHashFailedAt" < NOW() - (${RETRY_AFTER_HOURS} * INTERVAL '1 hour')
       )
-    ORDER BY "pHashCheckedAt" ASC NULLS FIRST, id ASC
+    ORDER BY "pHashFailedAt" ASC NULLS FIRST, id ASC
     LIMIT ${batchSize}
   `;
 
@@ -72,7 +73,7 @@ export async function sweepCosmeticPerceptualHashes({
         const hex = await getPerceptualHash(row.url, COSMETIC_PHASH_LANE.hashType);
         if (hex === undefined) {
           failed++;
-          await markCosmeticHashAttempted(row.id);
+          await markCosmeticHashFailed(row.id);
           return;
         }
         await storeCosmeticPerceptualHash({ id: row.id, url: row.url, hex });
@@ -81,7 +82,7 @@ export async function sweepCosmeticPerceptualHashes({
         failed++;
         // Best effort: if even the stamp fails the row simply comes back next
         // tick, which is the same outcome as before this job existed.
-        await markCosmeticHashAttempted(row.id).catch(() => null);
+        await markCosmeticHashFailed(row.id).catch(() => null);
       }
     }),
     concurrency
