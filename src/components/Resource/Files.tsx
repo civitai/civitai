@@ -64,7 +64,7 @@ import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
+import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
 
 // Small inline dropzone for adding files within a section
 function InlineDropzone({

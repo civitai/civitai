@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
+import { blockedCustomModels } from '~/shared/constants/training.constants';
 import { autoCaptionSchema, autoLabelLimits } from '~/store/training.store';
 
 // Auto-label workflow batches map 1 step per image; the orchestrator can ingest larger

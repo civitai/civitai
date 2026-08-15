@@ -30,7 +30,7 @@ import InputResourceSelectMultiple from '~/components/ImageGeneration/Generation
 import {
   MAX_DONATION_GOAL,
   MIN_DONATION_GOAL,
-} from '~/components/Model/ModelVersions/model-version.utils';
+} from '~/shared/constants/donation-goal.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
