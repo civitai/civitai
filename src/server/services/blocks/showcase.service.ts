@@ -1,6 +1,6 @@
 import { dbRead } from '~/server/db/client';
 import { getImageMetricsObject } from '~/server/services/image.service';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Flags } from '~/shared/utils/flags';
 import {
   domainBrowsingCeiling,

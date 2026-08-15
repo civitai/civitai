@@ -15,9 +15,8 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/server/createContext', () => ({ publicApiContext2: vi.fn() }));
 vi.mock('~/server/utils/pagination-helpers', () => ({ getPaginationLinks: vi.fn() }));
 vi.mock('~/server/utils/errorHandling', () => ({ isClientAbortError: () => false }));
-// getEdgeUrl reaches into client-only modules (react hooks, providers) at import;
-// stub it to a deterministic, inspectable string.
-vi.mock('~/client-utils/cf-images-utils', () => ({
+// Stub it to a deterministic, inspectable string.
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (src: string, opts: { width?: number; name?: string | null }) =>
     `edge:${src}:${opts?.width}:${opts?.name ?? ''}`,
 }));

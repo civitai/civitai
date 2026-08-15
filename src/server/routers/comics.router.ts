@@ -66,7 +66,7 @@ import {
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import {

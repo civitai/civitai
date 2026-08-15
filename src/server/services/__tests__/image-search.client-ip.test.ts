@@ -39,7 +39,7 @@ vi.mock('~/server/flipt/client', () => ({
 vi.mock('~/server/redis/caches', () => ({
   imageMetaCache: { fetch: vi.fn(async () => ({})) },
 }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: vi.fn(() => 'https://edge/x') }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: vi.fn(() => 'https://edge/x') }));
 
 const feedSearch = vi.fn(async () => ({ items: [], nextCursor: undefined }));
 vi.mock('~/server/services/image.service', () => ({

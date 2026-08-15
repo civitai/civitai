@@ -1,4 +1,4 @@
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { JudgingCategory } from '~/server/games/daily-challenge/daily-challenge-scoring';
 import type { Seat } from '~/server/games/daily-challenge/challenge-ladder';
 import {

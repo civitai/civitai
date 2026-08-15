@@ -33,7 +33,7 @@ const { mockDbRead } = vi.hoisted(() => ({
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 // getEdgeUrl → identity so URL fields assert against the stored key.
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 // queryCache → passthrough to the mocked $queryRaw (no Redis in unit tests).

@@ -25,7 +25,7 @@ const { mockCreateImage } = vi.hoisted(() => ({
 const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof S3Utils>()),
