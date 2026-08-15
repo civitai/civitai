@@ -18,6 +18,8 @@
  * belongs in TEST_ENV_DEFAULTS (worker-level, set before anything imports), not in a per-file
  * override.
  */
+import { schemaDefaults } from './schema-defaults';
+
 const defaults: Record<string, unknown> = {};
 const overrides = new Map<string, unknown>();
 
@@ -155,4 +157,8 @@ export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   S3_IMAGE_UPLOAD_SECRET: 'test-secret',
 };
 
+// Schema first, hand-written table second — the table WINS. Several of its values are
+// deliberate test fixtures rather than production defaults (`NEXTAUTH_URL` is a considered
+// choice with dozens of assertions behind it), and seeding must not quietly relitigate them.
+setEnvDefaults(schemaDefaults());
 setEnvDefaults(TEST_ENV_DEFAULTS);
