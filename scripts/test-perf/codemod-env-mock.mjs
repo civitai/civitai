@@ -30,6 +30,7 @@ const write = argv.includes('--write');
 const reportPath = argv.includes('--report') ? argv[argv.indexOf('--report') + 1] : null;
 const listPath = argv.includes('--list') ? argv[argv.indexOf('--list') + 1] : null;
 
+// Kept for the import path the codemod EMITS; site matching uses SPEC_RE below.
 const SPEC = '~/env/server';
 const CANON = '~/__tests__/mocks/env.mock';
 
@@ -125,9 +126,19 @@ function walk(dir, out = []) {
   return out;
 }
 
+/**
+ * Matches the alias spelling AND the relative one. `vi.mock('../../env/server')` is the same
+ * module as `vi.mock('~/env/server')`, and a scanner that only knows the alias reports a
+ * confident zero for the other — which is how a relative mock of a canonical module stayed
+ * invisible to the guard, the allowlist generator and the shared-mocks codemod at once
+ * (fixed at 92f1728652). There are no relative env spellings in the tree today, verified by
+ * independent grep; this is here so that stays a real zero rather than an unasked question.
+ */
+const SPEC_RE = /vi\.mock\(\s*['"](?:~\/env\/server|(?:\.\.\/)+env\/server)['"]/;
+
 /** The whole `vi.mock(…)` statement, plus the trailing semicolon and one blank line. */
 function mockStatement(src) {
-  const idx = src.search(new RegExp(`vi\\.mock\\(\\s*['"]${SPEC.replace('/', '\\/')}['"]`));
+  const idx = src.search(SPEC_RE);
   if (idx === -1) return null;
   const open = src.indexOf('(', idx);
   let depth = 0;
@@ -258,6 +269,21 @@ function classify(file, src, defaults, moduleScopeKeys) {
     const ident = (/env:\s*new Proxy\(\s*([A-Za-z_$][\w$]*)/.exec(st.text) ??
       /env:\s*([A-Za-z_$][\w$]*)\s*[,}]/.exec(st.text))?.[1];
     if (!ident) return { file, action: 'refuse', reason: 'no keys found — read by hand' };
+    // 🔴 A test that MUTATES the table at runtime — `mockEnv.DATABASE_IS_PROD = false` inside
+    // one case — cannot be converted by lifting its initial values. Removing the `vi.mock`
+    // leaves the local alive but disconnected, so every later assignment writes to an object
+    // nothing reads, and the case silently exercises the opposite branch. Two files got past
+    // an earlier version of this check and failed the pair on real assertions: "deletes
+    // nothing when the database is not prod" deleted, and "412s when bundle storage is not
+    // configured" returned 200. The canonical `env` proxy does support assignment, so these
+    // are convertible by hand — the mutations have to move to `setEnv` inside the case that
+    // needs them, which is a rewrite rather than a lift.
+    if (new RegExp(`\\b${ident}\\.[A-Z][A-Z0-9_]*\\s*=[^=]`).test(src))
+      return {
+        file,
+        action: 'refuse',
+        reason: `the env table local "${ident}" is mutated at runtime — needs per-case setEnv, not a lift`,
+      };
     const literal = ident && resolveEnvLocal(src, ident);
     if (!literal)
       return { file, action: 'refuse', reason: `could not resolve the env table local "${ident}"` };
@@ -349,7 +375,7 @@ function main() {
     const rel = path.relative(repoRoot, abs).split(path.sep).join('/');
     if (only && !only.has(rel)) continue;
     const src = readFileSync(abs, 'utf8');
-    if (!src.includes(SPEC)) continue;
+    if (!SPEC_RE.test(src)) continue;
     const plan = classify(rel, src, defaults, moduleScopeKeys);
     if (!plan) continue;
     plans.push(plan);

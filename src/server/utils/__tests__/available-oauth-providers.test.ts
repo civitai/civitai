@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// server-domain.ts validates the full server env at import (env.SERVER_DOMAIN_* etc.) — stub it so the unit
-// project can import the module without a real env. getAvailableOAuthProviders itself reads
-// process.env.AUTH_JWT_ISSUER directly (not the validated `env`), so the stub doesn't affect its logic.
-vi.mock('~/env/server', () => ({ env: {} }));
+// server-domain.ts validates the full server env at import, which the canonical env mock in
+// the global setup already satisfies. getAvailableOAuthProviders reads
+// process.env.AUTH_JWT_ISSUER directly rather than the validated `env`, so the defaults the
+// canonical mock supplies cannot reach its logic.
 
 describe('getAvailableOAuthProviders', () => {
   beforeEach(() => {

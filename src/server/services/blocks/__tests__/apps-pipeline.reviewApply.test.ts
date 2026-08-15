@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -15,7 +16,11 @@ const { mockEnv } = vi.hoisted(() => ({
     APPS_KUBE_NAMESPACE: 'civitai-apps',
   } as Record<string, unknown>,
 }));
-vi.mock('~/env/server', () => ({ env: mockEnv }));
+beforeEach(() => {
+  setEnv({
+    APPS_KUBE_NAMESPACE: 'civitai-apps',
+  });
+});
 
 // In-pod ServiceAccount token + cluster host (getDp1Target reads these).
 vi.mock('node:fs/promises', () => ({
@@ -61,12 +66,16 @@ describe('triggerApplyReview / deleteReviewResources', () => {
             ok: true,
             status: 200,
             statusText: 'OK',
-            text: async () =>
-              JSON.stringify({ items: [{ metadata: { name: 'review-obj-1' } }] }),
+            text: async () => JSON.stringify({ items: [{ metadata: { name: 'review-obj-1' } }] }),
           } as unknown as Response;
         }
         // DELETE → ok.
-        return { ok: true, status: 200, statusText: 'OK', text: async () => '' } as unknown as Response;
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => '',
+        } as unknown as Response;
       })
     );
   });
@@ -101,7 +110,10 @@ describe('triggerApplyReview / deleteReviewResources', () => {
     // Job fails ("Middleware -mod-gate is invalid"). Regression guard.
     expect(script).toContain('export REVIEW_NAME=');
     // Image is passed through env.
-    const envVars = job.spec.template.spec.containers[0].env as Array<{ name: string; value: string }>;
+    const envVars = job.spec.template.spec.containers[0].env as Array<{
+      name: string;
+      value: string;
+    }>;
     expect(envVars.find((e) => e.name === 'IMAGE')!.value).toContain('app-block-review-my-app');
   });
 
