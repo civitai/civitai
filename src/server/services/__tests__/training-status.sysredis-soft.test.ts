@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import * as z from 'zod';
 
 /**
@@ -19,20 +20,12 @@ import * as z from 'zod';
  * the parse still exercises the real default (available:true).
  */
 
-const { hGet, mockWithSysReadDeadline, mockLogSysRedisFailOpen } = vi.hoisted(() => ({
-  hGet: vi.fn(),
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
-  mockLogSysRedisFailOpen: vi.fn(),
-}));
+const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({ mockLogSysRedisFailOpen: vi.fn() }));
 
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { hGet },
-  REDIS_SYS_KEYS: {
-    SYSTEM: { FEATURES: 'system:features' },
-    TRAINING: { STATUS: 'training:status' },
-  },
-  withSysReadDeadline: mockWithSysReadDeadline,
-}));
+const hGet = redisMock.sysRedis.hGet;
+// The seam these tests drive: they replace it per-test to choose transparent or timed-out.
+const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
+
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
 // Replace the client-coupled schema module with an equivalent local schema so

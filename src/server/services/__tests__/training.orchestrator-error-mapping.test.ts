@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+// Transparent, not the canonical default: the default is the REAL deadline wrapper and this file
+// is about orchestrator error mapping, not about a read losing a race.
+redisMock.withSysReadDeadline.mockImplementation((p: Promise<unknown>) => p);
 import { TRPCError } from '@trpc/server';
 
 /**
@@ -47,11 +52,6 @@ vi.mock('@aws-sdk/lib-storage', () => {
 });
 vi.mock('~/server/db/db-lag-helpers', () => ({ preventModelVersionLag: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: {} }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_SYS_KEYS: { SYSTEM: { FEATURES: 'system:features' } },
-  sysRedis: { hGet: vi.fn() },
-  withSysReadDeadline: vi.fn((p: Promise<unknown>) => p),
-}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/schema/training.schema', () => ({ trainingServiceStatusSchema: {} }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));

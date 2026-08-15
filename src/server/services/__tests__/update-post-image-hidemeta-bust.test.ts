@@ -1,5 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+// Transparent, not the canonical default, which is the REAL deadline wrapper. The old fixture
+// also supplied a permissive proxy for all three key tables; the real ones come through the
+// canonical registration instead, so any path that does not exist for real now reads undefined.
+redisMock.withSysReadDeadline.mockImplementation((p: Promise<unknown>) => p);
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -24,25 +30,11 @@ const IMAGE_ID = 9001;
 const IMAGE_URL = 'abc123/def456.jpeg';
 const USER_ID = 5;
 
-const { mockBustImageDeliveryMetadataCache } = vi.hoisted(
-  () => ({
-    mockBustImageDeliveryMetadataCache: vi.fn(),
-  })
-);
+const { mockBustImageDeliveryMetadataCache } = vi.hoisted(() => ({
+  mockBustImageDeliveryMetadataCache: vi.fn(),
+}));
 
 // --- infra scaffold (mirrors contest-entry-resource-gate.test.ts) ---------------------
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { get: vi.fn(), set: vi.fn(), del: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: { get: vi.fn(), set: vi.fn() },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-    withSysReadDeadline: vi.fn((p) => p),
-  };
-});
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
