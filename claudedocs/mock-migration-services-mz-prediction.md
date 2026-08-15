@@ -445,18 +445,36 @@ asserting nothing. Fix is in flight on the base branch; do not convert until it 
 5. `typecheck-tests-gate.mjs` **inside** the tenancy. The base is already red for
    `minimax-h3-license` and `cosmetic-phash.service`; those are not yours.
 
-## One instrument warning that cost me a false finding
+## The search mistake that cost me a false finding — and it was mine, not the tool's
 
-Shell `grep` on this box can return empty with exit 0 on real matches (a hook rewrites it to a proxy).
-Use the structured search tool for anything load-bearing.
+I published that `REDIS_SUB_KEYS` does not exist in `packages/civitai-redis`. It does: line 2309,
+exported, used in 37 files including six production ones. I attributed the miss to a `grep`-rewriting
+hook that some sessions on this box have. **That was wrong. This session runs `/usr/bin/grep` and it
+answered correctly.** The command was:
 
-**The failure mode is a false ZERO, not a false positive**, which bounds any audit: a non-empty shell
-`grep` result is still evidence. It invalidates "X appears nowhere" claims and leaves "X appears here"
-claims standing, so do not go re-deriving correct positive findings.
+```bash
+grep -n "REDIS_SUB_KEYS\|REDIS_SYS_KEYS\|REDIS_KEYS_UNPREFIXED" packages/civitai-redis/src/client.ts | head -5
+#   -> 38, 46, 1606, 2049, 2299        five real matches, no SUB
+grep -c "REDIS_SUB_KEYS\|REDIS_SYS_KEYS\|REDIS_KEYS_UNPREFIXED" packages/civitai-redis/src/client.ts
+#   -> 7
+```
 
-⚠️ **And the variant that is not in the general warning:** I ran one grep with an alternation,
-`A\|B\|C`. It printed hits for B and C and nothing for A. **The command returned non-empty, so it
-looked alive**, and I read the missing branch as a real negative — publishing that
-`REDIS_SUB_KEYS` does not exist in `packages/civitai-redis`. It does: line 2309, exported, used in 37
-files including production. **A partially-empty alternation is as untrustworthy as a wholly-empty
-result and hides better, because the output looks like a working search.** Split the branches.
+🔴 **`| head -N` drops the LAST matches, and a symbol declared late in a large file is exactly what
+gets cut.** `client.ts` is 2,300+ lines with three key tables in ascending order, so a five-line window
+over an ordered result set could not reach the third. **The output looked like a complete search
+because it was full** — five lines of genuine matches, no truncation marker, exit 0. A short pattern
+list plus a habitual `| head` is all it takes, and unlike any tool-specific bug it happens everywhere.
+
+Check which grep you have before blaming it: `type grep`. If it says `/usr/bin/grep`, the tool is fine
+and the mistake is in the pipeline.
+
+**The method rules stand regardless, and this case argues for all three:**
+
+- **A control inside the same invocation is not a control.** An alternation — or a `head` — can drop
+  the very branch you were relying on as proof of life.
+- **A negative drawn from one branch of a multi-pattern search needs its own invocation.**
+- **Prefer the tool's own filter to a pipe.** Cheaper than any control, and it is the pipe that ate
+  the answer here.
+
+**And the bound that keeps an audit finite:** the hazard is a false ZERO. A non-empty result is still
+evidence, so this invalidates "X appears nowhere" claims and leaves "X appears here" claims standing.
