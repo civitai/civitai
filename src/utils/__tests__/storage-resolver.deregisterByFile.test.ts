@@ -168,8 +168,11 @@ describe('deregisterFileLocationsByFile', () => {
   });
 
   it('returns { deleted: 0 } rather than throwing when the endpoint 404s (contract not yet deployed)', async () => {
-    // The whole reason this PR is sequencing-blocked: against a resolver that
-    // does not yet understand `fileIds`, every call fails SILENTLY.
+    // This WAS the reason the PR was sequencing-blocked; the endpoint is now
+    // merged and deployed, so the 404 arm is no longer the live risk. It is
+    // kept because the silence it demonstrates is permanent: against a resolver
+    // that does not understand `fileIds` — a rollback, a half-rolled fleet —
+    // every call fails SILENTLY and the caller cannot tell.
     fetchMock.mockResolvedValue({
       ok: false,
       status: 404,
@@ -199,6 +202,12 @@ describe('deregisterFileLocationsByFile', () => {
     await deregisterFileLocationsByFile([123]);
 
     expect(spy).toHaveBeenCalledWith(30_000);
+    // 🔴 IDENTITY, not just the call. Asserting `timeout(30_000)` was CALLED and
+    // (elsewhere) that fetch got `some AbortSignal` leaves the two facts
+    // unconnected: computing the timeout and then handing fetch a DIFFERENT
+    // signal survives both, and the request ends up with NO working timeout.
+    // Verified: that mutant passed 13/13 before this line existed.
+    expect((fetchMock.mock.calls[0][1] as RequestInit).signal).toBe(spy.mock.results[0].value);
     spy.mockRestore();
   });
 

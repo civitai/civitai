@@ -221,6 +221,14 @@ export async function deregisterFileLocationsBatch(
  * id. `fileIds` and the version-keyed fields are mutually exclusive server-side
  * (sending both is rejected), so this request carries `fileIds` ONLY.
  */
+// 🔴 `key: 'file'` on every Axiom event below discriminates this per-FILE path
+// from the version-keyed batch, which emits the IDENTICAL event name and payload
+// shape — without it a wholly-inert deploy is indistinguishable from a failing
+// bulk version deregister. Mirrors the resolver's key="file" metric label.
+// Success is deliberately NOT logged (per-delete hot path); confirm it
+// server-side via storage_resolver_deregister_rows_deleted_total{key="file"},
+// read with sum() — the counter is created lazily, so only pods that have
+// handled one emit the series and avg() understates it.
 export async function deregisterFileLocationsByFile(
   fileIds: number[]
 ): Promise<DeregisterFileLocationsResult | null> {
@@ -231,13 +239,7 @@ export async function deregisterFileLocationsByFile(
     logToAxiom({
       type: 'warning',
       name: 'deregister-file-locations-skipped',
-      // 🔴 Discriminates this per-FILE path from the version-keyed batch,
-      // which emits the identical event name and payload shape. Without it a
-      // wholly-inert deploy of this feature is indistinguishable in Axiom from
-      // a failing bulk version deregister. Mirrors the resolver's key="file"
-      // metric label. Success is deliberately NOT logged here — it is a
-      // per-delete hot path; confirm success server-side via
-      // storage_resolver_deregister_rows_deleted_total{key="file"}.
+      // key: see the note above the function — discriminates this path.
       key: 'file',
       reason: 'storage-resolver-not-configured',
       count: fileIds.length,
@@ -271,14 +273,8 @@ export async function deregisterFileLocationsByFile(
         logToAxiom({
           type: 'error',
           name: 'deregister-file-locations-failed',
-      // 🔴 Discriminates this per-FILE path from the version-keyed batch,
-      // which emits the identical event name and payload shape. Without it a
-      // wholly-inert deploy of this feature is indistinguishable in Axiom from
-      // a failing bulk version deregister. Mirrors the resolver's key="file"
-      // metric label. Success is deliberately NOT logged here — it is a
-      // per-delete hot path; confirm success server-side via
-      // storage_resolver_deregister_rows_deleted_total{key="file"}.
-      key: 'file',
+          // key: see the note above the function — discriminates this path.
+          key: 'file',
           count: chunkIds.length,
           status: response.status,
           message: text,
@@ -295,14 +291,8 @@ export async function deregisterFileLocationsByFile(
       logToAxiom({
         type: 'error',
         name: 'deregister-file-locations-error',
-      // 🔴 Discriminates this per-FILE path from the version-keyed batch,
-      // which emits the identical event name and payload shape. Without it a
-      // wholly-inert deploy of this feature is indistinguishable in Axiom from
-      // a failing bulk version deregister. Mirrors the resolver's key="file"
-      // metric label. Success is deliberately NOT logged here — it is a
-      // per-delete hot path; confirm success server-side via
-      // storage_resolver_deregister_rows_deleted_total{key="file"}.
-      key: 'file',
+        // key: see the note above the function — discriminates this path.
+        key: 'file',
         count: chunkIds.length,
         error,
       }).catch(() => undefined);

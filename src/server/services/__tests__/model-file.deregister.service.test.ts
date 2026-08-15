@@ -170,7 +170,11 @@ describe('deleteFile — file_locations deregistration', () => {
     await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).resolves.toBeDefined();
 
     expect(mockDeregisterFileLocationsByFile).toHaveBeenCalled();
-    expect(release).toBeDefined(); // it really was still pending
+    // NOTE on what this does and does not pin: deleteFile resolving while the
+    // deregister is still pending proves it is not awaited UNBOUNDEDLY. A
+    // bounded wait (await Promise.race([sleep(50), deregister()])) still passes
+    // — that shape was checked and does survive. The unbounded case is the one
+    // the design forbids, and the mutant that adds a bare `await` dies here.
     release?.();
   });
 
