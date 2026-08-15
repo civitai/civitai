@@ -56,6 +56,8 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
+import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   CREATOR_SHOP_BORDER,
   submissionFeeLabel,
@@ -285,6 +287,14 @@ function CreatorShopReviewPage() {
     } as unknown as PreviewCosmetic;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, isDecoration, JSON.stringify(normalizedModOffsets)]);
+
+  const features = useFeatureFlags();
+  // Lazy, per selection: the lookup reads every fingerprinted cosmetic, so it has
+  // no business running for the whole queue when a mod is looking at one item.
+  const similarQuery = trpc.creatorShop.getSimilarCosmetics.useQuery(
+    { cosmeticId: selected?.cosmetic?.id as number },
+    { enabled: features.cosmeticSimilarity && !!selected?.cosmetic?.id }
+  );
 
   const queryUtils = trpc.useUtils();
   const saveFit = trpc.creatorShop.updateItem.useMutation({
@@ -845,6 +855,15 @@ function CreatorShopReviewPage() {
                           </Group>
                         )}
                       </ChecksCard>
+                    )}
+
+                    {/* Only when the flag is on: the query is disabled otherwise,
+                        so an empty-state card would claim a comparison nobody ran. */}
+                    {!isPack && features.cosmeticSimilarity && (
+                      <SimilarArtworkCard
+                        result={similarQuery.data}
+                        isLoading={similarQuery.isLoading}
+                      />
                     )}
 
                     <HistoryCard history={selectedMeta.history} creator={submitter} />

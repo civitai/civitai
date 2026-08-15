@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
   revokeCosmeticsFromUsers,
   validateStickerCosmetic,
@@ -357,7 +358,13 @@ export const submitCreatorShopItem = async ({
   if (!feeTxId) throw throwBadRequestError('Unable to charge the submission fee');
 
   try {
-    return await dbWrite.$transaction(async (tx) => {
+    // Captured out of the transaction so the hash can be queued after it commits
+    // — the request is a network round-trip and has no business inside a write
+    // transaction, and a cosmetic that exists without a hash is invisible to
+    // review. This path is why 228 of the 231 unhashed cosmetics on 2026-08-14
+    // were creator submissions.
+    let submittedCosmeticId: number | undefined;
+    const created = await dbWrite.$transaction(async (tx) => {
       const cosmetic = await tx.cosmetic.create({
         data: {
           name,
@@ -372,6 +379,7 @@ export const submitCreatorShopItem = async ({
           createdById: userId,
         },
       });
+      submittedCosmeticId = cosmetic.id;
 
       return tx.cosmeticShopItem.create({
         data: {
@@ -406,6 +414,11 @@ export const submitCreatorShopItem = async ({
         select: creatorShopItemSelect,
       });
     });
+
+    if (submittedCosmeticId)
+      queueCosmeticPerceptualHash({ id: submittedCosmeticId, url: imageUrl });
+
+    return created;
   } catch (error) {
     await refundTransaction(feeTxId, 'Creator Shop submission failed');
     throw error;
@@ -699,6 +712,11 @@ export const updateCreatorShopItem = async ({
         ...(patchedData !== undefined ? { data: patchedData } : {}),
       },
     });
+    // A raw update replaces `data.url` without going near updateCosmetic, so
+    // nothing else re-hashes it: the old hash survives against new artwork and
+    // `pHashUrl` is what tells the two apart afterwards.
+    if (artChanged && imageUrl)
+      queueCosmeticPerceptualHash({ id: existing.cosmeticId, url: imageUrl });
   }
 
   const updatedMeta: CosmeticShopItemMeta = {

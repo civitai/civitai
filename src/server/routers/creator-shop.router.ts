@@ -11,6 +11,7 @@ import {
   getManageItemsSchema,
   getPublicShopItemsSchema,
   getReviewQueueSchema,
+  getSimilarCosmeticsSchema,
   getShopItemResellersSchema,
   reorderResoldItemsSchema,
   resoldItemSchema,
@@ -55,6 +56,7 @@ import {
   updateCreatorShopPack,
 } from '~/server/services/creator-shop-pack.service';
 import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import { getSimilarCosmetics } from '~/server/services/cosmetic-phash.service';
 import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
 import * as z from 'zod';
 import {
@@ -273,6 +275,13 @@ export const creatorShopRouter = router({
   getReviewQueueCreators: moderatorProcedure
     .use(isFlagProtected('creatorShop'))
     .query(() => getCreatorShopReviewQueueCreators()),
+  // Flag-gated so the flag turns the LOOKUP off, not just the panel: a match list
+  // built on a hash too narrow to separate imitations from unrelated artwork is
+  // worse than no list, because a mod reads a ranked list as a ranking.
+  getSimilarCosmetics: moderatorProcedure
+    .use(isFlagProtected('cosmeticSimilarity'))
+    .input(getSimilarCosmeticsSchema)
+    .query(({ input }) => getSimilarCosmetics(input)),
   reviewItem: moderatorProcedure
     .use(isFlagProtected('creatorShop'))
     .input(reviewCreatorShopItemSchema)

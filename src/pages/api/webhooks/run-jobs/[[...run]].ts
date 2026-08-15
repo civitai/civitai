@@ -32,6 +32,7 @@ import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-revie
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
+import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
 import { challengeActivationJob } from '~/server/jobs/challenge-activation';
@@ -187,6 +188,7 @@ export const jobs: Job[] = [
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
   sweepStaleAgentReviewsJob,
+  cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
   checkImageExistence,
   fullImageExistence,
