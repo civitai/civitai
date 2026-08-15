@@ -8,7 +8,7 @@ import {
 } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { capitalize, getModelUrl } from '~/utils/string-helpers';
-import { getCurrencyConfig } from '~/shared/constants/currency.constants';
+import { getCurrencyThemeConfig } from '~/shared/constants/currency-theme.constants';
 
 export const parseBuzzTransactionDetails = (
   details?: BuzzTransactionDetails,
@@ -217,7 +217,7 @@ export const createBuzzDistributionGradient = ({
   if (entries.length <= 1) {
     if (entries.length === 0) return undefined;
 
-    const config = getCurrencyConfig({
+    const config = getCurrencyThemeConfig({
       currency: Currency.BUZZ,
       type: entries[0]?.[0] as BuzzSpendType,
     });
@@ -227,7 +227,7 @@ export const createBuzzDistributionGradient = ({
 
   let currentPct = 0;
   const gradientStops = entries.map(([accountType, pct]) => {
-    const typeConfig = getCurrencyConfig({
+    const typeConfig = getCurrencyThemeConfig({
       currency: Currency.BUZZ,
       type: accountType as BuzzSpendType,
     });

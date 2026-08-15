@@ -22,7 +22,7 @@ import {
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
 import { isDefined } from '~/utils/type-guards';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { createJob } from './job';
 
 // Chunks are barriers waiting on the slowest call (~3s median, 13-20s tail), so they must be wide

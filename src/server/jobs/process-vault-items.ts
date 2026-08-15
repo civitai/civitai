@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { VaultItemStatus } from '~/shared/utils/prisma/enums';
 import JSZip from 'jszip';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';

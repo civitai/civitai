@@ -535,6 +535,27 @@ const featureFlags = createFeatureFlags({
   // the route SSR resolver reads the same resolved flag) but staged `['mod']`
   // rather than `[]` because it's a re-host, not a brand-new dark capability.
   appReviewPage: { availability: ['mod'], fliptKey: 'app-review-page' },
+  // Early-adopter opt-in cohort. `availability: []` means static evaluation is false, so
+  // when Flipt is UNREACHABLE (isFliptSync → null) nobody is in the cohort. NOT
+  // `['user']`/`['public']`: those would fail OPEN during a Flipt outage, which defeats the
+  // point of an opt-in.
+  //
+  // 🔴 SCOPE OF THAT PROTECTION — it covers the Flipt-DOWN case ONLY, and nothing else.
+  // Once Flipt ANSWERS, `hasFeature` returns the Flipt result and never reaches static
+  // evaluation (see the `if (fliptResult !== null) return fliptResult` branch below), so
+  // `availability: []` cannot defend against a MIS-DEFINED flag. The correctness of this
+  // cohort therefore rests on a precondition held in ANOTHER REPO:
+  //
+  //   flipt-state `civitai-app/default/features.yaml` → flag `early-adopter` MUST be
+  //   `enabled: false` with the `early-adopters` segment rollout.
+  //
+  // For a boolean flag, Flipt's `enabled` is the value returned when NO rollout matches —
+  // it is not a master switch. `enabled: true` there would hand this flag to every
+  // non-opted-in user and every anonymous request, and nothing on this side would stop it.
+  // That exact defect was caught pre-merge in flipt-state#62; the shape is now gated by
+  // `scripts/validate-flag-shape.py` in that repo, and modelled in
+  // `feature-flags.early-adopter.seam.test.ts`.
+  earlyAdopter: { availability: [], fliptKey: 'early-adopter' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -667,6 +688,11 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
     // Creator Program membership is recorded as an onboarding-step bit
     // (set on join in creator-program.service, cleared on leave).
     ctx.isInCreatorProgram = String(Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram));
+    // Early-adopter opt-in, stored in `User.settings` and projected onto the session by
+    // the auth hub. Always emitted for a logged-in user (never opted in ⇒ 'false'), so a
+    // Flipt segment can match on the string EQUALLY rather than on key presence — same
+    // shape as `isModerator` above. Absent entirely for an anonymous request.
+    ctx.isEarlyAdopter = String(!!user.isEarlyAdopter);
   } else {
     ctx.isLoggedIn = 'false';
   }
@@ -818,8 +844,12 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
 // one user scrolling the feed (many getInfinite calls) — skip the per-flag work.
 //
 // KEY COMPLETENESS IS A CORRECTNESS INVARIANT. The cache key must include EVERY
-// input hasFeature reads: user id/isModerator/tier/permissions, host (domain
-// gating), and the FULL region. Region gates compliance-sensitive
+// input hasFeature reads: user id/isModerator/tier/isEarlyAdopter/permissions,
+// host (domain gating), and the FULL region. `isEarlyAdopter` is in the key for
+// exactly this reason — it feeds buildFliptContext, so an entry cached before the
+// user toggled it would keep the OLD cohort decision for the whole TTL, which is
+// precisely the staleness the toggle's `refreshSession` exists to prevent.
+// Region gates compliance-sensitive
 // restricted-region features, so two different regions must NEVER share an entry
 // — the whole region object is serialized into the key to guarantee that. Live
 // Flipt config changes are bounded by the TTL (same staleness as the per-eval
@@ -837,10 +867,9 @@ function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccess
   // checkRegionAccess's `if (req)`) so key construction never throws.
   const region = isDev || !req ? undefined : getRegion(req);
   const u = user
-    ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${(user.permissions ?? [])
-        .slice()
-        .sort()
-        .join(',')}`
+    ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${
+        user.isEarlyAdopter ? 1 : 0
+      }:${(user.permissions ?? []).slice().sort().join(',')}`
     : 'anon';
   return `${u}|h:${host ?? ''}|r:${region ? JSON.stringify(region) : ''}`;
 }

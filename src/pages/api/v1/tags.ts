@@ -1,6 +1,6 @@
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { publicApiContext2 } from '~/server/createContext';
+import { publicApiContext2 } from '~/server/public-api-context';
 
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';

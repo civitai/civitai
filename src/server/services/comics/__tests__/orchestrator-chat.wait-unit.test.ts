@@ -217,7 +217,7 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
       .map((m) => {
         const token = (m[1] ?? m[2]).trim();
         return {
-          file: path.relative(SRC, file),
+          file: path.relative(SRC, file).replace(/\\/g, '/'),
           token,
           kind: classify(token),
           seconds: resolveWait(token, source),

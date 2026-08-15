@@ -21,7 +21,9 @@ const { mockUpload, mockCreateImage } = vi.hoisted(() => ({
   mockCreateImage: vi.fn(async (..._a: unknown[]): Promise<{ id: number }> => ({ id: 4242 })),
 }));
 
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
+// The service statically imports getEdgeUrl; stub it so the module graph never
+// touches a real cf-images env. dbRead comes from the canonical mock in setup.ts.
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
 vi.mock('~/utils/s3-utils', () => ({ uploadImageBufferToStore: mockUpload }));
 // `createImage` is dynamically imported inside the service.
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));

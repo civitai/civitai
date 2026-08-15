@@ -11,7 +11,7 @@ import { beforeEach, describe, it, expect, vi } from 'vitest';
  */
 
 // Echo the args so we can assert exactly what getEdgeUrl was asked to produce.
-vi.mock('~/client-utils/cf-images-utils', () => ({
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (src: string, opts: Record<string, unknown>) => JSON.stringify({ src, ...opts }),
 }));
 const mockQueryRaw = dbMock.dbRead.$queryRaw;

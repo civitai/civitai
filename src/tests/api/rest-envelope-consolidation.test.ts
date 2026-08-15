@@ -69,7 +69,7 @@ const {
   mockTracker: vi.fn(),
 }));
 
-vi.mock('~/server/createContext', async (importOriginal) => ({
+vi.mock('~/server/public-api-context', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   publicApiContext2: mockPublicApiContext2,
 }));

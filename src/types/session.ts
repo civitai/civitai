@@ -1,8 +1,4 @@
-import type {
-  UserTier,
-  UserSubscriptionsByBuzzType,
-  UserMeta,
-} from '~/server/schema/user.schema';
+import type { UserTier, UserSubscriptionsByBuzzType, UserMeta } from '~/server/schema/user.schema';
 import type { getUserBanDetails } from '~/utils/user-helpers';
 
 // First-party session types — the app imports `Session`/`SessionUser` from here (not from 'next-auth'), so the
@@ -37,6 +33,13 @@ export interface SessionUser {
   memberInBadState?: boolean;
   meta?: UserMeta;
   allowAds?: boolean;
+  /**
+   * Early-adopter opt-in, projected off `User.settings.isEarlyAdopter` by the auth hub
+   * (`shapeSessionUser`). Read by `buildFliptContext` so Flipt segments can target the
+   * cohort. Session-carried on purpose — the Flipt context is built once per request and
+   * must not take a DB read (feature-flags.service.ts).
+   */
+  isEarlyAdopter?: boolean;
   banDetails?: ReturnType<typeof getUserBanDetails>;
   redBrowsingLevel?: number;
   deletedAt?: Date;

@@ -2,7 +2,7 @@ import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import {

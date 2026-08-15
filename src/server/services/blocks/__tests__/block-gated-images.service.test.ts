@@ -7,7 +7,7 @@ const queryRaw = dbMock.dbRead.$queryRaw;
 // Deterministic edge-url so the assertion is stable and we never import the real
 // CF util (which pulls env). The gated url embeds the raw key so we can assert it
 // is ONLY ever produced for a visible image.
-vi.mock('~/client-utils/cf-images-utils', () => ({
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (url: string, opts?: { width?: number }) => `edge:${url}@${opts?.width}`,
 }));
 // Viewer hidden-preferences — default: nothing blocked. Overridden per test.

@@ -61,7 +61,7 @@ vi.mock('~/env/server', () => ({
   env: { IS_DATAPACKET: false, LOGGING: '', IS_BUILD: true },
 }));
 
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 // The serialized `name` is not the subject here; a per-file deterministic name
 // keeps the fixture readable while staying distinct per file.
 vi.mock('~/server/services/file.service', () => ({

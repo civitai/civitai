@@ -55,7 +55,7 @@ vi.mock('~/server/services/creator-program.service', () => ({
 vi.mock('~/server/services/file.service', () => ({
   getDownloadFilename: ({ file }: any) => `${file.id}.safetensors`,
 }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   MixedAuthEndpoint: (handler: any) => handler,
   // by-hash/[hash] is wrapped in PublicEndpoint(handler, ['GET'], {maxAge}).
