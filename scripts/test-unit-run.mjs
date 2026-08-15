@@ -44,6 +44,8 @@ function runDirect(args) {
     process.platform === 'win32' ? 'vitest.cmd' : 'vitest'
   );
   const bin = existsSync(local) ? local : 'vitest';
+  // `unit*`, never a single name. `unit`, `unit-native` and `unit-fast` partition one suite, so a
+  // selector naming one of them runs a fraction of it and still exits 0.
   const child = spawn(bin, ['run', '--project', 'unit*', ...args], {
     cwd: repoRoot,
     stdio: 'inherit',
