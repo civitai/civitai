@@ -1,11 +1,11 @@
 # The `dbRead`/`dbWrite` alias split where the service picks its client at runtime
 
 Written by josh, 2026-08-15, for the `src/server/services/__tests__` a–m slice of the shared-mock
-migration (branch `perf/test-mock-migration-services-a-m`). This is the one bucket in that slice
+migration (branch `perf/test-mock-migration-services-a-m`). These are the buckets in that slice
 where the routing decision is **not** readable off the production source in the usual way, so it is
 written up per case rather than handed over as a to-do list.
 
-## The problem
+## Mechanism 1: the client is a PARAMETER
 
 Most files that mock `~/server/db/client` with one local serving both clients —
 
@@ -53,6 +53,38 @@ zero hits. So each entry point falls to its own default, and those defaults are 
 **The `:2032` inversion is the trap.** Four sites default to `dbWrite` and one defaults to `dbRead`.
 Anyone who learns "the default is write" from the first four and applies it to the fifth gets a
 silent mis-route. Check the site, not the pattern.
+
+## Mechanism 2: the client is chosen by REPLICATION LAG, not by a caller
+
+Found later, and it is the more common of the two. `getDbWithoutLag` (`db/db-lag-helpers.ts:46`)
+returns `dbRead` or `dbWrite` depending on runtime state:
+
+```ts
+if (env.REPLICATION_LAG_DELAY <= 0) return dbRead;                 // production: ALWAYS taken (default 0)
+return (await lagTracker.isStale(lagKey(type, id))) ? dbWrite : dbRead;
+```
+
+Anything reached through it — `model-version.service.getVersionById` is the one in this slice —
+has no fixed client in the source, so the usual grep resolves to `BOTH`.
+
+🔴 **And under test it does not behave as production does.** `REPLICATION_LAG_DELAY` is a zod
+`.default(0)` key that is **absent from `TEST_ENV_DEFAULTS`**, so the canonical env reads it as
+`undefined`; `undefined <= 0` is `false` where `0 <= 0` is `true`. **Every test whose path reaches
+`getDbWithoutLag` without mocking `db-lag-helpers` takes a staleness branch production never
+takes**, and lands on whichever client a redis read decides. 73 zod-defaulted keys exist, 59 are
+absent from `TEST_ENV_DEFAULTS`, and 40 of those have numeric or boolean defaults where `undefined`
+is not equivalent. Fixing that is a shared-mock change, not a slice change.
+
+**Affected here, and NOT to be split by inspection:** `model-version.blue-buzz-purchase`,
+`model-version.deregister`, `model-version.purge-by-hash`, `model-file.service`,
+`model-file-scan.service`.
+
+⚠️ **Why the already-converted files in this slice were safe is a coincidence, not a judgement.**
+`contest-entry-base-model-gate`, `contest-entry-resource-gate`, `article-locked-properties`,
+`model-locked-properties`, `model-flag-side-effects` and `model-version.linked-component` all mock
+`~/server/db/db-lag-helpers` directly, which pins the client before any of this applies. **The safe
+and unsafe conversions are separated by whether the test happened to stub that module** — so the
+population at risk cannot be read off which files converted cleanly.
 
 ## Per file
 
