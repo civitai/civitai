@@ -329,3 +329,32 @@ dirtied nothing tracked in my worktree. That only rules out my own regen — the
 move by someone else's commit on the base, and it did.
 
 Both are the same shape as reading two coincident timestamps as cause and effect.
+
+## Next batch, pre-mapped — the eight remaining aliases
+
+Scoped to the module under test rather than the whole tree: a repo-wide search reports `BOTH` for any
+common path because some unrelated service uses the other client, which buries the cases that genuinely
+need eyes.
+
+```
+resourceReview.idempotent    user.findFirst -> dbRead       A REAL SPLIT: the file drives a read and a
+                             resourceReview.* -> dbWrite    write through one local. Expect red.
+restore-user-image-recovery  user.update -> dbWrite
+                             user.findFirst, $transaction -> BOTH in user.service.ts; read the function
+model.service.vae-append     modelMetric/modelVersionMetric.findMany -> dbRead; several BOTH
+update-user-profile.sql      updateUserProfile emits through dbWrite only
+user-profile-domain-variants unmapped, local never dereferenced
+remix-gallery                unmapped, local never dereferenced
+tag.service.security         unmapped, local never dereferenced
+tag.service.unlisted         modelFindFirst aliases model.findFirst AND image.findFirst - two MODELS,
+                             not two clients, so a model assertion can be satisfied by an image call
+```
+
+⚠️ **"Unmapped" here means the local is never dereferenced — the test asserts through a captured array
+or a spy identity instead. That is a different SHAPE, not an empty answer**, and it produces output
+identical to the tool being blind. Read those files; do not convert on that output.
+
+The `tag.service.unlisted` case is worth its own note: it is the alias disease one level down. Everyone
+looks for `dbRead`/`dbWrite` aliasing; this one aliases two **models** on the same client, so a
+`model.findFirst` assertion can be satisfied by an `image.findFirst` call and no amount of getting the
+client right would catch it.
