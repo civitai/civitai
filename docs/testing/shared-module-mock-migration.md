@@ -339,6 +339,43 @@ worker-global, which is a change to every other file in the worker rather than t
 `src/server/services/storage-resolver.ts:6` reads them at module scope, and the two tests import
 different ones. The codemod got that pair right; a per-key generalisation would not have.
 
+### The remaining 8 refusals, assessed
+
+The other four labels, read the same way. **Five convert by hand, two are blocked, one is
+unresolved.** Note the count: 20 + 8 = 28, so there is no separate pool beyond these.
+
+**Convertible by hand — 5.** In every case the refusal is a static-analysis limit, not a
+property of the test:
+
+| file | refusal | what it actually is |
+|---|---|---|
+| `ingest-images-cap` | `IMAGE_SCANNING_MAX_PER_RUN` not statically evaluable | the value is a local `MOCK_CAP` const; the key is read inside the job body (`image-ingestion.ts:107`) |
+| `git-push.gate` | `FORGEJO_WEBHOOK_SECRET` not statically evaluable | same shape — a `SECRET` const; read inside `verifyForgejoSignature` |
+| `apps-pipeline.triggerBuild` | table not self-contained | references `TRIGGER_SECRET` from the same `vi.hoisted` block — **identical to `apps-pipeline.reviewBuild`**, already converted |
+| `review-build-callback` | table not self-contained | `mockEnvStore` from a hoisted block — **identical to `build-callback`**, already converted |
+| `publish-request.orchestration` | table not self-contained | `_publishEnvOverrides` is a plain module-scope const; every key it carries (`FORGEJO_*`, `BUNDLE_S3_*`, `DISCORD_WEBHOOK_MOD_ALERTS`) is read inside a function |
+
+**Blocked — 2.** `origin-helpers` builds the allowlist `Set` at module load from `TRPC_ORIGINS`
++ `NEXTAUTH_URL` and its own docblock says so; its values differ from the defaults, and
+promoting them is the origins blast-radius problem. `cloudflare/client.purgeCache` needs
+`CF_API_TOKEN` present at import (`getClient()` is called at module scope) **and** declares
+`LOGGING: 'cloudflare'` — a string — specifically so `createLogger` enables and the failure log
+becomes observable. The canonical `LOGGING: []` makes `.includes('cloudflare')` false, so the
+thing the test observes disappears; fixing that worker-wide changes logging for every file.
+
+**Unresolved — 1, and the interesting one.** `image-cacher-invalidate-scope`'s `KNOWN_UNSAFE`
+entry reads *"the value is captured during module evaluation, before any setEnv"* — but
+`IMAGE_CACHER_ADMIN_SECRET` is read at `image.service.ts:359`, **inside a function**. The
+file's table supplies it through a **getter** that returns a mutable `envOverrides` box, so the
+likely real mechanism is the mutation class — a lift froze the getter into a static value and
+lost the per-case variation — not module-scope capture at all. **A run beat a conversion whose
+shape is not visible from the entry**, so the entry stands; but retiring it is a fresh-pair
+question, and whoever does it should expect the canonical `defineProperty` accessor path
+(`__envAccessor` in `env.mock.ts`) to be the tool, not `TEST_ENV_DEFAULTS`.
+
+The general point: **a `KNOWN_UNSAFE` entry records that a run failed, not why.** The reason
+text is a hypothesis written at the time, and this one does not survive reading the code.
+
 ⚠️ **And "no direct mocks" is not "eligible for `isolate: false`".** A file can be fully
 migrated on every canonical axis — allowlist clean, nothing left to convert — and still be
 permanently isolated, because what blocks it is a module-scope flag its neighbours disagree
