@@ -41,9 +41,9 @@ import { getFileExtension } from '~/utils/string-helpers';
 import {
   comfyFileTypeLabels,
   filterFileTypeByExtension,
-  getFileIconConfig,
   UNQUANTIZED_QUANT_TYPE,
 } from '~/utils/file-display-helpers';
+import { getFileIconConfig } from '~/utils/file-display-icons';
 import { trpc } from '~/utils/trpc';
 
 type FileMetadataUpdate = {

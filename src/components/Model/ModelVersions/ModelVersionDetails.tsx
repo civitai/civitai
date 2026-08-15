@@ -151,7 +151,7 @@ import type { ModelById } from '~/types/router';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
+import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
