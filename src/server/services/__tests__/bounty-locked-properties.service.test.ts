@@ -1,38 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Unit tests for bounty lock enforcement — locks come from the stored row, never from the
 // client payload. bounty.service.ts has a large import graph, so its transitive
 // service/db/queue dependencies are stubbed out below. Mirrors the mock scaffold used in
 // model-locked-properties.service.test.ts.
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    count: vi.fn(),
-  });
-  const tx = {
-    bounty: mk(),
-    bountyBenefactor: mk(),
-    bountyEntry: mk(),
-    image: mk(),
-    tagsOnBounty: mk(),
-  };
-  return {
-    mockDbRead: { bounty: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      ...tx,
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-      $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
-    },
-  };
-});
+// The old fixture spread its `tx` into `dbWrite`, so a model reached through the transaction and
+// the same model reached directly were one object. The canonical `$transaction` default runs the
+// callback against `dbMock.dbWrite`, which keeps that identity.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockBuzzTransaction } = vi.hoisted(
   () => ({
@@ -45,7 +23,6 @@ const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockBuzzTransaction }
 vi.mock('~/libs/profanity-simple', () => ({
   createProfanityFilter: () => ({ evaluateContent: mockEvaluateContent }),
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: mockThrowOnBlockedLinkDomain,
 }));

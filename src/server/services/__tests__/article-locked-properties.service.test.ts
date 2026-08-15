@@ -1,42 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Unit tests for upsertArticle's lockedProperties enforcement — locks are read from the
 // stored row, never from the client payload. article.service.ts has a large import graph,
 // so its transitive service/db/search dependencies are stubbed out below.
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    deleteMany: vi.fn(),
-    count: vi.fn(),
-  });
-  const tx = {
-    article: mk(),
-    image: mk(),
-    imageConnection: mk(),
-    tagsOnArticle: mk(),
-    collectionItem: mk(),
-    $queryRaw: vi.fn(async () => []),
-    $executeRaw: vi.fn(async () => 0),
-  };
-  return {
-    mockDbRead: { article: mk(), image: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      ...tx,
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-      $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
-    },
-  };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+// The old fixture spread its `tx` into `dbWrite`, so a model reached through the transaction and
+// the same model reached directly were one object. The canonical `$transaction` default runs the
+// callback against `dbMock.dbWrite`, which keeps that identity.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
 
 // upsertArticle's UPDATE path does post-commit work that reaches Redis: the
