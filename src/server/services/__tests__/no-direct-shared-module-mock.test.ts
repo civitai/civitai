@@ -33,7 +33,10 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const ALLOWLIST_PATH = path.join(REPO_ROOT, 'src/__tests__/mocks/direct-mock-allowlist.json');
 
 function scan() {
-  const files = globSync('src/**/*.test.ts', { cwd: REPO_ROOT });
+  // `{ts,tsx}` so a `.browser.test.tsx` cannot add a direct mock the guard is structurally
+  // unable to see. Detection only — the codemod stays `.ts`, since the canonical mocks are
+  // proven on node-project tests and browser mode is unvalidated. (donovan's finding.)
+  const files = globSync('src/**/*.test.{ts,tsx}', { cwd: REPO_ROOT });
   const canonical: Record<string, string[]> = {};
   const pending: Record<string, string[]> = {};
   for (const rel of files) {

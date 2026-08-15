@@ -30,7 +30,11 @@ const { CANONICAL_SPECIFIERS, PENDING_SPECIFIERS } = readSpecifiers();
 const pattern = (spec) =>
   new RegExp(`vi\\.mock\\(\\s*['"\`]${spec.replace(/[/~.]/g, (c) => `\\${c}`)}['"\`]`);
 
-const testFiles = globSync('src/**/*.test.ts', { cwd: repoRoot })
+// `{ts,tsx}` for DETECTION. A `.browser.test.tsx` adding a direct canonical mock is a class
+// the guard could not observe at all, which is different from a class that happens to be
+// empty today (it is: 0 such files). The CODEMOD deliberately stays `.ts` — converting a
+// browser-mode file would put it in a regime the canonical mocks have never been proven in.
+const testFiles = globSync('src/**/*.test.{ts,tsx}', { cwd: repoRoot })
   .map((f) => f.replace(/\\/g, '/'))
   .filter((f) => !f.startsWith('src/__tests__/mocks/'))
   .sort();
