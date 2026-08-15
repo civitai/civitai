@@ -100,17 +100,9 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Tracker: mockTracker,
 }));
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() }, get: vi.fn(), set: vi.fn() },
-    sysRedis: { hGet: vi.fn() },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-  };
-});
+// The local redis mock replaced REDIS_KEYS / REDIS_SYS_KEYS / REDIS_SUB_KEYS with a proxy
+// that answers 'k' to every path. The canonical registration spreads the real package, so the
+// routes now build their cache keys from the real constants.
 
 import { Prisma } from '@prisma/client';
 import { DatabaseError } from 'pg';
