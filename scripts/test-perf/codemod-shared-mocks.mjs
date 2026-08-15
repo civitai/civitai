@@ -327,8 +327,14 @@ function convert(file, text) {
     const decl = findDeclaration(sf, name);
     if (decl) {
       if (!isPlainSpyInitializer(decl.initializer, expr)) {
-        refusals.push({ target: 'multiple', reason: `declaration of "${name}" is not a bare vi.fn()/vi.hoisted(() => vi.fn())` });
-        return { file, text, converted: [], refusals, findings };
+        // Same rule as a factory leaf: behaviour on the declaration lifts onto the canonical
+        // node rather than blocking the file.
+        const lift = liftingAllowed ? liftedAssignment(decl.initializer, expr) : null;
+        if (!lift) {
+          refusals.push({ target: 'multiple', reason: `declaration of "${name}" is not a bare vi.fn()/vi.hoisted(() => vi.fn())` });
+          return { file, text, converted: [], refusals, findings };
+        }
+        lifts.push(lift);
       }
       edits.push({ start: decl.initializer.getStart(sf), end: decl.initializer.getEnd(), replacement: expr });
       continue;
@@ -343,8 +349,12 @@ function convert(file, text) {
       return { file, text, converted: [], refusals, findings };
     }
     if (!isPlainSpyInitializer(hoisted.initializer, expr)) {
-      refusals.push({ target: 'multiple', reason: `hoisted entry "${name}" is not a bare vi.fn()` });
-      return { file, text, converted: [], refusals, findings };
+      const lift = liftingAllowed ? liftedAssignment(hoisted.initializer, expr) : null;
+      if (!lift) {
+        refusals.push({ target: 'multiple', reason: `hoisted entry "${name}" is not a bare vi.fn()` });
+        return { file, text, converted: [], refusals, findings };
+      }
+      lifts.push(lift);
     }
     hoistedRemovals.push(hoisted);
     lifted.push(`const ${name} = ${expr};`);
