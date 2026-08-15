@@ -5,6 +5,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import { useRouter } from 'next/router';
 import { CONNECT_CLIENT_TRANSFER_REFUSAL } from '~/shared/constants/app-transfer.constants';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
+import { constants } from '~/server/common/constants';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -437,6 +438,35 @@ describe('🔴 THE CONTROL ARM — an OFF-SITE listing with NO connect client', 
     // Absence, with the awaited present element above as its positive control.
     expect(page.getByTestId('apps-transfer-blocked').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-transfer-picker-disabled').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 THE POSITIVE CONTROL FOR THE SUPPRESSION TEST, and its absence was a real hole.
+   *
+   * The refused arm asserts the expiry copy is NOT rendered. Nothing anywhere asserted it
+   * is EVER rendered — so DELETING the block outright left the whole suite green, and the
+   * negative assertion could not distinguish "correctly suppressed when refused" from
+   * "this helper text no longer exists for anybody".
+   *
+   * 🔴 THE INVERSION MUTANT DOES NOT COVER THIS. "Stop suppressing" and "delete entirely"
+   * fail in OPPOSITE directions: a suite that catches one is structurally blind to the
+   * other, which is why the deletion mutant survived a battery that killed the inversion.
+   * A negative assertion is only meaningful next to a positive one on the same string.
+   */
+  test('…and the transfer helper copy DOES render on a listing that can transfer', async () => {
+    state.context = contextFor({ kind: 'offsite', connectClientId: null });
+    renderWithProviders(<AppListingEditPage />);
+
+    const section = page.getByTestId('apps-transfer-owner-section');
+    await expect.element(section).toBeInTheDocument();
+    await expect.element(section).toHaveTextContent(/One transfer offer at a time/i);
+    // The expiry figure comes from `constants`, so pin that it is interpolated at all
+    // rather than left as a literal — the sentence is only useful with a number in it.
+    await expect
+      .element(section)
+      .toHaveTextContent(
+        new RegExp(`expires after\\s*${constants.appCollaborators.transferExpiryDays}\\s*days`, 'i')
+      );
   });
 });
 

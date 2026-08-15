@@ -320,12 +320,21 @@ function OwnerTransferSection({
                 precisely why `acceptTransfer` re-asserts the refusal IN-TRANSACTION rather
                 than trusting the initiate-time check. Without this line the tab renders
                 "ownership cannot be transferred" directly above a "Transfer pending" card
-                and leaves the owner to guess which one is true — and the recipient would
-                hit the refusal on accept with no warning either. */}
+                and leaves the owner to guess which one is true.
+
+                🔴 SCOPE: THE OWNER ONLY. This is the owner's Collaborators tab. The
+                RECIPIENT's surfaces (`AppTransferOffersView`, `AppInvitesBody`) carry no
+                connect-client awareness at all, so an addressee still sees a normal-looking
+                offer and meets the refusal only on clicking accept — the same
+                learn-it-by-doing-the-work shape this section fixes for the owner, on the
+                other side of the wire. That gap is OPEN and deliberately NOT closed here;
+                it needs the recipient read to carry the verdict, which is its own change. */}
             {refusedForConnectClient ? (
               <Text size="xs" c="red.6" data-testid="apps-transfer-pending-dead">
-                This offer can no longer be accepted, because the listing is now linked to an OAuth
-                application. Cancel it to tidy it up.
+                {/* No "because the listing is linked to an OAuth application" here — the
+                    banner above says exactly that, and both render under the SAME
+                    condition, so a second wording of one fact could only drift from it. */}
+                This offer can no longer be accepted. Cancel it to tidy it up.
               </Text>
             ) : null}
           </Stack>
