@@ -68,9 +68,11 @@ REDIS_KEYS: completeKeys({ BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpo
 Refusals: `REDIS_KEYS in the factory is not a plain literal` (4), `non-literal property inside a
 client object` (2), `REDIS_SYS_KEYS literal DIFFERS from the real constant` (2).
 
-**Automatable, but the tool is asking the wrong question.** `setup.ts` registers the canonical mocks
-with an `importOriginal` spread, so `REDIS_KEYS` and `REDIS_SYS_KEYS` already come from the real
-module. The factory's copy is not needed at all — it can be deleted rather than translated.
+**Automatable, but the tool is asking the wrong question.** `setup.ts` spreads
+`@civitai/redis/client` into its registration, and both `REDIS_KEYS` and `REDIS_SYS_KEYS` are defined
+there (`packages/civitai-redis/src/client.ts:2305` and `:1606`) rather than in the `~/server/redis/client`
+shim — so the real constants are already present. The factory's copy is not needed at all; it can be
+deleted rather than translated.
 
 The tool refuses because it tries to prove the literal matches the real constant, which it cannot do
 when the value is a call expression. The question that actually decides safety is narrower: **does the
@@ -91,13 +93,14 @@ Two tests asserting against their own fixture rather than the real key.
 
 `safeError` (2, on `~/server/logging/client`), `withSysReadDeadline` (1, on `~/server/redis/client`).
 
-**Genuine gap in the canonical mocks, not in the codemod.** These are real exports of the mocked
-modules that a test needs to stub, and the canonical mock owns only `logToAxiom` / `redis` /
-`sysRedis`. Since both registrations spread the original, the real implementations are present — so
-the question is whether these three tests need to stub them at all, or were stubbing them only because
-the whole module was being replaced. Two of the three (`safeError`) are in files that also carry the
-drifted-constant finding above, which suggests the whole factory was written to avoid loading the real
-module rather than to change behaviour.
+**Not a codemod gap — a question about whether the stub is needed at all.** These are real exports of
+the mocked modules, and the canonical mocks own only `logToAxiom` / `redis` / `sysRedis`. Both
+registrations spread the rest in, so the real implementations are present:
+`withSysReadDeadline` explicitly (`setup.ts` spreads `~/server/redis/sys-read-deadline`), and
+`safeError` via the logging registration's `importOriginal`. So these three tests were most likely
+stubbing them only because the whole module was being replaced, not to change behaviour. Two of the
+three (`safeError`) are in the same files as the drifted-constant finding above, which points the same
+way: the factory exists to avoid loading the real module.
 
 ## What would raise the ceiling
 
