@@ -19,14 +19,14 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 332,
+    "canonicalFiles": 331,
     "pendingFiles": 390,
     "allFiles": 508,
-    "canonicalSites": 475,
+    "canonicalSites": 474,
     "pendingSites": 853
   },
   "bySpecifier": {
-    "~/server/db/client": 235,
+    "~/server/db/client": 234,
     "~/server/redis/client": 139,
     "~/server/logging/client": 101,
     "~/env/server": 106,
@@ -245,7 +245,6 @@
     "src/server/services/__tests__/training.orchestrator-error-mapping.test.ts",
     "src/server/services/__tests__/unblock-image-nsfwlevel-reset.test.ts",
     "src/server/services/__tests__/update-post-image-hidemeta-bust.test.ts",
-    "src/server/services/__tests__/update-user-profile.sql.service.test.ts",
     "src/server/services/__tests__/user-challenge-flag-gate.test.ts",
     "src/server/services/__tests__/user-profile-domain-variants.service.test.ts",
     "src/server/services/blocks/__tests__/agent-review.service.test.ts",

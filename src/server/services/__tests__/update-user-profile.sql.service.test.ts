@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Correctness tests for the SQL statement `updateUserProfile` emits for
 // `creatorCardStatsPreferences`.
@@ -15,7 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // literally (so the function, the path and the `::jsonb` cast can't drift), and the user data
 // appears only in the bound values.
 
-const { statements, mockDb } = vi.hoisted(() => {
+const { statements, record } = vi.hoisted(() => {
   const statements: { text: string; values: unknown[] }[] = [];
 
   // Two call shapes reach the capture. The tagged template (`$executeRaw`…``) arrives as
@@ -38,49 +39,37 @@ const { statements, mockDb } = vi.hoisted(() => {
     }
   };
 
-  const profileRow = { userId: 1, coverImage: null };
-  const tx = {
-    userLink: {
-      deleteMany: vi.fn(async () => ({ count: 0 })),
-      createMany: vi.fn(async () => ({ count: 0 })),
-      updateMany: vi.fn(async () => ({ count: 0 })),
-    },
-    userProfile: {
-      update: vi.fn(async () => profileRow),
-      upsert: vi.fn(async () => ({ userId: 1 })),
-    },
-  };
-
-  const mockDb = {
-    $executeRaw: vi.fn(async (first: any, ...rest: unknown[]) => {
-      record(first, rest);
-      return 1;
-    }),
-    $executeRawUnsafe: vi.fn(async (first: any, ...rest: unknown[]) => {
-      record(first, rest);
-      return 1;
-    }),
-    $queryRaw: vi.fn(async () => []),
-    $transaction: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn(tx)),
-    user: {
-      findUniqueOrThrow: vi.fn(async () => ({
-        id: 1,
-        meta: {},
-        settings: {},
-        publicSettings: {},
-        profile: { userId: 1, message: null, coverImage: null },
-      })),
-      findUnique: vi.fn(async () => ({ id: 1 })),
-    },
-    userStat: { findFirst: vi.fn(async () => null) },
-    userProfile: tx.userProfile,
-    userLink: tx.userLink,
-  };
-
-  return { statements, mockDb };
+  return { statements, record };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
+// dbWrite for everything except the stats read, which `updateUserProfile` takes off dbRead.
+// The old fixture handed `$transaction` a SEPARATE `tx` object and then aliased two of its
+// tables back onto the client. Prisma's tx client is the same client scoped to a transaction,
+// and the canonical `$transaction` models that by passing the node itself — so the separation
+// was a distinction the runtime does not have.
+const mockDb = dbMock.dbWrite;
+
+mockDb.$executeRaw.mockImplementation(async (first: any, ...rest: unknown[]) => {
+  record(first, rest);
+  return 1;
+});
+mockDb.$executeRawUnsafe.mockImplementation(async (first: any, ...rest: unknown[]) => {
+  record(first, rest);
+  return 1;
+});
+mockDb.user.findUniqueOrThrow.mockResolvedValue({
+  id: 1,
+  meta: {},
+  settings: {},
+  publicSettings: {},
+  profile: { userId: 1, message: null, coverImage: null },
+});
+mockDb.user.findUnique.mockResolvedValue({ id: 1 });
+mockDb.userProfile.update.mockResolvedValue({ userId: 1, coverImage: null });
+mockDb.userProfile.upsert.mockResolvedValue({ userId: 1 });
+mockDb.userLink.deleteMany.mockResolvedValue({ count: 0 });
+mockDb.userLink.createMany.mockResolvedValue({ count: 0 });
+mockDb.userLink.updateMany.mockResolvedValue({ count: 0 });
 // Cover-image ingestion makes a blocking external call; the profile write doesn't depend on it.
 vi.mock('~/server/services/image.service', () => ({
   enqueueImageIngestion: vi.fn(async () => undefined),
