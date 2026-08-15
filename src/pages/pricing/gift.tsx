@@ -114,9 +114,12 @@ export default function GiftMembershipPage() {
       }),
   });
 
-  const lockedTier = giftability?.status === 'active' ? giftability.tier : null;
-  const effectiveTier = lockedTier ?? tier;
-  const blocked = giftability?.status === 'blocked';
+  const recipientTier = giftability?.status === 'active' ? giftability.tier : null;
+  const effectiveTier = tier;
+  // Only an unsupported provider stops a gift now; an annual or past-due membership just
+  // means the recipient decides what to do with the months when they accept.
+  const blocked =
+    giftability?.status === 'blocked' && giftability.reason === 'unsupported-provider';
 
   const tierPlans = (plans ?? []).filter((p) =>
     ['bronze', 'silver', 'gold'].includes(p.metadata.tier)
@@ -201,24 +204,20 @@ export default function GiftMembershipPage() {
                   )}
                   {recipient && giftability?.status === 'no-subscription' && (
                     <Alert color="teal" icon={<IconGift size={18} />}>
-                      They don&rsquo;t have an active membership yet — your gift starts a{' '}
-                      {capitalize(effectiveTier)} membership for them the moment it&rsquo;s paid.
-                      Nothing needed on their end.
+                      They don&rsquo;t have a membership yet. Pick any tier — they&rsquo;ll get a
+                      notification and choose when to start it.
                     </Alert>
                   )}
                   {recipient && giftability?.status === 'active' && (
                     <Alert color="blue" icon={<IconInfoCircle size={18} />}>
-                      They&rsquo;re already on {capitalize(giftability.tier)}
-                      {giftability.renewsAt
-                        ? ` (renews ${formatDate(giftability.renewsAt)})`
-                        : ''}{' '}
-                      — your gift adds free months on top of their existing membership, so the tier
-                      is locked to match theirs.
-                      {giftability.cancelsAtPeriodEnd &&
-                        ' Their membership is set to cancel; the free months are added before it ends, and billing will not restart unless they choose to keep it.'}
+                      They&rsquo;re on {capitalize(giftability.tier)}
+                      {giftability.renewsAt ? ` (renews ${formatDate(giftability.renewsAt)})` : ''}.
+                      Gift any tier you like: at or above {capitalize(giftability.tier)} gives them
+                      free months, below it comes off their bill instead. They choose when to start
+                      it.
                     </Alert>
                   )}
-                  {blocked && giftability && (
+                  {blocked && giftability?.status === 'blocked' && (
                     <Alert color="yellow" icon={<IconInfoCircle size={18} />}>
                       {blockedReasons[giftability.reason] ??
                         'This user cannot receive gifted months.'}
@@ -238,7 +237,7 @@ export default function GiftMembershipPage() {
                         const planTier = plan.metadata.tier as GiftableTier;
                         const { image } = getPlanDetails(plan, features);
                         const isSelected = planTier === effectiveTier;
-                        const isDisabled = blocked || (!!lockedTier && lockedTier !== planTier);
+                        const isDisabled = blocked;
                         return (
                           <UnstyledButton
                             key={plan.id}
@@ -337,9 +336,9 @@ export default function GiftMembershipPage() {
                       <Text c="dimmed">Membership</Text>
                       <Group gap={6}>
                         <Text fw={500}>{capitalize(effectiveTier)}</Text>
-                        {lockedTier && (
+                        {recipientTier && recipientTier !== effectiveTier && (
                           <Badge size="xs" variant="light">
-                            matches theirs
+                            they&rsquo;re on {capitalize(recipientTier)}
                           </Badge>
                         )}
                       </Group>

@@ -20,6 +20,7 @@ import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
 import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
+import { dbWrite } from '~/server/db/client';
 import {
   recordBuzzPurchaseKickback,
   recordMembershipPaymentReward,
@@ -104,10 +105,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (relevantEvents.has(event.type)) {
       try {
         switch (event.type) {
-          case 'invoice.paid':
+          case 'invoice.paid': {
             const invoice = event.data.object as Stripe.Invoice;
             await manageInvoicePaid(invoice);
+            // A gifted month only counts once an invoice has actually used it.
+            const { recordGiftMonthConsumed } = await import(
+              '~/server/services/membership-gift.service'
+            );
+            await recordGiftMonthConsumed({ invoice }).catch((err) =>
+              log({
+                type: 'error',
+                stage: 'gift-month-consumed',
+                message: 'failed to record a consumed gift month',
+                invoiceId: invoice.id,
+                error: err instanceof Error ? err.message : String(err),
+              })
+            );
             break;
+          }
           case 'product.created':
           case 'product.updated':
           case 'product.deleted':
@@ -138,6 +153,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 error: err instanceof Error ? err.message : String(err),
               })
             );
+
+            // Their subscription ended with gifted months still owed: hand over the
+            // remainder as a free membership rather than letting it disappear with the
+            // subscription it happened to be riding on.
+            if (event.type === 'customer.subscription.deleted') {
+              const user = await dbWrite.user.findFirst({
+                where: { customerId },
+                select: { id: true },
+              });
+              if (user) {
+                const { honorGiftResidualsForUser } = await import(
+                  '~/server/services/membership-gift.service'
+                );
+                await honorGiftResidualsForUser({ userId: user.id }).catch((err) =>
+                  log({
+                    type: 'error',
+                    stage: 'gift-residual',
+                    message: 'failed to honor gifted months after cancellation',
+                    userId: user.id,
+                    error: err instanceof Error ? err.message : String(err),
+                  })
+                );
+              }
+            }
             break;
           }
           case 'checkout.session.completed':
