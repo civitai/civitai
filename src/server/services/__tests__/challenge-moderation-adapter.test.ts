@@ -1,24 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // applyFailure must only downgrade a challenge that is actually mid-scan. A moderator rescan
 // (rescanChallenge) is the first path that submits a workflow for an already-Scanned challenge, so
 // an unscoped write would let one transient orchestrator failure hide a live challenge from the
 // feeds and 404 its detail page.
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { challenge: { findUnique: vi.fn() } },
-  mockDbWrite: { challenge: { update: vi.fn(), updateMany: vi.fn() } },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 vi.mock('~/server/games/daily-challenge/challenge-nsfw-escalation', () => ({
   applyChallengeNsfwEscalation: vi.fn(),
 }));
 vi.mock('~/server/prom/challenge.metrics', () => ({ recordChallengeScanResult: vi.fn() }));
 
-const { challengeModerationAdapter } = await import('~/server/services/challenge-moderation.adapter');
+const { challengeModerationAdapter } = await import(
+  '~/server/services/challenge-moderation.adapter'
+);
 const { applyChallengeNsfwEscalation } = await import(
   '~/server/games/daily-challenge/challenge-nsfw-escalation'
 );
@@ -88,6 +87,9 @@ describe('challengeModerationAdapter.applyResult telemetry-read safety', () => {
 
     // The failed read collapses to null → `source: undefined` is passed, which normSource maps to
     // the 'unknown' bucket — the metric is still recorded, never skipped.
-    expect(recordChallengeScanResult).toHaveBeenCalledWith({ source: undefined, result: 'scanned' });
+    expect(recordChallengeScanResult).toHaveBeenCalledWith({
+      source: undefined,
+      result: 'scanned',
+    });
   });
 });

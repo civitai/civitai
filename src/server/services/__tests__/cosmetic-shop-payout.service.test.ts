@@ -20,23 +20,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique },
-    user: { findUnique: mocks.userFindUnique },
-    userCosmeticShopItemResale: { findUnique: mocks.resaleFindUnique },
-  },
-  dbWrite: {
-    cosmeticShopItem: { update: mocks.shopItemUpdate },
-    userCosmetic: { findFirst: mocks.userCosmeticFindFirst },
-    userCosmeticShopPurchases: { update: mocks.purchasesUpdate },
-    $transaction: (fn: (tx: unknown) => Promise<unknown>) =>
-      fn({
-        userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-        userCosmetic: { create: mocks.userCosmeticCreate },
-      }),
-  },
-}));
 // `importOriginal` keeps the rest of the module real: this suite's import graph
 // reaches prom collectors it never names, and a hand-listed mock silently breaks
 // the moment that graph grows.
@@ -44,7 +27,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
   dbReadFallbackCounter: { inc: vi.fn() },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mocks.logToAxiom }));
 // The post-commit sticker cache bust would reach a Redis that isn't running here,
 // and its failure path logs to axiom — which these tests assert stays silent.
 // `importOriginal` leaves every other cache export real.
@@ -70,6 +52,35 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.user.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.userFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmeticShopItemResale.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmetic.findFirst.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticFindFirst as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation((...args: unknown[]) =>
+  (mocks.purchasesUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) =>
+  fn({
+    userCosmeticShopPurchases: { create: mocks.purchasesCreate },
+    userCosmetic: { create: mocks.userCosmeticCreate },
+  })
+);
+loggingMock.logToAxiom.mockImplementation((...args: unknown[]) =>
+  (mocks.logToAxiom as (...a: unknown[]) => unknown)(...args)
+);
 
 const BUYER_ID = 1;
 const CREATOR_ID = 100;

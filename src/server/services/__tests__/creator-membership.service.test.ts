@@ -13,28 +13,6 @@ import { CacheTTL } from '~/server/common/constants';
  * + the per-sub Zod parse, and the result is byte-identical to the uncached path.
  */
 
-const { mockDbRead, mockRedis } = vi.hoisted(() => ({
-  mockDbRead: {
-    customerSubscription: { findMany: vi.fn() },
-    user: { findMany: vi.fn() },
-  },
-  mockRedis: {
-    packed: { mGet: vi.fn(), set: vi.fn() },
-    del: vi.fn(),
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  REDIS_KEYS: {
-    CACHES: {
-      CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
-      USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
-    },
-  },
-}));
-
 // Stubbed by the global setup (src/__tests__/setup.ts) — `.inc` is a vi.fn(), so these
 // are the assertion handles for the cache hit/miss instrumentation.
 import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
@@ -45,6 +23,10 @@ import {
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
 } from '~/server/services/creator-membership.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockRedis = redisMock.redis;
 
 const keyFor = (id: number) => `packed:caches:creator-membership-valid:${id}`;
 const defaultsKeyFor = (id: number) => `packed:caches:user-metric-privacy-defaults:${id}`;
@@ -364,7 +346,9 @@ describe('getUserMetricPrivacyDefaultsMap — derived read-through cache', () =>
   it('does not fail the request when the backfill write throws', async () => {
     mockRedis.packed.mGet.mockResolvedValue([null]);
     mockRedis.packed.set.mockRejectedValue(new Error('redis write down'));
-    mockDbRead.user.findMany.mockResolvedValue([{ id: 1, settings: { hideModelGenerations: true } }]);
+    mockDbRead.user.findMany.mockResolvedValue([
+      { id: 1, settings: { hideModelGenerations: true } },
+    ]);
     const result = await getUserMetricPrivacyDefaultsMap([1]);
     expect(result.get(1)?.hideModelGenerations).toBe(true);
   });

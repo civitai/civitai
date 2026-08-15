@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn() },
-  mockDbWrite: { $queryRaw: vi.fn(), collectionContributor: { upsert: vi.fn() } },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 const { addContributorToCollection, getUserCollectionPermissionsById } = await import(
   '~/server/services/collection.service'

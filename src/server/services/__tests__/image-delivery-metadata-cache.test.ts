@@ -6,23 +6,9 @@ import { pack, unpack } from 'msgpackr';
 // get -> unpack(buffer)) — so the byte-identical claim is exercised through the real
 // serializer end-to-end, not a pass-through fake. Cache hit/miss semantics stay real (a Map),
 // letting us assert exactly when the origin DB query is re-run.
-const { store, redisPackedGet, redisPackedSet, redisDel } =
-  vi.hoisted(() => ({
-    store: new Map<string, Buffer>(),
-    redisPackedGet: vi.fn(),
-    redisPackedSet: vi.fn(),
-    redisDel: vi.fn(),
-  }));
-
-// Keep the real REDIS_KEYS (so the key we build matches the production constant) and only
-// swap the live client for the in-memory fake.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/redis/client')>();
-  return {
-    ...actual,
-    redis: { del: redisDel, packed: { get: redisPackedGet, set: redisPackedSet } },
-  };
-});
+const { store } = vi.hoisted(() => ({
+  store: new Map<string, Buffer>(),
+}));
 
 import {
   getCachedImageDeliveryMetadata,
@@ -36,6 +22,10 @@ import { CacheTTL } from '~/server/common/constants';
 // the pre-change service until this was introduced.
 import { respondWithRows } from '~/test-utils/queryRawProjection';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const redisDel = redisMock.redis.del;
+const redisPackedGet = redisMock.redis.packed.get;
+const redisPackedSet = redisMock.redis.packed.set;
 const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
 const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
 

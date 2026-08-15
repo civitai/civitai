@@ -53,17 +53,6 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
-
 // The guard sits after enforceBlockedBrowsingTags — stub it to a non-empty result
 // so getAllImages proceeds into the prioritizeUser branch.
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
@@ -80,6 +69,7 @@ vi.mock('../../flipt/client', async (importOriginal) => {
 
 import { getAllImages } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const baseInput = {
   browsingLevel: 1,

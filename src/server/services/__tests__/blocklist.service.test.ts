@@ -4,12 +4,6 @@ import { TRPCError } from '@trpc/server';
 // getBlocklistData -> getBlocklistDTO reads redis.get first and, when a cached
 // value is present, returns it WITHOUT touching the DB. So stubbing redis.get to
 // return a JSON blocklist is enough to drive throwOnBlockedLinkDomain end-to-end.
-const { redisGet } = vi.hoisted(() => ({ redisGet: vi.fn() }));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: redisGet, set: vi.fn() },
-  REDIS_KEYS: { SYSTEM: { BLOCKLIST: 'system:blocklist' } },
-}));
 import {
   buildBenignPhraseRegex,
   stripBenignPhrases,
@@ -17,6 +11,8 @@ import {
 } from '../blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const redisGet = redisMock.redis.get;
 
 /** Make getBlocklistData return the given domains (already lower-cased in prod). */
 function setBlockedDomains(domains: string[]) {

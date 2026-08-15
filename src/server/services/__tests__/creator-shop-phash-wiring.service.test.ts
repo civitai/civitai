@@ -28,21 +28,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, findFirst: mocks.shopItemFindFirst },
-  },
-  dbWrite: {
-    keyValue: { findUnique: vi.fn() },
-    cosmetic: { update: mocks.cosmeticUpdate },
-    cosmeticShopItem: { update: mocks.shopItemUpdate },
-    $transaction: (cb: (tx: unknown) => unknown) =>
-      cb({
-        cosmetic: { create: mocks.cosmeticCreate },
-        cosmeticShopItem: { create: mocks.shopItemCreate },
-      }),
-  },
-}));
 vi.mock('sharp', () => ({ default: () => ({ metadata: mocks.sharpMetadata }) }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
@@ -55,6 +40,25 @@ vi.mock('~/server/services/cosmetic-phash.service', async (importOriginal) => ({
 }));
 
 import { submitCreatorShopItem, updateCreatorShopItem } from '../creator-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItem.findFirst.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindFirst as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmetic.update.mockImplementation((...args: unknown[]) =>
+  (mocks.cosmeticUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.$transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+  cb({
+    cosmetic: { create: mocks.cosmeticCreate },
+    cosmeticShopItem: { create: mocks.shopItemCreate },
+  })
+);
 
 const submitInput = {
   cosmeticType: CosmeticType.Badge,
