@@ -182,6 +182,35 @@ const unitTestConfig = {
   hookTimeout: 60000,
   deps: {
     inline: [/@civitai\/client/],
+    // Every test file gets a fresh module registry — under `forks` with `isolate: true` it is
+    // literally a fresh child process per file (measured: N files at maxWorkers=1 give N distinct
+    // pids), so Node's module cache dies with it and each externalised package is imported cold
+    // once per file that reaches it. Pre-bundling collapses a package's many-hundred-file native
+    // load into one chunk, paid once for the run.
+    //
+    // 🔴 The list is confined to packages NOTHING mocks, and that is load-bearing rather than
+    // conservative. Pre-bundling wraps a package as a CJS-interop chunk, so a `vi.mock` factory
+    // that returns only named exports stops satisfying its consumers:
+    //   Error: [vitest] No "default" export is defined on the "redis" mock.
+    // The `importOriginal` form does NOT protect against this — it guards a different failure
+    // (exports going missing as the graph grows). Measured: adding `redis` and `@aws-sdk/client-s3`
+    // here takes four mock-holding files from 92 tests passing to 7 collected.
+    //
+    // Before adding a package, check `vi.mock('<pkg>'` across `src` returns nothing. The three
+    // excluded on those grounds — `redis`, `@aws-sdk/client-s3`, `@aws-sdk/lib-storage` — are worth
+    // ~275s and need `default` added to six mock factories first; that is a separate change.
+    optimizer: {
+      ssr: {
+        enabled: true,
+        include: [
+          'lodash-es',
+          'googleapis',
+          '@tiptap/html',
+          '@axiomhq/axiom-node',
+          '@aws-sdk/s3-request-presigner',
+        ],
+      },
+    },
   },
 };
 
