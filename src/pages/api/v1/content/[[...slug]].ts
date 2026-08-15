@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { publicApiContext2 } from '~/server/createContext';
+import { publicApiContext2 } from '~/server/public-api-context';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
