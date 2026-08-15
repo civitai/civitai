@@ -1545,7 +1545,10 @@ export const getShopItemResellers = async ({
     select: {
       sellerShare: true,
       createdAt: true,
-      user: { select: { id: true, username: true, image: true, deletedAt: true } },
+      // The list renders UserAvatar with decorations and username, which reads
+      // the profile picture AND the equipped cosmetics. Selecting less than this
+      // renders a bare placeholder for nearly every reseller.
+      user: { select: userWithCosmeticsSelect },
     },
   });
   return rows

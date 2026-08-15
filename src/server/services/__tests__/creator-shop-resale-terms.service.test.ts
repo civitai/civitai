@@ -274,6 +274,21 @@ describe('getShopItemResellers', () => {
     );
   });
 
+  // Most creators have no `user.image` at all — the avatar lives on the
+  // `profilePicture` relation, and the decorations, nameplate and badges live on
+  // equipped `cosmetics`. UserAvatar falls back to `image` only when the
+  // relation is absent, so a select missing either renders a bare placeholder
+  // for nearly every reseller, which is what shipped.
+  it('selects everything UserAvatar draws, not just user.image', async () => {
+    mocks.resaleFindMany.mockResolvedValue([]);
+
+    await getShopItemResellers({ shopItemId: SHOP_ITEM_ID, userId: CREATOR_ID });
+
+    const userSelect = mocks.resaleFindMany.mock.calls[0][0].select.user.select;
+    expect(userSelect.profilePicture).toBeTruthy();
+    expect(userSelect.cosmetics).toBeTruthy();
+  });
+
   it('refuses to tell a stranger who resells someone else’s item', async () => {
     await expect(getShopItemResellers({ shopItemId: SHOP_ITEM_ID, userId: 999 })).rejects.toThrow();
     expect(mocks.resaleFindMany).not.toHaveBeenCalled();
