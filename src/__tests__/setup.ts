@@ -1,5 +1,31 @@
 import { vi } from 'vitest';
 import { generateKeyPairSync } from 'crypto';
+import { dbMock } from './mocks/db.mock';
+import { redisMock } from './mocks/redis.mock';
+import { loggingMock } from './mocks/logging.mock';
+import { resetSharedMocks } from './mocks';
+
+// Canonical shared-module mocks. Registered here, for every test file, rather than per
+// file — see docs/testing/shared-module-mocks.md. Under `isolate: false` a source module
+// that imports one of these is evaluated ONCE per worker and captures its bindings then,
+// so a per-file mock object freezes that file's shape for every later file in the worker.
+// One registration with one stable object removes the question.
+//
+// Runs before the test module is imported, which is what makes it the reset point for
+// implementations AND call counts.
+resetSharedMocks();
+
+vi.mock('~/server/db/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  dbRead: dbMock.dbRead,
+  dbWrite: dbMock.dbWrite,
+}));
+
+vi.mock('~/server/redis/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  redis: redisMock.redis,
+  sysRedis: redisMock.sysRedis,
+}));
 
 // Mock @civitai/client to avoid ESM resolution issues
 vi.mock('@civitai/client', () => ({
@@ -244,9 +270,12 @@ vi.mock('~/server/prom/client', () => ({
 // and `wasServerFaultLogged`, so nine previously-green route tests broke for a
 // reason that had nothing to do with what they assert. Only `logToAxiom` is
 // stubbed, because that is the one with an I/O side effect a test must not do.
+// The spy comes from the canonical mock rather than being built inline: under
+// `isolate: false` this factory runs once per WORKER, so an inline `vi.fn()` pooled its
+// call counts across every file sharing that worker.
 vi.mock('~/server/logging/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
+  logToAxiom: loggingMock.logToAxiom,
 }));
 
 // Mock session invalidation
