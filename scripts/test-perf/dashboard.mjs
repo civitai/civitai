@@ -157,7 +157,10 @@ function summarise(r) {
     files: r.totals.files,
     tests: r.totals.tests,
     failed: r.totals.failed,
-    workers: r.config?.maxWorkers ?? null,
+    // `null` here means the run predates the reporter recovering `maxWorkers` from argv — vitest 4
+    // does not put it on `ctx.config`, so every run before that fix recorded null. Rendering that
+    // as "default" claimed a fact nobody measured; it is UNRECORDED, which is a different thing.
+    workers: r.config?.maxWorkers ?? 'unrecorded',
   };
 }
 
@@ -251,7 +254,7 @@ $('#kpis').innerHTML = [
   kpi(L?L.tests.toLocaleString():'—','tests', L?L.files+' files':''),
   kpi(L?L.failed:'—','failed', '16 is the known Windows baseline'),
 ].join('');
-if(L) $('#phasenote').textContent = 'Latest full run: '+L.label+' ('+(L.workers??'default')+' workers, '+new Date(L.at).toLocaleString()+'). Import is '
+if(L) $('#phasenote').textContent = 'Latest full run: '+L.label+' ('+(L.workers??'unrecorded')+' workers, '+new Date(L.at).toLocaleString()+'). Import is '
   + (L.collectS/(L.collectS+L.setupS+L.testS)*100).toFixed(0) + '% of measured worker time.';
 
 const C = D.counts, tot = D.files.length;

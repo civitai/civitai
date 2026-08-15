@@ -78,17 +78,33 @@ function tryFile(base) {
 }
 
 /**
+ * Whole `import type ... from '...'` / `export type ... from '...'` statements.
+ *
+ * 🔴 The gap is a TEMPERED match, not `[\s\S]*?`, and that is the whole correctness of it. With a
+ * plain lazy gap the pattern also starts on a bodyless `export type X = ...` and then scans forward
+ * across the file to the next `from '...'`-shaped text — including inside comments and strings —
+ * deleting every statement in between before the import scanner sees them. Measured over 5,239
+ * files: 40 affected, 331 statements consumed; `src/server/common/enums.ts` lost a real
+ * `@civitai/notifications/constants` edge across a 7,881-character span. Direction is UNDER-count,
+ * and `graphModules` is the ranking key for the dashboard, `order.mjs` and `bench.mjs`.
+ *
+ * Between `type` and `from` a real type-import statement contains only a binding clause, so the gap
+ * may not cross `;`, `=`, or another `import`/`export` keyword. Each of those alone would have
+ * caught the enums.ts case; all three are cheap.
+ */
+const TYPE_STATEMENT_RE =
+  /(^|\n)[ \t]*(?:import|export)[ \t]+type[ \t\r\n]+(?:(?!\b(?:import|export)\b)[^;=])*?from[ \t]*['"][^'"]+['"][ \t]*;?/g;
+const stripTypeStatements = (text) => text.replace(TYPE_STATEMENT_RE, '$1');
+
+/**
  * True when every binding in an import/export statement carries the inline `type` modifier, so the
  * transform erases the statement and the module is never fetched.
  *
- * `import type { X } from` is handled by `stripTypeStatements`; `import { type X } from` is not, and
- * it is the common shape in this repo. Missing it over-counted `FeatureFlagsProvider` by 8 modules
- * — the whole `feature-flags.service` subtree — on two of the five files with traced ground truth.
+ * `import type { X } from` is handled by `stripTypeStatements` above; `import { type X } from` is
+ * not, and it is the common shape in this repo. Missing it over-counted `FeatureFlagsProvider` by 8
+ * modules — the whole `feature-flags.service` subtree — on two of the five files with traced
+ * ground truth.
  */
-const TYPE_STATEMENT_RE =
-  /(^|\n)[ \t]*(?:import|export)[ \t]+type[\s\S]*?from[ \t]*['"][^'"]+['"][ \t]*;?/g;
-const stripTypeStatements = (text) => text.replace(TYPE_STATEMENT_RE, '$1');
-
 function isTypeOnlyStatement(stmt) {
   const brace = stmt.match(/\{([^}]*)\}/);
   if (!brace) return false;
