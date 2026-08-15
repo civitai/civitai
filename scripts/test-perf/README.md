@@ -15,6 +15,25 @@ node scripts/test-perf/graph.mjs        # static import graph + vi.mock inventor
 node scripts/test-perf/dashboard.mjs    # -> .test-perf/dashboard.html
 ```
 
+`graph.mjs` writes `inventory.json` and `closures.json`. **`graphModules` is what a worker really
+loads**: lazy `import()` is not followed *except from a test file itself*, a `vi.mock` factory
+without `importOriginal` truncates the subtree behind it (the mocked module is still counted — vitest
+transforms it), and an `import type` / `import { type X }` statement is erased before the graph sees
+it. `graphModulesRaw` keeps the naive count for the bundler question.
+
+The two differ by **75x** on a page-render test, in the direction that puts the cheapest files at the
+top of a ranking: four `src/tests/pages/apps/**` files counted 1,655–1,670 naively and load **13–26**,
+while their *measured* worker time ranks 202–572 of 1,065. Do not rank test cost by the raw count.
+
+⚠️ The test-file exception is load-bearing, not a detail. `dynamic(() => import(...))` in a page never
+runs; `await import('~/pages/...')` in a test body is the point of the test. Treating them the same
+makes those four files either the top of the ranking or 1 module each, and both readings are wrong.
+
+Validated by diffing the model against a transform-hook trace as **sets**: 3 of 5 files exact with
+empty diffs both ways, 16 modules of symmetric error across 691 traced (2.32%). Counts alone agreed
+often enough to hide two of the four causes above — **a count agreeing is not the rule agreeing.**
+Ground truth exists for 5 files of 1,065; that is a sample, not a proof.
+
 Open `.test-perf/dashboard.html` in a browser. It shows where the run's time goes, how far the
 migration has got, which modules sit in the most test closures, and every run recorded so far.
 
@@ -115,6 +134,10 @@ union was 1084 modules alphabetically and 1139 by affinity — slightly *worse*.
 already groups by directory, and directory already correlates with the import graph. The sequencer
 that applied the affinity order was deleted; `order.mjs` is kept because the union report is the
 number that bounds what `isolate: false` can deliver.
+
+🔴 **Both union figures above predate the honest counts and must be re-run before either is quoted
+as a level.** The conclusion is a ratio between two orderings under one counting convention, so it
+survives; 1084 and 1139 do not.
 
 Two other things measured and found not to help, recorded so nobody spends the hour again:
 
