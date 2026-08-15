@@ -21,7 +21,9 @@ export function ManageStats({
   return (
     // Wrapping is driven by how much room a card needs, not by the viewport, so
     // six sit on one row wherever six fit and only fold when they would squash.
-    <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(200px,1fr))]">
+    // auto-FIT, not auto-fill: the count here is fixed at six, so empty tracks
+    // would be dead space rather than room for more cards.
+    <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
       <StatCard
         label="Published"
         value={stats.published}
