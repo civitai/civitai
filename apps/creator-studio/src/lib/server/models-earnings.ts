@@ -64,8 +64,8 @@ export type ChannelTotals = {
   total: number;
   prev: number;
   // What the CREATOR was credited, by account type. The filter chips sum a subset of this.
-  // NOTE: `createMultiAccountBuzzTransaction` defaults the credit to yellow, so on the buyer-funded
-  // channels (access sales, donations) this is always yellow whatever the buyer actually paid with.
+  // Buyer-funded channels pay in the currency the buyer spent, so rows dated before that cutover
+  // are yellow-only whatever was actually paid.
   received: ChannelCurrency[];
 };
 
