@@ -73,6 +73,16 @@ why nothing in the repo would ever surface them.
 the hand-written copy.** A test that goes red was hardcoding an expectation string against
 its own fixture instead of asserting behaviour. That redness is the finding.
 
+⚠️ **And expect most of them NOT to go red, which is the worse case.** In one slice, nine
+invented constants were replaced and none produced a failure — no affected test named them
+outside its own factory, so both sides of any comparison were the fixture's invention. A
+drifted constant nothing asserts on is invisible in both directions: it cannot fail, and it
+cannot be reviewed. Six of those nine were `new-order` keys whose fixture name was a
+*plausible* variant of the real one (`new-order:sanity-check-failures` against a real
+`new-order:sanity-failures`), which is precisely how they survive a reading. The only thing
+that surfaces them is swapping the real value in — so log what the codemod reports as
+drifted, even when the suite stays green.
+
 ### `local "mockDb" aliases dbMock.dbRead and dbMock.dbWrite`
 
 One spy served both clients, so a `dbWrite` call satisfied a `dbRead` assertion. Split it and
