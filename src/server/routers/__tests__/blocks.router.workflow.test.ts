@@ -457,6 +457,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 // W13 — the submit path fires recordScopeInvocation (detached) with a structured
@@ -2154,9 +2155,10 @@ describe('blocks.submitWorkflow', () => {
       const incrKey = String(mockSysRedis.incrBy.mock.calls[0][0]);
       // The review-session key — bound to the pubreq id and NOT the ordinary daily
       // buzz-cap key. This asserted the literal string `REVIEW_RUN_FOR_REAL_BUZZ_CAP`
-      // while the file supplied its own placeholder REDIS_SYS_KEYS, so it was matching
-      // the fixture's invented name rather than any key production emits.
-      expect(incrKey).toContain('system:blocks:review-run-for-real-buzz-cap');
+      // while the file supplied its own placeholder REDIS_SYS_KEYS, so expected and actual
+      // were both the fixture's invention. Named through the constant rather than as a
+      // literal, so it cannot drift again.
+      expect(incrKey).toContain(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP);
       expect(incrKey).toContain('pubreq_ABC');
       expect(incrKey).not.toContain('system:blocks:buzz-cap');
     });

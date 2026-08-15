@@ -52,6 +52,14 @@ describe('shared-module mocks', () => {
     expect(g.__civitaiRedisClients).toBeUndefined();
   });
 
+  it('tracks an assigned data property and reads it back', () => {
+    // Production code reads flags off these clients (`sysRedis.isReady`), and tests set them.
+    // The companion file asserts this does not survive into the next file.
+    (redisMock.sysRedis as unknown as { isReady?: boolean }).isReady = false;
+    expect((redisMock.sysRedis as unknown as { isReady?: boolean }).isReady).toBe(false);
+    expect((sysRedis as unknown as { isReady?: boolean }).isReady).toBe(false);
+  });
+
   it('is never mistaken for a thenable', async () => {
     // A node resolving `then` to a child would make it callable by the await machinery,
     // which hangs rather than fails.

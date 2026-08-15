@@ -29,6 +29,8 @@ const NON_VIVIFIED = new Set(['then', 'catch', 'finally']);
 const nodes = new Map<string, HybridNode>();
 const fns = new Map<string, Mock<(...args: any[]) => any>>();
 const defaults = new Map<string, ((...args: any[]) => any) | undefined>();
+/** Per-node data properties a test assigned directly. Cleared by the per-file reset. */
+const assignments = new Map<string, Map<string, unknown>>();
 
 let defaultResolver: (path: string) => ((...args: any[]) => any) | undefined = () => undefined;
 
@@ -53,16 +55,35 @@ export function hybridNode(path: string): HybridNode {
   fns.set(path, fn);
   applyDefault(path, fn);
 
+  // 🔴 Data a test ASSIGNS to a node — `sysRedis.isReady = false` is the real case — has to
+  // be tracked separately and cleared by the reset. Without a `set` trap it lands on the
+  // underlying `vi.fn` as an own property, and `mockReset()` clears mock state but not
+  // arbitrary properties: under `isolate: false` the value then persists for the whole life
+  // of the worker and leaks into every later file. (Found by donovan, who bounded it with a
+  // local `afterEach`; this is the general fix.)
+  const assigned = new Map<string, unknown>();
+  assignments.set(path, assigned);
+
   const proxy = new Proxy(fn, {
     get(target, prop, receiver) {
       if (typeof prop === 'symbol') return Reflect.get(target, prop, receiver);
       if (NON_VIVIFIED.has(prop)) return undefined;
+      // An explicit assignment wins over everything: the test said so this file.
+      if (assigned.has(prop)) return assigned.get(prop);
       // A real `vi.fn` member (mockResolvedValue, mock, mockReset, …) or a
       // Function.prototype member wins over vivification. A Prisma model or Redis
       // command sharing one of those names is unreachable through property access —
       // none exist today; `mockNode()` is the escape hatch if one ever does.
       if (prop in target) return Reflect.get(target, prop, receiver);
       return hybridNode(`${path}.${prop}`);
+    },
+    set(_target, prop, value) {
+      if (typeof prop === 'string') assigned.set(prop, value);
+      return true;
+    },
+    deleteProperty(_target, prop) {
+      if (typeof prop === 'string') assigned.delete(prop);
+      return true;
     },
     // Guards `'someModel' in dbRead` style checks in production code.
     has() {
@@ -94,6 +115,9 @@ function applyDefault(path: string, fn: Mock<(...args: any[]) => any>) {
  * function`.
  */
 export function resetHybridNodes() {
+  // Assigned data first: `sysRedis.isReady = false` is not mock state, so `mockReset()` does
+  // not touch it, and under `isolate: false` it would otherwise outlive the file that set it.
+  for (const assigned of assignments.values()) assigned.clear();
   for (const [path, fn] of fns) {
     fn.mockReset();
     fn.mockName(path);
