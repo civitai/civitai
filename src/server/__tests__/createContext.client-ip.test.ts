@@ -69,7 +69,8 @@ vi.mock('~/server/trpc', () => ({
   createCallerFactory: () => (ctx: unknown) => ctx,
 }));
 
-import { createContext, publicApiContext, publicApiContext2 } from '../createContext';
+import { createContext, publicApiContext } from '../createContext';
+import { publicApiContext2 } from '../public-api-context';
 import { UNRESOLVED_CLIENT_IP, resolveClientIp } from '~/server/utils/client-ip';
 
 function reqWith(
