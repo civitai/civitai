@@ -39,6 +39,7 @@ import { StripeManageSubscriptionButton } from '~/components/Stripe/ManageSubscr
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { MembershipGiftsCard } from '~/components/Account/MembershipGiftsCard';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { BuzzMembershipCallout } from '~/components/Subscriptions/BuzzMembershipCallout';
@@ -244,6 +245,8 @@ export default function UserMembership() {
               />
             )}
 
+            <MembershipGiftsCard />
+
             {!isFreeTier && !otherSubscription ? (
               <Card padding="lg" radius="md" className={styles.noSubscriptionCard}>
                 <Stack gap="md">
@@ -327,6 +330,7 @@ export default function UserMembership() {
                 />
               )}
               <ReferralCallout variant="compact" />
+              <MembershipGiftsCard />
               {otherSubscription && subscription && (
                 <BuzzEnvironmentAlert
                   buzzType={otherBuzzType}

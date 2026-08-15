@@ -17,12 +17,20 @@
  *   giftability  - {userId}                                        What getRecipientGiftability returns for the user
  *   create-gift  - {gifterId, recipientId, tier, months,           Insert a Pending MembershipGift row with a debug
  *                   message?, anonymous?}                          payment-intent id (skips Stripe Checkout)
- *   fulfill      - {giftId}                                        Run fulfillMembershipGift (real Stripe coupon/sub)
+ *   fulfill      - {giftId}                                        Run fulfillMembershipGift: marks it paid and queues it
+ *   offer        - {giftId, userId}                                What accepting it would do, given that user's membership
+ *   accept       - {giftId, userId}                                Accept it and arm the first month
+ *   arm          - {userId}                                        Force-arm the next gifted month
+ *   sweep        - {}                                              Run the arming backstop sweep
+ *   residual     - {userId}                                        Hand over owed months as a free subscription
  *   revoke       - {giftId, reason?}                               Run revokeMembershipGift as if the payment was refunded
  *   reset        - {userId, confirm: true}                         Delete all MembershipGift rows where the user is
  *                                                                  gifter or recipient (does NOT touch Stripe)
  *
- * Flow: create-gift -> fulfill -> check /user/membership -> revoke -> reset.
+ * Flow: create-gift -> fulfill -> offer -> accept -> check /user/membership -> revoke -> reset.
+ *
+ * A gift is N months of a tier consumed one month at a time, so `accept` arms only the
+ * first month; the rest arm off `invoice.paid` (or `arm`/`sweep` here).
  *
  * Permanent changes are scoped to a single user or gift per call so a misuse
  * never cascades across the DB.
@@ -32,14 +40,31 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  acceptMembershipGift,
+  armNextGiftMonth,
   fulfillMembershipGift,
+  getGiftOffer,
   getRecipientGiftability,
+  honorGiftResidualsForUser,
   revokeMembershipGift,
+  sweepGiftArming,
 } from '~/server/services/membership-gift.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { MembershipGiftStatus } from '~/shared/utils/prisma/enums';
 
-const actionSchema = z.enum(['dump', 'giftability', 'create-gift', 'fulfill', 'revoke', 'reset']);
+const actionSchema = z.enum([
+  'dump',
+  'giftability',
+  'create-gift',
+  'fulfill',
+  'offer',
+  'accept',
+  'arm',
+  'sweep',
+  'residual',
+  'revoke',
+  'reset',
+]);
 
 const schema = z
   .object({
@@ -56,7 +81,7 @@ const schema = z
     confirm: z.coerce.boolean().optional(),
   })
   .superRefine((data, ctx) => {
-    if (['dump', 'giftability', 'reset'].includes(data.action) && !data.userId) {
+    if (['dump', 'giftability', 'reset', 'arm', 'residual'].includes(data.action) && !data.userId) {
       ctx.addIssue({ code: 'custom', message: `${data.action} requires userId`, path: ['userId'] });
     }
     if (
@@ -68,8 +93,11 @@ const schema = z
         message: 'create-gift requires gifterId + recipientId + tier + months',
       });
     }
-    if (['fulfill', 'revoke'].includes(data.action) && !data.giftId) {
+    if (['fulfill', 'revoke', 'offer', 'accept'].includes(data.action) && !data.giftId) {
       ctx.addIssue({ code: 'custom', message: `${data.action} requires giftId`, path: ['giftId'] });
+    }
+    if (['offer', 'accept'].includes(data.action) && !data.userId) {
+      ctx.addIssue({ code: 'custom', message: `${data.action} requires userId`, path: ['userId'] });
     }
     if (data.action === 'reset' && !data.confirm) {
       ctx.addIssue({ code: 'custom', message: 'reset requires confirm=true' });
@@ -115,6 +143,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         data: {
           gifterId: input.gifterId!,
           recipientId: input.recipientId!,
+          holderId: input.recipientId!,
           tier: input.tier!,
           months: input.months!,
           amountCents: 0,
@@ -128,6 +157,31 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
     case 'fulfill': {
       const result = await fulfillMembershipGift({ giftId: input.giftId! });
+      return res.status(200).json({ action: input.action, ...result });
+    }
+
+    case 'offer': {
+      const offer = await getGiftOffer({ giftId: input.giftId!, userId: input.userId! });
+      return res.status(200).json({ action: input.action, offer });
+    }
+
+    case 'accept': {
+      const result = await acceptMembershipGift({ giftId: input.giftId!, userId: input.userId! });
+      return res.status(200).json({ action: input.action, ...result });
+    }
+
+    case 'arm': {
+      const result = await armNextGiftMonth({ userId: input.userId! });
+      return res.status(200).json({ action: input.action, ...result });
+    }
+
+    case 'sweep': {
+      const result = await sweepGiftArming();
+      return res.status(200).json({ action: input.action, ...result });
+    }
+
+    case 'residual': {
+      const result = await honorGiftResidualsForUser({ userId: input.userId! });
       return res.status(200).json({ action: input.action, ...result });
     }
 
