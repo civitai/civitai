@@ -1,10 +1,9 @@
-import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { runTsxCli, type CliRun } from './support/tsx-cli';
 import type { DbCatalog } from '../types';
 
 /**
@@ -25,28 +24,19 @@ import type { DbCatalog } from '../types';
  * These drive the real entry point as a process, so they exercise the actual command an
  * operator runs after a recapture.
  */
-const run = promisify(execFile);
-
 const here = fileURLToPath(new URL('.', import.meta.url));
 const packageRoot = join(here, '../../..');
-const tsx = join(packageRoot, 'node_modules/.bin/tsx');
 const cli = join(packageRoot, 'src/schema-drift/cli.ts');
 const snapshot = join(here, 'fixtures/catalog-production-2026-08-03.json');
 
-async function dump(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  try {
-    const { stdout, stderr } = await run(tsx, [cli, '--dump-catalog', ...args], {
-      cwd: packageRoot,
-      // Every case here is --catalog driven. An inherited DATABASE_URL must never be
-      // reachable from a test, and this command would otherwise try to connect.
-      env: { ...process.env, DATABASE_URL: '' },
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return { code: 0, stdout, stderr };
-  } catch (error) {
-    const e = error as { code?: number; stdout?: string; stderr?: string };
-    return { code: e.code ?? -1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
-  }
+async function dump(args: string[]): Promise<CliRun> {
+  return runTsxCli(cli, ['--dump-catalog', ...args], {
+    cwd: packageRoot,
+    // Every case here is --catalog driven. An inherited DATABASE_URL must never be
+    // reachable from a test, and this command would otherwise try to connect.
+    env: { ...process.env, DATABASE_URL: '' },
+    maxBuffer: 64 * 1024 * 1024,
+  });
 }
 
 describe('drift --dump-catalog stamps capturedAt', { timeout: 60_000 }, () => {
