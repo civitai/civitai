@@ -2,14 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { computeDynamicPool } from '../challenge-pool';
 import { buildChallengeModerationText } from '../challenge-helpers';
 import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.challenge.updateMany.mockImplementation(async () => ({ count: 1 }));
 
 // challenge-helpers.ts (transitively, via daily-challenge.utils.ts) eagerly constructs real
 // db/redis clients at import time. Mock them so the module graph loads without a live DB/Redis.
-const { mockDbRead, mockDbWrite, mockRedis } = vi.hoisted(() => {
-  const dbRead = { $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) };
-  const dbWrite = {
-    challenge: { updateMany: vi.fn(async () => ({ count: 1 })) },
-  };
+const { mockRedis } = vi.hoisted(() => {
   const redis = {
     packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
     get: vi.fn(async () => null),
@@ -17,10 +17,9 @@ const { mockDbRead, mockDbWrite, mockRedis } = vi.hoisted(() => {
     del: vi.fn(async () => 0),
     scanIterator: async function* () {},
   };
-  return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockRedis: redis };
+  return { mockRedis: redis };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/redis/client', () => ({
   redis: mockRedis,
   sysRedis: { sMembers: vi.fn(async () => []) },
