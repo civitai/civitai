@@ -346,24 +346,25 @@ export type AccessNode = {
 
 // The admin page's editing surface: only what a role can actually be granted, with only the roles that
 // can hold a grant. What isn't stored isn't checked — there are no implied grants to display.
-// `source` lets the admin page pass grants read straight from Postgres; omitting it falls back to the
-// request cache, which is fine for read-only callers but never for the editing surface.
 //
-// `grantable` narrows the stored roles to the hub's live catalogue, so a role deleted there stops being
-// carried forward by the next save. Pass it only alongside `source` — the editing surface is the one
-// caller that has already paid for that read and can fail loudly if it comes back wrong.
-export function pageAccessState(
-  source?: Record<string, string[]>,
-  grantable?: readonly string[]
-): {
+// `edit` is the editing surface's inputs: grants read straight from Postgres (the request cache is fine
+// for read-only callers, never for editing) and the hub's live role catalogue, which narrows the stored
+// roles so a role retired there stops being carried forward by the next save. One argument rather than
+// two optional ones because the two must arrive together — filtering fresh grants against a stale role
+// list, or vice versa, silently reverts to the behaviour this replaced.
+export function pageAccessState(edit?: {
+  grants: Record<string, string[]>;
+  roles: readonly Role[];
+}): {
   tree: AccessNode[];
   granted: Record<string, Role[]>;
   /** Every routable path in the tree, groups included — what `whoami` reports verdicts for. */
   paths: string[];
 } {
-  const keep = grantable ? (role: string) => grantable.includes(role) : isStorableRole;
-  const from = source
-    ? Object.fromEntries(Object.entries(source).map(([p, r]) => [p, r.filter(keep)]))
+  const from = edit
+    ? Object.fromEntries(
+        Object.entries(edit.grants).map(([p, r]) => [p, r.filter((role) => edit.roles.includes(role))])
+      )
     : { ...stored, ...storedCapabilities };
   const granted: Record<string, Role[]> = {};
   const paths: string[] = [];

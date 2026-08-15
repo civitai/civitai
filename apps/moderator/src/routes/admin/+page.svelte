@@ -25,6 +25,18 @@
     working = baseline();
   });
 
+  // A refusal is otherwise invisible. The default `enhance` does not invalidate on failure, so `data` and
+  // `working` are untouched and `dirty` is still non-zero when `form.error` arrives — an `{:else if}`
+  // chain led by `dirty` can never reach the error, and a refused save renders identically to no click at
+  // all. This says whether the operator has edited since the server last answered, so the refusal shows
+  // until they act on it and no longer.
+  let editedSinceAnswer = $state(false);
+  $effect(() => {
+    form;
+    untrack(() => (editedSinceAnswer = false));
+  });
+  const showError = $derived(!!form?.error && !editedSinceAnswer);
+
   // Records only what the operator changed, so the default lives in `isOpen` rather than in seeded state.
   // Seeding it from `data` instead would re-seed on every save — collapsing the feature rows someone had
   // just expanded to edit, at the exact moment they are checking their own work.
@@ -112,6 +124,7 @@
   }
 
   function setRoles(keys: string[], role: string, on: boolean) {
+    editedSinceAnswer = true;
     const next = { ...working };
     for (const key of keys) {
       const roles = new Set(next[key] ?? []);
@@ -148,6 +161,7 @@
   const dirty = $derived(Object.keys(changes).length);
 
   function revert() {
+    editedSinceAnswer = true;
     working = Object.fromEntries(Object.entries(data.granted).map(([k, r]) => [k, [...r]]));
   }
 
@@ -308,21 +322,24 @@
 </header>
 
 <!-- The outcome sits beside the button that caused it: the tree is taller than the viewport, so at the
-     top of the document a refused save scrolled out of sight and read as no click at all. `dirty` wins
-     over a stale `form.error`, or the first edit after a refusal would show no feedback. -->
+     top of the document a refused save scrolled out of sight and read as no click at all. A refusal
+     outranks the dirty count and states that the changes are still here, because a refused save leaves
+     `dirty` exactly as it was — showing only the count is what made the refusal invisible. -->
 <div
   class="sticky top-0 z-10 mb-4 flex items-center gap-3 border-b border-dark-4 bg-background py-3 text-sm"
 >
   <span
     role="status"
     class="flex-1"
-    class:text-red-300={form?.error && !dirty}
-    class:text-dark-2={!form?.error || dirty}
+    class:text-red-300={showError}
+    class:text-dark-2={!showError}
   >
-    {#if dirty}
+    {#if showError}
+      {form?.error}{dirty
+        ? ` Your ${dirty} unsaved change${dirty === 1 ? '' : 's'} ${dirty === 1 ? 'is' : 'are'} still on screen.`
+        : ''}
+    {:else if dirty}
       {dirty} grant{dirty === 1 ? '' : 's'} changed — not saved yet.
-    {:else if form?.error}
-      {form.error}
     {:else if form?.count}
       Saved {form.count} grant{form.count === 1 ? '' : 's'}.{form.trimmed
         ? ` ${form.trimmed} dropped a role that lacked the required page.`

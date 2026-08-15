@@ -3,13 +3,17 @@ import type { DB } from '@civitai/db-schema/kysely';
 
 // Which roles may reach which page, per app. A row's `roles` is authoritative — an empty array means
 // nobody — while a missing row means the app has never been told about that page and should fall back to
-// whatever its code declares. Roles are opaque strings; each app owns its own vocabulary.
+// whatever its code declares. Roles are opaque strings here, but the vocabulary is the auth hub's: it
+// mints them as `app:slug` in the `Role` table, and `listAppRoles` reads one app's slice of it.
 
 export type PageAccessGrants = Record<string, string[]>;
 
 /**
  * Every role the auth hub has defined for one app, as `app:slug`. The hub's `Role` table is the
  * catalogue: an app that keeps its own list cannot show a role someone created there.
+ *
+ * `app` goes into a `LIKE` pattern unescaped, so it must not contain `%` or `_`. Callers pass a literal
+ * today and the hub slugifies prefixes to `[a-z0-9-]`, but that invariant lives in the hub, not here.
  */
 export async function listAppRoles(db: Kysely<DB>, app: string): Promise<string[]> {
   const rows = await db

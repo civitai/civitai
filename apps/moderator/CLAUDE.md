@@ -33,6 +33,12 @@ provenance is the only reason it differs from the standard at all.
   `Role` table (`moderator:` prefix), so a role created there gets a `/admin` column without a deploy.
   Do not reintroduce a `ROLES` array — the one that existed made `moderator:community-manager` silently
   invisible on the only screen that grants it. Roles are opaque strings everywhere else already.
+  `COLUMN_ORDER` in that file is **not** that array: it sorts, and anything absent from it still renders.
+- **Never `throw error()` from a form action on a page holding unsaved work.** It renders the nearest
+  error boundary, which unmounts the page and takes the operator's in-progress edits with it. `/admin`
+  can carry dozens of unsaved ticks. Return `fail(status, { error })` and render it — and check that the
+  page actually *shows* it: the default `enhance` does not invalidate on failure, so any status line
+  led by a "you have unsaved changes" branch will hide every refusal behind it.
 - **Two databases.** `$lib/server/db.ts` is the main app's Postgres; `getModeratorDb()` is moderation
   data that never lived there (notes, strikes, help requests), typed by hand in
   `moderator-db-types.ts` because those tables are not in the Prisma schema.

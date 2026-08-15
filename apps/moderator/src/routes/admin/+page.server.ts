@@ -1,4 +1,4 @@
-import { fail } from '@sveltejs/kit';
+import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import {
@@ -9,12 +9,13 @@ import {
   requireAccess,
 } from '$lib/server/access';
 import { readPageAccessGrants, setPageRoles } from '$lib/server/page-access';
-import { grantableRoles } from '$lib/server/roles';
+import { NO_ROLE_CATALOGUE, grantableRoles } from '$lib/server/roles';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   requireAccess(locals.user, url.pathname);
   const [roles, grants] = await Promise.all([grantableRoles(), readPageAccessGrants()]);
-  return { roles, ...pageAccessState(grants, roles) };
+  if (!roles) error(503, NO_ROLE_CATALOGUE);
+  return { roles, ...pageAccessState({ grants, roles }) };
 };
 
 const changesSchema = z.record(z.string(), z.array(z.string()));
@@ -34,15 +35,23 @@ export const actions: Actions = {
     }
 
     // Validated against the hub's live catalogue, so a role retired there cannot be re-saved and a role
-    // added there needs no deploy to become grantable.
+    // added there needs no deploy to become grantable. `fail`, never `error`: an `error` thrown from an
+    // action renders the nearest error page, which unmounts this one and takes the operator's entire
+    // unsaved change set with it.
     const grantable = await grantableRoles();
+    if (!grantable) return fail(503, { error: NO_ROLE_CATALOGUE });
 
     const entries: { path: string; roles: string[] }[] = [];
     for (const [path, roles] of Object.entries(changes)) {
       if (!isGrantable(path) && !isGrantableCapability(path))
         return fail(400, { error: `${path} is not editable.` });
-      if (!roles.every((role) => grantable.includes(role)))
-        return fail(400, { error: `Unknown role for ${path}.` });
+      // The catalogue is re-read here, so a role deleted between load and save lands on an operator who
+      // did nothing wrong. Name it and say the save is intact — "unknown role" reads as a bug in the page.
+      const retired = roles.filter((role) => !grantable.includes(role));
+      if (retired.length)
+        return fail(400, {
+          error: `${retired.join(', ')} no longer exists in the auth hub, so nothing was saved. Reload the page and re-apply your changes.`,
+        });
       entries.push({ path, roles: [...new Set(roles)] });
     }
 

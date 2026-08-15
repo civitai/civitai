@@ -150,9 +150,17 @@ flat, padding-indented copy of the page list.
 granted, on the next page load and without a deploy. It was a constant in `access.ts` until 2026-08-14,
 which meant `moderator:community-manager` was invisible on this screen for as long as it took someone
 to notice and ship a matching line — with no error anywhere, since every other screen reads roles off
-the session as opaque strings. The super role is filtered out (it bypasses grants entirely), and an
-empty catalogue is treated as a failed read rather than "nothing to grant": the page 503s instead of
-rendering a blank matrix whose Save would wipe every grant.
+the session as opaque strings. The super role is filtered out (it bypasses grants entirely), and a
+catalogue that does not contain the super role is treated as a failed read rather than "nothing to
+grant" — empty, or against the wrong database or app prefix. The page 503s instead of rendering a blank
+matrix. It could not actually *wipe* anything (a fully filtered matrix leaves the working copy equal to
+the stored one, so Save is disabled), but it would state that nobody holds anything while the gate
+carries on granting, which is worse on this screen than an error.
+
+Column order is a display concern the hub cannot express — `Role` has no rank — so `roles.ts` sorts
+known ids into ascending-trust order and appends unknown ones. That is ordering, never membership: a
+role absent from the list still appears, just last. It exists because the matrix is read left to right
+and a column's position is the only thing distinguishing one unlabelled checkbox from the next.
 
 Two things deliberately do **not** consult that catalogue. The request-path gate (`applyGrants`) filters
 stored roles against the super role alone — it runs on every gated request, and filtering against a
