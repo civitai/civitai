@@ -1,3 +1,4 @@
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Regression tests for three prod 500-floor bugs in model-version.service.ts:
@@ -17,46 +18,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findFirstOrThrow: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    delete: vi.fn(),
-    deleteMany: vi.fn(),
-    groupBy: vi.fn(),
-    count: vi.fn(),
-  });
-  const read = {
-    modelVersion: mk(),
-    donationGoal: mk(),
-    model: mk(),
-    $queryRaw: vi.fn(),
-  };
-  const write = {
-    modelVersion: mk(),
-    modelVersionEngagement: mk(),
-    model: mk(),
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn(),
-    $transaction: vi.fn(),
-  };
-  return { mockDbRead: read, mockDbWrite: write };
-});
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
-const { mockGetOwnerDonationGoals, mockMaterialize, mockMaxDays, mockMaxModels } = vi.hoisted(() => ({
-  mockGetOwnerDonationGoals: vi.fn(),
-  mockMaterialize: vi.fn(),
-  mockMaxDays: vi.fn(),
-  mockMaxModels: vi.fn(),
-}));
+const { mockGetOwnerDonationGoals, mockMaterialize, mockMaxDays, mockMaxModels } = vi.hoisted(
+  () => ({
+    mockGetOwnerDonationGoals: vi.fn(),
+    mockMaterialize: vi.fn(),
+    mockMaxDays: vi.fn(),
+    mockMaxModels: vi.fn(),
+  })
+);
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/utils/early-access-helpers', () => ({
   getMaxEarlyAccessDays: mockMaxDays,
   getMaxEarlyAccessModels: mockMaxModels,
@@ -75,17 +48,6 @@ vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   modelVersionAccessCache: { refresh: vi.fn() },
 }));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  // The `redis`/`sysRedis` client instances live on the app shim, NOT the
-  // package (`...actual` only has the key consts + factory) — stub them so
-  // importers like db-lag-helpers resolve the named export.
-  return {
-    ...actual,
-    redis: { get: vi.fn(), set: vi.fn(), del: vi.fn().mockResolvedValue(undefined) },
-    sysRedis: { get: vi.fn() },
-  };
-});
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
@@ -120,7 +82,6 @@ vi.mock('~/server/services/model.service', () => ({
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import {
   assertUserEarlyAccessLimits,
@@ -206,7 +167,17 @@ describe('mergeVersions', () => {
   it('throws a 400 (not a join([]) 500) when sourceVersionIds is empty', async () => {
     mockDbRead.model.findUniqueOrThrow.mockResolvedValueOnce({
       userId: 7,
-      modelVersions: [{ id: 100, name: 'target', description: '', status: 'Published', earlyAccessEndsAt: null, monetization: null, meta: null }],
+      modelVersions: [
+        {
+          id: 100,
+          name: 'target',
+          description: '',
+          status: 'Published',
+          earlyAccessEndsAt: null,
+          monetization: null,
+          meta: null,
+        },
+      ],
     });
 
     let caught: unknown;

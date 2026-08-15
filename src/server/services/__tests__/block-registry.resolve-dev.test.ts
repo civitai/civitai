@@ -10,39 +10,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *   - it carries NO iframeSrc (the route derives the host from the tunnel only).
  */
 
-const { mockDbRead, mockDbWrite, mockRedis, mockSysRedis } = vi.hoisted(() => {
-  const ab = () => ({
-    findUnique: vi.fn(async (): Promise<unknown> => null),
-    findFirst: vi.fn(async (): Promise<unknown> => null),
-  });
-  const pubreq = () => ({ findFirst: vi.fn(async (): Promise<unknown> => null) });
-  return {
-    mockDbRead: {
-      $queryRaw: vi.fn(async () => []),
-      appBlock: ab(),
-      appBlockPublishRequest: pubreq(),
-    },
-    mockDbWrite: { appBlock: ab(), appBlockPublishRequest: pubreq() },
-    mockRedis: {
-      packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-      get: vi.fn(async () => null),
-      set: vi.fn(async () => undefined),
-      del: vi.fn(async () => 0),
-      scanIterator: async function* () {},
-    },
-    mockSysRedis: { sMembers: vi.fn(async () => []) },
-  };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: { BLOCKS: { REGISTRY: 'r', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' } },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
-
 import { BlockRegistry } from '~/server/services/block-registry.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
 
 function ownRow(status: string) {
   return {
@@ -50,7 +24,11 @@ function ownRow(status: string) {
     blockId: 'my-app',
     appId: 'appblk-my-app',
     status,
-    manifest: { name: 'My App', scopes: ['ai:write:budgeted'], iframe: { sandbox: 'allow-scripts' } },
+    manifest: {
+      name: 'My App',
+      scopes: ['ai:write:budgeted'],
+      iframe: { sandbox: 'allow-scripts' },
+    },
     trustTier: 'unverified',
     contentRating: null,
   };
@@ -199,7 +177,12 @@ describe('BlockRegistry.resolveDevPageBlockForAuthor', () => {
     mockDbRead.appBlock.findUnique.mockResolvedValue(null);
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
     const res = await BlockRegistry.resolveDevPageBlockForAuthor('brand-new', 555, {
-      sessionGrantedScopes: ['ai:write:budgeted', 'apps:storage:write', 'social:tip:self', 'not:a:scope'],
+      sessionGrantedScopes: [
+        'ai:write:budgeted',
+        'apps:storage:write',
+        'social:tip:self',
+        'not:a:scope',
+      ],
       unsubmittedSpendAllowed: true,
     });
     // apps:storage:* not in the tunnel allowlist; social:tip:self page-forbidden;

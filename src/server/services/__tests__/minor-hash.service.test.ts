@@ -1,37 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
-const { mockDbRead, mockDbWrite, mockReplicaModelFindUnique, mockPrimaryModelFindUnique } =
-  vi.hoisted(() => {
-    const mockReplicaModelFindUnique = vi.fn();
-    const mockPrimaryModelFindUnique = vi.fn();
-    return {
-      mockReplicaModelFindUnique,
-      mockPrimaryModelFindUnique,
-      mockDbRead: { $queryRaw: vi.fn(), model: { findUnique: mockReplicaModelFindUnique } },
-      mockDbWrite: {
-        $queryRaw: vi.fn(),
-        $executeRaw: vi.fn(),
-        model: { findUnique: mockPrimaryModelFindUnique },
-      },
-    };
-  });
+// The replica/primary distinction is the point of these two: `resolveMinorFlagAppeal` re-reads
+// `model.minor` from the PRIMARY so a revert inside replication lag cannot be missed.
+const mockReplicaModelFindUnique = dbMock.dbRead.model.findUnique;
+const mockPrimaryModelFindUnique = dbMock.dbWrite.model.findUnique;
 
 const {
   mockSetModelMinor,
   mockTrackModActivity,
-  mockLogToAxiom,
   mockQueueImageSearchIndexUpdate,
   mockResolveEntityAppeal,
 } = vi.hoisted(() => ({
   mockSetModelMinor: vi.fn(),
   mockTrackModActivity: vi.fn(),
-  mockLogToAxiom: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockResolveEntityAppeal: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 // MINOR_FLAG_SNAPSHOT_KEY is read at module scope by the service's Prisma.sql
 // fragments — omitting it from the mock makes the whole file fail to import
 // (which vitest reports as a passing run with zero tests collected).
@@ -40,7 +26,7 @@ vi.mock('~/server/services/model.service', () => ({
   MINOR_FLAG_SNAPSHOT_KEY: 'minorFlagSnapshot',
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: mockTrackModActivity }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
 }));
@@ -73,6 +59,11 @@ import {
   MINOR_HASH_ACCEPTED_KEY,
   AUTO_FLAG_REVIEW_WINDOW_DAYS,
 } from '~/server/services/minor-hash.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 beforeEach(() => {
   vi.clearAllMocks();
