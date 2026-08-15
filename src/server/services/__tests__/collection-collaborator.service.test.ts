@@ -5,12 +5,6 @@ import type * as SessionClientModule from '~/server/auth/session-client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
-dbMock.dbRead.collection.findUnique.mockResolvedValue({
-  userId: OWNER_ID,
-  read: 'Private',
-  write: 'Private',
-  mode: null,
-});
 
 // `dbRead.collection.findUnique`, `dbRead.collectionContributor.findMany`, and
 // `dbWrite.collectionInvite.deleteMany` aren't in the original brief's mock shape but the
@@ -55,6 +49,14 @@ const COLLECTION_ID = 10;
 const OWNER_ID = 999;
 const MANAGER_ID = 777;
 const TARGET_ID = 555;
+
+// The owner-lookup default every test that targets someone else passes through.
+mockDbRead.collection.findUnique.mockResolvedValue({
+  userId: OWNER_ID,
+  read: 'Private',
+  write: 'Private',
+  mode: null,
+});
 
 function asOwner() {
   mockGetPermissions.mockResolvedValue({
