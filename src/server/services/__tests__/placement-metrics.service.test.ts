@@ -9,8 +9,6 @@ const isFlipt = vi.fn();
 
 const count = vi.fn(async () => 0);
 
-vi.mock('~/env/server', () => ({ env: { CLICKHOUSE_TRACKER_URL: 'http://tracker.test' } }));
-
 vi.mock('~/server/db/client', () => ({
   dbWrite: {
     $queryRaw: (...args: unknown[]) => queryRaw(...args),

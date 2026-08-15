@@ -43,10 +43,6 @@ vi.mock('~/server/db/client', () => ({
   },
 }));
 
-vi.mock('~/env/server', () => ({
-  env: { APPS_DOMAIN: 'civit.ai', DISCORD_WEBHOOK_MOD_ALERTS: undefined },
-}));
-
 vi.mock('~/utils/bundle-s3', () => ({
   bundleKey: (sha: string) => `bundles/${sha}.zip`,
   getBundleBucket: () => 'test-bucket',

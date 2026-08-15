@@ -60,22 +60,6 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 // Importing the real `~/env/server` validates ALL prod env vars and throws in
 // test. A Proxy returns safe values for anything read at module load.
-vi.mock('~/env/server', () => ({
-  env: new Proxy({ LOGGING: [] as string[] } as Record<string, unknown>, {
-    get: (target, prop) => {
-      if (prop in target) return target[prop as string];
-      if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
-        return 'https://test:test@localhost:5432/test';
-      if (
-        typeof prop === 'string' &&
-        /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
-      )
-        return 1;
-      return undefined;
-    },
-  }),
-}));
-
 // A sentinel thrown from the mocked `post.findFirst` so the test stops exactly
 // at the call under inspection. Everything after it in `getAllImages` is a raw
 // SQL feed query whose mocking would add nothing to what is being pinned.

@@ -103,7 +103,11 @@ export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   MEILI_CALL_CONCURRENCY: 50,
   MEILI_RESOURCE_SELECT_CONCURRENCY: 500,
   SIGNALS_CALL_CONCURRENCY: 30,
-  LOGGING: '',
+  // `commaDelimitedStringArray()` in server-schema, so production hands consumers a string[]
+  // and `~/utils/logging` does `env.LOGGING.includes(name)`. A `''` default answered that
+  // call correctly by accident — String.prototype.includes — which is why the wrong type
+  // never threw, and why ten test files had each set `[]` by hand to get the real shape.
+  LOGGING: [] as string[],
   FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com',
   APPS_DOMAIN: 'civit.ai',
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',

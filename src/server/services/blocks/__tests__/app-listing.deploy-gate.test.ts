@@ -38,7 +38,6 @@ const { mockDbRead } = vi.hoisted(() => ({
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   queryCache:
@@ -107,8 +106,7 @@ function offsiteRow(over: Record<string, unknown> = {}) {
   };
 }
 
-const ONSITE_DEPLOY_GATE =
-  /al\.kind <> 'onsite' OR ab\.current_version_deployed_at IS NOT NULL/i;
+const ONSITE_DEPLOY_GATE = /al\.kind <> 'onsite' OR ab\.current_version_deployed_at IS NOT NULL/i;
 
 describe('listAvailableListings — DEPLOY-GATE WHERE clause', () => {
   beforeEach(() => {

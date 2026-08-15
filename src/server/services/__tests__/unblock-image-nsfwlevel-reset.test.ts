@@ -87,22 +87,6 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 // Real env validation throws in test; a Proxy hands back safe defaults for whatever
 // image.service reads at import time (mirrors image-metrics-timeout.test.ts).
-vi.mock('~/env/server', () => ({
-  env: new Proxy({ LOGGING: [] as string[] } as Record<string, unknown>, {
-    get: (target, prop) => {
-      if (prop in target) return target[prop as string];
-      if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
-        return 'https://test:test@localhost:5432/test';
-      if (
-        typeof prop === 'string' &&
-        /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
-      )
-        return 1;
-      return undefined;
-    },
-  }),
-}));
-
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: makePermissive({
     // bulkRemoveBlockedImages queries blocked_images via clickhouse.$query — capture it so

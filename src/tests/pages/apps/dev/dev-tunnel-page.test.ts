@@ -52,7 +52,6 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => mockGetActiveTunnel(...(a as [])),
 }));
 // Real dev-tunnel-session (pure) — signs a real token + validates the host.
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/utils/server-domain', () => ({ ratingAllowedOnHost: () => true }));
 
 // Heavy component deps stubbed so importing the page modules doesn't pull a DOM.
@@ -84,7 +83,11 @@ const DEV_APP = {
   contentRating: null,
 };
 
-function makeCtx(opts: { user?: any; blockId?: string; setHeader: (k: string, v: string) => void }) {
+function makeCtx(opts: {
+  user?: any;
+  blockId?: string;
+  setHeader: (k: string, v: string) => void;
+}) {
   return {
     features: { appBlocks: true, appBlocksAuthor: true },
     session: opts.user ? { user: opts.user } : null,
@@ -135,12 +138,8 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
       spendCapBuzz: 5000,
     });
     const headers: Record<string, string> = {};
-    const res = await resolver(
-      makeCtx({ user: AUTHOR, setHeader: (k, v) => (headers[k] = v) })
-    );
-    expect(res.props.iframeSrc).toMatch(
-      /^https:\/\/dev-0123456789abcdef\.civit\.ai\/\?dev=[^&]+$/
-    );
+    const res = await resolver(makeCtx({ user: AUTHOR, setHeader: (k, v) => (headers[k] = v) }));
+    expect(res.props.iframeSrc).toMatch(/^https:\/\/dev-0123456789abcdef\.civit\.ai\/\?dev=[^&]+$/);
     // ROUTE-SCOPED CSP: frame-src pinned to the exact dev host, on THIS response.
     expect(headers['Content-Security-Policy']).toBe(
       'frame-src https://dev-0123456789abcdef.civit.ai'

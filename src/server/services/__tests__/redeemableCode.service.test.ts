@@ -76,13 +76,6 @@ const {
 });
 
 // Mock modules
-vi.mock('~/env/server', () => ({
-  env: {
-    TIER_METADATA_KEY: 'tier',
-    BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
-  },
-}));
-
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: vi.fn().mockResolvedValue(undefined),
 }));

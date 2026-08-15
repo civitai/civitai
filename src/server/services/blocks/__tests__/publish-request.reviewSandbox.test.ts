@@ -86,7 +86,6 @@ const {
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   getReviewRepoHeadSha: mockGetReviewHead,
   listRepoTreeAtRef: mockListRepoTreeAtRef,
@@ -549,9 +548,7 @@ describe('getReviewStatus previewUrl mint surface', () => {
     expect(r.previewUrl!.startsWith(`${URL}?mr=`)).toBe(true);
 
     // The minted token verifies for THIS host + carries the calling mod id.
-    const { verifyReviewAccessToken } = await import(
-      '~/server/services/blocks/review-session'
-    );
+    const { verifyReviewAccessToken } = await import('~/server/services/blocks/review-session');
     const token = decodeURIComponent(r.previewUrl!.split('?mr=')[1]);
     expect(verifyReviewAccessToken(token, HOST, { secret: SECRET })).toEqual({
       ok: true,
@@ -751,7 +748,10 @@ describe('withdrawRequest review teardown (#2831)', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: PUBREQ, status: 'pending' }, data: { status: 'withdrawn' } })
+      expect.objectContaining({
+        where: { id: PUBREQ, status: 'pending' },
+        data: { status: 'withdrawn' },
+      })
     );
     expect(mockDeleteReviewResources).toHaveBeenCalledWith({
       slug: 'my-app',
@@ -802,8 +802,22 @@ describe('countActiveReviewPreviews', () => {
 
   it('queries pending + active preview-* states within the TTL window, oldest-first', async () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-      { id: 'a', slug: 's1', version: '1.0.0', deployState: 'preview-live', deployDetail: null, deployUpdatedAt: new Date() },
-      { id: 'b', slug: 's2', version: '1.0.0', deployState: 'preview-building', deployDetail: null, deployUpdatedAt: new Date() },
+      {
+        id: 'a',
+        slug: 's1',
+        version: '1.0.0',
+        deployState: 'preview-live',
+        deployDetail: null,
+        deployUpdatedAt: new Date(),
+      },
+      {
+        id: 'b',
+        slug: 's2',
+        version: '1.0.0',
+        deployState: 'preview-building',
+        deployDetail: null,
+        deployUpdatedAt: new Date(),
+      },
     ]);
     const before = Date.now();
     const count = await countActiveReviewPreviews();
@@ -867,7 +881,9 @@ describe('previewRequest concurrency cap', () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue(others);
 
     await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).rejects.toThrow(
-      new RegExp(`cap reached \\(${MAX_CONCURRENT_REVIEW_PREVIEWS}/${MAX_CONCURRENT_REVIEW_PREVIEWS} active\\)`)
+      new RegExp(
+        `cap reached \\(${MAX_CONCURRENT_REVIEW_PREVIEWS}/${MAX_CONCURRENT_REVIEW_PREVIEWS} active\\)`
+      )
     );
     await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).rejects.toThrow(
       /other-app-0/
@@ -896,7 +912,14 @@ describe('previewRequest concurrency cap', () => {
 
   it('proceeds under the cap', async () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-      { id: 'x', slug: 'x', version: '1.0.0', deployState: 'preview-live', deployDetail: null, deployUpdatedAt: new Date() },
+      {
+        id: 'x',
+        slug: 'x',
+        version: '1.0.0',
+        deployState: 'preview-live',
+        deployDetail: null,
+        deployUpdatedAt: new Date(),
+      },
     ]);
     await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).resolves.toBeDefined();
     expect(mockTriggerReviewBuild).toHaveBeenCalled();
@@ -1037,7 +1060,10 @@ describe('markReviewPreviewState (stale-watcher sha guard)', () => {
     // Play the DB: the row's CURRENT detail belongs to build B. An updateMany
     // changes the row only when the where-clause's sha fragment is actually a
     // substring of B's stored detail (which is exactly what Postgres LIKE does).
-    const storedDetailForB = JSON.stringify({ sha: SHA_B, host: 'review-bbbbbbbbbbbbbbbb.civit.ai' });
+    const storedDetailForB = JSON.stringify({
+      sha: SHA_B,
+      host: 'review-bbbbbbbbbbbbbbbb.civit.ai',
+    });
     let rowsChanged = 0;
     mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation(async ({ where }: any) => {
       const frag = where?.deployDetail?.contains as string | undefined;
@@ -1065,7 +1091,10 @@ describe('markReviewPreviewState (stale-watcher sha guard)', () => {
   });
 
   it('the OWNING watcher (sha B) still advances the row it owns', async () => {
-    const storedDetailForB = JSON.stringify({ sha: SHA_B, host: 'review-bbbbbbbbbbbbbbbb.civit.ai' });
+    const storedDetailForB = JSON.stringify({
+      sha: SHA_B,
+      host: 'review-bbbbbbbbbbbbbbbb.civit.ai',
+    });
     let rowsChanged = 0;
     mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation(async ({ where }: any) => {
       const frag = where?.deployDetail?.contains as string | undefined;
@@ -1157,7 +1186,12 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
   });
 
   it('requireActivePreview=true adds a deployState preview-* filter (no resurrection of a torn-down row)', async () => {
-    await markReviewPreviewState(PUBREQ, 'preview-live', { sha: SHA }, { requireActivePreview: true });
+    await markReviewPreviewState(
+      PUBREQ,
+      'preview-live',
+      { sha: SHA },
+      { requireActivePreview: true }
+    );
     const arg = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0];
     expect(arg.where.id).toBe(PUBREQ);
     expect(arg.where.status).toBe('pending');

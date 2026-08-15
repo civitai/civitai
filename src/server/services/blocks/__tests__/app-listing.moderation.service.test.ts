@@ -21,7 +21,6 @@ const { mockDbRead } = vi.hoisted(() => ({
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   queryCache:
@@ -30,10 +29,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
       mockDbRead.$queryRaw(sql),
 }));
 
-import {
-  listAllListingsForModeration,
-  projectModerationListing,
-} from '../app-listing.service';
+import { listAllListingsForModeration, projectModerationListing } from '../app-listing.service';
 
 /** A hydrated moderation row as `moderationListingSelect` returns it. */
 function modRow(over: Record<string, unknown> = {}) {

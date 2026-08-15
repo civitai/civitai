@@ -59,8 +59,6 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({
   },
 }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
-vi.mock('~/env/server', () => ({ env: { DISCORD_WEBHOOK_MOD_ALERTS: undefined } }));
-
 // Import AFTER mocks
 import { runAbuseDetectionScan } from '~/server/jobs/new-order-jobs';
 import { constants, newOrderConfig } from '~/server/common/constants';
@@ -217,9 +215,7 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
     await runAbuseDetectionScan();
 
     expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
-    expect(mockSmitePlayer).toHaveBeenCalledWith(
-      expect.objectContaining({ playerId: 500 })
-    );
+    expect(mockSmitePlayer).toHaveBeenCalledWith(expect.objectContaining({ playerId: 500 }));
   });
 
   it('honors custom smiteMaxUniqueRatings (allows 2-value spam as bot signal)', async () => {

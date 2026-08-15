@@ -34,7 +34,6 @@ const { mockDbRead } = vi.hoisted(() => ({
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 // getEdgeUrl → identity so URL fields assert against the stored key.
 vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 // queryCache → passthrough to the mocked $queryRaw (no Redis in unit tests).
 vi.mock('~/server/utils/cache-helpers', () => ({
@@ -269,7 +268,10 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
   it('onsite card liveUrl is `https://<slug>.<APPS_DOMAIN>` for the seeded slug', () => {
     const row = hydratedRow({ slug: 'my-neat-app' });
     const card = projectListingCard(row as never);
-    expect(card.kindData).toMatchObject({ kind: 'onsite', liveUrl: 'https://my-neat-app.civit.ai' });
+    expect(card.kindData).toMatchObject({
+      kind: 'onsite',
+      liveUrl: 'https://my-neat-app.civit.ai',
+    });
   });
 
   it('PARITY GUARD: onsite card liveUrl === detail liveUrl for the same listing (anti-drift)', () => {
@@ -546,7 +548,14 @@ describe('listAvailableListings — query building + pagination', () => {
     ]);
     // findMany returns the rows OUT OF ORDER — the service must re-apply the id order.
     mockDbRead.appListing.findMany.mockResolvedValueOnce([
-      hydratedRow({ id: 'apl_b', kind: 'offsite', appBlockId: null, appBlock: null, connectClientId: 'oc_1', slug: 'b-app' }),
+      hydratedRow({
+        id: 'apl_b',
+        kind: 'offsite',
+        appBlockId: null,
+        appBlock: null,
+        connectClientId: 'oc_1',
+        slug: 'b-app',
+      }),
       hydratedRow({ id: 'apl_a', kind: 'onsite', slug: 'a-app' }),
     ]);
     const { items } = await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 });
@@ -597,7 +606,11 @@ describe('listAvailableListings — query building + pagination', () => {
       hydratedRow({ id: 'apl_0' }),
       hydratedRow({ id: 'apl_1' }),
     ]);
-    const { nextCursor } = await listAvailableListings({ kind: 'all', sort: 'top-rated', limit: 2 });
+    const { nextCursor } = await listAvailableListings({
+      kind: 'all',
+      sort: 'top-rated',
+      limit: 2,
+    });
     const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
     expect(decoded).toBe(`000000790${SEP}apl_1${SEP}0.8`);
   });
@@ -733,7 +746,11 @@ describe('getListingDetail — approved-only + maturity gate', () => {
   it('the WHERE excludes SHADOW revision drafts (revisionOfId: null) for BOTH selectors', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
     await getListingDetail({ slug: 'cool-app' });
-    const bySlug = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: { revisionOfId?: unknown } })?.where;
+    const bySlug = (
+      mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as {
+        where?: { revisionOfId?: unknown };
+      }
+    )?.where;
     expect(bySlug?.revisionOfId).toBeNull();
   });
 

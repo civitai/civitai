@@ -36,7 +36,6 @@ const { mockDbRead } = vi.hoisted(() => ({
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   queryCache:
@@ -255,7 +254,7 @@ describe('getListingDetail — STORE-SCOPE kind gate (app-layer)', () => {
   // PENDING) onsite listing is indistinguishable from a missing one — even under the
   // most-permissive `full` scope. A crafted slug/id can never reach a draft's data on
   // the public REST `/api/v1/apps/[slug]` or the tRPC store detail.
-  it("DRAFT CANNOT LEAK — a pre-approval DRAFT onsite listing → null under full scope", async () => {
+  it('DRAFT CANNOT LEAK — a pre-approval DRAFT onsite listing → null under full scope', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({
       ...onsiteRow(),
       status: 'draft',

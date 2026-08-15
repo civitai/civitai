@@ -50,24 +50,6 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-vi.mock('~/env/server', () => ({
-  env: new Proxy({ LOGGING: [] as string[] } as Record<string, unknown>, {
-    get: (target, prop) => {
-      if (prop in target) return target[prop as string];
-      if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
-        return 'https://test:test@localhost:5432/test';
-      // Numeric-looking config (e.g. *_CONCURRENCY) is fed into helpers like pLimit at
-      // module load; hand it a safe positive number (matches image-metrics-timeout).
-      if (
-        typeof prop === 'string' &&
-        /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
-      )
-        return 1;
-      return undefined;
-    },
-  }),
-}));
-
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
@@ -122,7 +104,9 @@ describe('getImagesFromFeedSearch ClickHouse transport fail-soft', () => {
 
   it('re-maps a Code 279 ALL_CONNECTION_TRIES_FAILED to a retryable 503', async () => {
     const err = Object.assign(
-      new Error('Code: 279. DB::NetException: All connection tries failed. (ALL_CONNECTION_TRIES_FAILED)'),
+      new Error(
+        'Code: 279. DB::NetException: All connection tries failed. (ALL_CONNECTION_TRIES_FAILED)'
+      ),
       { code: '279' }
     );
     populatedQueryMock.mockRejectedValue(err);
@@ -147,7 +131,7 @@ describe('getImagesFromFeedSearch ClickHouse transport fail-soft', () => {
   });
 
   it('rethrows a non-CH error unchanged', async () => {
-    populatedQueryMock.mockRejectedValue(new TypeError("Cannot read properties of undefined"));
+    populatedQueryMock.mockRejectedValue(new TypeError('Cannot read properties of undefined'));
     await expect(getImagesFromFeedSearch(baseInput)).rejects.toThrow(/Cannot read properties/);
     expect(chFailSoftIncMock).not.toHaveBeenCalled();
   });

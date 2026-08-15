@@ -41,22 +41,6 @@ vi.mock('~/server/meilisearch/client', async (importOriginal) => {
   };
 });
 
-vi.mock('~/env/server', () => ({
-  env: new Proxy({ LOGGING: [] as string[] } as Record<string, unknown>, {
-    get: (target, prop) => {
-      if (prop in target) return target[prop as string];
-      if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
-        return 'https://test:test@localhost:5432/test';
-      if (
-        typeof prop === 'string' &&
-        /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
-      )
-        return 1;
-      return undefined;
-    },
-  }),
-}));
-
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });

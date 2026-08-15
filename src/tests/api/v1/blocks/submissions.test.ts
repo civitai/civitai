@@ -110,8 +110,6 @@ vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
   REDIS_SYS_KEYS: { BLOCKS: { SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit' } },
 }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-
 import handler from '~/pages/api/v1/blocks/submissions';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -175,7 +173,9 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   // Author capability defaults to the mod-floor (mirrors isAppBlocksAuthorEnabled
   // when the app-blocks-author Flipt flag is absent): mods pass, non-mods don't.
-  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator);
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  );
   mockFindMany.mockResolvedValue([dbRow()]);
   mockFindFirst.mockResolvedValue(dbRow());
 });
