@@ -2,7 +2,10 @@
 /**
  * Diff two `.test-perf/runs/<label>.perf.json` files PER FILE.
  *
- *   node scripts/test-perf/compare-runs.mjs pilot-before-iso-4 pilot-after-noiso-4
+ *   node scripts/test-perf/compare-runs-per-file.mjs pilot-before-iso-4 pilot-after-noiso-4
+ *
+ * Not to be confused with `compare-runs.mjs` beside it, which takes the same two positional
+ * arguments and answers a different question (control-group split by expected-to-move).
  *
  * 🔴 A summary line is not evidence on this suite. Under `--no-isolate` a file whose
  * module scope throws collects ZERO tests: the failure count does not rise, the run can
@@ -17,7 +20,7 @@ import { fileURLToPath } from 'url';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const [controlLabel, candidateLabel] = process.argv.slice(2);
 if (!controlLabel || !candidateLabel) {
-  console.error('usage: compare-runs.mjs <control-label> <candidate-label>');
+  console.error('usage: compare-runs-per-file.mjs <control-label> <candidate-label>');
   process.exit(2);
 }
 
@@ -56,6 +59,11 @@ const added = Object.keys(b).filter((f) => !a[f]);
 // shipped inert, throwing during collection in every full-suite run while passing whenever it
 // was invoked as a named file.
 const addedEmpty = added.filter((f) => collected(b[f]) === 0);
+// Same blind spot one step over: `newFailures` only walks files present in BOTH runs, so a
+// candidate-added file whose tests FAIL is invisible to it. Without this the verdict reads
+// `CLEAN: 1571/1570 tests collected, 1 failed` — a summary contradicting itself, in the tool
+// written because summary lines cannot be trusted.
+const addedFailing = added.filter((f) => b[f].failed > 0);
 
 const totals = (run) => ({
   files: run.files.length,
@@ -83,11 +91,20 @@ report(
   'FILES ADDED BY THE CANDIDATE THAT COLLECT ZERO TESTS',
   addedEmpty.map((f) => `  ${f}`)
 );
+report(
+  'FILES ADDED BY THE CANDIDATE THAT HAVE FAILURES',
+  addedFailing.map((f) => `  ${b[f].failed} failed  ${f}`)
+);
 report('FILES FIXED', fixed.map((x) => `  was ${x.was}  ${x.file}`));
 if (added.length) report('FILES ONLY IN CANDIDATE', added.map((f) => `  ${f}  (${collected(b[f])} tests)`));
 
 const clean =
-  !missing.length && !lostTests.length && !newFailures.length && !addedEmpty.length && tb.tests >= ta.tests;
+  !missing.length &&
+  !lostTests.length &&
+  !newFailures.length &&
+  !addedEmpty.length &&
+  !addedFailing.length &&
+  tb.tests >= ta.tests;
 console.log(`\n${clean ? 'CLEAN' : 'REGRESSION'}: ${tb.tests}/${ta.tests} tests collected, ${tb.failed} failed`);
 process.exit(clean ? 0 : 1);
 
