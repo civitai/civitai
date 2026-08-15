@@ -265,6 +265,30 @@ current count is a lower bound. The method for finding the next one is the same 
 migrate a set clean for everything listed, run it under `--no-isolate`, and read what still
 fails.
 
+**The list was built from repo-wide mock counts, and that is why it misses what it misses.**
+Two directories fail for different reasons:
+
+| | routers (27 files) | services (195 files) |
+|---|---|---|
+| distinct specifiers needed | 33 | 101 |
+| not on the PENDING list | 28 | 88 |
+| median shared per pair | 10 | 1 |
+| pairs sharing nothing | 0 (0%) | 6,149 (32.5%) |
+
+Services is a **fan-in** problem — a few specifiers reached by very many files — and the
+PENDING list covers it well: every high-fan-in specifier is on it, and the first undiscovered
+one ranks 12th. Routers is a **clique**: its colliding specifiers are locally dense and
+repo-wide rare, so a count built from repo-wide frequency cannot see them.
+
+So to find the missing ones, build the **per-pair shared-specifier graph for the directory
+you are working on** rather than sorting a repo-wide count. The two directories need
+different searches, not more of the same one.
+
+💡 **Untested, and the highest-value idea nobody has tried:** a third of services pairs share
+*no* specifier at all. A worker assignment that groups non-overlapping files could make much
+of that suite clean under `isolate: false` without canonicalising anything. It is statically
+evaluable from the same graph, before anyone writes code.
+
 **The unit of work is the CLUSTER of specifiers a set of files shares, not one specifier.**
 Canonicalising `block-scope.middleware` took one pair from 13 failures to 7, and the
 remaining 7 were a different class — so that pair shares at least one more poisoning
