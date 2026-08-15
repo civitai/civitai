@@ -434,3 +434,21 @@ and `REPLICATION_LAG_DELAY` is a zod `.default(0)` key **absent from `TEST_ENV_D
 canonical env reads `undefined` and `undefined <= 0` is `false` where `0 <= 0` is `true`. Checked
 against the base on 2026-08-15, not inherited: `TEST_ENV_DEFAULTS` is still hand-enumerated, so the
 seeding fix has not landed. **When it does, these two become ordinary entry-point conversions.**
+
+### ⚠️ #3973 is a STACKED PR — the retarget after #3959 lands is load-bearing
+
+Its base is `perf/test-mock-system`, which is #3959's head. `CLAUDE.md` forbids this shape for a
+reason with an incident behind it: **a squash-merged parent does not retarget the child**, so the
+child ends up pointing at an orphaned branch and its changes go missing (PR #2520, June 2026).
+
+The plan already dissolves it — after #3959 merges, #3973 rebases onto the new `main` and goes to
+`main` directly with its own review. **But the retarget is silent if forgotten.** Concretely:
+
+1. #3959 → `main`.
+2. **Retarget #3973's base to `main` AND rebase** — not one or the other.
+3. **Confirm the diff is still 132 files against the new base** before anything else. If it is not,
+   stop: something merged twice or went missing.
+
+It was deliberately NOT merged into `perf/test-mock-system` first, because that would have grown
+#3959's unreviewed diff to `main` by 132 files — folding a second large body of work into a PR that
+was one review away from landing.
