@@ -2126,6 +2126,21 @@ describe('blocks.submitWorkflow', () => {
   // = 5000) INSTEAD OF the ordinary 50k/day cap. This is invariant #6: a low
   // per-call budget alone cannot bound a hostile app looping sub-budget calls.
   describe('run-for-real aggregate Buzz cap (#2831)', () => {
+    // Golden value, and deliberately separate from the behavioural assertion below.
+    //
+    // The two guard different failures and neither subsumes the other. Naming the CONSTANT
+    // in the behavioural test stops it re-inventing a key — the class that made this file's
+    // old assertion match its own fixture's placeholder. Pinning the LITERAL here makes a
+    // rename of the key loud: the wire value addresses live Redis entries written by
+    // deployed code, so changing it orphans whatever is under the old name, and that should
+    // be a deliberate decision rather than something a test silently follows. (archer's
+    // argument, against his own preferred version.)
+    it('pins the wire value of the review-session key', () => {
+      expect(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP).toBe(
+        'system:blocks:review-run-for-real-buzz-cap'
+      );
+    });
+
     // Run-for-real tokens are dev:true (signDevScopedPageToken) + carry the pubreq
     // id as appBlockId. dev:true also skips the G8 per-app reserve (synthetic id).
     const runForRealClaims = () =>
