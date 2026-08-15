@@ -30,6 +30,7 @@ type Manifest = {
   members: string[];
   excluded: Record<string, string>;
   unitInclude: string[];
+  canonicalSpecifiers: string[];
   totals: Record<string, number>;
 };
 
@@ -66,6 +67,32 @@ describe('unit / unit-fast partition', () => {
 
   it('the member list has no duplicates and is sorted', () => {
     expect(manifest.members).toEqual([...new Set(manifest.members)].sort());
+  });
+
+  /**
+   * 🔴 The membership rule exempts canonical specifiers from its sharing test, because the canonical
+   * mock exists so they CAN be shared. That exemption is about the specifier and says nothing about
+   * whether a given file still mocks it directly — and a file with its own
+   * `vi.mock('~/server/db/client', …)` overrides the canonical registration for its whole worker
+   * under `isolate: false`, freezing its factory for every member beside it.
+   *
+   * So the exemption written to admit files that USE the canonical mock also admitted the files it
+   * was built to replace: 52 of them at 3c9ac23165, against 3 members that mocked anything and were
+   * safe. Reading the manifest's own count could not see it, which is why this reads the FILES.
+   */
+  it('no member directly mocks a canonical specifier', () => {
+    const canonical = new Set(manifest.canonicalSpecifiers);
+    const offenders: string[] = [];
+    for (const file of manifest.members) {
+      const full = path.join(repoRoot, file);
+      if (!existsSync(full)) continue;
+      const src = readFileSync(full, 'utf8');
+      const mocked = [...src.matchAll(/vi\.mock\(\s*(['"`])([^'"`]+)\1/g)]
+        .map((m) => m[2])
+        .filter((s) => canonical.has(s));
+      if (mocked.length) offenders.push(`${file} -> ${[...new Set(mocked)].join(', ')}`);
+    }
+    expect(offenders, 'these override the canonical mock for their whole worker').toEqual([]);
   });
 
   /**

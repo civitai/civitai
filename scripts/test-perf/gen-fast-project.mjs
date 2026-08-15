@@ -182,13 +182,18 @@ function computeMembers({ closures, inventory }, canonical) {
 
     const evicted = [];
     for (const file of members) {
+      const own = byFile.get(file).mocks.map((m) => m.specifier);
+      // 🔴 A canonical specifier is exempt from the sharing test because the canonical mock exists
+      // so it CAN be shared — but only for a file that uses it. A file with its own
+      // `vi.mock('~/server/db/client', …)` overrides that registration, and under `isolate: false`
+      // the first such file evaluated in a worker freezes its factory for every member sharing it.
+      // Exempting the specifier without asking whether THIS file still mocks it directly waves
+      // through exactly the files the canonical mock was built to replace: 52 of them on the
+      // manifest at 3c9ac23165, which is 52 of the 55 members that mocked anything at all.
+      const directCanonical = [...new Set(own.filter((s) => CANON.has(s)))];
       const blockers = [
-        ...new Set(
-          byFile
-            .get(file)
-            .mocks.map((m) => m.specifier)
-            .filter((s) => !CANON.has(s) && (touchers.get(s)?.size ?? 0) > 1)
-        ),
+        ...new Set(own.filter((s) => !CANON.has(s) && (touchers.get(s)?.size ?? 0) > 1)),
+        ...directCanonical,
       ];
       if (blockers.length) evicted.push({ file, blockers });
     }
@@ -249,6 +254,12 @@ const manifest = {
     members: members.length,
     excludedPermanently: excluded.size,
     pending: allTestFiles.length - members.length - excluded.size,
+    // 🔴 The member count flatters and must never be quoted alone. Most members mock NOTHING —
+    // they were never what the migration was for, and they would have been eligible on day one.
+    // The number that measures the migration's progress is the other one: members that mock
+    // something and are safe anyway. At 3c9ac23165 the split was 441 against 3.
+    membersMockingNothing: members.filter((f) => (byFile.get(f)?.mocks.length ?? 0) === 0).length,
+    membersEarned: members.filter((f) => (byFile.get(f)?.mocks.length ?? 0) > 0).length,
     // Published beside the file count on purpose: they diverge badly. Members are ~46% of files
     // and ~16% of module loads, because the files that are already eligible are the ones that mock
     // nothing, which are the cheap ones. Quoting the file count overstates the lane by ~3x.
