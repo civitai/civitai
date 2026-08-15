@@ -11,8 +11,9 @@ import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // dbWrite for the review write path (resourceReview.findUniqueOrThrow, create), dbRead for the
-// user and image reads. `getDbWithoutLag` picks between the two by replication lag; with lag
-// off it is dbRead, and the one call it feeds - resourceReview.findMany - is never asserted on.
+// user and image reads. `getDbWithoutLag` is mocked wholesale below, so its real lag decision
+// never runs; dbRead is the arbitrary side of a choice nothing observes, since the one call it
+// feeds - resourceReview.findMany - is never asserted on.
 const mockRead = dbMock.dbRead;
 const mockWrite = dbMock.dbWrite;
 
