@@ -358,3 +358,48 @@ The `tag.service.unlisted` case is worth its own note: it is the alias disease o
 looks for `dbRead`/`dbWrite` aliasing; this one aliases two **models** on the same client, so a
 `model.findFirst` assertion can be satisfied by an `image.findFirst` call and no amount of getting the
 client right would catch it.
+
+## The alias shape predicts a conversion, not a behaviour change
+
+Three files on this slice had one local bound to both `dbRead` and `dbWrite`. All three were read
+behaviourally — which client the service actually uses for each asserted path, from the production
+code — and in all three **the alias was load-bearing for nothing**: no assertion was being satisfied
+by a call on the other client.
+
+- `toggle-bookmarked` — `toggleBookmarked` uses `dbWrite` for everything including its reads.
+- `restore-user-image-recovery` — same, `restoreUser` reads through the writer.
+- `resourceReview.idempotent` — a genuine split, but the only asserted path is on `dbWrite` and the
+  `dbRead` side feeds a `findMany` nothing asserts on.
+
+**So "this file aliases its clients" and "this file's tests depend on the aliasing" are different
+claims, and the first is not evidence for the second.** Splitting is still required — the canonical
+mock keeps the clients distinct and a file cannot migrate without choosing — but expecting red is
+a separate judgement that has to come from reading the assertions.
+
+⚠️ **Two bounds, both of which matter more than the n=3.**
+
+**The sample is selection-biased.** These are the three that yielded to a behavioural read.
+`placement-escrow` did not, and it is missing from the numerator for a reason correlated with the
+outcome. Do not read 3/3 as a rate.
+
+🔴 **This must not become "routing does not matter."** A mis-routed alias is silent for a NEGATIVE
+assertion: `expect(node).not.toHaveBeenCalled()` passes when the call went to the other client,
+whatever the code did. The reads above say the aliasing carried no weight in these files; they say
+nothing about what happens if you route carelessly while splitting.
+
+The falsifiable form, worth holding because it costs nothing: **when a red finally arrives, it will
+come from a fixture that genuinely differs between the two clients — not from the aliasing itself.**
+
+## `placement-escrow` is neither bucket: it is a stateful fake
+
+Placed only after reading it, having twice named a family wrong by sorting on shape.
+
+It is not an alias case at all — only `dbWrite` is mocked, so there are no two clients to conflate.
+And its `Object.assign(dbWriteMock, …)` is module-scope construction, not the runtime-write hazard
+that pattern usually signals. What it actually is: a working in-memory database — `db.placements` and
+`db.legs` maps, `updateMany` implementations that match every `where` key and mutate rows, a
+`$transaction` that snapshots committed state so a later call cannot be what makes an assertion pass.
+
+That is convertible — canonical nodes take `mockImplementation` — but it is ~20 stateful behaviours
+to reattach, and every one of them is load-bearing by construction. It belongs in its own batch, not
+appended to one.
