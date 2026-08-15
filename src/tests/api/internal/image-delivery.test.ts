@@ -6,8 +6,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // it — which is exactly how these media-type assertions first went green against unchanged
 // production code.
 import { respondWithRows } from '~/test-utils/queryRawProjection';
-import type * as RedisClientModule from '~/server/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * Coverage for GET /api/internal/image-delivery/[id] — the per-request lookup the image
@@ -25,29 +25,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * which never selects `type`/`mimeType`.
  */
 
-const { store,  } = vi.hoisted(() => ({
-  store: new Map<string, unknown>(),
-  
-}));
+const store = new Map<string, unknown>();
 const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
 const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
-
-// Keep the real REDIS_KEYS (so the key prefix matches the real one) and swap only the client.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof RedisClientModule>();
-  return {
-    ...actual,
-    redis: {
-      del: vi.fn(async (key: string) => (store.delete(key), 1)),
-      packed: {
-        get: vi.fn(async (key: string) => store.get(key) ?? null),
-        set: vi.fn(async (key: string, value: unknown) => {
-          store.set(key, value);
-        }),
-      },
-    },
-  };
-});
 
 // WebhookEndpoint wraps the handler with the shared internal-auth check we don't exercise
 // here — pass it through so the route's own logic (query validation, 404, body shape) is
@@ -82,6 +62,13 @@ const IMAGE_URL = 'abc123/def456.jpeg';
 beforeEach(() => {
   vi.clearAllMocks();
   store.clear();
+  // A store-backed cache, which no canonical default provides: these tests assert the real
+  // lookup's cache behaviour, so a miss and a hit have to be distinguishable.
+  redisMock.redis.del.mockImplementation(async (key: string) => (store.delete(key), 1));
+  redisMock.redis.packed.get.mockImplementation(async (key: string) => store.get(key) ?? null);
+  redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown) => {
+    store.set(key, value);
+  });
 });
 
 describe('GET /api/internal/image-delivery/[id]', () => {

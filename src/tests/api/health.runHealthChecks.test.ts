@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Unit test for runHealthChecks' overall-health computation, focused on the
 // sysRedis SOFT-dependency rule: a failing sysRedis check must NOT flip the
@@ -17,16 +17,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // these SAME references at call time, so mutating a method here (per test)
 // changes what the corresponding check returns without re-importing.
 const mocks = vi.hoisted(() => ({
-  sysRedis: {
-    isReady: true,
-    ping: vi.fn(async () => 'PONG'),
-    // hGet is only touched in the prod config-read leg; isProd is mocked false
-    // below so this stays inert, but provide it so the import is faithful.
-    hGet: vi.fn(async () => '[]'),
-  },
-  redis: { isReady: true },
-  dbRead: { $transaction: vi.fn(async () => 1) },
-  dbWrite: { $transaction: vi.fn(async () => 1) },
   pgDbRead: { query: vi.fn(async () => ({})) },
   pgDbWrite: { query: vi.fn(async () => ({})) },
 }));
@@ -50,12 +40,8 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: mocks.dbRead,
-  dbWrite: mocks.dbWrite,
-}));
-
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, 
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbReadLong: {},
   pgDbRead: mocks.pgDbRead,
   pgDbWrite: mocks.pgDbWrite,
 }));
@@ -72,17 +58,11 @@ vi.mock('~/server/prom/client', () => ({
   registerHistogram: () => ({ observe: vi.fn() }),
 }));
 
-vi.mock('~/server/redis/client', () => ({
-  redis: mocks.redis,
-  sysRedis: mocks.sysRedis,
-  REDIS_SYS_KEYS: {
-    SYSTEM: {
-      DISABLED_HEALTHCHECKS: 'sys:disabled-healthchecks',
-      NON_CRITICAL_HEALTHCHECKS: 'sys:non-critical-healthchecks',
-      FEATURES: 'sys:features',
-    },
-  },
-}));
+// The hand-written REDIS_SYS_KEYS this file used to carry invented a `sys:` prefix on all
+// three keys (the real ones are `disabled-healthchecks`, `non-critical-healthchecks`,
+// `system:features`). Nothing asserted on them — isProd is false, so the config-read leg is
+// inert — so the copy was never wrong in a way anything could see. The canonical
+// registration spreads the real constant.
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
@@ -92,6 +72,8 @@ vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
 
 import { runHealthChecks } from '~/pages/api/health';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // A never-aborted signal so runHealthChecks runs the full check set.
 const liveSignal = () => new AbortController().signal;
@@ -99,13 +81,22 @@ const liveSignal = () => new AbortController().signal;
 beforeEach(() => {
   vi.clearAllMocks();
   // Reset every backing mock to the HEALTHY default before each test.
-  mocks.sysRedis.isReady = true;
-  mocks.sysRedis.ping.mockImplementation(async () => 'PONG');
-  mocks.redis.isReady = true;
-  mocks.dbRead.$transaction.mockImplementation(async () => 1);
-  mocks.dbWrite.$transaction.mockImplementation(async () => 1);
+  redisMock.sysRedis.isReady = true;
+  redisMock.sysRedis.ping.mockImplementation(async () => 'PONG');
+  redisMock.redis.isReady = true;
+  dbMock.dbRead.$transaction.mockImplementation(async () => 1);
+  dbMock.dbWrite.$transaction.mockImplementation(async () => 1);
   mocks.pgDbRead.query.mockImplementation(async () => ({}));
   mocks.pgDbWrite.query.mockImplementation(async () => ({}));
+});
+
+// `isReady` is a plain data property, not a spy, so it is written straight onto the canonical
+// node and `resetSharedMocks()` — which resets mock functions — does not clear it. Under
+// `isolate: false` that would leave `sysRedis.isReady === false` for every later file in this
+// worker. Restore it here so the leak cannot escape this file.
+afterEach(() => {
+  redisMock.sysRedis.isReady = true;
+  redisMock.redis.isReady = true;
 });
 
 describe('runHealthChecks — sysRedis soft dependency', () => {
@@ -116,7 +107,7 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
   });
 
   it('sysRedis ping returns non-PONG → still healthy, sysRedis result recorded false', async () => {
-    mocks.sysRedis.ping.mockImplementation(async () => 'NOPE');
+    redisMock.sysRedis.ping.mockImplementation(async () => 'NOPE');
     const { healthy, results } = await runHealthChecks(liveSignal());
     // Fleet NOT shed despite sysRedis failing.
     expect(healthy).toBe(true);
@@ -125,7 +116,7 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
   });
 
   it('sysRedis ping throws → still healthy, sysRedis result recorded false', async () => {
-    mocks.sysRedis.ping.mockImplementation(async () => {
+    redisMock.sysRedis.ping.mockImplementation(async () => {
       throw new Error('sysRedis connection refused');
     });
     const { healthy, results } = await runHealthChecks(liveSignal());
@@ -134,14 +125,14 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
   });
 
   it('sysRedis isReady false → still healthy, sysRedis result recorded false', async () => {
-    mocks.sysRedis.isReady = false;
+    redisMock.sysRedis.isReady = false;
     const { healthy, results } = await runHealthChecks(liveSignal());
     expect(healthy).toBe(true);
     expect(results.sysRedis).toBe(false);
   });
 
   it('did NOT over-broaden: a critical check (dbRead) failing DOES flip healthy false', async () => {
-    mocks.dbRead.$transaction.mockRejectedValue(new Error('db read down'));
+    dbMock.dbRead.$transaction.mockRejectedValue(new Error('db read down'));
     const { healthy, results } = await runHealthChecks(liveSignal());
     expect(healthy).toBe(false);
     expect(results.read).toBe(false);
@@ -150,8 +141,8 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
   });
 
   it('critical failing AND sysRedis failing → healthy false (sysRedis never rescues a real failure)', async () => {
-    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
-    mocks.sysRedis.ping.mockImplementation(async () => 'NOPE');
+    dbMock.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    redisMock.sysRedis.ping.mockImplementation(async () => 'NOPE');
     const { healthy, results } = await runHealthChecks(liveSignal());
     expect(healthy).toBe(false);
     expect(results.write).toBe(false);
@@ -179,7 +170,7 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
     try {
       // Never-resolving promise: the ONLY way this check ends is the per-check
       // wall-clock timeout inside runCheckWithTimeout.
-      mocks.sysRedis.ping.mockImplementation(() => new Promise<string>(() => {}));
+      redisMock.sysRedis.ping.mockImplementation(() => new Promise<string>(() => {}));
 
       const runPromise = runHealthChecks(liveSignal());
 

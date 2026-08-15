@@ -36,23 +36,17 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 // would leave the blacklist test asserting against a value no request can
 // actually produce.
 
-// Mock the Axiom logger. `safeError` mirrors the real @civitai/axiom shape
-// (spreads `name: <errClass>` which the handler overrides). We assert server-fault
-// branches log and client-fault branches do NOT.
-const { mockLogToAxiom } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn(() => Promise.resolve()),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
-  safeError: (e: unknown) =>
-    e instanceof Error ? { name: e.name, message: e.message } : { message: String(e) },
-}));
+// `logToAxiom` is the canonical spy; `safeError` is the REAL one, since the canonical
+// registration spreads the module. These tests assert that server-fault branches log and
+// client-fault branches do not.
 
 // isClientAbortError (~/server/utils/errorHandling) is kept REAL so the handler's
 // real abort classification runs.
 
 import handler from '~/pages/api/download/[...key]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
 function createMocks({

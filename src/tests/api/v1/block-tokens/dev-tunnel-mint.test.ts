@@ -20,8 +20,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  */
 
 const {
-  mockDbWrite,
-  mockRedis,
   mockSession,
   mockTokenService,
   mockBlockRegistry,
@@ -29,23 +27,6 @@ const {
   mockAppBlocksFlag,
   mockDevTunnelService,
 } = vi.hoisted(() => {
-  const dbWrite = {
-    user: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
-        deletedAt: null,
-        bannedAt: null,
-      })),
-    },
-    appBlockPublishRequest: {
-      findFirst: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
-    },
-    appUserScopeGrant: { findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => null) },
-  };
-  const redis = {
-    incrBy: vi.fn(async () => 1),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => 60),
-  };
   const session = { value: null as any };
   const tokenService = {
     sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
@@ -80,8 +61,6 @@ const {
     })),
   };
   return {
-    mockDbWrite: dbWrite,
-    mockRedis: redis,
     mockSession: session,
     mockTokenService: tokenService,
     mockBlockRegistry: blockRegistry,
@@ -100,16 +79,14 @@ vi.mock('~/env/server', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
 vi.mock('~/server/services/block-token.service', () => ({ BlockTokenService: mockTokenService }));
 vi.mock('~/server/services/block-registry.service', () => ({ BlockRegistry: mockBlockRegistry }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
-}));
+// The hand-written REDIS_KEYS carried a placeholder ('rl') where the real key is
+// 'blocks:token-rate-limit'. Nothing asserted on it, so the copy was invisible; the canonical
+// registration spreads the real constant.
 vi.mock('~/server/utils/server-domain', () => ({
   getAllServerHosts: () => ['civitai.com'],
   getRequestDomainColor: () => undefined,
@@ -119,6 +96,12 @@ vi.mock('~/server/utils/server-domain', () => ({
 vi.mock('~/server/services/feature-flags.service', () => mockFlags);
 vi.mock('~/server/services/app-blocks-flag', () => mockAppBlocksFlag);
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => mockDevTunnelService);
+
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
 
 function makeReq(body: unknown): NextApiRequest {
   return {

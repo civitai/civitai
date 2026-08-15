@@ -58,44 +58,17 @@ function createMocks({
   return { req, res };
 }
 
-const {
-  mockGetSession,
-  mockIsAppBlocksEnabled,
-  mockIsAppBlocksAuthorEnabled,
-  mockFindMany,
-  mockFindFirst,
-  mockSysRedis,
-  mockMultiIncr,
-} = vi.hoisted(() => {
-  const mockMultiIncr = {
-    value: 1,
-    malformedExec: false as unknown[] | null | false,
-    throwExec: false,
-  };
-  const multiFactory = () => ({
-    set: vi.fn().mockReturnThis(),
-    incr: vi.fn().mockReturnThis(),
-    exec: vi.fn().mockImplementation(async () => {
-      if (mockMultiIncr.throwExec) throw new Error('redis down');
-      return mockMultiIncr.malformedExec !== false
-        ? mockMultiIncr.malformedExec
-        : ['OK', mockMultiIncr.value];
-    }),
-  });
-  return {
+const { mockGetSession, mockIsAppBlocksEnabled, mockIsAppBlocksAuthorEnabled, mockMultiIncr } =
+  vi.hoisted(() => ({
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
-    mockFindMany: vi.fn(),
-    mockFindFirst: vi.fn(),
-    mockSysRedis: {
-      multi: vi.fn(multiFactory),
-      ttl: vi.fn().mockResolvedValue(60),
-      expire: vi.fn().mockResolvedValue(1),
+    mockMultiIncr: {
+      value: 1,
+      malformedExec: false as unknown[] | null | false,
+      throwExec: false,
     },
-    mockMultiIncr,
-  };
-});
+  }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
@@ -103,14 +76,14 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlockPublishRequest: { findMany: mockFindMany, findFirst: mockFindFirst } },
-}));
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: mockSysRedis,
-  REDIS_SYS_KEYS: { BLOCKS: { SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit' } },
-}));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
+
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+const mockFindMany = dbMock.dbRead.appBlockPublishRequest.findMany;
+const mockFindFirst = dbMock.dbRead.appBlockPublishRequest.findFirst;
+const mockSysRedis = redisMock.sysRedis;
 
 import handler from '~/pages/api/v1/blocks/submissions';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -170,12 +143,26 @@ beforeEach(() => {
   mockMultiIncr.value = 1;
   mockMultiIncr.malformedExec = false;
   mockMultiIncr.throwExec = false;
+  // Not a canonical default: the limiter needs a chainable multi whose exec the tests
+  // drive through `mockMultiIncr`.
+  mockSysRedis.multi.mockImplementation(() => ({
+    set: vi.fn().mockReturnThis(),
+    incr: vi.fn().mockReturnThis(),
+    exec: vi.fn().mockImplementation(async () => {
+      if (mockMultiIncr.throwExec) throw new Error('redis down');
+      return mockMultiIncr.malformedExec !== false
+        ? mockMultiIncr.malformedExec
+        : ['OK', mockMultiIncr.value];
+    }),
+  }));
   mockSysRedis.ttl.mockResolvedValue(60);
   mockSysRedis.expire.mockResolvedValue(1);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   // Author capability defaults to the mod-floor (mirrors isAppBlocksAuthorEnabled
   // when the app-blocks-author Flipt flag is absent): mods pass, non-mods don't.
-  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator);
+  mockIsAppBlocksAuthorEnabled.mockImplementation(
+    async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
+  );
   mockFindMany.mockResolvedValue([dbRow()]);
   mockFindFirst.mockResolvedValue(dbRow());
 });
