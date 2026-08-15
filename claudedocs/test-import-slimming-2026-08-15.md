@@ -99,20 +99,24 @@ Paired full runs on `main` and this branch, same reporter, same window:
                    collect -27.8%  wall -24.5%
 ```
 
-The 306 files this branch does not touch are flat at +0.4% across that pair, which is what licenses
-the aggregate — both runs saw the same box.
-
-A second, independent method agrees. Splitting an earlier pair by whether a file's static closure
-changed rather than by whether its time moved, comparing the 412 test files whose closure these
-commits changed against the 653 they did not, in the same two runs:
+What licenses that aggregate is a control group defined **before the fact**. Partition all 1,065 files
+by whether these commits change a file's static import closure — a predicate computed from the diff,
+not from the timings — and measure both groups in the same two runs:
 
 ```
-  CHANGED-graph files   n=412   collect 4843s -> 3778s   -22.0%
-  UNCHANGED files       n=653   collect  633s ->  720s   +13.7%  (slower)
+  CHANGED-closure files   n=412   collect 4843s -> 3778s   -22.0%
+  UNCHANGED files         n=653   collect  633s ->  720s   +13.7%  (slower)
 ```
 
-That pair was taken on a busier box: the untouched files got 13.7% slower, which is why its
-whole-suite wall clock looked flat. Against that headwind the touched files still dropped 22%.
+That pair was taken on a busier box, which is why its whole-suite wall clock looked flat. The control
+group moved 13.7% **against** the result, and a headwind on the control is what makes the changed
+group's drop hard to explain as box noise.
+
+⚠️ Two numbers that look like corroboration and are not. "306 unchanged files at +0.4%" selects files
+by whose time did not move; "234 files improved by >20% went 4252s -> 2496s" selects files by how much
+they improved and then reports how much they improved. Both are outcome-defined, so both are
+descriptive only. Only the closure-based partition is a control. (The first of those was quoted as the
+licensing claim in an early draft of the PR body — an adversarial review caught it, correctly.)
 
 ### Do not read a null from the 90-file yardstick as a null
 
@@ -124,8 +128,10 @@ many files the run matches, because `@vitest/browser` seeds `optimizeDeps.entrie
 file, so a 13-file probe measured no charge at all. The subset's job is to be stable, not to be
 representative of every change; a null on it means "not visible here", not "not there".
 
-Individual movers map onto the edges: `app-settings-bootstrap` 24.7s -> 0.9s, `og-image-helpers`
-12.9s -> 0.4s, `contest-entry-base-model-gate` 17.1s -> 3.8s.
+Individual movers map onto the edges. From the busier pair: `app-settings-bootstrap` 24.7s -> 0.9s,
+`og-image-helpers` 12.9s -> 0.4s, `contest-entry-base-model-gate` 17.1s -> 3.8s. The same file reads
+31.5s -> 0.9s in the clean pair — the "before" differs because the box did, which is exactly why a
+single-run figure is not quotable and every table here names the pair it came from.
 
 The -1,065s on the changed files is what the externals table has to fit inside, and it does: the two
 externals cuts predict ~314s on their own. Checking a per-file model against the whole-suite total
