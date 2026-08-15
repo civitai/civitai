@@ -1,15 +1,31 @@
 # Handover — `src/server/services/__tests__` a–m shared-mock migration
 
-josh, 2026-08-15, with additions by liz after batch 6 (marked where they are hers). Branch
+josh, 2026-08-15, continued and closed out by liz through batches 6–9 (her sections are marked).
+Kept as a LOG rather than rewritten to current state: which claims were superseded, and by what, is
+the thing a successor most needs — josh's *"the three easiest remaining files"* with the ✅ beneath
+it is a corrected prediction, and a corrected prediction is evidence about the method. Branch
 `perf/test-mock-migration-services-a-m`, now based on `perf/test-mock-system` at `17f994221e` — the
 `withSysReadDeadline` seam commit. Everything below is the state at handover plus the reasoning that
 is not recoverable from the diff.
 
 ## Where it stands
 
-**114 of 129 files migrated, 15 remaining** (liz, after batch 6 — the three `withSysReadDeadline`
-seam files). josh's count before that was 111 of 129 with 18 remaining, and it was right; an earlier
-draft of his said 112 "once batch 5 lands", which the verified count after it landed corrected to 111.
+**127 of 129 files migrated, 2 remaining — the slice is done apart from the two lag-selected
+hold-outs.** (liz, after batches 6–9.) josh's count at handover was 111 of 129, and it was right; an
+earlier draft of his said 112 "once batch 5 lands", which the verified count corrected to 111.
+
+Every batch below was verified the same way: a control and a candidate in ONE box tenancy, per-file
+collected counts, a `cmp` gate before the control half proving it is not a second copy of the
+candidate, and a probe that had to FAIL. No claim here rests on a failure count or a timing delta at
+any width — those are not instruments under `--no-isolate` (96 / 379 / 121 failures on an identical
+tree, same tenancy, elise 2026-08-15).
+
+| batch | files | result |
+|---|---|---|
+| 6 | 3 `withSysReadDeadline` seam | 4/4/4 both halves, 3/3 predictions |
+| 7 | 6 ordinary (bucket 4 minus `model-file-scan`) | 22/7/4/11/22/4 both halves, 6/6 predictions |
+| 8 | `model-file-scan` (1,439 lines) | 66 both halves, matching a static prior stated first |
+| 9 | 6 parameterised-client | 11/17/14/4/27/15 — **4/6 predictions; see the red below** |
 
 ⚠️ **129 is the count of files that EVER carried a direct canonical mock, and it is not the count of
 files in the directory.** Re-derived independently off the allowlist at the branch base
@@ -19,27 +35,77 @@ makes it checkable rather than inherited:
 ```
 files ON DISK in the a-m range (flat dir, through purge-by-hash)   170
   ever carried a direct canonical mock                             129   <- the denominator
-    still carrying one                                              15
-    converted                                                      114
+    still carrying one                                               2
+    converted                                                      127
   never carried one — not work, and not progress                    41
 ```
 
-🔴 **So "files with no direct canonical mock" reads 155 of 170 — 91% — against a true 114 of 129.**
+🔴 **So "files with no direct canonical mock" over-reports by 41 files at every point in this
+migration** — at the time this table was first written it read 155 of 170, 91%, against a true
+114 of 129.
 The 41 were never work. Anyone measuring this slice by absence gets the flattering number, and it is
 the one that is easier to compute. Same shape as `fast-eligible` on `blocks/` (39 of 56 mock nothing;
 earned number 17) and the `unit-fast` manifest (439 of 443 mock nothing; earned 4) — **three
 independent instances, all inflating in the same direction.** It is a property of measuring migration
 progress by absence, not a caveat about one metric.
 
-Every landed batch was verified in a single tenancy: per-file collected counts against a control
-taken on this branch, zero-collect checked from a `--no-isolate` half, no failure totals compared
-across tenancies.
-
 The slice is the allowlist's `files[]` under `src/server/services/__tests__/` (flat, no subdir),
 sorted, from `account-deletion-images.test.ts` through `model-version.purge-by-hash.service.test.ts`
 inclusive. `blocks/`, `generation/` and `orchestrator/` subdirectories are a different owner's.
 
-## The 15 that remain, by bucket, with the discriminator
+## 🔴 The red, and the routing table that caused it — read this before trusting any inherited table
+
+Batch 9's first candidate half went **red on 2 of 6 files**, six tests, every one
+`AssertionError: expected null not to be null`. The cause was a line in
+`services-a-m-parameterised-client-analysis.md`, taken as evidence rather than as a claim.
+
+`resolveBlockInstance` (`block-registry.service:1354`) takes its client as a parameter at `:1362`
+and then uses that local for **everything on the path**:
+
+```
+:1409   db.blockUserSubscription.findUnique
+:1451   db.model.findUnique
+:1461   db.modelVersion.findFirst
+```
+
+The analysis says *"`model.findUnique` resolves to `dbRead` in the service source directly"*. **It
+does not — not on this path.** The `dbRead.model.findUnique` spelling it cites is at `:2617`, in a
+function these tests never call. Routing `model` / `modelVersion` to dbRead made the code read the
+canonical `null` on a client it never touches, and `if (!model) return null` fired everywhere.
+Fifteen sites corrected to dbWrite; green after.
+
+🔑 **This is the fourth `BOTH`-off-a-whole-module-scan instance in this slice and the first to reach
+a routing TABLE rather than a bucket assignment.** josh's own rule caught his; the analysis's own
+warning did not catch the analysis. **A citation was present, it looked checked, and the cited line
+was not on the path.** The aggravating detail is that the analysis is otherwise excellent and its
+per-case table is right everywhere else — a document that is right 95% of the time is more dangerous
+than one that is obviously rough, because trusting it is easier.
+
+**So: for a parameterised entry point, the question is not "where is this table spelled" but "does
+this call go through the parameterised local".** If it does, one default decides every table on that
+path at once.
+
+## 🔑 A mis-routed negative is silent — demonstrated, with the control that makes it mean something
+
+Batch 9's probe, three mutations in one run:
+
+| | mutation | observed |
+|---|---|---|
+| **A** | the two DANGEROUS negatives (`appBlockPublishRequest.findFirst`) mis-routed to dbRead | **PASSED** |
+| **B** | three SAFE negatives (`appBlock.update`, dbWrite-only) mis-routed the same way | **PASSED**, 14/14 |
+| **C** | the dangerous one asserted POSITIVELY on dbWrite, where the code does not call it | **FAILED** |
+
+**A and B both passing is the result.** A passing mis-route carries no information, because the safe
+case passes identically — so only **C** discriminates, and it is the only evidence available for the
+two assertions no static check can resolve. Without B you show the technique fires; with it you show
+it separates.
+
+⚠️ **Free win, worth knowing before you write an assertion:** the hybrid node carries its dotted path
+as its `mockName`, so a failure reads `expected "dbWrite.appBlockPublishRequest.findFirst"` where the
+old hand-rolled fixtures read `expected "spy"`. **A mis-route now names the client it landed on.**
+The migration improves failure legibility, not only isolation.
+
+## The 2 that remain, by bucket, with the discriminator
 
 **A successor's first question about any unconverted file is which bucket it is in. This is how to
 decide, not just what the answer was.**
@@ -69,7 +135,7 @@ stubbing `db-lag-helpers` takes a staleness branch production never takes. See
 `services-a-m-parameterised-client-analysis.md`; the fix (seed `TEST_ENV_DEFAULTS` from the schema's
 own defaults) is a shared-mock change and was handed to the env lane.
 
-### Bucket 2 — the client is a caller-supplied parameter (6 files)
+### Bucket 2 — the client is a caller-supplied parameter: DONE (6 files, batch 9)
 
 The `block-registry.*` family plus both `appBlockReview.*` files.
 
@@ -131,7 +197,7 @@ check's own 1,000 ms per-check timeout stays **below** `REDIS_SYS_READ_TIMEOUT_M
 numbers with nothing connecting them; raise the first for an unrelated reason and the hazard goes
 live in a file nowhere near the change.
 
-### Bucket 4 — ordinary hand work (7 files, and they are next)
+### Bucket 4 — ordinary hand work: DONE (7 files, batches 7 and 8)
 
 `coinbase.service`, `commentsv2.appListing.service`, `commentsv2.blockCheck.service`,
 `model-early-access-refund.service`, `model-version.deregister.service`, `model-file.service`,
