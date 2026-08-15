@@ -19,14 +19,14 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 385,
+    "canonicalFiles": 383,
     "pendingFiles": 390,
     "allFiles": 525,
-    "canonicalSites": 550,
+    "canonicalSites": 544,
     "pendingSites": 853
   },
   "bySpecifier": {
-    "~/server/db/client": 270,
+    "~/server/db/client": 264,
     "~/server/redis/client": 165,
     "~/server/logging/client": 115,
     "~/env/server": 106,
@@ -43,12 +43,10 @@
     "~/server/prom/client": 50
   },
   "files": [
-    "src/__tests__/pages/api/download/attachment-blocklist.test.ts",
     "src/__tests__/pages/api/download/download-quota-seam.test.ts",
     "src/__tests__/pages/api/download/model-version-blocklist.test.ts",
     "src/__tests__/pages/api/download/split-query-repair.test.ts",
     "src/__tests__/pages/api/download/training-data-blocklist.test.ts",
-    "src/__tests__/pages/api/download/vault-blocklist.test.ts",
     "src/__tests__/pages/api/v1/model-versions/mini-download-url-file-match.test.ts",
     "src/__tests__/pages/api/webhooks/image-scan-result.test.ts",
     "src/server/__tests__/live-endpoint.test.ts",
