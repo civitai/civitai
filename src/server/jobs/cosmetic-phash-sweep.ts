@@ -56,7 +56,7 @@ export async function sweepCosmeticPerceptualHashes({
       )
       AND (
         "pHashCheckedAt" IS NULL
-        OR "pHashCheckedAt" < NOW() - ${`${RETRY_AFTER_HOURS} hours`}::interval
+        OR "pHashCheckedAt" < NOW() - (${RETRY_AFTER_HOURS} * INTERVAL '1 hour')
       )
     ORDER BY "pHashCheckedAt" ASC NULLS FIRST, id ASC
     LIMIT ${batchSize}

@@ -141,9 +141,10 @@ export type CosmeticSimilarityResult =
   | { status: 'ok'; comparedAgainst: number; bits: number; matches: SimilarCosmetic[] };
 
 export function hammingDistanceHex(a: string, b: string) {
-  // Same-lane hashes are the same width by construction; a mismatch means the
-  // caller compared across lanes, which yields a meaningless number rather than
-  // an error unless it is refused here.
+  // Same-lane hashes are the same width by construction, and the candidate query
+  // filters on length as well, so this should be unreachable. It throws anyway:
+  // a distance between two widths is a meaningless number that looks like a
+  // meaningful one, and nothing downstream could tell.
   if (a.length !== b.length) throw new Error(`Hash width mismatch: ${a.length} vs ${b.length}`);
   let bits = 0;
   for (let i = 0; i < a.length; i++) {
@@ -202,6 +203,7 @@ export async function getSimilarCosmetics({
       AND "pHashVersion" = ${COSMETIC_PHASH_LANE.version}
       AND "pHashUrl" = data->>'url'
       AND "pHashHex" !~ '^0+$'
+      AND length("pHashHex") = ${targetHex.length}
       AND id != ${cosmeticId}
   `;
 
