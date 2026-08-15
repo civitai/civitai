@@ -10,7 +10,11 @@ import { getUserBanDetails, type BanDetailsMeta } from './ban';
 // honors it while getSessionUser currently defaults. To make them bit-identical, getSessionUser should adopt
 // the same focused read (a small, revenue-adjacent change — left for explicit review). See the cutover doc (D).
 const settingsSchema = z
-  .object({ allowAds: z.boolean().optional(), redBrowsingLevel: z.number().optional() })
+  .object({
+    allowAds: z.boolean().optional(),
+    redBrowsingLevel: z.number().optional(),
+    isEarlyAdopter: z.boolean().optional(),
+  })
   .passthrough();
 
 // PURE derivation: queried rows + permissions → the @civitai/auth SessionUser. No DB / redis / env, so the
@@ -124,6 +128,12 @@ export function shapeSessionUser({
   const redBrowsingLevel: number | undefined =
     settings.redBrowsingLevel != null ? settings.redBrowsingLevel : undefined;
 
+  // Early-adopter opt-in. Kept SPARSE (undefined when the user never opted in) rather
+  // than coerced to false, so the session payload for the overwhelming majority of users
+  // is unchanged; `buildFliptContext` is what turns it into a 'true'/'false' string.
+  const isEarlyAdopter: boolean | undefined =
+    settings.isEarlyAdopter != null ? settings.isEarlyAdopter : undefined;
+
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
   // is effectively undefined; reproduced exactly).
   const fullMeta = asObject(row.meta) as { banDetails?: BanDetailsMeta } & Record<string, unknown>;
@@ -159,6 +169,7 @@ export function shapeSessionUser({
     subscriptionId: primarySubscriptionId,
     memberInBadState,
     allowAds,
+    isEarlyAdopter,
     tier: highestTier,
     meta: userMeta,
     banDetails: banDetails as Record<string, unknown> | undefined,

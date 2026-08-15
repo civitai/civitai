@@ -535,6 +535,13 @@ const featureFlags = createFeatureFlags({
   // the route SSR resolver reads the same resolved flag) but staged `['mod']`
   // rather than `[]` because it's a re-host, not a brand-new dark capability.
   appReviewPage: { availability: ['mod'], fliptKey: 'app-review-page' },
+  // Early-adopter opt-in cohort. `availability: []` = DARK by default and FAILS CLOSED
+  // (empty availability → static eval false when Flipt is absent/down), so the Flipt
+  // `early-adopter` flag is the ONLY on-switch. NOT `['user']`/`['public']`: those would
+  // fail OPEN and hand the cohort to everyone the moment Flipt is unreachable, which
+  // defeats the point of an opt-in. The flag's `early-adopters` segment matches on the
+  // `isEarlyAdopter` context property emitted by `buildFliptContext`.
+  earlyAdopter: { availability: [], fliptKey: 'early-adopter' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -667,6 +674,11 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
     // Creator Program membership is recorded as an onboarding-step bit
     // (set on join in creator-program.service, cleared on leave).
     ctx.isInCreatorProgram = String(Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram));
+    // Early-adopter opt-in, stored in `User.settings` and projected onto the session by
+    // the auth hub. Always emitted for a logged-in user (never opted in ⇒ 'false'), so a
+    // Flipt segment can match on the string EQUALLY rather than on key presence — same
+    // shape as `isModerator` above. Absent entirely for an anonymous request.
+    ctx.isEarlyAdopter = String(!!user.isEarlyAdopter);
   } else {
     ctx.isLoggedIn = 'false';
   }
@@ -818,8 +830,12 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
 // one user scrolling the feed (many getInfinite calls) — skip the per-flag work.
 //
 // KEY COMPLETENESS IS A CORRECTNESS INVARIANT. The cache key must include EVERY
-// input hasFeature reads: user id/isModerator/tier/permissions, host (domain
-// gating), and the FULL region. Region gates compliance-sensitive
+// input hasFeature reads: user id/isModerator/tier/isEarlyAdopter/permissions,
+// host (domain gating), and the FULL region. `isEarlyAdopter` is in the key for
+// exactly this reason — it feeds buildFliptContext, so an entry cached before the
+// user toggled it would keep the OLD cohort decision for the whole TTL, which is
+// precisely the staleness the toggle's `refreshSession` exists to prevent.
+// Region gates compliance-sensitive
 // restricted-region features, so two different regions must NEVER share an entry
 // — the whole region object is serialized into the key to guarantee that. Live
 // Flipt config changes are bounded by the TTL (same staleness as the per-eval
@@ -837,10 +853,9 @@ function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccess
   // checkRegionAccess's `if (req)`) so key construction never throws.
   const region = isDev || !req ? undefined : getRegion(req);
   const u = user
-    ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${(user.permissions ?? [])
-        .slice()
-        .sort()
-        .join(',')}`
+    ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${
+        user.isEarlyAdopter ? 1 : 0
+      }:${(user.permissions ?? []).slice().sort().join(',')}`
     : 'anon';
   return `${u}|h:${host ?? ''}|r:${region ? JSON.stringify(region) : ''}`;
 }

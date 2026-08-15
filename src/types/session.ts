@@ -37,6 +37,13 @@ export interface SessionUser {
   memberInBadState?: boolean;
   meta?: UserMeta;
   allowAds?: boolean;
+  /**
+   * Early-adopter opt-in, projected off `User.settings.isEarlyAdopter` by the auth hub
+   * (`shapeSessionUser`). Read by `buildFliptContext` so Flipt segments can target the
+   * cohort. Session-carried on purpose — the Flipt context is built once per request and
+   * must not take a DB read (feature-flags.service.ts).
+   */
+  isEarlyAdopter?: boolean;
   banDetails?: ReturnType<typeof getUserBanDetails>;
   redBrowsingLevel?: number;
   deletedAt?: Date;

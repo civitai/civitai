@@ -92,6 +92,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
+  // that `buildFliptContext` emits from the user's opt-in setting, so background paths
+  // (no request context) can gate on the same flag the request path does. Default-off —
+  // isFlipt returns false for an unknown flag.
+  EARLY_ADOPTER = 'early-adopter',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

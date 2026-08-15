@@ -245,6 +245,43 @@ describe('shapeSessionUser — allowAds / redBrowsingLevel from settings (D)', (
   });
 });
 
+describe('shapeSessionUser — isEarlyAdopter from settings', () => {
+  it('projects an explicit opt-in / opt-out off the settings blob', () => {
+    expect(shape({ settings: { isEarlyAdopter: true } }).isEarlyAdopter).toBe(true);
+    expect(shape({ settings: { isEarlyAdopter: false } }).isEarlyAdopter).toBe(false);
+  });
+
+  it('stays undefined — not false — when the user never opted in', () => {
+    // Sparse on purpose: the overwhelming majority of session payloads must be
+    // byte-unchanged by this feature. `buildFliptContext` is what collapses
+    // undefined to the 'false' string, so nothing downstream needs a default here.
+    expect(shape({ settings: {} }).isEarlyAdopter).toBeUndefined();
+    expect(shape({ settings: null }).isEarlyAdopter).toBeUndefined();
+  });
+
+  it('ignores a mistyped value rather than passing it through or throwing', () => {
+    // The lenient .passthrough() parse drops the whole focused object on a type
+    // mismatch, so a garbage value must not surface as a truthy opt-in.
+    expect(shape({ settings: { isEarlyAdopter: 'yes' } }).isEarlyAdopter).toBeUndefined();
+    expect(shape({ settings: { isEarlyAdopter: 1 } }).isEarlyAdopter).toBeUndefined();
+  });
+
+  it('is independent of tier — a free user can opt in, a paying user can stay out', () => {
+    // The cohort must not be a proxy for membership; it is a pure user choice.
+    expect(shape({ settings: { isEarlyAdopter: true } }).isEarlyAdopter).toBe(true);
+    expect(shape({ settings: { isEarlyAdopter: false } }, [sub()]).isEarlyAdopter).toBe(false);
+  });
+
+  it('does not disturb the neighbouring settings-derived fields', () => {
+    // Same focused parse feeds allowAds/redBrowsingLevel; adding a key to it must
+    // not change how those resolve.
+    const u = shape({ settings: { isEarlyAdopter: true, allowAds: false, redBrowsingLevel: 31 } });
+    expect(u.allowAds).toBe(false);
+    expect(u.redBrowsingLevel).toBe(31);
+    expect(u.isEarlyAdopter).toBe(true);
+  });
+});
+
 describe('shapeSessionUser — meta / banDetails (parity)', () => {
   it('strips banDetails out of the output meta and yields undefined banDetails', () => {
     const u = shape({
