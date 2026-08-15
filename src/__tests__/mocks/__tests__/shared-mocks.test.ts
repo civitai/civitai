@@ -40,6 +40,18 @@ describe('shared-module mocks', () => {
     expect(redisClient.withSysReadDeadline).toBeTypeOf('function');
   });
 
+  it('never evaluates the real db/redis shims, so no client is ever constructed', () => {
+    // 🔴 The registration spreads the PACKAGE, not `importOriginal` of the app shim. The
+    // shims construct Prisma/Redis clients at module scope, so spreading them forced real
+    // construction into EVERY test file — and a file whose own `@prisma/client` mock lacks a
+    // `PrismaClient` constructor then died at module scope, collecting ZERO tests while the
+    // failure count stayed at 0. Both shims stash their clients on globalThis outside prod,
+    // so an absent global is direct evidence the module body never ran.
+    const g = globalThis as { __civitaiPrismaClients?: unknown; __civitaiRedisClients?: unknown };
+    expect(g.__civitaiPrismaClients).toBeUndefined();
+    expect(g.__civitaiRedisClients).toBeUndefined();
+  });
+
   it('is never mistaken for a thenable', async () => {
     // A node resolving `then` to a child would make it callable by the await machinery,
     // which hangs rather than fails.

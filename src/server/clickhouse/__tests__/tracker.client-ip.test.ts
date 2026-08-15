@@ -29,16 +29,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * overwritten later in the constructor, is invisible to it and caught here.
  */
 
-vi.mock('~/env/server', () => ({
-  env: {
-    CLICKHOUSE_TRACKER_URL: 'http://tracker.test',
-    CLICKHOUSE_HOST: undefined,
-    CLICKHOUSE_USERNAME: undefined,
-    CLICKHOUSE_PASSWORD: undefined,
-    IS_BUILD: true,
-    LOGGING: [],
-  },
-}));
 vi.mock('~/env/other', () => ({ isProd: false, isDev: true }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),

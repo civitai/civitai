@@ -9,16 +9,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * that a counter moved — and nothing else in the suite notices.
  */
 
-vi.mock('~/env/server', () => ({
-  env: {
-    CLICKHOUSE_TRACKER_URL: 'http://tracker.test',
-    CLICKHOUSE_HOST: undefined,
-    CLICKHOUSE_USERNAME: undefined,
-    CLICKHOUSE_PASSWORD: undefined,
-    IS_BUILD: true,
-    LOGGING: [],
-  },
-}));
 vi.mock('~/env/other', () => ({ isProd: false, isDev: true }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),

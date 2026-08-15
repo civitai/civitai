@@ -1,8 +1,10 @@
 import { resetHybridNodes } from './hybrid';
+import { resetEnv } from './env.mock';
 
 export { dbMock } from './db.mock';
 export { redisMock } from './redis.mock';
 export { loggingMock } from './logging.mock';
+export { envMock, setEnv, setEnvDefaults, TEST_ENV_DEFAULTS } from './env.mock';
 export { mockNode, hybridNodeCount, type HybridNode } from './hybrid';
 
 /**
@@ -18,4 +20,7 @@ export { mockNode, hybridNodeCount, type HybridNode } from './hybrid';
  */
 export function resetSharedMocks() {
   resetHybridNodes();
+  // Per-file env overrides only. The worker-level defaults survive, because a module that
+  // read one at import time did so once per worker and cannot be re-answered.
+  resetEnv();
 }
