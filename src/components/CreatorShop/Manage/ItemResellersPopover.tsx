@@ -36,14 +36,14 @@ export function ItemResellersPopover({ shopItemId, count }: { shopItemId: number
           size="xs"
           lh="xs"
           p={0}
-          className="w-fit text-left focus:outline-none focus-visible:outline focus-visible:outline-1"
+          className="w-fit text-left"
           onClick={() => setOpened((o) => !o)}
         >
           {count} {count === 1 ? 'creator resells' : 'creators resell'} this
         </Anchor>
       </Popover.Target>
       <Popover.Dropdown p={0}>
-        <Text size="xs" c="dimmed" px="sm" py="xs" className="whitespace-nowrap">
+        <Text size="xs" c="dimmed" px="sm" py="xs">
           Each creator keeps the share listed below, even if you change it
         </Text>
         <Divider />

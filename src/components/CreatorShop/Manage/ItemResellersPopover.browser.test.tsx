@@ -92,6 +92,11 @@ describe('ItemResellersPopover — the dropdown escapes the manage table', () =>
     // this guard is only meaningful while that clipping ancestor exists.
     expect(scrollContainer).not.toBeNull();
     expect(scrollContainer!.contains(dropdown!)).toBe(false);
+    // The table has a SECOND clipping ancestor — the Paper wrapping it also sets
+    // overflow-hidden — so escaping the scroll container alone is not enough.
+    const paper = document.querySelector('.mantine-Paper-root');
+    expect(paper).not.toBeNull();
+    expect(paper!.contains(dropdown!)).toBe(false);
   });
 
   // Positive control for the harness: an unportalled popover rendered in the same
