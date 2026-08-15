@@ -438,6 +438,19 @@ module calls the canonical node instead of a spy bound by per-file re-instantiat
 green before the conversion and green after, and neither green was informative — the mutation is the
 entire result.**
 
+🔑 **A reviewer added the mechanism that makes this stronger than a compromise.** The shielding
+hazard cannot re-enter here at all, because `logToAxiom` is a canonical hybrid node whose identity is
+cached in a module-level `Map` for the life of the worker (`hybrid.ts:30`, `:48-95`). **The binding
+is correct whether or not the consuming module re-instantiates**, which is precisely what a per-file
+spy could not promise. So converting logging while keeping env is not half a job — it is the right
+split, and the canonical mock **removes** the hazard rather than dodging it.
+
+⚠️ **One claim of mine in this section is reasoned, not independently confirmed**, and the reviewer
+was right to label it: that a per-file `~/env/server` mock *forces* the consuming module to
+re-instantiate under `isolate: false`. It is the standard account of how the `deregisterBatch` /
+`deregister` failure worked, and nothing here depends on it — the `Map`-cached identity above makes
+the binding correct either way. Recorded as reasoned so nobody quotes it as measured.
+
 ### What is NOT established
 
 **Nothing in this slice has been adversarially reviewed.** Every verification in this document is the
