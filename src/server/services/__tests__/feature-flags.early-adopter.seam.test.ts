@@ -44,10 +44,7 @@ import {
   shapeSessionUser,
   type ProducerUserRow,
 } from '../../../../apps/auth/src/lib/server/auth/session-shape';
-import {
-  buildFliptContext,
-  getFeatureFlagsAsync,
-} from '~/server/services/feature-flags.service';
+import { buildFliptContext, getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
 
 /**
@@ -221,8 +218,12 @@ describe('early-adopter seam: the FeatureAccess memo key must include the opt-in
     const id = freshId();
 
     expect(
-      (await getFeatureFlagsAsync({ user: sessionUserFromSettings({ isEarlyAdopter: true }, id), req }))
-        .earlyAdopter
+      (
+        await getFeatureFlagsAsync({
+          user: sessionUserFromSettings({ isEarlyAdopter: true }, id),
+          req,
+        })
+      ).earlyAdopter
     ).toBe(true);
     expect(
       (

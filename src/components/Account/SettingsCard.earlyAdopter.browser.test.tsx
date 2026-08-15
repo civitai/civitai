@@ -137,8 +137,6 @@ describe('SettingsCard — early-adopter toggle', () => {
     // real explanatory copy, not just the label.
     renderWithProviders(<SettingsCard />);
 
-    await expect
-      .element(page.getByText(/before they roll out to everyone/i))
-      .toBeInTheDocument();
+    await expect.element(page.getByText(/before they roll out to everyone/i)).toBeInTheDocument();
   });
 });

@@ -1,8 +1,4 @@
-import type {
-  UserTier,
-  UserSubscriptionsByBuzzType,
-  UserMeta,
-} from '~/server/schema/user.schema';
+import type { UserTier, UserSubscriptionsByBuzzType, UserMeta } from '~/server/schema/user.schema';
 import type { getUserBanDetails } from '~/utils/user-helpers';
 
 // First-party session types — the app imports `Session`/`SessionUser` from here (not from 'next-auth'), so the

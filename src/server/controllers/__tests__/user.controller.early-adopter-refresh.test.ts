@@ -17,17 +17,13 @@ import type * as SessionInvalidation from '~/server/auth/session-invalidation';
  * on whether `refreshSession` was called and with what.
  */
 
-const {
-  mockGetUserSettings,
-  mockSetUserSetting,
-  mockRefreshSession,
-  mockQueueReindex,
-} = vi.hoisted(() => ({
-  mockGetUserSettings: vi.fn(),
-  mockSetUserSetting: vi.fn().mockResolvedValue(undefined),
-  mockRefreshSession: vi.fn().mockResolvedValue(undefined),
-  mockQueueReindex: vi.fn().mockResolvedValue(undefined),
-}));
+const { mockGetUserSettings, mockSetUserSetting, mockRefreshSession, mockQueueReindex } =
+  vi.hoisted(() => ({
+    mockGetUserSettings: vi.fn(),
+    mockSetUserSetting: vi.fn().mockResolvedValue(undefined),
+    mockRefreshSession: vi.fn().mockResolvedValue(undefined),
+    mockQueueReindex: vi.fn().mockResolvedValue(undefined),
+  }));
 
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),

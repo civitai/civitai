@@ -87,7 +87,10 @@ describe('shapeSessionUser — field mapping', () => {
   });
 
   it('passes permissions straight through', () => {
-    expect(shape({}, [], ['feature:a', 'feature:b']).permissions).toEqual(['feature:a', 'feature:b']);
+    expect(shape({}, [], ['feature:a', 'feature:b']).permissions).toEqual([
+      'feature:a',
+      'feature:b',
+    ]);
   });
 
   it('coerces filePreferences to an object (never a primitive)', () => {
@@ -99,7 +102,9 @@ describe('shapeSessionUser — field mapping', () => {
 
 describe('shapeSessionUser — tier / subscriptions', () => {
   it('resolves tier + subscription entry for a single active sub', () => {
-    const u = shape({}, [sub({ id: 'sub_1', status: 'active', product: { metadata: { tier: 'gold' } } })]);
+    const u = shape({}, [
+      sub({ id: 'sub_1', status: 'active', product: { metadata: { tier: 'gold' } } }),
+    ]);
     expect(u.tier).toBe('gold');
     expect(u.subscriptionId).toBe('sub_1');
     expect(u.memberInBadState).toBe(false);
@@ -127,7 +132,9 @@ describe('shapeSessionUser — tier / subscriptions', () => {
   });
 
   it('flags memberInBadState and keeps a primary sub id from a bad-state sub', () => {
-    const u = shape({}, [sub({ id: 'bad', status: 'past_due', product: { metadata: { tier: 'gold' } } })]);
+    const u = shape({}, [
+      sub({ id: 'bad', status: 'past_due', product: { metadata: { tier: 'gold' } } }),
+    ]);
     expect(u.memberInBadState).toBe(true);
     expect(u.tier).toBeUndefined(); // bad-state isn't "active", so no highest tier
     expect(u.subscriptionId).toBe('bad'); // but the bad-state sub is tracked so the user can manage it
@@ -184,7 +191,9 @@ describe('shapeSessionUser — membership override', () => {
   });
 
   it('never lowers a higher paid tier', () => {
-    const u = withOverride('bronze', [sub({ id: 'a', product: { metadata: { tier: 'founder' } } })]);
+    const u = withOverride('bronze', [
+      sub({ id: 'a', product: { metadata: { tier: 'founder' } } }),
+    ]);
     expect(u.tier).toBe('founder');
   });
 

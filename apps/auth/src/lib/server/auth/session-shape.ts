@@ -124,7 +124,8 @@ export function shapeSessionUser({
   // else fall back to the tier-based default (member → no ads; free → ads). Mirrors getSessionUser's intent.
   const parsedSettings = settingsSchema.safeParse(asObject(row.settings));
   const settings = parsedSettings.success ? parsedSettings.data : {};
-  const allowAds = settings.allowAds != null ? settings.allowAds : highestTier != null ? false : true;
+  const allowAds =
+    settings.allowAds != null ? settings.allowAds : highestTier != null ? false : true;
   const redBrowsingLevel: number | undefined =
     settings.redBrowsingLevel != null ? settings.redBrowsingLevel : undefined;
 
