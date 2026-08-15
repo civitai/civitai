@@ -450,6 +450,10 @@ asserting nothing. Fix is in flight on the base branch; do not convert until it 
 Shell `grep` on this box can return empty with exit 0 on real matches (a hook rewrites it to a proxy).
 Use the structured search tool for anything load-bearing.
 
+**The failure mode is a false ZERO, not a false positive**, which bounds any audit: a non-empty shell
+`grep` result is still evidence. It invalidates "X appears nowhere" claims and leaves "X appears here"
+claims standing, so do not go re-deriving correct positive findings.
+
 ⚠️ **And the variant that is not in the general warning:** I ran one grep with an alternation,
 `A\|B\|C`. It printed hits for B and C and nothing for A. **The command returned non-empty, so it
 looked alive**, and I read the missing branch as a real negative — publishing that
