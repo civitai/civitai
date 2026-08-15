@@ -127,9 +127,11 @@ vi.mock('~/server/jobs/daily-challenge-processing', async (importOriginal) => {
   return { ...actual, pickWinnersForChallenge: mockPickWinnersForChallenge };
 });
 
-const { reviewEntries, challengeReviewInternals } = await import(
+const { reviewEntries, challengeReviewInternals, dailyChallengeJobs } = await import(
   '~/server/jobs/daily-challenge-processing'
 );
+const { createJob } = await import('~/server/jobs/job');
+const { REVIEW_JOB_LOCK_SECONDS } = await import('~/server/games/daily-challenge/challenge-ladder');
 const { runChallengeCompletion } = await import('~/server/jobs/challenge-completion');
 const { CHALLENGE_JOB_BATCH_SIZE, CHALLENGE_JOB_CONCURRENCY } = await import(
   '~/shared/constants/challenge.constants'
@@ -160,6 +162,20 @@ beforeEach(() => {
   mockGetEndedActiveChallenges.mockResolvedValue([]);
   mockGetChallengesToReconcile.mockResolvedValue([]);
   mockResetStuckCompletingChallenges.mockResolvedValue(0);
+});
+
+describe('the review job asks for the lock the placement budget was sized against', () => {
+  // The bound REVIEW_TICK_BUDGET_MS is sized against is the JOB lock, not the completion claim and
+  // not the cron interval. The arithmetic lives beside those constants in challenge-ladder.test.ts;
+  // this is the wiring half, here because loading daily-challenge-processing.ts is what it costs.
+  it('is the lock the job actually asks for, not createJob’s default', () => {
+    const inherited = createJob('probe', '*/10 * * * *', async () => undefined);
+    const job = dailyChallengeJobs.find((j) => j.name === 'daily-challenge-process-entries')!;
+
+    expect(job.options.lockExpiration).toBe(REVIEW_JOB_LOCK_SECONDS);
+    // The point of the override: the inherited default is too short to hold a drain.
+    expect(REVIEW_JOB_LOCK_SECONDS).toBeGreaterThan(inherited.options.lockExpiration);
+  });
 });
 
 describe('reviewEntries at volume', () => {

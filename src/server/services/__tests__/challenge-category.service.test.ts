@@ -1,11 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// No ~/server/db/client mock on purpose: the service imports it lazily and falls back to the
-// preset constants when the import/query fails, which is exactly the pre-seed behavior these
-// tests pin down. (In prod the same path covers an env whose ChallengeCategory table hasn't
-// been created/seeded yet — migrations are applied manually.)
+// The service imports dbRead lazily and falls back to the preset constants when the read fails —
+// the pre-seed behavior the "preset fallback" tests below pin down. (In prod the same path covers
+// an env whose ChallengeCategory table hasn't been created/seeded yet: migrations are applied
+// manually.) The read is stubbed to reject rather than left to a real connection attempt: the
+// unmocked client took ~4s per call to time out, and whether it failed at all depended on what the
+// box could reach.
+const findManyMock = dbMock.dbRead.challengeCategory.findMany;
+
 import {
   assertCategoryActiveAllowed,
+  clearChallengeCategoryCache,
   getJudgingCategoryOptions,
   mergeCategoryRows,
   pickCategoryRubric,
@@ -62,6 +68,33 @@ describe('pickCategoryRubric precedence', () => {
 });
 
 describe('preset fallback (no DB available)', () => {
+  beforeEach(() => {
+    clearChallengeCategoryCache();
+    findManyMock.mockReset();
+    findManyMock.mockRejectedValue(new Error('relation "ChallengeCategory" does not exist'));
+  });
+
+  // Every assertion below this line also holds when the read SUCCEEDS and returns no rows, because
+  // merging presets with an empty row set gives the same answer. These two pin which path ran: the
+  // failure path deliberately does not cache, so a blip cannot make resolveJudgingCategories reject
+  // valid keys for a whole TTL.
+  it('does not cache a failed read — the next call retries the DB', async () => {
+    await getJudgingCategoryOptions();
+    await getJudgingCategoryOptions();
+    expect(findManyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches a successful read, and lets its rows override the presets', async () => {
+    findManyMock.mockReset();
+    findManyMock.mockResolvedValue([row({ key: 'theme', label: 'Theme (from DB)' })]);
+
+    const first = await getJudgingCategoryOptions();
+    await getJudgingCategoryOptions();
+
+    expect(first.find((o) => o.key === 'theme')?.label).toBe('Theme (from DB)');
+    expect(findManyMock).toHaveBeenCalledTimes(1);
+  });
+
   it('getJudgingCategoryOptions returns the preset library without rubric columns', async () => {
     const options = await getJudgingCategoryOptions();
     expect(options.map((o) => o.key)).toContain('theme');
@@ -104,7 +137,9 @@ describe('preset fallback (no DB available)', () => {
   it('resolveRubricBlock derives per-key blocks from the preset library when the DB is unavailable', async () => {
     const block = await resolveRubricBlock([{ key: 'theme' }, { key: 'aesthetic' }]);
     const derive = (k: 'theme' | 'aesthetic') =>
-      `${CHALLENGE_PRESET_CATEGORIES[k].label.toUpperCase()} SCORING (0-10):\n${CHALLENGE_PRESET_CATEGORIES[k].criteria}`.trim();
+      `${CHALLENGE_PRESET_CATEGORIES[k].label.toUpperCase()} SCORING (0-10):\n${
+        CHALLENGE_PRESET_CATEGORIES[k].criteria
+      }`.trim();
     expect(block).toBe([derive('theme'), derive('aesthetic')].join('\n\n'));
   });
 });
