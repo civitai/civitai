@@ -94,7 +94,7 @@
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
     "test:reset": "make bootstrap-db",
     "test:unit": "vitest --project unit",
-    "test:unit:run": "vitest run --project unit",
+    "test:unit:run": "node scripts/test-unit-run.mjs",
     "test:unit:coverage": "vitest run --project unit --coverage",
     "test:packages": "vitest --project '@civitai/*'",
     "test:packages:run": "vitest run --project '@civitai/*'",

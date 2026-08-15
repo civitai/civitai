@@ -1,0 +1,141 @@
+#!/usr/bin/env node
+/**
+ * `pnpm run test:unit:run` — runs the unit suite, optionally through the dev-server queue.
+ *
+ * Off by default: with no flag set this spawns exactly the vitest command the script used to be,
+ * so CI and anyone who does not run the daemon see no change at all.
+ *
+ * With CIVITAI_TEST_QUEUE set, a full-suite run is routed through the daemon's queue instead, which
+ * serialises it against every other agent on the machine. Routing rather than refusing is the whole
+ * point: there is no second command to learn, nothing to wrap around, and an agent that never read
+ * the guidance still gets queued.
+ */
+
+import { spawn } from 'child_process';
+import { existsSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const CLI = resolve(repoRoot, '.claude/skills/dev-server/cli.mjs');
+const DAEMON = 'http://127.0.0.1:9444';
+const POLL_MS = 2000;
+
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+export function queueDecision(args, env) {
+  if (env.CI) return { queue: false, why: 'CI runs the suite directly' };
+  if (!env.CIVITAI_TEST_QUEUE || /^(0|false|off|no)$/i.test(env.CIVITAI_TEST_QUEUE)) {
+    return { queue: false, why: 'CIVITAI_TEST_QUEUE is not set' };
+  }
+  // A narrow run is cheap and is the fast iteration loop. Queueing it behind a full suite would
+  // turn a two-second check into a nine-minute wait, and push callers toward batching more work
+  // into each run — the opposite of what this is for.
+  if (args.some((a) => TEST_FILE.test(a))) return { queue: false, why: 'run names specific files' };
+  return { queue: true };
+}
+
+function runDirect(args) {
+  // Resolved from node_modules rather than PATH, so this behaves the same when run directly as it
+  // does under `pnpm run`, which is the only context that puts .bin on PATH.
+  const local = resolve(
+    repoRoot,
+    'node_modules/.bin',
+    process.platform === 'win32' ? 'vitest.cmd' : 'vitest'
+  );
+  const bin = existsSync(local) ? local : 'vitest';
+  const child = spawn(bin, ['run', '--project', 'unit', ...args], {
+    cwd: repoRoot,
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+  });
+  child.on('exit', (code, signal) => process.exit(signal ? 1 : code ?? 1));
+  child.on('error', (err) => {
+    console.error(`Failed to start vitest: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+async function post(path, body) {
+  const res = await fetch(`${DAEMON}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`daemon returned ${res.status}`);
+  return res.json();
+}
+
+function ensureDaemon() {
+  return new Promise((done) => {
+    const child = spawn(process.execPath, [CLI, 'status'], { cwd: repoRoot, stdio: 'ignore' });
+    child.on('exit', () => done());
+    child.on('error', () => done());
+  });
+}
+
+async function runQueued(args) {
+  let run;
+  try {
+    run = await post('/test-runs', { worktree: repoRoot, args });
+  } catch {
+    await ensureDaemon();
+    try {
+      run = await post('/test-runs', { worktree: repoRoot, args });
+    } catch (err) {
+      // Never leave a caller unable to run tests because the queue is unavailable.
+      console.error(`Test queue unreachable (${err.message}); running directly.`);
+      return runDirect(args);
+    }
+  }
+
+  if (run.status === 'queued') {
+    console.error(
+      run.paused
+        ? `Queued at position ${run.position}. The queue is PAUSED (concurrency 0) — nothing starts until it is raised.`
+        : `Queued at position ${run.position} of ${run.queueLength} (${run.running}/${run.concurrency} running).`
+    );
+  }
+
+  let lastLog = -1;
+  for (;;) {
+    const res = await fetch(`${DAEMON}/test-runs/${run.id}`);
+    if (res.status === 404) {
+      console.error(
+        `The daemon forgot run ${run.id} — it was most likely restarted. Re-run this command.`
+      );
+      process.exit(2);
+    }
+    if (!res.ok) {
+      console.error(`Lost contact with the test queue (${res.status}).`);
+      process.exit(2);
+    }
+    const state = await res.json();
+
+    const logs = await fetch(`${DAEMON}/test-runs/${run.id}/logs?since=${lastLog}`).then((r) =>
+      r.json()
+    );
+    for (const entry of logs.logs ?? []) {
+      console.log(entry.message);
+      lastLog = entry.index;
+    }
+
+    if (state.status !== 'queued' && state.status !== 'running') {
+      if (state.status !== 'completed')
+        console.error(`Run ${state.status}${state.error ? `: ${state.error}` : ''}`);
+      // Only a completed run that exited 0 is a pass; a cancelled or timed-out run can carry a 0.
+      process.exit(state.status === 'completed' && state.exitCode === 0 ? 0 : state.exitCode || 1);
+    }
+    await new Promise((r) => setTimeout(r, POLL_MS));
+  }
+}
+
+if (
+  import.meta.url === `file://${process.argv[1]}` ||
+  process.argv[1] === fileURLToPath(import.meta.url)
+) {
+  const args = process.argv.slice(2);
+  const decision = queueDecision(args, process.env);
+  if (decision.queue && existsSync(CLI)) runQueued(args);
+  else runDirect(args);
+}
