@@ -1,36 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const {
-  mockDbWrite,
-  mockResetNsfwLevel,
-  mockDropDeleteQueue,
-  mockQueueSearchIndex,
-  mockBustCachesForPosts,
-  mockLogToAxiom,
-  mockSysRedis,
-} = vi.hoisted(() => ({
-  mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
-  mockResetNsfwLevel: vi.fn(async () => undefined),
-  mockDropDeleteQueue: vi.fn(async () => undefined),
-  mockQueueSearchIndex: vi.fn(async () => undefined),
-  mockBustCachesForPosts: vi.fn(async () => undefined),
-  mockLogToAxiom: vi.fn(async () => undefined),
-  mockSysRedis: { sAdd: vi.fn(), sMembers: vi.fn(), sRem: vi.fn() },
-}));
+const { mockResetNsfwLevel, mockDropDeleteQueue, mockQueueSearchIndex, mockBustCachesForPosts } =
+  vi.hoisted(() => ({
+    mockResetNsfwLevel: vi.fn(async () => undefined),
+    mockDropDeleteQueue: vi.fn(async () => undefined),
+    mockQueueSearchIndex: vi.fn(async () => undefined),
+    mockBustCachesForPosts: vi.fn(async () => undefined),
+  }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/image.service', () => ({
   resetBlockedNsfwLevel: mockResetNsfwLevel,
   dropBlockedImageDeleteQueue: mockDropDeleteQueue,
   queueImageSearchIndexUpdate: mockQueueSearchIndex,
 }));
 vi.mock('~/server/services/post.service', () => ({ bustCachesForPosts: mockBustCachesForPosts }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: mockSysRedis,
-  REDIS_SYS_KEYS: { SYSTEM: { PENDING_IMAGE_RESTORES: 'pending-restores' } },
-}));
-
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import {
   countPendingAccountDeletionImageRestores,
@@ -42,6 +25,13 @@ import {
 } from '~/server/services/account-deletion-images';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
+const mockLogToAxiom = loggingMock.logToAxiom;
+const mockSysRedis = redisMock.sysRedis;
+const mockDbWrite = dbMock.dbWrite;
 
 /**
  * A tiny in-memory Postgres for the reversal. The statements are interpreted rather than
@@ -501,7 +491,10 @@ describe('countPendingAccountDeletionImageRestores', () => {
 describe('recordPendingImageRestore', () => {
   it('names the account on the job worklist', async () => {
     expect(await recordPendingImageRestore(7)).toBe(true);
-    expect(mockSysRedis.sAdd).toHaveBeenCalledWith('pending-restores', '7');
+    expect(mockSysRedis.sAdd).toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.SYSTEM.PENDING_IMAGE_RESTORES,
+      '7'
+    );
   });
 
   it('swallows a Redis failure rather than failing a restore that already committed', async () => {

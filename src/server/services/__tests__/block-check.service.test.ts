@@ -10,29 +10,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * the read handlers) when the acting user is blocked by that owner.
  */
 
-const { mockDb, amIBlockedByUser } = vi.hoisted(() => ({
+const { amIBlockedByUser } = vi.hoisted(() => ({
   amIBlockedByUser: vi.fn(async (..._a: unknown[]): Promise<boolean> => false),
-  mockDb: {
-    image: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    post: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    article: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    model: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    resourceReview: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    question: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    answer: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    bounty: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    bountyEntry: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    comment: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    commentV2: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    thread: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    model3D: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    model3DReview: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    comicChapter: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    comicProject: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-  },
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser }));
 
 import {
@@ -40,6 +21,8 @@ import {
   throwIfBlockedByEntityOwner,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDb = dbMock.dbRead;
 
 const OWNER = 100;
 const VIEWER = 7;

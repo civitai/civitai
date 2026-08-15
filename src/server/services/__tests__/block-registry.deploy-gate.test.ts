@@ -1,53 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.scanIterator.mockImplementation(async function* () {});
+const mockDbRead = dbMock.dbRead;
 
-/**
- * DEPLOY-GATE (generic, all app-blocks) on the AppBlock-native public read paths
- * (`block-registry.service`), the LIVE store surfaces today:
- *
- *   - listAvailable / getFeaturedBlocks (marketplace list + featured rail) — the
- *     SQL WHERE must exclude an ON-PLATFORM app that has never SUCCESSFULLY
- *     deployed its `<slug>.<APPS_DOMAIN>` origin (`current_version_deployed_at IS
- *     NULL`), while EXEMPTING off-site (external-link) apps (they host no origin
- *     and never deploy).
- *   - getAppDetail (per-app detail) — an approved but never-deployed on-platform
- *     app is treated as MISSING (returns null → NOT_FOUND); a deployed one is
- *     shown; a re-deploying one (timestamp still set) is shown; an off-site app
- *     (external_url set, timestamp null) is shown (exempt).
- *
- * `current_version_deployed_at` is set (to now()) ONLY on a successful apply in
- * build-callback.ts and left UNCHANGED on build failure/timeout AND while a NEW
- * version rebuilds — so NULL ⇔ never-served and non-null ⇔ live (incl.
- * mid-re-deploy).
- *
- * No DB in unit tests: we mock `dbRead.$queryRaw` to capture the SQL (for the
- * list paths, where the gate is a WHERE clause) + return seeded rows (for
- * getAppDetail, where the gate is an app-layer check on the row).
- */
-
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    blockUserSubscription: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  },
-  sysRedis: { sMembers: vi.fn(async () => []) },
-  REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'packed:caches:block-registry', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
 
 /** Reconstructs the SQL string from the tagged-template OR Prisma.sql args. */
