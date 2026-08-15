@@ -1,9 +1,11 @@
 import { Anchor, CloseButton, Text } from '@mantine/core';
 import { IconHierarchy } from '@tabler/icons-react';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
-const ALERT_ID = 'remix-gallery-explainer';
+// Declared in the notice registry so the persisted-id set stays enumerable.
+const ALERT_ID = FEATURE_NOTICES.remixGalleryExplainer.id;
 
 /**
  * Where the reasoning lives in full, for anyone who wants it.

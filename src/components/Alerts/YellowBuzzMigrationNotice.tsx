@@ -1,5 +1,7 @@
 import { Button, CloseButton, Popover, Text } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
+import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -7,8 +9,6 @@ import { trpc } from '~/utils/trpc';
 import { BuzzBoltSvg } from '~/components/User/BuzzBoltSvg';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { syncAccount } from '~/utils/sync-account';
-
-const ALERT_ID = 'yellow-buzz-migration';
 
 /**
  * Floating popover card that wraps children (e.g. UserMenu) and shows
@@ -24,42 +24,20 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   // Shares the `getBuzzAccount` cache with the global buzz display (signal-kept
   // live) — no need to force a refetch here.
   const { data: buzzAccounts } = trpc.buzz.getBuzzAccount.useQuery(undefined, { enabled });
-  // SSR-seeded `user.getSettings` + the dismiss mutation's optimistic cache
-  // update keep `dismissedAlerts` authoritative without a per-mount refetch.
-  const { data: settings } = trpc.user.getSettings.useQuery(undefined, { enabled });
-  const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
-
-  const utils = trpc.useUtils();
-  const dismissMutation = trpc.user.dismissAlert.useMutation({
-    onMutate: async () => {
-      await utils.user.getSettings.cancel();
-      const prev = utils.user.getSettings.getData();
-      utils.user.getSettings.setData(undefined, (old) => ({
-        ...old,
-        dismissedAlerts: [...(old?.dismissedAlerts ?? []), ALERT_ID],
-      }));
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
-    },
-    // Reconcile with server truth after the optimistic update: the optimistic
-    // setData spreads `...old`, so if the cached base was incomplete (e.g. a
-    // failed SSR settings snapshot) it could persist a truncated settings
-    // object. Refetch once on dismiss to restore the full object + confirm the
-    // stored dismissedAlerts. One request per dismiss (rare) — not per mount.
-    onSettled: () => {
-      utils.user.getSettings.invalidate();
-    },
-  });
+  const { isDismissed, hasSettings, dismiss } = useFeatureNotice(
+    FEATURE_NOTICES.yellowBuzzMigration,
+    // `useFeatureNotice` ANDs in "is signed in" itself, so pass only the extra
+    // conditions.
+    { enabled: features.isGreen && features.buzz }
+  );
 
   const yellowBalance = buzzAccounts?.yellow ?? 0;
-  // `!!settings` guards the rare failed-SSR-snapshot path (undefined initialData):
-  // don't render against undefined `dismissedAlerts` until the self-healing mount
-  // fetch lands. Defined immediately on the normal SSR-seeded path → no delay.
-  const show = enabled && ready && !!settings && !isDismissed && yellowBalance > 0;
+  // `hasSettings` waits for a resolved settings object so a rare failed SSR
+  // snapshot cannot flash this at someone who already dismissed it; on the
+  // normal SSR-seeded path it is true on the first render, so there is no delay.
+  const show = enabled && ready && hasSettings && !isDismissed && yellowBalance > 0;
 
-  const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
+  const handleDismiss = () => dismiss();
 
   if (!show) return <>{children}</>;
 
