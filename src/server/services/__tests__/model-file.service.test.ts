@@ -1,21 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    modelFile: {
-      count: vi.fn(),
-      findFirst: vi.fn(),
-      findUnique: vi.fn(),
-      findMany: vi.fn(),
-      update: vi.fn(),
-    },
-  },
-}));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
+// One local named `mockDbRead` served BOTH clients, and the file drives both sides of a genuine
+// split: `count` (model-file.service:599), `findFirst` (:617) and `findMany` (:36) are dbRead,
+// while `findUnique` and `update` belong to markFileReplaced (:334, :347) and restoreReplacedFile
+// (:368, :382) and are dbWrite.
+//
+// 🔴 `expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled()` below is the assertion that
+// makes the routing load-bearing: `update` exists only on dbWrite, so routing it to dbRead would
+// satisfy that negative whatever the code did.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // model-file.service builds a cached object at import (filesForModelVersionCache);
 // stub the cache/redis/cloudflare surface so importing it here doesn't require a
-// live redis connection — these official-file helpers only touch dbRead.
+// live redis connection.
 // `lookupFn` isn't reachable through this stub, so the cache-filter test below calls
 // the exported `fetchModelFilesForCache` directly instead of going through the cache object.
 // `mockCacheFetch` is hoisted so the getFilesForModelVersionCache tests below can drive what
@@ -25,9 +24,6 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: () => ({ bust: vi.fn(), fetch: mockCacheFetch, lookupFn: undefined }),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: { CACHES: { FILES_FOR_MODEL_VERSION: 'files-for-model-version' } },
-}));
 
 import * as modelFileService from '~/server/services/model-file.service';
 import {
@@ -145,7 +141,7 @@ describe('findOfficialFileByHash', () => {
 
 describe('markFileReplaced', () => {
   it('flags the file replaced + private and stashes prior visibility, without deleting', async () => {
-    mockDbRead.modelFile.findUnique.mockResolvedValue({
+    mockDbWrite.modelFile.findUnique.mockResolvedValue({
       id: 88,
       visibility: ModelFileVisibility.Public,
       metadata: { format: 'SafeTensor' },
@@ -155,7 +151,7 @@ describe('markFileReplaced', () => {
     const res = await markFileReplaced({ fileId: 88, recommendedResourceId: 1 });
 
     expect(res).toEqual({ modelVersionId: 10 });
-    const arg = mockDbRead.modelFile.update.mock.calls[0][0];
+    const arg = mockDbWrite.modelFile.update.mock.calls[0][0];
     expect(arg.where).toEqual({ id: 88 });
     expect(arg.data.replacedAt).toBeInstanceOf(Date);
     expect(arg.data.visibility).toBe(ModelFileVisibility.Private);
@@ -166,68 +162,86 @@ describe('markFileReplaced', () => {
   });
 
   it('throws when the file does not exist', async () => {
-    mockDbRead.modelFile.findUnique.mockResolvedValue(null);
+    mockDbWrite.modelFile.findUnique.mockResolvedValue(null);
     await expect(markFileReplaced({ fileId: 999, recommendedResourceId: 1 })).rejects.toThrow();
   });
 
   it('is a no-op when the file is already quarantined', async () => {
-    mockDbRead.modelFile.findUnique.mockResolvedValue({
+    mockDbWrite.modelFile.findUnique.mockResolvedValue({
       id: 88,
       replacedAt: new Date(),
       visibility: ModelFileVisibility.Private,
-      metadata: { format: 'SafeTensor', replacedBy: { priorVisibility: ModelFileVisibility.Public } },
+      metadata: {
+        format: 'SafeTensor',
+        replacedBy: { priorVisibility: ModelFileVisibility.Public },
+      },
       modelVersionId: 10,
     });
 
     const res = await markFileReplaced({ fileId: 88, recommendedResourceId: 2 });
 
     expect(res).toEqual({ modelVersionId: 10 });
-    expect(mockDbRead.modelFile.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
   });
 });
 
 describe('restoreReplacedFile', () => {
   it('reverts replacedAt + prior visibility and clears the replacedBy marker', async () => {
-    mockDbRead.modelFile.findUnique.mockResolvedValue({
+    mockDbWrite.modelFile.findUnique.mockResolvedValue({
       id: 88,
       replacedAt: new Date(),
       dataPurged: false,
-      metadata: { format: 'SafeTensor', replacedBy: { priorVisibility: ModelFileVisibility.Private } },
+      metadata: {
+        format: 'SafeTensor',
+        replacedBy: { priorVisibility: ModelFileVisibility.Private },
+      },
       modelVersionId: 10,
     });
 
     const res = await restoreReplacedFile({ id: 88 });
 
     expect(res).toEqual({ modelVersionId: 10 });
-    const arg = mockDbRead.modelFile.update.mock.calls[0][0];
+    const arg = mockDbWrite.modelFile.update.mock.calls[0][0];
     expect(arg.data.replacedAt).toBeNull();
     expect(arg.data.visibility).toBe(ModelFileVisibility.Private);
     expect(arg.data.metadata).toEqual({ format: 'SafeTensor' });
   });
 
   it('rejects when the file is not replaced', async () => {
-    mockDbRead.modelFile.findUnique.mockResolvedValue({
-      id: 88, replacedAt: null, dataPurged: false, metadata: {}, modelVersionId: 10,
+    mockDbWrite.modelFile.findUnique.mockResolvedValue({
+      id: 88,
+      replacedAt: null,
+      dataPurged: false,
+      metadata: {},
+      modelVersionId: 10,
     });
     await expect(restoreReplacedFile({ id: 88 })).rejects.toThrow();
   });
 
   it('rejects once bytes have been purged', async () => {
-    mockDbRead.modelFile.findUnique.mockResolvedValue({
-      id: 88, replacedAt: new Date(), dataPurged: true, metadata: {}, modelVersionId: 10,
+    mockDbWrite.modelFile.findUnique.mockResolvedValue({
+      id: 88,
+      replacedAt: new Date(),
+      dataPurged: true,
+      metadata: {},
+      modelVersionId: 10,
     });
     await expect(restoreReplacedFile({ id: 88 })).rejects.toThrow();
   });
 
   it('defaults visibility to Public when no priorVisibility was stashed', async () => {
-    mockDbRead.modelFile.findUnique.mockResolvedValue({
-      id: 88, replacedAt: new Date(), dataPurged: false, metadata: {}, modelVersionId: 10,
+    mockDbWrite.modelFile.findUnique.mockResolvedValue({
+      id: 88,
+      replacedAt: new Date(),
+      dataPurged: false,
+      metadata: {},
+      modelVersionId: 10,
     });
 
     const res = await restoreReplacedFile({ id: 88 });
 
     expect(res).toEqual({ modelVersionId: 10 });
-    const arg = mockDbRead.modelFile.update.mock.calls[0][0];
+    const arg = mockDbWrite.modelFile.update.mock.calls[0][0];
     expect(arg.data.replacedAt).toBeNull();
     expect(arg.data.visibility).toBe(ModelFileVisibility.Public);
   });
