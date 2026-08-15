@@ -36,6 +36,13 @@ const componentMaxWorkers = maxWorkers;
 // bare `vitest run` serialises the browser project against the node one instead of interleaving
 // them; keep it for that, not for the throw.
 //
+// 🔴 `unit` and `unit-native` deliberately set NO per-project `maxWorkers`, and that is a trade
+// rather than an omission. Per-project `maxWorkers` does apply at runtime — measured, not inferred
+// from the types — but two projects with different counts must sit in different `sequence.groupOrder`
+// values, and different groups run SERIALLY. So giving either project its own worker count costs the
+// concurrency between them, which for a 1059/6 split is a bad exchange: the six-file project would
+// gate the other 1059 rather than filling spare capacity beside it.
+//
 // Declared statically below AND re-asserted here, deliberately. Static alone is not enough: a CLI
 // `--sequence.*` flag REPLACES `test.sequence` wholesale (cliOverrides is a spread, not a merge)
 // and takes `groupOrder` with it. The plugin alone is not enough either: this file is outside
