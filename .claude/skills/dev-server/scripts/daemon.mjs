@@ -559,6 +559,11 @@ class DevSession {
 
     // The overlay goes on before the port remap, so a mode that supplies its own auth URLs still
     // gets rewritten to this session's port like any other .env value would be.
+    // Cleared before anything can fail: a session that errors out must not keep reporting the
+    // modes of the run before it, in `status`, `list` or the dashboard.
+    this.modes = {};
+    this.modeSummary = null;
+
     const modeDefinitions = loadModeDefinitions(skillDir);
     if (modeDefinitions.errors.length) {
       // Starting anyway on a half-parsed definitions file is how a typo becomes a session on the
@@ -2060,6 +2065,9 @@ async function main() {
         // ones rather than a session that exists and immediately errors.
         let requestedModes;
         try {
+          // Resolve against the same config start() will, or an edited DEVSERVER_PROD_GROUPS makes
+          // the two disagree and the mismatch check below compares against the wrong answer.
+          Object.assign(skillConfig, loadSkillConfig());
           const definitions = loadModeDefinitions(skillDir);
           if (definitions.errors.length) {
             res.writeHead(400);
@@ -2143,6 +2151,11 @@ async function main() {
           // therefore lands on dev even where the session it reuses was started with --prod,
           // which is the whole of "prod is never sticky".
           existing.modeOverrides = modeOverrides;
+          // Stamped BEFORE the await: stop() plus the port claim can take seconds, and until
+          // start() runs, `modes` would still describe the run being torn down — long enough for a
+          // second agent's bare start to match it and be handed a session coming up on production.
+          existing.modes = requestedModes;
+          existing.modeSummary = formatModeSummary(requestedModes);
           await existing.restart((s) => claimPortForReuse(s));
 
           res.writeHead(200);

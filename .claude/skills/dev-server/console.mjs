@@ -183,7 +183,9 @@ async function cmdDashboard(initialWorktree) {
     sessionId = startResult.data.session.id;
   } else if (startResult.data?.session?.id) {
     // A refusal that names the session it refused for — a session already running this worktree
-    // with env modes a bare start would not reproduce. Watching it is exactly what was asked for.
+    // with env modes a bare start would not reproduce. Watching it is what was asked for, but the
+    // dashboard must say so: the request and the session it attaches to disagree.
+    log(`${C.ylw}${startResult.data.error ?? 'Attaching to the running session'}${C.r}`);
     sessionId = startResult.data.session.id;
   } else {
     // Scoped to THIS worktree. An unfiltered `find` opened the dashboard on whichever session came
@@ -526,9 +528,11 @@ async function cmdDashboard(initialWorktree) {
       const statusStr = s.status === 'running' ? `${C.grn}running${C.r}` : `${C.ylw}${s.status}${C.r}`;
       const readyStr = s.ready ? `${C.grn}ready${C.r}` : `${C.ylw}starting${C.r}`;
       const uptimeStr = s.startedAt ? fmtUptime(Math.floor((Date.now() - new Date(s.startedAt).getTime()) / 1000)) : '';
+      // `base` counts as production here: it means no section applied and the .env value stands,
+      // and this repo's .env is production for everything it does not override.
       const prodGroups = Object.entries(s.envModes ?? {})
-        .filter(([, mode]) => mode === 'prod')
-        .map(([group]) => group);
+        .filter(([, mode]) => mode !== 'dev')
+        .map(([group, mode]) => (mode === 'prod' ? group : `${group}(${mode})`));
       const modeStr = prodGroups.length ? `  ${C.ylw}prod:${prodGroups.join(',')}${C.r}` : '';
       info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}${modeStr}`;
     }

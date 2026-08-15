@@ -64,12 +64,15 @@ export function parseModeDefinitions(content) {
       // Closing the open section matters more than the message. `[db prod]` misses the section
       // regex, and leaving the previous section open would file every following key under it —
       // a one-character typo putting the production DATABASE_URL under [db.dev].
-      errors.push(`line ${i + 1}: expected [group.mode] or KEY=VALUE, got "${trimmed}"`);
+      errors.push(`line ${i + 1}: expected [group.mode] or KEY=VALUE`);
       current = null;
       return;
     }
     if (!current) {
-      errors.push(`line ${i + 1}: "${kv[1].trim()}" is outside any [group.mode] section`);
+      // No echo of the line: these errors reach an HTTP 400 body and a log buffer any agent can
+      // read, and a stray connection-string line splits on its first `=` with the password on the
+      // left of it.
+      errors.push(`line ${i + 1}: assignment outside any [group.mode] section`);
       return;
     }
     current[kv[1].trim()] = stripQuotes(kv[2].trim());
@@ -133,12 +136,32 @@ export function resolveSessionModes({ definitions, prod = [], dev = [], defaultP
     );
   }
 
-  // `all` means every group that HAS that mode. Taking `defined` wholesale would fail the whole
-  // start over one group that only has a prod block.
-  const expand = (list, mode) =>
-    list.includes('all') ? defined.filter((g) => definitions.groups[g][mode]) : list;
-  const explicitProd = new Set(expand(prod, 'prod'));
-  const explicitDev = new Set(expand(dev, 'dev'));
+  const namedProd = prod.filter((g) => g !== 'all');
+  const namedDev = dev.filter((g) => g !== 'all');
+
+  if (prod.includes('all') && dev.includes('all')) {
+    throw new Error('--prod all and --dev all ask for opposite things');
+  }
+
+  const conflict = namedProd.filter((g) => namedDev.includes(g));
+  if (conflict.length) {
+    throw new Error(`Group(s) asked for both --dev and --prod: ${conflict.join(', ')}`);
+  }
+
+  // `all` covers every group that HAS that mode and was not named on the other flag, so
+  // `--prod all --dev search` reads as "everything on prod except search" rather than a conflict.
+  // Taking `defined` wholesale would instead fail the whole start over one group that only has a
+  // dev block.
+  const expand = (list, named, other, mode) =>
+    list.includes('all')
+      ? [...named, ...defined.filter((g) => definitions.groups[g][mode] && !other.includes(g))]
+      : named;
+  const explicitProd = new Set(expand(prod, namedProd, namedDev, 'prod'));
+  const explicitDev = new Set(expand(dev, namedDev, namedProd, 'dev'));
+
+  // A group named alongside `all` still has to be honoured by name — `--prod all,db` where db has
+  // no prod block is a request that cannot be met, not one to drop on the floor.
+  const namedByFlag = new Set([...namedProd, ...namedDev]);
 
   const unusedDefaults = defaultProdGroups.filter((g) => !defined.includes(g));
   if (unusedDefaults.length) {
@@ -150,23 +173,20 @@ export function resolveSessionModes({ definitions, prod = [], dev = [], defaultP
     );
   }
 
-  const conflict = [...explicitProd].filter((g) => explicitDev.has(g));
-  if (conflict.length) {
-    throw new Error(`Group(s) asked for both --dev and --prod: ${conflict.join(', ')}`);
-  }
-
   for (const group of defined) {
     const available = definitions.groups[group];
     let mode;
     if (explicitProd.has(group)) mode = 'prod';
     else if (explicitDev.has(group)) mode = 'dev';
+    else if (namedProd.includes(group)) mode = 'prod';
+    else if (namedDev.includes(group)) mode = 'dev';
     else if (defaultProdGroups.includes(group)) mode = 'prod';
     else mode = 'dev';
 
     if (!available[mode]) {
       // Only worth failing when someone asked for this by name. An absent [x.dev] under the
       // default would otherwise make the daemon unstartable for a group nobody mentioned.
-      if (explicitProd.has(group) || explicitDev.has(group)) {
+      if (namedByFlag.has(group)) {
         throw new Error(
           `No [${group}.${mode}] section in ${definitions.path} — ${group} has only: ` +
             Object.keys(available).join(', ')

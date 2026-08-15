@@ -23,12 +23,14 @@
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
 DATABASE_REPLICA_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
 DATABASE_REPLICA_LONG_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
+DATAPACKET_DATABASE_RO_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
 DATABASE_IS_PROD=false
 
 [db.prod]
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
 DATABASE_REPLICA_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
 DATABASE_REPLICA_LONG_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
+DATAPACKET_DATABASE_RO_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=20
 DATABASE_IS_PROD=true
 
 [buzz.dev]
@@ -37,17 +39,24 @@ BUZZ_ENDPOINT=http://HOST:PORT
 [buzz.prod]
 BUZZ_ENDPOINT=http://HOST:PORT
 
+# METRICS_SEARCH_* is a SECOND Meilisearch instance that the app writes to, so leaving it out
+# means a search=dev session syncing indexes into the production metrics index.
+
 [search.dev]
 SEARCH_HOST=https://HOST/
 SEARCH_API_KEY=KEY
 NEXT_PUBLIC_SEARCH_HOST=https://HOST/
 NEXT_PUBLIC_SEARCH_CLIENT_KEY=KEY
+METRICS_SEARCH_HOST=https://HOST/
+METRICS_SEARCH_API_KEY=KEY
 
 [search.prod]
 SEARCH_HOST=http://HOST:PORT
 SEARCH_API_KEY=KEY
 NEXT_PUBLIC_SEARCH_HOST=http://HOST:PORT
 NEXT_PUBLIC_SEARCH_CLIENT_KEY=KEY
+METRICS_SEARCH_HOST=http://HOST:PORT
+METRICS_SEARCH_API_KEY=KEY
 
 [signals.dev]
 SIGNALS_ENDPOINT=https://HOST
@@ -57,10 +66,17 @@ NEXT_PUBLIC_SIGNALS_ENDPOINT=https://HOST
 SIGNALS_ENDPOINT=http://HOST:PORT
 NEXT_PUBLIC_SIGNALS_ENDPOINT=https://HOST
 
+# REDIS_SYS_SENTINELS must be restated (empty for dev) whenever the base .env sets it: with
+# sentinels configured, REDIS_SYS_URL supplies only the password and the host comes from the
+# sentinel list — so overriding the URL alone leaves the session on the production system Redis.
+
 [redis.dev]
 REDIS_URL=redis://default:PASSWORD@localhost:6379
 REDIS_SYS_URL=redis://default:PASSWORD@localhost:6379
 REDIS_CLUSTER=false
+REDIS_SYS_SENTINELS=
+REDIS_SYS_SENTINEL_NAME=
+REDIS_SYS_SENTINEL_PASSWORD=
 
 # If the production cache is a cluster, REDIS_CLUSTER must move with the URL — it defaults to
 # false, so a single-node client would fail on keyslot redirects instead of connecting.
@@ -69,3 +85,5 @@ REDIS_URL=redis://HOST:PORT
 REDIS_SYS_URL=redis://HOST:PORT
 REDIS_CLUSTER=true
 REDIS_CLUSTER_NODES=HOST:PORT,HOST:PORT,HOST:PORT
+REDIS_SYS_SENTINELS=HOST:PORT
+REDIS_SYS_SENTINEL_NAME=NAME
