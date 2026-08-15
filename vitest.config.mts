@@ -36,6 +36,13 @@ const componentMaxWorkers = maxWorkers;
 // bare `vitest run` serialises the browser project against the node one instead of interleaving
 // them; keep it for that, not for the throw.
 //
+// 🔴 `unit` and `unit-native` deliberately set NO per-project `maxWorkers`, and that is a trade
+// rather than an omission. Per-project `maxWorkers` does apply at runtime — measured, not inferred
+// from the types — but two projects with different counts must sit in different `sequence.groupOrder`
+// values, and different groups run SERIALLY. So giving either project its own worker count costs the
+// concurrency between them, which for a 1059/6 split is a bad exchange: the six-file project would
+// gate the other 1059 rather than filling spare capacity beside it.
+//
 // Declared statically below AND re-asserted here, deliberately. Static alone is not enough: a CLI
 // `--sequence.*` flag REPLACES `test.sequence` wholesale (cliOverrides is a spread, not a merge)
 // and takes `groupOrder` with it. The plugin alone is not enough either: this file is outside
@@ -49,6 +56,20 @@ const componentGroupOrderPlugin = {
   name: 'civitai:component-group-order',
   configureVitest({ project }: { project: any }) {
     project.config.sequence.groupOrder = COMPONENT_GROUP_ORDER;
+  },
+};
+
+// Same both-belts reasoning one project down, for the setting whose failure is a SIGSEGV rather than
+// an empty run. `unit-native`'s static `pool: 'forks'` loses to a CLI `--pool=threads`, which is the
+// one flag someone experimenting on `unit` will reach for — and the six sharp files would follow it
+// onto a thread pool and crash AFTER printing a green summary. `configureVitest` runs after
+// `resolveProjects(cliOptions)`, and `getFilePoolName` reads `project.config.pool` when each
+// specification is created, so re-asserting here outranks the flag.
+const NATIVE_POOL = 'forks' as const;
+const nativePoolPlugin = {
+  name: 'civitai:unit-native-pool',
+  configureVitest({ project }: { project: any }) {
+    project.config.pool = NATIVE_POOL;
   },
 };
 
@@ -105,9 +126,119 @@ const componentAlias = [
   ...alias,
 ];
 
-// Two Vitest projects sharing one config/runner:
-//  - `unit`      = the existing node-env suite, unchanged.
-//  - `component` = browser-mode (real Chromium via Playwright) for React
+// `sharp` 0.32.6's native addon is not context-aware, so a `worker_threads` worker that has run a
+// libvips operation segfaults when the thread is torn down — AFTER the tests pass and the summary
+// prints, which is why it surfaces as an exit code with no failing test. That takes the whole run
+// down, so it is what keeps the unit suite on the slow `forks` pool.
+//
+// It is a RACE, not a threshold. Measured on these six files alone, three repeats per width:
+// vmThreads crashed 3/3 at 1 worker, 2/3 at 2, 1/3 at 3, 0/3 at 4; the `threads` pool crashed at
+// every width tried. So a clean run proves nothing about the next one, and CI's 4 vCPU (~3 workers)
+// sits squarely in the band that failed 1-in-3. Do not read a green run here as safety.
+//
+// IMPORTING sharp is harmless — only executing an operation arms it. 100 test files carry sharp in
+// their static closure; exactly these six call it. That set was measured by aliasing sharp to a
+// recording proxy and running all 100 under `forks`
+// (`scripts/test-perf/sharp-probe-config.mts`), not by grepping and not by a crash-scan — with a
+// race, "ran alone and didn't crash" builds the list out of the files that got lucky.
+//
+// Regenerate after touching any sharp call site:
+//   node node_modules/vitest/vitest.mjs run --config scripts/test-perf/sharp-probe-config.mts \
+//     --project unit --pool=forks $(cat .test-perf/sharp-candidates.txt)
+//
+// The upstream fix is sharp >= 0.33, which makes the addon context-aware. That is a native-dep bump
+// on a repo where a playwright bump cost 59 CI specs, so it is deliberately not bundled with this.
+//
+// 🔴 The split exists; `unit` stays on `forks` anyway. Two reasons, and the second is the blocker:
+// `threads` measured 1.04x at 4 workers and 0.94x at 16 on the 90-file yardstick — no win at either
+// width. And it segfaults MID-RUN on the full suite at roughly 1 in 4, after completing hundreds of
+// files cleanly, with no `unit-native` file having run — so a second crasher exists that is not
+// sharp and is not diagnosed. Unconfirmed hypothesis: `threads` puts every worker in ONE process,
+// so 31 registries of ~1,320 modules share one address space where `forks` gives each its own.
+// Unconfirmed because the reporter records no heap figures for these runs.
+//
+// So switching `unit` to `threads` buys nothing and costs an undiagnosed intermittent SIGSEGV.
+// What the split does buy: the sharp crash is deterministic and gone, and anyone who wants to
+// EXPERIMENT with `threads` (`--pool=threads`) no longer has to fight it as well.
+const sharpExecutingTestFiles = [
+  'src/server/services/blocks/__tests__/block-image-upload.persist.test.ts',
+  'src/server/services/blocks/__tests__/listing-asset-upload-integrity.test.ts',
+  'src/server/services/blocks/__tests__/listing-meta.datauri-raster.integration.test.ts',
+  'src/server/services/blocks/__tests__/offsite-listing.service.test.ts',
+  'src/server/utils/__tests__/listing-asset-exif-fixture.test.ts',
+  'src/server/utils/__tests__/stored-image-probe.test.ts',
+];
+
+// Shared by `unit` and `unit-native`, which differ ONLY in pool and in which files they claim.
+// Every other setting has to stay identical or the split changes behaviour as well as scheduling.
+const unitTestConfig = {
+  globals: true,
+  environment: 'node' as const,
+  exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
+  setupFiles: ['src/__tests__/setup.ts'],
+  // Several unit tests cold-`await import(...)` a large Next API-page / service
+  // module graph (mocked I/O, but a real ~9–16s TS transform). With the suite's
+  // worker pool saturated, that legitimate cold transform races for CPU and
+  // overran the old 10s default — a PASS→FAIL that tracked CI load, not code.
+  // 60s absorbs that contention while still bounding a genuine hang (these are
+  // mocked-I/O tests; nothing should legitimately approach a minute).
+  //
+  // 🔴 But do NOT treat this ceiling as the place to solve that cost. A cold
+  // `await import(...)` reached from a TEST BODY is charged to that ONE test's
+  // budget, so the file's whole transform lands inside a single 60s clock:
+  // get-models-raw.transient-503 spent 99.9% of its runtime in one test that
+  // way (2726ms of a 2730ms file under a 4-CPU quota) and went red purely on
+  // ambient runner speed. Hoist the import to MODULE SCOPE instead — `vi.mock`
+  // is hoisted above imports, so the mocks still apply, and the transform then
+  // lands in Vitest's COLLECTION phase, which no timeout bounds (Vitest has
+  // only testTimeout / hookTimeout / teardownTimeout). Where a module genuinely
+  // must load per-suite, a `beforeAll` with an explicit long timeout is the
+  // fallback (see prisma-inconsistent-orphan-relations). Raising this number
+  // only moves the cliff.
+  testTimeout: 60000,
+  // Same cold-`await import()` graph is paid in some suites' beforeAll/beforeEach
+  // (e.g. file-download-lookup, listForModel.behavior). Vitest's default
+  // hookTimeout is 10s — too tight for that transform on a saturated CI box — so
+  // match testTimeout. Without this a hoisted import flakes the hook instead.
+  hookTimeout: 60000,
+  deps: {
+    inline: [/@civitai\/client/],
+    // Every test file gets a fresh module registry — under `forks` with `isolate: true` it is
+    // literally a fresh child process per file (measured: N files at maxWorkers=1 give N distinct
+    // pids), so Node's module cache dies with it and each externalised package is imported cold
+    // once per file that reaches it. Pre-bundling collapses a package's many-hundred-file native
+    // load into one chunk, paid once for the run.
+    //
+    // 🔴 The list is confined to packages NOTHING mocks, and that is load-bearing rather than
+    // conservative. Pre-bundling wraps a package as a CJS-interop chunk, so a `vi.mock` factory
+    // that returns only named exports stops satisfying its consumers:
+    //   Error: [vitest] No "default" export is defined on the "redis" mock.
+    // The `importOriginal` form does NOT protect against this — it guards a different failure
+    // (exports going missing as the graph grows). Measured: adding `redis` and `@aws-sdk/client-s3`
+    // here takes four mock-holding files from 92 tests passing to 7 collected.
+    //
+    // Before adding a package, check `vi.mock('<pkg>'` across `src` returns nothing. The three
+    // excluded on those grounds — `redis`, `@aws-sdk/client-s3`, `@aws-sdk/lib-storage` — are worth
+    // ~275s and need `default` added to six mock factories first; that is a separate change.
+    optimizer: {
+      ssr: {
+        enabled: true,
+        include: [
+          'lodash-es',
+          'googleapis',
+          '@tiptap/html',
+          '@axiomhq/axiom-node',
+          '@aws-sdk/s3-request-presigner',
+        ],
+      },
+    },
+  },
+};
+
+// Three Vitest projects sharing one config/runner:
+//  - `unit`        = the node-env suite, minus the six sharp-executing files.
+//  - `unit-native` = those six files, on `forks`, for the reason above.
+//  - `component`   = browser-mode (real Chromium via Playwright) for React
 //                  components/widgets. Distinct `.browser.test.tsx` glob so the
 //                  unit project never boots a browser (its include is `.test.ts`
 //                  only, so `.tsx` is already excluded — the glob is explicit
@@ -158,44 +289,34 @@ export default defineConfig({
       {
         resolve: { alias },
         test: {
+          ...unitTestConfig,
           name: 'unit',
-          globals: true,
-          environment: 'node',
           // `scripts/` is included so the typecheck wrapper's outcome
           // classifier (scripts/typecheck.mjs) is covered — it is the thing that
           // decides whether a run counts as a pass, so it needs a suite of its
           // own rather than a one-off manual check.
           include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
-          exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
-          setupFiles: ['src/__tests__/setup.ts'],
-          // Several unit tests cold-`await import(...)` a large Next API-page / service
-          // module graph (mocked I/O, but a real ~9–16s TS transform). With the suite's
-          // worker pool saturated, that legitimate cold transform races for CPU and
-          // overran the old 10s default — a PASS→FAIL that tracked CI load, not code.
-          // 60s absorbs that contention while still bounding a genuine hang (these are
-          // mocked-I/O tests; nothing should legitimately approach a minute).
-          //
-          // 🔴 But do NOT treat this ceiling as the place to solve that cost. A cold
-          // `await import(...)` reached from a TEST BODY is charged to that ONE test's
-          // budget, so the file's whole transform lands inside a single 60s clock:
-          // get-models-raw.transient-503 spent 99.9% of its runtime in one test that
-          // way (2726ms of a 2730ms file under a 4-CPU quota) and went red purely on
-          // ambient runner speed. Hoist the import to MODULE SCOPE instead — `vi.mock`
-          // is hoisted above imports, so the mocks still apply, and the transform then
-          // lands in Vitest's COLLECTION phase, which no timeout bounds (Vitest has
-          // only testTimeout / hookTimeout / teardownTimeout). Where a module genuinely
-          // must load per-suite, a `beforeAll` with an explicit long timeout is the
-          // fallback (see prisma-inconsistent-orphan-relations). Raising this number
-          // only moves the cliff.
-          testTimeout: 60000,
-          // Same cold-`await import()` graph is paid in some suites' beforeAll/beforeEach
-          // (e.g. file-download-lookup, listForModel.behavior). Vitest's default
-          // hookTimeout is 10s — too tight for that transform on a saturated CI box — so
-          // match testTimeout. Without this a hoisted import flakes the hook instead.
-          hookTimeout: 60000,
-          deps: {
-            inline: [/@civitai\/client/],
-          },
+          // The six sharp files are excluded rather than merely routed elsewhere, so that
+          // `--project unit <a sharp file>` reports "No test files found" instead of running it
+          // on `threads` and segfaulting. A legible empty run beats an exit code with no failing
+          // test — which is what the crash looks like from the outside.
+          exclude: [...unitTestConfig.exclude, ...sharpExecutingTestFiles],
+        },
+      },
+      {
+        resolve: { alias },
+        plugins: [nativePoolPlugin],
+        test: {
+          ...unitTestConfig,
+          name: 'unit-native',
+          include: sharpExecutingTestFiles,
+          // Pinned, not inherited: `unit` may be pointed at `threads` for an experiment, and these
+          // six must not follow it there. Every process-based pool survives the sharp teardown
+          // (`forks` and `vmForks` both measured clean); every thread-based one races and loses.
+          // Declared here AND re-asserted by `nativePoolPlugin`, for the reason given at its
+          // definition: a static value alone loses to a CLI `--pool`, and a plugin alone is
+          // unchecked by anything (this file is outside tsconfig's `include`).
+          pool: NATIVE_POOL,
         },
       },
       {
