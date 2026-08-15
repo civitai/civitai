@@ -246,6 +246,7 @@
     "happy-dom": "^20.0.2",
     "he": "^1.2.0",
     "html-to-text": "^9.0.5",
+    "html2canvas": "1.4.1",
     "idb-keyval": "^6.2.0",
     "immer": "^9.0.15",
     "instantsearch.js": "4.64.1",

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
-import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -1496,7 +1496,7 @@ export const addResourceToPostImage = async ({
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
   // TODO technically this can be called with a combo of on/off site imgs
-  if (images.some((i) => i.type !== MediaType.video && isMadeOnSite(i.meta as ImageMetaProps))) {
+  if (images.some((i) => i.type !== MediaType.video && isImageMetaOnSite(i.meta as ImageMetaProps))) {
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 

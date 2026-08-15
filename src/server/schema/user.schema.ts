@@ -283,6 +283,12 @@ export const userSettingsSchema = z.object({
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
+  // Opt-in: receive in-progress features ahead of general release. Unlike every
+  // other key here this one is PROJECTED ONTO THE SESSION (auth hub
+  // `shapeSessionUser` → `SessionUser.isEarlyAdopter` → `buildFliptContext`), so
+  // Flipt can segment on it. That projection is cached, which is why the write
+  // path re-produces the session on CHANGE — see `setUserSettingHandler`.
+  isEarlyAdopter: z.boolean().optional(),
   // Opt-in: horizontal drag on multi-image gallery post cards. Off by default —
   // the feed mounts hundreds of cards and each one costs an embla engine.
   swipeGalleryCards: z.boolean().optional(),
@@ -353,6 +359,7 @@ export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.date().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
+  isEarlyAdopter: z.boolean().optional(),
   swipeGalleryCards: z.boolean().optional(),
   disableStickerMotion: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
