@@ -498,3 +498,59 @@ and the mistake is in the pipeline.
 
 **And the bound that keeps an audit finite:** the hazard is a false ZERO. A non-empty result is still
 evidence, so this invalidates "X appears nowhere" claims and leaves "X appears here" claims standing.
+
+---
+
+# Closing notes
+
+## A known blind spot is not closed by knowing about it
+
+ES6 shorthand — `sysRedis: { hGet }`, `dbRead: { keyValue: { findUnique } }` — cost me four false
+converts in the first prediction of this slice. It is written up above. It then cost me a **second**
+miss, hours later, in `training-status.sysredis-soft`: a file I had hand-converted and read twice,
+predicting it would auto-convert when the codemod refuses it as a `non-literal property`.
+
+**Knowing about a blind spot did not close it. A tool refusing it does.** That is the argument for
+putting every one of these in the codemod's refusal list rather than in a reviewer's head, and it is
+why the refusal list is worth more than the conversion rules.
+
+## Predictions, honestly tallied
+
+```
+prediction                       predicted   actual
+first codemod dry run            5 of 40     11    stopping rule fired, 27/40 per file
+alias batch (2 files)            no red      no red
+resourceReview + 2               no red      no red      (a RED prediction withdrawn before running)
+six seam files                   no red      ONE ZERO-COLLECT, caused by my own scripted edit
+codemod after the seam fix       4 convert   1         fallback of 2 also wrong
+```
+
+**Seven behavioural reads landed. Every count prediction missed.** The reads were about what the code
+does; the counts were about what a tool would do with it. Those are different skills and only one of
+them improved over the day.
+
+## The oracle, which is the pattern worth reusing
+
+The six seam files were hand-converted and verified by a pair **before** the codemod was taught to
+convert them. That made the tool's output checkable against a known-good conversion rather than only
+inspectable — and on the file it converts, the two agree on substance, differing only in placement.
+
+**Arrange this deliberately when changing a codemod: convert a few by hand, verify them, then teach
+the tool and diff.** It costs the hand conversions you were going to do anyway, and it is the only
+check that can tell "the tool produces something plausible" from "the tool produces the right thing".
+
+## What the next person inherits
+
+**13 workable hold-outs, all the same shape:** the mocked local is never dereferenced — the test
+asserts through a captured array or a spy identity instead. `whichclient.mjs` returns nothing for
+these **and says so in those words**, because an empty list is indistinguishable from a blind tool.
+They need reading, not mapping, and each one is its own small decision.
+
+**2 refused, deliberately:** `nsfwLevels.buffer-flag` (partial: db converts, redis refuses) and
+`placement-escrow` (a stateful in-memory fake — ~20 behaviours, every one load-bearing, and its own
+comment warns it does not model rollback).
+
+**The recipe that worked, in order:** read the client out of the production code scoped to the module
+under test; predict per file; convert; `residual-mocks.mjs` **per file against your converted list**;
+control on your own branch with the converted files at their pre-conversion blobs, same tenancy;
+`--no-isolate` for the zero-collect check only; the tests gate inside the tenancy.
