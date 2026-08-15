@@ -19,16 +19,16 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 225,
+    "canonicalFiles": 224,
     "pendingFiles": 395,
     "allFiles": 486,
-    "canonicalSites": 301,
+    "canonicalSites": 298,
     "pendingSites": 864
   },
   "bySpecifier": {
-    "~/server/db/client": 142,
-    "~/server/redis/client": 93,
-    "~/server/logging/client": 66,
+    "~/server/db/client": 141,
+    "~/server/redis/client": 92,
+    "~/server/logging/client": 65,
     "~/env/server": 107,
     "~/server/services/buzz.service": 99,
     "~/server/services/image.service": 89,
@@ -98,7 +98,6 @@
     "src/server/services/__tests__/block-registry.pinned-version.test.ts",
     "src/server/services/__tests__/block-registry.resolve-instance.test.ts",
     "src/server/services/__tests__/block-registry.spend-cap-config.test.ts",
-    "src/server/services/__tests__/model-file-scan.service.test.ts",
     "src/server/services/__tests__/model-version.blue-buzz-purchase.service.test.ts",
     "src/server/services/__tests__/model-version.purge-by-hash.service.test.ts",
     "src/server/services/__tests__/model.service.vae-append-no-mutation.test.ts",
