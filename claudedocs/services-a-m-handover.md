@@ -413,7 +413,24 @@ this was first found, four of six such files were mutation-affected and the run 
 two went green while silently exercising the opposite branch.
 
 `~/env/server` is a **pending** specifier, so this does not hold the canonical gate. Anyone reading
-the allowlist later will see the file listed for env. **Do not "finish" it.**
+the allowlist later will see the file listed for env.
+
+🔑 **Sharpened after sky checked the one link I could not swear to — the claim is narrower and
+stronger than "must stay".** The canonical `env` proxy **does** honour post-hoc assignment:
+`env.mock.ts:79` writes `env.FOO = 'x'` straight into `overrides`, and `read()` at `:45` checks
+`overrides.has(prop)` first, with `defineProperty` and `deleteProperty` traps landing in the same
+map. (Verified here by reading it, not taken on report.)
+
+That does **not** rescue a lift — the proxy honours assignment *to `env`*, and it cannot honour
+assignment to a different object that used to be the mock, which is exactly what a lift leaves
+`envValues` as. **But it does mean the file is convertible by REWRITE**: move the mutations into
+`setEnv({…})` or a direct `env.X = …` inside the case that needs them, and the not-configured branch
+stays reachable.
+
+**So: this file must not be LIFTED. Converting it properly is a rewrite, and the rewrite needs its
+own probe** — one that makes the not-configured case FAIL after conversion. That was out of scope
+for a two-file unblocking task, and *a refusal to do it the cheap way is not a claim that it cannot
+be done*. Do not record this as permanently refused; nobody has earned that.
 
 The logging half is the *fix* for that family rather than a risk to it, and it was verified rather
 than argued: pointing `logToAxiom` at an unrelated `vi.fn()` reds **7 of 13**, which proves the
