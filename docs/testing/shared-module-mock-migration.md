@@ -168,6 +168,28 @@ Stronger, not weaker: it still fails if the read is routed to the replica, inclu
 another file has populated that method. Worked example in
 `src/server/jobs/__tests__/purge-review-snapshots.test.ts`.
 
+**`toBeUndefined()` on a node is wrong about the design, while looking like the obvious
+check.** An unset property still vivifies to a node, so the assertion fails with
+`expected [Function Mock] to be undefined`. When you mean "the previous file's value did not
+survive", say that: `expect(node.isReady).not.toBe(false)`. Assigned data properties are
+tracked and cleared per file — `sysRedis.isReady = false` is the real case — but "cleared"
+means the assignment is gone, not that the property reads as absent.
+
+**Asserting on a key: name the constant, and pin the wire value ONCE.**
+
+```ts
+expect(incrKey).toContain(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP);
+expect(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP)
+  .toBe('system:blocks:review-run-for-real-buzz-cap');
+```
+
+They guard different failures and neither subsumes the other. Naming the constant in the
+behavioural assertion stops the test re-inventing a key — the class that produced fourteen
+invented values in one day. The golden value makes a rename loud: a key's wire value
+addresses live Redis entries written by deployed code, so changing it orphans whatever sits
+under the old name, and that should be a deliberate decision rather than something a test
+silently follows.
+
 **Redundant `mockReset()` in `beforeEach`.** Harmless, but the global setup already reset
 every node before the file was imported. Delete it when you are in the file anyway; note that
 `mockReset()` also clears the canonical DEFAULT, so a test relying on `findMany → []` after
