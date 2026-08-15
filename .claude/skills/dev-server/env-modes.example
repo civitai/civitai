@@ -1,0 +1,57 @@
+# Per-service dev/prod values for `cli.mjs start --prod <groups>`.
+#
+# Copy to `env-modes.local` (gitignored) and fill in real values. Ask an infra owner for the
+# connection recipes — deliberately not in this file, which is public.
+#
+# Format: [<group>.<dev|prod>] followed by KEY=VALUE lines. A section is applied as an OVERLAY on
+# top of the session's `.env`; keys it does not mention keep their `.env` value. Group names are
+# whatever you write here, so adding a service needs no code change.
+#
+# Every group defaults to `dev`. Move a default with DEVSERVER_PROD_GROUPS in the skill's `.env`
+# (e.g. when the dev Buzz API is down), and override per start with `--prod` / `--dev`.
+#
+# ⚠️ These are the only services with a dev counterpart. The orchestrator, payments, S3,
+# ClickHouse, the notifications DB, the feeds proxy and OpenSearch have none — a session in `dev`
+# mode still talks to production for those. Pressing Generate spends real Buzz whatever this says.
+
+[db.dev]
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
+DATABASE_REPLICA_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
+
+[db.prod]
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
+DATABASE_REPLICA_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
+
+[buzz.dev]
+BUZZ_ENDPOINT=http://HOST:PORT
+
+[buzz.prod]
+BUZZ_ENDPOINT=http://HOST:PORT
+
+[search.dev]
+SEARCH_HOST=https://HOST/
+SEARCH_API_KEY=KEY
+NEXT_PUBLIC_SEARCH_HOST=https://HOST/
+NEXT_PUBLIC_SEARCH_CLIENT_KEY=KEY
+
+[search.prod]
+SEARCH_HOST=http://HOST:PORT
+SEARCH_API_KEY=KEY
+NEXT_PUBLIC_SEARCH_HOST=http://HOST:PORT
+NEXT_PUBLIC_SEARCH_CLIENT_KEY=KEY
+
+[signals.dev]
+SIGNALS_ENDPOINT=https://HOST
+NEXT_PUBLIC_SIGNALS_ENDPOINT=https://HOST
+
+[signals.prod]
+SIGNALS_ENDPOINT=http://HOST:PORT
+NEXT_PUBLIC_SIGNALS_ENDPOINT=https://HOST
+
+[redis.dev]
+REDIS_URL=redis://default:PASSWORD@localhost:6379
+REDIS_SYS_URL=redis://default:PASSWORD@localhost:6379
+
+[redis.prod]
+REDIS_URL=redis://HOST:PORT
+REDIS_SYS_URL=redis://HOST:PORT

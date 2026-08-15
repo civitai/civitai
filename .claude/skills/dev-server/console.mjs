@@ -123,6 +123,7 @@ async function listSessionsCli() {
     log(`  ${C.cyn}${i + 1}.${C.r} [${s.id}] ${s.branch}`);
     log(`     ${C.dim}Port:${C.r} ${s.port}  ${C.dim}Status:${C.r} ${status}  ${C.dim}Ready:${C.r} ${ready}`);
     log(`     ${C.dim}URL:${C.r} ${s.url}`);
+    if (s.envModeSummary) log(`     ${C.dim}Env:${C.r} ${s.envModeSummary}`);
     log('');
   });
   return sessions;
@@ -515,7 +516,11 @@ async function cmdDashboard(initialWorktree) {
       const statusStr = s.status === 'running' ? `${C.grn}running${C.r}` : `${C.ylw}${s.status}${C.r}`;
       const readyStr = s.ready ? `${C.grn}ready${C.r}` : `${C.ylw}starting${C.r}`;
       const uptimeStr = s.startedAt ? fmtUptime(Math.floor((Date.now() - new Date(s.startedAt).getTime()) / 1000)) : '';
-      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}`;
+      const prodGroups = Object.entries(s.envModes ?? {})
+        .filter(([, mode]) => mode === 'prod')
+        .map(([group]) => group);
+      const modeStr = prodGroups.length ? `  ${C.ylw}prod:${prodGroups.join(',')}${C.r}` : '';
+      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}${modeStr}`;
     }
     // Session counter, top-right. `n/N` so you know where you are in the rotation.
     if (allSessions.length) {

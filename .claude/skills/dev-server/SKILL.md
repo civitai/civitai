@@ -19,6 +19,9 @@ node .claude/skills/dev-server/cli.mjs start
 # Start for a specific worktree
 node .claude/skills/dev-server/cli.mjs start /path/to/worktree
 
+# Start with a service on production (see Env modes)
+node .claude/skills/dev-server/cli.mjs start /path/to/worktree --prod buzz
+
 # View logs
 node .claude/skills/dev-server/cli.mjs logs <session-id>
 
@@ -34,7 +37,7 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 |---------|-------------|
 | `status` | Check daemon status and list all sessions |
 | `list` | List all dev sessions |
-| `start [worktree]` | Start dev server (default: current directory) |
+| `start [worktree] [--prod a,b] [--dev a,b]` | Start dev server (default: current directory) |
 | `logs [session-id]` | Get logs for a session |
 | `tail [session-id]` | Tail logs continuously |
 | `stop <session-id>` | Stop a session |
@@ -49,6 +52,54 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 | `test cancel <id>` | Cancel a queued or running run |
 | `test config [n]` | Show or set the concurrency limit (`0` pauses the queue) |
 | `shutdown` | Shutdown the daemon |
+
+## Env modes — which services a session talks to
+
+A session picks one `.env` (its worktree's if present, otherwise the project root's) and then
+applies a per-service **overlay** on top of it. The overlay only restates the keys for the services
+it names, so nothing else in the chosen `.env` moves — the two `.env` files are still never merged.
+
+```bash
+# Everything on dev. This is what a bare start does.
+node .claude/skills/dev-server/cli.mjs start
+
+# Buzz on production, everything else still dev.
+node .claude/skills/dev-server/cli.mjs start --prod buzz
+
+# Several groups, and the whole lot.
+node .claude/skills/dev-server/cli.mjs start --prod db,search
+node .claude/skills/dev-server/cli.mjs start --prod all
+```
+
+The groups are whatever `env-modes.local` defines — today `db`, `buzz`, `search`, `signals`,
+`redis`. Copy `env-modes.example` to `env-modes.local` (gitignored, holds credentials) and fill it
+in; adding a service is an edit to that file, not to the code.
+
+**Defaults.** Every group defaults to `dev`. Move a default in the skill's own `.env` when a dev
+service is unreliable:
+
+```
+DEVSERVER_PROD_GROUPS=buzz
+```
+
+A `--prod` / `--dev` flag beats that, and the flag applies to that start only — a bare start after
+a `--prod` start is back on dev, including when it reuses a dead session. Asking for different
+modes while a session is already running that worktree is refused rather than silently answered
+with the running one; stop it first.
+
+⚠️ **`dev` is not a synonym for safe.** The orchestrator, payments, S3, ClickHouse, the
+notifications DB, the feeds proxy and OpenSearch have **no dev counterpart at all** — a session in
+full dev mode still talks to production for every one of them. Pressing Generate submits a real job
+and spends real Buzz whatever the mode says. That list is printed after every mode summary for
+exactly this reason.
+
+**Where to read a running session's modes:** `status` and `list` carry `envModes` and
+`envModeSummary`, and the daemon log prints them next to `Env:` at start:
+
+```
+Env: C:\Dev\Repos\work\wt-thing\.env
+Env modes: buzz=dev db=prod redis=dev search=dev signals=dev | always prod (no dev target): ...
+```
 
 ## Queued test runs
 
@@ -101,7 +152,9 @@ Each session includes:
   "ready": true,
   "readyAt": "2024-01-15T10:30:02.000Z",
   "startedAt": "2024-01-15T10:30:00.000Z",
-  "url": "http://localhost:3000"
+  "url": "http://localhost:3000",
+  "envModes": { "db": "dev", "buzz": "dev", "search": "dev", "signals": "dev", "redis": "dev" },
+  "envModeSummary": "buzz=dev db=dev ... | always prod (no dev target): orchestrator, payments, ..."
 }
 ```
 

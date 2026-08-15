@@ -20,6 +20,14 @@ import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
 import { TestQueue } from './test-queue.mjs';
+import {
+  loadModeDefinitions,
+  resolveSessionModes,
+  applyModes,
+  formatModeSummary,
+  parseGroupList,
+  sameModeOverrides,
+} from './env-modes.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, '..');
@@ -55,6 +63,7 @@ function loadSkillConfig() {
     prewarmRoutes: [],
     prewarmTimeout: 300000,
     testConcurrency: 1,
+    prodGroups: [],
   };
 
   if (existsSync(envPath)) {
@@ -135,6 +144,9 @@ function loadSkillConfig() {
           else if (value) console.error(`Ignoring TEST_CONCURRENCY=${value} (want an integer >= 0)`);
           break;
         }
+        case 'DEVSERVER_PROD_GROUPS':
+          config.prodGroups = parseGroupList(value);
+          break;
       }
     }
   }
@@ -440,11 +452,14 @@ async function findAvailablePort(basePort, usedPorts = new Set()) {
 
 // Session class
 class DevSession {
-  constructor(id, worktree, port, envPath) {
+  constructor(id, worktree, port, envPath, modeOverrides = { prod: [], dev: [] }) {
     this.id = id;
     this.worktree = worktree;
     this.port = port;
     this.envPath = envPath;
+    this.modeOverrides = modeOverrides;
+    this.modes = {};
+    this.modeSummary = null;
     this.status = 'starting';
     this.process = null;
     this.logs = [];
@@ -542,6 +557,38 @@ class DevSession {
     // Load environment variables
     let envVars = loadEnvFile(this.envPath);
 
+    // The overlay goes on before the port remap, so a mode that supplies its own auth URLs still
+    // gets rewritten to this session's port like any other .env value would be.
+    const modeDefinitions = loadModeDefinitions(skillDir);
+    for (const error of modeDefinitions.errors) {
+      this.addLog('warn', `env-modes.local: ${error}`);
+    }
+    // The start endpoint resolves these first and rejects a bad group there. Reaching a throw here
+    // means the definitions file changed under a restart, and starting on the base .env anyway
+    // would be starting on an env nobody asked for — so fail visibly instead.
+    let resolved;
+    try {
+      resolved = resolveSessionModes({
+        definitions: modeDefinitions,
+        prod: this.modeOverrides.prod,
+        dev: this.modeOverrides.dev,
+        defaultProdGroups: skillConfig.prodGroups,
+      });
+    } catch (err) {
+      this.status = 'error';
+      this.addLog('error', `Env mode: ${err.message}`);
+      return this.getStatus();
+    }
+    this.modes = resolved.modes;
+    const { applied } = applyModes(envVars, modeDefinitions, this.modes);
+    this.modeSummary = formatModeSummary(this.modes);
+    for (const note of resolved.notes) {
+      this.addLog('warn', `Env mode: ${note}`);
+    }
+    for (const change of applied) {
+      this.addLog('info', `Env mode: ${change.group}=${change.mode} (${change.keys.join(', ')})`);
+    }
+
     // Update URL-related env vars if using non-default port
     const { envVars: remapped, overrides } = updateEnvUrlsForPort(envVars, this.port);
     envVars = remapped;
@@ -560,6 +607,7 @@ class DevSession {
     this.addLog('info', `Worktree: ${this.worktree}`);
     this.addLog('info', `Branch: ${this.branch}`);
     this.addLog('info', `Env: ${this.envPath}`);
+    this.addLog('info', `Env modes: ${this.modeSummary}`);
     this.addLog('info', `Build dir: ${this.distDir}`);
 
     if (skillConfig.perBranchDistDir) {
@@ -1044,6 +1092,10 @@ class DevSession {
       worktree: this.worktree,
       branch: this.branch,
       envPath: this.envPath,
+      envModes: Object.fromEntries(
+        Object.entries(this.modes).map(([group, choice]) => [group, choice.mode])
+      ),
+      envModeSummary: this.modeSummary,
       distDir: this.distDir,
       switching: this.switching,
       busy: this.busy,
@@ -1992,6 +2044,25 @@ async function main() {
         }
 
         const { worktree, port: requestedPort, envPath } = parsed;
+        const modeOverrides = {
+          prod: parseGroupList(parsed.prod),
+          dev: parseGroupList(parsed.dev),
+        };
+
+        // Resolve here as well as at start, so a bad group name is a 400 with the list of real
+        // ones rather than a session that exists and immediately errors.
+        try {
+          resolveSessionModes({
+            definitions: loadModeDefinitions(skillDir),
+            prod: modeOverrides.prod,
+            dev: modeOverrides.dev,
+            defaultProdGroups: skillConfig.prodGroups,
+          });
+        } catch (err) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: err.message }));
+          return;
+        }
 
         if (!worktree) {
           res.writeHead(400);
@@ -2025,6 +2096,19 @@ async function main() {
         // Check if already running for this worktree
         const existing = findSessionByWorktree(resolvedWorktree);
         if (existing && sessionIsBusy(existing)) {
+          // Handing back a live session while quietly ignoring the modes just asked for is how an
+          // agent ends up believing it is on dev. Refuse instead of answering a different question.
+          if (!sameModeOverrides(existing.modeOverrides, modeOverrides)) {
+            res.writeHead(409);
+            res.end(JSON.stringify({
+              error:
+                `Session ${existing.id} is already running this worktree with different env modes ` +
+                `(${existing.modeSummary ?? 'not yet resolved'}). Stop it first: ` +
+                `node .claude/skills/dev-server/cli.mjs stop ${existing.id}`,
+              session: existing.getStatus(),
+            }));
+            return;
+          }
           res.writeHead(200);
           res.end(JSON.stringify({
             existing: true,
@@ -2038,6 +2122,10 @@ async function main() {
         // a port for the life of the daemon. Only when a different port is asked for is a second
         // session created, and the old one keeps its reservation because its process may be alive.
         if (existing && (!requestedPort || requestedPort === existing.port)) {
+          // Taking over a dead session takes over this request's modes with it. A bare start
+          // therefore lands on dev even where the session it reuses was started with --prod,
+          // which is the whole of "prod is never sticky".
+          existing.modeOverrides = modeOverrides;
           await existing.restart((s) => claimPortForReuse(s));
 
           res.writeHead(200);
@@ -2083,7 +2171,13 @@ async function main() {
 
         // Create and start session
         const sessionId = generateSessionId();
-        const session = new DevSession(sessionId, resolvedWorktree, port, resolvedEnvPath);
+        const session = new DevSession(
+          sessionId,
+          resolvedWorktree,
+          port,
+          resolvedEnvPath,
+          modeOverrides
+        );
         sessions.set(sessionId, session);
 
         const result = await session.start();

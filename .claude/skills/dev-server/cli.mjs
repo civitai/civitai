@@ -113,12 +113,45 @@ async function cmdList() {
   console.log(JSON.stringify(result.data, null, 2));
 }
 
-async function cmdStart(worktree) {
+// `--prod db,buzz` / `--dev search`, repeatable. Groups come from env-modes.local, so the daemon
+// validates the names — this only has to get the shape right.
+function parseModeFlags(flags) {
+  const modes = { prod: [], dev: [] };
+  for (let i = 0; i < flags.length; i++) {
+    const flag = flags[i];
+    const inline = flag.match(/^--(prod|dev)=(.*)$/);
+    if (inline) {
+      modes[inline[1]].push(inline[2]);
+      continue;
+    }
+    if (flag === '--prod' || flag === '--dev') {
+      const value = flags[++i];
+      if (!value || value.startsWith('--')) {
+        throw new Error(`${flag} needs a group list, e.g. ${flag} db,buzz`);
+      }
+      modes[flag.slice(2)].push(value);
+      continue;
+    }
+    throw new Error(`Unknown option "${flag}". Usage: start [worktree] [--prod a,b] [--dev a,b]`);
+  }
+  return { prod: modes.prod.join(','), dev: modes.dev.join(',') };
+}
+
+async function cmdStart(worktree, flags = []) {
   await ensureDaemon();
   const cwd = worktree ? resolve(worktree) : process.cwd();
+
+  let modes;
+  try {
+    modes = parseModeFlags(flags);
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+
   const result = await daemonRequest('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ worktree: cwd }),
+    body: JSON.stringify({ worktree: cwd, ...modes }),
   });
   if (!result.ok) {
     console.error('Error:', result.error || result.data?.error);
@@ -514,7 +547,8 @@ switch (command) {
     cmdList();
     break;
   case 'start':
-    cmdStart(arg1);
+    if (arg1 && arg1.startsWith('--')) cmdStart(undefined, args.slice(1));
+    else cmdStart(arg1, args.slice(2));
     break;
   case 'logs':
     cmdLogs(arg1, arg2);
