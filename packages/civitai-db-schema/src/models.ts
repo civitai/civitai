@@ -2958,6 +2958,9 @@ export interface Cosmetic {
   createdById: number | null;
   pHash: bigint | null;
   pHashUrl: string | null;
+  pHashHex: string | null;
+  pHashVersion: string | null;
+  pHashFailedAt: Date | null;
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];

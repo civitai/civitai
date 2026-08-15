@@ -314,6 +314,14 @@ const featureFlags = createFeatureFlags({
   // not strip cosmetics people paid for, only stop new packs being listed,
   // discovered or sold.
   cosmeticPacks: { availability: ['mod'], fliptKey: 'cosmetic-packs' },
+  // Perceptual near-match surfacing in creator-shop review. `availability: []` =
+  // DARK and FAILS CLOSED, and it gates the LOOKUP as well as the panel: at the
+  // current 64-bit hash width the two badges we know were imitations of official
+  // artwork sit at Hamming 17 and 22 against a corpus whose 1st percentile is 17,
+  // so the list would show mods unrelated cosmetics ahead of the real match. It
+  // stays off until the orchestrator offers a wider hash and the sweep has
+  // re-hashed the corpus into that lane.
+  cosmeticSimilarity: { availability: [], fliptKey: 'cosmetic-similarity' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],

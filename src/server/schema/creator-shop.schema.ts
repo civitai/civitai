@@ -1,6 +1,9 @@
 import * as z from 'zod';
 import { CosmeticShopSort } from '~/server/common/enums';
-import { COSMETIC_SHOP_DEFAULT_PAGE_SIZE } from '~/shared/constants/cosmetic-shop.constants';
+import {
+  COSMETIC_SHOP_DEFAULT_PAGE_SIZE,
+  COSMETIC_SIMILARITY_LIMIT,
+} from '~/shared/constants/cosmetic-shop.constants';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { STICKER_MAX_ASPECT_RATIO, STICKER_SIZE } from '~/shared/utils/sticker-token';
 
@@ -754,3 +757,9 @@ export const updateCreatorShopSettingsSchema = z.object({
   coverImageId: z.number().nullish(),
   sections: z.array(creatorShopSectionSchema).optional(),
 });
+
+export const getSimilarCosmeticsSchema = z.object({
+  cosmeticId: z.number(),
+  limit: z.number().min(1).max(COSMETIC_SIMILARITY_LIMIT).optional(),
+});
+export type GetSimilarCosmeticsInput = z.infer<typeof getSimilarCosmeticsSchema>;
