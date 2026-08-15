@@ -6,25 +6,35 @@ import path from 'path';
 // run mode, `floor(cpus / 2)` in watch; the browser pool sizes itself at `min(12, cpus - 1)`).
 //
 // The flat cap of 8 that lived here (#3900) existed because several agents each running a full
-// suite at once saturated the box. The dev-server test queue now serialises full-suite runs at
-// concurrency 1 (#3947), so one suite has the machine to itself and may use all of it.
+// suite at once saturated the box. The dev-server test queue now serialises `test:unit:run` at
+// concurrency 1 (#3947), so the unit suite no longer competes with a second copy of itself.
 //
-// Set `VITEST_MAX_WORKERS=<n>` to cap a run. That is the name Vitest itself honours, so the number
-// is the same whichever layer reads it; it is read here as well because `getThreadsCount` consults
-// ONLY the project's own `maxWorkers`, never the root, so the browser (`component`) project has to
-// be handed it individually or it is not capped at all.
+// Set `VITEST_MAX_WORKERS=<n>` to size a run. Vitest reads that name itself, in `resolveConfig`,
+// per project and AFTER this file — so the value here can only ever agree with it, never clamp it.
+// In particular it does NOT respect the browser pool's `min(12, cpus - 1)` default: `getThreadsCount`
+// returns `project.config.maxWorkers` unclamped, so a number above 12 raises the Chromium instance
+// count past what upstream considers safe rather than lowering it.
+//
+// A run routed through the dev-server queue does not see the caller's environment at all — the
+// daemon spawns it with its own — so cap those with the CLI flag instead, which is forwarded:
+// `pnpm run test:unit:run --max-workers=8`.
 //
 // `undefined` is genuinely identical to omitting the key — every consumer is a truthiness / `??`
 // check, and `configDefaults` has no `maxWorkers`.
 // (Unrelated but adjacent: `test.poolOptions` was removed in Vitest 4, so `poolOptions.forks.maxForks`
 // does nothing apart from logging a deprecation.)
+// Read here as well as natively so the knob survives Vitest dropping its own read; today the two
+// always resolve to the same number, so this cannot disagree with it.
 const envMaxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? '', 10);
 const maxWorkers = Number.isFinite(envMaxWorkers) && envMaxWorkers > 0 ? envMaxWorkers : undefined;
 const componentMaxWorkers = maxWorkers;
 
-// `component` resolves to a different worker count than the other projects, so it needs its own
-// group or `groupSpecs` throws — and that throw reports as `Test Files: no tests`, i.e. a run that
-// reads as having found nothing rather than as having failed.
+// `component` runs in its own group. The throw this used to dodge — `groupSpecs` refusing two
+// projects that share a group but resolve to different worker counts, reported as
+// `Test Files: no tests` rather than as a failure — can no longer happen now that nothing here
+// sets a per-project `maxWorkers` the others don't also get. What the group still buys is that a
+// bare `vitest run` serialises the browser project against the node one instead of interleaving
+// them; keep it for that, not for the throw.
 //
 // Declared statically below AND re-asserted here, deliberately. Static alone is not enough: a CLI
 // `--sequence.*` flag REPLACES `test.sequence` wholesale (cliOverrides is a spread, not a merge)

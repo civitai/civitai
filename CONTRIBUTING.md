@@ -81,8 +81,11 @@ pnpm exec eslint <files you added>
 Use `pnpm exec prettier --write <file>`, **not** `pnpm prettier:write -- <file>`.
 The latter ignores the argument and reformats the entire repository.
 
-Both suites use Vitest's own worker count. To leave the machine usable while one
-runs, cap it for that run: `VITEST_MAX_WORKERS=8 pnpm test:unit:run`.
+Both suites use Vitest's own worker count (`cpus - 1`, or `min(12, cpus - 1)` for
+the browser one). To leave the machine usable while a suite runs, size it for that
+run with `--max-workers=8`, or with `VITEST_MAX_WORKERS=8` in the environment. The
+number applies to every project and is not clamped, so a value above 12 raises the
+Chromium instance count rather than lowering it.
 
 ### Compare against a baseline, not against zero
 

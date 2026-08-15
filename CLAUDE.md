@@ -120,16 +120,25 @@ pnpm run test:ui          # Playwright with UI
 
 Both vitest suites are projects in `vitest.config.mts` (`--project unit` / `--project component`).
 
-#### Worker count: uncapped by default, `VITEST_MAX_WORKERS` to cap
-A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`). Set `VITEST_MAX_WORKERS=<n>` for a smaller pool — it applies to every project, including the browser one:
+#### Worker count: uncapped by default, `VITEST_MAX_WORKERS` / `--max-workers` to size it
+A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`).
 
 ```bash
-VITEST_MAX_WORKERS=8 pnpm run test:unit:run
+VITEST_MAX_WORKERS=8 pnpm exec vitest run --project unit   # direct run
+pnpm run test:unit:run --max-workers=8                     # through the dev-server queue
 ```
 
-**Why uncapped is the default.** A flat cap of 8 lived in `vitest.config.mts` (#3900) because several agents each running a full suite at once saturated the box. The dev-server test queue now serialises full-suite runs at concurrency 1 (#3947), so one suite has the machine to itself. Measured on a 32-core Windows box, alternating runs through that queue: **8 workers 507.3s / 526.9s, uncapped (31 workers) 281.4s / 295.8s** — 1.79x on the means. Nothing changes on CI, which runs on 4-vCPU `ubuntu-latest`, where the old cap's `cpus > 9` guard already made it inert.
+🔴 **The env var does not reach a queued run.** With `CIVITAI_TEST_QUEUE` set, `test:unit:run` hands the run to the dev-server daemon, which spawns it with **its own** environment — so `VITEST_MAX_WORKERS=8 pnpm run test:unit:run` silently runs at the full pool while you believe you capped it. The CLI flag is forwarded and does work (verified: 3 distinct `VITEST_POOL_ID`s from a 40-file probe run through the queue with `--max-workers=3`).
+
+⚠️ Either knob sets the count for **every** project, browser included, and it is **not clamped** to the browser pool's 12 — `getThreadsCount` returns it unchanged, so `--max-workers=16` launches 16 Chromium instances, past what upstream calls safe. It sizes the pool; it does not only shrink it.
+
+**Why uncapped is the default.** A flat cap of 8 lived in `vitest.config.mts` (#3900) because several agents each running a full suite at once saturated the box. The dev-server test queue now serialises `test:unit:run` at concurrency 1 (#3947). Measured on a 32-core Windows box, alternating runs through that queue: **8 workers 507.3s / 526.9s, uncapped (31 workers) 281.4s / 295.8s** — 1.79x on the means. Nothing changes on GitHub CI, which runs on 4-vCPU `ubuntu-latest`, where the old cap's `cpus > 9` guard already made it inert.
+
+⚠️ Only `test:unit:run` is queued. `test:component`, `test:packages:run`, `test:apps:run` and `test:lint-rules` call `vitest` directly, so a queued unit run and an unqueued component run still overlap — 31 workers plus 12 Chromium instances, where the old config bounded the pair at 8 + 6. Cap one of them by hand if you are sharing the box.
 
 ⚠️ More workers is not monotonically better once other pool settings move: with `--no-isolate` the same box measured 119s at 8 workers and 1025s at 31. Measure both ends before changing one.
+
+⚠️ In a container limited by a **CPU quota** rather than a cpuset, `os.availableParallelism()` reports the host's cores, so an uncapped run resolves to host-cores-1 workers under a much smaller budget. Nothing in this repo invokes Vitest that way — the only CI that does is `ubuntu-latest` — but a pipeline defined outside it should set `VITEST_MAX_WORKERS` explicitly.
 
 #### Never put unit tests under `src/pages`
 Next.js 16 treats **every** `.ts`/`.tsx` file under `src/pages` (incl. nested `__tests__/`) as a route, and `next build` runs a route-type validator over it. A Vitest test file there fails the build with `Type '...test' does not satisfy the constraint 'ApiRouteConfig'. Property 'default' is missing` — and **only `next build` catches it**: `pnpm typecheck`, `pnpm test`/vitest, and the CI typecheck/unit/component tasks all pass, so it sneaks through to the preview `build-image` step. Keep handler tests in a `__tests__/` dir **outside** `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias. (Bit us on PR #2653.)
