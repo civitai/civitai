@@ -181,14 +181,24 @@ async function cmdDashboard(initialWorktree) {
   let sessionId;
   if (startResult.ok) {
     sessionId = startResult.data.session.id;
+  } else if (startResult.data?.session?.id) {
+    // A refusal that names the session it refused for — a session already running this worktree
+    // with env modes a bare start would not reproduce. Watching it is exactly what was asked for.
+    sessionId = startResult.data.session.id;
   } else {
-    // Try to find an existing session
+    // Scoped to THIS worktree. An unfiltered `find` opened the dashboard on whichever session came
+    // first in the map — another tree, another branch, its logs, and nothing saying so.
+    const sameTree = (s) =>
+      process.platform === 'win32'
+        ? resolve(s.worktree ?? '').toLowerCase() === cwd.toLowerCase()
+        : resolve(s.worktree ?? '') === cwd;
     const listResult = await daemonRequest('/sessions');
-    if (listResult.ok && listResult.data.sessions?.length) {
-      const running = listResult.data.sessions.find(s => s.status === 'running');
-      sessionId = running ? running.id : listResult.data.sessions[0].id;
-    } else {
-      log(`${C.red}No session available${C.r}`);
+    const mine = listResult.ok ? (listResult.data.sessions ?? []).filter(sameTree) : [];
+    const running = mine.find((s) => s.status === 'running');
+    sessionId = running ? running.id : mine[0]?.id;
+    if (!sessionId) {
+      log(`${C.red}No session available for ${cwd}${C.r}`);
+      if (startResult.data?.error) log(`${C.dim}${startResult.data.error}${C.r}`);
       process.exit(1);
     }
   }

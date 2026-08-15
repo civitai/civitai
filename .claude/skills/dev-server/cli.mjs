@@ -121,6 +121,10 @@ function parseModeFlags(flags) {
     const flag = flags[i];
     const inline = flag.match(/^--(prod|dev)=(.*)$/);
     if (inline) {
+      // `--prod=` would otherwise be an empty, silent no-op while the spaced form errors.
+      if (!inline[2].trim()) {
+        throw new Error(`--${inline[1]}= needs a group list, e.g. --${inline[1]}=db,buzz`);
+      }
       modes[inline[1]].push(inline[2]);
       continue;
     }

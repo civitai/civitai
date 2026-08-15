@@ -61,7 +61,11 @@ export function parseModeDefinitions(content) {
 
     const kv = trimmed.match(/^([^=]+)=(.*)$/);
     if (!kv) {
+      // Closing the open section matters more than the message. `[db prod]` misses the section
+      // regex, and leaving the previous section open would file every following key under it —
+      // a one-character typo putting the production DATABASE_URL under [db.dev].
       errors.push(`line ${i + 1}: expected [group.mode] or KEY=VALUE, got "${trimmed}"`);
+      current = null;
       return;
     }
     if (!current) {
@@ -89,9 +93,16 @@ export function parseGroupList(value) {
     .filter(Boolean);
 }
 
-export function sameModeOverrides(a = {}, b = {}) {
-  const norm = (v) => [...new Set(parseGroupList(v))].sort().join(',');
-  return norm(a.prod) === norm(b.prod) && norm(a.dev) === norm(b.dev);
+// Compared as RESOLVED modes rather than as flag text: `--prod all` and `--prod <every group>` are
+// the same session, and a bare start is not the same session it was before someone edited
+// DEVSERVER_PROD_GROUPS.
+export function sameResolvedModes(a = {}, b = {}) {
+  const norm = (modes) =>
+    Object.entries(modes)
+      .map(([group, choice]) => `${group}=${choice.mode ?? choice}`)
+      .sort()
+      .join(' ');
+  return norm(a) === norm(b);
 }
 
 // Resolve one session's modes. Every defined group defaults to dev; the skill's own .env can move
@@ -103,16 +114,39 @@ export function resolveSessionModes({ definitions, prod = [], dev = [], defaultP
   const modes = {};
   const notes = [];
 
-  const wantsAll = prod.includes('all');
-  const explicitProd = new Set(wantsAll ? defined : prod);
-  const explicitDev = new Set(dev.includes('all') ? defined : dev);
-
-  const unknown = [...explicitProd, ...explicitDev].filter((g) => !defined.includes(g));
+  // Names are checked BEFORE `all` expands, or `--prod all,typo` would replace the set with every
+  // defined group and the typo would never be looked at. `all` with nothing defined is the same
+  // mistake wearing a different name: it would resolve to "no groups" and report success.
+  const named = [...prod, ...dev].filter((g) => g !== 'all');
+  const unknown = named.filter((g) => !defined.includes(g));
+  const known = defined.length ? defined.join(', ') : '(none — env-modes.local is missing)';
   if (unknown.length) {
-    const known = defined.length ? defined.join(', ') : '(none — env-modes.local is missing)';
     throw new Error(
       `Unknown env group(s): ${unknown.join(', ')}. Defined in ${definitions.path}: ${known}. ` +
         `Always production, no dev target: ${PROD_ONLY_GROUPS.join(', ')}.`
+    );
+  }
+  if ((prod.includes('all') || dev.includes('all')) && !defined.length) {
+    throw new Error(
+      `"all" matches no env groups — ${definitions.path} defines none. ` +
+        `Copy env-modes.example to env-modes.local and fill it in.`
+    );
+  }
+
+  // `all` means every group that HAS that mode. Taking `defined` wholesale would fail the whole
+  // start over one group that only has a prod block.
+  const expand = (list, mode) =>
+    list.includes('all') ? defined.filter((g) => definitions.groups[g][mode]) : list;
+  const explicitProd = new Set(expand(prod, 'prod'));
+  const explicitDev = new Set(expand(dev, 'dev'));
+
+  const unusedDefaults = defaultProdGroups.filter((g) => !defined.includes(g));
+  if (unusedDefaults.length) {
+    // Silent here would mean an operator who set DEVSERVER_PROD_GROUPS=buzzz to route around a
+    // broken dev service keeps hitting the dev service, with nothing anywhere saying why.
+    notes.push(
+      `DEVSERVER_PROD_GROUPS names ${unusedDefaults.join(', ')}, which no [group.mode] section ` +
+        `defines — ignored. Defined: ${known}.`
     );
   }
 

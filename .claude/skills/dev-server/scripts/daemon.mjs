@@ -26,7 +26,7 @@ import {
   applyModes,
   formatModeSummary,
   parseGroupList,
-  sameModeOverrides,
+  sameResolvedModes,
 } from './env-modes.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -560,8 +560,15 @@ class DevSession {
     // The overlay goes on before the port remap, so a mode that supplies its own auth URLs still
     // gets rewritten to this session's port like any other .env value would be.
     const modeDefinitions = loadModeDefinitions(skillDir);
-    for (const error of modeDefinitions.errors) {
-      this.addLog('warn', `env-modes.local: ${error}`);
+    if (modeDefinitions.errors.length) {
+      // Starting anyway on a half-parsed definitions file is how a typo becomes a session on the
+      // production database that reports itself as dev. A warning in a log buffer is not a guard.
+      this.status = 'error';
+      for (const error of modeDefinitions.errors) {
+        this.addLog('error', `env-modes.local: ${error}`);
+      }
+      this.addLog('error', `Refusing to start: ${modeDefinitions.path} did not parse cleanly`);
+      return this.getStatus();
     }
     // The start endpoint resolves these first and rejects a bad group there. Reaching a throw here
     // means the definitions file changed under a restart, and starting on the base .env anyway
@@ -2051,13 +2058,23 @@ async function main() {
 
         // Resolve here as well as at start, so a bad group name is a 400 with the list of real
         // ones rather than a session that exists and immediately errors.
+        let requestedModes;
         try {
-          resolveSessionModes({
-            definitions: loadModeDefinitions(skillDir),
+          const definitions = loadModeDefinitions(skillDir);
+          if (definitions.errors.length) {
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              error: `${definitions.path} did not parse cleanly`,
+              details: definitions.errors,
+            }));
+            return;
+          }
+          requestedModes = resolveSessionModes({
+            definitions,
             prod: modeOverrides.prod,
             dev: modeOverrides.dev,
             defaultProdGroups: skillConfig.prodGroups,
-          });
+          }).modes;
         } catch (err) {
           res.writeHead(400);
           res.end(JSON.stringify({ error: err.message }));
@@ -2098,7 +2115,7 @@ async function main() {
         if (existing && sessionIsBusy(existing)) {
           // Handing back a live session while quietly ignoring the modes just asked for is how an
           // agent ends up believing it is on dev. Refuse instead of answering a different question.
-          if (!sameModeOverrides(existing.modeOverrides, modeOverrides)) {
+          if (!sameResolvedModes(existing.modes, requestedModes)) {
             res.writeHead(409);
             res.end(JSON.stringify({
               error:

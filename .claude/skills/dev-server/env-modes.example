@@ -14,13 +14,22 @@
 # ClickHouse, the notifications DB, the feeds proxy and OpenSearch have none — a session in `dev`
 # mode still talks to production for those. Pressing Generate spends real Buzz whatever this says.
 
+# A section must restate EVERY key that names the same service. The overlay only moves keys it
+# mentions, so an omitted one keeps its `.env` value — that is how you get writes on production and
+# reads on dev, which looks like nothing at all until it corrupts something. DATABASE_IS_PROD in
+# particular gates the S3 delete paths.
+
 [db.dev]
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
 DATABASE_REPLICA_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
+DATABASE_REPLICA_LONG_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
+DATABASE_IS_PROD=false
 
 [db.prod]
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
 DATABASE_REPLICA_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
+DATABASE_REPLICA_LONG_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
+DATABASE_IS_PROD=true
 
 [buzz.dev]
 BUZZ_ENDPOINT=http://HOST:PORT
@@ -51,7 +60,12 @@ NEXT_PUBLIC_SIGNALS_ENDPOINT=https://HOST
 [redis.dev]
 REDIS_URL=redis://default:PASSWORD@localhost:6379
 REDIS_SYS_URL=redis://default:PASSWORD@localhost:6379
+REDIS_CLUSTER=false
 
+# If the production cache is a cluster, REDIS_CLUSTER must move with the URL — it defaults to
+# false, so a single-node client would fail on keyslot redirects instead of connecting.
 [redis.prod]
 REDIS_URL=redis://HOST:PORT
 REDIS_SYS_URL=redis://HOST:PORT
+REDIS_CLUSTER=true
+REDIS_CLUSTER_NODES=HOST:PORT,HOST:PORT,HOST:PORT
