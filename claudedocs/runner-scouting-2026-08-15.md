@@ -1,6 +1,14 @@
 # Is vitest the right runner? Scouting Bun and node:test
 
-Recorded 2026-08-15. Measurement and a recommendation; no migration was attempted.
+Recorded 2026-08-15. Measurement and a recommendation; no migration was attempted, and no box time
+was used — every probe is a single-process module import, not a suite run.
+
+> **Two corrections were made to this document after first publication, and both are stated in place
+> below rather than silently edited out.** (1) A per-module ratio derived from `inventory.json`'s
+> static counts is retracted; that artifact over-counted by up to 75x, selectively. (2) The headline
+> comparison was not like-for-like — it set vitest's `collect` for a *test file* against a probe
+> importing only the *source module* beneath it, which is a smaller graph. The gap was overstated as
+> ~1600x; it is ~20x. **The recommendation did not change under either correction.**
 
 **Recommendation: stay on vitest — but the reason overturns the cost model we had been optimising
 against.** The per-module constant is *not* inherent to our module graph. On the one file all three
@@ -48,6 +56,17 @@ Refit against aidan's honest `closures.json` (`mode: 'real'`), joined to the `pr
 
 ~14x per module, on the one file both can load — consistent with the per-file figure above, as it
 must be.
+
+**The 45.1 is worth more than the comparison it was computed for.** aidan refit the same constant
+independently, from a different artifact by a different route, and got **43.6**. Two wrong
+denominators would not have agreed, so the pair is the only independent confirmation the honest graph
+has — and everything downstream that divides by a module count rests on it.
+
+**What both of this document's errors had in common**, since the pattern generalises past this
+question: each was a denominator error, and each produced a number that was right about the thing it
+measured and wrong about what that thing was. The second was catchable alone by asking what `collect`
+actually includes before dividing by anything. It is easy to check that two *runtimes* are comparable
+and forget to check that the two *quantities* are.
 
 **So the cost is the module runner, not the modules.** That is consistent with the tracer result from
 this morning — 569 module *bodies* executing in ~0.4 s against a 25.4 s import phase — and it locates
