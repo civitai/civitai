@@ -110,6 +110,35 @@ noise.
 A behaviour the canonical default does not cover. Keep it, as a `mockResolvedValue` /
 `mockImplementation` on the canonical node in `beforeEach`.
 
+## 2b. `~/env/server` has a second bucket the others do not
+
+🔴 **A per-file override cannot affect a value read at MODULE scope.** With `isolate: false`
+the module under test is evaluated once per worker, so only the file that happened to trigger
+that evaluation had its overrides visible. Everyone after it reads whatever was in place then.
+
+This is **not** a shortcoming of the canonical mock. A per-file `vi.mock('~/env/server')`
+factory has the identical problem, because it also runs once per worker. Do not try to "fix"
+it by going back to per-file mocks.
+
+So env splits in two:
+
+| when the value is read | where it goes |
+|---|---|
+| at module scope (`const host = new URL(env.S3_UPLOAD_ENDPOINT)`, `pLimit(env.X)`) | `TEST_ENV_DEFAULTS` in `env.mock.ts` — worker-level, set before anything imports |
+| at call time (inside a function the test invokes) | `setEnv({ … })` in the test file — per-file, reset between files |
+
+Worked example: the three `clickhouse/__tests__/tracker.*.test.ts` files each carried an
+identical `vi.mock('~/env/server')` supplying `CLICKHOUSE_TRACKER_URL`, which
+`clickhouse/client.ts` reads at module scope. Moving that one string into the defaults and
+deleting all three per-file mocks cleared 11 failures.
+
+⚠️ Tests reach for `Object.defineProperty(env, 'FLAG', …)` to flip a single variable. A proxy
+whose reported descriptor disagrees with what `defineProperty` then writes throws
+`TypeError: Cannot redefine property` on the **second** call — surfacing as a dozen unrelated
+failures in one file, with a symptom that points nowhere near the cause. The canonical env
+implements `defineProperty` / `set` / `deleteProperty` / `getOwnPropertyDescriptor`
+consistently; keep it that way if you extend it.
+
 ## 3. Fix the two assertion shapes that stop working
 
 **Absence assertions.** A test may prove a code path by the fixture LACKING a method:

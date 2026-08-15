@@ -83,6 +83,32 @@ vi.mock('~/server/db/client', () => dbMock);
 resetSharedMocks();
 ```
 
+### 🔴 Spread the package, never `importOriginal` of a shim
+
+`~/server/db/client` and `~/server/redis/client` are shims: they re-export their package
+wholesale *and* construct real clients at module scope. Registering them with an
+`importOriginal` spread evaluates the shim, which forces real Prisma/Redis construction into
+**every** test file — where before, only files without their own db mock paid it.
+
+That failed in the worst available shape. A file whose own `@prisma/client` mock omitted
+`PrismaClient` died during module evaluation, so it collected **zero tests**: the failure
+count stayed at 0 and the run read as green.
+
+The package re-exports are all the spread was ever protecting, so spread the package:
+
+```ts
+vi.mock('~/server/db/client', async () => ({
+  ...(await import('@civitai/db/client')),
+  dbRead: dbMock.dbRead,
+  dbWrite: dbMock.dbWrite,
+}));
+```
+
+Same exports, nothing constructed. This removes the precondition rather than enumerating the
+files that trip it — a file no longer needs its own db mock to be protected. Pinned by a test
+asserting neither shim's `globalThis` client cache is populated, since an absent global is
+direct evidence the module body never ran.
+
 ### The primitive: a hybrid callable proxy
 
 Prisma's surface is roughly 60 models times 15 methods; Redis has a few hundred commands.
