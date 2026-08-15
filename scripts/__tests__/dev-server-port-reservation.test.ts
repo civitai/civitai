@@ -39,11 +39,21 @@ import {
   sessions,
 } from '../../.claude/skills/dev-server/scripts/daemon.mjs';
 
-// A 1ms poll with a generous deadline keeps every case below count-bound rather than clock-bound:
-// the probe mocks decide the outcome, so a slow box cannot turn a pass into the very failure these
-// tests exist to detect. The scan base sits above the default 3000 so no case can be satisfied by
-// a port a real session would be using.
+// A 1ms poll with a generous deadline keeps the cases where the port FREES count-bound rather than
+// clock-bound: the probe mocks decide the outcome, so a slow box cannot turn a pass into the very
+// failure these tests exist to detect. The scan base sits above the default 3000 so no case can be
+// satisfied by a port a real session would be using.
 const FAST_CLAIM = { timeoutMs: 5000, intervalMs: 1, baseDevPort: 3100 };
+
+// The cases where the port NEVER frees are a different shape, and the comment above used to claim
+// them too. They cannot be count-bound: claimPortForReuse polls until its deadline and only then
+// moves, so expiry IS the mechanism under test and the deadline is paid in full. At 5000ms the two
+// of them cost 10.0s of the file's 10.6s — measured, and unmoved by running the file alone, which
+// is what distinguishes a real wait from contention. 60ms buys the same expiry.
+//
+// Shortening it cannot make these flaky: the assertion is that the session MOVED, and the move is
+// what happens once the deadline passes however few probes fit inside it.
+const HELD_CLAIM = { ...FAST_CLAIM, timeoutMs: 60 };
 
 const ENV_PATH = '/nonexistent/.env'; // only read by start(), which no test here calls
 
@@ -149,7 +159,7 @@ describe('dev-server port claim on reuse', () => {
     makeSession('neighbour', 3100).status = 'running';
     isPortFreeMock.mockImplementation(async (port: number) => port !== 3101);
 
-    expect(await claimPortForReuse(session, FAST_CLAIM)).toBe(3102);
+    expect(await claimPortForReuse(session, HELD_CLAIM)).toBe(3102);
     expect(session.port).toBe(3102);
     expect(session.logs.at(-1)?.message).toContain('moving this session to 3102');
   });
@@ -162,7 +172,7 @@ describe('dev-server port claim on reuse', () => {
     makeSession('above', 3102).status = 'crashed';
     isPortFreeMock.mockImplementation(async (port: number) => port !== 3101);
 
-    expect(await claimPortForReuse(session, FAST_CLAIM)).toBe(3103);
+    expect(await claimPortForReuse(session, HELD_CLAIM)).toBe(3103);
   });
 });
 
