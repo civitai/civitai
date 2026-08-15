@@ -1,6 +1,11 @@
-import { uniq } from 'instantsearch.js/es/lib/utils';
 import { uniqBy } from 'lodash-es';
 import { ModelType } from '~/shared/utils/prisma/enums';
+
+// Inlined from `instantsearch.js/es/lib/utils`, whose barrel costs ~0.7s to import in a fresh
+// process for this one four-line function. Same first-index-wins semantics, NaN included.
+function uniq<T>(array: T[]): T[] {
+  return array.filter((value, index, self) => self.indexOf(value) === index);
+}
 
 export const getRandom = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
 
