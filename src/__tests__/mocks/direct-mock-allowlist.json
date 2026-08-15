@@ -19,15 +19,15 @@
     "~/server/prom/client"
   ],
   "totals": {
-    "canonicalFiles": 234,
+    "canonicalFiles": 231,
     "pendingFiles": 395,
-    "allFiles": 488,
-    "canonicalSites": 316,
+    "allFiles": 487,
+    "canonicalSites": 313,
     "pendingSites": 864
   },
   "bySpecifier": {
     "~/server/db/client": 148,
-    "~/server/redis/client": 99,
+    "~/server/redis/client": 96,
     "~/server/logging/client": 69,
     "~/env/server": 107,
     "~/server/services/buzz.service": 99,
@@ -99,11 +99,8 @@
     "src/server/services/__tests__/block-registry.resolve-instance.test.ts",
     "src/server/services/__tests__/block-registry.spend-cap-config.test.ts",
     "src/server/services/__tests__/coinbase.service.test.ts",
-    "src/server/services/__tests__/collection.service.sysredis-soft.test.ts",
     "src/server/services/__tests__/commentsv2.appListing.service.test.ts",
     "src/server/services/__tests__/commentsv2.blockCheck.service.test.ts",
-    "src/server/services/__tests__/content-markdown.sysredis-soft.test.ts",
-    "src/server/services/__tests__/daily-challenge-service.sysredis-soft.test.ts",
     "src/server/services/__tests__/model-early-access-refund.service.test.ts",
     "src/server/services/__tests__/model-file-scan.service.test.ts",
     "src/server/services/__tests__/model-file.service.test.ts",
