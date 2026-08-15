@@ -70,6 +70,32 @@ node scripts/test-perf/trace-report.mjs
 ⚠️ Under `isolate: true`, `globalThis` is reset between test files, so a multi-file traced run keeps
 only the last file's counters. Trace one file at a time, or trace with `--no-isolate`.
 
+## Per-worker union
+
+```bash
+node scripts/test-perf/graph.mjs     # also writes .test-perf/closures.json
+node scripts/test-perf/order.mjs
+```
+
+Under `isolate: false` a worker keeps one module registry for its whole lifetime, so its cost is the
+**union** of what its files import, not the sum. `order.mjs` reports the mean per-worker union for
+alphabetical order against a graph-affinity order, at several worker counts.
+
+**Measured 2026-08-15: affinity ordering is not worth having.** At 31 workers the mean per-worker
+union was 1084 modules alphabetically and 1139 by affinity — slightly *worse*. Alphabetical order
+already groups by directory, and directory already correlates with the import graph. The sequencer
+that applied the affinity order was deleted; `order.mjs` is kept because the union report is the
+number that bounds what `isolate: false` can deliver.
+
+Two other things measured and found not to help, recorded so nobody spends the hour again:
+
+- **`NODE_COMPILE_CACHE`** — three yardstick runs under `--no-isolate`: cold 26.8s, warm 51.4s, warm
+  again 33.9s. No signal, and the cache directory did fill (5.3 MB), so it was active. vite-node does
+  not evaluate through the loader that cache covers.
+- **`vmThreads`** — looked 1.16x faster than `forks` with a clean 90-file run, twice. It is a race:
+  on the five files that execute `sharp`, worker counts 2 and 3 crash or pass on identical input.
+  CI's 4 vCPU resolves to ~3 workers, the width measured at 1-in-3 SIGSEGV.
+
 ## What the numbers meant on 2026-08-15
 
 Full run, uncapped (31 workers), quiet 32-core box, at `3863adcbb0`:

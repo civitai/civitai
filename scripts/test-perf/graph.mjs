@@ -227,6 +227,33 @@ function median(xs) {
 
 mkdirSync(path.join(repoRoot, '.test-perf'), { recursive: true });
 writeFileSync(path.join(repoRoot, '.test-perf/inventory.json'), JSON.stringify(out, null, 2));
+
+// Closures in a compact form (module -> index, file -> indices) for the affinity sequencer.
+// Kept out of inventory.json: it is ~10x the size and nothing that reads inventory wants it.
+{
+  const index = new Map();
+  const modules = [];
+  const closures = {};
+  for (const file of unitTests) {
+    const rel = path.relative(repoRoot, file).replace(/\\/g, '/');
+    const ids = [];
+    for (const mod of closure(file).internal) {
+      let i = index.get(mod);
+      if (i === undefined) {
+        i = modules.length;
+        index.set(mod, i);
+        modules.push(path.relative(repoRoot, mod).replace(/\\/g, '/'));
+      }
+      ids.push(i);
+    }
+    closures[rel] = ids;
+  }
+  writeFileSync(
+    path.join(repoRoot, '.test-perf/closures.json'),
+    JSON.stringify({ modules, closures })
+  );
+  console.log(`suite-wide union: ${modules.length} first-party modules`);
+}
 console.log(
   `${out.totals.testFiles} unit test files, ${out.totals.tests} tests, ${out.totals.mockSites} vi.mock sites`
 );
