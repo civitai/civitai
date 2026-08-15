@@ -1,2 +1,3 @@
 daemon.pid
 .env
+env-modes.local
