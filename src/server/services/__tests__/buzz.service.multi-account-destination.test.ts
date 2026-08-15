@@ -25,10 +25,14 @@ import { createMultiAccountBuzzTransaction } from '~/server/services/buzz.servic
 const SELLER = 4242;
 const BANK = 0;
 
+// The spend list is deliberately a DIFFERENT currency from every destination asserted below.
+// Spending green while paying green would make `fromAccountTypes[0]` a perfect proxy for the
+// destination, so an implementation that pays in the currency spent — ignoring the named
+// destination entirely — would pass every assertion here.
 const charge = (overrides: Record<string, unknown>) =>
   createMultiAccountBuzzTransaction({
     fromAccountId: 111,
-    fromAccountTypes: ['green'],
+    fromAccountTypes: ['blue'],
     amount: 500,
     externalTransactionIdPrefix: 'test-prefix',
     ...overrides,
@@ -63,6 +67,23 @@ describe('createMultiAccountBuzzTransaction destination', () => {
     const [payload] = createMultiTransaction.mock.calls[0];
     expect(payload.toAccountId).toBe(SELLER);
     expect(payload.toAccountType).toBe('green');
+  });
+
+  it('refuses a user destination at COMPILE time', () => {
+    // The `charge` helper casts, which erases the union — this is the only assertion covering the
+    // type half. Widening the destination back to an always-optional `toAccountType` makes the
+    // directive unused and fails the build with TS2578.
+    const payUserWithNoDestinationType = () =>
+      // @ts-expect-error - toAccountType is required whenever toAccountId is not the bank
+      createMultiAccountBuzzTransaction({
+        fromAccountId: 111,
+        fromAccountTypes: ['blue'],
+        amount: 500,
+        externalTransactionIdPrefix: 'test-prefix',
+        toAccountId: SELLER,
+      });
+
+    expect(payUserWithNoDestinationType).toBeTypeOf('function');
   });
 
   it('lets a bank charge omit the account type and books it as yellow', async () => {

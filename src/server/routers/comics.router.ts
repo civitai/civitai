@@ -93,7 +93,7 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import { domainSpendType, getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
@@ -4938,9 +4938,7 @@ export const comicsRouter = router({
       let buzzTransactionId: string | undefined;
       try {
         const externalTransactionIdPrefix = `comic-ea-${chapter.id}-${ctx.user.id}`;
-        // One currency, the domain's, spent AND received. `getAllowedAccountTypes`
-        // with no seed returns exactly one element.
-        const [spendType] = getAllowedAccountTypes(ctx.features);
+        const spendType = domainSpendType(ctx.features);
         const data = await createMultiAccountBuzzTransaction({
           fromAccountId: ctx.user.id,
           toAccountId: chapter.project.userId,
