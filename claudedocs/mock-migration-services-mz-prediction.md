@@ -403,3 +403,56 @@ that pattern usually signals. What it actually is: a working in-memory database 
 That is convertible — canonical nodes take `mockImplementation` — but it is ~20 stateful behaviours
 to reattach, and every one of them is load-bearing by construction. It belongs in its own batch, not
 appended to one.
+
+---
+
+# Handoff — services `__tests__` m–z
+
+Branch `perf/test-mock-migration-c`, based on `perf/test-mock-system`.
+
+```
+allowlist 345 -> 330      15 migrated, all verified by an isolated pair at 4 and 8 workers
+refused    2              nsfwLevels.buffer-flag  partial: db converts, redis refuses
+                          placement-escrow        stateful in-memory fake, own batch
+blocked    6              on the withSysReadDeadline seam - see below
+workable  19
+```
+
+## The six blocked files, and why converting them would be worse than leaving them
+
+`system-cache.memoize`, `system-cache.sysredis-soft`, `training-status.sysredis-soft`,
+`training.orchestrator-error-mapping`, `update-post-image-hidemeta-bust`, `user-challenge-flag-gate`.
+
+Each mocks `~/server/redis/client` **and replaces `withSysReadDeadline`** with a pass-through or a
+rejecting variant. That export is the seam a test uses to inject the timeout — `system-cache.sysredis-soft`
+substitutes a rejecting version so the deadline is the *subject* of the test. The canonical factory
+currently spreads the **real** implementation, so a converted file loses its only lever and goes green
+asserting nothing. Fix is in flight on the base branch; do not convert until it lands.
+
+## Verifying: what worked and in what order
+
+1. Read which client an aliased call belongs to **out of the production code**, scoped to the module
+   under test. Predict per file before converting.
+2. `residual-mocks.mjs` **per file against your converted list**, never as a set total — the total
+   cannot distinguish a hold-out's site from a site inside a file you just converted. This caught a
+   second-axis logging mock in `resourceReview.idempotent` after the db split was already clean.
+3. Control on your own branch with the converted files checked out at their pre-conversion blobs, in
+   the same tenancy as the candidate. Widening the control to **all** conversions costs nothing extra
+   and replaces N controls taken at N different times with one tree difference.
+4. Run the `--no-isolate` halves **for the zero-collect check only**. The failure totals are unreadable
+   three times over: hold-outs dominate, the count is not comparable across tenancies, and poisoning
+   needs a co-resident file importing the same *consuming module*, not one mocking the same specifier.
+5. `typecheck-tests-gate.mjs` **inside** the tenancy. The base is already red for
+   `minimax-h3-license` and `cosmetic-phash.service`; those are not yours.
+
+## One instrument warning that cost me a false finding
+
+Shell `grep` on this box can return empty with exit 0 on real matches (a hook rewrites it to a proxy).
+Use the structured search tool for anything load-bearing.
+
+⚠️ **And the variant that is not in the general warning:** I ran one grep with an alternation,
+`A\|B\|C`. It printed hits for B and C and nothing for A. **The command returned non-empty, so it
+looked alive**, and I read the missing branch as a real negative — publishing that
+`REDIS_SUB_KEYS` does not exist in `packages/civitai-redis`. It does: line 2309, exported, used in 37
+files including production. **A partially-empty alternation is as untrustworthy as a wholly-empty
+result and hides better, because the output looks like a working search.** Split the branches.
