@@ -12,10 +12,21 @@ import { stdin } from 'process';
 
 // `prettier --write <targets>`: the incident was a repo-WIDE rewrite, not formatting a directory
 // this change owns. Read the targets instead of matching `--write`, so a scoped path just runs.
+// A segment RUNS prettier only if the invocation starts it — optionally behind a runner or leading
+// env assignments. A segment that merely CONTAINS the word is quoting it: a `for cmd in '…'` list,
+// an echo, a doc string. A hook reading text cannot tell those apart in general (which is why
+// heredocs and `-m` messages are stripped above), but position gets the common cases right, and a
+// mention that never runs must not be blocked — that is what made this guard annoying enough to
+// route around, and a guard people route around protects nothing.
+const PRETTIER_INVOCATION = /^\s*(?:\w+=\S*\s+)*(?:sudo\s+)?(?:(?:pnpm|yarn|bun)\s+(?:exec|dlx|run)\s+|npx\s+|\.\/node_modules\/\.bin\/)?prettier\b/;
+
+export function prettierSegments(command) {
+  return command.split(/[;&|\n]+/).filter((seg) => PRETTIER_INVOCATION.test(seg));
+}
+
 function prettierWriteTargets(command) {
-  return command
-    .split(/[;&|]+/)
-    .filter((seg) => /\bprettier\b/.test(seg) && /--write/.test(seg))
+  return prettierSegments(command)
+    .filter((seg) => /--write/.test(seg))
     .flatMap((seg) =>
       seg
         .slice(seg.indexOf('--write') + '--write'.length)
@@ -25,6 +36,12 @@ function prettierWriteTargets(command) {
         .map((t) => t.replace(/^['"]|['"]$/g, ''))
         // Not targets: flags, and redirections (`2>&1`, `> out.txt`) that survive the segment split.
         .filter((t) => t && !t.startsWith('-') && !/[<>]/.test(t))
+        // Not judgeable: `$FILE`, `$(cat list.txt)`, backticks. The hook sees the command before
+        // the shell expands it, so these are not paths it can measure — and scoring an unexpanded
+        // token as a bare directory made `prettier --write "$FILE"` ask on a single named file.
+        // Skipped rather than treated as unscoped; the outright block on a literal `*` / `**`
+        // below is what still stops the breadth case this guard exists for.
+        .filter((t) => !/[$`()]/.test(t))
     );
 }
 
@@ -67,7 +84,7 @@ const DANGEROUS_PATTERNS = [
   { pattern: /pkill\s+.*node/i, reason: 'This would kill Node.js processes including Claude Code' },
   { pattern: /rm\s+-rf\s+\/(?!\w)/i, reason: 'This would recursively delete the root filesystem' },
   {
-    pattern: /prettier[^;&|]*prettier-plugin-svelte/i,
+    check: (command) => prettierSegments(command).some((seg) => /prettier-plugin-svelte/i.test(seg)),
     reason:
       'Ad-hoc prettier with prettier-plugin-svelte EMPTIES .svelte files to zero bytes while reporting success (28 components lost, 2026-08-07). Use `pnpm run prettier:write`.',
   },
