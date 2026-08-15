@@ -33,6 +33,30 @@ const listPath = argv.includes('--list') ? argv[argv.indexOf('--list') + 1] : nu
 const SPEC = '~/env/server';
 const CANON = '~/__tests__/mocks/env.mock';
 
+/**
+ * Files a run proved unsafe, which the analysis cannot see and therefore keeps re-nominating.
+ *
+ * The scope walk asks whether an `env.X` read is lexically inside a function. The question
+ * that decides the migration is whether it is REACHABLE from module-scope execution, and
+ * those differ by one hop: `~/server/cloudflare/client` reads `env.CF_API_TOKEN` inside
+ * `getClient()` — call-time by scope — then calls `getClient()` at module scope on the next
+ * line. A per-file override lands after that call, so the client is already null.
+ *
+ * Both were converted, failed a control-vs-candidate pair on real assertions, and reverted.
+ * Without this list the next dry run nominates them again and the next person re-lands the
+ * same regression, because a codemod has no memory of what a run taught it.
+ */
+const KNOWN_UNSAFE = new Map([
+  [
+    'src/server/cloudflare/__tests__/client.purgeCache.test.ts',
+    'env.CF_API_TOKEN is read inside getClient(), which client.ts calls at module scope',
+  ],
+  [
+    'src/server/services/__tests__/image-cacher-invalidate-scope.test.ts',
+    'same one-hop shape: the value is captured during module evaluation, before any setEnv',
+  ],
+]);
+
 // ---------------------------------------------------------------- the canonical defaults
 // Parsed out of env.mock.ts rather than restated, so this cannot drift from the thing it
 // compares against — which is the exact failure the LOGGING and REDIS_KEYS findings were.
@@ -214,6 +238,12 @@ function classify(file, src, defaults, moduleScopeKeys) {
   const st = mockStatement(src);
   if (!st) return null;
 
+  if (KNOWN_UNSAFE.has(file))
+    return {
+      file,
+      action: 'refuse',
+      reason: `a run proved this unsafe: ${KNOWN_UNSAFE.get(file)}`,
+    };
   if (/importOriginal/.test(st.text))
     return { file, action: 'refuse', reason: 'importOriginal spread' };
   if (/vi\.fn|vi\.hoisted/.test(st.text))

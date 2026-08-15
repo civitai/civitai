@@ -163,6 +163,55 @@ result instead — or to leave those files isolated. **Treat them as a permanent
 as remaining work**, and do not let an unmigrated count that includes them read as progress
 still to be made.
 
+### The env codemod, and the one thing it gets wrong
+
+`node scripts/test-perf/codemod-env-mock.mjs --dry|--write` is the env transform. It sorts each
+site into **drop** (every declared key already equals the canonical default), **setEnv**
+(non-default values, none read at module scope) or **refuse**, and it decides "module scope" with
+the TypeScript parser rather than by counting braces — two hand-rolled depth heuristics answered
+that question on the same tree with 73 keys and 127, differing only in where the "is this brace a
+function body" regex was anchored, and nothing in either output says which is lying.
+
+🔴 **Its module-scope answer is unsound in BOTH directions, and only a run tells you which.** The
+walk asks whether a read is *lexically inside a function*. The question that decides the migration
+is whether the read is *reachable from module-scope execution*, and they differ by one hop:
+
+```ts
+// src/server/cloudflare/client.ts
+const getClient = () => { if (!env.CF_API_TOKEN) return null; … };  // call-time by scope
+const client = getClient();                                         // …called at module scope
+```
+
+Two files converted on that basis failed a control-vs-candidate pair on real assertions. So do not
+treat a `setEnv` nomination as proof, and do not treat a refusal as proof of hardness either.
+
+### Write a proven-unsafe file back into the tool, or it un-learns it
+
+Those two files were reverted — and the next `--dry` nominated them again, because the analysis
+had not changed. Static analysis proposes, the run disproves, a human reverts, and the analysis
+proposes the identical thing tomorrow to somebody who does everything right.
+
+`KNOWN_UNSAFE` in the codemod is the fix: refuse by name, with the mechanism in a comment so the
+entry can be *retired* when the analysis improves rather than becoming permanent by default. It is
+bookkeeping, not analysis.
+
+The general rule, because this is not specific to env: **the allowlist ratchets against a growing
+set of direct mocks; nothing was catching a shrinking set of proven-unsafe conversions.** Any
+refusal a run teaches you has to be written back into the tool, or the tool's memory stays shorter
+than the project's.
+
+### Check the canonical default itself, not just the copies
+
+`LOGGING`'s default was `''` while `server-schema` declares it `commaDelimitedStringArray()` — so
+production hands consumers a `string[]`. The wrong type never threw, because the only consumer
+does `env.LOGGING.includes(name)` and `String.prototype.includes` answers that correctly by
+accident. Ten test files had each hand-set `LOGGING: []` to get the real shape and eight more
+copied the wrong one, and nobody could see the disagreement because each file only ever saw its
+own copy. Fixing the default is what made those hand-written declarations removable.
+
+Same shape as the `REDIS_KEYS` drift: when a value is hand-copied per file, the copies diverge and
+the divergence is invisible precisely because the copy is what the test compares against.
+
 ## 3. Fix the two assertion shapes that stop working
 
 **Absence assertions.** A test may prove a code path by the fixture LACKING a method:
