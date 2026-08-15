@@ -30,9 +30,10 @@ export const PROD_ONLY_GROUPS = [
   'auth-hub',
 ];
 
-// Groups that cannot be moved by an overlay AT ALL, whatever anyone writes in env-modes.local: the
-// hub is a separate process reading its own .env, so defining [auth-hub.dev] would delete the
-// warning without changing where the login goes.
+// Groups an overlay cannot move, whatever anyone writes in env-modes.local: the hub is a separate
+// process reading its own .env, so `[auth-hub.dev]` would not change where the login goes — it
+// would only repoint the app at a hub that is not there, and delete the warning while doing it.
+// Defining one is refused rather than silently honoured.
 const UNMOVABLE_GROUPS = ['auth-hub'];
 
 // A group someone has actually defined is not prod-only any more, whatever this list says. Naming
@@ -100,6 +101,14 @@ export function loadModeDefinitions(skillDir) {
   const path = resolve(skillDir, 'env-modes.local');
   if (!existsSync(path)) return { path, exists: false, groups: {}, errors: [] };
   const { groups, errors } = parseModeDefinitions(readFileSync(path, 'utf-8'));
+  for (const group of Object.keys(groups)) {
+    if (!UNMOVABLE_GROUPS.includes(group)) continue;
+    delete groups[group];
+    errors.push(
+      `[${group}.*] cannot be an env group — ${group} is a separate process with its own .env, ` +
+        `and an overlay here would only repoint the app at a service that is not there`
+    );
+  }
   return { path, exists: true, groups, errors };
 }
 
@@ -124,6 +133,10 @@ export function parseGroupList(value) {
 // fail-open half of "compare the overlap", so it is not allowed.
 export function sameResolvedModes(running = {}, requested = {}) {
   const modeOf = (choice) => choice?.mode ?? choice;
+  // A session that resolved NOTHING came up before env-modes.local existed and is running the base
+  // .env — production for everything it does not override. `every` over no keys is vacuously true,
+  // so without this the first bare start after the file appears would be told its dev modes hold.
+  if (!Object.keys(running).length) return !Object.keys(requested).length;
   return Object.keys(running).every(
     (group) => group in requested && modeOf(running[group]) === modeOf(requested[group])
   );
@@ -191,9 +204,17 @@ export function resolveSessionModes({ definitions, prod = [], dev = [], defaultP
     const skipped = defined.filter(
       (g) => !chosen.has(g) && !other.includes(g) && !definitions.groups[g][mode]
     );
-    if (skipped.length) {
-      notes.push(`"all" skipped ${skipped.join(', ')} — no [<group>.${mode}] section defined`);
+    if (!skipped.length) continue;
+    if (mode === 'dev') {
+      // Skipping is only survivable in the prod direction, where the group stays on dev. A group
+      // `--dev all` cannot move stays on the .env, which is production — so the request that was
+      // asking for safety would be the one that quietly failed to deliver it.
+      throw new Error(
+        `--dev all cannot move ${skipped.join(', ')} — no [<group>.dev] section in ` +
+          `${definitions.path}. Add one, or name the groups you do mean.`
+      );
     }
+    notes.push(`"all" skipped ${skipped.join(', ')} — no [<group>.${mode}] section defined`);
   }
 
   // A group named alongside `all` still has to be honoured by name — `--prod all,db` where db has
@@ -267,6 +288,11 @@ export function formatModeSummary(modes) {
   const pairs = entries.length
     ? entries.map(([group, choice]) => `${group}=${choice.mode}`).join(' ')
     : '(no groups defined — no overlay applied, the .env stands as written)';
-  const stillProd = prodOnlyExcluding(entries.map(([group]) => group));
+  // Only a group that actually MOVED leaves the warning list. `base` means no section applied and
+  // the .env value stands, which for a prod-only service is the production one — dropping it there
+  // would under-report precisely when a definition is half-written.
+  const stillProd = prodOnlyExcluding(
+    entries.filter(([, choice]) => choice.mode !== 'base').map(([group]) => group)
+  );
   return `${pairs} | always prod (no dev target): ${stillProd.join(', ')}`;
 }

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 // as the queue's tests beside it.
 const {
   parseModeDefinitions,
+  loadModeDefinitions,
   resolveSessionModes,
   applyModes,
   formatModeSummary,
@@ -124,6 +125,23 @@ describe('the definitions parser', () => {
     expect(parsed.errors[1]).toMatch(/outside any/);
   });
 
+  it('refuses a group an overlay cannot actually move', async () => {
+    // Defining [auth-hub.*] would not move the hub — it reads its own .env — it would only repoint
+    // the app at a hub that is not listening, and delete the always-prod warning while doing it.
+    const { mkdtempSync, writeFileSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const dir = mkdtempSync(join(tmpdir(), 'env-modes-'));
+    writeFileSync(
+      join(dir, 'env-modes.local'),
+      '[auth-hub.dev]\nNEXT_PUBLIC_AUTH_URL=http://nope\n'
+    );
+
+    const loaded = loadModeDefinitions(dir);
+    expect(loaded.groups['auth-hub']).toBeUndefined();
+    expect(loaded.errors.join(' ')).toMatch(/auth-hub/);
+  });
+
   it('never echoes the offending line, which may carry a password', () => {
     const stray = parseModeDefinitions('DATABASE_URL=postgres://user:hunter2@host/db');
     const junk = parseModeDefinitions('[db.dev]\npostgres://user:hunter2@host/db\n');
@@ -188,5 +206,33 @@ describe('the summary and the session comparison', () => {
     const withGap = defs(['[only.dev]', 'K=v', '[db.dev]', 'D=1', '[db.prod]', 'D=2'].join('\n'));
     const { notes } = resolveSessionModes({ definitions: withGap, prod: ['all'], dev: [] });
     expect(notes.join(' ')).toMatch(/"all" skipped only/);
+  });
+
+  it('refuses --dev all when a group cannot go to dev', () => {
+    // Skipping is survivable in the prod direction — the group stays on dev. Skipping in the dev
+    // direction leaves it on the .env, which is production, so the request asking for safety would
+    // be the one that quietly failed to deliver it.
+    const prodOnly = defs(['[buzz.prod]', 'BUZZ_ENDPOINT=prod'].join('\n'));
+    expect(() => resolveSessionModes({ definitions: prodOnly, prod: [], dev: ['all'] })).toThrow(
+      /--dev all cannot move buzz/
+    );
+  });
+
+  it('does not match a session that resolved nothing against one that resolved groups', () => {
+    // A session that came up before env-modes.local existed is running the base .env. Once the file
+    // appears, a bare start resolves real modes — the two are not the same session.
+    expect(sameResolvedModes({}, resolve().modes)).toBe(false);
+    expect(sameResolvedModes({}, {})).toBe(true);
+  });
+
+  it('keeps a half-defined prod-only service in the warning', () => {
+    // [s3.prod] alone resolves s3 to `base`: nothing applied, the .env value stands, and the .env
+    // is production. Dropping it from the tail would under-report exactly then.
+    const halfS3 = defs(['[s3.prod]', 'S3_UPLOAD_BUCKET=prod'].join('\n'));
+    const summary = formatModeSummary(
+      resolveSessionModes({ definitions: halfS3, prod: [], dev: [] }).modes
+    );
+    expect(summary).toMatch(/s3=base/);
+    expect(summary).toMatch(/always prod \(no dev target\):.*\bs3\b/);
   });
 });

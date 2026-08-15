@@ -2171,6 +2171,8 @@ async function main() {
           // Taking over a dead session takes over this request's modes with it. A bare start
           // therefore lands on dev even where the session it reuses was started with --prod,
           // which is the whole of "prod is never sticky".
+          const previousOverrides = existing.modeOverrides;
+          const previousDefaults = existing.defaultProdGroups;
           existing.modeOverrides = modeOverrides;
           existing.defaultProdGroups = [...skillConfig.prodGroups];
           // Stamped BEFORE the await: stop() plus the port claim can take seconds, and until
@@ -2183,6 +2185,13 @@ async function main() {
           existing.pendingModes = requestedModes;
           try {
             await existing.restart((s) => claimPortForReuse(s));
+          } catch (err) {
+            // A request that errored out must not leave its --prod set pinned to the session: the
+            // next unattended restart — a branch switch, a crash — would then bring it up on
+            // production off the back of a start that failed.
+            existing.modeOverrides = previousOverrides;
+            existing.defaultProdGroups = previousDefaults;
+            throw err;
           } finally {
             // start() clears this on the way through, but a restart that throws — no port left in
             // the range, a failing stop() — never reaches it, and the session would then advertise
