@@ -149,6 +149,20 @@ failures in one file, with a symptom that points nowhere near the cause. The can
 implements `defineProperty` / `set` / `deleteProperty` / `getOwnPropertyDescriptor`
 consistently; keep it that way if you extend it.
 
+### Some env tests cannot be migrated, and that is a property of the flag not a gap in the mock
+
+A boolean that tests set **both ways** at module scope — `IS_BUILD`, `IS_DATAPACKET` — cannot
+be varied per file under `isolate: false` by any mechanism. The module reading it is
+evaluated once per worker, so only the first file's value is ever visible. That is not a
+shortcoming of the canonical env mock; a per-file `vi.mock` factory has the identical
+problem, and so would any future one.
+
+Those tests exist precisely to exercise build-vs-runtime and datapacket-vs-not behaviour, so
+the options are to stop testing it through `env` — mock the consuming module's exported
+result instead — or to leave those files isolated. **Treat them as a permanent exclusion, not
+as remaining work**, and do not let an unmigrated count that includes them read as progress
+still to be made.
+
 ## 3. Fix the two assertion shapes that stop working
 
 **Absence assertions.** A test may prove a code path by the fixture LACKING a method:
