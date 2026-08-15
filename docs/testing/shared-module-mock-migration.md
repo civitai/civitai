@@ -288,6 +288,57 @@ the one you are about to remove. Both `storage-resolver` files held a direct
 one `Number of calls: 0`. **The danger point is a file whose env mock is its only mock** — and
 the fix is the canonical mock for the other axis, never restoring the shield.
 
+### The 20 module-scope refusals, assessed file by file
+
+Read, not converted. The question for each is narrower than the label: **does the module-scope
+read that triggered the refusal sit in THIS test's import closure, and do THIS test's
+assertions depend on that key?** A "yes" to the first and a "no" to the second makes the
+refusal correct and inapplicable, and the file converts by deleting its mock.
+
+**Correct-but-inapplicable — 8 files.** The blocked key is read at module scope *somewhere*,
+but not by anything this test asserts on, and the canonical default is compatible:
+
+| file | key | why it does not bind |
+|---|---|---|
+| `nowpayments.currencies.memoize` | `NEXTAUTH_URL` | zero references to the host anywhere in the file; the subject is memoisation |
+| `public-endpoint-cache-override` | `NEXTAUTH_URL` | the only origin reference is a comment saying `TRPC_ORIGINS` must be iterable, which `TEST_ENV_DEFAULTS` already supplies |
+| `public-endpoint-maxage` | `NEXTAUTH_URL` | same |
+| `manifest-schema-endpoint` | `WEBHOOK_TOKEN`, `NEXTAUTH_URL` | asserts a literal `Access-Control-Allow-Origin: '*'`, not a derived origin list |
+| `signals.service` | `SIGNALS_ENDPOINT` | **false positive** — every read in `signals.service.ts` is inside a function (`:42`, `:65`) |
+| `delete-image-from-s3-logging` | `S3_IMAGE_B2_BUCKET` | **false positive of the one-hop kind, inverted** — `announcement-media-check.ts:177` is `const UPLOADS_BUCKET = () => env.…`, a module-scope const whose *value is a function*, so the read happens on call |
+| `adjust-tag-level` | `IS_BUILD` | wants `false`; the key is absent from the defaults and reads `undefined`, which is falsy — same branch |
+| `backfill-theme-elements` | `IS_BUILD` | same |
+
+**Convertible by hand, with edits — 5 files.** The key genuinely binds, and the fix is either a
+worker-level default or an assertion edit:
+
+- `meilisearch/client` — `SEARCH_HOST`/`SEARCH_API_KEY`/`METRICS_SEARCH_*` are read at module
+  scope to build the clients this test is about. Same shape as the `CLICKHOUSE_TRACKER_URL`
+  precedent: move them into `TEST_ENV_DEFAULTS`. Note this makes them worker-global.
+- `s3-utils` — `S3_UPLOAD_BUCKET` / `S3_UPLOAD_B2_*` bind at module scope and the file imports
+  `env` directly to assert against it. Defaults or assertion edits.
+- `delivery-worker` — `delivery-worker.ts:4` builds its endpoint string at module scope. Real.
+- `createModelFileScanRequest` — binds, and ten references depend on the declared values, so
+  this is an assertion-editing job rather than a lift.
+- `image-scan-result` — `EMAIL_PORT` is read at module scope by `email/client.ts:8`. Real, and
+  a default would fix it.
+
+**Genuinely blocked — 5 files, and 4 of them are the flag the doc already calls a permanent
+exclusion.** `id-origin-cache` needs `IS_DATAPACKET: true` while `id-file-download-url` and
+`id-overflow-validation` need `false`; `pgDbMock.parity` needs `IS_BUILD: true` to short-circuit
+`getClient()` while others want it falsy. Under one worker only the first value is ever visible,
+so no mechanism fixes these — see *Some env tests cannot be migrated*. `health.runHealthChecks`
+is the fifth: `health.ts:182` builds `envDisabledChecks` at module scope from
+`HEALTHCHECK_DISABLED`, and varying it is the point of the file.
+
+**Least sure about the middle group**, specifically `meilisearch/client` and `s3-utils`: both
+are fixable by moving values into `TEST_ENV_DEFAULTS`, and both make a per-file value
+worker-global, which is a change to every other file in the worker rather than to these two. The
+`storage-resolver-null-contract` entry is a reminder to check the *module*, not the key —
+`src/utils/storage-resolver.ts` reads these keys at call time while
+`src/server/services/storage-resolver.ts:6` reads them at module scope, and the two tests import
+different ones. The codemod got that pair right; a per-key generalisation would not have.
+
 **Read `bySpecifier`, not `pendingFiles`.** A file blocked on two pending specifiers stays in
 `pendingFiles` after you migrate one of them, so the file count can sit still while real sites
 move — it stayed at 349 across three migrations in one batch, then moved by 2 for three in the
