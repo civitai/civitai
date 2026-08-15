@@ -68,6 +68,39 @@ describe('unit / unit-fast partition', () => {
     expect(manifest.members).toEqual([...new Set(manifest.members)].sort());
   });
 
+  /**
+   * The other half of the "runs in neither project" hole, and the half a manifest cannot close: a
+   * selector naming `unit` alone runs half the suite and exits 0.
+   *
+   * Textual, over the config and every script that spawns vitest. It cannot prove a project ran —
+   * only a collected count from the run itself can — but it does catch the mechanical mistake of
+   * adding a unit-family project and leaving a selector behind, which is how this fails in
+   * practice.
+   */
+  it('every unit-family project is named by every unit-family selector', () => {
+    const config = readFileSync(path.join(repoRoot, 'vitest.config.mts'), 'utf8');
+    const projects = [...config.matchAll(/name: '(unit[\w-]*)'/g)].map((m) => m[1]);
+    expect(projects, 'expected at least unit and unit-fast').toContain('unit-fast');
+
+    const selectors: [string, string][] = [
+      ['package.json', readFileSync(path.join(repoRoot, 'package.json'), 'utf8')],
+      [
+        'scripts/test-unit-run.mjs',
+        readFileSync(path.join(repoRoot, 'scripts/test-unit-run.mjs'), 'utf8'),
+      ],
+    ];
+
+    const gaps: string[] = [];
+    for (const [where, text] of selectors)
+      for (const line of text.split('\n')) {
+        if (!/--project/.test(line) || !/\bunit\b/.test(line)) continue;
+        for (const project of projects)
+          if (!new RegExp(`['"\`\\s]${project}['"\`,\\s]`).test(line))
+            gaps.push(`${where}: a unit selector does not name '${project}': ${line.trim()}`);
+      }
+    expect(gaps).toEqual([]);
+  });
+
   // Freshness, not correctness of the rule: a test file added since the last generate is neither a
   // member nor recorded anywhere, and without this it falls through as "not yet migrated" forever
   // rather than being classified.

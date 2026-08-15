@@ -44,7 +44,12 @@ function runDirect(args) {
     process.platform === 'win32' ? 'vitest.cmd' : 'vitest'
   );
   const bin = existsSync(local) ? local : 'vitest';
-  const child = spawn(bin, ['run', '--project', 'unit', ...args], {
+  // BOTH unit projects, named explicitly. `unit` and `unit-fast` partition the same suite, so a
+  // selector naming one runs half of it and still exits 0 — the failure this pair is designed
+  // around. Not a `unit*` glob: that would silently adopt any future project whose name happens to
+  // start with `unit`, which is the same hazard pointing the other way. Adding a unit-family
+  // project means adding it here, and `unit-fast-partition.test.ts` fails if you forget.
+  const child = spawn(bin, ['run', '--project', 'unit', '--project', 'unit-fast', ...args], {
     cwd: repoRoot,
     stdio: 'inherit',
     shell: process.platform === 'win32',

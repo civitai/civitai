@@ -285,7 +285,7 @@ jobs:
     name: Package unit tests
     runs-on: ubuntu-latest
     # The nine `packages/*` suites — 616 tests that, until this job existed, NO CI job ran.
-    # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
+    # The `unit` job above runs the `unit` and `unit-fast` projects, whose `include` is root-relative
     # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
     # suite. That is not a small gap: the schema-drift detector shipped 81 tests into it,
     # and two of them had been RED on `main` since #3592 corrected the schema out from under
