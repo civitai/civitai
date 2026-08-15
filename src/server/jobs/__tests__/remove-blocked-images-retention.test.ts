@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // `remove-blocked-images` hard-deletes blocked media (row + S3) after a retention window.
@@ -54,7 +55,6 @@ const {
   mockDbWrite,
   mockDeleteImages,
   mockLogToAxiom,
-  mockEnv,
   heldUsers,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
@@ -62,12 +62,6 @@ const {
   const queueWhereLog: any[] = [];
   // Mutable so a test can vary which reports are open.
   const heldUsers: { userId: number; oldestReport: Date }[] = [];
-  const mockEnv = {
-    IMAGE_SCANNING_MAX_PER_RUN: 100,
-    IMAGE_SCANNING_RETRY_DELAY: 5,
-    IMAGE_SCANNING_PENDING_TIMEOUT: 30,
-    DATABASE_IS_PROD: true,
-  };
   const queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
     sqlLog.push(sql);
@@ -86,7 +80,6 @@ const {
     sqlLog,
     queueWhereLog,
     heldUsers,
-    mockEnv,
     mockDbRead: {
       jobQueue: {
         findMany: vi.fn(async ({ where }: any) => {
@@ -120,7 +113,6 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn(async () => []) }));
 vi.mock('~/env/other', () => ({ isProd: true }));
-vi.mock('~/env/server', () => ({ env: mockEnv }));
 
 import { removeBlockedImages } from '~/server/jobs/image-ingestion';
 
@@ -156,7 +148,12 @@ beforeEach(() => {
     { userId: HELD_USER, oldestReport: RECENT },
     { userId: STRANDED_USER, oldestReport: OLD_REPORT }
   );
-  mockEnv.DATABASE_IS_PROD = true;
+  setEnv({
+    IMAGE_SCANNING_MAX_PER_RUN: 100,
+    IMAGE_SCANNING_RETRY_DELAY: 5,
+    IMAGE_SCANNING_PENDING_TIMEOUT: 30,
+    DATABASE_IS_PROD: true,
+  });
   mockDbRead.jobQueue.findMany.mockClear();
   mockDbRead.$queryRaw.mockClear();
   mockDbWrite.$queryRaw.mockClear();
@@ -263,7 +260,7 @@ describe('remove-blocked-images retention clock', () => {
   });
 
   it('deletes nothing when the database is not prod', async () => {
-    mockEnv.DATABASE_IS_PROD = false;
+    setEnv({ DATABASE_IS_PROD: false });
     await runJob();
 
     expect(mockDeleteImages).not.toHaveBeenCalled();

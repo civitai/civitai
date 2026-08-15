@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -18,7 +19,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const {
-  mockEnv,
   mockFindUnique,
   mockAppBlockFindFirst,
   mockReportFindFirst,
@@ -31,13 +31,6 @@ const {
   mockSign,
   mockDeriveHooks,
 } = vi.hoisted(() => ({
-  mockEnv: {
-    APPS_KUBE_NAMESPACE: 'civitai-apps',
-    APPS_DOMAIN: 'civit.ai',
-    AGENT_REVIEW_COST_CAP_USD: '2',
-    NEXTAUTH_URL: 'https://civitai.com',
-    AGENT_REVIEW_CALLBACK_BASE_URL: undefined,
-  } as Record<string, unknown>,
   mockFindUnique: vi.fn(),
   mockAppBlockFindFirst: vi.fn(async () => null as { id: string } | null),
   // Double-provision pre-check: no running report by default.
@@ -52,7 +45,6 @@ const {
   mockDeriveHooks: vi.fn(() => 'hooks.token'),
 }));
 
-vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('node:fs/promises', () => ({ readFile: vi.fn(async () => 'in-pod-token') }));
 vi.mock('~/server/db/client', () => ({
   dbRead: {
@@ -107,7 +99,12 @@ function stubFetch(postOk = true) {
       });
       if (init.method === 'POST') {
         if (!postOk) {
-          return { ok: false, status: 500, statusText: 'err', text: async () => 'boom' } as unknown as Response;
+          return {
+            ok: false,
+            status: 500,
+            statusText: 'err',
+            text: async () => 'boom',
+          } as unknown as Response;
         }
         return {
           ok: true,
@@ -125,7 +122,12 @@ function stubFetch(postOk = true) {
         } as unknown as Response;
       }
       // DELETE (pre-delete / teardown)
-      return { ok: true, status: 200, statusText: 'OK', text: async () => '' } as unknown as Response;
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+      } as unknown as Response;
     })
   );
 }
@@ -140,8 +142,13 @@ beforeEach(() => {
   mockReportFindFirst.mockResolvedValue(null);
   mockGetPrior.mockResolvedValue(null);
   mockUpdateMany.mockResolvedValue({ count: 1 });
-  mockEnv.NEXTAUTH_URL = 'https://civitai.com';
-  mockEnv.AGENT_REVIEW_CALLBACK_BASE_URL = undefined;
+  setEnv({
+    APPS_KUBE_NAMESPACE: 'civitai-apps',
+    APPS_DOMAIN: 'civit.ai',
+    AGENT_REVIEW_COST_CAP_USD: '2',
+    NEXTAUTH_URL: 'https://civitai.com',
+    AGENT_REVIEW_CALLBACK_BASE_URL: undefined,
+  });
   stubFetch();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -328,7 +335,7 @@ describe('startAgentReview — callback base URL (containment)', () => {
   });
 
   it('prefers the in-cluster AGENT_REVIEW_CALLBACK_BASE_URL when set (keeps report off the public internet)', async () => {
-    mockEnv.AGENT_REVIEW_CALLBACK_BASE_URL = 'http://web.internal.svc.cluster.local/';
+    setEnv({ AGENT_REVIEW_CALLBACK_BASE_URL: 'http://web.internal.svc.cluster.local/' });
     mockFindUnique.mockResolvedValue(pendingRequest());
     await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 });
     expect(jobEnv().CALLBACK_URL).toBe(
@@ -396,7 +403,9 @@ describe('buildAgentReviewApplyScript', () => {
     expect(script).toContain('kubectl apply -f /tmp/rendered.yaml');
     // Idempotent re-dispatch: a same-name review-agent Job (immutable spec) is
     // deleted before apply recreates it.
-    expect(script).toContain('kubectl delete job "${AGENT_NAME}" -n civitai-apps --ignore-not-found');
+    expect(script).toContain(
+      'kubectl delete job "${AGENT_NAME}" -n civitai-apps --ignore-not-found'
+    );
     // The rendered manifest embeds the presigned URL + callback token — never cat
     // it (match an actual `cat` command line, not the "Do NOT cat" comment).
     expect(script).not.toContain('\ncat /tmp/rendered.yaml');

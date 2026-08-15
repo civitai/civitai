@@ -20,16 +20,16 @@
   ],
   "totals": {
     "canonicalFiles": 343,
-    "pendingFiles": 351,
-    "allFiles": 505,
+    "pendingFiles": 349,
+    "allFiles": 504,
     "canonicalSites": 491,
-    "pendingSites": 790
+    "pendingSites": 787
   },
   "bySpecifier": {
     "~/server/db/client": 244,
     "~/server/redis/client": 144,
     "~/server/logging/client": 103,
-    "~/env/server": 43,
+    "~/env/server": 40,
     "~/server/services/buzz.service": 98,
     "~/server/services/image.service": 88,
     "~/server/clickhouse/client": 77,
@@ -642,8 +642,6 @@
     "src/server/services/__tests__/user-challenge-flag-gate.test.ts",
     "src/server/services/__tests__/user-profile-domain-variants.service.test.ts",
     "src/server/services/__tests__/vae-files-cross-version.test.ts",
-    "src/server/services/blocks/__tests__/agent-review-chat.service.test.ts",
-    "src/server/services/blocks/__tests__/agent-review.service.test.ts",
     "src/server/services/blocks/__tests__/app-block-notify.test.ts",
     "src/server/services/blocks/__tests__/app-views.service.test.ts",
     "src/server/services/blocks/__tests__/apps-pipeline.triggerBuild.test.ts",

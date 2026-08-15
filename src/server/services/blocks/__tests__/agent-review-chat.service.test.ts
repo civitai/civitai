@@ -1,3 +1,4 @@
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -17,13 +18,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *   - LLM throws → clean BAD_GATEWAY (no leak)
  */
 
-const { mockEnv, mockGetAgentReport, mockGetTextCompletion } = vi.hoisted(() => ({
-  mockEnv: { APPS_KUBE_NAMESPACE: 'civitai-apps' } as Record<string, unknown>,
+const { mockGetAgentReport, mockGetTextCompletion } = vi.hoisted(() => ({
   mockGetAgentReport: vi.fn(),
   mockGetTextCompletion: vi.fn(),
 }));
 
-vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   getDp1Target: vi.fn(),
   k8sFetch: vi.fn(),
@@ -36,8 +35,9 @@ vi.mock('~/server/services/blocks/app-review-report.service', () => ({
 // Keep the real `AI_MODELS` export (drift-proof: agent-review.service reads
 // `AI_MODELS.CLAUDE_HAIKU` at module load for AGENT_REVIEW_CHAT_MODEL). Only the
 // live `openrouter` client is stubbed. `importOriginal` doesn't construct a real
-// client here — `~/env/server` is mocked with no OPENROUTER_API_KEY, so the
-// module-load `createOpenRouterClient()` guard is skipped.
+// client here — openrouter.ts reads OPENROUTER_API_KEY at module scope and the
+// canonical env defaults carry no such key, so the `createOpenRouterClient()` guard
+// is skipped. Adding one to TEST_ENV_DEFAULTS would construct a real client here.
 vi.mock('~/server/services/ai/openrouter', async (importOriginal) => ({
   ...(await importOriginal<typeof import('~/server/services/ai/openrouter')>()),
   openrouter: { getTextCompletion: mockGetTextCompletion },
@@ -64,7 +64,7 @@ const REPORT = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  mockEnv.APPS_KUBE_NAMESPACE = 'civitai-apps';
+  setEnv({ APPS_KUBE_NAMESPACE: 'civitai-apps' });
   vi.clearAllMocks();
   mockGetTextCompletion.mockResolvedValue({
     content: 'grounded reply',
@@ -166,7 +166,10 @@ describe('agentReviewChat — failure containment (no 500, no leak)', () => {
     ).rejects.toMatchObject({ code: 'BAD_GATEWAY', message: 'the review agent did not respond' });
 
     try {
-      await agentReviewChat({ publishRequestId: PUBREQ, messages: [{ role: 'user', content: 'hi' }] });
+      await agentReviewChat({
+        publishRequestId: PUBREQ,
+        messages: [{ role: 'user', content: 'hi' }],
+      });
     } catch (e) {
       expect((e as Error).message).not.toContain('boom secret');
     }
