@@ -68,7 +68,7 @@ import {
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';

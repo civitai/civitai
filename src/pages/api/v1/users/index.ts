@@ -3,7 +3,7 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
-import { publicApiContext2 } from '~/server/createContext';
+import { publicApiContext2 } from '~/server/public-api-context';
 import { getAllUsersInput } from '~/server/schema/user.schema';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';

@@ -93,12 +93,30 @@ describe('typecheck wrapper outcome classification', () => {
     expect(res.stderr).not.toContain(DIAGNOSTIC_MARKER);
   });
 
-  it('distinguishes an outside kill from V8 running out of heap', () => {
-    const res = run(stub('sigkill', "process.kill(process.pid, 'SIGKILL');\n"));
+  // Windows has no signals: `process.kill(pid, 'SIGKILL')` terminates the child with
+  // exit code 1 and `signal === null`, so the shape this case exists to produce cannot
+  // occur there and the wrapper correctly reports the generic crash instead. The 137
+  // case below carries the same classification on every platform.
+  it.skipIf(process.platform === 'win32')(
+    'distinguishes an outside kill (by signal) from V8 running out of heap',
+    () => {
+      const res = run(stub('sigkill', "process.kill(process.pid, 'SIGKILL');\n"));
+
+      expect(res.status).not.toBe(0);
+      expect(res.stdout).toContain(CRASH_MARKER);
+      // Different cause, different fix: more RAM / a LOWER cap, not a higher one.
+      expect(res.stderr).toContain('killed from outside');
+      expect(res.stderr).not.toContain('ran out of old-space heap');
+    }
+  );
+
+  // The other half of the same branch, and the half a container actually delivers: a
+  // shell reports an OOM-killed child as 128+9 rather than as a signal.
+  it('distinguishes an outside kill (exit 137) from V8 running out of heap', () => {
+    const res = run(stub('exit137', 'process.exit(137);\n'));
 
     expect(res.status).not.toBe(0);
     expect(res.stdout).toContain(CRASH_MARKER);
-    // Different cause, different fix: more RAM / a LOWER cap, not a higher one.
     expect(res.stderr).toContain('killed from outside');
     expect(res.stderr).not.toContain('ran out of old-space heap');
   });

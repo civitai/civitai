@@ -200,7 +200,10 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
           // `const handler = withBlockScope(...); export default handler`, which
           // is one refactor away and was previously invisible to this walk.
           if (/export default\s+withBlockScope\(/.test(src) || /=\s*withBlockScope\(/.test(src)) {
-            out.push(path.relative(PAGES_API, child));
+            // A URL path, not a filesystem path: it is split on `/` below and
+            // compared against `/`-separated literals, so it must not carry
+            // Windows separators.
+            out.push(path.relative(PAGES_API, child).replace(/\\/g, '/'));
           }
         }
       }

@@ -7,7 +7,7 @@ import {
   licenses as sharedLicenses,
 } from '@civitai/shared/basemodel.constants';
 import { baseModelLicenses } from '~/server/common/constants';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '@civitai/shared/basemodel.constants';
 
 // The 2 Aug 2026 revision the on-site weights carry. A moving ref here would let
 // MiniMax rewrite the terms we point creators at, which is what section III.1's

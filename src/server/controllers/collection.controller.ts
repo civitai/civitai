@@ -31,7 +31,6 @@ import {
   bulkSaveItems,
   checkUserOwnsCollectionAndItem,
   deleteCollectionById,
-  enableCollectionYoutubeSupport,
   getAllCollections,
   getCollectionById,
   getCollectionCoverImages,
@@ -53,6 +52,7 @@ import {
   updateCollectionItemsStatus,
   upsertCollection,
 } from '~/server/services/collection.service';
+import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
 import { setModelShowcaseCollection } from '~/server/services/model.service';

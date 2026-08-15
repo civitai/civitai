@@ -179,7 +179,7 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { withRetries } from '~/utils/errorHandling';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { AIModel } from '~/server/services/ai/openrouter';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';

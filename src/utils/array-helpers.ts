@@ -1,6 +1,12 @@
-import { uniq } from 'instantsearch.js/es/lib/utils';
 import { uniqBy } from 'lodash-es';
 import { ModelType } from '~/shared/utils/prisma/enums';
+
+// Inlined from `instantsearch.js/es/lib/utils` to keep that barrel out of the graph for one
+// four-line function. First index wins, and it drops every NaN (indexOf(NaN) is -1). Do not
+// rewrite as `new Set` — that keeps one NaN, and every test still passes.
+function uniq<T>(array: T[]): T[] {
+  return array.filter((value, index, self) => self.indexOf(value) === index);
+}
 
 export const getRandom = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
 

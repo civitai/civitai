@@ -55,7 +55,7 @@ vi.mock('~/server/utils/region-blocking', () => ({
   getRegion: () => 'US',
   isRegionRestricted: () => false,
 }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 vi.mock('~/server/services/file.service', () => ({ getDownloadFilename: () => 'file.safetensors' }));
 
 // --- shared / mini/[id] handler graph ---

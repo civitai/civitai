@@ -46,7 +46,7 @@ vi.mock('~/utils/s3-utils', () => ({
   getCustomPutUrl: mockGetCustomPutUrl,
   getS3Client: mockGetS3Client,
 }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 vi.mock('~/server/utils/errorHandling', () => ({
   withRetries: (fn: () => Promise<unknown>) => fn(),
 }));

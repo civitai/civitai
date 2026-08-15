@@ -65,7 +65,7 @@ const bin = path.join(repoRoot, 'node_modules/.bin', process.platform === 'win32
 const args = [
   'run',
   '--project',
-  'unit*',
+  'unit',
   `--max-workers=${workers}`,
   '--reporter=default',
   `--reporter=${path.join(repoRoot, 'scripts/test-perf/reporter.mjs').replace(/\\/g, '/')}`,

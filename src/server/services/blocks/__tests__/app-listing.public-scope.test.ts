@@ -35,7 +35,7 @@ const { mockDbRead } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({

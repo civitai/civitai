@@ -60,7 +60,12 @@ export default class TestPerfReporter {
       config: {
         isolate: this.ctx?.config?.isolate,
         pool: this.ctx?.config?.pool,
-        maxWorkers: this.ctx?.config?.maxWorkers,
+        // 🔴 `maxWorkers` is NOT on vitest 4's `ctx.config` — verified by execution, the emitted
+        // object was `{isolate, pool, argv}`. Reading it there recorded `null` on every run ever
+        // taken, and `dashboard.mjs` rendered that as "(default) workers" for all of them. Recover
+        // it from argv, and say UNKNOWN rather than null when it is not there: a null reads as
+        // "vitest's default" and is indistinguishable from "we could not tell".
+        maxWorkers: maxWorkersFromArgv(process.argv) ?? maxWorkersFromEnv() ?? 'unknown',
         argv: process.argv.slice(2).join(' '),
       },
       wallMs: Date.now() - this.start,
@@ -78,9 +83,19 @@ export default class TestPerfReporter {
       files,
     };
 
-    const dir = path.join(root, '.test-perf/runs');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, `${label}.perf.json`), JSON.stringify(out, null, 2));
+    // 🔴 A measurement tool must never be able to fail a suite. This runs inside an AWAITED vitest
+    // lifecycle hook, so a throw here — read-only cwd, `.test-perf` existing as a file, ENOSPC, an
+    // antivirus EPERM — reds a run whose tests all passed, and the failure would be attributed to
+    // the code under test. Losing the recording is the correct trade; every other operation in this
+    // reporter is already guarded this way.
+    try {
+      const dir = path.join(root, '.test-perf/runs');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, `${label}.perf.json`), JSON.stringify(out, null, 2));
+    } catch (err) {
+      console.error(`[test-perf] could not write ${label}.perf.json: ${err?.message ?? err}`);
+      return;
+    }
     console.log(
       `\n[test-perf] ${label}: wall ${(out.wallMs / 1000).toFixed(1)}s | collect ${(
         out.totals.collectMs / 1000
@@ -92,3 +107,25 @@ export default class TestPerfReporter {
 }
 
 const round = (n) => (typeof n === 'number' ? Math.round(n) : 0);
+
+/** `--max-workers=8` / `--max-workers 8` / `--maxWorkers=8`, whichever form the caller used. */
+function maxWorkersFromArgv(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const m = /^--max-?[Ww]orkers(?:=(.+))?$/.exec(argv[i]);
+    if (!m) continue;
+    const raw = m[1] ?? argv[i + 1];
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+/**
+ * The env var vitest reads itself. Recorded separately because it and the flag do NOT behave the
+ * same: the flag reaches a run started through the dev-server queue and the env var does not, so a
+ * run can be capped by one and not the other.
+ */
+function maxWorkersFromEnv() {
+  const n = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}

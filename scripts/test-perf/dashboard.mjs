@@ -14,6 +14,7 @@
  * in the most recent `--no-isolate` run. Files nobody has run that way yet say so.
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
+import { execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -83,11 +84,50 @@ const files = inventory.files.map((f) => {
   };
 });
 
+/**
+ * The migration's authoritative number is the guard's allowlist, not anything derived here: it
+ * ratchets in both directions, so it cannot drift from what the suite will actually accept. Read it
+ * from the working tree if present, otherwise from the branch that carries it — a dashboard built on
+ * `main` should still show the real burn-down.
+ */
+const ALLOWLIST = 'src/__tests__/mocks/direct-mock-allowlist.json';
+function readAllowlist() {
+  const local = path.join(repoRoot, ALLOWLIST);
+  const parse = (text, source) => {
+    const data = JSON.parse(text);
+    const entries = Array.isArray(data) ? data : (data.files ?? data.allowlist ?? []);
+    return { count: entries.length, source };
+  };
+  if (existsSync(local)) {
+    try {
+      return parse(readFileSync(local, 'utf8'), 'working tree');
+    } catch {}
+  }
+  for (const ref of ['perf/test-mock-system', 'origin/perf/test-mock-system']) {
+    try {
+      const text = execFileSync('git', ['show', `${ref}:${ALLOWLIST}`], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      return parse(text, ref);
+    } catch {}
+  }
+  return null;
+}
+const allowlist = readAllowlist();
+
 const counts = files.reduce((a, f) => ((a[f.status] = (a[f.status] || 0) + 1), a), {});
 const verdictCounts = files.reduce((a, f) => ((a[f.verdict ?? 'unknown'] = (a[f.verdict ?? 'unknown'] || 0) + 1), a), {});
 
+const sweep = existsSync(path.join(perfDir, 'sweep.json'))
+  ? JSON.parse(readFileSync(path.join(perfDir, 'sweep.json'), 'utf8'))
+  : [];
+
 const payload = {
   generatedAt: new Date().toISOString(),
+  sweep,
+  allowlist,
   inventoryTotals: inventory.totals,
   baseline: baseline && summarise(baseline),
   latestFull: latestFull && summarise(latestFull),
@@ -117,7 +157,10 @@ function summarise(r) {
     files: r.totals.files,
     tests: r.totals.tests,
     failed: r.totals.failed,
-    workers: r.config?.maxWorkers ?? null,
+    // `null` here means the run predates the reporter recovering `maxWorkers` from argv — vitest 4
+    // does not put it on `ctx.config`, so every run before that fix recorded null. Rendering that
+    // as "default" claimed a fact nobody measured; it is UNRECORDED, which is a different thing.
+    workers: r.config?.maxWorkers ?? 'unrecorded',
   };
 }
 
@@ -178,6 +221,7 @@ input[type=search]{background:var(--panel);border:1px solid var(--line);color:va
 <main>
 <section><h2>Where the time goes</h2><div class="kpis" id="kpis"></div><div class="note" id="phasenote"></div></section>
 <section><h2>Migration to the shared-mock system</h2><div id="bar"></div><div class="legend" id="legend"></div><div class="note" id="verdictnote"></div></section>
+<section><h2>Config sweep — same 90-file subset, back to back</h2><div class="wrap"><table id="sweep"></table></div><div class="note">A crash exit (<span class="mono">3221225477</span> = 0xC0000005, Windows access violation) writes no report, so its phase columns are blank. Wall clock is still the run's real duration.</div></section>
 <section class="cols">
   <div><h2>Most-mocked shared modules</h2><div class="wrap scroll"><table id="mocks"></table></div></div>
   <div><h2>Run history</h2><div class="wrap scroll"><table id="runs"></table></div></div>
@@ -210,7 +254,7 @@ $('#kpis').innerHTML = [
   kpi(L?L.tests.toLocaleString():'—','tests', L?L.files+' files':''),
   kpi(L?L.failed:'—','failed', '16 is the known Windows baseline'),
 ].join('');
-if(L) $('#phasenote').textContent = 'Latest full run: '+L.label+' ('+(L.workers??'default')+' workers, '+new Date(L.at).toLocaleString()+'). Import is '
+if(L) $('#phasenote').textContent = 'Latest full run: '+L.label+' ('+(L.workers??'unrecorded')+' workers, '+new Date(L.at).toLocaleString()+'). Import is '
   + (L.collectS/(L.collectS+L.setupS+L.testS)*100).toFixed(0) + '% of measured worker time.';
 
 const C = D.counts, tot = D.files.length;
@@ -218,6 +262,12 @@ const seg = [['no-shared-mocks','#30363d',C['no-shared-mocks']||0],['spread-only
 $('#bar').innerHTML = '<div class="bar">'+seg.map(([k,c,n])=>'<div style="width:'+(n/tot*100)+'%;background:'+c+'" title="'+k+': '+n+'"></div>').join('')+'</div>';
 $('#legend').innerHTML = seg.map(([k,c,n])=>'<span><span class="dot" style="background:'+c+'"></span><b>'+n+'</b> '+k+'</span>').join('')
   + '<span><b>'+tot+'</b> files total</span>';
+if (D.allowlist) {
+  $('#bar').insertAdjacentHTML('beforebegin',
+    '<div class="kpi" style="margin-bottom:14px"><div class="v">'+D.allowlist.count+'</div>'
+    + '<div class="l">files still on the guard allowlist &mdash; the authoritative burn-down, read from '
+    + D.allowlist.source + '</div></div>');
+}
 const V = D.verdictCounts;
 $('#verdictnote').textContent = D.latestNoIso
   ? 'Latest --no-isolate run ('+D.latestNoIso.label+'): '+(V.pass||0)+' files passed, '+(V.fail||0)+' failed, '+(V.unknown||0)+' not covered by that run.'
@@ -227,6 +277,8 @@ function table(el, cols, rows, rowFn){
   el.innerHTML = '<thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>'
     + rows.map(rowFn).join('') + '</tbody>';
 }
+table($('#sweep'), ['config','workers','wall','import','setup','tests','failed','exit'], D.sweep,
+  r => '<tr><td class="mono">'+r.pool+' '+(r.isolate?'isolate':'no-isolate')+'</td><td>'+r.workers+'</td><td><b>'+s(r.wallS)+'</b></td><td>'+s(r.collectS)+'</td><td>'+s(r.setupS)+'</td><td>'+s(r.testS)+'</td><td>'+(r.failed==null?'—':r.failed)+'</td><td class="'+(r.exit===0?'':'up')+'">'+r.exit+'</td></tr>');
 table($('#mocks'), ['module','sites','files','inline factories'], D.mockedModules,
   m => '<tr><td class="mono">'+m.specifier+'</td><td>'+m.sites+'</td><td>'+m.files+'</td><td>'+m.partial+'</td></tr>');
 table($('#runs'), ['label','when','wall','import','setup','tests','failed','files'], [...D.runs].reverse(),
