@@ -9,8 +9,14 @@ const run = promisify(execFile);
  * `execFile` cannot exec the extensionless one, so every spawn there failed `ENOENT` before the
  * CLI started. Resolving tsx's own entry module and running it under the current `node` is the
  * same command on every platform and skips the shim entirely.
+ *
+ * 🔴 Resolved per call, NOT at module scope. All three drift test files import this module, so a
+ * resolve that throws at module scope — a tsx release dropping the `./cli` export subpath, a
+ * partial install — takes all three down during module evaluation, and each collects ZERO tests
+ * while the failure count stays at 0. Inside the function it surfaces as a test failure naming
+ * the module, which is the same reason the spawn failure below throws instead of returning.
  */
-const tsxCli = createRequire(import.meta.url).resolve('tsx/cli');
+const resolveTsxCli = () => createRequire(import.meta.url).resolve('tsx/cli');
 
 export interface CliRun {
   code: number;
@@ -31,6 +37,7 @@ export async function runTsxCli(
   args: string[],
   options: ExecFileOptions
 ): Promise<CliRun> {
+  const tsxCli = resolveTsxCli();
   try {
     const { stdout, stderr } = await run(process.execPath, [tsxCli, script, ...args], options);
     return { code: 0, stdout: String(stdout), stderr: String(stderr) };
@@ -42,9 +49,11 @@ export async function runTsxCli(
       stderr?: string;
     };
     if (typeof e.code !== 'number') {
-      throw new Error(
-        `${script} did not run: ${e.code ?? e.signal ?? String(error)}\n${e.stderr ?? ''}`
-      );
+      // A signal kill DID run — saying otherwise sends the reader looking for a spawn failure.
+      const how = e.signal
+        ? `was killed by ${e.signal}`
+        : `did not run: ${e.code ?? String(error)}`;
+      throw new Error(`${script} ${how}\n${e.stderr ?? ''}`);
     }
     return { code: e.code, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
   }
