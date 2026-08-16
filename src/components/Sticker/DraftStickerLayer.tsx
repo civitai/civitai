@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Gesture } from '~/components/Sticker/draft-gesture';
 import { rotate } from '~/components/Sticker/draft-gesture';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
-import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { useOwnedSticker, useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
@@ -33,6 +33,14 @@ export function DraftStickerLayer() {
   const move = useStickerPlacementDraftStore((state) => state.move);
   const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
   const { sticker } = useOwnedSticker();
+  // A draft dragged out of the shop is a sticker the placer does not own yet, so
+  // its artwork is not in `useOwnedSticker` — without this it renders nothing and
+  // the drag looks like it failed.
+  const unownedIds = useMemo(
+    () => drafts.filter((draft) => draft.purchase).map((draft) => draft.cosmeticId),
+    [drafts]
+  );
+  const { sticker: shopArt } = useStickerCosmetics(unownedIds);
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
   // Resolved once for the layer rather than per draft: `useStickerTreatment`
   // reads the user's settings and the router, so a subscription per sticker is
@@ -209,7 +217,8 @@ export function DraftStickerLayer() {
   return (
     <>
       {drafts.map((draft) => {
-        const art = sticker.find((option) => option.id === draft.cosmeticId);
+        const art =
+          sticker.find((option) => option.id === draft.cosmeticId) ?? shopArt.get(draft.cosmeticId);
         if (!art) return null;
 
         return (

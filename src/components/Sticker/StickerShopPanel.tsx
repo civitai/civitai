@@ -7,9 +7,12 @@ import {
   ScrollArea,
   Text,
   TextInput,
+  ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconSearch } from '@tabler/icons-react';
+import { IconInfoCircle, IconSearch } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useMutateCosmeticShop, useQueryShop } from '~/components/CosmeticShop/cosmetic-shop.util';
@@ -18,6 +21,7 @@ import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefr
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { browseShopItems } from '~/components/Shop/shop-browse';
 import { StickerBuyButton } from '~/components/Sticker/StickerBuyButton';
+import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
 import { CosmeticShopSort } from '~/server/common/enums';
@@ -43,6 +47,7 @@ type Tile = {
   cosmeticData: unknown;
   viaShopUserId?: number;
   acceptsBlue: boolean;
+  creatorUsername?: string | null;
   owned: boolean;
 };
 
@@ -58,11 +63,15 @@ type Tile = {
 export function StickerShopPanel({
   onClose,
   onTopUp,
+  maxScale,
 }: {
   onClose: () => void;
   /** Owned stickers can't be bought again; more uses is the only thing left to sell. */
   onTopUp: (sticker: ResolvedSticker) => void;
+  /** The space's own ceiling, so a sticker dragged from here starts inside it. */
+  maxScale: number;
 }) {
+  const { grab, dragging } = useStickerDragOut(maxScale);
   const [search, setSearch] = useState('');
   const [showOwned, setShowOwned] = useState(false);
   // The community half searches server-side, so this is a request per keystroke
@@ -118,6 +127,7 @@ export function StickerShopPanel({
         unitAmount: shopItem.unitAmount,
         cosmeticData: shopItem.cosmetic?.data,
         meta: shopItem.meta,
+        creatorUsername: shopItem.cosmetic?.creator?.username ?? null,
         viaShopUserId: CIVITAI_SHOP_ATTRIBUTION,
       }));
 
@@ -128,6 +138,10 @@ export function StickerShopPanel({
       unitAmount: item.unitAmount,
       cosmeticData: item.cosmetic?.data,
       meta: item.meta,
+      // Who drew it, which is not always who listed it — a resold sticker is
+      // sold by one creator and made by another, and the purchase line names
+      // the maker.
+      creatorUsername: item.cosmetic?.creator?.username ?? item.addedBy?.username ?? null,
       // Attributes the sale to the shop it was bought from, the same way the
       // storefront grid does.
       viaShopUserId: item.addedById ?? undefined,
@@ -150,6 +164,7 @@ export function StickerShopPanel({
         cosmeticData: entry.cosmeticData,
         viaShopUserId: entry.viaShopUserId,
         acceptsBlue: !!(entry.meta as CosmeticShopItemMeta | null)?.acceptsBlueBuzz,
+        creatorUsername: entry.creatorUsername,
         owned: ownedCosmeticIds.has(entry.cosmeticId),
       });
       return acc;
@@ -192,6 +207,16 @@ export function StickerShopPanel({
         <Chip size="xs" checked={showOwned} onChange={setShowOwned}>
           Show owned
         </Chip>
+        <Tooltip
+          label="Drag one onto the image to try it. You buy it before you can place it."
+          withArrow
+          multiline
+          w={220}
+        >
+          <ThemeIcon size="sm" radius="xl" variant="subtle" color="gray">
+            <IconInfoCircle size={16} />
+          </ThemeIcon>
+        </Tooltip>
         <CloseButton onClick={onClose} aria-label="Close the sticker shop" />
       </div>
 
@@ -226,13 +251,43 @@ export function StickerShopPanel({
                 shadow="sm"
               >
                 <HoverCard.Target>
-                  <div className="flex w-24 shrink-0 flex-col items-center gap-1 rounded border border-transparent p-1">
-                    <EdgeImage
-                      src={tile.data.url}
-                      alt={tile.data.slug ? `:${tile.data.slug}:` : tile.title}
-                      options={{ height: 96, anim: tile.data.animated, optimized: true }}
-                      style={{ height: 48, width: 'auto' }}
-                    />
+                  <div
+                    className={clsx(
+                      'flex w-24 shrink-0 flex-col items-center gap-1 rounded border p-1',
+                      dragging === tile.cosmeticId ? 'border-blue-5' : 'border-transparent'
+                    )}
+                  >
+                    {/* The artwork is the drag handle, not the whole tile: the
+                        price button is inside it, and a pointer-down there has
+                        to stay a click on the button. */}
+                    <button
+                      type="button"
+                      aria-label={`Drag ${tile.title} onto the image`}
+                      className="cursor-grab border-0 bg-transparent p-0"
+                      style={{ touchAction: 'none' }}
+                      onPointerDown={grab(
+                        tile.cosmeticId,
+                        // Owned ones (the chip shows them) drag out with no gate
+                        // — they are already paid for.
+                        tile.owned
+                          ? undefined
+                          : {
+                              shopItemId: tile.shopItemId,
+                              unitAmount: tile.unitAmount,
+                              acceptsBlue: tile.acceptsBlue,
+                              viaShopUserId: tile.viaShopUserId,
+                              creatorUsername: tile.creatorUsername,
+                            }
+                      )}
+                    >
+                      <EdgeImage
+                        src={tile.data.url}
+                        alt={tile.data.slug ? `:${tile.data.slug}:` : tile.title}
+                        options={{ height: 96, anim: tile.data.animated, optimized: true }}
+                        style={{ height: 48, width: 'auto', pointerEvents: 'none' }}
+                        draggable={false}
+                      />
+                    </button>
                     <Text size="10px" lineClamp={1} ta="center" className="w-full">
                       {tile.title}
                     </Text>

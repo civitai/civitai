@@ -22,7 +22,8 @@ import {
   placeButtonBoxes,
   shouldFlipPlaceButton,
 } from '~/components/Sticker/place-button-position';
-import { payoutCopy } from '~/components/Sticker/payout-copy';
+import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
+import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-copy';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
@@ -32,6 +33,8 @@ import {
   STICKER_COMMENT_MAX_LENGTH,
   STICKER_PLACEMENT_MIN_OPACITY,
 } from '~/shared/utils/sticker-placement';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import {
   pointerToSurfaceFraction,
@@ -109,7 +112,40 @@ export function DraftSticker({
   ownerUsername: string | null | undefined;
   onGesture: StartGesture;
 }) {
-  const payout = payoutCopy(ownerShare, ownerUsername);
+  // While the sticker is unbought the chip names who that payment goes to — the
+  // sticker's maker — not who the later placement pays. Two payments, two
+  // recipients, and only one of them is being made right now.
+  const payout = draft.purchase
+    ? stickerPurchaseCopy(draft.purchase.creatorUsername)
+    : payoutCopy(ownerShare, ownerUsername);
+  const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
+  const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
+
+  const buySticker = async () => {
+    const purchase = draft.purchase;
+    if (!purchase) return;
+
+    try {
+      await purchaseShopItem({
+        shopItemId: purchase.shopItemId,
+        viaShopUserId: purchase.viaShopUserId,
+        payWith: purchase.acceptsBlue ? 'blue-first' : undefined,
+      });
+      // Every draft of this sticker, not just this one — the purchase granted
+      // the sticker, not one copy of it.
+      markPurchased(draft.cosmeticId);
+      showSuccessNotification({
+        title: 'Sticker purchased',
+        message: 'Place it whenever you like — it stays where you put it.',
+      });
+    } catch (error) {
+      showErrorNotification({
+        title: 'Could not buy that sticker',
+        error: error instanceof Error ? error : new Error('Purchase failed'),
+      });
+    }
+  };
+
   const select = useStickerPlacementDraftStore((state) => state.select);
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
   const move = useStickerPlacementDraftStore((state) => state.move);
@@ -610,35 +646,62 @@ export function DraftSticker({
           </UnstyledButton>
         )}
 
-        <BuzzTransactionButton
-          size="sm"
-          style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-          buzzAmount={price}
-          // Says what it means. `BuzzTransactionButton` already ran the pair
-          // through `useAvailableBuzz`, which strips both and appends the
-          // domain's, so this renders identically — the pair was never the hole.
-          // That was server-side, where the escrow drew from both.
-          accountTypes={spendTypes}
-          label="Place"
-          loading={place.isPending}
-          onPerformTransaction={() =>
-            place.mutate({
-              imageId: draft.imageId,
-              data: {
-                cosmeticId: draft.cosmeticId,
-                x: draft.x,
-                y: draft.y,
-                scale: draft.scale,
-                rotation: draft.rotation,
-                flip: draft.flip,
-                opacity: draft.opacity,
-                // Sent only when there is something to send, so an opened-then-
-                // abandoned field is the same as never opening it.
-                ...(note.trim() ? { comment: note } : {}),
-              },
-            })
-          }
-        />
+        {/* Bought before it can be placed, and arranged before either. Dragging
+            it out first is the point: you see what it looks like where you want
+            it, and only then decide it is worth two payments. */}
+        {draft.purchase ? (
+          <BuzzTransactionButton
+            size="sm"
+            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+            buzzAmount={draft.purchase.unitAmount}
+            accountTypes={draft.purchase.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
+            label="Purchase sticker"
+            loading={purchasingShopItem}
+            onPerformTransaction={buySticker}
+          />
+        ) : (
+          <BuzzTransactionButton
+            size="sm"
+            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+            buzzAmount={price}
+            // Says what it means. `BuzzTransactionButton` already ran the pair
+            // through `useAvailableBuzz`, which strips both and appends the
+            // domain's, so this renders identically — the pair was never the hole.
+            // That was server-side, where the escrow drew from both.
+            accountTypes={spendTypes}
+            label="Place"
+            loading={place.isPending}
+            onPerformTransaction={() =>
+              place.mutate({
+                imageId: draft.imageId,
+                data: {
+                  cosmeticId: draft.cosmeticId,
+                  x: draft.x,
+                  y: draft.y,
+                  scale: draft.scale,
+                  rotation: draft.rotation,
+                  flip: draft.flip,
+                  opacity: draft.opacity,
+                  // Sent only when there is something to send, so an opened-then-
+                  // abandoned field is the same as never opening it.
+                  ...(note.trim() ? { comment: note } : {}),
+                },
+              })
+            }
+          />
+        )}
+
+        {/* The second payment, said before the first one is made. Someone who
+            buys a sticker to put it here and then meets another price has been
+            surprised with their own money. */}
+        {draft.purchase && (
+          <div className="rounded-lg bg-black/80 px-2 py-0.5 text-center">
+            <Text size="xs" c="gray.3" className="leading-tight">
+              Then {numberWithCommas(price)} Buzz to place it
+            </Text>
+          </div>
+        )}
+
         {/* On its own dark chip rather than over the artwork: this sits on
             whatever the creator uploaded, and yellow on light work is as
             unreadable as dimmed was on dark.

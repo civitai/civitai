@@ -11,6 +11,21 @@ import {
 
 export type StickerInteraction = 'move' | 'resize' | 'rotate';
 
+/**
+ * What a draft dragged out of the shop still has to be paid for before it can be
+ * placed. Absent on a sticker the placer already owns, which is every draft that
+ * came out of the tray.
+ */
+export type DraftPurchase = {
+  shopItemId: number;
+  unitAmount: number;
+  acceptsBlue: boolean;
+  /** Attributes the sale to the storefront it came from, as the shop grids do. */
+  viaShopUserId?: number;
+  /** Who made the sticker, for the "this goes to" line on the purchase button. */
+  creatorUsername?: string | null;
+};
+
 export type StickerDraft = {
   /**
    * Client-side identity. Not the cosmetic: the same sticker can be laid down
@@ -27,6 +42,8 @@ export type StickerDraft = {
   rotation: number;
   flip: boolean;
   opacity: number;
+  /** Set while this sticker is still unbought. Cleared by `markPurchased`. */
+  purchase?: DraftPurchase;
 };
 
 /**
@@ -99,7 +116,18 @@ interface StickerPlacementDraftStore {
   select: (id: string) => void;
   setSurface: (element: HTMLElement | null) => void;
   setTray: (element: HTMLElement | null) => void;
-  begin: (cosmeticId: number, at?: { x: number; y: number }, maxScale?: number) => void;
+  begin: (
+    cosmeticId: number,
+    at?: { x: number; y: number },
+    maxScale?: number,
+    purchase?: DraftPurchase
+  ) => void;
+  /**
+   * The sticker has been bought. Clears the gate from EVERY draft of it, not
+   * just the one whose button was pressed: one purchase grants the sticker, so
+   * a second copy of it still asking to be bought would be selling it twice.
+   */
+  markPurchased: (cosmeticId: number) => void;
   setInteraction: (interaction: StickerInteraction | null, pointerId?: number) => void;
   /**
    * Moves one draft by id rather than "the current one". A gesture outlives the
@@ -220,11 +248,21 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   setSurface: (element) => set({ surface: element }),
   setTray: (element) => set({ tray: element }),
 
-  begin: (cosmeticId, at, maxScale) =>
+  markPurchased: (cosmeticId) =>
+    set((state) => ({
+      drafts: state.drafts.map((draft) =>
+        draft.cosmeticId === cosmeticId && draft.purchase
+          ? { ...draft, purchase: undefined }
+          : draft
+      ),
+    })),
+
+  begin: (cosmeticId, at, maxScale, purchase) =>
     set((state) => {
       if (state.targetImageId == null) return state;
 
       const draft: StickerDraft = {
+        ...(purchase ? { purchase } : {}),
         id: nextDraftId(),
         imageId: state.targetImageId,
         cosmeticId,

@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
+import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
@@ -36,16 +37,8 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // than sending them to the shop is the point — a tray they have to leave is a
   // placement they don't make.
   const [topUp, setTopUp] = useState<ResolvedSticker | null>(null);
-  // Being dragged, but not yet on the image. The only feedback during that
-  // stretch, since nothing is drawn on the image until the pointer arrives.
-  const [dragging, setDragging] = useState<number | null>(null);
   const [shopping, setShopping] = useState(false);
-  const endGrab = useRef<(() => void) | null>(null);
   const trayRef = useRef<HTMLDivElement>(null);
-
-  // A gesture in flight when the tray closes would leave window listeners behind
-  // and could drop a sticker onto an image nobody is looking at any more.
-  useEffect(() => () => endGrab.current?.(), []);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
@@ -82,6 +75,10 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
+  // The creator's ceiling, not just the global one. Read before the early return
+  // below, because the pickup gesture is a hook and cannot be conditional.
+  const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
+  const { grab, dragging } = useStickerDragOut(maxScale);
 
   if (!showing) return null;
 
@@ -96,73 +93,6 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     if (remaining == null) return remaining;
     const drafted = drafts.filter((draft) => draft.cosmeticId === cosmeticId).length;
     return Math.max(remaining - drafted, 0);
-  };
-
-  const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
-
-  /**
-   * A sticker reaches the image by being dragged onto it, and by nothing else.
-   *
-   * Pressing one creates no draft. The draft comes into existence on the first
-   * pointer move that lands inside the media box, positioned under the cursor;
-   * a press that never gets there — a plain click, or a drag released outside —
-   * leaves the image untouched. Creating it on pointer-down put a sticker in the
-   * middle of someone's work before they had chosen anywhere and then teleported
-   * it, which is the thing being fixed rather than a detail of when it renders.
-   */
-  const grab = (cosmeticId: number) => (event: React.PointerEvent) => {
-    // No pickup while a drag is already in flight. The layer holds one gesture,
-    // so the sticker this created would be dropped on the image and then never
-    // follow anything — placed, stationary, with no cue that it went wrong.
-    //
-    // Gated on a live gesture rather than on `event.isPrimary`, which looks
-    // equivalent and is not: a mouse is primary no matter how many touches are
-    // down, so a trackpad pickup during a touch drag walked straight past it —
-    // and a palm resting on a tablet makes the dragging finger non-primary, so
-    // it silently dropped pickups that were perfectly fine.
-    if (useStickerPlacementDraftStore.getState().interaction) return;
-
-    event.preventDefault();
-    endGrab.current?.();
-    setDragging(cosmeticId);
-    const { pointerId } = event;
-
-    // Captured here, on the tray button, for the same reason the sticker
-    // captures its own: this drag ends up owned by the layer's gesture, which is
-    // refused outright while another is live, so a pointerup that never arrives
-    // would strand it and refuse everything after. Capture makes that delivery
-    // guaranteed. Released implicitly on the up that ends the drag.
-    try {
-      event.currentTarget.setPointerCapture(pointerId);
-    } catch {
-      // Pointer already gone; teardown below still runs on up/cancel.
-    }
-
-    const onMove = (move: PointerEvent) => {
-      if (move.pointerId !== pointerId) return;
-      const at = pointerOverSurface(move.clientX, move.clientY);
-      if (!at) return;
-      begin(cosmeticId, at, maxScale);
-      // Handing the drag to the layer, which owns it from here — along with the
-      // pointer holding it, so the layer arms against this finger rather than
-      // whichever one moves next. Armed only once the sticker exists on the
-      // image, so there is never a live move gesture with nothing to move.
-      setInteraction('move', pointerId);
-      teardown();
-    };
-
-    const teardown = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', teardown);
-      window.removeEventListener('pointercancel', teardown);
-      endGrab.current = null;
-      setDragging(null);
-    };
-
-    endGrab.current = teardown;
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', teardown);
-    window.addEventListener('pointercancel', teardown);
   };
 
   const price = space?.price ?? 0;
@@ -183,6 +113,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
             thing you are shopping to add to, so it stays visible while you buy. */}
         {shopping && (
           <StickerShopPanel
+            maxScale={maxScale}
             onClose={() => setShopping(false)}
             onTopUp={(sticker) => {
               setShopping(false);
