@@ -1464,7 +1464,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         SELECT
           SUM(amount) AS balance
         FROM buzzTransactions
-        WHERE toAccountType = 'yellow'
+        WHERE toAccountType IN (${BANKABLE_ACCOUNT_TYPES_SQL})
         AND (
           (type IN ('compensation')) -- Generation
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -1485,7 +1485,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         SELECT
             SUM(amount) / 1000 AS balance
         FROM buzzTransactions
-        WHERE toAccountType = 'yellow'
+        WHERE toAccountType IN (${BANKABLE_ACCOUNT_TYPES_SQL})
         AND type = 'purchase'
         AND fromAccountId = 0
         AND externalTransactionId NOT LIKE 'renewalBonus:%'
