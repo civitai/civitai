@@ -1,5 +1,10 @@
 import type { SessionUser } from '~/types/session';
-import { isFlipt } from '~/server/flipt/client';
+import { isFlipt, isFliptSync } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  recordStoreScopeDivergence,
+  recordStoreScopeResolution,
+} from '~/server/prom/store-scope.metrics';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 
 const APP_BLOCKS_FLAG = 'app-blocks-enabled';
@@ -397,9 +402,7 @@ export const APP_BLOCKS_DEV_TUNNEL_FLAG = 'app-blocks-dev-tunnel';
  * is a brand-new surface (no existing mod access to preserve), so fail-closed for
  * all until the flag exists is the safe posture.
  */
-export async function isAppBlocksDevTunnelEnabled(opts?: {
-  user?: SessionUser;
-}): Promise<boolean> {
+export async function isAppBlocksDevTunnelEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
   if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG);
   const user = opts.user;
   return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG, String(user.id), buildFliptContext(user));
@@ -735,6 +738,19 @@ export type StoreVisibilityScope = 'full' | 'public-external' | 'none';
 export async function resolveStoreVisibilityScope(opts?: {
   user?: SessionUser;
 }): Promise<StoreVisibilityScope> {
+  const scope = await resolveStoreVisibilityScopeUninstrumented(opts);
+  // Instrumentation is deliberately at THIS choke point and nowhere else: it is the
+  // single place both read paths (tRPC middleware + the REST handlers) and the SSR
+  // store pages agree on, so one counter covers every entry point and cannot drift
+  // the way per-call-site logging would.
+  recordStoreScopeResolution(scope, opts?.user ? 'user' : 'anon');
+  if (scope === 'none' && opts?.user) reportSilentStoreGate(opts.user);
+  return scope;
+}
+
+async function resolveStoreVisibilityScopeUninstrumented(opts?: {
+  user?: SessionUser;
+}): Promise<StoreVisibilityScope> {
   // Axis 1 — the existing catalog-visibility gate (mods + app-dev-testers). MUST be
   // checked FIRST so a privileged viewer always gets `full`, never `public-external`
   // (the external flag can only ever LIFT a non-privileged viewer, never narrow a mod).
@@ -745,4 +761,50 @@ export async function resolveStoreVisibilityScope(opts?: {
   if (await isExternalListingsPublicEnabled(opts)) return 'public-external';
   // Fail-closed: neither flag → dark.
   return 'none';
+}
+
+/** The three flags a `full` / `public-external` scope can come from. */
+const STORE_SCOPE_FLAGS = [
+  APP_LISTINGS_FLAG,
+  APP_BLOCKS_FLAG,
+  APP_LISTINGS_PUBLIC_EXTERNAL_FLAG,
+] as const;
+
+/**
+ * 🔴 DETECTION NET for the civitai#3983 failure mode: a store gate that denies
+ * SILENTLY (empty grid, NOT_FOUND detail) and is therefore indistinguishable from an
+ * empty catalog — to the viewer, to operators, and for the whole of that
+ * investigation.
+ *
+ * The check is a RELATIONSHIP, not a component: the `/apps` page gate admits a viewer
+ * on the SYNC evaluation of these same three flags (`isFliptSync` →
+ * `featureFlags.appListings*` → `hasAppsStoreAccess`), while the read path admits them
+ * on the ASYNC one. A logged-in viewer for whom the async side resolved `none` while
+ * the sync side still says they hold a store flag is a state that should not exist —
+ * it is exactly "reaches /apps, store is empty". Emitting it converts a silent
+ * mis-gate into an alertable event.
+ *
+ * Deliberately narrow so it cannot become background noise: only a LOGGED-IN viewer
+ * (anon has no page-gate pairing to contradict), only after the resolver already
+ * answered `none`, and `isFliptSync` reuses the eval cache the awaited call above just
+ * populated, so the re-read is a cache hit rather than three more wasm evaluations.
+ * A `null` sync answer (client not initialized) is NOT a divergence — it is the
+ * documented fall-through to static availability.
+ */
+function reportSilentStoreGate(user: SessionUser): void {
+  try {
+    const context = buildFliptContext(user);
+    const entityId = String(user.id);
+    const held = STORE_SCOPE_FLAGS.filter((flag) => isFliptSync(flag, entityId, context) === true);
+    if (!held.length) return;
+    for (const flag of held) recordStoreScopeDivergence(flag);
+    logToAxiom({
+      type: 'store-scope-divergence',
+      message: 'store read scope resolved `none` for a logged-in viewer who holds a store flag',
+      userId: user.id,
+      heldFlags: [...held],
+    }).catch(() => null);
+  } catch {
+    /* never throw from telemetry — a detection net must not break the read path */
+  }
 }

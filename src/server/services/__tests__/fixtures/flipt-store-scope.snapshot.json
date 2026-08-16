@@ -1,0 +1,144 @@
+{
+  "namespace": {
+    "key": "default"
+  },
+  "flags": [
+    {
+      "key": "app-blocks-enabled",
+      "name": "",
+      "description": "",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "rank": 1,
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "moderators",
+                "name": "",
+                "description": "",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isModerator",
+                    "operator": "eq",
+                    "value": "true"
+                  }
+                ]
+              },
+              {
+                "key": "app-dev-testers",
+                "name": "",
+                "description": "",
+                "matchType": "ANY_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "userId",
+                    "operator": "isoneof",
+                    "value": "[\"900000001\", \"900000002\"]"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "app-listings",
+      "name": "",
+      "description": "",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "rank": 1,
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "moderators",
+                "name": "",
+                "description": "",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isModerator",
+                    "operator": "eq",
+                    "value": "true"
+                  }
+                ]
+              },
+              {
+                "key": "app-dev-testers",
+                "name": "",
+                "description": "",
+                "matchType": "ANY_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "userId",
+                    "operator": "isoneof",
+                    "value": "[\"900000001\", \"900000002\"]"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "app-listings-public-external",
+      "name": "",
+      "description": "",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "rank": 1,
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "testers",
+                "name": "",
+                "description": "",
+                "matchType": "ANY_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isModerator",
+                    "operator": "eq",
+                    "value": "true"
+                  },
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "userId",
+                    "operator": "isoneof",
+                    "value": "[\"900001001\", \"900001002\"]"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "digest": "store-scope-fixture"
+}
