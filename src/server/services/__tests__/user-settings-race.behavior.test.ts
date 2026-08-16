@@ -357,8 +357,11 @@ describe('User.settings — single-request behaviour the writers must keep', () 
   // INVARIANT GUARD (green on the pre-change code too). `COALESCE(settings, '{}')` is easy
   // to drop when rewriting the statement, and a NULL column is the default for a new user.
   it('dismisses onto a NULL settings column', async () => {
-    await holder.db.query(`INSERT INTO "User" (id, settings) VALUES ($1, NULL)
-                           ON CONFLICT (id) DO UPDATE SET settings = NULL`, [USER_ID]);
+    await holder.db.query(
+      `INSERT INTO "User" (id, settings) VALUES ($1, NULL)
+                           ON CONFLICT (id) DO UPDATE SET settings = NULL`,
+      [USER_ID]
+    );
 
     await dismissAlertHandler({ input: { alertId: 'notice-e', dismiss: true }, ctx });
 

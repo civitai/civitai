@@ -1,4 +1,6 @@
-import { PGlite } from '@electric-sql/pglite';
+// Type-only: this module never constructs a PGlite, it only takes one. The behaviour
+// test owns the instance.
+import type { PGlite } from '@electric-sql/pglite';
 
 /**
  * Harness for the `User.settings` lost-update tests.
@@ -38,7 +40,8 @@ export type Gate = {
 };
 
 export function createGate(): Gate {
-  const pending: { match: (sql: string) => boolean; arrive: () => void; gate: Promise<void> }[] = [];
+  const pending: { match: (sql: string) => boolean; arrive: () => void; gate: Promise<void> }[] =
+    [];
   const statements: string[] = [];
 
   const gate: Gate = {
