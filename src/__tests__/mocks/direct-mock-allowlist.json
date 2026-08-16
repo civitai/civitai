@@ -20,10 +20,10 @@
   ],
   "totals": {
     "canonicalFiles": 218,
-    "pendingFiles": 397,
-    "allFiles": 484,
+    "pendingFiles": 399,
+    "allFiles": 486,
     "canonicalSites": 288,
-    "pendingSites": 868
+    "pendingSites": 870
   },
   "bySpecifier": {
     "~/server/db/client": 135,
@@ -36,7 +36,7 @@
     "~/server/services/notification.service": 77,
     "~/server/services/user.service": 75,
     "~/server/search-index": 65,
-    "~/server/flipt/client": 64,
+    "~/server/flipt/client": 66,
     "~/server/redis/fail-open-log": 55,
     "~/server/utils/endpoint-helpers": 53,
     "~/server/redis/caches": 55,
@@ -398,6 +398,8 @@
     "src/server/services/__tests__/app-blocks-flag.agentic-review.test.ts",
     "src/server/services/__tests__/app-blocks-flag.external-scope.seam.test.ts",
     "src/server/services/__tests__/app-blocks-flag.external-scope.test.ts",
+    "src/server/services/__tests__/app-blocks-flag.real-flipt-client.integration.test.ts",
+    "src/server/services/__tests__/app-blocks-flag.silent-gate-signal.test.ts",
     "src/server/services/__tests__/app-blocks-flag.test.ts",
     "src/server/services/__tests__/app-blocks-pipeline-flag.test.ts",
     "src/server/services/__tests__/app-blocks-runtime-flag.test.ts",

@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { getAppListingsListQuery } from '~/server/schema/blocks/app-listing-read.schema';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
+import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { getNextPage } from '~/server/utils/pagination-helpers';
@@ -87,6 +88,11 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
 
     // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
     const scope = await resolveStoreVisibilityScope({ user });
+    // Record what this entry point actually branched on. 🔴 The listing service
+    // defaults an ABSENT scope to `full`, so "no scope arrived" and "resolved full"
+    // produce the identical response here — `recordStoreScopeApplied` is what keeps
+    // those two apart in production (see store-scope.metrics; civitai#3983).
+    recordStoreScopeApplied(scope, 'rest-list');
     if (scope === 'none') {
       // Anon / non-privileged pre-launch → empty page, NEVER the full catalog.
       return res
