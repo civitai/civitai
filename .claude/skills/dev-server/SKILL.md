@@ -486,6 +486,18 @@ Real-time protection scans all ~210k files in `node_modules` plus every build-ca
 powershell -File .claude\skills\dev-server\scripts\defender-exclusions.ps1
 ```
 
+## Self-tests
+
+The daemon's trickier invariants are pinned by plain-node self-tests. Run them after touching the
+files they cover — they take milliseconds and need no daemon:
+
+```bash
+node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs
+```
+
+Each case is a shape measured on this repo, and each is mutation-checked: reverting the code it
+covers produces a wrong number, not a hang.
+
 ## Notes
 
 - The daemon starts automatically when you run CLI commands
