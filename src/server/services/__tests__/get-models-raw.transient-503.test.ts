@@ -21,6 +21,7 @@ import { getModelsRaw } from '~/server/services/model.service';
 import { MeiliCallTimeoutError } from '~/server/meilisearch/client';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as RedisClient from '~/server/redis/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * DIRECT test of the transient-error widening in getModelsRaw — the Meili search
@@ -83,13 +84,6 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
-// Stub the DB/redis surfaces model.service imports. None are reached on the
-// throw path (the Meili catch fires before any query), but importing the REAL
-// modules instantiates a Prisma client that fires a query at module load and
-// throws an UNHANDLED PrismaClientInitializationError on this host (no
-// linux-nixos query engine) — a false-positive vector Vitest flags. Stubbing
-// them keeps the run clean without touching the code under test.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 // All three pools: kyselyDb builds a client per tier at module load, so a
 // missing one fails the import rather than the code under test.
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));

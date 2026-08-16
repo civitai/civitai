@@ -5,16 +5,7 @@ import {
   type ListingProblemCode,
   type ListingProblemInput,
 } from '~/server/services/blocks/listing-problems';
-
-/**
- * Advisory listing-completeness helper tests. `computeListingProblems` is the
- * AUTHORITATIVE gate for the /apps/my-submissions warning icon — it enumerates a
- * listing's problems (missing assets via the shared `checkListingAssetsComplete`
- * gate + empty key text fields). Pure; no DB/network. The db client is mocked
- * only because the reused assets-service module imports it at load time.
- */
-
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** A fully-complete listing (no problems). Spread + override per case. */
 const complete: ListingProblemInput = {

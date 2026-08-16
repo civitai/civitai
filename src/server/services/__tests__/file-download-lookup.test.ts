@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // file.service.ts imports `@prisma/client` (type-only) plus a wide graph that
 // calls Prisma runtime helpers at module load. Mirror the house stub pattern
@@ -46,19 +47,10 @@ vi.mock('@prisma/client', () => {
   );
 });
 
-const modelVersionFindFirst = vi.fn();
-const modelFileFindMany = vi.fn();
-const modelFileFindFirst = vi.fn();
-const recommendedResourceFindFirst = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    modelVersion: { findFirst: modelVersionFindFirst },
-    modelFile: { findMany: modelFileFindMany, findFirst: modelFileFindFirst },
-    recommendedResource: { findFirst: recommendedResourceFindFirst },
-  },
-  dbWrite: {},
-}));
+const modelVersionFindFirst = dbMock.dbRead.modelVersion.findFirst;
+const modelFileFindMany = dbMock.dbRead.modelFile.findMany;
+const modelFileFindFirst = dbMock.dbRead.modelFile.findFirst;
+const recommendedResourceFindFirst = dbMock.dbRead.recommendedResource.findFirst;
 
 // Entity-access check: grant access by default so the happy path reaches the
 // file lookup + URL resolution.

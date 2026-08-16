@@ -57,7 +57,6 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
@@ -82,6 +81,7 @@ import {
   getImagesFromSearchPreFilter,
   getImagesFromSearchPostFilter,
 } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** The real shape observed in production logs, values substituted. */
 const sessionUser = {

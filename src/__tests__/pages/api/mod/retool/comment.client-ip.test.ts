@@ -35,24 +35,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * being inside it, which is the convention the sibling API suites already follow.
  */
 
-const { mockGetSession, mockRedis, mockRetoolAudit } = vi.hoisted(() => ({
+const { mockGetSession, mockRetoolAudit } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
-  mockRedis: {
-    multi: vi.fn(() => ({
-      set: vi.fn().mockReturnThis(),
-      incr: vi.fn().mockReturnThis(),
-      exec: vi.fn().mockResolvedValue(['OK', 1]),
-    })),
-    ttl: vi.fn().mockResolvedValue(60),
-  },
   mockRetoolAudit: vi.fn(),
 }));
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: mockRedis,
-  REDIS_SYS_KEYS: { RETOOL_ENDPOINT: { RATE_LIMIT: 'retool-endpoint:rate-limit' } },
-}));
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
     retoolAudit = mockRetoolAudit;
@@ -83,6 +71,14 @@ vi.mock('~/server/services/commentsv2.service', () => ({
 
 import handler from '~/pages/api/mod/retool/comment';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.sysRedis;
+redisMock.sysRedis.multi.mockImplementation(() => ({
+  set: vi.fn().mockReturnThis(),
+  incr: vi.fn().mockReturnThis(),
+  exec: vi.fn().mockResolvedValue(['OK', 1]),
+}));
+redisMock.sysRedis.ttl.mockResolvedValue(60);
 
 function createMocks(headers: Record<string, string | string[]>, remoteAddress?: string) {
   const req = {

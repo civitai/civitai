@@ -57,8 +57,6 @@ const {
   mockGetOrCreateVault,
   mockToggleModelVersionOnVault,
   mockPopulateNotificationDetails,
-  mockVaultItemFindMany,
-  mockModelVersionFindFirst,
   mockTracker,
 } = vi.hoisted(() => ({
   mockPublicApiContext2: vi.fn(),
@@ -68,8 +66,6 @@ const {
   mockGetOrCreateVault: vi.fn(),
   mockToggleModelVersionOnVault: vi.fn(),
   mockPopulateNotificationDetails: vi.fn(),
-  mockVaultItemFindMany: vi.fn(),
-  mockModelVersionFindFirst: vi.fn(),
   mockTracker: vi.fn(),
 }));
 
@@ -94,14 +90,6 @@ vi.mock('~/server/notifications/detail-fetchers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   populateNotificationDetails: mockPopulateNotificationDetails,
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    vaultItem: { findMany: mockVaultItemFindMany },
-    modelVersion: { findFirst: mockModelVersionFindFirst },
-    partner: { findUnique: vi.fn() },
-  },
-  dbWrite: {},
-}));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Tracker: mockTracker,
@@ -123,6 +111,9 @@ import vaultCheckRoute from '~/pages/api/v1/vault/check-vault';
 import vaultToggleRoute from '~/pages/api/v1/vault/toggle-version';
 import notificationDetailsRoute from '~/pages/api/notification/getDetails';
 import runHandler from '~/pages/api/run/[modelVersionId]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockVaultItemFindMany = dbMock.dbRead.vaultItem.findMany;
+const mockModelVersionFindFirst = dbMock.dbRead.modelVersion.findFirst;
 
 /**
  * `AuthedEndpoint` is mocked to an identity function above, so these modules

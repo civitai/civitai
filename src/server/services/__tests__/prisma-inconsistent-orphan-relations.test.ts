@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Regression tests for the "Inconsistent query result" 500s on
@@ -20,37 +21,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // model.service.ts has a very large import graph and only one thin handler on it
 // is exercised here, so its transitive service/db/search dependencies are stubbed.
 // Mirrors the scaffold in set-model-minor.service.test.ts.
-const { mockDbRead, mockDbWrite, findManyMock } = vi.hoisted(() => {
-  const findManyMock = vi.fn();
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-  });
-  return {
-    findManyMock,
-    mockDbRead: {
-      model: mk(),
-      modelVersion: mk(),
-      imageResourceNew: { findMany: findManyMock },
-      $queryRaw: vi.fn(),
-    },
-    mockDbWrite: {
-      model: mk(),
-      modelVersion: mk(),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-  };
-});
+const findManyMock = dbMock.dbRead.imageResourceNew.findMany;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: vi.fn(),
-  getDbWithoutLag: vi.fn(async () => mockDbRead),
+  getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
   preventModelVersionLagBatch: vi.fn(),
 }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
@@ -63,10 +38,6 @@ vi.mock('~/server/redis/caches', () => ({
   modelVotableTagsCache: { bust: vi.fn() },
   userBasicCache: {},
   userModelCountCache: { refresh: vi.fn() },
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: { del: vi.fn() },
-  REDIS_KEYS: { MODEL: { GALLERY_SETTINGS: 'model:gallery-settings' } },
 }));
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
@@ -112,7 +83,6 @@ vi.mock('~/server/services/model-version.service', () => ({
   publishModelVersionsWithEarlyAccess: vi.fn(),
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/services/subscriptions.service', () => ({ getHighestTierSubscription: vi.fn() }));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({

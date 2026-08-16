@@ -2,6 +2,7 @@ import type { NextApiResponse } from 'next';
 import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * 🔴 THE SEAM: `$metrics` is a Prisma PREVIEW feature, so it is one schema or
@@ -27,13 +28,8 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
 }));
 
-const readPrometheus = vi.fn();
-const writePrometheus = vi.fn();
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $metrics: { prometheus: (...args: unknown[]) => readPrometheus(...args) } },
-  dbWrite: { $metrics: { prometheus: (...args: unknown[]) => writePrometheus(...args) } },
-}));
-
+const readPrometheus = dbMock.dbRead.$metrics.prometheus;
+const writePrometheus = dbMock.dbWrite.$metrics.prometheus;
 type Handler = (req: unknown, res: NextApiResponse) => Promise<void> | void;
 
 const FAILURES = 'prisma_metrics_scrape_failures_total';

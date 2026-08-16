@@ -25,12 +25,8 @@ vi.mock('~/env/server', () => ({
   },
 }));
 
-vi.mock('~/server/redis/client', () => ({
-  redis: { sMembers: vi.fn(), del: vi.fn() },
-  REDIS_KEYS: { CACHES: { EDGE_CACHED: 'edge-cached' } },
-}));
-
 import { purgeCache } from '~/server/cloudflare/client';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const URL = 'https://civitai.com/api/v1/model-versions/by-hash/ABC123';
 

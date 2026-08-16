@@ -19,7 +19,6 @@ const {
   mockStop,
   mockStopForUserBlock,
   mockGetActive,
-  mockSysRedis,
 } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsDevTunnelEnabled: vi.fn(async () => true),
@@ -30,11 +29,6 @@ const {
   mockGetActive: vi.fn(async () => null),
   // Ephemeral dev-tunnel rate limiter (INCR + first-hit EX). Default counter = 1
   // (under the limit). Only the ephemeral branch touches it.
-  mockSysRedis: {
-    incrBy: vi.fn(async () => 1),
-    expire: vi.fn(async () => 1),
-    ttl: vi.fn(async () => 3600),
-  },
 }));
 
 vi.mock('~/server/services/block-registry.service', () => ({
@@ -57,18 +51,6 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   stopDevTunnelForUserBlock: mockStopForUserBlock,
   getActiveDevTunnel: mockGetActive,
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findUnique: vi.fn() } },
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
-}));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return {
-    ...actual,
-    redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    sysRedis: mockSysRedis,
-  };
-});
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
   parseSubjectUserId: vi.fn(),
@@ -95,6 +77,13 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockSysRedis = redisMock.sysRedis;
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.sysRedis.incrBy.mockImplementation(async () => 1);
+redisMock.sysRedis.expire.mockImplementation(async () => 1);
+redisMock.sysRedis.ttl.mockImplementation(async () => 3600);
 
 function authedCtx(userId: number, isModerator = true) {
   return {
@@ -207,7 +196,11 @@ describe('startDevTunnel — EPHEMERAL pre-submit rate limit (Phase 1)', () => {
       expect.stringContaining('dev-tunnel-ephemeral-rate-limit:100'),
       1
     );
-    expect(mockStart).toHaveBeenCalledWith({ userId: 100, blockId: 'new-app', sshPublicKey: PUBKEY });
+    expect(mockStart).toHaveBeenCalledWith({
+      userId: 100,
+      blockId: 'new-app',
+      sshPublicKey: PUBKEY,
+    });
   });
 
   it('ephemeral start OVER the limit → TOO_MANY_REQUESTS, never mints', async () => {
@@ -247,7 +240,9 @@ describe('startDevTunnel — EPHEMERAL pre-submit rate limit (Phase 1)', () => {
     // path" test above: that resolves to a real row, this resolves to null.
     mockResolveDev.mockResolvedValue(null);
     const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
-    await expect(caller.startDevTunnel({ blockId: 'their-app', sshPublicKey: PUBKEY })).rejects.toMatchObject({
+    await expect(
+      caller.startDevTunnel({ blockId: 'their-app', sshPublicKey: PUBKEY })
+    ).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
     expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
@@ -336,7 +331,11 @@ describe('dev-tunnel procs — AppBlocksDevTunnel scope gate', () => {
       const caller = blocksRouter.createCaller(tokenCtx(100, NEW_CLI) as never);
       const res = await caller.startDevTunnel(input);
       expect(res.host).toMatch(/^dev-[a-f0-9]{16}\.civit\.ai$/);
-      expect(mockStart).toHaveBeenCalledWith({ userId: 100, blockId: 'my-app', sshPublicKey: PUBKEY });
+      expect(mockStart).toHaveBeenCalledWith({
+        userId: 100,
+        blockId: 'my-app',
+        sshPublicKey: PUBKEY,
+      });
     });
 
     it('old CLI OAuth token (no DevTunnel bit) → FORBIDDEN at the scope gate, never mints', async () => {
@@ -352,12 +351,18 @@ describe('dev-tunnel procs — AppBlocksDevTunnel scope gate', () => {
   describe('stopDevTunnel', () => {
     it('Full personal key passes the scope gate (no regression)', async () => {
       const caller = blocksRouter.createCaller(tokenCtx(100, FULL) as never);
-      expect(await caller.stopDevTunnel({ sessionId: 'bki_s' })).toEqual({ ok: true, stopped: true });
+      expect(await caller.stopDevTunnel({ sessionId: 'bki_s' })).toEqual({
+        ok: true,
+        stopped: true,
+      });
     });
 
     it('new CLI OAuth token (with DevTunnel bit) passes the scope gate', async () => {
       const caller = blocksRouter.createCaller(tokenCtx(100, NEW_CLI) as never);
-      expect(await caller.stopDevTunnel({ sessionId: 'bki_s' })).toEqual({ ok: true, stopped: true });
+      expect(await caller.stopDevTunnel({ sessionId: 'bki_s' })).toEqual({
+        ok: true,
+        stopped: true,
+      });
       expect(mockStop).toHaveBeenCalledWith(100, 'bki_s');
     });
 

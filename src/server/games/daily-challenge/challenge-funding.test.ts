@@ -1,6 +1,8 @@
 import { BuzzApiError } from '@civitai/buzz';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Verifies chargeEntryFees' two-leg (house + pool) charging and its NO-REFUND partial-failure
 // contract: the buzz ledger keeps a refunded externalTransactionId occupied and exposes no
@@ -14,30 +16,20 @@ const {
   mockGetTransactionByExternalId,
   mockRefundMultiAccountTransaction,
   mockRefundTransaction,
-  mockChallengeUpdate,
-  mockChallengeFindUnique,
-  mockCollectionItemCount,
-  mockLogToAxiom,
+  
 } = vi.hoisted(() => ({
   mockCreateBuzzTransaction: vi.fn(),
   mockCreateBuzzTransactionMany: vi.fn(),
   mockGetTransactionByExternalId: vi.fn(),
   mockRefundMultiAccountTransaction: vi.fn().mockResolvedValue({ refundedTransactions: [] }),
   mockRefundTransaction: vi.fn(),
-  mockChallengeUpdate: vi.fn(),
-  mockChallengeFindUnique: vi.fn(),
-  mockCollectionItemCount: vi.fn(),
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
+  
 }));
+const mockChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockCollectionItemCount = dbMock.dbRead.collectionItem.count;
+const mockChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    challenge: { findUnique: mockChallengeFindUnique },
-    collectionItem: { count: mockCollectionItemCount },
-  },
-  dbWrite: { challenge: { update: mockChallengeUpdate } },
-}));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
   createBuzzTransactionMany: mockCreateBuzzTransactionMany,

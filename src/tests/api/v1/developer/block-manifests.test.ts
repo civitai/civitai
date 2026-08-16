@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 /**
  * Handler-level coverage for POST /api/v1/developer/block-manifests.
@@ -11,27 +14,19 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *    pre-upsert check 403s on attempted change)
  */
 
-const { mockDbRead, mockDbWrite, mockValidator } = vi.hoisted(() => {
-  const dbRead = {
-    oauthClient: { findUnique: vi.fn() },
-    appBlock: { findUnique: vi.fn() },
-  };
-  const dbWrite = {
-    appBlock: { upsert: vi.fn() },
-  };
+const { mockValidator } = vi.hoisted(() => {
   // The handler now calls the async submission gate (validate + settings-pattern
   // ReDoS check). Point validateSubmission at the SAME fn as validate so existing
   // `mockValidator.validate.mockReturnValue(...)` overrides drive both.
   const validate = vi.fn(() => ({ valid: true }));
   const validator = { validate, validateSubmission: validate };
-  return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockValidator: validator };
+  return { mockValidator: validator };
 });
 
 vi.mock('~/env/server', () => ({
   env: { JOB_TOKEN: 'job-secret', BLOCK_TOKEN_PRIVATE_KEY: 'x', BLOCK_TOKEN_PUBLIC_KEY: 'x' },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: vi.fn(async () => true),
 }));

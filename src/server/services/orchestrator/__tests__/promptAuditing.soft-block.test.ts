@@ -12,10 +12,8 @@ const {
   mockModeratePrompt,
   mockProhibited,
   mockSysRedis,
-  mockLogToAxiom,
   mockUpdateUserById,
 } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn(async () => undefined),
   mockUpdateUserById: vi.fn(async () => undefined),
   mockAuditPromptEnriched: vi.fn(),
   mockModeratePrompt: vi.fn(async () => ({ flagged: false, categories: [] as string[] })),
@@ -54,7 +52,6 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: mockUpdateUserById }));
@@ -63,10 +60,11 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
-
 import type { PromptTrigger, PromptTriggerCategory } from '~/utils/metadata/audit';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // `daughter` is a real soft-tier blocklist entry; `rape` is a real hard-tier one.
 // nsfw_blocklist severity is per matched word, so these are not interchangeable.

@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import { validateListingImage } from '~/server/schema/blocks/app-listing.schema';
 import { persistBlockUploadImageSchema } from '~/server/schema/blocks/block-image-upload.schema';
 import type * as S3Utils from '~/utils/s3-utils';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * `blockImageUpload.persist` — DECLARED-vs-ACTUAL geometry (issue #3770).
@@ -24,7 +25,6 @@ const { mockCreateImage } = vi.hoisted(() => ({
 }));
 const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (u: string) => `edge:${u}` }));
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({

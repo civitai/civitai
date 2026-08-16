@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Targeted announcements ride the same global per-domain cache flagged with
 // `targeted: true`; getCurrentAnnouncements resolves per-user visibility with a
@@ -9,38 +10,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // when nothing is targeted.
 const {
   redisGet,
-  membershipFindMany,
-  announcementCreate,
-  userFindMany,
   createNotificationMock,
-  targetDeleteMany,
-  targetCreateMany,
+  
 } = vi.hoisted(() => ({
   redisGet: vi.fn(),
-  membershipFindMany: vi.fn(),
-  announcementCreate: vi.fn(),
-  userFindMany: vi.fn(),
   createNotificationMock: vi.fn(),
-  targetDeleteMany: vi.fn(),
-  targetCreateMany: vi.fn(),
+  
 }));
+const membershipFindMany = dbMock.dbRead.announcementUser.findMany;
+const announcementCreate = dbMock.dbWrite.announcement.create;
+const targetDeleteMany = dbMock.dbWrite.announcementUser.deleteMany;
+const targetCreateMany = dbMock.dbWrite.announcementUser.createMany;
+const userFindMany = dbMock.dbWrite.user.findMany;
 
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { day: 86400 } }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: createNotificationMock,
-}));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    announcement: { findMany: vi.fn(), count: vi.fn() },
-    announcementUser: { findMany: membershipFindMany },
-    $transaction: vi.fn(),
-  },
-  dbWrite: {
-    announcement: { findMany: vi.fn(), create: announcementCreate, update: vi.fn() },
-    announcementUser: { deleteMany: targetDeleteMany, createMany: targetCreateMany },
-    user: { findMany: userFindMany },
-    $transaction: vi.fn(),
-  },
 }));
 vi.mock('~/server/redis/client', () => ({
   redis: { get: redisGet, set: vi.fn(), del: vi.fn() },

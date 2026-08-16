@@ -13,9 +13,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *    a k8s/TLS blip can NEVER crash the runner.
  */
 
-const { mockReap, mockLogToAxiom, mockRecordRun } = vi.hoisted(() => ({
+const { mockReap, mockRecordRun } = vi.hoisted(() => ({
   mockReap: vi.fn(),
-  mockLogToAxiom: vi.fn(() => Promise.resolve(undefined)),
   mockRecordRun: vi.fn(),
 }));
 
@@ -25,9 +24,6 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
 vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
   recordDevTunnelReaperRun: (...a: unknown[]) => mockRecordRun(...a),
 }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
-}));
 // createJob wraps the handler in metadata/lock machinery we don't need here —
 // stub it to hand back the bare handler (mirrors the sibling block-job tests).
 vi.mock('../job', () => ({
@@ -35,6 +31,8 @@ vi.mock('../job', () => ({
 }));
 
 import { reapDevTunnelsJob } from '../reap-dev-tunnels';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // After the createJob stub, the export is the bare async handler.
 const runJob = reapDevTunnelsJob as unknown as () => Promise<{

@@ -3,19 +3,6 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ImageService from '~/server/services/image.service';
 import type * as ReportService from '~/server/services/report.service';
 
-/**
- * `report.router.ts`'s `createAppeal` uses `guardedProcedure` with no ownership
- * middleware, so the switch in `createEntityAppealHandler` is the only thing
- * standing between a user and appealing someone else's model. The BAD_REQUEST
- * gate is also what keeps the ~13,700 legacy minor flags (no `minorFlagSnapshot`)
- * off this path.
- */
-
-const { mockModelFindUnique, mockModel3DFindUnique } = vi.hoisted(() => ({
-  mockModelFindUnique: vi.fn(),
-  mockModel3DFindUnique: vi.fn(),
-}));
-
 const {
   mockGetImageById,
   mockGetLatestModelAppeal,
@@ -28,13 +15,6 @@ const {
   mockReopenModelAppeal: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    model: { findUnique: mockModelFindUnique },
-    model3D: { findUnique: mockModel3DFindUnique },
-  },
-  dbWrite: {},
-}));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
 }));
@@ -51,6 +31,9 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
 
 import { createEntityAppealHandler } from '../report.controller';
 import { EntityType } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockModelFindUnique = dbMock.dbRead.model.findUnique;
+const mockModel3DFindUnique = dbMock.dbRead.model3D.findUnique;
 
 function ctxUser(id = 602767) {
   return { user: { id }, features: { isGreen: false } } as never;

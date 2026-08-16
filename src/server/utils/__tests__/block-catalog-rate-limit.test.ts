@@ -11,24 +11,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * The redis cache client is mocked so no real connection is constructed.
  */
 
-const { mockRedis } = vi.hoisted(() => ({
-  mockRedis: {
-    incrBy: vi.fn(),
-    expire: vi.fn(),
-    ttl: vi.fn(),
-  },
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'blocks:token-rate-limit' } },
-}));
-
 import {
   checkBlockCatalogRateLimit,
   BLOCK_CATALOG_RATE_LIMIT_MAX,
   BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS,
 } from '../block-catalog-rate-limit';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
 
 const KEY = `blocks:token-rate-limit:catalog:bki_test`;
 

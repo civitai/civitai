@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Verifies deleteFile's post-commit cleanup: deleting ONE file now deregisters
 // that file's storage-resolver registry row, keyed on the file id the DELETE
@@ -8,19 +9,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // best-effort: a failure must not fail the (already-committed) file delete, and
 // must not disturb the object cleanup or the cache bust beside it.
 
-const { mockDbWrite } = vi.hoisted(() => ({
-  mockDbWrite: {
-    modelFile: {
-      findFirst: vi.fn(),
-      findUnique: vi.fn(),
-      findMany: vi.fn(),
-      update: vi.fn(),
-      count: vi.fn(),
-    },
-    $queryRaw: vi.fn(),
-  },
-}));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
+// One local served both clients. The only entry point is deleteFile
+// (model-file.service:247), which is dbWrite throughout - modelFile.findFirst (:257) and
+// $queryRaw (:284) - so the read half of the alias was dead.
+const mockDbWrite = dbMock.dbWrite;
 
 // model-file.service builds a cached object at import (filesForModelVersionCache).
 // Hand back a STABLE stub so the test can assert the cache bust actually fired.
@@ -29,10 +21,6 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: () => ({ bust: mockCacheBust, fetch: vi.fn(), lookupFn: undefined }),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: { CACHES: { FILES_FOR_MODEL_VERSION: 'files-for-model-version' } },
-}));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 
 const { mockDeleteModelFileObject, mockDeregisterFileLocationsByFile } = vi.hoisted(() => ({
   mockDeleteModelFileObject: vi.fn(),

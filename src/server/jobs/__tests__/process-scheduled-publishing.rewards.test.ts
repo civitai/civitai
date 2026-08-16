@@ -2,34 +2,21 @@ import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  mockDbWrite,
   mockApply,
   mockRewardedIds,
   mockSetLastRun,
-  mockLogToAxiom,
   mockProcessEngagement,
   mockCreateNotification,
   jobDate,
 } = vi.hoisted(() => ({
-  mockDbWrite: {
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn(),
-    $transaction: vi.fn(),
-    image: { findMany: vi.fn() },
-    comicProject: { updateMany: vi.fn() },
-  },
   mockApply: vi.fn(),
   mockRewardedIds: vi.fn(),
   mockSetLastRun: vi.fn(),
-  mockLogToAxiom: vi.fn(() => Promise.resolve()),
   mockProcessEngagement: vi.fn(),
   mockCreateNotification: vi.fn(),
   jobDate: { lastRun: new Date(0) },
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
-
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 // Hand-listed rather than spread via importOriginal: the rewards barrel reaches
 // modules that build query caches from the db client at import time, so pulling the
 // real one in drops this suite to zero collected tests.
@@ -60,6 +47,10 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
+const mockDbWrite = dbMock.dbWrite;
 
 type Row = { id: number; userId: number };
 type Chapter = {

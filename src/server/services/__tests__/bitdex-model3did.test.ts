@@ -1,13 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// Mocked for the EXIT CODE, not the assertions. Reached transitively, this
-// module instantiates Prisma — and in a worktree without the repo's flake
-// dev-shell that leaves an unhandled rejection which fails no test but still
-// sets rc=1, so a mutation sweep reading rc scores every mutant as killed.
-// Nothing below touches a database. See civitai#3576.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 import { mapBitdexDoc } from '~/server/services/image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // mapBitdexDoc must emit model3dId only when the doc carries a number, and must
 // never coerce a missing value to null: downstream treats a number as a real

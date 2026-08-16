@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as EnvOther from '~/env/other';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * `recordStickerUsage` withholds usage-history rows when the deployment's ids come from a
@@ -25,13 +26,6 @@ vi.mock('~/env/other', async (importOriginal) => ({
   },
 }));
 
-// Module-load scaffold: `sticker.service` reaches Prisma clients, redis caches and the buzz
-// service at import time. None of them are on `recordStickerUsage`'s path (it is a pure
-// env-guard + array build + fire-and-forget call), so they only need to exist.
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: vi.fn() },
-  dbWrite: { $queryRaw: vi.fn(), $transaction: vi.fn() },
-}));
 vi.mock('~/server/redis/caches', () => ({ refreshOwnedStickerCache: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),

@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DomainColor } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// leaderboard.service reaches the db/router graph at import; this test only needs the
-// pure filter, so stub the heavy edges rather than widening them.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/routers/base.router', () => ({ isModerator: false }));
 vi.mock('~/server/services/user.service', () => ({
   getCosmeticsForUsers: vi.fn(),

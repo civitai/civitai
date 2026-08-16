@@ -1,25 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-/**
- * `snapshotSource()` stamps a contest snapshot as describing THROWAWAY DATA — in the stored
- * value and in the KeyValue key, where the docblock advertises it as a prefix-delete handle.
- *
- * It used to fire on `IS_PREVIEW`, which is a claim about environment identity, not about which
- * database the rows land in. A non-production deployment running against the PRODUCTION database
- * therefore stamped `preview` onto snapshots of REAL entries, badged them as disposable in the
- * moderator UI, and filed them under the deletable prefix. These cases pin the corrected matrix.
- *
- * Every expected key/marker below is a hand-written literal. `takenAt` is a fixed string rather
- * than a clock read, so the composed key is fully literal too.
- */
-
-// Module-load scaffold: the service reaches Prisma, redis and ClickHouse at import time. None of
-// them are on `snapshotSource`/`snapshotKey`'s path — both are pure functions of the environment
-// and their arguments — so they only need to exist.
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: vi.fn(), keyValue: { findUnique: vi.fn() } },
-  dbWrite: { $queryRaw: vi.fn(), keyValue: { create: vi.fn() } },
-}));
 vi.mock('~/server/db/db-helpers', () => ({ dbKV: { get: vi.fn(), set: vi.fn() } }));
 vi.mock('~/server/redis/client', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();

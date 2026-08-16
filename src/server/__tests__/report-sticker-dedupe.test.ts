@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ReportReason } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+  fn({
+    report: { create: (...args: unknown[]) => reportCreate(...args) },
+    image: { update: vi.fn(), findUnique: vi.fn(async () => null) },
+    model: { update: vi.fn() },
+  })
+);
 
 /**
  * Fixture discipline: every quantity here is distinct, so a value reaching the
@@ -15,26 +23,10 @@ const EXISTING_REPORT = 104;
 const PLACEMENT_ONE = 115;
 const PLACEMENT_TWO = 126;
 
-const reportFindFirst = vi.fn();
+const reportFindFirst = dbMock.dbWrite.report.findFirst;
 const reportCreate = vi.fn();
-const reportUpdate = vi.fn();
-const placementFindFirst = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { placement: { findFirst: (...args: unknown[]) => placementFindFirst(...args) } },
-  dbWrite: {
-    report: {
-      findFirst: (...args: unknown[]) => reportFindFirst(...args),
-      update: (...args: unknown[]) => reportUpdate(...args),
-    },
-    $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
-      fn({
-        report: { create: (...args: unknown[]) => reportCreate(...args) },
-        image: { update: vi.fn(), findUnique: vi.fn(async () => null) },
-        model: { update: vi.fn() },
-      }),
-  },
-}));
+const reportUpdate = dbMock.dbWrite.report.update;
+const placementFindFirst = dbMock.dbRead.placement.findFirst;
 
 vi.mock('~/server/services/system-cache', () => ({ getModeratedTags: vi.fn(async () => []) }));
 

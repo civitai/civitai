@@ -69,8 +69,6 @@ vi.mock('~/env/server', () => ({
   ),
 }));
 
-// Stub the infra clients so no real DB/Redis connection is opened on import.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 // REDIS_KEYS / REDIS_SYS_KEYS are deeply path-accessed at module load; a Proxy
 // returns a string for any key without enumerating the whole namespace tree.
@@ -87,6 +85,7 @@ vi.mock('~/server/redis/client', () => {
 });
 
 import { getImageMetricsObject } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const never = () => new Promise<never>(() => {});
 

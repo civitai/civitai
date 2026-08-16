@@ -1,10 +1,8 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { applyTagRules } from '../tagsOnImageNew.service';
 import * as systemCache from '../system-cache';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { $executeRawUnsafe: vi.fn() },
-}));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, 
   pgDbWrite: { query: vi.fn() },
 }));

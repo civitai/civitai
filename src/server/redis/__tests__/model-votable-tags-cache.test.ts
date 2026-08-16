@@ -15,25 +15,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // In-memory packed store so a cached value survives to the next fetch (real dedup).
 const store = new Map<string, unknown>();
-const mGetMock = vi.fn(async (keys: string[]) => keys.map((k) => store.get(k)));
-const setMock = vi.fn(async (key: string, value: unknown) => {
-  store.set(key, value);
-});
-const delMock = vi.fn(async () => undefined);
-const setNxMock = vi.fn().mockResolvedValue(true);
-
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: {
-      mGet: (...args: unknown[]) => mGetMock(...(args as [string[]])),
-      set: (...args: unknown[]) => setMock(...(args as [string, unknown])),
-    },
-    setNxKeepTtlWithEx: (...args: unknown[]) => setNxMock(...args),
-    del: (...args: unknown[]) => delMock(...args),
-  },
-  sysRedis: {},
-  REDIS_KEYS: { CACHE_LOCKS: 'caches:lock' },
-}));
+const mGetMock = redisMock.redis.packed.mGet;
+const setMock = redisMock.redis.packed.set;
+const delMock = redisMock.redis.del;
+const setNxMock = redisMock.redis.setNxKeepTtlWithEx;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/prom/client', () => ({
@@ -45,6 +30,13 @@ vi.mock('~/server/prom/client', () => ({
 }));
 
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.mGet.mockImplementation(async (keys: string[]) => keys.map((k) => store.get(k)));
+redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown) => {
+  store.set(key, value);
+});
+redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
+redisMock.redis.del.mockImplementation(async () => undefined);
 
 type ModelTagComposite = {
   tagId: number;

@@ -1,29 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionService from '~/server/services/collection.service';
 
-/**
- * `collection.getPermissionDetails` is a `protectedProcedure` taking arbitrary ids, so the
- * handler's own filtering is the only read gate on the name/metadata/mode/tags it returns.
- */
-
-const { mockCollectionFindMany } = vi.hoisted(() => ({
-  mockCollectionFindMany: vi.fn(),
-}));
-
 const { mockGetUserCollectionPermissionsByIds } = vi.hoisted(() => ({
   mockGetUserCollectionPermissionsByIds: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { collection: { findMany: mockCollectionFindMany } },
-  dbWrite: {},
-}));
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
   getUserCollectionPermissionsByIds: mockGetUserCollectionPermissionsByIds,
 }));
 
 import { getPermissionDetailsHandler } from '../collection.controller';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockCollectionFindMany = dbMock.dbRead.collection.findMany;
 
 function collectionRow(id: number, name: string) {
   return { id, name, metadata: null, mode: null, tags: [] };

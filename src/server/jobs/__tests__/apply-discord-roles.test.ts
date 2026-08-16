@@ -7,12 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * never try again. These pin that the write follows Discord's answer, per account.
  */
 
-const { mockDbWrite, mockDiscord } = vi.hoisted(() => ({
-  mockDbWrite: {
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn().mockResolvedValue(undefined),
-    user: { findMany: vi.fn(), findUnique: vi.fn() },
-  },
+const { mockDiscord } = vi.hoisted(() => ({
   mockDiscord: {
     getAllRoles: vi.fn(),
     addRoleToUser: vi.fn(),
@@ -20,9 +15,7 @@ const { mockDbWrite, mockDiscord } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/integrations/discord', () => ({ discord: mockDiscord }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
     name,
@@ -36,6 +29,10 @@ import {
   applyDiscordLeaderboardRoles,
   syncUserDiscordLeaderboardRoles,
 } from '~/server/jobs/apply-discord-roles';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(undefined);
 
 const TOP_10 = { id: 'role-10', name: 'Top 10' };
 const TOP_100 = { id: 'role-100', name: 'Top 100' };

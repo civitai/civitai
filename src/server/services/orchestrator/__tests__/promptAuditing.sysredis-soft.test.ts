@@ -78,9 +78,6 @@ vi.mock('~/server/integrations/moderation', () => ({
   extModeration: { moderatePrompt: mockModeratePrompt },
 }));
 
-// Collapse the heavy graph — none of these are reached on the counting path with
-// a below-threshold count.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: vi.fn() }));
@@ -88,11 +85,9 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
 }));
-// The mute path's banError catch logs via logToAxiom — stub it so the test
-// doesn't attempt a real network call.
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const blockingOptions = {
   prompt: 'a flagged prompt',

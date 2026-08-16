@@ -58,7 +58,6 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/redis/client', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- self-referential key proxy
@@ -93,6 +92,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { getImagesFromSearch } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const CURRENT_USER_ID = 42;
 

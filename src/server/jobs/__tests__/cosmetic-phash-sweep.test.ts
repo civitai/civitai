@@ -10,7 +10,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: { $queryRaw: mocks.queryRaw }, dbWrite: {} }));
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   getPerceptualHash: mocks.getPerceptualHash,
 }));
@@ -19,10 +18,13 @@ vi.mock('~/server/services/cosmetic-phash.service', async (importOriginal) => ({
   storeCosmeticPerceptualHash: mocks.storeCosmeticPerceptualHash,
   markCosmeticHashFailed: mocks.markCosmeticHashFailed,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-
 import { COSMETIC_PHASH_LANE } from '~/server/services/cosmetic-phash.service';
 import { sweepCosmeticPerceptualHashes } from '../cosmetic-phash-sweep';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.$queryRaw.mockImplementation((...args: unknown[]) =>
+  (mocks.queryRaw as (...a: unknown[]) => unknown)(...args)
+);
 
 describe('sweepCosmeticPerceptualHashes', () => {
   beforeEach(() => {

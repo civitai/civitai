@@ -171,7 +171,6 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -221,6 +220,7 @@ import {
 } from '~/shared/data-graph/generation/model-substitution';
 import { classifyModelSubstitutionReason } from '~/shared/data-graph/generation/workflow-capability';
 import { getWorkflowCapability } from '~/shared/data-graph/generation/workflow-capability';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** An id no ecosystem has ever heard of — #3665's own probe. */
 const UNRECOGNIZED_ID = 987654321;

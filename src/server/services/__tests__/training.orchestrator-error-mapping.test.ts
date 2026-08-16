@@ -39,10 +39,13 @@ vi.mock('@civitai/client', () => ({
     return undefined;
   }),
 }));
-vi.mock('@aws-sdk/lib-storage', () => ({ Upload: class {} }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+// See the note in training-status.sysredis-soft.test.ts: `default` is required for the
+// pre-bundled CJS interop, and its absence shows up as a near-empty collect, not a failure.
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {};
+  return { Upload, default: { Upload } };
+});
 vi.mock('~/server/db/db-lag-helpers', () => ({ preventModelVersionLag: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: {} }));
 vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { SYSTEM: { FEATURES: 'system:features' } },
@@ -61,9 +64,13 @@ vi.mock('~/utils/s3-utils', () => ({
   isB2Url: vi.fn(),
   parseKey: vi.fn(),
 }));
-vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({ getOrchestratorCaller: vi.fn() }));
+vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
+  getOrchestratorCaller: vi.fn(),
+}));
 
 import { toOrchestratorError } from '~/server/services/training.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // toOrchestratorError has a `never` return — capture the thrown value.
 const capture = (error: unknown): unknown => {

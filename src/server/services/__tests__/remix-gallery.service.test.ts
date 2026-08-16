@@ -5,6 +5,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const updateEntityMetricDetached = vi.fn(async () => undefined);
 vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
@@ -44,8 +45,6 @@ vi.mock('~/server/services/placement-moderation.service', () => ({ assertCanPlac
 
 const resolvePlacementSpaceFor = vi.fn();
 vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSpaceFor }));
-
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
 vi.mock('~/server/services/placement.service', () => ({
   getPlacementConfig: async () => ({

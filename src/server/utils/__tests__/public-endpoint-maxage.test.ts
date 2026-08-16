@@ -25,7 +25,6 @@ vi.mock('~/env/server', () => ({
     { get: (t, p: string) => (p in t ? t[p] : undefined) }
   ),
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/db/db-helpers', () => ({ checkNotUpToDate: vi.fn() }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(),
@@ -37,6 +36,7 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 vi.mock('~/server/utils/errorHandling', () => ({ isClientAbortError: vi.fn(() => false) }));
 
 import { PublicEndpoint } from '../endpoint-helpers';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 type HeaderBag = Record<string, string | string[]>;
 

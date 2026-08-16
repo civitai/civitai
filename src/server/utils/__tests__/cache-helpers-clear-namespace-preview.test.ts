@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisClientModule from '@civitai/redis/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * NAMESPACED half of the coverage for namespace-scoping the admin cache-clear path (the
@@ -84,8 +85,6 @@ vi.mock('~/server/prom/client', () => ({
   cacheFailOpenDegradedCounter: { inc: vi.fn() },
   cacheFailOpenOriginFetchCounter: { inc: vi.fn() },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));

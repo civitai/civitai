@@ -1,16 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFeedbackSchema } from '~/server/schema/feedback.schema';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
-    feedbackCreate: vi.fn(),
     isFlipt: vi.fn(),
   },
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: { feedback: { create: mocks.feedbackCreate } },
 }));
 
 vi.mock('~/server/flipt/client', () => ({ isFlipt: mocks.isFlipt }));
@@ -19,12 +14,12 @@ const { createFeedback, isFeedbackAreaEnabled } = await import('../feedback.serv
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.feedbackCreate.mockResolvedValue({ id: 1 });
+  dbMock.dbWrite.feedback.create.mockResolvedValue({ id: 1 });
   mocks.isFlipt.mockResolvedValue(true);
 });
 
 /** What the write layer was actually handed, read off the real call. */
-const writtenContext = () => mocks.feedbackCreate.mock.calls[0][0].data.context;
+const writtenContext = () => dbMock.dbWrite.feedback.create.mock.calls[0][0].data.context;
 
 /**
  * `createFeedback` persistence for the extended context.
@@ -75,8 +70,8 @@ describe('createFeedback — extended context', () => {
       screenshotId: 'cf-shot',
       sessionId: 'faro-abc',
     });
-    expect(mocks.feedbackCreate.mock.calls[0][0].data.userId).toBe(7);
-    expect(mocks.feedbackCreate.mock.calls[0][0].data.area).toBe('bitdex-image-feed');
+    expect(dbMock.dbWrite.feedback.create.mock.calls[0][0].data.userId).toBe(7);
+    expect(dbMock.dbWrite.feedback.create.mock.calls[0][0].data.area).toBe('bitdex-image-feed');
   });
 
   /**

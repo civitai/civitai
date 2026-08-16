@@ -1,15 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// The helpers file imports db/client which calls env.LOGGING.filter() at
-// module load. Mock the db client before the module is imported so the load
-// succeeds. shouldRestampOverrideBasis is a pure predicate — no DB calls
-// are made in the tests below.
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: {},
-}));
-
 import { shouldRestampOverrideBasis } from '~/server/services/article-rating-review.helpers';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('shouldRestampOverrideBasis', () => {
   it('restamps when a moderator asserts a non-null override (value changed)', () => {

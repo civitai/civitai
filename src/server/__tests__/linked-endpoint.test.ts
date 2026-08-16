@@ -6,17 +6,17 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // effect is gated on the one-shot cookie /api/auth/connect sets — otherwise any page could fire it in a
 // logged-in visitor's browser and spend our Discord rate limit.
 
-const { mockSync, mockSession, mockLog } = vi.hoisted(() => ({
+const { mockSync, mockSession,  } = vi.hoisted(() => ({
   mockSync: vi.fn(),
   mockSession: vi.fn(),
-  mockLog: vi.fn(),
+  
 }));
 
 vi.mock('~/server/jobs/apply-discord-roles', () => ({ syncUserDiscordLeaderboardRoles: mockSync }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: mockSession }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLog }));
-
 import handler from '~/pages/api/auth/linked';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLog = loggingMock.logToAxiom;
 
 function mockReqRes(query: Record<string, string>, cookies: Record<string, string> = {}) {
   const res = {

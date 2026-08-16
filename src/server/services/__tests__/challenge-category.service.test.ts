@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The service imports dbRead lazily and falls back to the preset constants when the read fails —
 // the pre-seed behavior the "preset fallback" tests below pin down. (In prod the same path covers
@@ -6,12 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // manually.) The read is stubbed to reject rather than left to a real connection attempt: the
 // unmocked client took ~4s per call to time out, and whether it failed at all depended on what the
 // box could reach.
-const { findManyMock } = vi.hoisted(() => ({ findManyMock: vi.fn() }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { challengeCategory: { findMany: findManyMock } },
-  dbWrite: { challengeCategory: { upsert: vi.fn() } },
-}));
+const findManyMock = dbMock.dbRead.challengeCategory.findMany;
 
 import {
   assertCategoryActiveAllowed,

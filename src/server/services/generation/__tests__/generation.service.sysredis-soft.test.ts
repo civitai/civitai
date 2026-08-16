@@ -34,10 +34,6 @@ vi.mock('~/server/redis/client', () => {
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
-// Collapse the heavy sibling-service graph: these are only used at runtime by
-// code paths the five readers under test never reach, so empty/vi.fn stubs keep
-// the import light without touching DB / search-index / image feed infra.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -70,6 +66,7 @@ import {
   getGenerationEcosystemConfig,
   getGateRules,
 } from '~/server/services/generation/generation.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();
