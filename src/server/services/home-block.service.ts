@@ -22,7 +22,10 @@ import {
 } from '~/server/services/collection.service';
 import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
 import { getAllImagesIndex } from '~/server/services/image.service';
-import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
+import {
+  bustSystemHomeBlockCaches,
+  getHomeBlockCached,
+} from '~/server/services/home-block-cache.service';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import {
@@ -50,6 +53,22 @@ import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constant
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+
+/**
+ * The list endpoint hands `metadata` straight to the block components (`src/pages/home/index.tsx`),
+ * which render the title, link and layout from it — so a clone's empty column has to be resolved
+ * here too, not only on the by-id content path.
+ */
+const resolveMetadataForAll = async <
+  T extends { metadata: Prisma.JsonValue; sourceId?: number | null }
+>(
+  rows: T[]
+) => {
+  if (!rows.some((r) => r.sourceId)) return rows;
+  return Promise.all(
+    rows.map(async (r) => ({ ...r, metadata: await resolveHomeBlockMetadata(r) }))
+  );
+};
 
 const homeBlockSelect = {
   id: true,
@@ -99,11 +118,13 @@ export const getHomeBlocks = async ({
     ? { userId, ...excludePermanent }
     : { id: ids ? { in: ids } : undefined };
 
-  const userBlocks = await dbRead.homeBlock.findMany({
-    select,
-    orderBy: { index: { sort: 'asc', nulls: 'last' } },
-    where: { ...where, userId: hasCustomHomeBlocks ? userId : -1 },
-  });
+  const userBlocks = await resolveMetadataForAll(
+    await dbRead.homeBlock.findMany({
+      select,
+      orderBy: { index: { sort: 'asc', nulls: 'last' } },
+      where: { ...where, userId: hasCustomHomeBlocks ? userId : -1 },
+    })
+  );
 
   if (ownedOnly || ids) return userBlocks;
 
@@ -292,12 +313,56 @@ const modelFeedDefaults = {
 const feedBrowsingLevel = (level?: 'public' | 'sfw') =>
   level === 'sfw' ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
 
-const readThroughTypes: HomeBlockType[] = [
-  HomeBlockType.Feed,
-  HomeBlockType.Leaderboard,
-  HomeBlockType.CosmeticShop,
-  HomeBlockType.FeaturedCollections,
-];
+/**
+ * Every system block's metadata, in one cache entry. There are 9 rows, they change only when a
+ * mod edits the homepage, and every clone render needs one of them — so this is read far more
+ * often than the per-block content caches it feeds.
+ *
+ * Busted by `bustSystemHomeBlockCaches`. A stale entry serves the previous homepage config for
+ * up to a day, which is why every write path that can touch a system block calls that.
+ */
+const getSystemBlockMetadata = async () =>
+  fetchThroughCache(
+    REDIS_KEYS.CACHES.HOME_BLOCKS_SYSTEM,
+    async () => {
+      const rows = await dbRead.homeBlock.findMany({
+        where: { userId: -1 },
+        select: { id: true, metadata: true },
+      });
+      return Object.fromEntries(rows.map((r) => [r.id, r.metadata as HomeBlockMetaSchema]));
+    },
+    { ttl: CacheTTL.day }
+  );
+
+/**
+ * A linked clone is a POINTER: the system block it points at owns its content and its
+ * presentation, and the clone's own `metadata` column is ignored entirely.
+ *
+ * Resolving the whole object rather than merging field-by-field is the point. A merge would keep
+ * the clone's stale copy of anything the source no longer sets, which is the bug this replaces —
+ * 494 users read a typo in the Buzz Beggars description for exactly that reason, because the fix
+ * was applied to the source through a path that never propagated.
+ *
+ * Falls back to the clone's own metadata only when the source is missing from the system map,
+ * which means someone sourced a block off a non-system row.
+ */
+export const resolveHomeBlockMetadata = async (homeBlock: {
+  metadata?: HomeBlockMetaSchema | Prisma.JsonValue;
+  sourceId?: number | null;
+}): Promise<HomeBlockMetaSchema> => {
+  const own = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
+  if (!homeBlock.sourceId) return own;
+
+  const systemMetadata = await getSystemBlockMetadata();
+  const source = systemMetadata[homeBlock.sourceId];
+  if (source) return source;
+
+  const row = await dbRead.homeBlock.findUnique({
+    where: { id: homeBlock.sourceId },
+    select: { metadata: true },
+  });
+  return ((row?.metadata as HomeBlockMetaSchema) || own) ?? own;
+};
 
 export const getHomeBlockData = async ({
   user,
@@ -318,20 +383,7 @@ export const getHomeBlockData = async ({
   // which requires it for models/posts/etc
   user?: SessionUser;
 }): Promise<HomeBlockWithData | null> => {
-  const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
-
-  // System block is source of truth for content selection; cloned user blocks read through to
-  // source so mods only update the singleton and clones stay in sync. Only the types below drift
-  // in practice — upsertHomeBlock already propagates metadata to clones, so this covers system
-  // blocks edited out-of-band (direct SQL/Retool).
-  let sourceMetadata: HomeBlockMetaSchema | undefined;
-  if (homeBlock.sourceId && readThroughTypes.includes(homeBlock.type)) {
-    const source = await dbRead.homeBlock.findUnique({
-      where: { id: homeBlock.sourceId },
-      select: { metadata: true },
-    });
-    sourceMetadata = (source?.metadata || undefined) as HomeBlockMetaSchema | undefined;
-  }
+  const metadata = await resolveHomeBlockMetadata(homeBlock);
 
   switch (homeBlock.type) {
     case HomeBlockType.Collection: {
@@ -373,7 +425,7 @@ export const getHomeBlockData = async ({
       };
     }
     case HomeBlockType.Leaderboard: {
-      const leaderboards = sourceMetadata?.leaderboards ?? metadata.leaderboards;
+      const leaderboards = metadata.leaderboards;
       if (!leaderboards) {
         return null;
       }
@@ -403,7 +455,7 @@ export const getHomeBlockData = async ({
       };
     }
     case HomeBlockType.Feed: {
-      const feed = sourceMetadata?.feed ?? metadata.feed;
+      const feed = metadata.feed;
       if (!feed) return null;
 
       const limit = resolveFeedFetchLimit(feed.limit);
@@ -444,7 +496,7 @@ export const getHomeBlockData = async ({
     }
     case HomeBlockType.CosmeticShop: {
       const cosmeticShopSectionMeta =
-        sourceMetadata?.cosmeticShopSection ?? metadata.cosmeticShopSection;
+        metadata.cosmeticShopSection;
       if (!cosmeticShopSectionMeta) {
         return null;
       }
@@ -470,7 +522,7 @@ export const getHomeBlockData = async ({
       };
     }
     case HomeBlockType.FeaturedCollections: {
-      const effectivePool = sourceMetadata?.featuredCollections ?? metadata.featuredCollections;
+      const effectivePool = metadata.featuredCollections;
       if (!effectivePool?.collectionIds?.length) return null;
 
       const state = await getFeaturedCollectionsState();
@@ -633,13 +685,16 @@ export const upsertHomeBlock = async ({
       throw throwAuthorizationError('You are not authorized to edit this home block.');
     }
 
-    const updated = await dbWrite.homeBlock.updateMany({
-      where: { OR: [{ id }, { sourceId: id }] },
-      data: {
-        metadata,
-        index,
-      },
+    // Only the row addressed. Clones resolve content and presentation from their source at
+    // render, so propagating to them would write ~114k rows to no effect — and would refill the
+    // metadata column that makes them pointers.
+    const updated = await dbWrite.homeBlock.update({
+      where: { id },
+      data: { metadata, index },
+      select: { id: true, type: true, metadata: true, userId: true },
     });
+
+    if (updated.userId === SYSTEM_HOMEBLOCK_USER_ID) await bustSystemHomeBlockCaches(updated);
 
     return updated;
   }
@@ -659,7 +714,9 @@ export const upsertHomeBlock = async ({
           index: (source.index ?? 0) + 1, // Ensures this will all fall below the new user created home block.
           type: source.type,
           sourceId: source?.id,
-          metadata: source.metadata || {},
+          // A pointer, not a copy. Content and presentation are resolved from the source at
+          // render, so a snapshot here could only ever go stale.
+          metadata: {},
         };
       })
       .filter(isDefined);
@@ -920,7 +977,7 @@ export async function createHomeBlockAdmin({
   index?: number;
   permanent?: boolean;
 }) {
-  return dbWrite.homeBlock.create({
+  const created = await dbWrite.homeBlock.create({
     data: {
       userId: SYSTEM_HOMEBLOCK_USER_ID,
       type,
@@ -930,6 +987,10 @@ export async function createHomeBlockAdmin({
       permanent: permanent ?? false,
     },
   });
+
+  await bustSystemHomeBlockCaches(created);
+
+  return created;
 }
 
 export async function updateHomeBlockAdmin({
@@ -956,17 +1017,17 @@ export async function updateHomeBlockAdmin({
   if (sourceId !== undefined) data.sourceId = sourceId;
   const updated = await dbWrite.homeBlock.update({ where: { id }, data });
 
-  // The permanent-block list is cached for a day and nothing else here busts it, so flipping
-  // `permanent` leaves the read path serving the old set while setHomeBlocksOrder reads the
-  // new one live — a block that renders for nobody until the TTL turns over.
-  await redis.del(REDIS_KEYS.CACHES.HOME_BLOCKS_PERMANENT);
+  // This is the path that stranded 494 users on a typo: it edits the system row, and before
+  // read-through nothing carried that to the clones or dropped their cached copies.
+  await bustSystemHomeBlockCaches(updated);
 
   return updated;
 }
 
 export async function deleteHomeBlockAdmin({ id }: { id: number }) {
   await assertSystemHomeBlock(id);
-  await dbWrite.homeBlock.delete({ where: { id } });
+  const deleted = await dbWrite.homeBlock.delete({ where: { id } });
+  await bustSystemHomeBlockCaches(deleted);
   return { deleted: true };
 }
 
@@ -995,6 +1056,7 @@ export async function reorderHomeBlocksAdmin({ orderedIds }: { orderedIds: numbe
   await dbWrite.$transaction(
     orderedIds.map((id, index) => dbWrite.homeBlock.update({ where: { id }, data: { index } }))
   );
+  await bustSystemHomeBlockCaches();
   return { count: orderedIds.length };
 }
 
@@ -1017,7 +1079,7 @@ export const setHomeBlocksOrder = async ({
   // keeps that from being load-bearing. Same predicate upsertHomeBlock's clone loop uses.
   const clonableSources = systemBlocksRequested.length
     ? await dbRead.homeBlock.findMany({
-        select: { id: true, type: true, metadata: true },
+        select: { id: true, type: true },
         where: {
           id: { in: systemBlocksRequested.map((i) => i.id) },
           userId: -1,
@@ -1063,7 +1125,8 @@ export const setHomeBlocksOrder = async ({
           index: i.index,
           type: source.type,
           sourceId: source.id,
-          metadata: (source.metadata || {}) as Prisma.InputJsonValue,
+          // A pointer — see the clone loop in upsertHomeBlock.
+          metadata: {} as Prisma.InputJsonValue,
         };
       })
       .filter(isDefined);

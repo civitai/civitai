@@ -2124,6 +2124,7 @@ const REDIS_KEYS_UNPREFIXED = {
     FEATURED_MODELS: 'packed:featured-models-2',
     OFFICIAL_MODELS: 'packed:caches:official-models',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
+    HOME_BLOCKS_SYSTEM: 'packed:caches:home-blocks-system',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',
