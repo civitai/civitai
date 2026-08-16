@@ -1,4 +1,3 @@
-import type * as PromClient from '~/server/prom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mocks } = vi.hoisted(() => ({
@@ -8,17 +7,9 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/prom/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof PromClient>()),
-  dbReadFallbackCounter: { inc: vi.fn() },
-}));
-vi.mock('~/server/services/buzz.service', () => ({
-  createBuzzTransaction: vi.fn(),
-  createMultiAccountBuzzTransaction: vi.fn(),
-  refundMultiAccountTransaction: vi.fn(),
-}));
-vi.mock('~/server/services/user-preferences.service', () => ({ getBlockedPairIds: vi.fn() }));
-
+// No `vi.mock` of shared modules here on purpose: the canonical mocks in
+// `src/__tests__/setup.ts` already cover this file's import graph, and a local
+// one freezes its shape into every later file in the same worker.
 import { getStickerOffers } from '../sticker.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
