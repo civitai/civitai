@@ -36,6 +36,7 @@ import ts from 'typescript';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(repoRoot, 'src/__tests__/mocks/unit-fast-manifest.json');
 const SPECIFIERS_SRC = path.join(repoRoot, 'src/__tests__/mocks/guarded-specifiers.ts');
+const PRE_MIGRATION = path.join(repoRoot, 'src/__tests__/mocks/pre-migration-mockers.json');
 const CLOSURES = path.join(repoRoot, '.test-perf/closures.json');
 const INVENTORY = path.join(repoRoot, '.test-perf/inventory.json');
 const GRAPH = path.join(repoRoot, 'scripts/test-perf/graph.mjs');
@@ -147,6 +148,71 @@ function findPermanentExclusions(testFiles) {
   return { excluded, conflicts };
 }
 
+/**
+ * 🔴 Files that rely on a FRESH MODULE REGISTRY without using `vi.mock` at all.
+ *
+ * The membership rule above is specifier-shaped: it reasons about what a file mocks. That misses
+ * two classes which poison a shared worker exactly as hard, and both were found by running the
+ * project rather than by reading it — the manifest called all six safe.
+ *
+ * 1. MODULE-SCOPE ENV STUBBING + A DEFERRED SUBJECT IMPORT. `vi.stubEnv(...)` (or a
+ *    `process.env.X = …`) at module scope, then `await import('../subject')` inside each test, is
+ *    a bet that the subject is evaluated fresh for this file. Unisolated, the first file to load
+ *    it freezes its module-scope reads for every sibling and the loser silently reads the
+ *    winner's configuration. Measured: `server-domain.board-color` and `server-domain.nsfw-rating`
+ *    both build a domain map from stubbed env at import; whichever lost the race failed with
+ *    `expected undefined to be 'blue'`, and in the run where they landed in different workers
+ *    BOTH passed. That is why the victim rotated across four runs and never repeated.
+ *
+ * 2. REAL EXTERNAL RESOURCES. A worker thread or a listening socket outlives the file that made
+ *    it when the process is shared. `eventloop-watchdog.worker` failed `expected 200 to be 404`
+ *    against a port it believed it had just opened.
+ *
+ * ⚠️ Both are detected by SHAPE, and neither detector is complete — they are a floor on this
+ * class, not a proof it is closed. The only instrument that has actually found a member of it is
+ * a repeated unisolated run, and a single run does not suffice: of four, one was entirely clean.
+ *
+ * ⚠️ These are not permanent. Each is fixable in the file — hoist the subject import to module
+ * scope so `vi.mock`/`stubEnv` hoisting still applies, or tear the resource down and stop
+ * assuming the port. "I am not converting this" is not "this cannot be converted".
+ */
+function findRegistryUnsafe(testFiles) {
+  const unsafe = new Map();
+  for (const file of testFiles) {
+    const src = readFileSync(path.join(repoRoot, file), 'utf8');
+    // Everything before the first describe/it is module scope in this shape of file.
+    const headEnd = src.search(/^\s*(describe|it|test)\s*\(/m);
+    const head = headEnd === -1 ? src : src.slice(0, headEnd);
+    const stubsEnv = /vi\.stubEnv\s*\(/.test(head) || /process\.env\.[A-Z0-9_]+\s*=/.test(head);
+    const defersImport = /await\s+import\s*\(/.test(src);
+    if (stubsEnv && defersImport)
+      unsafe.set(
+        file,
+        'stubs env at module scope and imports its subject with a deferred `await import()`, so it ' +
+          'depends on that module being evaluated fresh for this file; under one shared registry the ' +
+          'first file to load it wins and the rest read its configuration'
+      );
+
+    // ⚠️ `vi.resetModules()` looks like a third class — worker-wide once the registry is shared —
+    // and excluding all 30 callers was TRIED and did not change the outcome: the same
+    // `Invalid environment variables` kept arriving on a rotating victim. It is left in on that
+    // evidence rather than excluded on the theory. See the PR body for the mechanism that is
+    // actually responsible, which no per-file rule can express.
+
+    const spawnsWorker =
+      /from ['"]node:worker_threads['"]|require\(['"]node:worker_threads['"]\)/.test(src);
+    const bindsSocket = /createServer\s*\(|\.listen\s*\(/.test(src);
+    if (spawnsWorker || bindsSocket)
+      unsafe.set(
+        file,
+        `owns a real external resource (${
+          spawnsWorker ? 'worker thread' : 'listening socket'
+        }) that outlives the file when the process is shared between files`
+      );
+  }
+  return unsafe;
+}
+
 function computeMembers({ closures, inventory }, canonical) {
   const CANON = new Set(canonical);
   const byFile = new Map(inventory.files.map((f) => [f.file, f]));
@@ -161,6 +227,8 @@ function computeMembers({ closures, inventory }, canonical) {
     }
 
   const { excluded, conflicts } = findPermanentExclusions([...byFile.keys()]);
+  for (const [file, reason] of findRegistryUnsafe([...byFile.keys()]))
+    if (!excluded.has(file)) excluded.set(file, reason);
   let members = new Set([...byFile.keys()].filter((f) => !excluded.has(f)));
 
   const rounds = [];
@@ -210,6 +278,20 @@ function computeMembers({ closures, inventory }, canonical) {
 
 const canonical = readCanonicalSpecifiers();
 const graph = loadGraph();
+
+/**
+ * The files that carried a direct mock of a guarded specifier BEFORE the migration started —
+ * committed by `gen-pre-migration-mockers.mjs`, because CI clones shallow and because a baseline
+ * that can drift is not a baseline. See that file's header for why the count needs one at all.
+ */
+if (!existsSync(PRE_MIGRATION))
+  fail(
+    `src/__tests__/mocks/pre-migration-mockers.json is missing.\n` +
+      `Regenerate it: node scripts/test-perf/gen-pre-migration-mockers.mjs`
+  );
+const preMigration = JSON.parse(readFileSync(PRE_MIGRATION, 'utf8'));
+const mockedAtBase = new Set(preMigration.files);
+
 const { members, excluded, conflicts, rounds, byFile } = computeMembers(graph, canonical);
 
 /**
@@ -254,12 +336,20 @@ const manifest = {
     members: members.length,
     excludedPermanently: excluded.size,
     pending: allTestFiles.length - members.length - excluded.size,
-    // 🔴 The member count flatters and must never be quoted alone. Most members mock NOTHING —
-    // they were never what the migration was for, and they would have been eligible on day one.
-    // The number that measures the migration's progress is the other one: members that mock
-    // something and are safe anyway. At 3c9ac23165 the split was 441 against 3.
-    membersMockingNothing: members.filter((f) => (byFile.get(f)?.mocks.length ?? 0) === 0).length,
-    membersEarned: members.filter((f) => (byFile.get(f)?.mocks.length ?? 0) > 0).length,
+    // 🔴 The member count flatters and must never be quoted alone. Most members mock NOTHING and
+    // never did — they were not what the migration was for and would have been eligible on day
+    // one. `membersEarned` is the number that measures the migration: members that carried a
+    // guarded mock at the pre-migration base and are safe now.
+    //
+    // 🔴 It is measured against that BASE, not against the current tree. Counting members that
+    // still mock something today answers the opposite question: converting a file removes its
+    // mocks, so a converted member is indistinguishable from one that never mocked anything, and
+    // the count credits the migration with nothing. Measured: present-tense scored 4 -> 5 across a
+    // day that converted 127 files; against the base the same two member sets score 23 -> 46.
+    membersNeverMocked: members.filter((f) => !mockedAtBase.has(f)).length,
+    membersEarned: members.filter((f) => mockedAtBase.has(f)).length,
+    // The denominator the two above partition, so a reader can check they sum.
+    mockersAtBase: mockedAtBase.size,
     // Published beside the file count on purpose: they diverge badly. Members are ~46% of files
     // and ~16% of module loads, because the files that are already eligible are the ones that mock
     // nothing, which are the cheap ones. Quoting the file count overstates the lane by ~3x.
@@ -301,6 +391,11 @@ if (CHECK) {
       `carrying ${loadsIn} of ${loadsAll} module loads (${((loadsIn / loadsAll) * 100).toFixed(
         1
       )}%)`
+  );
+  console.log(
+    `of those, ${manifest.totals.membersEarned} EARNED (carried a guarded mock at ` +
+      `${preMigration.base.slice(0, 10)}, now safe) and ${manifest.totals.membersNeverMocked} ` +
+      `never mocked anything`
   );
   console.log(
     `excluded permanently ${excluded.size}, one specifier away ${manifest.totals.oneSpecifierAway}`

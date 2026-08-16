@@ -72,9 +72,14 @@ describe('unit / unit-fast partition', () => {
   /**
    * 🔴 The membership rule exempts canonical specifiers from its sharing test, because the canonical
    * mock exists so they CAN be shared. That exemption is about the specifier and says nothing about
-   * whether a given file still mocks it directly — and a file with its own
-   * `vi.mock('~/server/db/client', …)` overrides the canonical registration for its whole worker
-   * under `isolate: false`, freezing its factory for every member beside it.
+   * whether a given file still mocks it directly — and a file carrying its own direct mock of a
+   * canonical module overrides the canonical registration for its whole worker under
+   * `isolate: false`, freezing its factory for every member beside it.
+   *
+   * ⚠️ Written without the literal call spelled out, because `no-direct-shared-module-mock` scans
+   * raw text and cannot tell a comment from code. Quoting the shape here put THIS file on the
+   * allowlist. `app-access.service.test.ts` is on `main`'s allowlist for the same reason and has
+   * no mock to migrate — see the PR body; the guard fix is a follow-up, not this change.
    *
    * So the exemption written to admit files that USE the canonical mock also admitted the files it
    * was built to replace: 52 of them at 3c9ac23165, against 3 members that mocked anything and were
@@ -104,10 +109,12 @@ describe('unit / unit-fast partition', () => {
    * adding a unit-family project and leaving a selector behind, which is how this fails in
    * practice.
    */
-  it('every unit-family project is named by every unit-family selector', () => {
+  it('every unit-family project is covered by every unit-family selector', () => {
     const config = readFileSync(path.join(repoRoot, 'vitest.config.mts'), 'utf8');
     const projects = [...config.matchAll(/name: '(unit[\w-]*)'/g)].map((m) => m[1]);
-    expect(projects, 'expected at least unit and unit-fast').toContain('unit-fast');
+    expect(projects, 'expected at least unit and unit-fast').toEqual(
+      expect.arrayContaining(['unit', 'unit-fast'])
+    );
 
     const selectors: [string, string][] = [
       ['package.json', readFileSync(path.join(repoRoot, 'package.json'), 'utf8')],
@@ -117,13 +124,24 @@ describe('unit / unit-fast partition', () => {
       ],
     ];
 
+    // Vitest matches `--project` against a project name as a glob, so `'unit*'` covers the whole
+    // family and an explicit list covers whatever it names. Check COVERAGE, not spelling: a guard
+    // that insisted on one of the two forms would fail on the other while nothing was wrong.
+    const covers = (spec: string, project: string) =>
+      new RegExp(`^${spec.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[\\w-]*')}$`).test(
+        project
+      );
+
     const gaps: string[] = [];
     for (const [where, text] of selectors)
       for (const line of text.split('\n')) {
-        if (!/--project/.test(line) || !/\bunit\b/.test(line)) continue;
+        const specs = [...line.matchAll(/--project[ =]+['"`]?([\w*@:/-]+)['"`]?/g)].map(
+          (m) => m[1]
+        );
+        if (!specs.some((s) => covers(s, 'unit'))) continue;
         for (const project of projects)
-          if (!new RegExp(`['"\`\\s]${project}['"\`,\\s]`).test(line))
-            gaps.push(`${where}: a unit selector does not name '${project}': ${line.trim()}`);
+          if (!specs.some((s) => covers(s, project)))
+            gaps.push(`${where}: a unit selector does not cover '${project}': ${line.trim()}`);
       }
     expect(gaps).toEqual([]);
   });

@@ -126,6 +126,50 @@ const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
 
 const alias = [{ find: '~', replacement: path.resolve(__dirname, './src') }, ...civitaiAlias];
 
+// 🔴 `unit-fast` resolves `~/env/server` to the canonical env mock by ALIAS, not by the
+// `vi.mock('~/env/server', …)` that `setup.ts` registers for every other project.
+//
+// That registration is made from a SETUP FILE, which under `isolate: false` runs once per worker
+// while the module cache is also per worker — so the registration and the cache race. Whichever
+// file first pulls `~/server/flipt/client` (which imports `~/env/server` at its line 2) into a
+// worker where the registration has not taken can load the REAL module, and the real module
+// throws `Invalid environment variables` under test env. Measured before this alias: three
+// unisolated runs, three DIFFERENT victim files, every one that same throw through that same
+// import; the matched isolated controls were clean every time. 66 members reach that module,
+// which is why the victim rotated and never repeated.
+//
+// Resolution cannot race a registry: the alias is applied when the id is resolved, so every file
+// in the worker gets the mock whether or not `vi.mock` took for it. The regex is anchored so it
+// cannot swallow `~/env/server-schema` or shadow the bare `~` entry below it.
+//
+// ⚠️ Only `unit-fast` needs this. `unit` re-instantiates per file, so the setup registration is
+// reliable there, and pointing an isolated project at an alias would change behaviour for 600
+// files to fix a problem they do not have.
+// ⚠️ A `resolve.alias` entry is NOT enough, and the reason is the hazard `guarded-specifiers.ts`
+// already records one level up: the module is imported under BOTH spellings. An alias anchored on
+// `~/env/server` left `user-payment-configuration.service.ts:4`'s `import { env } from
+// '../../env/server'` resolving to the real module, and 12 files failed deterministically on it.
+// Resolving the id settles every spelling at once, because it runs after the relative path is
+// joined to its importer.
+const ENV_SERVER_REAL = path.resolve(__dirname, './src/env/server').replace(/\\/g, '/');
+const ENV_SERVER_MOCK = path
+  .resolve(__dirname, './src/__tests__/mocks/env-server.alias.ts')
+  .replace(/\\/g, '/');
+const unitFastEnvPlugin = {
+  name: 'civitai:unit-fast-env',
+  enforce: 'pre' as const,
+  resolveId(source: string, importer?: string) {
+    const joined =
+      source.startsWith('.') && importer
+        ? path.resolve(path.dirname(importer), source).replace(/\\/g, '/')
+        : source === '~/env/server'
+        ? ENV_SERVER_REAL
+        : null;
+    if (joined?.replace(/\.[cm]?tsx?$/, '') === ENV_SERVER_REAL) return ENV_SERVER_MOCK;
+    return null;
+  },
+};
+
 // Browser-mode (`component` project) alias: stub the native `sharp` module.
 // A few `.browser.test.tsx` tests import a Next *page* to render its client shell;
 // the page's `getServerSideProps` transitively pulls a server service that does
@@ -347,9 +391,11 @@ export default defineConfig({
       // Files move across as they clear the predicate. That converts an all-or-nothing flip at the
       // end of a months-long migration into value every week.
       //
-      // ⚠️ Read the manifest's `totals` before quoting progress: members are ~46% of FILES and
-      // ~15% of MODULE LOADS, because the files that qualify first are the ones that mock nothing,
-      // which are the cheap ones. The file count overstates the delivered win by roughly 3x.
+      // ⚠️ Read the manifest's `totals` before quoting progress. Members are 44% of FILES and 13%
+      // of MODULE LOADS, because the files that qualify first are the ones that mock nothing,
+      // which are the cheap ones — the file count overstates the delivered win by ~3x. And of the
+      // members, 46 are EARNED (they carried a guarded mock before the migration) against 432 that
+      // never mocked anything.
       //
       // 🔴 No `maxWorkers` here, and no `sequence.groupOrder`, so this shares the default group
       // with `unit` and the two interleave. Vitest REFUSES to run two projects in one group with
@@ -372,6 +418,7 @@ export default defineConfig({
         ? [
             {
               resolve: { alias },
+              plugins: [unitFastEnvPlugin],
               test: {
                 // Spread, not re-declared: `unit`, `unit-native` and `unit-fast` must differ ONLY
                 // in pool, isolation and which files they claim. A re-declared copy drifts.
