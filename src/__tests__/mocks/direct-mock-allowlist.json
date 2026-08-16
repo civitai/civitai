@@ -20,7 +20,7 @@
   ],
   "totals": {
     "canonicalFiles": 218,
-    "pendingFiles": 395,
+    "pendingFiles": 396,
     "allFiles": 482,
     "canonicalSites": 288,
     "pendingSites": 864
@@ -29,17 +29,17 @@
     "~/server/db/client": 135,
     "~/server/redis/client": 88,
     "~/server/logging/client": 65,
-    "~/env/server": 107,
+    "~/env/server": 108,
     "~/server/services/buzz.service": 99,
     "~/server/services/image.service": 89,
     "~/server/clickhouse/client": 78,
     "~/server/services/notification.service": 77,
-    "~/server/services/user.service": 74,
+    "~/server/services/user.service": 75,
     "~/server/search-index": 65,
     "~/server/flipt/client": 64,
     "~/server/redis/fail-open-log": 55,
     "~/server/utils/endpoint-helpers": 53,
-    "~/server/redis/caches": 53,
+    "~/server/redis/caches": 54,
     "~/server/prom/client": 50
   },
   "files": [
@@ -293,6 +293,7 @@
     "src/server/__tests__/owned-sticker-cache-choice.test.ts",
     "src/server/__tests__/pack-detail-agreement.test.ts",
     "src/server/__tests__/pending-review-mute.test.ts",
+    "src/server/__tests__/settings-endpoint-deadlines.test.ts",
     "src/server/__tests__/sticker-topup.test.ts",
     "src/server/__tests__/upload-backend.test.ts",
     "src/server/__tests__/warmup.test.ts",

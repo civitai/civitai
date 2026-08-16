@@ -310,6 +310,11 @@ export const serverSchema = z
     // of silently disabling the guard (withTimeoutFallback passes through unbounded
     // when ms<=0 → the exact ~30s hang this exists to prevent, with no signal).
     CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
+    // Per-read deadline for `/api/user/settings`, which `_app` self-fetches on every SSR
+    // render. Must stay well under `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s): a response the
+    // caller has stopped waiting for is the same outage. .int().positive() for the same
+    // reason as above — withTimeoutFallback passes through unbounded when ms<=0.
+    SETTINGS_READ_DEADLINE_MS: z.coerce.number().int().positive().default(2000),
     NODE_ENV: z.enum(['development', 'test', 'production']),
     NEXTAUTH_SECRET: z.string(),
     NEXTAUTH_URL: z.preprocess(
