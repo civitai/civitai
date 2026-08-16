@@ -52,6 +52,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import clsx from 'clsx';
 import { Fragment, useMemo, useState } from 'react';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelineProgress';
 import { useSpotlight } from '~/hooks/useSpotlight';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
@@ -89,8 +90,10 @@ const rankAccent: Record<string, string> = {
 };
 
 const INITIAL_ACTIVITY_COUNT = 5;
-const ALERT_LITE_ONBOARDING = 'referral-lite-onboarding';
-const ALERT_KICKBACK = 'referral-kickback-info';
+// Declared in the notice registry so the persisted-id set stays enumerable, and
+// so the kickback id is literally the SAME value the full dashboard dismisses.
+const ALERT_LITE_ONBOARDING = FEATURE_NOTICES.referralLiteOnboarding.id;
+const ALERT_KICKBACK = FEATURE_NOTICES.referralKickback.id;
 
 const premiumCardStyle: React.CSSProperties = {
   background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',

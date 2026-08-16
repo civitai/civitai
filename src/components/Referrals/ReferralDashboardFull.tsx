@@ -47,6 +47,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import clsx from 'clsx';
 import { Fragment, useMemo, useState } from 'react';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelineProgress';
 import { useSpotlight } from '~/hooks/useSpotlight';
 import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
@@ -81,9 +82,11 @@ const rankAccent: Record<string, string> = {
 };
 
 const INITIAL_ACTIVITY_COUNT = 10;
-const ALERT_HOW_IT_WORKS = 'referral-how-it-works';
-const ALERT_KICKBACK = 'referral-kickback-info';
-const ALERT_TOKEN_SHOP = 'referral-token-shop-info';
+// Declared in the notice registry so the persisted-id set stays enumerable, and
+// so the kickback id is literally the SAME value the lite dashboard dismisses.
+const ALERT_HOW_IT_WORKS = FEATURE_NOTICES.referralHowItWorks.id;
+const ALERT_KICKBACK = FEATURE_NOTICES.referralKickback.id;
+const ALERT_TOKEN_SHOP = FEATURE_NOTICES.referralTokenShop.id;
 
 const premiumCardStyle: React.CSSProperties = {
   background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
