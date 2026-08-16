@@ -86,8 +86,17 @@ export const getHomeBlocks = async ({
     ...(includeSource && { source: { select: { userId: true } } }),
   };
 
+  // The editor's seed. Permanent blocks are unioned in for everyone and cannot be reordered or
+  // removed, so offering them here gives the user controls that silently do nothing — and for a
+  // user with no rows yet this branch reads back the SYSTEM blocks (userId -1 below), which is
+  // how a clone of a permanent block got written in the first place.
+  const excludePermanent: Prisma.HomeBlockWhereInput = {
+    permanent: false,
+    OR: [{ sourceId: null }, { source: { permanent: false } }],
+  };
+
   const where: Prisma.HomeBlockWhereInput = ownedOnly
-    ? { userId }
+    ? { userId, ...excludePermanent }
     : { id: ids ? { in: ids } : undefined };
 
   const userBlocks = await dbRead.homeBlock.findMany({
@@ -110,8 +119,13 @@ export const getHomeBlocks = async ({
     { ttl: CacheTTL.day }
   );
 
+  // A clone carries its own row id, so dedupe by id can't see that it and the permanent block
+  // below are the same block — drop clones of permanent blocks before the union or both render.
+  const permanentIds = new Set(permanentBlocks.map((b) => b.id));
+  const ownBlocks = userBlocks.filter((b) => !b.sourceId || !permanentIds.has(b.sourceId));
+
   // Combine and deduplicate - user blocks take precedence over permanent
-  const blockMap = new Map(userBlocks.map((b) => [b.id, b]));
+  const blockMap = new Map(ownBlocks.map((b) => [b.id, b]));
   for (const block of permanentBlocks) {
     if (!blockMap.has(block.id)) blockMap.set(block.id, block);
   }
@@ -940,7 +954,14 @@ export async function updateHomeBlockAdmin({
   if (permanent !== undefined) data.permanent = permanent;
   if (type !== undefined) data.type = type;
   if (sourceId !== undefined) data.sourceId = sourceId;
-  return dbWrite.homeBlock.update({ where: { id }, data });
+  const updated = await dbWrite.homeBlock.update({ where: { id }, data });
+
+  // The permanent-block list is cached for a day and nothing else here busts it, so flipping
+  // `permanent` leaves the read path serving the old set while setHomeBlocksOrder reads the
+  // new one live — a block that renders for nobody until the TTL turns over.
+  await redis.del(REDIS_KEYS.CACHES.HOME_BLOCKS_PERMANENT);
+
+  return updated;
 }
 
 export async function deleteHomeBlockAdmin({ id }: { id: number }) {
@@ -988,13 +1009,35 @@ export const setHomeBlocksOrder = async ({
   }
 
   const homeBlockIds = homeBlocks.map((i) => i.id);
-  const homeBlocksToClone = homeBlocks.filter((i) => i.userId === -1);
+  const systemBlocksRequested = homeBlocks.filter((i) => i.userId === -1);
   const ownedHomeBlocks = homeBlocks.filter((i) => i.userId === userId);
 
+  // Permanent blocks are unioned into every homepage already, so a clone of one is a second
+  // copy rather than a preference. getHomeBlocks drops such clones on read; not writing them
+  // keeps that from being load-bearing. Same predicate upsertHomeBlock's clone loop uses.
+  const clonableSources = systemBlocksRequested.length
+    ? await dbRead.homeBlock.findMany({
+        select: { id: true, type: true, metadata: true },
+        where: {
+          id: { in: systemBlocksRequested.map((i) => i.id) },
+          userId: -1,
+          permanent: false,
+        },
+      })
+    : [];
+
   const transactions = [];
+  // Anything absent from the submitted list is a removal — but the editor is no longer seeded
+  // with clones of permanent blocks, so for those absence means "never offered", not "removed".
+  // Sweeping them would delete the last row of a user who kept only a permanent block, and this
+  // app reads "no rows" as "never customized", which hands that user the full default homepage.
   const homeBlocksToRemove = await dbRead.homeBlock.findMany({
     select: { id: true },
-    where: { userId, id: { not: { in: homeBlockIds } } },
+    where: {
+      userId,
+      id: { not: { in: homeBlockIds } },
+      OR: [{ sourceId: null }, { source: { permanent: false } }],
+    },
   });
 
   // if we have items to remove, add a deleteMany mutation to the transaction
@@ -1006,14 +1049,10 @@ export const setHomeBlocksOrder = async ({
     );
   }
 
-  if (homeBlocksToClone.length) {
-    const homeBlockData = await getHomeBlocks({
-      ids: homeBlocksToClone.map((i) => i.id),
-    });
-
-    const data = homeBlocksToClone
+  if (clonableSources.length) {
+    const data = systemBlocksRequested
       .map((i) => {
-        const source = homeBlockData.find((item) => item.id === i.id);
+        const source = clonableSources.find((item) => item.id === i.id);
 
         if (!source) {
           return null;
@@ -1023,8 +1062,8 @@ export const setHomeBlocksOrder = async ({
           userId,
           index: i.index,
           type: source.type,
-          sourceId: source?.id,
-          metadata: source.metadata || {},
+          sourceId: source.id,
+          metadata: (source.metadata || {}) as Prisma.InputJsonValue,
         };
       })
       .filter(isDefined);
