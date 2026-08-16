@@ -4,11 +4,17 @@
  * PostgreSQL Query Runner
  *
  * Usage:
- *   node .claude/skills/postgres-query/query.mjs "SELECT * FROM \"User\" LIMIT 5"
- *   node .claude/skills/postgres-query/query.mjs --explain "SELECT * FROM \"User\" WHERE id = 1"
- *   node .claude/skills/postgres-query/query.mjs --writable "UPDATE ..." (requires explicit flag)
- *   node .claude/skills/postgres-query/query.mjs --file query.sql
- *   node .claude/skills/postgres-query/query.mjs --timeout 60 "SELECT ..." (override 30s default)
+ *   node .claude/skills/postgres-query/query.mjs --prod "SELECT * FROM \"User\" LIMIT 5"
+ *   node .claude/skills/postgres-query/query.mjs --dev --explain "SELECT * FROM \"User\" WHERE id = 1"
+ *   node .claude/skills/postgres-query/query.mjs --prod --writable "UPDATE ..." (requires explicit flag)
+ *   node .claude/skills/postgres-query/query.mjs --dev --file query.sql
+ *   node .claude/skills/postgres-query/query.mjs --prod --timeout 60 "SELECT ..." (override 30s default)
+ *
+ * Targets (pick one; defaults to --prod):
+ *   --prod          Production main database
+ *   --dev           Dev cnpg database (DEV_DATABASE_URL)
+ *   --data-packet   DataPacket logical replica
+ *   --notifications notifications-db replica
  *
  * Options:
  *   --explain       Run EXPLAIN ANALYZE on the query
@@ -75,30 +81,57 @@ pg.types.setTypeParser(1114, (value) =>
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
+const TARGETS = {
+  prod: {
+    flag: '--prod',
+    label: 'PROD',
+    envVar: (writable) => (writable ? 'DATABASE_URL' : 'DATABASE_REPLICA_URL'),
+    fallbackEnvVar: 'DATABASE_URL',
+    readOnly: false,
+  },
+  dev: {
+    flag: '--dev',
+    label: 'DEV',
+    envVar: () => 'DEV_DATABASE_URL',
+    readOnly: false,
+    hint: 'Start the SSH bastion tunnel and add DEV_DATABASE_URL to the skill .env (see SKILL.md).',
+  },
+  'data-packet': {
+    flag: '--data-packet',
+    label: 'DATA-PACKET REPLICA',
+    envVar: () => 'DATABASE_DATA_PACKET_URL',
+    readOnly: true,
+  },
+  notifications: {
+    flag: '--notifications',
+    label: 'NOTIFICATIONS-DB REPLICA',
+    envVar: () => 'NOTIFICATION_DB_REPLICA_URL',
+    readOnly: true,
+    hint: 'Start the SSH bastion tunnel and add NOTIFICATION_DB_REPLICA_URL to the skill .env (see SKILL.md).',
+  },
+};
+
+const DEFAULT_TARGET = 'prod';
+
 // Parse arguments
 const args = process.argv.slice(2);
 let query = '';
 let explain = false;
 let writable = false;
-let dataPacket = false;
-let notifications = false;
-let dev = false;
 let jsonOutput = false;
 let quiet = false;
 let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
+const requestedTargets = [];
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
-  if (arg === '--explain') {
+  const targetName = Object.keys(TARGETS).find((name) => TARGETS[name].flag === arg);
+  if (targetName) {
+    if (!requestedTargets.includes(targetName)) requestedTargets.push(targetName);
+  } else if (arg === '--explain') {
     explain = true;
   } else if (arg === '--writable') {
     writable = true;
-  } else if (arg === '--data-packet') {
-    dataPacket = true;
-  } else if (arg === '--notifications') {
-    notifications = true;
-  } else if (arg === '--dev') {
-    dev = true;
   } else if (arg === '--json') {
     jsonOutput = true;
   } else if (arg === '--quiet' || arg === '-q') {
@@ -123,7 +156,13 @@ for (let i = 0; i < args.length; i++) {
 }
 
 if (!query) {
-  console.error(`Usage: node query.mjs [options] "SQL query"
+  console.error(`Usage: node query.mjs [--prod|--dev] [options] "SQL query"
+
+Targets (pick one, defaults to --prod):
+  --prod          Production main database
+  --dev           Dev cnpg database (needs SSH bastion tunnel)
+  --data-packet   DataPacket logical replica (read-only)
+  --notifications notifications-db replica (read-only, needs tunnel)
 
 Options:
   --explain       Run EXPLAIN ANALYZE on the query
@@ -134,52 +173,58 @@ Options:
   --quiet, -q     Minimal output
 
 Examples:
-  node query.mjs "SELECT id, username FROM \\"User\\" LIMIT 5"
-  node query.mjs --explain "SELECT * FROM \\"Model\\" WHERE id = 1"
-  node query.mjs --timeout 60 "SELECT ... (long running query)"
-  node query.mjs -f my-query.sql`);
+  node query.mjs --prod "SELECT id, username FROM \\"User\\" LIMIT 5"
+  node query.mjs --dev --explain "SELECT * FROM \\"Model\\" WHERE id = 1"
+  node query.mjs --prod --timeout 60 "SELECT ... (long running query)"
+  node query.mjs --dev -f my-query.sql`);
   process.exit(1);
 }
 
-// Select connection string
-let connectionString;
-if (notifications) {
-  // notifications-db on DataPacket (read-only via SSH bastion tunnel).
-  // Set NOTIFICATION_DB_REPLICA_URL in .env after starting the tunnel.
-  connectionString = process.env.NOTIFICATION_DB_REPLICA_URL;
-} else if (dev) {
-  // Dev cnpg cluster via SSH bastion tunnel (port 15432).
-  // Writes still require --writable (the postgres superuser can write).
-  connectionString = process.env.DEV_DATABASE_URL;
-} else if (dataPacket) {
-  connectionString = process.env.DATABASE_DATA_PACKET_URL;
-} else if (writable) {
-  connectionString = process.env.DATABASE_URL;
-} else {
-  connectionString = process.env.DATABASE_REPLICA_URL || process.env.DATABASE_URL;
+if (requestedTargets.length > 1) {
+  console.error(
+    `Error: pick one target. Got ${requestedTargets.map((t) => TARGETS[t].flag).join(' and ')}.`
+  );
+  process.exit(1);
 }
+
+const targetName = requestedTargets[0] ?? DEFAULT_TARGET;
+const target = TARGETS[targetName];
+const targetWasExplicit = requestedTargets.length === 1;
+
+const candidateVars = [...new Set([target.envVar(writable), target.fallbackEnvVar].filter(Boolean))];
+const connectionVar = candidateVars.find((name) => process.env[name]);
+const connectionString = connectionVar && process.env[connectionVar];
 
 if (!connectionString) {
-  if (notifications) {
-    console.error('Error: NOTIFICATION_DB_REPLICA_URL is not set. Start the SSH tunnel and add it to .env (see SKILL.md).');
-  } else if (dev) {
-    console.error('Error: DEV_DATABASE_URL is not set. Start the SSH tunnel (ssh civitai -N) and add it to .env (see SKILL.md).');
-  } else {
-    console.error('Error: No database connection string found in environment');
-  }
+  console.error(`Error: ${target.flag} needs ${candidateVars.join(' or ')} set, and it is not.`);
+  if (target.hint) console.error(target.hint);
   process.exit(1);
+}
+
+// The wrong-database failure is silent by construction: the skill's own .env and the app's root
+// .env name different databases under the same key names. Print what actually answered, every run,
+// so a result can never be attributed to the wrong target.
+function describeConnection(str) {
+  try {
+    const url = new URL(str);
+    const db = url.pathname.replace(/^\//, '') || '(default db)';
+    const user = url.username ? `${decodeURIComponent(url.username)}@` : '';
+    return `${user}${url.hostname}:${url.port || '5432'}/${db}`;
+  } catch {
+    return '(unparsable connection string)';
+  }
 }
 
 // Safety check for writable operations
-// --notifications connects through a read-only role on a replica — writes
+// --notifications and --data-packet connect through read-only roles on replicas — writes
 // would fail anyway, but block them client-side so users get a clearer error.
-if (!writable || notifications) {
+if (!writable || target.readOnly) {
   const upperQuery = query.toUpperCase().trim();
   const writeOps = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE'];
   for (const op of writeOps) {
     if (upperQuery.startsWith(op)) {
-      const ctx = notifications
-        ? '--notifications is read-only (bastion routes through a replica).'
+      const ctx = target.readOnly
+        ? `${target.flag} is read-only.`
         : 'Use --writable flag to confirm.';
       console.error(`Error: Write operation detected (${op}). ${ctx}`);
       console.error('This requires explicit user permission as it modifies the database.');
@@ -187,6 +232,24 @@ if (!writable || notifications) {
     }
   }
 }
+
+const onFallback = connectionVar !== target.envVar(writable);
+const access =
+  writable && !target.readOnly
+    ? 'writable'
+    : onFallback
+      ? 'read-only, but pointed at the primary'
+      : 'read-only';
+console.error(
+  `Target: ${target.label} (${access}) -> ${describeConnection(connectionString)} ` +
+    `[${connectionVar}, timeout ${timeoutSeconds}s]`
+);
+if (!targetWasExplicit) {
+  console.error(
+    `No target flag given, defaulted to ${target.flag}. Pass --prod or --dev to be explicit.`
+  );
+}
+console.error('');
 
 async function main() {
   const client = new Client({
@@ -198,19 +261,6 @@ async function main() {
 
   try {
     await client.connect();
-
-    if (!quiet) {
-      const dbType = notifications
-        ? 'NOTIFICATIONS-DB REPLICA via bastion (read-only)'
-        : dev
-          ? `DEV via bastion (${writable ? 'writable' : 'read-only'})`
-          : dataPacket
-            ? 'DATA-PACKET REPLICA (read-only)'
-            : writable
-              ? 'PRIMARY (writable)'
-              : 'REPLICA (read-only)';
-      console.error(`Connected to ${dbType} (timeout: ${timeoutSeconds}s)\n`);
-    }
 
     const finalQuery = explain ? `EXPLAIN ANALYZE ${query}` : query;
     const start = Date.now();
