@@ -34,6 +34,7 @@ import {
   getFeaturedCollectionsState,
 } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { GET_ALL_IMAGES_PER_MODEL_SLIM } from '~/server/utils/model-getall-images';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -506,6 +507,13 @@ export const getHomeBlockData = async ({
                   periodMode: 'stats',
                   browsingLevel: allBrowsingLevelsFlag,
                 },
+                // The images attached here are NOT browsing-level filtered — they come straight
+                // from the shared cache — so the cap has to keep a representative of every
+                // distinct nsfwLevel, which is what `biasImageSlice` does and what sizes the
+                // slim cap. Going below it drops mixed-level models for whoever's level isn't
+                // among the first bits in cache order.
+                imagesPerModel: GET_ALL_IMAGES_PER_MODEL_SLIM,
+                biasImageSlice: true,
               })
             ).items
           : ([] as GetModelsWithImagesAndModelVersions[]);
