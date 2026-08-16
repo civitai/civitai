@@ -13,7 +13,7 @@
  * The PENDING list has no such rule: those specifiers have no canonical mock to migrate to,
  * so their count moves with ordinary development and is measurement, not enforcement.
  */
-import { readFileSync, writeFileSync, existsSync, globSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, globSync, statSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import ts from 'typescript';
@@ -37,6 +37,10 @@ const pattern = (spec) =>
 const testFiles = globSync('src/**/*.test.{ts,tsx}', { cwd: repoRoot })
   .map((f) => f.replace(/\\/g, '/'))
   .filter((f) => !f.startsWith('src/__tests__/mocks/'))
+  // Vitest browser mode names each snapshot DIRECTORY after its spec, so
+  // `__screenshots__/Foo.browser.test.tsx` is a directory that matches this glob and the read
+  // below dies EISDIR. Gitignored, so it reproduces only for someone who has run a browser test.
+  .filter((f) => statSync(path.join(repoRoot, f)).isFile())
   .sort();
 
 const files = [];
