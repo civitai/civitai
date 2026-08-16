@@ -1471,10 +1471,12 @@ export const setUserSettingHandler = async ({
     // signals the browser to re-pull. Awaited so the bust lands before the mutation
     // returns; same reason `updateContentSettings` awaits its own call.
     //
-    // Gated on a CHANGE, not on key presence: `newSettings` is a read-modify-write of the
-    // whole blob, so once a user has opted in the key is present on EVERY subsequent
-    // settings write, and a presence check would refresh the session on unrelated
-    // toggles. Mirrors the `metricPrivacyChanged` comparison directly above.
+    // Gated on a CHANGE, not on key presence, and compared against `restInput` — the keys
+    // THIS request sent — rather than against the stored blob. Mirrors the
+    // `metricPrivacyChanged` comparison directly above. (The payload no longer carries the
+    // whole blob, so a presence check on it would no longer fire on unrelated toggles the
+    // way it did when this handler rewrote everything; the change comparison is still the
+    // right test, because re-sending the value a user already holds is not a change.)
     const earlyAdopterChanged =
       'isEarlyAdopter' in restInput && restSettings.isEarlyAdopter !== restInput.isEarlyAdopter;
     if (earlyAdopterChanged) await refreshSession(id, { caller: 'profile' });

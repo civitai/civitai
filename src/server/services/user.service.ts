@@ -2712,9 +2712,14 @@ function userSettingsCache() {
 }
 
 /**
- * JSON-settings-only view. Used by internal callers (e.g. setUserSetting) that
- * need to read the JSON blob and write it back without polluting it with the
- * User-column fields.
+ * JSON-settings-only view, without the User-column fields.
+ *
+ * 🔴 Redis-backed (4h TTL) and READ-ONLY as far as writers are concerned. No caller may
+ * read this and write the result back — that read-modify-write is the lost-update bug
+ * `patchUserSettings` exists to remove, and the cache makes its window the TTL rather
+ * than a few milliseconds. Read it to DECIDE something (a toggle's next value, whether a
+ * value changed); never to build a write payload. Do not call it inside a transaction
+ * either: it is a Redis round trip on the transaction's clock.
  */
 export async function getUserSettings(id: number): Promise<UserSettingsSchema> {
   const result = await userSettingsCache().fetch([id]);
@@ -2756,10 +2761,18 @@ export async function getUserContentSettings(id: number): Promise<UserContentSet
  * overlapping patches compose instead of clobbering.
  *
  * Ops (all optional, all applied in one statement, in this order):
- *  - `set`       — replace these top-level keys outright.
+ *  - `set`       — replace these top-level keys outright. The patch WINS over the
+ *                  stored value; that is the whole point, so the operand order of
+ *                  the `||` below is load-bearing rather than stylistic.
  *  - `mergeInto` — merge one level INTO these top-level object keys, so a
  *                  sibling sub-key another writer added survives.
  *  - `remove`    — delete these top-level keys.
+ *
+ * 🔴 `set` and `mergeInto` do NOT compose on the SAME top-level key. `mergeInto`
+ * reads `settings->key` — the STORED column — not the partially-built expression,
+ * so passing one key to both ops makes `mergeInto` merge onto the pre-`set` value
+ * and win. No caller does this today; if one ever needs to, make `mergeInto` read
+ * from the accumulated expression instead of the column.
  *
  * Values are bound as parameters, never spliced into the statement text —
  * `JSON.stringify` escapes `"` and `\` but not `'`, so a setting value holding
@@ -2790,7 +2803,26 @@ export async function patchUserSettings(
     ([, value]) => value && Object.keys(value).length
   );
   const remove = patch.remove?.length ? patch.remove : undefined;
-  if (!set && !mergeInto.length && !remove) return getUserSettings(userId);
+
+  const client = tx ?? dbWrite;
+
+  // Nothing to write, but the contract is still "the settings this user now has".
+  // Read the ROW, never the cache: `getUserSettings` is Redis-backed, and both `tx`
+  // callers reach this branch with an empty patch — `updateCreatorShopSettings` when
+  // every field of its all-optional input is omitted, and the gallery copy when the
+  // model already carries default gallery settings. A Redis round trip there would
+  // burn the caller's interactive-transaction budget (Prisma's default is 5s), and
+  // the repo's `no-io-in-transaction` lint rule is a call-name denylist that cannot
+  // see it. Reading the row also keeps the return value consistent with the write
+  // path below, which returns `RETURNING settings` rather than a cached blob.
+  if (!set && !mergeInto.length && !remove) {
+    const current = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
+      `SELECT settings FROM "User" WHERE id = $1`,
+      userId
+    );
+    if (!current.length) throw throwNotFoundError(`No user with id ${userId}`);
+    return current[0]?.settings ?? {};
+  }
 
   const values: unknown[] = [];
   // Returns the `$N` placeholder for a newly bound value.
@@ -2809,11 +2841,14 @@ export async function patchUserSettings(
   // `jsonb - text[]` drops every listed key in one go, so the names bind as one array.
   if (remove) expr = `(${expr} - ${bind(remove)}::text[])`;
 
-  const client = tx ?? dbWrite;
   const rows = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
     `UPDATE "User" SET settings = ${expr} WHERE id = ${bind(userId)} RETURNING settings`,
     ...values
   );
+  // A raw UPDATE matching no row is a silent no-op, where the `user.update` this
+  // replaced raised Prisma P2025. A moderator acting on a deleted user must not get
+  // a success back.
+  if (!rows.length) throw throwNotFoundError(`No user with id ${userId}`);
   userUpdateCounter?.inc({ location: patch.location ?? 'user.service:patchUserSettings' });
 
   if (!tx) await bustUserSettings(userId);

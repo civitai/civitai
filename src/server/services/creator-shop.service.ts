@@ -2381,6 +2381,10 @@ export const updateCreatorShopSettings = async ({
         throw throwBadRequestError('Add at least one item to your shop before publishing.');
     }
 
+    // Every field of the input is optional, so `patch` can be empty. `patchUserSettings`
+    // then writes nothing and returns the row read inside this transaction — the same
+    // value the old read-merge-write returned for an empty patch, and deliberately not
+    // the Redis-cached blob, which can be hours old.
     return patchUserSettings(userId, { mergeInto: { creatorShop: patch } }, tx);
   });
 

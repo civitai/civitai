@@ -51,20 +51,30 @@ function installBridge() {
 
 // The settings cache is Redis-backed with a 4h TTL. Replace it with a pass-through so
 // every read reaches Postgres — a cached read would hide the race behind cache timing
-// instead of measuring it, and a stale cache is a SEPARATE defect (see the PR body).
+// instead of measuring it.
+//
+// `bust` is a SPY, not a no-op: busting is half of the fix. A stale cache is what turns
+// the lost update from a millisecond race into a near-certain loss over the TTL, and two
+// writers previously never busted at all. Without an assertion, deleting any bust call
+// leaves the whole suite green.
+const { settingsCacheBust, metricPrivacyBust } = vi.hoisted(() => ({
+  settingsCacheBust: vi.fn(async () => undefined),
+  metricPrivacyBust: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createCachedObject: vi.fn((opts: { lookupFn: (ids: number[]) => Promise<unknown> }) => ({
     fetch: async (ids: number | number[]) =>
       opts.lookupFn(Array.isArray(ids) ? ids : [ids]) as Promise<Record<string, unknown>>,
-    bust: async () => undefined,
+    bust: settingsCacheBust,
     refresh: async () => undefined,
     flush: async () => undefined,
   })),
 }));
 
 vi.mock('~/server/services/creator-membership.service', () => ({
-  bustUserMetricPrivacyDefaultsCache: vi.fn(async () => undefined),
+  bustUserMetricPrivacyDefaultsCache: metricPrivacyBust,
 }));
 vi.mock('~/server/auth/session-invalidation', () => ({
   refreshSession: vi.fn(async () => undefined),
@@ -96,7 +106,12 @@ import {
   toggleUserFeatureFlagHandler,
 } from '~/server/controllers/user.controller';
 import { toggleableFeatures } from '~/server/services/feature-flags.service';
-import { updateContentSettings } from '~/server/services/user.service';
+import {
+  patchUserSettings,
+  setUserSetting,
+  updateContentSettings,
+} from '~/server/services/user.service';
+import { updateCreatorShopSettings } from '~/server/services/creator-shop.service';
 
 const USER_ID = 4242;
 const ctx = { user: { id: USER_ID } } as Parameters<typeof dismissAlertHandler>[0]['ctx'];
@@ -148,7 +163,11 @@ describe('User.settings — concurrent writers must not discard each other', () 
   });
 
   it('keeps a dismissal that lands while a content-settings write is in flight', async () => {
-    await seedUser(holder.db, USER_ID, { dismissedAlerts: ['already-dismissed'] });
+    // `allowAds` is seeded FALSE and written TRUE. Seeding it ABSENT (as this fixture
+    // first did) makes "the patch wins" and "the stored column wins" produce byte-identical
+    // output, so the operand order of the shallow merge — the central claim of this change —
+    // would be unpinned. See the dedicated cases in the shallow-merge describe below.
+    await seedUser(holder.db, USER_ID, { dismissedAlerts: ['already-dismissed'], allowAds: false });
 
     // Hold the content-settings UPDATE. Its read has already happened by the time the
     // statement reaches the wire, so the dismissal below runs strictly in between.
@@ -171,7 +190,7 @@ describe('User.settings — concurrent writers must not discard each other', () 
   });
 
   it('keeps a content-settings write that lands while a dismissal is in flight', async () => {
-    await seedUser(holder.db, USER_ID, { dismissedAlerts: [] });
+    await seedUser(holder.db, USER_ID, { dismissedAlerts: [], allowAds: false });
 
     const hold = holder.gate.hold(isAlertWrite);
     const dismiss = dismissAlertHandler({
@@ -389,5 +408,258 @@ describe('User.settings — single-request behaviour the writers must keep', () 
     await restoreAlertHandler({ input: { alertId: 'b' }, ctx });
 
     expect(alerts(await readSettings(holder.db, USER_ID))).toEqual(['a', 'c']);
+  });
+});
+
+/**
+ * The shallow merge's OPERAND ORDER, pinned behaviourally.
+ *
+ * `settings || $patch` and `$patch || settings` are the same shape, the same operator and
+ * the same bound values — the only difference is which side wins for a key present on
+ * both. Every fixture above writes a key the seed did NOT contain, which makes the two
+ * orders byte-identical, so the suite could not see the swap. Inverted, every settings
+ * write silently no-ops for any key the user already holds: strictly worse than the
+ * lost-update bug this change exists to fix, and invisible.
+ *
+ * So these seed a value and CHANGE it. The control is mechanical: feed a stored value the
+ * expected result cannot equal, and watch the output move.
+ */
+describe('User.settings — a patch overrides the stored value, not the other way round', () => {
+  beforeAll(async () => {
+    holder.db = new PGlite();
+    await createUserSchema(holder.db);
+  }, 60_000);
+
+  afterAll(async () => {
+    await holder.db?.close();
+  });
+
+  beforeEach(() => {
+    holder.gate = createGate();
+    holder.bridge = createPrismaBridge(holder.db, holder.gate);
+    installBridge();
+    settingsCacheBust.mockClear();
+    metricPrivacyBust.mockClear();
+  });
+
+  it('overwrites an existing top-level value', async () => {
+    await seedUser(holder.db, USER_ID, { allowAds: false, preferredFiatCurrency: 'EUR' });
+
+    await patchUserSettings(USER_ID, { set: { allowAds: true } });
+
+    const settings = await readSettings(holder.db, USER_ID);
+    expect(settings.allowAds).toBe(true);
+    // …and leaves the key it was not asked about alone.
+    expect(settings.preferredFiatCurrency).toBe('EUR');
+  });
+
+  it('overwrites an existing value through setUserSetting', async () => {
+    // 6 of the 8 writers reach the column through this function.
+    await seedUser(holder.db, USER_ID, { preferredFiatCurrency: 'EUR' });
+
+    await setUserSetting(USER_ID, { preferredFiatCurrency: 'USD' });
+
+    expect((await readSettings(holder.db, USER_ID)).preferredFiatCurrency).toBe('USD');
+  });
+
+  it('overwrites an existing value through the tRPC settings handler', async () => {
+    await seedUser(holder.db, USER_ID, { isEarlyAdopter: true, dismissedAlerts: ['keep-me'] });
+
+    await setUserSettingHandler({ input: { isEarlyAdopter: false }, ctx });
+
+    const settings = await readSettings(holder.db, USER_ID);
+    expect(settings.isEarlyAdopter).toBe(false);
+    expect(alerts(settings)).toEqual(['keep-me']);
+  });
+
+  it('overwrites an existing nested sub-key while keeping its siblings', async () => {
+    await seedUser(holder.db, USER_ID, { tourSettings: { tourA: { completed: true } } });
+
+    await patchUserSettings(USER_ID, {
+      mergeInto: { tourSettings: { tourB: { completed: true } } },
+    });
+    await patchUserSettings(USER_ID, {
+      mergeInto: { tourSettings: { tourA: { completed: false } } },
+    });
+
+    const tour = (await readSettings(holder.db, USER_ID)).tourSettings as Record<
+      string,
+      { completed: boolean }
+    >;
+    expect(tour.tourA.completed).toBe(false);
+    expect(tour.tourB.completed).toBe(true);
+  });
+
+  it('removes a key that currently holds a value', async () => {
+    await seedUser(holder.db, USER_ID, { allowAds: true, preferredFiatCurrency: 'EUR' });
+
+    await setUserSetting(USER_ID, { allowAds: undefined });
+
+    const settings = await readSettings(holder.db, USER_ID);
+    expect(settings).not.toHaveProperty('allowAds');
+    expect(settings.preferredFiatCurrency).toBe('EUR');
+  });
+});
+
+/**
+ * The cache bust is the OTHER half of the fix. `getUserSettings` reads a Redis cache with
+ * a 4h TTL, so a write that lands without a bust is served stale until it expires — and
+ * the next whole-blob writer then persists that stale snapshot. Deleting any bust call
+ * used to leave the entire suite green.
+ */
+describe('User.settings — every write busts the caches that mirror the column', () => {
+  beforeAll(async () => {
+    holder.db = new PGlite();
+    await createUserSchema(holder.db);
+  }, 60_000);
+
+  afterAll(async () => {
+    await holder.db?.close();
+  });
+
+  beforeEach(async () => {
+    holder.gate = createGate();
+    holder.bridge = createPrismaBridge(holder.db, holder.gate);
+    installBridge();
+    settingsCacheBust.mockClear();
+    metricPrivacyBust.mockClear();
+    await seedUser(holder.db, USER_ID, { dismissedAlerts: [], allowAds: false });
+  });
+
+  it('busts after a settings patch', async () => {
+    await patchUserSettings(USER_ID, { set: { allowAds: true } });
+
+    expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
+    // The `hideModel*` metric-privacy flags live in this same blob.
+    expect(metricPrivacyBust).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it('busts after a notice dismissal', async () => {
+    await dismissAlertHandler({ input: { alertId: 'notice-a', dismiss: true }, ctx });
+
+    expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
+    expect(metricPrivacyBust).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it('busts after the creator-shop settings write', async () => {
+    // This writer never busted at all before this change.
+    await updateCreatorShopSettings({ userId: USER_ID, showModels: true });
+
+    expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
+  });
+
+  it('does NOT bust from inside a caller transaction — the caller busts after commit', async () => {
+    // Redis inside an interactive transaction burns the transaction's budget, and a bust
+    // before commit can be re-populated with the pre-commit row.
+    await patchUserSettings(USER_ID, { set: { allowAds: true } }, holder.bridge);
+
+    expect(settingsCacheBust).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The two transactional writers. Both used to replace the WHOLE settings column from a JS
+ * snapshot; both are now a nested merge. Neither had any test — sequential or concurrent —
+ * so `mergeInto` -> `set` at either site, or `patchUserSettings` ignoring its `tx`
+ * argument, survived the whole suite.
+ */
+describe('User.settings — the transactional writers merge rather than replace', () => {
+  beforeAll(async () => {
+    holder.db = new PGlite();
+    await createUserSchema(holder.db);
+  }, 60_000);
+
+  afterAll(async () => {
+    await holder.db?.close();
+  });
+
+  beforeEach(() => {
+    holder.gate = createGate();
+    holder.bridge = createPrismaBridge(holder.db, holder.gate);
+    installBridge();
+    settingsCacheBust.mockClear();
+  });
+
+  it('keeps unrelated settings keys when the creator shop is updated', async () => {
+    await seedUser(holder.db, USER_ID, {
+      dismissedAlerts: ['keep-me'],
+      allowAds: true,
+      creatorShop: { enabled: true, showModels: false },
+    });
+
+    await updateCreatorShopSettings({ userId: USER_ID, showModels: true });
+
+    const settings = await readSettings(holder.db, USER_ID);
+    // The whole-column replace lost these.
+    expect(alerts(settings)).toEqual(['keep-me']);
+    expect(settings.allowAds).toBe(true);
+    // The sub-object is MERGED, so a sibling field set by another request survives …
+    const shop = settings.creatorShop as Record<string, unknown>;
+    expect(shop.enabled).toBe(true);
+    // … and the field this request changed wins.
+    expect(shop.showModels).toBe(true);
+  });
+
+  it('returns the stored creator-shop settings for an empty patch without writing', async () => {
+    await seedUser(holder.db, USER_ID, { creatorShop: { enabled: true, showModels: true } });
+
+    const result = await updateCreatorShopSettings({ userId: USER_ID });
+
+    expect(result).toMatchObject({ enabled: true, showModels: true });
+    expect(holder.gate.statements.some((sql) => sql.includes('UPDATE'))).toBe(false);
+  });
+
+  it('runs the settings write on the CALLER transaction client, not the global one', async () => {
+    await seedUser(holder.db, USER_ID, { allowAds: false });
+    // A tx client that records what it was asked to run. If `patchUserSettings` ignored
+    // its `tx` argument the write would leave the caller's transaction entirely — it would
+    // still land, so only an assertion on WHICH client ran it can see the difference.
+    const seen: string[] = [];
+    const txSpy = {
+      $queryRawUnsafe: async (sql: string, ...values: unknown[]) => {
+        seen.push(sql);
+        return holder.bridge.$queryRawUnsafe(sql, ...values) as Promise<
+          { settings: Record<string, unknown> | null }[]
+        >;
+      },
+    };
+
+    await patchUserSettings(USER_ID, { set: { allowAds: true } }, txSpy as never);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('UPDATE "User"');
+    expect((await readSettings(holder.db, USER_ID)).allowAds).toBe(true);
+  });
+
+  it('reads the row inside the transaction for an empty patch, never the Redis cache', async () => {
+    // `getUserSettings` is Redis-backed. Reaching it from inside an interactive transaction
+    // spends the transaction's wall-clock budget (Prisma default 5s) on a cache round trip,
+    // and returns a blob that can be hours stale.
+    await seedUser(holder.db, USER_ID, { allowAds: true });
+    const seen: string[] = [];
+    const txSpy = {
+      $queryRawUnsafe: async (sql: string, ...values: unknown[]) => {
+        seen.push(sql);
+        return holder.bridge.$queryRawUnsafe(sql, ...values) as Promise<
+          { settings: Record<string, unknown> | null }[]
+        >;
+      },
+    };
+
+    const result = await patchUserSettings(
+      USER_ID,
+      { mergeInto: { creatorShop: {} } },
+      txSpy as never
+    );
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('SELECT settings FROM "User"');
+    expect(seen[0]).not.toContain('UPDATE');
+    expect(result.allowAds).toBe(true);
+  });
+
+  it('raises rather than silently succeeding when the user does not exist', async () => {
+    await expect(patchUserSettings(999_999, { set: { allowAds: true } })).rejects.toThrow();
+    await expect(patchUserSettings(999_999, {})).rejects.toThrow();
   });
 });

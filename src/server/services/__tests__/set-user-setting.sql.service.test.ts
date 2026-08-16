@@ -270,7 +270,9 @@ describe('patchUserSettings — the nested merge', () => {
     const [write] = statements;
     // The sub-object is read from the column inside the same statement — that is what
     // keeps a sibling sub-key another writer just added.
-    expect(write.text).toMatch(/COALESCE\(settings->\$\d+::text, *'\{\}'::jsonb\) *\|\| *\$\d+::jsonb/);
+    expect(write.text).toMatch(
+      /COALESCE\(settings->\$\d+::text, *'\{\}'::jsonb\) *\|\| *\$\d+::jsonb/
+    );
     expect(write.values).toContainEqual('features');
     expect(write.values).toContainEqual(JSON.stringify({ someFlag: true }));
     // The key name binds; it is never pasted into the text (a settings key is fixed
@@ -325,6 +327,8 @@ describe('setAlertDismissed — the set operation', () => {
     await setAlertDismissed(USER_ID, 'notice-a', true);
 
     const [write] = statements;
-    expect(write.text).toMatch(/jsonb_set\(COALESCE\(settings, '\{\}'::jsonb\), '\{dismissedAlerts\}'/);
+    expect(write.text).toMatch(
+      /jsonb_set\(COALESCE\(settings, '\{\}'::jsonb\), '\{dismissedAlerts\}'/
+    );
   });
 });
