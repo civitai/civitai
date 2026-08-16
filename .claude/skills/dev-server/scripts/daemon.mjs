@@ -323,6 +323,22 @@ function readHeadRef(headPath) {
   }
 }
 
+// The debounce exists so a rebase — HEAD moving several times in a second — settles before the
+// session reacts. It must therefore be re-armed when HEAD moves AGAIN, and only then.
+//
+// Re-arming on every poll instead is a livelock, because the poll keeps seeing the same unchanged
+// HEAD: `session.branch` is not updated until the switch actually runs, so with the shipped
+// defaults (poll 1000ms, debounce 3000ms) the timer was cleared and re-set three times per debounce
+// window and could never expire. Every consequence of a switch — `pnpm install` on a lockfile
+// change, `db:generate` on a schema change, re-prewarm, even the reported branch name — was
+// therefore unreachable whenever the poll interval was shorter than the debounce, which is what the
+// defaults specify. `pendingHead` is what makes "moved again" distinguishable from "still moved".
+export function shouldScheduleSwitch(head, branch, pendingHead) {
+  if (!head) return false;
+  if (head === branch) return false;
+  return head !== pendingHead;
+}
+
 function branchSlug(branch) {
   const safe = branch.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
   const digest = createHash('sha1').update(branch).digest('hex').slice(0, 6);
@@ -505,6 +521,7 @@ class DevSession {
     this.headPath = resolveGitHeadPath(worktree);
     this.branchWatchTimer = null;
     this.branchSwitchTimer = null;
+    this.pendingHead = null;
     this.switching = false;
     this.removed = false;
     this.busyDepth = 0;
@@ -512,6 +529,7 @@ class DevSession {
     this.prewarming = false;
     this.lockHash = null;
     this.schemaHash = null;
+    this.depsBaselined = false;
   }
 
   lockfilePath() {
@@ -578,8 +596,40 @@ class DevSession {
     this.branch =
       (this.headPath && readHeadRef(this.headPath)) || getGitBranch(this.worktree) || 'unknown';
     this.distDir = skillConfig.perBranchDistDir ? distDirForBranch(this.branch) : '.next';
-    this.lockHash = fileHash(this.lockfilePath());
-    this.schemaHash = fileHash(this.schemaPath());
+
+    // Baseline the dependency hashes ONCE, on the session's first start.
+    //
+    // Re-baselining on every start is how a checkout gets swallowed for good. `stop()` kills the
+    // poller and drops any pending switch, so a restart landing inside the debounce window — or a
+    // second checkout during the `pnpm install` of the first, which also runs with the poller off
+    // — arrives here with HEAD already on the new branch. Re-reading the hashes then adopts that
+    // branch's lockfile as the baseline WITHOUT having installed it, and every later poll sees
+    // `head === this.branch` and returns. The result is a stale `node_modules` that nothing will
+    // ever reconcile: `Module not found` 500s until someone installs by hand.
+    //
+    // Keeping the earlier hashes instead means the mismatch survives the restart, and
+    // reconcileDeps() below acts on it.
+    //
+    // Scope, honestly: the baseline is "what was on disk when this session first started", which is
+    // only the same thing as "what was installed" if nobody checked out a branch while the daemon
+    // was down. Restart the daemon after a checkout and the new session baselines the new lockfile
+    // against a node_modules that was never installed for it, and nothing here notices.
+    // An explicit flag, not `lockHash === null`. `fileHash` returns null on ANY read error, and
+    // pnpm-lock.yaml is exactly the file another process briefly locks on Windows — one unlucky
+    // read at first start would leave the baseline unset, so the next start re-baselines and
+    // silently restores the swallow this is here to remove.
+    if (!this.depsBaselined) {
+      const lockHash = fileHash(this.lockfilePath());
+      // Only claim a baseline we actually read. `fileHash` returns null on any read error, and
+      // pnpm-lock.yaml is the file another process briefly locks on Windows — baselining a null
+      // would make reconcileDeps() see a mismatch on the next start and run one install for
+      // nothing. Leaving it unbaselined just tries again.
+      if (lockHash !== null) {
+        this.lockHash = lockHash;
+        this.schemaHash = fileHash(this.schemaPath());
+        this.depsBaselined = true;
+      }
+    }
 
     // Load environment variables
     let envVars = loadEnvFile(this.envPath);
@@ -695,6 +745,7 @@ class DevSession {
     }
 
     this.startBranchWatch();
+    this.reconcileDeps();
 
     return {
       id: this.id,
@@ -816,13 +867,35 @@ class DevSession {
     }
   }
 
+  // What the poller cannot see, because it was not running. Any restart can land on a tree whose
+  // lockfile or schema no longer matches what was last installed — a stop/start inside the debounce
+  // window, a second checkout during an install, a crash restart after someone switched branches.
+  // Comparing the files on disk against the last INSTALLED hashes catches all of those without
+  // needing to have observed the checkout that caused them.
+  reconcileDeps() {
+    if (this.removed || this.switching) return;
+    const lockChanged = fileHash(this.lockfilePath()) !== this.lockHash;
+    const schemaChanged = fileHash(this.schemaPath()) !== this.schemaHash;
+    if (!lockChanged && !schemaChanged) return;
+    this.addLog(
+      'info',
+      `${lockChanged ? 'pnpm-lock.yaml' : 'schema.full.prisma'} does not match what was last ` +
+        `installed — reconciling`
+    );
+    // Through the ordinary switch path so it installs, regenerates and restarts exactly as a
+    // watched checkout would; it is the same work, just triggered by state instead of by an event.
+    this.pendingHead = null;
+    clearTimeout(this.branchSwitchTimer);
+    this.branchSwitchTimer = setTimeout(() => this.finishBranchSwitch(), 0);
+  }
+
   startBranchWatch() {
     if (!skillConfig.branchWatchEnabled || !this.headPath || this.branchWatchTimer) return;
 
     this.branchWatchTimer = setInterval(() => {
       if (this.switching) return;
       const head = readHeadRef(this.headPath);
-      if (!head || head === this.branch) return;
+      if (!shouldScheduleSwitch(head, this.branch, this.pendingHead)) return;
       this.onHeadChanged(head);
     }, skillConfig.branchWatchInterval);
     this.branchWatchTimer.unref?.();
@@ -837,6 +910,7 @@ class DevSession {
       clearTimeout(this.branchSwitchTimer);
       this.branchSwitchTimer = null;
     }
+    this.pendingHead = null;
   }
 
   // HEAD moved. Measured: leaving the server up through a checkout beats killing it —
@@ -856,6 +930,7 @@ class DevSession {
       }
     }
 
+    this.pendingHead = head;
     clearTimeout(this.branchSwitchTimer);
     this.branchSwitchTimer = setTimeout(
       () => this.finishBranchSwitch(),
@@ -871,11 +946,22 @@ class DevSession {
     // A DELETE that lands after this was queued would otherwise spend minutes on an install for a
     // session nobody tracks — against a worktree `wt rm` may have just deleted — before start()
     // refuses at the end of it.
-    if (this.removed) return;
+    if (this.removed) {
+      // Cleared here too: this is the one exit that runs before the clear below, and leaving it set
+      // would make a later switch to this same ref look like one already scheduled. Safe today only
+      // because the DELETE handler stops the session first — which is a long way from this line.
+      this.pendingHead = null;
+      return;
+    }
 
+    clearTimeout(this.branchSwitchTimer);
     this.branchSwitchTimer = null;
     this.switching = true;
     const head = readHeadRef(this.headPath);
+    // Cleared as the switch begins, not when it ends: `switching` suppresses the poll for the
+    // duration, and leaving it set would make a later switch BACK to this same ref look like one
+    // already scheduled.
+    this.pendingHead = null;
     if (!head) {
       this.switching = false;
       return;
@@ -884,7 +970,13 @@ class DevSession {
     try {
       const from = this.branch;
       this.branch = head;
-      this.addLog('info', `Branch switch: ${from} -> ${head}`);
+      // A rebase that lands back where it started, and reconcileDeps(), both arrive here with HEAD
+      // unmoved. Saying "switch: main -> main" reads as a bug in the watcher; the work below is
+      // still correct and still worth doing.
+      this.addLog(
+        'info',
+        from === head ? `Re-checking ${head} for dependency changes` : `Branch switch: ${from} -> ${head}`
+      );
 
       const env = { ...process.env, ...loadEnvFile(this.envPath) };
       const log = (l, m) => this.addLog(l, m);
@@ -912,8 +1004,13 @@ class DevSession {
         await runCommand(pnpmCmd, ['run', 'db:generate'], this.worktree, env, log);
       }
 
-      this.lockHash = lockHash;
-      this.schemaHash = schemaHash;
+      // Re-read AFTER the install, not the values captured before it. `pnpm install` can rewrite
+      // pnpm-lock.yaml (a stale lock against a changed package.json, a workspace bump), and storing
+      // the pre-install hash then makes reconcileDeps() see a mismatch on the way back up and run
+      // the whole stop/install/restart again.
+      this.lockHash = fileHash(this.lockfilePath());
+      this.schemaHash = fileHash(this.schemaPath());
+      this.depsBaselined = true;
 
       if (mustRestart) {
         await this.stop();
