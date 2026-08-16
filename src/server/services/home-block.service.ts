@@ -233,6 +233,38 @@ const imageFeedDefaults = {
   types: undefined,
 } as const;
 
+// Mirrors `homeBlockMetaSchema.feed.limit`, which never runs: `getHomeBlockData` casts the
+// stored metadata rather than parsing it, and no route writes a Feed block — the only writer is
+// hand-written SQL. So these are the sole guard against a typo, not a redundant second one.
+const FEED_FETCH_CEILING = 100;
+const FEED_FETCH_DEFAULT = 28;
+
+/**
+ * How many items a Feed block fetches. Nothing scales the configured value, so what the config
+ * says is what ships — a `limit` of 42 fetches 42.
+ *
+ * The value has to sit well above the rendered slice (`rows * HOME_BLOCK_ITEMS_PER_ROW`), because
+ * `maxPerUser` and the viewer's own hidden-preferences filter both thin the pool after the fetch,
+ * and the fetch applies no per-creator cap of its own — so the head of the pool is
+ * creator-concentrated. Measured on the two live blocks: 454066 (7 slots) fills at 7, but 454065
+ * (14 slots) needs 21, and its first 7 items come from only 4 creators.
+ *
+ * Exported for unit tests.
+ */
+export function resolveFeedFetchLimit(limit?: number) {
+  return Math.min(limit ?? FEED_FETCH_DEFAULT, FEED_FETCH_CEILING);
+}
+
+// Both model-carrying home blocks take this pair. The images come straight from the shared
+// cache, in `postId,index` order and never browsing-level filtered, so a plain cap can leave
+// a mixed-level model with no image a given viewer may see — and the client-side filter then
+// drops the whole model rather than the image. The bit-coverage slice is what makes the cap
+// safe, which is why the two travel together.
+const slimModelImages = {
+  imagesPerModel: GET_ALL_IMAGES_PER_MODEL_SLIM,
+  biasImageSlice: true,
+} as const;
+
 const modelFeedDefaults = {
   period: MetricTimeframe.Week,
   periodMode: 'published',
@@ -360,9 +392,7 @@ export const getHomeBlockData = async ({
       const feed = sourceMetadata?.feed ?? metadata.feed;
       if (!feed) return null;
 
-      // Overfetch so `maxPerUser` has a pool to thin, matching how Collection blocks
-      // pair a larger fetch limit with their cap.
-      const limit = feed.maxPerUser ? Math.min(feed.limit * 3, 200) : feed.limit;
+      const limit = resolveFeedFetchLimit(feed.limit);
 
       if (feed.entity === 'images') {
         const { items } = await getAllImagesIndex({
@@ -393,6 +423,7 @@ export const getHomeBlockData = async ({
         },
         user,
         domain: input.domain,
+        ...slimModelImages,
       });
 
       return { ...homeBlock, metadata, feedItems: { entity: 'models' as const, items } };
@@ -507,13 +538,7 @@ export const getHomeBlockData = async ({
                   periodMode: 'stats',
                   browsingLevel: allBrowsingLevelsFlag,
                 },
-                // The images attached here are NOT browsing-level filtered — they come straight
-                // from the shared cache — so the cap has to keep a representative of every
-                // distinct nsfwLevel, which is what `biasImageSlice` does and what sizes the
-                // slim cap. Going below it drops mixed-level models for whoever's level isn't
-                // among the first bits in cache order.
-                imagesPerModel: GET_ALL_IMAGES_PER_MODEL_SLIM,
-                biasImageSlice: true,
+                ...slimModelImages,
               })
             ).items
           : ([] as GetModelsWithImagesAndModelVersions[]);
