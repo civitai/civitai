@@ -17,11 +17,23 @@ export type StickerInteraction = 'move' | 'resize' | 'rotate';
  * came out of the tray.
  */
 export type DraftPurchase = {
-  shopItemId: number;
-  unitAmount: number;
-  acceptsBlue: boolean;
-  /** Attributes the sale to the storefront it came from, as the shop grids do. */
-  viaShopUserId?: number;
+  /**
+   * Buying the sticker itself. Set on a draft dragged out of the shop; absent
+   * once it is owned, because a sticker cannot be sold to the same person twice.
+   */
+  pack?: {
+    shopItemId: number;
+    unitAmount: number;
+    acceptsBlue: boolean;
+    /** Attributes the sale to the storefront it came from, as the shop grids do. */
+    viaShopUserId?: number;
+  };
+  /**
+   * Price of one more use, for a sticker that is owned and spent. Absent when
+   * the sticker sells no top-ups at all, which is a real state — a sticker sold
+   * before per-use pricing existed has no price to charge.
+   */
+  perUse?: number;
   /** Who made the sticker, for the "this goes to" line on the purchase button. */
   creatorUsername?: string | null;
 };

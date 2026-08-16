@@ -1,7 +1,6 @@
 import {
-  Button,
-  Chip,
   CloseButton,
+  Divider,
   HoverCard,
   Loader,
   ScrollArea,
@@ -15,22 +14,23 @@ import { IconInfoCircle, IconSearch } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import { useMutateCosmeticShop, useQueryShop } from '~/components/CosmeticShop/cosmetic-shop.util';
+import { useQueryShop } from '~/components/CosmeticShop/cosmetic-shop.util';
+import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { useQueryCommunityCosmetics } from '~/components/CreatorShop/creator-shop.util';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { browseShopItems } from '~/components/Shop/shop-browse';
-import { StickerBuyButton } from '~/components/Sticker/StickerBuyButton';
+import { StickerPriceBadge } from '~/components/Sticker/StickerPriceBadge';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
-import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
 import { CosmeticShopSort } from '~/server/common/enums';
 import type { StickerCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 /** The single page of the community catalog this panel holds client-side. */
 const COMMUNITY_PAGE_SIZE = 100;
@@ -48,7 +48,8 @@ type Tile = {
   viaShopUserId?: number;
   acceptsBlue: boolean;
   creatorUsername?: string | null;
-  owned: boolean;
+  creator?: ({ id: number } & Partial<UserWithCosmetics>) | null;
+  description?: string | null;
 };
 
 /**
@@ -62,18 +63,14 @@ type Tile = {
  */
 export function StickerShopPanel({
   onClose,
-  onTopUp,
   maxScale,
 }: {
   onClose: () => void;
-  /** Owned stickers can't be bought again; more uses is the only thing left to sell. */
-  onTopUp: (sticker: ResolvedSticker) => void;
   /** The space's own ceiling, so a sticker dragged from here starts inside it. */
   maxScale: number;
 }) {
   const { grab, dragging } = useStickerDragOut(maxScale);
   const [search, setSearch] = useState('');
-  const [showOwned, setShowOwned] = useState(false);
   // The community half searches server-side, so this is a request per keystroke
   // without the debounce. The official half is already in memory and filters
   // off `search` directly, so typing still feels immediate there.
@@ -93,10 +90,12 @@ export function StickerShopPanel({
     sort: CosmeticShopSort.MostPopular,
     limit: COMMUNITY_PAGE_SIZE,
     page: 1,
-    owned: showOwned ? undefined : 'notOwned',
+    // Never shown: this shelf sells stickers, and one you own cannot be sold to
+    // you again. Running low on uses is answered where you notice it — on the
+    // sticker itself, in the row below — not by a second copy of it up here.
+    owned: 'notOwned',
     query: debouncedSearch || undefined,
   });
-  const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
 
   const isLoading = loadingOfficial || loadingCommunity;
   const query = search.trim().toLowerCase();
@@ -108,10 +107,7 @@ export function StickerShopPanel({
       entries: (cosmeticShopSections ?? []).flatMap((section) => section.items),
       shopItemOf: (entry) => entry.shopItem,
       listedAtOf: (entry) => entry.createdAt,
-      filters: {
-        cosmeticTypes: [CosmeticType.Sticker],
-        ...(showOwned ? {} : { modifier: 'notOwned' as const }),
-      },
+      filters: { cosmeticTypes: [CosmeticType.Sticker], modifier: 'notOwned' },
       sort: CosmeticShopSort.MostPopular,
       ownedCosmeticIds,
       wishlistedIds: new Set<number>(),
@@ -128,6 +124,8 @@ export function StickerShopPanel({
         cosmeticData: shopItem.cosmetic?.data,
         meta: shopItem.meta,
         creatorUsername: shopItem.cosmetic?.creator?.username ?? null,
+        creator: shopItem.cosmetic?.creator ?? null,
+        description: shopItem.description,
         viaShopUserId: CIVITAI_SHOP_ATTRIBUTION,
       }));
 
@@ -142,6 +140,8 @@ export function StickerShopPanel({
       // sold by one creator and made by another, and the purchase line names
       // the maker.
       creatorUsername: item.cosmetic?.creator?.username ?? item.addedBy?.username ?? null,
+      creator: item.cosmetic?.creator ?? item.addedBy ?? null,
+      description: item.description,
       // Attributes the sale to the shop it was bought from, the same way the
       // storefront grid does.
       viaShopUserId: item.addedById ?? undefined,
@@ -165,32 +165,12 @@ export function StickerShopPanel({
         viaShopUserId: entry.viaShopUserId,
         acceptsBlue: !!(entry.meta as CosmeticShopItemMeta | null)?.acceptsBlueBuzz,
         creatorUsername: entry.creatorUsername,
-        owned: ownedCosmeticIds.has(entry.cosmeticId),
+        creator: entry.creator,
+        description: entry.description,
       });
       return acc;
     }, []);
-  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, query, showOwned]);
-
-  const buy = async (tile: Tile) => {
-    try {
-      await purchaseShopItem({
-        shopItemId: tile.shopItemId,
-        viaShopUserId: tile.viaShopUserId,
-        // The server refuses 'blue-first' on an item that hasn't opted in, so
-        // this is sent only where the listing says it is accepted.
-        payWith: tile.acceptsBlue ? 'blue-first' : undefined,
-      });
-      showSuccessNotification({
-        title: 'Sticker purchased',
-        message: `${tile.title} is in your stickers below.`,
-      });
-    } catch (error) {
-      showErrorNotification({
-        title: 'Could not buy that sticker',
-        error: error instanceof Error ? error : new Error('Purchase failed'),
-      });
-    }
-  };
+  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, query]);
 
   return (
     <div className="mb-2 w-full overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
@@ -204,9 +184,6 @@ export function StickerShopPanel({
           onChange={(event) => setSearch(event.currentTarget.value)}
           aria-label="Search stickers"
         />
-        <Chip size="xs" checked={showOwned} onChange={setShowOwned}>
-          Show owned
-        </Chip>
         <Tooltip
           label="Drag one onto the image to try it. You buy it before you can place it."
           withArrow
@@ -232,8 +209,6 @@ export function StickerShopPanel({
             <Text size="sm" c="dimmed" p="xs">
               {search
                 ? `Nothing matches “${search}”.`
-                : showOwned
-                ? 'No stickers on sale right now.'
                 : 'Nothing new here — you already own every sticker on sale.'}
             </Text>
           )}
@@ -244,91 +219,53 @@ export function StickerShopPanel({
             return (
               <HoverCard
                 key={tile.shopItemId}
-                width={220}
+                width={300}
                 withArrow
                 openDelay={200}
                 position="top"
                 shadow="sm"
               >
                 <HoverCard.Target>
-                  <div
+                  {/* Artwork and a price, nothing else — the same shape as the
+                      row of stickers you own below it. Names are long and vary
+                      wildly in length, and a caption under each tile made a
+                      shelf of ragged columns out of a set of equal squares. The
+                      name is in the hover card, which is where the rest of the
+                      detail is anyway. */}
+                  <button
+                    type="button"
+                    aria-label={`Drag ${tile.title} onto the image`}
                     className={clsx(
-                      'flex w-24 shrink-0 flex-col items-center gap-1 rounded border p-1',
+                      'relative flex shrink-0 cursor-grab flex-col items-center rounded border p-2',
                       dragging === tile.cosmeticId ? 'border-blue-5' : 'border-transparent'
                     )}
+                    style={{ touchAction: 'none' }}
+                    onPointerDown={grab(tile.cosmeticId, {
+                      pack: {
+                        shopItemId: tile.shopItemId,
+                        unitAmount: tile.unitAmount,
+                        acceptsBlue: tile.acceptsBlue,
+                        viaShopUserId: tile.viaShopUserId,
+                      },
+                      creatorUsername: tile.creatorUsername,
+                    })}
                   >
-                    {/* The artwork is the drag handle, not the whole tile: the
-                        price button is inside it, and a pointer-down there has
-                        to stay a click on the button. */}
-                    <button
-                      type="button"
-                      aria-label={`Drag ${tile.title} onto the image`}
-                      className="cursor-grab border-0 bg-transparent p-0"
-                      style={{ touchAction: 'none' }}
-                      onPointerDown={grab(
-                        tile.cosmeticId,
-                        // Owned ones (the chip shows them) drag out with no gate
-                        // — they are already paid for.
-                        tile.owned
-                          ? undefined
-                          : {
-                              shopItemId: tile.shopItemId,
-                              unitAmount: tile.unitAmount,
-                              acceptsBlue: tile.acceptsBlue,
-                              viaShopUserId: tile.viaShopUserId,
-                              creatorUsername: tile.creatorUsername,
-                            }
-                      )}
-                    >
-                      <EdgeImage
-                        src={tile.data.url}
-                        alt={tile.data.slug ? `:${tile.data.slug}:` : tile.title}
-                        options={{ height: 96, anim: tile.data.animated, optimized: true }}
-                        style={{ height: 48, width: 'auto', pointerEvents: 'none' }}
-                        draggable={false}
-                      />
-                    </button>
-                    <Text size="10px" lineClamp={1} ta="center" className="w-full">
-                      {tile.title}
-                    </Text>
-                    <Text size="10px" c="dimmed" lineClamp={1}>
-                      {terms.usesLabel}
-                    </Text>
-                    {tile.owned ? (
-                      // Owning it is terminal — the shop can't sell it twice, so
-                      // the only thing left to buy is more uses of it.
-                      <Button
-                        size="compact-xs"
-                        variant="light"
-                        className="w-full"
-                        onClick={() =>
-                          onTopUp({
-                            id: tile.cosmeticId,
-                            name: tile.title,
-                            slug: tile.data.slug ?? tile.title,
-                            url: tile.data.url,
-                            animated: tile.data.animated,
-                            pricePerUse: tile.data.pricePerUse,
-                          })
-                        }
-                      >
-                        Buy uses
-                      </Button>
-                    ) : (
-                      <StickerBuyButton
-                        amount={tile.unitAmount}
-                        // Blue first where the seller takes it, which is also
-                        // what the button colours itself from — so the bolt is
-                        // the colour of the Buzz this purchase will actually
-                        // spend, not of the domain it happens to be on.
-                        accountTypes={
-                          tile.acceptsBlue ? ['blue', domainBuzzType] : [domainBuzzType]
-                        }
-                        loading={purchasingShopItem}
-                        onBuy={() => buy(tile)}
-                      />
-                    )}
-                  </div>
+                    <EdgeImage
+                      src={tile.data.url}
+                      alt={tile.data.slug ? `:${tile.data.slug}:` : tile.title}
+                      options={{ height: 96, anim: tile.data.animated, optimized: true }}
+                      style={{ height: 48, width: 'auto', pointerEvents: 'none' }}
+                      draggable={false}
+                    />
+                    <StickerPriceBadge
+                      className="mt-1"
+                      amount={tile.unitAmount}
+                      // Blue first where the seller takes it, so the badge is the
+                      // colour of the Buzz this would actually spend — and the
+                      // same colour as the button it turns into on the image.
+                      accountTypes={tile.acceptsBlue ? ['blue', domainBuzzType] : [domainBuzzType]}
+                    />
+                  </button>
                 </HoverCard.Target>
                 <HoverCard.Dropdown p="xs">
                   <Text size="sm" fw={600} lineClamp={2}>
@@ -336,11 +273,22 @@ export function StickerShopPanel({
                   </Text>
                   <Text size="xs" c="dimmed">
                     {numberWithCommas(tile.unitAmount)} Buzz · {terms.usesLabel}
+                    {terms.extraUseLabel ? ` · ${terms.extraUseLabel}` : ''}
                   </Text>
-                  {terms.extraUseLabel && (
-                    <Text size="xs" c="dimmed">
-                      {terms.extraUseLabel}
+                  <Divider my="xs" />
+                  {tile.description ? (
+                    <div className="text-xs">
+                      <RenderHtml html={tile.description} />
+                    </div>
+                  ) : (
+                    <Text size="xs" c="dimmed" fs="italic">
+                      No description.
                     </Text>
+                  )}
+                  {tile.creator && (
+                    <div className="mt-2">
+                      <CreatorCardSimple user={tile.creator} withBorder p={0} />
+                    </div>
                   )}
                 </HoverCard.Dropdown>
               </HoverCard>

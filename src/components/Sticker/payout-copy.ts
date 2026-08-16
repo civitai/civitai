@@ -44,7 +44,13 @@ export function payoutCopy(
 export function stickerPurchaseCopy(creatorUsername: string | null | undefined): {
   lead: string;
   name?: string;
-} {
+} | null {
+  // `undefined` is "not known here" and `null` is "there is no maker". The two
+  // must not collapse: the owned-sticker payload carries no creator, and
+  // defaulting it to the site would credit Civitai for a sticker somebody else
+  // drew — a claim about money, made where the money is about to move.
+  if (creatorUsername === undefined) return null;
+
   return creatorUsername
     ? { lead: 'This goes to', name: `@${creatorUsername}` }
     : { lead: 'This goes to Civitai' };

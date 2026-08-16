@@ -41,6 +41,7 @@ import {
 } from '~/shared/utils/sticker-placement';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import {
   pointerToSurfaceFraction,
@@ -126,16 +127,26 @@ export function DraftSticker({
     : payoutCopy(ownerShare, ownerUsername);
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
+  const queryUtils = trpc.useUtils();
+  const buyUses = trpc.cosmetic.purchaseStickerUses.useMutation({
+    onSuccess: () =>
+      Promise.all([
+        queryUtils.cosmetic.getStickerBalances.invalidate(),
+        queryUtils.user.getCosmetics.invalidate(),
+      ]),
+    onError: (error) =>
+      showErrorNotification({ title: 'Could not buy a use', error: new Error(error.message) }),
+  });
 
   const buySticker = async () => {
-    const purchase = draft.purchase;
-    if (!purchase) return;
+    const pack = draft.purchase?.pack;
+    if (!pack) return;
 
     try {
       await purchaseShopItem({
-        shopItemId: purchase.shopItemId,
-        viaShopUserId: purchase.viaShopUserId,
-        payWith: purchase.acceptsBlue ? 'blue-first' : undefined,
+        shopItemId: pack.shopItemId,
+        viaShopUserId: pack.viaShopUserId,
+        payWith: pack.acceptsBlue ? 'blue-first' : undefined,
       });
       // Every draft of this sticker, not just this one — the purchase granted
       // the sticker, not one copy of it.
@@ -149,6 +160,28 @@ export function DraftSticker({
         title: 'Could not buy that sticker',
         error: error instanceof Error ? error : new Error('Purchase failed'),
       });
+    }
+  };
+
+  // Only the one use this draft will spend. Buying a stack you may not place is
+  // the shop's business, not this button's — the sticker is already arranged and
+  // the next press after this one is Place.
+  const buyOneUse = async () => {
+    const perUse = draft.purchase?.perUse;
+    if (perUse == null) return;
+
+    try {
+      await buyUses.mutateAsync({
+        cosmeticId: draft.cosmeticId,
+        quantity: 1,
+        // What the button charged for. The server refuses if the creator has
+        // moved the price since this rendered.
+        expectedPricePerUse: perUse,
+        payWith: 'default',
+      });
+      markPurchased(draft.cosmeticId);
+    } catch {
+      // Surfaced by the mutation's own error handler.
     }
   };
 
@@ -678,15 +711,31 @@ export function DraftSticker({
         {/* Bought before it can be placed, and arranged before either. Dragging
             it out first is the point: you see what it looks like where you want
             it, and only then decide it is worth two payments. */}
-        {draft.purchase ? (
+        {draft.purchase?.pack ? (
           <BuzzTransactionButton
             size="sm"
             style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={draft.purchase.unitAmount}
-            accountTypes={draft.purchase.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
+            buzzAmount={draft.purchase.pack.unitAmount}
+            accountTypes={draft.purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
             label="Purchase sticker"
             loading={purchasingShopItem}
             onPerformTransaction={buySticker}
+          />
+        ) : draft.purchase ? (
+          // Owned, and out of uses. One use, because one is what placing this
+          // draft spends.
+          <BuzzTransactionButton
+            size="sm"
+            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+            buzzAmount={draft.purchase.perUse ?? 0}
+            accountTypes={spendTypes}
+            label="Buy a use"
+            loading={buyUses.isPending}
+            // A sticker sold before per-use pricing existed has no price to
+            // charge, and the listing price is not a stand-in for one. Says so
+            // rather than offering a button that cannot work.
+            error={draft.purchase.perUse == null ? 'This sticker sells no extra uses' : undefined}
+            onPerformTransaction={buyOneUse}
           />
         ) : (
           <BuzzTransactionButton

@@ -54,8 +54,15 @@ describe('stickerPurchaseCopy', () => {
 
   // Not a fallback: an official sticker genuinely has no maker to pay, and
   // saying so is more honest than a dangling "This goes to".
-  it('says Civitai when there is no maker', () => {
-    for (const missing of [null, undefined, ''])
+  it('says Civitai when there is explicitly no maker', () => {
+    for (const missing of [null, ''])
       expect(stickerPurchaseCopy(missing)).toEqual({ lead: 'This goes to Civitai' });
+  });
+
+  // The distinction the whole signature exists for. A top-up dragged from the
+  // owned row has no creator in its payload, and crediting the site there would
+  // name the wrong recipient of real money.
+  it('says nothing when the maker is unknown rather than absent', () => {
+    expect(stickerPurchaseCopy(undefined)).toBeNull();
   });
 });
