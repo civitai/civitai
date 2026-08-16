@@ -1,9 +1,10 @@
-import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon } from '@mantine/core';
 import { IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
+import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
@@ -166,9 +167,14 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
           <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
             <Group gap="xs" wrap="nowrap" p="xs">
               {isLoading && <Text size="sm">Loading your stickers…</Text>}
-              {/* Owning nothing is the one state where the plus is not an
-                  afterthought at the end of a row — it is the only thing to do,
-                  so it gets said rather than left to be found. */}
+
+              {/* Ahead of the stickers, so it stays put as the row grows. */}
+              {!isLoading && !!sticker.length && (
+                <StickerShopTile open={shopping} onClick={() => setShopping((open) => !open)} />
+              )}
+
+              {/* Owning nothing is the one state where the tile is not enough —
+                  there is nothing beside it to explain it, so it gets said. */}
               {!isLoading && !sticker.length && (
                 <div className="flex items-center gap-3 px-1 py-2">
                   <ThemeIcon size={40} radius="xl" variant="light" color="yellow">
@@ -229,26 +235,6 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   </button>
                 );
               })}
-
-              {/* Takes the shape of a sticker slot, at the end of the row: the
-                  way to get more is the next thing along from what you have,
-                  rather than a control somewhere else on the panel. */}
-              {!!sticker.length && (
-                <Tooltip label="Buy more stickers" withArrow>
-                  <button
-                    type="button"
-                    onClick={() => setShopping((open) => !open)}
-                    aria-label="Buy more stickers"
-                    aria-expanded={shopping}
-                    className={clsx(
-                      'flex h-[66px] w-14 shrink-0 flex-col items-center justify-center rounded border border-dashed',
-                      shopping ? 'border-blue-5 text-blue-5' : 'border-gray-4 dark:border-dark-3'
-                    )}
-                  >
-                    <IconPlus size={20} stroke={2.5} />
-                  </button>
-                </Tooltip>
-              )}
             </Group>
           </ScrollArea.Autosize>
         </div>
