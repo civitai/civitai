@@ -226,6 +226,47 @@ function computeMembers({ closures, inventory }, canonical) {
       importedBy.get(mod).add(file);
     }
 
+  /**
+   * 🔴 An EXTERNAL specifier needs the closure test too, and `specifierToPath` returns null for one.
+   *
+   * The loop below used to `continue` on a null path, which skipped the "does another member IMPORT
+   * this module" half of the sharing test for every npm package. Mocking an external is then treated
+   * as private whenever no *other member mocks it* — but a sibling that merely imports it, through
+   * production code, poisons the worker just the same.
+   *
+   * Measured: `settings-pattern-guard.failclosed` mocks `recheck`; `settings-pattern-guard.test.ts`
+   * reaches the real `recheck` through `settings-pattern-guard.ts` and mocks nothing. Both were
+   * members. Whichever loaded first won the worker, so the fail-closed case returned `false` instead
+   * of `true` in roughly one run in five — the only survivor after the env-resolution fix.
+   *
+   * An external is not in `closures.modules` (the graph is first-party), so map it to the first-party
+   * modules that import it and reuse the closure test on those.
+   */
+  const externalImporters = (() => {
+    const wanted = new Set();
+    for (const rec of byFile.values())
+      for (const mk of rec.mocks)
+        if (!specifierToPath(mk.specifier, rec.file)) wanted.add(mk.specifier);
+    const map = new Map();
+    if (!wanted.size) return map;
+    for (const mod of closures.modules) {
+      let src;
+      try {
+        src = readFileSync(path.join(repoRoot, mod), 'utf8');
+      } catch {
+        continue;
+      }
+      for (const spec of wanted) {
+        const esc = spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`from\\s*['"\`]${esc}['"\`]|import\\(\\s*['"\`]${esc}['"\`]`).test(src)) {
+          if (!map.has(spec)) map.set(spec, new Set());
+          map.get(spec).add(mod.replace(/\.[cm]?[jt]sx?$/, '').replace(/\/index$/, ''));
+        }
+      }
+    }
+    return map;
+  })();
+
   const { excluded, conflicts } = findPermanentExclusions([...byFile.keys()]);
   for (const [file, reason] of findRegistryUnsafe([...byFile.keys()]))
     if (!excluded.has(file)) excluded.set(file, reason);
@@ -243,7 +284,13 @@ function computeMembers({ closures, inventory }, canonical) {
       for (const mk of byFile.get(file).mocks) {
         touch(mk.specifier, file);
         const modPath = specifierToPath(mk.specifier, file);
-        if (!modPath) continue;
+        if (!modPath) {
+          // External: every first-party module importing it stands in for the module itself.
+          for (const proxy of externalImporters.get(mk.specifier) ?? [])
+            for (const other of importedBy.get(proxy) ?? [])
+              if (members.has(other)) touch(mk.specifier, other);
+          continue;
+        }
         for (const other of importedBy.get(modPath) ?? [])
           if (members.has(other)) touch(mk.specifier, other);
       }

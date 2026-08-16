@@ -188,7 +188,14 @@ const unitFastEnvPlugin = {
   name: 'civitai:unit-fast-env',
   enforce: 'pre' as const,
   resolveId(source: string, importer?: string) {
-    if (source === '~/env/server') return ENV_SERVER_MOCK;
+    // 🔴 Vite's OWN alias plugin runs ahead of every user `enforce: 'pre'` plugin
+    // (`resolvePlugins()`: preAlias, alias, then prePlugins), and it re-enters resolution with the
+    // rewritten id. So this hook never sees `~/anything` — measured in situ: 2,987 resolutions in
+    // one file's run, ZERO of them starting `~/`. A `source === '~/env/server'` test is dead code.
+    // The id arrives already absolute, and with MIXED separators
+    // (`C:\…\wt-fast-project` + `/env/server`), which is why the comparison goes through
+    // `canonicalId` rather than string equality.
+    if (canonicalId(source) === ENV_SERVER_REAL) return ENV_SERVER_MOCK;
     if (!source.startsWith('.') || !importer) return null;
     const joined = path.resolve(path.dirname(importer.replace(/^\/(?=[A-Za-z]:\/)/, '')), source);
     return canonicalId(joined) === ENV_SERVER_REAL ? ENV_SERVER_MOCK : null;

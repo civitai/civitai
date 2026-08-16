@@ -342,7 +342,6 @@
     "src/server/services/blocks/__tests__/review-session.agentCallback.test.ts",
     "src/server/services/blocks/__tests__/review-session.agentHooks.test.ts",
     "src/server/services/blocks/__tests__/review-session.test.ts",
-    "src/server/services/blocks/__tests__/settings-pattern-guard.failclosed.test.ts",
     "src/server/services/blocks/__tests__/settings-pattern-guard.test.ts",
     "src/server/services/blocks/__tests__/settings-validator.service.test.ts",
     "src/server/services/blocks/__tests__/stored-object-integrity.test.ts",
@@ -395,7 +394,6 @@
     "src/server/utils/__tests__/repair-split-query-string.test.ts",
     "src/server/utils/__tests__/rest-error-envelope-ledger.test.ts",
     "src/server/utils/__tests__/rest-error-envelope.test.ts",
-    "src/server/utils/__tests__/safe-fetch.test.ts",
     "src/server/utils/__tests__/ssrf-hostname.test.ts",
     "src/server/utils/__tests__/timeout-helpers.test.ts",
     "src/server/utils/__tests__/ttl-memoize.test.ts",
@@ -459,7 +457,6 @@
     "src/utils/faro/__tests__/classifyException.test.ts",
     "src/utils/faro/__tests__/experimentFlags.test.ts",
     "src/utils/faro/__tests__/feedDrop.test.ts",
-    "src/utils/faro/__tests__/getFaroSessionId.test.ts",
     "src/utils/faro/__tests__/redact.test.ts",
     "src/utils/faro/__tests__/resourceTiming.test.ts",
     "src/utils/faro/__tests__/traceSampler.test.ts",
@@ -525,14 +522,14 @@
   ],
   "totals": {
     "testFiles": 1087,
-    "members": 473,
+    "members": 470,
     "excludedPermanently": 16,
-    "pending": 598,
-    "membersNeverMocked": 427,
+    "pending": 601,
+    "membersNeverMocked": 424,
     "membersEarned": 46,
     "mockersAtBase": 580,
-    "moduleLoadsInMembers": 14390,
+    "moduleLoadsInMembers": 14381,
     "moduleLoadsTotal": 109181,
-    "oneSpecifierAway": 121
+    "oneSpecifierAway": 123
   }
 }
