@@ -511,6 +511,220 @@ async function cmdShutdown() {
   }
 }
 
+function samePath(a, b) {
+  if (!a || !b) return false;
+  const norm = (p) => resolve(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return norm(a) === norm(b);
+}
+
+async function resolveSession(sessionId) {
+  const result = await daemonRequest('/sessions');
+  const sessions = result.data?.sessions ?? [];
+  if (sessionId) {
+    const found = sessions.find((s) => s.id === sessionId);
+    if (!found) {
+      console.error(`No session ${sessionId}. Known: ${sessions.map((s) => s.id).join(', ') || 'none'}`);
+      process.exit(1);
+    }
+    return found;
+  }
+  const cwd = process.cwd();
+  return (
+    sessions.find((s) => samePath(s.worktree, cwd)) ??
+    sessions.find((s) => s.status === 'running') ??
+    sessions[0] ??
+    null
+  );
+}
+
+// Flags that take a VALUE. Without this the positional scan treats the value as the route, so
+// `probe --port 3005 /home` probes `/3005` — a fast 404 that used to report `ok`. Same class of
+// wrong-confident answer the Git Bash de-mangling exists to prevent, arriving from the caller.
+const VALUE_FLAGS = new Set(['--port', '--session', '--timeout', '--route']);
+
+// A flag nobody reads is a flag silently ignored, and `unwedge` is the destructive command — so it
+// gets the check too, not just `probe`.
+function rejectUnknownFlags(args, allowed, usage) {
+  const unknown = args.filter((a) => a.startsWith('--') && !allowed.includes(a.split('=')[0]));
+  if (!unknown.length) return;
+  console.error(`Unknown option${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`);
+  console.error(`Usage: ${usage}`);
+  process.exit(1);
+}
+
+export function positionalArgs(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (VALUE_FLAGS.has(a)) {
+      i++;
+      continue;
+    }
+    if (a.startsWith('--')) continue;
+    out.push(a);
+  }
+  return out;
+}
+
+// Both spellings. `--session=abc` used to be skipped by the positional scan and ignored by the
+// lookup, so it read as accepted and silently probed a different session.
+export function stringFlag(args, name) {
+  const inline = args.find((a) => a.startsWith(`${name}=`));
+  if (inline) return inline.slice(name.length + 1) || undefined;
+  const index = args.indexOf(name);
+  return index !== -1 ? args[index + 1] : undefined;
+}
+
+// `min` is per-flag: a timeout under a second is a mistake, but `--port 80` is not.
+function numericFlag(args, name, fallback, min = 1) {
+  const raw = stringFlag(args, name);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  // `??` does not catch NaN, and `AbortSignal.timeout(NaN)` is not a timeout.
+  if (!Number.isFinite(value) || value < min) {
+    console.error(`${name} needs a number of at least ${min}, got "${raw}"`);
+    process.exit(1);
+  }
+  return value;
+}
+
+async function cmdProbe(rest) {
+  await ensureDaemon();
+  const { probe, formatProbe, normalizeRoute } = await import('./scripts/probe.mjs');
+
+  rejectUnknownFlags(rest, ['--route', '--session', '--port', '--timeout', '--json'],
+    'probe [route] [--route /x] [--session id] [--port n] [--timeout ms] [--json]');
+  // Two routes given, one silently discarded, is the same class of quiet wrong answer as the rest
+  // of this function.
+  if (stringFlag(rest, '--route') && positionalArgs(rest)[0]) {
+    console.error('Give the route once: either positionally or with --route, not both.');
+    process.exit(1);
+  }
+  // `--route` is what the sibling `unwedge` documents, so it gets typed here. Accepting it silently
+  // probed `/` and reported a confident verdict about a route nobody asked for.
+  const { route, mangled } = normalizeRoute(
+    stringFlag(rest, '--route') ?? positionalArgs(rest)[0] ?? '/'
+  );
+  if (mangled) console.log(`(Git Bash rewrote the route; probing ${route})`);
+  const sessionId = stringFlag(rest, '--session');
+  const session = await resolveSession(sessionId);
+  const port = numericFlag(rest, '--port', session?.port);
+
+  if (!port) {
+    console.error('No dev session and no --port. Start one: cli.mjs start');
+    process.exit(1);
+  }
+
+  const result = await probe({
+    route,
+    port,
+    sessionId: session?.id ?? null,
+    worktree: session?.worktree,
+    daemonRequest,
+    timeoutMs: numericFlag(rest, '--timeout', undefined, 1000),
+  });
+
+  console.log(formatProbe(result));
+  if (rest.includes('--json')) console.log(JSON.stringify(result, null, 2));
+  // A wedged or unreachable server is a failure for whoever asked, not a report.
+  process.exit(['ok', 'cold'].includes(result.verdict) ? 0 : 1);
+}
+
+// Explicit session id, always: this stops a running server and deletes several GB, and the session
+// it would otherwise guess at is usually the one someone is looking at.
+async function cmdUnwedge(rest) {
+  await ensureDaemon();
+  const { probe, formatProbe, purgeDistDir, normalizeRoute } = await import('./scripts/probe.mjs');
+
+  rejectUnknownFlags(rest, ['--route'], 'unwedge <session-id> [--route /x]');
+  const sessionId = positionalArgs(rest)[0];
+  if (!sessionId) {
+    console.error('Usage: unwedge <session-id> [--route /home]');
+    console.error('Takes the server down for ~45s. Name the session deliberately.');
+    process.exit(1);
+  }
+  const session = await resolveSession(sessionId);
+  const { route } = normalizeRoute(stringFlag(rest, '--route') ?? '/');
+
+  // Restart on the modes it is already running, so unwedging never silently relocates a session.
+  // Both halves, explicitly. Sending only the prod list lets DEVSERVER_PROD_GROUPS re-decide every
+  // group that was not named — so a session deliberately started `--dev db` could come back up on
+  // the PRODUCTION database, with nothing but a mode summary scrolling past to say so.
+  const groups = Object.entries(session.envModes || {});
+  const prod = groups.filter(([, m]) => m === 'prod').map(([g]) => g).join(',');
+  // `m === 'dev'`, NOT `m !== 'prod'`. getStatus() also reports `base` — a group with no section
+  // for the chosen mode, which the resolver deliberately tolerates. Naming one on a flag turns that
+  // tolerated case into a throw, and this runs AFTER the purge, so the session is already down.
+  const dev = groups.filter(([, m]) => m === 'dev').map(([g]) => g).join(',');
+
+  console.log(`Stopping ${session.id} (${session.branch}) on port ${session.port}...`);
+  const stopped = await daemonRequest(`/sessions/${session.id}`, { method: 'DELETE' });
+  if (!stopped.ok) {
+    console.error('Error stopping session:', stopped.error || stopped.data?.error);
+    process.exit(1);
+  }
+
+  const purgeStart = Date.now();
+  let purged;
+  try {
+    purged = purgeDistDir(session.worktree, session.distDir);
+  } catch (err) {
+    console.error(`${err.message}\nThe session is stopped; start it again with: cli.mjs start ${session.worktree}`);
+    process.exit(1);
+  }
+  console.log(
+    purged.removed
+      ? `Purged ${purged.path} in ${((Date.now() - purgeStart) / 1000).toFixed(1)}s`
+      : `Nothing to purge at ${purged.path}`
+  );
+
+  const started = await daemonRequest('/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ worktree: session.worktree, prod, dev }),
+  });
+  if (!started.ok) {
+    console.error('Error restarting session:', started.error || started.data?.error);
+    // The build dir is already gone at this point; say how to get a server back.
+    console.error(`The session is stopped and its build dir was purged. Start it again with:`);
+    console.error(`  node .claude/skills/dev-server/cli.mjs start ${session.worktree}`);
+    process.exit(1);
+  }
+  const fresh = started.data?.session ?? started.data;
+  const newId = fresh?.id ?? session.id;
+  console.log(`Restarted as ${newId} on port ${fresh?.port ?? session.port}.`);
+
+  const readyStart = Date.now();
+  const READY_TIMEOUT_MS = 180_000;
+  for (;;) {
+    const check = await daemonRequest(`/sessions/${newId}`);
+    const state = check.data?.session ?? check.data;
+    if (state?.ready) {
+      console.log(`Ready in ${((Date.now() - readyStart) / 1000).toFixed(1)}s.`);
+      break;
+    }
+    if (state?.status === 'crashed' || state?.status === 'error') {
+      console.error(`Session ${state.status}. Read: cli.mjs logs ${newId}`);
+      process.exit(1);
+    }
+    if (Date.now() - readyStart > READY_TIMEOUT_MS) {
+      console.error(`Not ready after ${READY_TIMEOUT_MS / 1000}s. Read: cli.mjs logs ${newId}`);
+      process.exit(1);
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+
+  console.log('');
+  const result = await probe({
+    route,
+    port: fresh?.port ?? session.port,
+    sessionId: newId,
+    worktree: session.worktree,
+    daemonRequest,
+  });
+  console.log(formatProbe(result));
+  process.exit(['ok', 'cold'].includes(result.verdict) ? 0 : 1);
+}
+
 async function cmdWorktree(rest) {
   const [action, ...tail] = rest;
   const { cmdStale, cmdRemove } = await import('./scripts/worktree.mjs');
@@ -581,6 +795,12 @@ switch (command) {
   case 'test':
     cmdTest(arg1, args.slice(2));
     break;
+  case 'probe':
+    cmdProbe(args.slice(1));
+    break;
+  case 'unwedge':
+    cmdUnwedge(args.slice(1));
+    break;
   case 'wt':
     cmdWorktree(args.slice(1));
     break;
@@ -594,6 +814,11 @@ Commands:
                       Start a dev server (default: current directory).
                       Every env group defaults to dev; --prod moves named groups
                       (or "all") to production for this start only. See SKILL.md.
+  probe [route]       Request a route with a hard timeout and say WHY it was slow.
+                      Never hangs. Use this instead of curl against a dev port.
+                      [--session id] [--port n] [--timeout ms] [--json]
+  unwedge <session>   Stop, delete the build dir, restart, wait for ready, re-probe.
+                      ~45s of downtime — only after probe says WEDGED.
   logs [session-id]   Get logs for a session
   tail [session-id]   Tail logs continuously
   stop <session-id>   Stop a session

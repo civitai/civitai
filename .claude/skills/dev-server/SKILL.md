@@ -31,10 +31,120 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 
 **Checking if server is ready:** After starting, poll the session status to check `ready: true`. The daemon marks sessions ready either via configured health check endpoint or by detecting "Ready" patterns in logs.
 
+## Never curl a dev port — `probe` instead
+
+```bash
+node .claude/skills/dev-server/cli.mjs probe /home
+```
+
+A dev server that has stopped serving properly does not refuse connections. It accepts and answers
+slowly, or accepts and never answers — so an unbounded `curl` sits there until the 300s tool timeout
+and returns nothing you can act on. Chaining a few in one shell call is how ten minutes disappear.
+A `PreToolUse` hook blocks unbounded requests at dev ports for this reason; `--max-time` is the
+escape hatch if you really want curl.
+
+`probe` requests the route twice with a hard budget, reads the session's own log for those two
+requests, and returns a verdict with the matching remedy. It always terminates.
+
+```
+UPSTREAM-SLOW  http://localhost:3000/home
+  UPSTREAM-SLOW — the framework is fine; time is spent in application code (database, tunnel, cache).
+  first : 200 in 8.10s  [next.js 30ms | application-code 8.10s]
+  repeat: 200 in 8.10s  [next.js 31ms | application-code 8.10s]
+  -> Not a cache problem — do NOT purge, it will not help. [...]
+```
+
+Exit code is 0 for `ok`/`cold` and 1 for everything else, so it substitutes for a curl in a check.
+
+Two verdicts worth knowing before you meet them. **`stopped-answering`** means the first request was
+served and the second was not — the process is up and something inside it has parked, so starting
+another session is the wrong move and the remedy says so. And a probe may add
+`note: more than one request to this route in the window`: `probe` tags its own request with a
+`?__probe=` nonce so it can find its own log line, but a route that already has a query string —
+and every `/api/trpc/*` route, whose handlers parse their query — falls back to matching on the
+path, where a busy session's traffic is genuinely indistinguishable from ours. The note means the
+reading may not be about your request, which is different from the server declining to explain
+itself.
+
+### Why timing alone cannot tell you what is wrong
+
+Two different failures produce the **same** shape — a page that takes ~8s, warm and cold alike, with
+a 200 and nothing in the log that reads as an error. Health checks keep passing through both, because
+`/api/health` is a cheap already-compiled API route and neither failure touches what it does.
+
+Next already separates them on every request line it prints:
+
+```
+ GET /home 200 in 8.1s (next.js: 39ms, proxy.ts: 8ms, application-code: 8.1s)
+```
+
+| Reading | Meaning | Remedy |
+|---|---|---|
+| `next.js` dominates on a **repeat** hit | The build cache is not serving; the framework redoes the work every time | `unwedge` — purge and restart |
+| `application-code` dominates | The framework is fine; the time is downstream (database, tunnel, cache) | Fix the upstream. **Purging costs 45s and changes nothing** |
+| Repeat is fast | Cold compile, working as designed | Nothing |
+
+**Two failures are FAST, and both are checked before any timing rule**, because a verdict of `ok` on
+a broken page is worse than no verdict. A stale `node_modules` after a merge or checkout 500s in
+milliseconds (`STALE-DEPS` — the fix is `pnpm install`, and purging the build cache installs
+nothing); and the settings self-fetch case below renders a degraded page quickly.
+
+**One case defeats the split, and `probe` checks for it first.** `_app` self-fetches
+`/api/user/settings` on every SSR render and aborts at `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s default).
+That abort is billed to *application-code*, so a server that cannot answer its own API route reads as
+"slow database" on the split alone. The greppable marker `[_app] settings bootstrap fetch failed`
+outranks the timing, and the verdict is `SELF-FETCH-FAILING`; `probe` then requests that endpoint
+directly and tells you which of the two causes you have — a self-fetch aimed at the wrong port
+(`NEXTAUTH_URL_INTERNAL` vs the session's port) or an endpoint that genuinely never answers.
+
+The tell that separates it from any slow dependency: **the page time is a constant equal to a
+configured timeout**, identical warm and cold. A slow dependency varies; a timeout does not. Measured
+2026-08-16 — moving `APP_SETTINGS_FETCH_TIMEOUT_MS` from 8000 to 30000 moved `/home` from 8.1s to
+30.1s in lockstep, and purging `.next` did not help at either value.
+
+Worth knowing when you read that verdict: `updateEnvUrlsForPort` returns early on port 3000, so a
+primary session uses `NEXTAUTH_URL_INTERNAL` exactly as the `.env` writes it while every secondary
+session gets it rewritten to its own port. The value is correct today — this is only why the two
+kinds of session can differ, and why the verdict asks you to compare it against the session's port.
+
+This is why "flat 8s means purge `.next`" is wrong as a rule and cost real time as a habit: measured
+on this repo on 2026-08-16, a flat 8.1s `/home` was **30ms of framework and 8.1s of application
+code** — a purge would have deleted several GB and fixed nothing. Read the split, not the total.
+
+When the split is unavailable (log buffer overran, no session), the verdict is `slow-unclassified`
+and it says so rather than guessing.
+
+### `unwedge` — only after a `WEDGED` verdict
+
+```bash
+node .claude/skills/dev-server/cli.mjs unwedge <session-id>
+```
+
+Stops the session, deletes its build dir, restarts on the same env modes, waits for ready, re-probes,
+and prints each timing. It costs a guaranteed ~45s rebuild, so it is not automatic and it does not
+guess a session: name the id, because the session you did not name is usually the one someone is
+looking at.
+
+Self-tests — run all three after touching `probe.mjs` or the hook:
+
+```bash
+node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
+node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
+node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
+```
+
+The integration one exists because the unit one cannot see the bug that matters most. `runSample`
+once dropped `missingModule` on the way to `classify`, so the whole `stale-deps` verdict was dead
+code — and every unit case for it passed, because they hand-built the field the shipping code never
+produced. **Reintroduce that bug today and the unit test is still green while the integration test
+fails.** Anything that adds a new signal belongs in the integration file, not just the unit one.
+
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
+| `probe [route]` | Bounded request + verdict (`ok`/`cold`/`wedged`/`stale-deps`/`upstream-slow`/`proxy-slow`/`error-status`/`self-fetch-failing`). Use instead of curl |
+| `unwedge <session-id>` | Stop, purge the build dir, restart, wait, re-probe (~45s) |
 | `status` | Check daemon status and list all sessions |
 | `list` | List all dev sessions |
 | `start [worktree] [--prod a,b] [--dev a,b]` | Start dev server (default: current directory) |

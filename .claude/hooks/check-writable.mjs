@@ -75,6 +75,42 @@ function isUnscoped(target) {
   return segments.length < required;
 }
 
+// A dev server that has stopped answering does not refuse connections — it accepts and never
+// replies, so an unbounded request against it hangs until the 300s tool timeout and the agent
+// learns nothing. Chaining several in one call multiplies that.
+//
+// This ASKS rather than blocks. A hard block was tried and is wrong: the matcher reads text, so it
+// cannot reliably tell a request from a shell comment, a note being written down, or a production
+// URL carrying a dev port in a query parameter — and `$(curl ...)` defeats it anyway. A guard with
+// those false positives and no override is one people route around, and the routes around it are
+// shorter than the compliant path. Asking keeps the nudge and costs a keystroke when it is wrong.
+const DEV_PORTS = /(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?):(?:30\d\d|51[67]\d|9444)\b/i;
+
+// Any of curl's, wget's or PowerShell's own timeout flags, including `-m5` and bundled shorts.
+// `-T` is wget's timeout but curl's --upload-file, and `-m` is curl's --max-time but wget's
+// --mirror, so the ambiguous shorts are scoped to the tool that means "timeout" by them.
+const BOUNDED_LONG = /--max-time|--connect-timeout|--timeout|-TimeoutSec/i;
+const BOUNDED_CURL = /(?:^|\s)-[a-zA-Z]*m\s*\d/i;
+const BOUNDED_WGET = /(?:^|\s)-T\s*\d/i;
+const isBounded = (seg) =>
+  BOUNDED_LONG.test(seg) ||
+  (/(?:^|[;&|`]|\$\()\s*(?:\w+=\S*\s+)*(?:sudo\s+)?curl\b/i.test(seg) && BOUNDED_CURL.test(seg)) ||
+  (/(?:^|[;&|`]|\$\()\s*(?:\w+=\S*\s+)*(?:sudo\s+)?wget\b/i.test(seg) && BOUNDED_WGET.test(seg));
+
+// Command position only: start of a segment, after a pipe, or inside `$(`/backticks.
+const REQUEST_TOOL =
+  /(?:^|[;&|`]|\$\()\s*(?:\w+=\S*\s+)*(?:sudo\s+)?(?:curl|wget|iwr|Invoke-WebRequest|Invoke-RestMethod)(?:\s|$)/i;
+
+export function unboundedDevRequest(command) {
+  return command
+    .split(/[;&|\n]+/)
+    .map((seg) => seg.trim())
+    .filter((seg) => seg && !seg.startsWith('#'))
+    .filter((seg) => DEV_PORTS.test(seg.replace(/[?&][^\s"']*/g, '')))
+    .filter((seg) => REQUEST_TOOL.test(seg))
+    .filter((seg) => !isBounded(seg));
+}
+
 // Patterns that would kill Claude Code or critical processes - BLOCK OUTRIGHT
 const DANGEROUS_PATTERNS = [
   { pattern: /taskkill\s+\/\/F\s+\/\/IM\s+node\.exe/i, reason: 'This would kill all Node.js processes including Claude Code itself' },
@@ -97,6 +133,14 @@ const DANGEROUS_PATTERNS = [
 
 // Expensive or historically destructive, but sometimes legitimate — confirm rather than block.
 const GUARDED_PATTERNS = [
+  {
+    check: (command) => unboundedDevRequest(command).length > 0,
+    reason:
+      'An unbounded request at a local dev port hangs for the full 300s tool timeout when the ' +
+      'server is unhealthy, and tells you nothing about why. Prefer: node ' +
+      '.claude/skills/dev-server/cli.mjs probe <route> — it bounds the request and reports WHY it ' +
+      'was slow, with the matching remedy. Or add --max-time <seconds>.',
+  },
   {
     pattern: /svelte-kit\s+sync|pnpm\s+(run\s+)?check\b/i,
     reason:
@@ -126,7 +170,10 @@ stdin.on('end', () => {
     // describes a blocked command is not an attempt to run it, and blocking those makes the incident
     // impossible to write down.
     const command = rawCommand
-      .replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?^\1$/gm, ' ')
+      // `^[ \t]*\1[ \t]*$`, not `^\1$`: the `<<-` form exists precisely to allow an indented
+      // terminator, and a heredoc written inside an indented block has one too. Requiring column 0
+      // leaked those bodies into the matcher, so writing the incident down got flagged.
+      .replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?^[ \t]*\1[ \t]*$/gm, ' ')
       .replace(/-m\s+(['"])[\s\S]*?\1/g, ' ');
 
     // Check for dangerous commands that should be blocked outright (no confirmation possible)
