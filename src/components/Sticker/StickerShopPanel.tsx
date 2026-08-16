@@ -2,7 +2,7 @@ import {
   CloseButton,
   Group,
   HoverCard,
-  Loader,
+  Skeleton,
   ScrollArea,
   Text,
   TextInput,
@@ -21,6 +21,7 @@ import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefr
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { browseShopItems } from '~/components/Shop/shop-browse';
+import { STICKER_HOVER_CARD_WIDTH } from '~/components/Sticker/StickerPlacementHoverCard';
 import { StickerPriceBadge } from '~/components/Sticker/StickerPriceBadge';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
@@ -40,11 +41,10 @@ const SmartCreatorCard = dynamic(() =>
 );
 
 /**
- * Wide enough that the creator card's top row never wraps — the same 400 the
- * placed-sticker hover card uses, and for the same reason: below about 385 the
- * cosmetic badge drops to its own line.
+ * Enough to fill the two rows the shelf shows before it scrolls, at the ~96px
+ * tile the real ones use.
  */
-const HOVER_CARD_WIDTH = 400;
+const SKELETON_TILES = 12;
 
 /** The single page of the community catalog this panel holds client-side. */
 const COMMUNITY_PAGE_SIZE = 100;
@@ -58,7 +58,6 @@ type Tile = {
   title: string;
   unitAmount: number;
   data: StickerCosmetic['data'];
-  cosmeticData: unknown;
   viaShopUserId?: number;
   acceptsBlue: boolean;
   creatorUsername?: string | null;
@@ -115,13 +114,16 @@ export function StickerShopPanel({
   const query = search.trim().toLowerCase();
 
   const tiles = useMemo(() => {
-    // Most-sold first, matching the order the community half is already asking
-    // the server for, so the merged shelf has one order rather than two.
+    // Official first, then community, each most-sold first. Not interleaved:
+    // the two halves are separately paged catalogs with no comparable sort key
+    // — `meta.purchases` against a joined row count — so a merged ordering would
+    // be a made-up one.
     const official = browseShopItems({
       entries: (cosmeticShopSections ?? []).flatMap((section) => section.items),
       shopItemOf: (entry) => entry.shopItem,
       listedAtOf: (entry) => entry.createdAt,
-      filters: { cosmeticTypes: [CosmeticType.Sticker], modifier: 'notOwned' },
+      // `getShop` already filtered the types server-side; this is the owned rule.
+      filters: { modifier: 'notOwned' },
       sort: CosmeticShopSort.MostPopular,
       ownedCosmeticIds,
       wishlistedIds: new Set<number>(),
@@ -175,7 +177,6 @@ export function StickerShopPanel({
         title: entry.title,
         unitAmount: entry.unitAmount,
         data,
-        cosmeticData: entry.cosmeticData,
         viaShopUserId: entry.viaShopUserId,
         acceptsBlue: !!(entry.meta as CosmeticShopItemMeta | null)?.acceptsBlueBuzz,
         creatorUsername: entry.creatorUsername,
@@ -213,12 +214,16 @@ export function StickerShopPanel({
 
       <ScrollArea.Autosize mah={260} type="auto" scrollbarSize={6}>
         <div className="flex flex-wrap gap-2 p-2">
-          {isLoading && (
-            <div className="flex w-full items-center gap-2 p-2">
-              <Loader size="xs" />
-              <Text size="sm">Loading the shop…</Text>
-            </div>
-          )}
+          {/* Two rows of them, which is what the shelf holds before it scrolls —
+              so the panel opens at the height it will keep, instead of growing
+              under the cursor as the stickers land. */}
+          {isLoading &&
+            Array.from({ length: SKELETON_TILES }, (_, index) => (
+              <div key={index} className="flex w-24 shrink-0 flex-col items-center gap-1 p-2">
+                <Skeleton height={48} width={48} radius="sm" />
+                <Skeleton height={20} width={44} radius="xl" />
+              </div>
+            ))}
           {!isLoading && !tiles.length && (
             <Text size="sm" c="dimmed" p="xs">
               {search
@@ -228,12 +233,12 @@ export function StickerShopPanel({
           )}
 
           {tiles.map((tile) => {
-            const terms = stickerPurchaseTerms(tile.cosmeticData);
+            const terms = stickerPurchaseTerms(tile.data);
 
             return (
               <HoverCard
                 key={tile.shopItemId}
-                width={HOVER_CARD_WIDTH}
+                width={STICKER_HOVER_CARD_WIDTH}
                 withArrow
                 // Portalled, or the panel's own `overflow-hidden` and the
                 // scroll area inside it clip the card to the shelf — which on

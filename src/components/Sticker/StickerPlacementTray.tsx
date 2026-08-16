@@ -10,10 +10,8 @@ import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  pointerOverSurface,
-  useStickerPlacementDraftStore,
-} from '~/store/sticker-placement-draft.store';
+import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
+import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -38,9 +36,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
   const drafts = useStickerPlacementDraftStore((state) => state.drafts);
-  const begin = useStickerPlacementDraftStore((state) => state.begin);
   const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
-  const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
   const setTray = useStickerPlacementDraftStore((state) => state.setTray);
 
   // Bound to this bar's own image, not merely to "a session exists". The
@@ -78,7 +74,14 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // Asked for every owned sticker rather than only the spent ones, because the
   // list of spent ones changes as drafts are laid down — keying the query on it
   // would refetch mid-arrangement, and the answer is the same either way.
-  const ownedIds = useMemo(() => sticker.map((option) => option.id), [sticker]);
+  // Capped at what the schema accepts. Past it the whole query fails zod, and
+  // the failure is invisible — `offers` stays undefined and the pack option
+  // silently never appears for anyone with a large collection. Newest-obtained
+  // first, which is the order the row is already in.
+  const ownedIds = useMemo(
+    () => sticker.slice(0, STICKER_OFFER_LIMIT).map((option) => option.id),
+    [sticker]
+  );
   const { data: offers } = trpc.cosmetic.getStickerOffers.useQuery(
     { ids: ownedIds },
     { enabled: !!currentUser && !!ownedIds.length, staleTime: 60_000 }
@@ -105,6 +108,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
               unitAmount: listing.unitAmount,
               acceptsBlue: listing.acceptsBlue,
               uses: listing.uses,
+              viaShopUserId: listing.viaShopUserId ?? undefined,
             },
           }
         : {}),

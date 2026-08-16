@@ -39,7 +39,7 @@ const SmartCreatorCard = dynamic(() =>
  * preview caps at), so this is the narrowest value that still looks like the
  * card people know.
  */
-const HOVER_CARD_WIDTH = 400;
+export const STICKER_HOVER_CARD_WIDTH = 400;
 
 const A_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -99,7 +99,7 @@ export function StickerPlacementHoverCard({
 
   return (
     <HoverCard
-      width={HOVER_CARD_WIDTH}
+      width={STICKER_HOVER_CARD_WIDTH}
       shadow="sm"
       withArrow
       withinPortal

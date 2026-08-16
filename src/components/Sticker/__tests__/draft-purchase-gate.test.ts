@@ -7,10 +7,9 @@ import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.s
  * purchase button lives on the sticker while the thing that created it lives in
  * a panel across the screen.
  */
+// The shape the app actually constructs: the listing lives under `pack`.
 const purchase = {
-  shopItemId: 7,
-  unitAmount: 500,
-  acceptsBlue: false,
+  pack: { shopItemId: 7, unitAmount: 500, acceptsBlue: false },
   creatorUsername: 'maker',
 };
 
@@ -40,7 +39,10 @@ describe('draft purchase gate', () => {
     const store = useStickerPlacementDraftStore.getState();
     store.begin(42, { x: 0.3, y: 0.3 }, 0.4, purchase);
     store.begin(42, { x: 0.7, y: 0.7 }, 0.4, purchase);
-    store.begin(99, { x: 0.5, y: 0.5 }, 0.4, { ...purchase, shopItemId: 8 });
+    store.begin(99, { x: 0.5, y: 0.5 }, 0.4, {
+      ...purchase,
+      pack: { ...purchase.pack, shopItemId: 8 },
+    });
 
     useStickerPlacementDraftStore.getState().markPurchased(42);
 
@@ -51,6 +53,22 @@ describe('draft purchase gate', () => {
     ]);
     // A different sticker is a different purchase and stays gated.
     expect(remaining.find((draft) => draft.cosmeticId === 99)?.purchase).toBeDefined();
+  });
+
+  // One use funds one placement. Freeing every draft of the sticker would put a
+  // Place button on ones the server refuses at `assertHasUse` — a button that
+  // claims something was paid for when it was not.
+  it('frees only the draft that paid, when a single use was bought', () => {
+    const store = useStickerPlacementDraftStore.getState();
+    store.begin(42, { x: 0.3, y: 0.3 }, 0.4, { refill: true, perUse: 5 });
+    store.begin(42, { x: 0.7, y: 0.7 }, 0.4, { refill: true, perUse: 5 });
+    const [first, second] = drafts();
+
+    useStickerPlacementDraftStore.getState().markPurchased(42, first.id);
+
+    const after = drafts();
+    expect(after.find((draft) => draft.id === first.id)?.purchase).toBeUndefined();
+    expect(after.find((draft) => draft.id === second.id)?.purchase).toBeDefined();
   });
 
   it('keeps every other property of the draft it ungates', () => {

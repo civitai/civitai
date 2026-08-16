@@ -1,10 +1,9 @@
 import { Text } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { useMainBuzzAccountType } from '~/components/Buzz/useBuzz';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { getBuzzTypeDistribution } from '~/utils/buzz';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 /**
@@ -31,16 +30,9 @@ export function StickerPriceBadge({
   accountTypes: BuzzSpendType[];
   className?: string;
 }) {
-  const {
-    data: { accounts },
-  } = useQueryBuzz(accountTypes);
-
-  const distribution = getBuzzTypeDistribution({ accounts, buzzAmount: amount });
-  const payingType = (Object.entries(distribution.amt).reduce(
-    (max, [type, value]) => (value > (distribution.amt[max as BuzzSpendType] ?? 0) ? type : max),
-    Object.keys(distribution.amt)[0] ?? accountTypes[0]
-  ) ?? accountTypes[0]) as BuzzSpendType;
-  const config = useBuzzCurrencyConfig(payingType);
+  const config = useBuzzCurrencyConfig(
+    useMainBuzzAccountType(accountTypes, amount) ?? accountTypes[0]
+  );
 
   return (
     <div

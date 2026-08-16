@@ -9,6 +9,7 @@ const { mocks } = vi.hoisted(() => ({
     userFindUnique: vi.fn(),
     resaleFindUnique: vi.fn(),
     userCosmeticFindFirst: vi.fn(),
+    purchasesFindUnique: vi.fn(),
     purchasesCreate: vi.fn(),
     purchasesUpdate: vi.fn(),
     userCosmeticCreate: vi.fn(),
@@ -68,6 +69,9 @@ dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =
 );
 dbMock.dbWrite.userCosmetic.findFirst.mockImplementation((...args: unknown[]) =>
   (mocks.userCosmeticFindFirst as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopPurchases.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.purchasesFindUnique as (...a: unknown[]) => unknown)(...args)
 );
 dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation((...args: unknown[]) =>
   (mocks.purchasesUpdate as (...a: unknown[]) => unknown)(...args)
@@ -630,9 +634,14 @@ describe('purchaseCosmeticShopItem repeat purchases', () => {
 
   it('sells a sticker to someone who already owns a spent holding of it', async () => {
     mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
-    // The unlimited-holding lookup is the only `findFirst` a sticker makes now,
-    // and this buyer's holding is a finite one.
-    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    // 🔴 Answers by QUERY, not by call order. The buyer holds a spent (finite)
+    // row: the ownership lookup — which only the reverted code makes — must see
+    // it and throw, while the unlimited lookup this code makes finds nothing.
+    // Keyed on call order instead, the same mock passes against a revert,
+    // because for a sticker today there is exactly one `findFirst`.
+    mocks.userCosmeticFindFirst.mockImplementation(({ where }: { where: { remaining?: null } }) =>
+      Promise.resolve('remaining' in where ? null : { claimKey: 'held' })
+    );
 
     await purchaseCosmeticShopItem({
       userId: BUYER_ID,
@@ -644,6 +653,73 @@ describe('purchaseCosmeticShopItem repeat purchases', () => {
     // A second row, not an edit of the first: the claim key is the transaction
     // id, and `getStickerBalances` sums across holdings.
     expect(mocks.userCosmeticCreate).toHaveBeenCalled();
+  });
+
+  // Repeat purchases are what make a duplicate charge reachable at all: every
+  // other type is still refused by the ownership check.
+  it('refuses a replay of the same buying intent instead of charging twice', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.purchasesFindUnique.mockResolvedValue({ buzzTransactionId: 'seen-before' });
+
+    await expect(
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        stickersEnabled: true,
+        idempotencyKey: '11111111-1111-4111-8111-111111111111',
+      })
+    ).rejects.toThrow('already been completed');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('charges when the intent has not been seen before', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.purchasesFindUnique.mockResolvedValue(null);
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      stickersEnabled: true,
+      idempotencyKey: '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+    // The key IS the transaction id, which is what makes the replay above
+    // recognisable — a random one per attempt would never match.
+    expect(mocks.createMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toContain(
+      '22222222-2222-4222-8222-222222222222'
+    );
+  });
+
+  // The buyer pressed a button showing a number. A listing re-priced while a
+  // shop panel sat open must refuse rather than charge the new one silently.
+  it('refuses when the price moved since the button rendered', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ unitAmount: 9999 }));
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+
+    await expect(
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        expectedUnitAmount: PRICE,
+      })
+    ).rejects.toThrow('price changed');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('charges when the expected price still matches', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow());
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      expectedUnitAmount: PRICE,
+    });
+
+    expect(mocks.createMultiTx).toHaveBeenCalled();
   });
 
   it('refuses a second sale when the buyer already has unlimited uses', async () => {

@@ -53,7 +53,7 @@ export const cosmeticRouter = router({
   getStickerOffers: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getStickerCosmeticsSchema)
-    .query(({ input }) => getStickerOffers(input)),
+    .query(({ input, ctx }) => getStickerOffers({ ...input, viewerId: ctx.user.id })),
   // Topping up a sticker the user already owns, offered where they run out.
   // Money moves, so it matches the shop purchase's procedure: verified account,
   // no API keys.

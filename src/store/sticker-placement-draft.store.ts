@@ -144,11 +144,18 @@ interface StickerPlacementDraftStore {
     purchase?: DraftPurchase
   ) => void;
   /**
-   * The sticker has been bought. Clears the gate from EVERY draft of it, not
-   * just the one whose button was pressed: one purchase grants the sticker, so
-   * a second copy of it still asking to be bought would be selling it twice.
+   * The sticker has been paid for.
+   *
+   * Without a draft id this clears the gate from EVERY draft of that sticker,
+   * which is right for a pack: it grants the sticker itself, and a second copy
+   * still asking to be bought would be selling it twice.
+   *
+   * With one, only that draft is freed. That is the single-use purchase: it buys
+   * exactly one placement, and freeing its siblings would put a Place button on
+   * stickers the server refuses at `assertHasUse` — a button that says paid on
+   * something that was not.
    */
-  markPurchased: (cosmeticId: number) => void;
+  markPurchased: (cosmeticId: number, draftId?: string) => void;
   setInteraction: (interaction: StickerInteraction | null, pointerId?: number) => void;
   /**
    * Moves one draft by id rather than "the current one". A gesture outlives the
@@ -269,10 +276,10 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   setSurface: (element) => set({ surface: element }),
   setTray: (element) => set({ tray: element }),
 
-  markPurchased: (cosmeticId) =>
+  markPurchased: (cosmeticId, draftId) =>
     set((state) => ({
       drafts: state.drafts.map((draft) =>
-        draft.cosmeticId === cosmeticId && draft.purchase
+        draft.cosmeticId === cosmeticId && draft.purchase && (!draftId || draft.id === draftId)
           ? { ...draft, purchase: undefined }
           : draft
       ),

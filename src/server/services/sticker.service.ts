@@ -237,6 +237,8 @@ export type StickerOffer = {
     unitAmount: number;
     acceptsBlue: boolean;
     uses: number | null;
+    /** The storefront the sale is credited to, as the shop grids pass. */
+    viaShopUserId: number | null;
   } | null;
 };
 
@@ -246,23 +248,31 @@ export type StickerOffer = {
  *
  * Its own query rather than a wider `getSticker`, which resolves artwork on
  * every surface that renders a sticker — a comment thread would pay for a shop
- * lookup it never shows. Only the placement tray asks this, and only for the
- * stickers it is offering to refill.
+ * lookup it never shows.
  *
- * ⚠️ The rule for which listing counts is `purchaseStickerUses`'s, deliberately
- * duplicated in shape rather than in code because the two answer different
- * questions: that one asks whether a top-up is still authorised (a delisted
- * sticker's is), this one asks whether a NEW batch can be bought (it cannot).
- * A listing shown here that the purchase then refuses is worse than no price.
+ * ⚠️ Every refusal `purchaseCosmeticShopItem` makes has to be made here too, or
+ * the tray offers a price the press then rejects. That is why it takes the
+ * viewer: self-created, blocked and sold-out are answers about a person and a
+ * moment, not about a listing.
  */
-export async function getStickerOffers({ ids }: { ids: number[] }): Promise<StickerOffer[]> {
+export async function getStickerOffers({
+  ids,
+  viewerId,
+}: {
+  ids: number[];
+  viewerId: number;
+}): Promise<StickerOffer[]> {
   if (!ids.length) return [];
 
   const cosmetics = await dbRead.cosmetic.findMany({
     where: { id: { in: ids }, type: CosmeticType.Sticker },
-    select: { id: true, data: true, creator: { select: { username: true } } },
+    select: { id: true, data: true, createdById: true, creator: { select: { username: true } } },
   });
   if (!cosmetics.length) return [];
+
+  // Same block semantics as buying one outright, and for the same reason: a
+  // price offered here is a purchase the server would refuse.
+  const blockedPairIds = await getBlockedPairIds(viewerId);
 
   // `listed` as well as published: delisting stops new sales, which is exactly
   // what the pack option is.
@@ -277,7 +287,18 @@ export async function getStickerOffers({ ids }: { ids: number[] }): Promise<Stic
       ],
     },
     orderBy: { id: 'asc' },
-    select: { id: true, cosmeticId: true, unitAmount: true, meta: true, availableQuantity: true },
+    select: {
+      id: true,
+      cosmeticId: true,
+      unitAmount: true,
+      meta: true,
+      availableQuantity: true,
+      addedById: true,
+      // The purchase counts rows, not `meta.purchases` — that counter is written
+      // from a snapshot read and loses increments under concurrency, so a
+      // listing genuinely out of stock still reads as available through it.
+      _count: { select: { purchases: true } },
+    },
   });
 
   const byCosmetic = new Map<number, (typeof listings)[number]>();
@@ -290,19 +311,28 @@ export async function getStickerOffers({ ids }: { ids: number[] }): Promise<Stic
     const meta = (listing?.meta ?? {}) as CosmeticShopItemMeta;
     // A capped listing that has sold out is not on sale, whatever its row says.
     const soldOut =
-      listing?.availableQuantity != null && listing.availableQuantity - (meta.purchases ?? 0) <= 0;
+      listing?.availableQuantity != null &&
+      listing.availableQuantity - (listing._count?.purchases ?? 0) <= 0;
+    // The creator is granted their own sticker on approval, so the shop refuses
+    // to sell it to them; the block is refused in either direction, against both
+    // the maker and whoever listed it.
+    const refusedForViewer =
+      cosmetic.createdById === viewerId ||
+      (cosmetic.createdById != null && blockedPairIds.includes(cosmetic.createdById)) ||
+      (listing?.addedById != null && blockedPairIds.includes(listing.addedById));
 
     return {
       cosmeticId: cosmetic.id,
       pricePerUse: stickerPricePerUseFromCosmeticData(cosmetic.data),
       creatorUsername: cosmetic.creator?.username ?? null,
       listing:
-        listing && !soldOut
+        listing && !soldOut && !refusedForViewer
           ? {
               shopItemId: listing.id,
               unitAmount: listing.unitAmount,
               acceptsBlue: !!meta.acceptsBlueBuzz,
               uses: stickerUsesFromCosmeticData(cosmetic.data),
+              viaShopUserId: listing.addedById,
             }
           : null,
     };

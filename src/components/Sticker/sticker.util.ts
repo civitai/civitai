@@ -1,3 +1,4 @@
+import { uniqBy } from 'lodash-es';
 import { useMemo } from 'react';
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 import {
@@ -75,19 +76,10 @@ export function useOwnedSticker() {
       .filter((x) => !!x.slug && !!x.url)
       .sort((a, b) => obtainedTime(b.obtainedAt) - obtainedTime(a.obtainedAt));
 
-    // One tile per sticker, not per holding. The source is `UserCosmetic` rows,
-    // and buying a sticker you already own adds a row rather than replacing one
-    // — so a refill used to put a second, identical tile in the picker, and the
-    // balance under each was the whole balance, making it read as double what it
-    // was. Newest first, so the surviving entry is the most recent purchase.
-    const seen = new Set<number>();
-    const unique: typeof resolved = [];
-    for (const item of resolved) {
-      if (seen.has(item.id)) continue;
-      seen.add(item.id);
-      unique.push(item);
-    }
-    return unique;
+    // One tile per sticker, not per holding: buying a sticker you own adds a
+    // row, and each tile would then show the whole balance. Sorted newest-first
+    // above, so the survivor is the most recent purchase.
+    return uniqBy(resolved, 'id');
   }, [data?.sticker]);
 
   const bySlug = useMemo(() => {
@@ -97,6 +89,35 @@ export function useOwnedSticker() {
   }, [sticker]);
 
   return { sticker, bySlug, isLoading };
+}
+
+/**
+ * Buying more uses of a sticker, with the cache work that has to follow it.
+ *
+ * Shared because there are three surfaces that sell a top-up and one set of
+ * caches that go stale when one lands — a caller that forgets an invalidation
+ * leaves the picker calling a refilled sticker spent, and offering to sell it
+ * again.
+ */
+export function useBuyStickerUses({
+  onSuccess,
+  onError,
+}: {
+  onSuccess?: (result: { quantity: number; remaining: number | null }) => void;
+  onError?: (message: string) => void;
+} = {}) {
+  const queryUtils = trpc.useUtils();
+
+  return trpc.cosmetic.purchaseStickerUses.useMutation({
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryUtils.cosmetic.getStickerBalances.invalidate(),
+        queryUtils.user.getCosmetics.invalidate(),
+      ]);
+      onSuccess?.(result);
+    },
+    onError: (error) => onError?.(error.message),
+  });
 }
 
 /**

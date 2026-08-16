@@ -18,9 +18,16 @@ export const grantCosmeticsToUsersSchema = z.object({
   userIds: z.array(z.number()).min(1).max(100),
 });
 
+/**
+ * The cap on one sticker lookup. Exported so a caller can slice to it rather
+ * than discover it as a zod failure — which is silent on a query, and takes the
+ * whole answer with it.
+ */
+export const STICKER_OFFER_LIMIT = 100;
+
 export type GetStickerCosmeticsInput = z.infer<typeof getStickerCosmeticsSchema>;
 export const getStickerCosmeticsSchema = z.object({
-  ids: z.array(z.number().int().positive()).min(1).max(100),
+  ids: z.array(z.number().int().positive()).min(1).max(STICKER_OFFER_LIMIT),
 });
 
 // Buying more uses of a sticker already owned. Keyed on the cosmetic rather than
