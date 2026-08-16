@@ -613,3 +613,60 @@ describe('purchaseCosmeticShopItem sticker gate', () => {
     expect(mocks.createMultiTx).toHaveBeenCalled();
   });
 });
+
+// A sticker is spent, not worn: a purchase is a batch of uses, so someone out of
+// them is buying the same thing they bought the first time. Every other
+// single-ownership type stays refused — owning a second badge gets you nothing.
+describe('purchaseCosmeticShopItem repeat purchases', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+    mocks.userFindUnique.mockResolvedValue({ id: BUYER_ID });
+    mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([{ accountType: 'yellow', amount: PRICE }])
+    );
+  });
+
+  it('sells a sticker to someone who already owns a spent holding of it', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    // The unlimited-holding lookup is the only `findFirst` a sticker makes now,
+    // and this buyer's holding is a finite one.
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      stickersEnabled: true,
+    });
+
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+    // A second row, not an edit of the first: the claim key is the transaction
+    // id, and `getStickerBalances` sums across holdings.
+    expect(mocks.userCosmeticCreate).toHaveBeenCalled();
+  });
+
+  it('refuses a second sale when the buyer already has unlimited uses', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    mocks.userCosmeticFindFirst.mockResolvedValue({ id: 5 });
+
+    await expect(
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        stickersEnabled: true,
+      })
+    ).rejects.toThrow('unlimited uses');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a second badge', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow());
+    mocks.userCosmeticFindFirst.mockResolvedValue({ id: 9 });
+
+    await expect(
+      purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
+    ).rejects.toThrow('already own');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+});

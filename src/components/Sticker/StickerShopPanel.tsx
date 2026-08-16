@@ -1,6 +1,6 @@
 import {
   CloseButton,
-  Divider,
+  Group,
   HoverCard,
   Loader,
   ScrollArea,
@@ -10,12 +10,12 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconInfoCircle, IconSearch } from '@tabler/icons-react';
+import { IconInfoCircle, IconSearch, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
+import dynamic from 'next/dynamic';
 import { useMemo, useState } from 'react';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useQueryShop } from '~/components/CosmeticShop/cosmetic-shop.util';
-import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { useQueryCommunityCosmetics } from '~/components/CreatorShop/creator-shop.util';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
@@ -31,6 +31,20 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
+
+// Loaded with the hover, not with the shelf. The creator card drags in profile
+// cosmetics, live metrics and edge media, and the panel renders dozens of tiles
+// whose cards nobody opens. Same reason the placed-sticker card defers it.
+const SmartCreatorCard = dynamic(() =>
+  import('~/components/CreatorCard/CreatorCard').then((m) => m.SmartCreatorCard)
+);
+
+/**
+ * Wide enough that the creator card's top row never wraps — the same 400 the
+ * placed-sticker hover card uses, and for the same reason: below about 385 the
+ * cosmetic badge drops to its own line.
+ */
+const HOVER_CARD_WIDTH = 400;
 
 /** The single page of the community catalog this panel holds client-side. */
 const COMMUNITY_PAGE_SIZE = 100;
@@ -219,10 +233,15 @@ export function StickerShopPanel({
             return (
               <HoverCard
                 key={tile.shopItemId}
-                width={300}
+                width={HOVER_CARD_WIDTH}
                 withArrow
+                // Portalled, or the panel's own `overflow-hidden` and the
+                // scroll area inside it clip the card to the shelf — which on
+                // the top row cut off everything but the title.
+                withinPortal
                 openDelay={200}
                 position="top"
+                offset={4}
                 shadow="sm"
               >
                 <HoverCard.Target>
@@ -267,28 +286,32 @@ export function StickerShopPanel({
                     />
                   </button>
                 </HoverCard.Target>
-                <HoverCard.Dropdown p="xs">
-                  <Text size="sm" fw={600} lineClamp={2}>
-                    {tile.title}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {numberWithCommas(tile.unitAmount)} Buzz · {terms.usesLabel}
-                    {terms.extraUseLabel ? ` · ${terms.extraUseLabel}` : ''}
-                  </Text>
-                  <Divider my="xs" />
-                  {tile.description ? (
-                    <div className="text-xs">
+                {/* Same shape as the card you get hovering a placed sticker:
+                    a bordered title row, the words in the middle, and the
+                    creator card edge to edge at the bottom carrying its own
+                    padding. */}
+                <HoverCard.Dropdown p={0}>
+                  <div className="border-b border-gray-3 px-3 py-2 dark:border-dark-4">
+                    <Group gap={6} wrap="nowrap">
+                      <IconSticker size={14} className="shrink-0 text-yellow-6" />
+                      <Text size="sm" fw={600} lineClamp={1}>
+                        {tile.title}
+                      </Text>
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      {numberWithCommas(tile.unitAmount)} Buzz · {terms.usesLabel}
+                      {terms.extraUseLabel ? ` · ${terms.extraUseLabel}` : ''}
+                    </Text>
+                  </div>
+
+                  {tile.description && (
+                    <div className="border-b border-gray-3 px-3 py-2 text-sm dark:border-dark-4">
                       <RenderHtml html={tile.description} />
                     </div>
-                  ) : (
-                    <Text size="xs" c="dimmed" fs="italic">
-                      No description.
-                    </Text>
                   )}
+
                   {tile.creator && (
-                    <div className="mt-2">
-                      <CreatorCardSimple user={tile.creator} withBorder p={0} />
-                    </div>
+                    <SmartCreatorCard user={tile.creator} withActions={false} withBorder={false} />
                   )}
                 </HoverCard.Dropdown>
               </HoverCard>

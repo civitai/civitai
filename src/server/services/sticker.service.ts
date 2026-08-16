@@ -28,6 +28,7 @@ import {
   STICKER_TOPUP_CLAIM_KEY,
   STICKER_TOPUP_MAX_QUANTITY,
   stickerPricePerUseFromCosmeticData,
+  stickerUsesFromCosmeticData,
 } from '~/shared/utils/sticker-token';
 
 /**
@@ -219,6 +220,94 @@ export type StickerUsageRow = {
   entityType: string;
   entityId: number;
 };
+
+export type StickerOffer = {
+  cosmeticId: number;
+  /** What one more use costs, or null where the sticker sells none. */
+  pricePerUse: number | null;
+  /** Who made it — the party a purchase of either kind pays. */
+  creatorUsername: string | null;
+  /**
+   * The listing to buy another batch through, when one is on sale right now.
+   * Null covers both "never listed on its own" and "no longer for sale", which
+   * are the same thing to a buyer looking at the price.
+   */
+  listing: {
+    shopItemId: number;
+    unitAmount: number;
+    acceptsBlue: boolean;
+    uses: number | null;
+  } | null;
+};
+
+/**
+ * What a sticker costs today, both ways: one more use, or another batch of them
+ * through its listing.
+ *
+ * Its own query rather than a wider `getSticker`, which resolves artwork on
+ * every surface that renders a sticker — a comment thread would pay for a shop
+ * lookup it never shows. Only the placement tray asks this, and only for the
+ * stickers it is offering to refill.
+ *
+ * ⚠️ The rule for which listing counts is `purchaseStickerUses`'s, deliberately
+ * duplicated in shape rather than in code because the two answer different
+ * questions: that one asks whether a top-up is still authorised (a delisted
+ * sticker's is), this one asks whether a NEW batch can be bought (it cannot).
+ * A listing shown here that the purchase then refuses is worse than no price.
+ */
+export async function getStickerOffers({ ids }: { ids: number[] }): Promise<StickerOffer[]> {
+  if (!ids.length) return [];
+
+  const cosmetics = await dbRead.cosmetic.findMany({
+    where: { id: { in: ids }, type: CosmeticType.Sticker },
+    select: { id: true, data: true, creator: { select: { username: true } } },
+  });
+  if (!cosmetics.length) return [];
+
+  // `listed` as well as published: delisting stops new sales, which is exactly
+  // what the pack option is.
+  const listings = await dbRead.cosmeticShopItem.findMany({
+    where: {
+      cosmeticId: { in: cosmetics.map((c) => c.id) },
+      status: CosmeticShopItemStatus.Published,
+      listed: true,
+      AND: [
+        { OR: [{ availableFrom: null }, { availableFrom: { lte: new Date() } }] },
+        { OR: [{ availableTo: null }, { availableTo: { gte: new Date() } }] },
+      ],
+    },
+    orderBy: { id: 'asc' },
+    select: { id: true, cosmeticId: true, unitAmount: true, meta: true, availableQuantity: true },
+  });
+
+  const byCosmetic = new Map<number, (typeof listings)[number]>();
+  for (const listing of listings)
+    if (listing.cosmeticId != null && !byCosmetic.has(listing.cosmeticId))
+      byCosmetic.set(listing.cosmeticId, listing);
+
+  return cosmetics.map((cosmetic) => {
+    const listing = byCosmetic.get(cosmetic.id);
+    const meta = (listing?.meta ?? {}) as CosmeticShopItemMeta;
+    // A capped listing that has sold out is not on sale, whatever its row says.
+    const soldOut =
+      listing?.availableQuantity != null && listing.availableQuantity - (meta.purchases ?? 0) <= 0;
+
+    return {
+      cosmeticId: cosmetic.id,
+      pricePerUse: stickerPricePerUseFromCosmeticData(cosmetic.data),
+      creatorUsername: cosmetic.creator?.username ?? null,
+      listing:
+        listing && !soldOut
+          ? {
+              shopItemId: listing.id,
+              unitAmount: listing.unitAmount,
+              acceptsBlue: !!meta.acceptsBlueBuzz,
+              uses: stickerUsesFromCosmeticData(cosmetic.data),
+            }
+          : null,
+    };
+  });
+}
 
 /**
  * Buys N additional uses of a sticker the way the picker offers them: at the

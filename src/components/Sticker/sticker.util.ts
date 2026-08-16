@@ -62,7 +62,7 @@ export function useOwnedSticker() {
 
   const sticker = useMemo(() => {
     const owned = data?.sticker ?? [];
-    return owned
+    const resolved = owned
       .map(({ id, name, data: stickerData, obtainedAt }) => ({
         id,
         name,
@@ -74,6 +74,20 @@ export function useOwnedSticker() {
       }))
       .filter((x) => !!x.slug && !!x.url)
       .sort((a, b) => obtainedTime(b.obtainedAt) - obtainedTime(a.obtainedAt));
+
+    // One tile per sticker, not per holding. The source is `UserCosmetic` rows,
+    // and buying a sticker you already own adds a row rather than replacing one
+    // — so a refill used to put a second, identical tile in the picker, and the
+    // balance under each was the whole balance, making it read as double what it
+    // was. Newest first, so the surviving entry is the most recent purchase.
+    const seen = new Set<number>();
+    const unique: typeof resolved = [];
+    for (const item of resolved) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      unique.push(item);
+    }
+    return unique;
   }, [data?.sticker]);
 
   const bySlug = useMemo(() => {

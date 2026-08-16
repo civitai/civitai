@@ -1,7 +1,7 @@
 import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
@@ -73,6 +73,45 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // below, because the pickup gesture is a hook and cannot be conditional.
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
   const { grab, dragging } = useStickerDragOut(maxScale);
+
+  // Asked for every owned sticker rather than only the spent ones, because the
+  // list of spent ones changes as drafts are laid down — keying the query on it
+  // would refetch mid-arrangement, and the answer is the same either way.
+  const ownedIds = useMemo(() => sticker.map((option) => option.id), [sticker]);
+  const { data: offers } = trpc.cosmetic.getStickerOffers.useQuery(
+    { ids: ownedIds },
+    { enabled: !!currentUser && !!ownedIds.length, staleTime: 60_000 }
+  );
+  /**
+   * What a spent sticker's draft may be refilled with. The listing is offered
+   * only while it is genuinely on sale — a delisted or sold-out one would show a
+   * price the purchase then refuses.
+   *
+   * `pricePerUse` falls back to the owned payload's copy so the single-use price
+   * is there on the first frame, before the offers query lands.
+   */
+  const refillOffer = (cosmeticId: number, ownedPricePerUse?: number) => {
+    const offer = offers?.find((entry) => entry.cosmeticId === cosmeticId);
+    const listing = offer?.listing;
+
+    return {
+      refill: true,
+      perUse: offer?.pricePerUse ?? ownedPricePerUse,
+      ...(listing
+        ? {
+            pack: {
+              shopItemId: listing.shopItemId,
+              unitAmount: listing.unitAmount,
+              acceptsBlue: listing.acceptsBlue,
+              uses: listing.uses,
+            },
+          }
+        : {}),
+      // `undefined` until the offers land, which shows no attribution rather
+      // than crediting the wrong party while it is unknown.
+      creatorUsername: offer ? offer.creatorUsername : undefined,
+    };
+  };
 
   if (!showing) return null;
 
@@ -167,11 +206,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                     // buying one from the shop, and the same gesture.
                     onPointerDown={grab(
                       option.id,
-                      // No `creatorUsername`: the owned-sticker payload does
-                      // not carry one, and `undefined` here means "unknown",
-                      // which shows no attribution line rather than crediting
-                      // the wrong party.
-                      exhausted ? { perUse: option.pricePerUse } : undefined
+                      exhausted ? refillOffer(option.id, option.pricePerUse) : undefined
                     )}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',

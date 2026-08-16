@@ -25,6 +25,8 @@ export type DraftPurchase = {
     shopItemId: number;
     unitAmount: number;
     acceptsBlue: boolean;
+    /** How many uses it comes with; null is unlimited, undefined not known here. */
+    uses?: number | null;
     /** Attributes the sale to the storefront it came from, as the shop grids do. */
     viaShopUserId?: number;
   };
@@ -34,6 +36,13 @@ export type DraftPurchase = {
    * before per-use pricing existed has no price to charge.
    */
   perUse?: number;
+  /**
+   * Whether this is a refill of a sticker already owned rather than a first
+   * purchase. Decides what the button calls itself, which `pack` alone cannot:
+   * a sticker that sells no uses at all is refillable only by the pack, and
+   * would otherwise offer to sell itself to someone who owns it.
+   */
+  refill?: boolean;
   /** Who made the sticker, for the "this goes to" line on the purchase button. */
   creatorUsername?: string | null;
 };

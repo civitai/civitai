@@ -858,12 +858,18 @@ export const purchaseCosmeticShopItem = async ({
 
   const singleCosmeticId = shopItem.cosmeticId;
   const singleCosmetic = shopItem.cosmetic;
+  // Stickers are deliberately NOT here. The others are worn — owning a second
+  // badge gets you nothing, so a repeat purchase is a mistake to refuse. A
+  // sticker is spent: a purchase is a batch of uses, and someone out of them is
+  // buying the same thing they bought the first time. Each purchase writes its
+  // own `UserCosmetic` row (the claim key is the transaction id, so they cannot
+  // collide) and `getStickerBalances` sums across holdings, so the balances add
+  // up without anything else changing.
   const onlySupportsSinglePurchase =
     shopItem.cosmetic.type == CosmeticType.Badge ||
     shopItem.cosmetic.type == CosmeticType.NamePlate ||
     shopItem.cosmetic.type == CosmeticType.ProfileBackground ||
-    shopItem.cosmetic.type == CosmeticType.ProfileDecoration ||
-    shopItem.cosmetic.type == CosmeticType.Sticker;
+    shopItem.cosmetic.type == CosmeticType.ProfileDecoration;
 
   if (onlySupportsSinglePurchase) {
     // Confirm the user doesn't own it already:
@@ -877,6 +883,18 @@ export const purchaseCosmeticShopItem = async ({
     if (userCosmetic) {
       throw new Error('You already own this cosmetic');
     }
+  }
+
+  // A repeat sticker purchase buys uses, so there has to be a balance for it to
+  // add to. An unlimited holding is inexhaustible — charging for more would sell
+  // a balance that can never be spent, the same refusal `purchaseStickerUses`
+  // makes for the same reason.
+  if (shopItem.cosmetic.type === CosmeticType.Sticker) {
+    const unlimited = await dbWrite.userCosmetic.findFirst({
+      where: { userId, cosmeticId: singleCosmeticId, remaining: null },
+      select: { claimKey: true },
+    });
+    if (unlimited) throw new Error('You already have unlimited uses of this sticker');
   }
 
   const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;

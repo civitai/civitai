@@ -15,7 +15,11 @@ import {
   revokeCosmeticsFromUsers,
   unequipCosmetic,
 } from '~/server/services/cosmetic.service';
-import { getStickerBalances, purchaseStickerUses } from '~/server/services/sticker.service';
+import {
+  getStickerBalances,
+  getStickerOffers,
+  purchaseStickerUses,
+} from '~/server/services/sticker.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import {
   moderatorProcedure,
@@ -44,6 +48,12 @@ export const cosmeticRouter = router({
   getStickerBalances: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .query(({ ctx }) => getStickerBalances(ctx.user.id)),
+  // What refilling a sticker costs, both ways: one more use, or another batch
+  // through its listing where one is still on sale.
+  getStickerOffers: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getStickerCosmeticsSchema)
+    .query(({ input }) => getStickerOffers(input)),
   // Topping up a sticker the user already owns, offered where they run out.
   // Money moves, so it matches the shop purchase's procedure: verified account,
   // no API keys.

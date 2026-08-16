@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Popover,
+  SegmentedControl,
   Slider,
   Text,
   Textarea,
@@ -190,6 +191,19 @@ export function DraftSticker({
   const move = useStickerPlacementDraftStore((state) => state.move);
   const place = useCreateStickerPlacement(draft.id);
   const spendTypes = useAvailableBuzz();
+
+  // Which of the two refill prices is being offered. Defaults to the single
+  // use: it is the cheaper of the two and exactly what placing this draft
+  // spends, so the larger commitment is the one you have to ask for.
+  const [buyMode, setBuyMode] = useState<'use' | 'pack'>('use');
+  const canBuyUse = draft.purchase?.perUse != null;
+  const canBuyPack = !!draft.purchase?.pack;
+  const offersBoth = canBuyUse && canBuyPack;
+  // A first purchase has no per-use option at all — you cannot top up a sticker
+  // you do not own — so the toggle's value only decides anything when both are
+  // open.
+  const effectiveMode = offersBoth ? buyMode : canBuyPack ? 'pack' : 'use';
+  const packUses = draft.purchase?.pack?.uses;
 
   // Local to the draft rather than in the store: it is written once, read once
   // at purchase, and putting it in the store would make every keystroke a
@@ -711,13 +725,32 @@ export function DraftSticker({
         {/* Bought before it can be placed, and arranged before either. Dragging
             it out first is the point: you see what it looks like where you want
             it, and only then decide it is worth two payments. */}
-        {draft.purchase?.pack ? (
+        {/* Both ways to pay for a spent sticker, where both are open. One use is
+            what placing this draft actually costs; the pack is the listing's own
+            price, offered only while it is genuinely on sale. */}
+        {offersBoth && (
+          <SegmentedControl
+            size="xs"
+            radius="xl"
+            value={buyMode}
+            onChange={(value) => setBuyMode(value as 'use' | 'pack')}
+            data={[
+              { label: '1 use', value: 'use' },
+              {
+                label: packUses == null ? 'Pack' : `${numberWithCommas(packUses)} uses`,
+                value: 'pack',
+              },
+            ]}
+          />
+        )}
+
+        {draft.purchase && effectiveMode === 'pack' && draft.purchase.pack ? (
           <BuzzTransactionButton
             size="sm"
             style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
             buzzAmount={draft.purchase.pack.unitAmount}
             accountTypes={draft.purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
-            label="Purchase sticker"
+            label={draft.purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
             loading={purchasingShopItem}
             onPerformTransaction={buySticker}
           />
@@ -734,7 +767,11 @@ export function DraftSticker({
             // A sticker sold before per-use pricing existed has no price to
             // charge, and the listing price is not a stand-in for one. Says so
             // rather than offering a button that cannot work.
-            error={draft.purchase.perUse == null ? 'This sticker sells no extra uses' : undefined}
+            error={
+              draft.purchase.perUse == null
+                ? 'This sticker sells no extra uses, and it is not on sale right now'
+                : undefined
+            }
             onPerformTransaction={buyOneUse}
           />
         ) : (
