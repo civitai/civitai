@@ -1,7 +1,9 @@
-import { CloseButton, Group, ScrollArea, Text } from '@mantine/core';
+import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
@@ -37,6 +39,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // Being dragged, but not yet on the image. The only feedback during that
   // stretch, since nothing is drawn on the image until the pointer arrives.
   const [dragging, setDragging] = useState<number | null>(null);
+  const [shopping, setShopping] = useState(false);
   const endGrab = useRef<(() => void) | null>(null);
   const trayRef = useRef<HTMLDivElement>(null);
 
@@ -65,7 +68,12 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // the target alone: a panel that has been put away is not an obstacle the buy
   // button should still be avoiding.
   useEffect(() => {
-    if (!showing) return;
+    if (!showing) {
+      // The panel is state, not markup: without this it survives the tray being
+      // put away and is still open on the next image opened.
+      setShopping(false);
+      return;
+    }
     setTray(trayRef.current);
     return () => setTray(null);
   }, [showing, setTray]);
@@ -170,80 +178,138 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     // at full width rather than at the visible panel's `max-w-xl`: this root
     // spans the viewport and takes the clicks across all of it.
     <div ref={trayRef} className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
-      <div className="w-full max-w-xl overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
-        <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
-          <div className="flex-1">
-            <Text size="sm" fw={600}>
-              {instruction}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {price} Buzz + one use
-              {space?.mode === 'review' &&
-                ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
-            </Text>
-          </div>
-          <CloseButton
-            onClick={closeTray}
-            aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
+      <div className="flex w-full max-w-xl flex-col">
+        {/* Above the tray, not in place of it: the row of what you own is the
+            thing you are shopping to add to, so it stays visible while you buy. */}
+        {shopping && (
+          <StickerShopPanel
+            onClose={() => setShopping(false)}
+            onTopUp={(sticker) => {
+              setShopping(false);
+              setTopUp(sticker);
+            }}
           />
-        </div>
-
-        {topUp ? (
-          <div className="p-3">
-            <StickerTopUp
-              sticker={topUp}
-              onCancel={() => setTopUp(null)}
-              // Returns to the row rather than starting a draft. Convenient as
-              // that would be, it would put a sticker on the image with no drag
-              // — the one thing `grab` above promises cannot happen — and a
-              // purchase confirmation is not a placement gesture.
-              onPurchased={() => setTopUp(null)}
+        )}
+        <div className="overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
+          <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
+            <div className="flex-1">
+              <Text size="sm" fw={600}>
+                {instruction}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {price} Buzz + one use
+                {space?.mode === 'review' &&
+                  ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
+              </Text>
+            </div>
+            <CloseButton
+              onClick={closeTray}
+              aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
             />
           </div>
-        ) : (
-          <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
-            <Group gap="xs" wrap="nowrap" p="xs">
-              {isLoading && <Text size="sm">Loading your stickers…</Text>}
-              {!isLoading && !sticker.length && (
-                <Text size="sm" c="dimmed">
-                  You don&apos;t own any stickers yet.
-                </Text>
-              )}
-              {sticker.map((option) => {
-                const remaining = balanceFor(option.id);
-                const exhausted = remaining === 0;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    // An exhausted sticker opens the top-up instead of doing
-                    // nothing. It stays a pointer-down like the others so the two
-                    // outcomes of pressing a sticker share one gesture.
-                    onPointerDown={exhausted ? () => setTopUp(option) : grab(option.id)}
-                    className={clsx(
-                      'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
-                      drafts.some((draft) => draft.cosmeticId === option.id) ||
-                        dragging === option.id
-                        ? 'border-blue-5'
-                        : 'border-transparent',
-                      exhausted && 'opacity-40'
-                    )}
-                    style={{ touchAction: 'none' }}
-                  >
-                    <EdgeImage
-                      src={option.url}
-                      alt={`:${option.slug}:`}
-                      options={{ height: 96, anim: option.animated, optimized: true }}
-                      style={{ height: 48, width: 'auto', pointerEvents: 'none' }}
-                      draggable={false}
-                    />
-                    <Text size="10px">{remaining === null ? '∞' : remaining ?? '…'}</Text>
-                  </button>
-                );
-              })}
-            </Group>
-          </ScrollArea.Autosize>
-        )}
+
+          {topUp ? (
+            <div className="p-3">
+              <StickerTopUp
+                sticker={topUp}
+                onCancel={() => setTopUp(null)}
+                // Returns to the row rather than starting a draft. Convenient as
+                // that would be, it would put a sticker on the image with no drag
+                // — the one thing `grab` above promises cannot happen — and a
+                // purchase confirmation is not a placement gesture.
+                onPurchased={() => setTopUp(null)}
+              />
+            </div>
+          ) : (
+            <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
+              <Group gap="xs" wrap="nowrap" p="xs">
+                {isLoading && <Text size="sm">Loading your stickers…</Text>}
+                {/* Owning nothing is the one state where the plus is not an
+                  afterthought at the end of a row — it is the only thing to do,
+                  so it gets said rather than left to be found. */}
+                {!isLoading && !sticker.length && (
+                  <div className="flex items-center gap-3 px-1 py-2">
+                    <ThemeIcon size={40} radius="xl" variant="light" color="yellow">
+                      <IconSticker size={22} />
+                    </ThemeIcon>
+                    <div className="flex flex-col items-start gap-1">
+                      <Text size="sm" fw={500}>
+                        No stickers yet
+                      </Text>
+                      <Button
+                        size="compact-xs"
+                        variant="light"
+                        color="yellow"
+                        leftSection={<IconPlus size={14} stroke={2.5} />}
+                        onClick={() => {
+                          setTopUp(null);
+                          setShopping(true);
+                        }}
+                      >
+                        Browse the sticker shop
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {sticker.map((option) => {
+                  const remaining = balanceFor(option.id);
+                  const exhausted = remaining === 0;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      // An exhausted sticker opens the top-up instead of doing
+                      // nothing. It stays a pointer-down like the others so the two
+                      // outcomes of pressing a sticker share one gesture.
+                      onPointerDown={exhausted ? () => setTopUp(option) : grab(option.id)}
+                      className={clsx(
+                        'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
+                        drafts.some((draft) => draft.cosmeticId === option.id) ||
+                          dragging === option.id
+                          ? 'border-blue-5'
+                          : 'border-transparent',
+                        exhausted && 'opacity-40'
+                      )}
+                      style={{ touchAction: 'none' }}
+                    >
+                      <EdgeImage
+                        src={option.url}
+                        alt={`:${option.slug}:`}
+                        options={{ height: 96, anim: option.animated, optimized: true }}
+                        style={{ height: 48, width: 'auto', pointerEvents: 'none' }}
+                        draggable={false}
+                      />
+                      <Text size="10px">{remaining === null ? '∞' : remaining ?? '…'}</Text>
+                    </button>
+                  );
+                })}
+
+                {/* Takes the shape of a sticker slot, at the end of the row: the
+                  way to get more is the next thing along from what you have,
+                  rather than a control somewhere else on the panel. */}
+                {!!sticker.length && (
+                  <Tooltip label="Buy more stickers" withArrow>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTopUp(null);
+                        setShopping((open) => !open);
+                      }}
+                      aria-label="Buy more stickers"
+                      aria-expanded={shopping}
+                      className={clsx(
+                        'flex h-[66px] w-14 shrink-0 flex-col items-center justify-center rounded border border-dashed',
+                        shopping ? 'border-blue-5 text-blue-5' : 'border-gray-4 dark:border-dark-3'
+                      )}
+                    >
+                      <IconPlus size={20} stroke={2.5} />
+                    </button>
+                  </Tooltip>
+                )}
+              </Group>
+            </ScrollArea.Autosize>
+          )}
+        </div>
       </div>
     </div>
   );
