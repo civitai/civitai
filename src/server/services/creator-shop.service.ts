@@ -85,6 +85,7 @@ const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
   ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
 });
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
+import { bustUserSettings, patchUserSettings } from '~/server/services/user.service';
 import {
   STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
@@ -2368,8 +2369,11 @@ export const updateCreatorShopSettings = async ({
   userId,
   ...patch
 }: UpdateCreatorShopSettingsInput & { userId: number }) => {
-  // Read-merge-write the JSON blob so we only touch the creatorShop key.
-  return dbWrite.$transaction(async (tx) => {
+  // The merge happens in Postgres, over the stored column. Reading the blob into JS
+  // and writing the whole object back replaced every other settings key with the value
+  // it held at read time, discarding any write that landed in between (a notice
+  // dismissal, a feature toggle, a content preference).
+  const settings = await dbWrite.$transaction(async (tx) => {
     if (patch.enabled === true) {
       // Don't let a creator publish an empty shop — there'd be nothing to show.
       const itemCount = await tx.cosmeticShopItem.count({ where: { addedById: userId } });
@@ -2377,13 +2381,11 @@ export const updateCreatorShopSettings = async ({
         throw throwBadRequestError('Add at least one item to your shop before publishing.');
     }
 
-    const user = await tx.user.findUnique({ where: { id: userId }, select: { settings: true } });
-    const settings = (user?.settings ?? {}) as UserSettingsSchema;
-    const creatorShop: CreatorShopSettings = { ...(settings.creatorShop ?? {}), ...patch };
-    await tx.user.update({
-      where: { id: userId },
-      data: { settings: { ...settings, creatorShop } as Prisma.InputJsonValue },
-    });
-    return creatorShop;
+    return patchUserSettings(userId, { mergeInto: { creatorShop: patch } }, tx);
   });
+
+  // After commit — the settings cache is Redis, and it was never busted here at all,
+  // so `getUserSettings` served a pre-shop blob for up to its 4h TTL.
+  await bustUserSettings(userId);
+  return (settings.creatorShop ?? {}) as CreatorShopSettings;
 };

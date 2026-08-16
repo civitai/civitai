@@ -17,10 +17,10 @@ import type * as SessionInvalidation from '~/server/auth/session-invalidation';
  * on whether `refreshSession` was called and with what.
  */
 
-const { mockGetUserSettings, mockSetUserSetting, mockRefreshSession, mockQueueReindex } =
+const { mockGetUserSettings, mockPatchUserSettings, mockRefreshSession, mockQueueReindex } =
   vi.hoisted(() => ({
     mockGetUserSettings: vi.fn(),
-    mockSetUserSetting: vi.fn().mockResolvedValue(undefined),
+    mockPatchUserSettings: vi.fn().mockResolvedValue({}),
     mockRefreshSession: vi.fn().mockResolvedValue(undefined),
     mockQueueReindex: vi.fn().mockResolvedValue(undefined),
   }));
@@ -28,7 +28,7 @@ const { mockGetUserSettings, mockSetUserSetting, mockRefreshSession, mockQueueRe
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   getUserSettings: mockGetUserSettings,
-  setUserSetting: mockSetUserSetting,
+  patchUserSettings: mockPatchUserSettings,
 }));
 
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
@@ -59,6 +59,7 @@ const call = (input: Record<string, unknown>) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetUserSettings.mockResolvedValue({});
+  mockPatchUserSettings.mockResolvedValue({});
 });
 
 describe('setUserSettingHandler — session refresh on the early-adopter toggle', () => {
@@ -67,7 +68,7 @@ describe('setUserSettingHandler — session refresh on the early-adopter toggle'
 
     await call({ isEarlyAdopter: true });
 
-    expect(mockSetUserSetting).toHaveBeenCalledTimes(1);
+    expect(mockPatchUserSettings).toHaveBeenCalledTimes(1);
     expect(mockRefreshSession).toHaveBeenCalledTimes(1);
     expect(mockRefreshSession).toHaveBeenCalledWith(USER_ID, { caller: 'profile' });
   });
@@ -90,25 +91,28 @@ describe('setUserSettingHandler — session refresh on the early-adopter toggle'
 
     await call({ swipeGalleryCards: true });
 
-    expect(mockSetUserSetting).toHaveBeenCalledTimes(1);
+    expect(mockPatchUserSettings).toHaveBeenCalledTimes(1);
     expect(mockRefreshSession).not.toHaveBeenCalled();
   });
 
   it('does NOT refresh when an unrelated setting is written by an ALREADY-opted-in user', async () => {
-    // The regression this guards: `setUserSettingHandler` does a read-modify-write, so the
-    // payload handed to `setUserSetting` carries `isEarlyAdopter` on EVERY write once the
-    // user has opted in. A presence check (`'isEarlyAdopter' in newSettings`) would fire the
-    // refresh on every unrelated toggle for exactly the cohort that uses the site most.
+    // The change-detection predicate compares against the PREVIOUS value, so it must not
+    // fire for a user who merely already holds the opt-in. (Before the atomic-write change
+    // the handler also rewrote the whole blob, which put `isEarlyAdopter` in the payload on
+    // every write — so a presence check would have refreshed on every unrelated toggle for
+    // exactly the cohort that uses the site most. The presence check is still wrong; the
+    // payload no longer carries the key at all.)
     mockGetUserSettings.mockResolvedValue({ isEarlyAdopter: true, allowAds: false });
 
     await call({ swipeGalleryCards: true });
 
-    // The write still carries the existing opt-in through (read-modify-write intact) ...
-    expect(mockSetUserSetting).toHaveBeenCalledWith(
-      USER_ID,
-      expect.objectContaining({ isEarlyAdopter: true })
-    );
-    // ... but nothing CHANGED, so no refresh.
+    // The write carries ONLY what this request is changing. Writing back the read snapshot
+    // is the lost-update defect — see user-settings-race.behavior.test.ts.
+    const [, patch] = mockPatchUserSettings.mock.calls[0];
+    expect(patch.set).toEqual({ swipeGalleryCards: true });
+    expect(patch.set).not.toHaveProperty('isEarlyAdopter');
+    expect(patch.set).not.toHaveProperty('allowAds');
+    // ... and nothing CHANGED, so no refresh.
     expect(mockRefreshSession).not.toHaveBeenCalled();
   });
 
@@ -132,8 +136,12 @@ describe('setUserSettingHandler — session refresh on the early-adopter toggle'
     expect(mockRefreshSession).toHaveBeenCalledTimes(1);
   });
 
-  it('still returns the merged settings to the caller', async () => {
+  it('returns the STORED settings to the caller, not a JS-side reconstruction', async () => {
+    // The handler used to return the object it had just computed. That object was a
+    // read-modify-write of a possibly-stale snapshot, so the client could be handed values
+    // that were never in the database. The write now returns the row it produced.
     mockGetUserSettings.mockResolvedValue({ allowAds: false });
+    mockPatchUserSettings.mockResolvedValue({ allowAds: false, isEarlyAdopter: true });
 
     const result = await call({ isEarlyAdopter: true });
 
