@@ -1695,16 +1695,27 @@ export async function getMyListingForApp(opts: {
         select: entrySelect,
       })
     : null;
-  // (W13 draft-at-submit) Pre-approval DRAFT fallback: a FIRST-version app has no
-  // backing AppBlock yet, so its draft listing (minted at submit) has
-  // `appBlockId = NULL` and is only reachable BY SLUG. Resolve it when the appBlockId
-  // lookup missed (or only a slug was supplied) so the owner-media page can reach the
-  // draft to set icon/cover/screenshots WHILE the app is pending. Scoped to the exact
-  // pre-approval-draft shape so this can never resolve some other kind/status by slug.
-  // Owner-bound below (unchanged).
+  // SLUG fallback: resolve the listing by its globally-unique public slug when the
+  // `appBlockId` lookup missed (or only a slug was supplied). Two callers need it:
+  //   - (W13 draft-at-submit) a FIRST-version on-site app has no backing AppBlock yet,
+  //     so its draft listing (minted at submit) has `appBlockId = NULL` and is only
+  //     reachable BY SLUG while it is pending; and
+  //   - any client whose ONLY handle is the slug — an OFF-SITE listing has no AppBlock
+  //     at all, ever, so `appBlockId` can never address it (civitai/civitai#3984).
+  //
+  // 🔴 `revisionOfId: null` IS LOAD-BEARING, not decoration. `beginListingRevision`
+  // mints a shadow with a synthetic `rev-<ulid>` slug that is never public but IS a
+  // real row — kind copied from the parent, `appBlockId` NULL, status `draft` — i.e.
+  // it matched the previous, apparently-narrower clause. Excluding revisions here is
+  // what makes the comment below ("only ever sees a top-level parent") true by
+  // construction rather than by the accident that nobody knows a shadow's slug.
+  //
+  // `AppListing.slug` is `@unique` across BOTH kinds (schema.full.prisma), so this is
+  // unambiguous without an index change. Owner-bound below (unchanged): a slug that
+  // is not yours is refused by `resolveListingRole`, not by this `where`.
   if (!listing && slug) {
     listing = await dbRead.appListing.findFirst({
-      where: { slug, kind: 'onsite', appBlockId: null, status: 'draft' },
+      where: { slug, revisionOfId: null },
       select: entrySelect,
     });
   }

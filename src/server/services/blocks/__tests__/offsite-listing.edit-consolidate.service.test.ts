@@ -96,7 +96,9 @@ function editViewRow(ssRowId: string, overrides: Record<string, unknown> = {}) {
     coverId: 20,
     icon: { url: 'icon-key' },
     cover: { url: 'cover-key' },
-    screenshots: [{ id: ssRowId, imageId: 30, order: 0, caption: 'cap', image: { url: 'shot-key' } }],
+    screenshots: [
+      { id: ssRowId, imageId: 30, order: 0, caption: 'cap', image: { url: 'shot-key' } },
+    ],
     ...overrides,
   };
 }
@@ -146,7 +148,9 @@ beforeEach(() => {
   mockRead.oauthClient.findUnique.mockResolvedValue(null);
   mockWrite.appListing.findFirst.mockResolvedValue(null);
   mockWrite.appListing.update.mockImplementation(async (args: { data: unknown }) => args.data);
-  mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
+  mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
+    cb(mockWrite)
+  );
 });
 
 describe('getMyListingForEdit', () => {
@@ -183,7 +187,7 @@ describe('getMyListingForEdit', () => {
    * only the off-site row would survive `kind: 'offsite'`, and asserting only the on-site
    * row would survive `kind: 'onsite'`.
    */
-  it('🔴 returns the listing\'s REAL kind — off-site', async () => {
+  it("🔴 returns the listing's REAL kind — off-site", async () => {
     wireFindUnique(ownedRow({ status: 'draft', kind: 'offsite' }), {
       apl_parent: editViewRow('ss_parent'),
     });
@@ -191,7 +195,7 @@ describe('getMyListingForEdit', () => {
     expect(res.kind).toBe('offsite');
   });
 
-  it('🔴 returns the listing\'s REAL kind — on-site', async () => {
+  it("🔴 returns the listing's REAL kind — on-site", async () => {
     wireFindUnique(ownedRow({ status: 'draft', kind: 'onsite' }), {
       apl_parent: editViewRow('ss_parent'),
     });
@@ -289,6 +293,50 @@ describe('getMyListingForEdit', () => {
     expect(res.assets.screenshots[0].id).toBe('ss_shadow_new');
   });
 
+  /**
+   * 🟡 CHARACTERIZATION TEST — this pins what the code DOES today. It is not an
+   * assertion about what it SHOULD do, and it should not be read as one.
+   *
+   * `getMyListingForEdit` gates on ownership + status
+   * (`loadOwnedEditableListing`, then the shadow / removed / rejected switch) and
+   * contains NO `kind` check; neither do the listing-keyed asset procs
+   * (`loadOwnedListing`). So an APPROVED OFF-SITE listing goes down the whole
+   * shadow-revision media path: a shadow is minted, the prefill returns the
+   * SHADOW's asset row ids, and the caller is handed an editable target.
+   *
+   * Meanwhile `CAPABILITIES_BY_KIND.offsite.listingMedia` is `false`. That cell is
+   * read ONLY by the web tab gate (`src/components/Apps/appListingEditorTabs.ts`);
+   * no service consults it — unlike `earnings` and `submitVersion`, the two other
+   * `false` cells, which ARE enforced service-side.
+   *
+   * 🔴 OPEN QUESTION, deliberately NOT answered here (raised in the PR for
+   * civitai/civitai#3984 for whoever owns the capability table): is off-site media
+   * editing through the listing-keyed procs INTENDED — in which case the cell is
+   * stale — or a gap the `listingMedia: false` cell believes is closed, in which
+   * case the missing check is in the services, not in the tab gate? Whichever
+   * answer lands, re-label or invert this test; do not silently delete it.
+   */
+  it('CHARACTERIZATION: an APPROVED OFF-SITE listing gets the full shadow media path (no kind check)', async () => {
+    wireFindUnique(ownedRow({ kind: 'offsite', status: 'approved' }), {
+      apl_shadow_offsite: editViewRow('ss_shadow_offsite'),
+    });
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'apl_shadow_offsite' });
+
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+
+    // The listing really is off-site — no kind check refused it anywhere on the path.
+    expect(res.kind).toBe('offsite');
+    // …and it got everything the on-site media flow gets: a shadow, and the shadow's
+    // asset rows (the ids a "remove screenshot" would target).
+    expect(mockWrite.appListing.create).toHaveBeenCalled();
+    expect(res.shadowId).toBe('apl_shadow_offsite');
+    expect(res.assets.screenshots[0].id).toBe('ss_shadow_offsite');
+    expect(res.assets.icon).toEqual({ imageId: 10, url: 'edge:icon-key' });
+  });
+
   // -------------------------------------------------------------------------
   // 🔴 READ-AFTER-WRITE (the `getMyListingForEdit` half of the same guard).
   // The shadow is INSERTed on the PRIMARY; reading it back off the replica misses
@@ -364,26 +412,34 @@ describe('getMyListingForEdit', () => {
 
   it('rejects a non-owner (NOT_OWNED)', async () => {
     wireFindUnique(ownedRow({ userId: 999 }), { apl_parent: editViewRow('ss_parent') });
-    await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject({
-      code: 'NOT_OWNED',
-    });
+    await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject(
+      {
+        code: 'NOT_OWNED',
+      }
+    );
   });
 
   it('rejected → MUST_RESUBMIT; removed → FORBIDDEN; a shadow → INVALID_REVISION', async () => {
     wireFindUnique(ownedRow({ status: 'rejected' }), {});
-    await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject({
-      code: 'MUST_RESUBMIT',
-    });
+    await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject(
+      {
+        code: 'MUST_RESUBMIT',
+      }
+    );
 
     wireFindUnique(ownedRow({ status: 'removed' }), {});
-    await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
+    await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject(
+      {
+        code: 'FORBIDDEN',
+      }
+    );
 
     wireFindUnique(ownedRow({ revisionOfId: 'apl_parent2' }), {});
-    await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject({
-      code: 'INVALID_REVISION',
-    });
+    await expect(getMyListingForEdit({ listingId: 'apl_parent', userId: 7 })).rejects.toMatchObject(
+      {
+        code: 'INVALID_REVISION',
+      }
+    );
   });
 
   it('throws NOT_FOUND when the listing does not exist', async () => {
