@@ -14,9 +14,15 @@
 -- block through the Retool path, which never propagated. Those users have been reading the typo
 -- ever since.
 --
--- APPLY AFTER THE DEPLOY. Before it, Collection blocks still render from this column, so emptying
--- it first would blank 113,891 users' Featured Images and Buzz Beggars blocks. Nothing breaks if
--- it is never applied — the column is simply ignored — so there is no hurry, only an order.
+-- APPLY AFTER THE DEPLOY, AND TREAT IT AS A ONE-WAY DOOR.
+--
+-- Before the deploy, Collection blocks still render from this column, so emptying it first would
+-- blank 113,891 users' Featured Images and Buzz Beggars blocks. Nothing breaks if it is never
+-- applied — the column is simply ignored — so there is no hurry, only an order.
+--
+-- The direction that does NOT recover: once this has run, rolling the deploy back re-blanks those
+-- same 113,891 users, because the old code reads the column this emptied and there is no copy of
+-- it anywhere. Let the deploy soak until you are confident you will not roll it back.
 
 -- 1. Count first.
 --
@@ -28,8 +34,15 @@
 --    GROUP BY 1 ORDER BY 2 DESC;
 
 -- 2. Empty in batches. `metadata` is NOT NULL with a '{}' default, so this writes '{}', not NULL.
---    Uses "HomeBlock_sourceId_idx" from the preceding migration — without that index the
---    subquery seq-scans 408k rows on every pass.
+--
+--    This one seq-scans whatever happens, and that is fine — do not "optimize" it with an index.
+--    The driving predicate is `metadata::text <> '{}'`, which no index covers. An earlier draft
+--    claimed this depended on "HomeBlock_sourceId_idx" from the preceding migration; it does not.
+--    That index earns its place there, where the FK's referential action fires once per DELETED
+--    row, and contributes nothing here.
+--
+--    The join to `src` was only ever testing "is this a clone", so it is written as the predicate
+--    it is. `sourceId` has an FK, so a non-null value always names a real row.
 DO $$
 DECLARE
   touched integer;
@@ -40,8 +53,8 @@ BEGIN
     WHERE hb.id IN (
       SELECT c.id
       FROM "HomeBlock" c
-      JOIN "HomeBlock" src ON src.id = c."sourceId"
       WHERE c."userId" <> -1
+        AND c."sourceId" IS NOT NULL
         AND c.metadata::text <> '{}'
       LIMIT 5000
     );

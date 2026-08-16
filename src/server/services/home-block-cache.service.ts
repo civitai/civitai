@@ -1,4 +1,5 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import { getHomeBlockData, resolveHomeBlockMetadata } from '~/server/services/home-block.service';
@@ -24,6 +25,9 @@ type HomeBlockForCache = {
   type: HomeBlockType;
   metadata: HomeBlockMetaSchema;
   sourceId?: number | null;
+  // Declared because the stored payload carries whichever row filled the shared entry, and the
+  // hit path overwrites it from here. A caller that omitted it would hand back a stranger's.
+  userId?: number;
 };
 
 const log = createLogger('home-block-cache', 'green');
@@ -115,9 +119,12 @@ export async function bustSystemHomeBlockCaches(row?: {
   type: HomeBlockType;
   metadata?: HomeBlockMetaSchema | unknown;
 }) {
+  // `bustFetchThroughCache`, not `del`: a plain delete leaves concurrent readers with nothing to
+  // serve, and the losers of the refill lock sleep out a retry. Resetting `cachedAt` lets them
+  // serve stale while one refreshes — and the system map is on the homepage's hottest path.
   await Promise.all([
-    redis.del(REDIS_KEYS.CACHES.HOME_BLOCKS_SYSTEM),
-    redis.del(REDIS_KEYS.CACHES.HOME_BLOCKS_PERMANENT),
+    bustFetchThroughCache(REDIS_KEYS.CACHES.HOME_BLOCKS_SYSTEM),
+    bustFetchThroughCache(REDIS_KEYS.CACHES.HOME_BLOCKS_PERMANENT),
   ]);
 
   if (!row) return;

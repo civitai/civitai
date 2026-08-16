@@ -318,8 +318,14 @@ const feedBrowsingLevel = (level?: 'public' | 'sfw') =>
  * mod edits the homepage, and every clone render needs one of them — so this is read far more
  * often than the per-block content caches it feeds.
  *
- * Busted by `bustSystemHomeBlockCaches`. A stale entry serves the previous homepage config for
- * up to a day, which is why every write path that can touch a system block calls that.
+ * Busted by `bustSystemHomeBlockCaches` on every write that goes through the app.
+ *
+ * The TTL bounds the OUT-OF-BAND window instead — a Retool or direct-SQL edit busts nothing, and
+ * this entry now supplies both the config and the cache identifier, so a stale one cannot be
+ * cleared by busting the content key. Three minutes matches the shortest content TTL below it,
+ * which keeps that window no worse than it was when each clone re-read its source per render.
+ * Do not raise it to a day to save 9 rows' worth of reads: that is a day of a moderator's
+ * homepage edit not reaching the users who cloned it.
  */
 const getSystemBlockMetadata = async () =>
   fetchThroughCache(
@@ -331,7 +337,7 @@ const getSystemBlockMetadata = async () =>
       });
       return Object.fromEntries(rows.map((r) => [r.id, r.metadata as HomeBlockMetaSchema]));
     },
-    { ttl: CacheTTL.day }
+    { ttl: CacheTTL.sm }
   );
 
 /**
@@ -357,11 +363,14 @@ export const resolveHomeBlockMetadata = async (homeBlock: {
   const source = systemMetadata[homeBlock.sourceId];
   if (source) return source;
 
-  const row = await dbRead.homeBlock.findUnique({
-    where: { id: homeBlock.sourceId },
+  // `userId: -1` is the point of this query, not decoration. Without it a row sourced off another
+  // USER's block would resolve that stranger's content and presentation onto this homepage — and
+  // the migration empties the clone's own column, so there would be nothing to fall back to.
+  const row = await dbRead.homeBlock.findFirst({
+    where: { id: homeBlock.sourceId, userId: -1 },
     select: { metadata: true },
   });
-  return ((row?.metadata as HomeBlockMetaSchema) || own) ?? own;
+  return (row?.metadata as HomeBlockMetaSchema) || own;
 };
 
 export const getHomeBlockData = async ({
@@ -495,8 +504,7 @@ export const getHomeBlockData = async ({
       return { ...homeBlock, metadata, feedItems: { entity: 'models' as const, items } };
     }
     case HomeBlockType.CosmeticShop: {
-      const cosmeticShopSectionMeta =
-        metadata.cosmeticShopSection;
+      const cosmeticShopSectionMeta = metadata.cosmeticShopSection;
       if (!cosmeticShopSectionMeta) {
         return null;
       }
@@ -517,7 +525,7 @@ export const getHomeBlockData = async ({
         ...homeBlock,
         // Client slices by metadata.cosmeticShopSection.maxItems, so hand back the section we
         // actually resolved rather than the clone's snapshot of a different section.
-        metadata: { ...metadata, cosmeticShopSection: cosmeticShopSectionMeta },
+        metadata,
         cosmeticShopSection,
       };
     }
@@ -581,7 +589,7 @@ export const getHomeBlockData = async ({
         type: HomeBlockType.FeaturedCollections,
         // A clone's own copy is a snapshot from clone time; serving it advertises config that
         // isn't in effect.
-        metadata: { ...metadata, featuredCollections: effectivePool },
+        metadata,
         pickedCollections,
       };
     }
@@ -876,17 +884,20 @@ async function updateFeaturedPool(
     },
   };
 
-  // Only mutate the system block. Cloned user blocks (sourceId=block.id) may have user-customized
-  // fields (title, description) — we'd clobber them. Runtime hydration pulls pool state from the
-  // source block via sourceId lookup, so clones stay in sync without their metadata being touched.
+  // Only mutate the system block. Clones are pointers — they resolve this pool from here at
+  // render, and their own metadata column is read by nothing.
   await dbWrite.homeBlock.update({
     where: { id: block.id },
     data: { metadata: newMetadata },
   });
 
   // Bust the permanent-blocks list cache so if the FeaturedCollections row is flagged permanent,
-  // the 1-day-TTL'd list doesn't serve stale metadata to cold-cache users.
-  await redis.del(REDIS_KEYS.CACHES.HOME_BLOCKS_PERMANENT);
+  // the 1-day-TTL'd list doesn't serve stale metadata to cold-cache users. And the system map,
+  // which every clone resolves its pool through.
+  await Promise.all([
+    redis.del(REDIS_KEYS.CACHES.HOME_BLOCKS_PERMANENT),
+    redis.del(REDIS_KEYS.CACHES.HOME_BLOCKS_SYSTEM),
+  ]);
 
   // Recompute Redis state after pool changes so eligibility reflects reality.
   await computeFeaturedCollectionsState();
