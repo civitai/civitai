@@ -126,47 +126,72 @@ const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
 
 const alias = [{ find: '~', replacement: path.resolve(__dirname, './src') }, ...civitaiAlias];
 
-// 🔴 `unit-fast` resolves `~/env/server` to the canonical env mock by ALIAS, not by the
-// `vi.mock('~/env/server', …)` that `setup.ts` registers for every other project.
+// 🔴 `unit-fast` resolves `~/env/server` to the canonical env mock by RESOLUTION, not by the
+// `vi.mock('~/env/server', …)` that `setup.ts:150` registers for every other project.
 //
-// That registration is made from a SETUP FILE, which under `isolate: false` runs once per worker
-// while the module cache is also per worker — so the registration and the cache race. Whichever
-// file first pulls `~/server/flipt/client` (which imports `~/env/server` at its line 2) into a
-// worker where the registration has not taken can load the REAL module, and the real module
-// throws `Invalid environment variables` under test env. Measured before this alias: three
-// unisolated runs, three DIFFERENT victim files, every one that same throw through that same
-// import; the matched isolated controls were clean every time. 66 members reach that module,
-// which is why the victim rotated and never repeated.
+// The symptom: under `isolate: false`, runs intermittently lose one file to the REAL
+// `src/env/server.ts` throwing `Invalid environment variables` at :22, reached through
+// `src/server/flipt/client.ts:2`. Three consecutive runs gave three DIFFERENT victims and the same
+// throw; the matched isolated controls were clean every time. 66 members reach that module, which
+// is why the victim rotates and never repeats.
 //
-// Resolution cannot race a registry: the alias is applied when the id is resolved, so every file
-// in the worker gets the mock whether or not `vi.mock` took for it. The regex is anchored so it
-// cannot swallow `~/env/server-schema` or shadow the bare `~` entry below it.
+// ⚠️ THE MECHANISM IS NOT SETTLED, and an earlier version of this comment stated a wrong one as
+// fact. It said setup files run "once per worker" so the registration races the module cache.
+// That is disproven from vitest 4.0.18's own shipped code: `runSetupFiles()` is called inside the
+// per-spec block of `runFiles` (`@vitest/runner/dist/index.js:1346-1378`) and
+// `VitestTestRunner.importFile()` explicitly INVALIDATES the setup module before importing it
+// (`vitest/dist/chunks/test.B8ej_ZHS.js:129-133`), so setup — and its hoisted `vi.mock` — re-runs
+// for every test file in both modes. The registry is keyed per test filepath and only reset under
+// isolation. So there is no registration-vs-cache race inside a file.
 //
-// ⚠️ Only `unit-fast` needs this. `unit` re-instantiates per file, so the setup registration is
-// reliable there, and pointing an isolated project at an alias would change behaviour for 600
-// files to fix a problem they do not have.
+// The best-fitting replacement, credited as a HYPOTHESIS rather than a finding: `workerState`'s
+// filepath advances to the next file BEFORE that file's setup runs, so for a short window the
+// current registry is empty. Async work leaking across the file boundary — an unawaited promise, a
+// timer, an in-flight dynamic import — that fetches a module in that window gets no mock and
+// evaluates the real one. Nothing survives the boundary under `isolate: true`. Unproven: it needs
+// a failing run with the filepath and a stack captured at the throw.
+//
+// What is not in doubt is that resolution does not depend on any of that. Both spellings of the
+// module resolve here before the registry is consulted at all.
+//
 // ⚠️ A `resolve.alias` entry is NOT enough, and the reason is the hazard `guarded-specifiers.ts`
 // already records one level up: the module is imported under BOTH spellings. An alias anchored on
 // `~/env/server` left `user-payment-configuration.service.ts:4`'s `import { env } from
-// '../../env/server'` resolving to the real module, and 12 files failed deterministically on it.
+// '../../env/server'` resolving to the real module, and 12 files failed DETERMINISTICALLY on it.
 // Resolving the id settles every spelling at once, because it runs after the relative path is
-// joined to its importer.
-const ENV_SERVER_REAL = path.resolve(__dirname, './src/env/server').replace(/\\/g, '/');
+// joined to its importer. Those two are the complete set of spellings in the repo.
+//
+// ⚠️ Only `unit-fast` needs this. `unit` re-instantiates per file, so pointing an isolated project
+// at it would change behaviour for 600 files to fix a problem they do not have.
+//
+// ⚠️ Known consequence: `vi.doUnmock('~/env/server')` becomes a no-op in this project, because the
+// specifier still resolves to the stub after the registry entry is deleted. Two files do that
+// (`forgejo.service.test.ts:956`, `block-tokens/index.test.ts:813`); both are PENDING, not members,
+// so it is latent — but it would present as a test passing for the wrong reason, not as a failure.
 const ENV_SERVER_MOCK = path
   .resolve(__dirname, './src/__tests__/mocks/env-server.alias.ts')
   .replace(/\\/g, '/');
+// Compared case-insensitively, and with a `/C:/…` style leading slash stripped, because an importer
+// id reaches a resolver under several spellings on Windows: vitest normalises drive-letter case
+// itself (`vitest/dist/module-evaluator.js:143-149`) and its `normalizeModuleId` can hand back a
+// root-relative id. Exact string equality silently no-ops on those — and a no-op here means the
+// real module loads and throws, which is the failure this plugin exists to remove.
+const canonicalId = (p: string) =>
+  p
+    .replace(/\\/g, '/')
+    .replace(/^\/(?=[A-Za-z]:\/)/, '')
+    .replace(/\?.*$/, '')
+    .replace(/\.[cm]?tsx?$/, '')
+    .toLowerCase();
+const ENV_SERVER_REAL = canonicalId(path.resolve(__dirname, './src/env/server'));
 const unitFastEnvPlugin = {
   name: 'civitai:unit-fast-env',
   enforce: 'pre' as const,
   resolveId(source: string, importer?: string) {
-    const joined =
-      source.startsWith('.') && importer
-        ? path.resolve(path.dirname(importer), source).replace(/\\/g, '/')
-        : source === '~/env/server'
-        ? ENV_SERVER_REAL
-        : null;
-    if (joined?.replace(/\.[cm]?tsx?$/, '') === ENV_SERVER_REAL) return ENV_SERVER_MOCK;
-    return null;
+    if (source === '~/env/server') return ENV_SERVER_MOCK;
+    if (!source.startsWith('.') || !importer) return null;
+    const joined = path.resolve(path.dirname(importer.replace(/^\/(?=[A-Za-z]:\/)/, '')), source);
+    return canonicalId(joined) === ENV_SERVER_REAL ? ENV_SERVER_MOCK : null;
   },
 };
 
@@ -394,7 +419,7 @@ export default defineConfig({
       // ⚠️ Read the manifest's `totals` before quoting progress. Members are 44% of FILES and 13%
       // of MODULE LOADS, because the files that qualify first are the ones that mock nothing,
       // which are the cheap ones — the file count overstates the delivered win by ~3x. And of the
-      // members, 46 are EARNED (they carried a guarded mock before the migration) against 432 that
+      // members, 46 are EARNED (they carried a guarded mock before the migration) against 427 that
       // never mocked anything.
       //
       // 🔴 No `maxWorkers` here, and no `sequence.groupOrder`, so this shares the default group

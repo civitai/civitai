@@ -104,10 +104,23 @@ describe('unit / unit-fast partition', () => {
    * The other half of the "runs in neither project" hole, and the half a manifest cannot close: a
    * selector naming `unit` alone runs half the suite and exits 0.
    *
-   * Textual, over the config and every script that spawns vitest. It cannot prove a project ran —
+   * Textual, over `package.json` and `scripts/test-unit-run.mjs`. It cannot prove a project ran —
    * only a collected count from the run itself can — but it does catch the mechanical mistake of
    * adding a unit-family project and leaving a selector behind, which is how this fails in
    * practice.
+   *
+   * 🔴 The separator class must tolerate a QUOTE, because the highest-stakes selector in the repo
+   * is an argv array, not a command string: `spawn(bin, ['run', '--project', 'unit*', …])`. An
+   * earlier `--project[ =]+` matched nothing there, so the guard opened that file, iterated its
+   * lines and evaluated NONE of them — while `package.json:97` routes every `test:unit:run`,
+   * CI's included, through exactly that line. Narrowing it to `'unit'` left the guard green with
+   * `unit-fast` and `unit-native` running nowhere. Mutation-tested in both files; see the
+   * scoreboard doc for the table.
+   *
+   * ⚠️ Still per-line, so a selector whose value sits on the NEXT line is invisible to it
+   * (`scripts/test-perf/bench.mjs`, `run-pilot.mjs`, `accept-mock-default.mjs` are all that shape).
+   * Those are perf tooling rather than the suite's entry points, which is why this is a bound and
+   * not a bug — but it is a bound, so do not read a pass here as "every spawn site is checked".
    */
   it('every unit-family project is covered by every unit-family selector', () => {
     const config = readFileSync(path.join(repoRoot, 'vitest.config.mts'), 'utf8');
@@ -127,6 +140,10 @@ describe('unit / unit-fast partition', () => {
     // Vitest matches `--project` against a project name as a glob, so `'unit*'` covers the whole
     // family and an explicit list covers whatever it names. Check COVERAGE, not spelling: a guard
     // that insisted on one of the two forms would fail on the other while nothing was wrong.
+    //
+    // Deliberately STRICTER than vitest's own `wildcardPatternToRegExp`, which maps `*` to `.*` and
+    // matches case-insensitively. Narrower can only produce a false failure here, never a false
+    // pass, which is the safe direction for a guard.
     const covers = (spec: string, project: string) =>
       new RegExp(`^${spec.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[\\w-]*')}$`).test(
         project
@@ -135,7 +152,7 @@ describe('unit / unit-fast partition', () => {
     const gaps: string[] = [];
     for (const [where, text] of selectors)
       for (const line of text.split('\n')) {
-        const specs = [...line.matchAll(/--project[ =]+['"`]?([\w*@:/-]+)['"`]?/g)].map(
+        const specs = [...line.matchAll(/--project['"`]?[\s,=]+['"`]?([\w*@:/-]+)/g)].map(
           (m) => m[1]
         );
         if (!specs.some((s) => covers(s, 'unit'))) continue;
