@@ -872,9 +872,30 @@ function DisplayMessages({
   // TODO we should be checking first if this exists in `chats`
   //      then, grab the content
   //      then, grab the user info from chatMembers (but what if its not there?)
-  const replyIds = chats
-    .filter((c) => isDefined(c.referenceMessageId))
-    .map((c) => c.referenceMessageId as number);
+  // DISTINCT reply targets, in INSERTION ORDER. `chats` comes from a query with no explicit
+  // limit (the schema default is 1000), and several messages commonly reply to the SAME
+  // message, so the un-deduplicated list fired one `getMessageById` per REPLY rather than per
+  // replied-to message. Those extra queries were never even read: the lookup below is
+  // `replyIds.indexOf(...)`, which always resolves to the first occurrence — so deduplicating
+  // is behaviour-identical and removes pure fan-out.
+  //
+  // Insertion order, NOT sorted — same reasoning as `useStickerCosmetics` in
+  // `src/components/Sticker/sticker.util.ts`: this list GROWS as the chat pages, and sorting
+  // would shift positions of already-fetched entries every time an older id arrives.
+  //
+  // Width still scales with the number of distinct replies in a long chat. That is safe under
+  // the batch-size cap because the batch link is capped at `TRPC_MAX_BATCH_SIZE` items and its
+  // dataloader SPLITS a wider fan-out across several requests rather than rejecting it (see
+  // `maxItems` in `src/utils/trpc.ts`). The real fix is a bulk `chat.getMessagesByIds`, which
+  // would make this one query regardless of width — deliberately left as a follow-up.
+  const replyIds = useMemo(
+    () => [
+      ...new Set(
+        chats.filter((c) => isDefined(c.referenceMessageId)).map((c) => c.referenceMessageId!)
+      ),
+    ],
+    [chats]
+  );
   const replyData = trpc.useQueries((t) =>
     replyIds.map((r) => t.chat.getMessageById({ messageId: r }))
   );

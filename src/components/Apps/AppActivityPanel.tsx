@@ -269,6 +269,14 @@ export function AppActivityPanel({
   // model versions via the existing `getVersionsByIds`, recipients via
   // `user.getById` coalesced through the tRPC http-batch link. The view renders
   // ids until the names settle (progressive), then swaps in @username / name.
+  //
+  // The `user.getById` fan-out is one call per DISTINCT recipient, so it can reach
+  // ~50 across the two feeds (limit 25 each) — above `TRPC_MAX_BATCH_SIZE`. That is
+  // safe: the batch link caps itself at the same constant and its dataloader SPLITS
+  // a wider fan-out across several requests rather than rejecting it (see `maxItems`
+  // in `src/utils/trpc.ts`), so no request is ever built above the server's cap. A
+  // bulk `user.getByIds` would collapse it to one query at any width and is the
+  // right follow-up; `getVersionsByIds` above is already that shape.
   const userIds = useMemo(
     () =>
       Array.from(
