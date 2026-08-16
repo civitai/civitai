@@ -52,8 +52,10 @@ of the string, so the line cannot disagree with where the query actually went.
 define `DATABASE_URL`, and **they name different databases** — the skill's is production, the root
 one is the dev snapshot the dev server uses. The skill's `.env` wins: it is loaded first, and
 `loadEnv` only fills in keys that are not already **present** (an empty value counts as present, so
-a bare `DATABASE_REPLICA_URL=` left in this file does not hand the run to the root `.env`). So a
-bare `query.mjs` answers from production while your dev server answers from dev. Comparing a value
+a bare `DATABASE_REPLICA_URL=` left in this file does not hand that key to the root `.env` — the
+target falls back to this file's `DATABASE_URL` instead, and the banner says
+`read-only, but pointed at the primary`). So a bare `query.mjs` answers from production while your
+dev server answers from dev. Comparing a value
 read here against one read by the running app is comparing two different databases unless both lines
 say the same host and port. That cost an hour and produced a confidently wrong root cause on
 2026-08-16: `limit: 8` from the app's DB and `limit: 40` from this skill's, reported as a config bug

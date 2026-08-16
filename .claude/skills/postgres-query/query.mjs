@@ -152,8 +152,9 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     query = readFileSync(resolve(process.cwd(), filePath), 'utf-8');
-  } else if (arg.startsWith('-')) {
-    // A swallowed typo falls through to the default target, which is production.
+  } else if (arg.startsWith('-') && !/^--(\s|$)/.test(arg) && !/\s/.test(arg)) {
+    // A swallowed typo falls through to the default target, which is production. SQL opening with
+    // a `--` comment is still SQL, hence the two exceptions above.
     console.error(`Error: unknown option "${arg}".`);
     console.error(`Targets: ${Object.values(TARGETS).map((t) => t.flag).join(', ')}`);
     console.error('Options: --explain --writable --timeout <s> --file <path> --json --quiet');
@@ -199,11 +200,6 @@ const targetName = requestedTargets[0] ?? DEFAULT_TARGET;
 const target = TARGETS[targetName];
 const targetWasExplicit = requestedTargets.length === 1;
 
-if (writable && target.readOnly) {
-  console.error(`Error: ${target.flag} is a read-only replica; --writable cannot apply to it.`);
-  process.exit(1);
-}
-
 const candidateVars = [...new Set([target.envVar(writable), target.fallbackEnvVar].filter(Boolean))];
 const connectionVar = candidateVars.find((name) => process.env[name]);
 const connectionString = connectionVar && process.env[connectionVar];
@@ -214,18 +210,12 @@ if (!connectionString) {
   process.exit(1);
 }
 
-let client;
-try {
-  client = new Client({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
-    statement_timeout: timeoutSeconds * 1000,
-    query_timeout: timeoutSeconds * 1000,
-  });
-} catch (err) {
-  console.error(`Error: ${connectionVar} is not a usable connection string: ${err.message}`);
-  process.exit(1);
-}
+const client = new Client({
+  connectionString,
+  ssl: { rejectUnauthorized: false },
+  statement_timeout: timeoutSeconds * 1000,
+  query_timeout: timeoutSeconds * 1000,
+});
 
 // The wrong-database failure is silent by construction: this skill's .env and the app's root .env
 // name different databases under the same key names. Report the parameters pg itself resolved —
@@ -254,12 +244,19 @@ if (!targetWasExplicit) {
 }
 console.error('');
 
-// Client-side write guard. It matches the query's first keyword, so it is a guard against an
-// accidental write, not a sandbox: a write nested in a CTE gets through, and only the server-side
-// role stops that. Leading comments are stripped first so `/* note */ DELETE` can't slip past.
+if (writable && target.readOnly) {
+  console.error(`Error: ${target.flag} is a read-only replica; --writable cannot apply to it.`);
+  process.exit(1);
+}
+
+// Client-side write guard. It matches the query's leading keyword, so it catches an accidental
+// write, not a determined one: anything nested deeper than a leading CTE gets through, and only
+// the role you connect as stops that. Comments and string literals are blanked first, so
+// `/* note */ DELETE` can't slip past and a SELECT mentioning "delete" in a literal isn't blocked.
 if (!writable || target.readOnly) {
   const upperQuery = query
-    .replace(/^(\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)+/, '')
+    .replace(/'([^']|'')*'/g, "''")
+    .replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, ' ')
     .toUpperCase()
     .trim();
   const writeOps = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE'];
