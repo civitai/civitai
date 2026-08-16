@@ -53,7 +53,9 @@ function loadEnv() {
         if (eqIndex === -1) continue;
         const key = trimmed.slice(0, eqIndex);
         const value = trimmed.slice(eqIndex + 1);
-        if (!process.env[key]) {
+        // Presence wins, not truthiness: `DATABASE_REPLICA_URL=` left empty in the skill's .env
+        // must not hand the run to the root .env, which names a different database.
+        if (process.env[key] === undefined) {
           process.env[key] = value;
         }
       }
@@ -150,7 +152,13 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     query = readFileSync(resolve(process.cwd(), filePath), 'utf-8');
-  } else if (!arg.startsWith('-')) {
+  } else if (arg.startsWith('-')) {
+    // A swallowed typo falls through to the default target, which is production.
+    console.error(`Error: unknown option "${arg}".`);
+    console.error(`Targets: ${Object.values(TARGETS).map((t) => t.flag).join(', ')}`);
+    console.error('Options: --explain --writable --timeout <s> --file <path> --json --quiet');
+    process.exit(1);
+  } else {
     query = arg;
   }
 }
@@ -191,6 +199,11 @@ const targetName = requestedTargets[0] ?? DEFAULT_TARGET;
 const target = TARGETS[targetName];
 const targetWasExplicit = requestedTargets.length === 1;
 
+if (writable && target.readOnly) {
+  console.error(`Error: ${target.flag} is a read-only replica; --writable cannot apply to it.`);
+  process.exit(1);
+}
+
 const candidateVars = [...new Set([target.envVar(writable), target.fallbackEnvVar].filter(Boolean))];
 const connectionVar = candidateVars.find((name) => process.env[name]);
 const connectionString = connectionVar && process.env[connectionVar];
@@ -201,36 +214,26 @@ if (!connectionString) {
   process.exit(1);
 }
 
-// The wrong-database failure is silent by construction: the skill's own .env and the app's root
-// .env name different databases under the same key names. Print what actually answered, every run,
-// so a result can never be attributed to the wrong target.
-function describeConnection(str) {
-  try {
-    const url = new URL(str);
-    const db = url.pathname.replace(/^\//, '') || '(default db)';
-    const user = url.username ? `${decodeURIComponent(url.username)}@` : '';
-    return `${user}${url.hostname}:${url.port || '5432'}/${db}`;
-  } catch {
-    return '(unparsable connection string)';
-  }
+let client;
+try {
+  client = new Client({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    statement_timeout: timeoutSeconds * 1000,
+    query_timeout: timeoutSeconds * 1000,
+  });
+} catch (err) {
+  console.error(`Error: ${connectionVar} is not a usable connection string: ${err.message}`);
+  process.exit(1);
 }
 
-// Safety check for writable operations
-// --notifications and --data-packet connect through read-only roles on replicas — writes
-// would fail anyway, but block them client-side so users get a clearer error.
-if (!writable || target.readOnly) {
-  const upperQuery = query.toUpperCase().trim();
-  const writeOps = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE'];
-  for (const op of writeOps) {
-    if (upperQuery.startsWith(op)) {
-      const ctx = target.readOnly
-        ? `${target.flag} is read-only.`
-        : 'Use --writable flag to confirm.';
-      console.error(`Error: Write operation detected (${op}). ${ctx}`);
-      console.error('This requires explicit user permission as it modifies the database.');
-      process.exit(1);
-    }
-  }
+// The wrong-database failure is silent by construction: this skill's .env and the app's root .env
+// name different databases under the same key names. Report the parameters pg itself resolved —
+// not a re-parse of the string — so the line can't disagree with what the query actually hit.
+function describeConnection() {
+  const { user, host, port, database } = client.connectionParameters ?? {};
+  if (!host) return '(connection parameters unavailable)';
+  return `${user ? `${user}@` : ''}${host}:${port}/${database ?? '(default db)'}`;
 }
 
 const onFallback = connectionVar !== target.envVar(writable);
@@ -241,7 +244,7 @@ const access =
       ? 'read-only, but pointed at the primary'
       : 'read-only';
 console.error(
-  `Target: ${target.label} (${access}) -> ${describeConnection(connectionString)} ` +
+  `Target: ${target.label} (${access}) -> ${describeConnection()} ` +
     `[${connectionVar}, timeout ${timeoutSeconds}s]`
 );
 if (!targetWasExplicit) {
@@ -251,14 +254,29 @@ if (!targetWasExplicit) {
 }
 console.error('');
 
-async function main() {
-  const client = new Client({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
-    statement_timeout: timeoutSeconds * 1000,
-    query_timeout: timeoutSeconds * 1000,
-  });
+// Client-side write guard. It matches the query's first keyword, so it is a guard against an
+// accidental write, not a sandbox: a write nested in a CTE gets through, and only the server-side
+// role stops that. Leading comments are stripped first so `/* note */ DELETE` can't slip past.
+if (!writable || target.readOnly) {
+  const upperQuery = query
+    .replace(/^(\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)+/, '')
+    .toUpperCase()
+    .trim();
+  const writeOps = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE'];
+  for (const op of writeOps) {
+    const nested = upperQuery.startsWith('WITH') && new RegExp(`\\(\\s*${op}\\b`).test(upperQuery);
+    if (upperQuery.startsWith(op) || nested) {
+      const ctx = target.readOnly
+        ? `${target.flag} is read-only.`
+        : 'Use --writable flag to confirm.';
+      console.error(`Error: Write operation detected (${op}). ${ctx}`);
+      console.error('This requires explicit user permission as it modifies the database.');
+      process.exit(1);
+    }
+  }
+}
 
+async function main() {
   try {
     await client.connect();
 
