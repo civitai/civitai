@@ -1,6 +1,6 @@
 ---
 name: postgres-query
-description: Run PostgreSQL queries for testing, debugging, and performance analysis. Use when you need to query the database directly, run EXPLAIN ANALYZE, compare query results, or test SQL optimizations. Always uses read-only connections unless explicitly directed otherwise.
+description: Run PostgreSQL queries for testing, debugging, and performance analysis. Use when you need to query the database directly, run EXPLAIN ANALYZE, compare query results, or test SQL optimizations. Always pass a target — `--prod` or `--dev` — because prod and dev are different databases and the default is prod. Always uses read-only connections unless explicitly directed otherwise.
 ---
 
 # PostgreSQL Query Testing
@@ -9,57 +9,103 @@ Use this skill to run ad-hoc PostgreSQL queries for testing, debugging, and perf
 
 ## Running Queries
 
-Use the included query script:
+Use the included query script, and **name the target**:
 
 ```bash
-node .claude/skills/postgres-query/query.mjs "SELECT * FROM \"User\" LIMIT 5"
+node .claude/skills/postgres-query/query.mjs --prod "SELECT * FROM \"User\" LIMIT 5"
+node .claude/skills/postgres-query/query.mjs --dev  "SELECT * FROM \"User\" LIMIT 5"
 ```
+
+### Targets
+
+Pick exactly one. Two target flags in one call is an error, not a silent precedence rule, and an
+unrecognised option (`--devv`, `--data_packet`) is rejected rather than ignored — a swallowed typo
+would fall through to the default target, which is production.
+
+| Flag | Connection string | Use when |
+|------|-------------------|----------|
+| `--prod` (default) | `DATABASE_REPLICA_URL`, or `DATABASE_URL` with `--writable` | The production main database |
+| `--dev` | `DEV_DATABASE_URL` | The dev cnpg database; requires SSH tunnel |
+| `--data-packet` | `DATABASE_DATA_PACKET_URL` | The DataPacket replica (read-only) |
+| `--notifications` | `NOTIFICATION_DB_REPLICA_URL` | notifications-db (read-only); requires SSH tunnel |
+
+Omitting the target still runs against prod, so old commands keep working — but the run prints
+`No target flag given, defaulted to --prod`. Pass the flag.
+
+### Every run prints which database answered
+
+Before connecting, the script writes a line to **stderr** naming the target, the access mode, the
+`user@host:port/database` **pg itself resolved**, and the env var it came from:
+
+```
+Target: PROD (read-only) -> <user>@<host>:25061/civitai [DATABASE_REPLICA_URL, timeout 30s]
+```
+
+It prints under `--quiet` and `--json` too, and before every exit path that reaches a database —
+including a blocked write, so you can always see which database you just aimed a `DELETE` at. It is
+on stderr, so `--json` piped to a file is still clean JSON.
+
+The host and port come from the client's own resolved connection parameters rather than a re-parse
+of the string, so the line cannot disagree with where the query actually went.
+
+🔴 **Read that line before you trust a result.** This skill's `.env` and the app's root `.env` both
+define `DATABASE_URL`, and **they name different databases** — the skill's is production, the root
+one is the dev snapshot the dev server uses. The skill's `.env` wins: it is loaded first, and
+`loadEnv` only fills in keys that are not already **present** (an empty value counts as present, so
+a bare `DATABASE_REPLICA_URL=` left in this file does not hand that key to the root `.env` — the
+target falls back to this file's `DATABASE_URL` instead, and the banner says
+`read-only, but pointed at the primary`). So a bare `query.mjs` answers from production while your
+dev server answers from dev. Comparing a value
+read here against one read by the running app is comparing two different databases unless both lines
+say the same host and port. That cost an hour and produced a confidently wrong root cause on
+2026-08-16: `limit: 8` from the app's DB and `limit: 40` from this skill's, reported as a config bug
+that did not exist.
 
 ### Options
 
 | Flag | Description |
 |------|-------------|
 | `--explain` | Run EXPLAIN ANALYZE on the query |
-| `--writable` | Use primary database instead of read replica (requires user permission) |
-| `--data-packet` | Use the DataPacket replica (`DATABASE_DATA_PACKET_URL`) — read-only |
-| `--notifications` | Query the notifications-db (DataPacket) — read-only via SSH bastion (see setup below) |
-| `--dev` | Query the dev cnpg database (`DEV_DATABASE_URL`) via SSH bastion (see setup below) |
+| `--writable` | Use the primary connection instead of the read replica (requires user permission) |
 | `--timeout <s>`, `-t` | Query timeout in seconds (default: 30) |
 | `--file`, `-f` | Read query from a file |
 | `--json` | Output results as JSON |
 | `--quiet`, `-q` | Minimal output, only results |
 
+`--writable` combined with `--data-packet` or `--notifications` is an error — both are read-only
+replicas, so the combination can only mean a mistake.
+
 ### Examples
 
 ```bash
 # Simple query
-node .claude/skills/postgres-query/query.mjs "SELECT id, username FROM \"User\" LIMIT 5"
+node .claude/skills/postgres-query/query.mjs --prod "SELECT id, username FROM \"User\" LIMIT 5"
+
+# Same query against the dev database
+node .claude/skills/postgres-query/query.mjs --dev "SELECT id, username FROM \"User\" LIMIT 5"
 
 # Check query performance
-node .claude/skills/postgres-query/query.mjs --explain "SELECT * FROM \"Model\" WHERE id = 1"
+node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT * FROM \"Model\" WHERE id = 1"
 
 # Override default 30s timeout for longer queries
-node .claude/skills/postgres-query/query.mjs --timeout 60 "SELECT ... (complex query)"
+node .claude/skills/postgres-query/query.mjs --prod --timeout 60 "SELECT ... (complex query)"
 
 # Query the notifications-db
 node .claude/skills/postgres-query/query.mjs --notifications "SELECT count(*) FROM \"Notification\""
 
 # Query from file
-node .claude/skills/postgres-query/query.mjs -f my-query.sql
+node .claude/skills/postgres-query/query.mjs --dev -f my-query.sql
 
-# JSON output for processing
-node .claude/skills/postgres-query/query.mjs --json "SELECT id, username FROM \"User\" LIMIT 3"
+# JSON output for processing (banner goes to stderr, stdout stays valid JSON)
+node .claude/skills/postgres-query/query.mjs --prod --json "SELECT id, username FROM \"User\" LIMIT 3"
 ```
 
-## Connection Targets
+### There is a second skill with this name
 
-| Flag | Connection string | Use when |
-|------|-------------------|----------|
-| (default) | `DATABASE_REPLICA_URL` (falls back to `DATABASE_URL`) | Most queries — read-only main replica |
-| `--writable` | `DATABASE_URL` | Writes against primary; needs user permission |
-| `--data-packet` | `DATABASE_DATA_PACKET_URL` | Querying the DataPacket replica (read-only) |
-| `--notifications` | `NOTIFICATION_DB_REPLICA_URL` | Querying notifications-db (read-only); requires SSH tunnel |
-| `--dev` | `DEV_DATABASE_URL` | Querying the dev cnpg database; requires SSH tunnel |
+`apps/event-engine/.claude/skills/postgres-query/` is a separate copy with its own `.env`, and it
+has **none** of the above — no target flag, no banner. Skills are directory-scoped, so work under
+`apps/event-engine` resolves to that one. Check which script you are invoking by path before
+trusting its output.
 
 ## Querying the dev database (cnpg)
 
@@ -80,6 +126,10 @@ node .claude/skills/postgres-query/query.mjs --dev "SELECT count(*) FROM \"User\
 # Writable DML (needs user permission)
 node .claude/skills/postgres-query/query.mjs --dev --writable "UPDATE ..."
 ```
+
+`--dev` uses `DEV_DATABASE_URL` either way — unlike `--prod`, there is no separate replica
+credential, so `--writable` only lifts the client-side guard. Whether a write lands is decided by
+the role in that URL.
 
 **DDL does not work through this credential.** `DEV_DATABASE_URL` connects as a
 non-superuser role, and the dev database has a `ddl_command_end` event trigger that
@@ -126,10 +176,17 @@ The role `notifications_readonly` only has `SELECT`. Writes are also rejected at
 
 ## Safety Features
 
-1. **Read-only by default**: Uses `DATABASE_REPLICA_URL` to prevent accidental writes
+1. **Read-only by default**: `--prod` uses `DATABASE_REPLICA_URL` to prevent accidental writes
 2. **Write protection**: Blocks INSERT/UPDATE/DELETE/DROP unless `--writable` flag is used
-3. **Notifications is always read-only**: `--notifications` blocks writes client-side AND the database role/pooler reject them
+3. **Replica targets refuse `--writable`**: `--notifications` and `--data-packet` error on the flag, and their roles/poolers reject writes anyway
 4. **Explicit permission required**: Before using `--writable`, you MUST ask the user for permission
+5. **The target is printed on every run**: no result can be attributed to the wrong database by accident
+
+⚠️ **The write guard is a typo-catcher, not a sandbox.** It matches the query's leading keyword
+(after stripping leading comments) and the `(INSERT|UPDATE|DELETE|…` inside a leading `WITH`. A write
+buried deeper than that gets through the client. What actually stops writes is the **role** you
+connect as — which is why `--prod` defaults to the read-only replica credential. Do not treat a
+missing `--writable` as proof a query cannot write.
 
 ## When to Use --writable
 
@@ -142,18 +199,18 @@ Only use the `--writable` flag when:
 
 ## Comparing Query Performance
 
-To compare two query approaches:
+To compare two query approaches — same target on both runs, or the comparison is meaningless:
 
 ```bash
 # Run first approach
-node .claude/skills/postgres-query/query.mjs --explain "SELECT ... (approach 1)"
+node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT ... (approach 1)"
 
 # Run second approach
-node .claude/skills/postgres-query/query.mjs --explain "SELECT ... (approach 2)"
+node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT ... (approach 2)"
 
 # Compare actual results
-node .claude/skills/postgres-query/query.mjs --json "SELECT ... (approach 1)" > /tmp/q1.json
-node .claude/skills/postgres-query/query.mjs --json "SELECT ... (approach 2)" > /tmp/q2.json
+node .claude/skills/postgres-query/query.mjs --prod --json "SELECT ... (approach 1)" > /tmp/q1.json
+node .claude/skills/postgres-query/query.mjs --prod --json "SELECT ... (approach 2)" > /tmp/q2.json
 ```
 
 ## Verifying Index Usage
@@ -163,5 +220,5 @@ Run with `--explain` and look for:
 - **Bad**: "Seq Scan" on large tables (indicates missing or unused index)
 
 ```bash
-node .claude/skills/postgres-query/query.mjs --explain "SELECT * FROM \"Account\" WHERE provider = 'discord'"
+node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT * FROM \"Account\" WHERE provider = 'discord'"
 ```
