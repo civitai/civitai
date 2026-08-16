@@ -9,8 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // honor at every call site: delete BOTH browsing-level keys for the model id(s),
 // honor the IS_DATAPACKET gate, and fail open on a Redis error.
 
-const { mockRedisDel, envBox } = vi.hoisted(() => ({
-  mockRedisDel: vi.fn(),
+const { envBox } = vi.hoisted(() => ({
   // envBox.IS_DATAPACKET toggles the cache gate per-test. The other keys are the
   // module-load-time vars the import chain dereferences (s3-utils `new URL`,
   // meili/signals pLimit, logging `.includes`); mirror the global test-setup
@@ -29,41 +28,10 @@ const { mockRedisDel, envBox } = vi.hoisted(() => ({
 vi.mock('~/env/server', () => ({
   env: new Proxy(envBox, { get: (t, p: string) => (p in t ? t[p] : undefined) }),
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { del: mockRedisDel },
-  REDIS_KEYS: { CACHES: { PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response' } },
-}));
 
 // Keep the heavy service/search-index graph out of the test module graph
 // (mirrors model-version.idempotent.service.test.ts).
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findFirstOrThrow: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    delete: vi.fn(),
-    deleteMany: vi.fn(),
-    groupBy: vi.fn(),
-    count: vi.fn(),
-  });
-  return {
-    mockDbRead: { modelVersion: mk(), donationGoal: mk(), model: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      modelVersion: mk(),
-      modelVersionEngagement: mk(),
-      model: mk(),
-      $queryRaw: vi.fn(),
-      $transaction: vi.fn(),
-    },
-  };
-});
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, dbReadFallbackCounter: { inc: vi.fn() } };
@@ -91,13 +59,18 @@ vi.mock('~/server/services/model.service', () => ({
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedisDel = redisMock.redis.del;
 
 const keysFor = (id: number) => [
   `packed:caches:public-model-response:${id}:${allBrowsingLevelsFlag}`,

@@ -1,29 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+dbMock.dbWrite.challenge.delete.mockResolvedValue(undefined);
+dbMock.dbWrite.collection.delete.mockResolvedValue(undefined);
 
-const {
-  mockDbRead,
-  mockDbWrite,
-  mockRefundUserChallengeFunds,
-  mockQueueUpdate,
-} = vi.hoisted(() => ({
-  mockDbRead: {
-    challenge: { findUnique: vi.fn() },
-    collectionItem: { count: vi.fn().mockResolvedValue(0) },
-  },
-  mockDbWrite: {
-    challenge: {
-      findUnique: vi.fn(),
-      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-      delete: vi.fn().mockResolvedValue(undefined),
-    },
-    collection: { delete: vi.fn().mockResolvedValue(undefined) },
-    $transaction: vi.fn(),
-  },
+const { mockRefundUserChallengeFunds, mockQueueUpdate } = vi.hoisted(() => ({
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   mockQueueUpdate: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: mockRefundUserChallengeFunds,

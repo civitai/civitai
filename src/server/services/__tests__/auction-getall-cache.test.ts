@@ -6,18 +6,8 @@ import { pack, unpack } from 'msgpackr';
 // (set -> pack(value), get -> unpack(buffer)) — so the byte-identical claim is exercised
 // through the real serializer end-to-end, not a pass-through fake. Cache hit/miss
 // semantics stay real (a Map), letting us assert exactly when the origin DB query re-runs.
-const {
-  store,
-  redisPackedGet,
-  redisPackedSet,
-  redisSetNxKeepTtlWithEx,
-  redisDel,
-} = vi.hoisted(() => ({
+const { store } = vi.hoisted(() => ({
   store: new Map<string, Buffer>(),
-  redisPackedGet: vi.fn(),
-  redisPackedSet: vi.fn(),
-  redisSetNxKeepTtlWithEx: vi.fn(),
-  redisDel: vi.fn(),
 }));
 
 // Cut the heavy sibling-service import graph (image.service pulls the event-engine-common
@@ -32,24 +22,14 @@ vi.mock('~/utils/signal-client', () => ({ signalClient: { send: vi.fn(), topicSe
 // (origin fetch still returns), not the log line.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
-// Keep the real REDIS_KEYS (so the key we build matches the production constant) and only
-// swap the live client for the in-memory fake. `fetchThroughCache` uses
-// `redis.packed.{get,set}`, `redis.setNxKeepTtlWithEx` (stampede lock), and `redis.del`.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/redis/client')>();
-  return {
-    ...actual,
-    redis: {
-      packed: { get: redisPackedGet, set: redisPackedSet },
-      setNxKeepTtlWithEx: redisSetNxKeepTtlWithEx,
-      del: redisDel,
-    },
-  };
-});
-
 import { getAllAuctions, getAllAuctionsUncached } from '~/server/services/auction.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const redisPackedGet = redisMock.redis.packed.get;
+const redisPackedSet = redisMock.redis.packed.set;
+const redisSetNxKeepTtlWithEx = redisMock.redis.setNxKeepTtlWithEx;
+const redisDel = redisMock.redis.del;
 const auctionFindMany = dbMock.dbWrite.auction.findMany;
 
 const KEY = REDIS_KEYS.CACHES.ACTIVE_AUCTIONS; // 'packed:caches:active-auctions'

@@ -4,6 +4,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ChallengeFunding from '~/server/games/daily-challenge/challenge-funding';
 import type * as EngineRegistry from '~/server/games/daily-challenge/challenge-engine-registry';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
 
 // The MODERATOR completion path — `endChallengeAndPickWinners`, reached from the tRPC router when a
 // mod ends a challenge by hand. It has its own `createChallengeWinner` +
@@ -21,7 +26,6 @@ import type * as EngineRegistry from '~/server/games/daily-challenge/challenge-e
 // harness that drives this function down its LLM re-pick branch.
 
 const {
-  mockDbWrite,
   mockGetJudgedEntries,
   mockGenerateWinners,
   mockGetChallengeById,
@@ -34,14 +38,6 @@ const {
   mockRankField,
   mockSelectWinners,
 } = vi.hoisted(() => ({
-  mockDbWrite: {
-    $queryRaw: vi.fn().mockResolvedValue([]),
-    $executeRaw: vi.fn().mockResolvedValue(1),
-    challenge: {
-      update: vi.fn().mockResolvedValue(undefined),
-      findUnique: vi.fn().mockResolvedValue({ prizePool: 0, prizeDistribution: null }),
-    },
-  },
   mockGetJudgedEntries: vi.fn(),
   mockGenerateWinners: vi.fn(),
   mockGetChallengeById: vi.fn(),
@@ -59,11 +55,6 @@ const {
   mockSelectWinners: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: vi.fn().mockResolvedValue([]), challenge: { findUnique: vi.fn() } },
-  dbWrite: mockDbWrite,
-}));
-
 vi.mock('~/server/events', () => ({
   eventEngine: { processEngagement: vi.fn().mockResolvedValue(undefined) },
 }));
@@ -72,11 +63,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: vi.fn().mockResolvedValue(false) };
 });
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-  safeError: vi.fn((e: unknown) => e),
-}));
 
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
   getChallengeConfig: vi.fn().mockResolvedValue({

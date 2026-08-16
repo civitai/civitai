@@ -10,13 +10,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmetic: { findUnique: mocks.cosmeticFindUnique, findMany: mocks.cosmeticFindMany },
-    $queryRaw: mocks.queryRaw,
-  },
-  dbWrite: { cosmetic: { update: mocks.cosmeticUpdate } },
-}));
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   getPerceptualHash: mocks.getPerceptualHash,
 }));
@@ -31,6 +24,19 @@ import {
   storeCosmeticPerceptualHash,
 } from '../cosmetic-phash.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.cosmetic.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.cosmeticFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmetic.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.cosmeticFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.$queryRaw.mockImplementation((...args: unknown[]) =>
+  (mocks.queryRaw as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmetic.update.mockImplementation((...args: unknown[]) =>
+  (mocks.cosmeticUpdate as (...a: unknown[]) => unknown)(...args)
+);
 
 const LANE = COSMETIC_PHASH_LANE.version;
 

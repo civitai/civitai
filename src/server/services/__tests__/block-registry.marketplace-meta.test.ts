@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * F-E E4 — service tests for curation:
@@ -19,38 +21,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * the write `data` to assert the SHAPE.
  */
 
-const { mockDb } = vi.hoisted(() => ({
-  mockDb: {
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    appBlock: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-    },
-    blockUserSubscription: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-  },
-}));
+// One local served both clients, and the three entry points here do NOT agree on which one:
+// getFeaturedBlocks reads `dbRead.$queryRaw` (block-registry.service:3465), getMarketplaceMeta
+// reads `dbRead.appBlock.findUnique` (:3534), and setMarketplaceMeta uses `dbWrite` for both its
+// findUnique (:3588) and its update (:3613). So this file splits per CASE, not per path — it is
+// the one file where `appBlock.findUnique` genuinely appears on both clients.
+//
+// 🔴 The three `expect(...appBlock.update).not.toHaveBeenCalled()` are safe to route
+// mechanically: `update` is dbWrite-only, so there is no client a mis-route could hide behind.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  },
-  sysRedis: { sMembers: vi.fn(async () => []) },
-  REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'packed:caches:block-registry', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
+// `scanIterator` is consumed with `for await`; a vivified spy returns undefined, which throws
+// rather than iterating.
+mockRedis.scanIterator.mockImplementation(async function* () {});
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
 
 function capturedSql(): string {
-  expect(mockDb.$queryRaw).toHaveBeenCalled();
-  const lastCall = mockDb.$queryRaw.mock.calls.at(-1);
+  expect(mockDbRead.$queryRaw).toHaveBeenCalled();
+  const lastCall = mockDbRead.$queryRaw.mock.calls.at(-1);
   if (!lastCall) return '';
   const first = lastCall[0] as unknown;
   if (first && typeof first === 'object' && typeof (first as { sql?: unknown }).sql === 'string') {
@@ -95,8 +85,8 @@ function featuredRow(over: Partial<Record<string, unknown>> = {}) {
 
 describe('BlockRegistry.getFeaturedBlocks — featured rail exposure (F-E E4)', () => {
   beforeEach(() => {
-    mockDb.$queryRaw.mockClear();
-    mockDb.$queryRaw.mockResolvedValue([featuredRow()]);
+    mockDbRead.$queryRaw.mockClear();
+    mockDbRead.$queryRaw.mockResolvedValue([featuredRow()]);
   });
 
   it('SQL hard-filters status=approved AND featured=true (only curated approved apps)', async () => {
@@ -168,7 +158,7 @@ describe('BlockRegistry.getFeaturedBlocks — featured rail exposure (F-E E4)', 
   });
 
   it('a NULL approved_scopes / malformed manifest do not crash or leak', async () => {
-    mockDb.$queryRaw.mockResolvedValueOnce([
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
       featuredRow({ approved_scopes: null, manifest: null }),
     ]);
     const { BlockRegistry } = await import('../block-registry.service');
@@ -180,9 +170,9 @@ describe('BlockRegistry.getFeaturedBlocks — featured rail exposure (F-E E4)', 
 
 describe('BlockRegistry.setMarketplaceMeta — data-integrity rules (F-E E4)', () => {
   beforeEach(() => {
-    mockDb.appBlock.findUnique.mockReset();
-    mockDb.appBlock.update.mockReset();
-    mockDb.appBlock.update.mockResolvedValue({
+    mockDbWrite.appBlock.findUnique.mockReset();
+    mockDbWrite.appBlock.update.mockReset();
+    mockDbWrite.appBlock.update.mockResolvedValue({
       id: 'ab_1',
       status: 'approved',
       category: 'games',
@@ -200,32 +190,32 @@ describe('BlockRegistry.setMarketplaceMeta — data-integrity rules (F-E E4)', (
         category: 'totally-made-up',
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(mockDb.appBlock.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
   });
 
   it('throws NOT_FOUND for a missing app (no write)', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValueOnce(null);
+    mockDbWrite.appBlock.findUnique.mockResolvedValueOnce(null);
     const { BlockRegistry } = await import('../block-registry.service');
     await expect(
       BlockRegistry.setMarketplaceMeta({ appBlockId: 'missing', featured: false })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect(mockDb.appBlock.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
   });
 
   it('REFUSES to feature a non-approved app (no write)', async () => {
     for (const status of ['pending', 'rejected', 'withdrawn', 'disabled']) {
-      mockDb.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status });
+      mockDbWrite.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status });
       const { BlockRegistry } = await import('../block-registry.service');
       await expect(
         BlockRegistry.setMarketplaceMeta({ appBlockId: 'ab_1', featured: true }),
         `status="${status}" must not be featurable`
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     }
-    expect(mockDb.appBlock.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
   });
 
   it('ALLOWS featuring an approved app, writing the expected fields', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status: 'approved' });
+    mockDbWrite.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status: 'approved' });
     const { BlockRegistry } = await import('../block-registry.service');
     const result = await BlockRegistry.setMarketplaceMeta({
       appBlockId: 'ab_1',
@@ -233,8 +223,8 @@ describe('BlockRegistry.setMarketplaceMeta — data-integrity rules (F-E E4)', (
       featured: true,
       featuredOrder: 3,
     });
-    expect(mockDb.appBlock.update).toHaveBeenCalledTimes(1);
-    const call = mockDb.appBlock.update.mock.calls[0][0] as {
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalledTimes(1);
+    const call = mockDbWrite.appBlock.update.mock.calls[0][0] as {
       where: { id: string };
       data: Record<string, unknown>;
     };
@@ -244,10 +234,10 @@ describe('BlockRegistry.setMarketplaceMeta — data-integrity rules (F-E E4)', (
   });
 
   it('is a PATCH — only the provided fields are written (omitted = unchanged)', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status: 'approved' });
+    mockDbWrite.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status: 'approved' });
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.setMarketplaceMeta({ appBlockId: 'ab_1', featured: false });
-    const call = mockDb.appBlock.update.mock.calls[0][0] as { data: Record<string, unknown> };
+    const call = mockDbWrite.appBlock.update.mock.calls[0][0] as { data: Record<string, unknown> };
     // category + featuredOrder were NOT provided → not in the write data.
     expect(call.data).toEqual({ featured: false });
     expect(call.data).not.toHaveProperty('category');
@@ -255,7 +245,7 @@ describe('BlockRegistry.setMarketplaceMeta — data-integrity rules (F-E E4)', (
   });
 
   it('allows explicitly CLEARING category/order with null (a non-approved app can be un-featured/edited)', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status: 'pending' });
+    mockDbWrite.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status: 'pending' });
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.setMarketplaceMeta({
       appBlockId: 'ab_1',
@@ -263,12 +253,12 @@ describe('BlockRegistry.setMarketplaceMeta — data-integrity rules (F-E E4)', (
       featuredOrder: null,
       featured: false, // un-feature is allowed on a non-approved app
     });
-    const call = mockDb.appBlock.update.mock.calls[0][0] as { data: Record<string, unknown> };
+    const call = mockDbWrite.appBlock.update.mock.calls[0][0] as { data: Record<string, unknown> };
     expect(call.data).toEqual({ category: null, featuredOrder: null, featured: false });
   });
 
   it('E4 Low-2: the service writes ONLY its allowlisted fields even if extra keys reach it (mass-assignment guard, independent of the router zod strip)', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status: 'approved' });
+    mockDbWrite.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status: 'approved' });
     const { BlockRegistry } = await import('../block-registry.service');
     // Call the service DIRECTLY (bypassing the router's zod object that would
     // strip unknown keys) with attacker-controlled protected columns. The
@@ -281,7 +271,7 @@ describe('BlockRegistry.setMarketplaceMeta — data-integrity rules (F-E E4)', (
       manifest: { evil: true },
       approvedScopes: ['*'],
     } as never);
-    const call = mockDb.appBlock.update.mock.calls[0][0] as { data: Record<string, unknown> };
+    const call = mockDbWrite.appBlock.update.mock.calls[0][0] as { data: Record<string, unknown> };
     expect(call.data).toEqual({ featured: true });
     for (const k of ['status', 'trustTier', 'manifest', 'approvedScopes', 'appBlockId']) {
       expect(call.data).not.toHaveProperty(k);
@@ -291,11 +281,11 @@ describe('BlockRegistry.setMarketplaceMeta — data-integrity rules (F-E E4)', (
 
 describe('BlockRegistry.getMarketplaceMeta — mod seed read (F-E E4)', () => {
   beforeEach(() => {
-    mockDb.appBlock.findUnique.mockReset();
+    mockDbRead.appBlock.findUnique.mockReset();
   });
 
   it('returns the current meta for an existing app', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValueOnce({
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({
       id: 'ab_1',
       status: 'approved',
       category: 'utility',
@@ -313,7 +303,7 @@ describe('BlockRegistry.getMarketplaceMeta — mod seed read (F-E E4)', () => {
   });
 
   it('returns null for a missing app', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce(null);
     const { BlockRegistry } = await import('../block-registry.service');
     expect(await BlockRegistry.getMarketplaceMeta('missing')).toBeNull();
   });

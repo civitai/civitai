@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.scanIterator.mockImplementation(async function* () {});
+const mockDbRead = dbMock.dbRead;
 
 /**
  * NSFW-APP-RED-ONLY — service-level tests for the public marketplace reads
@@ -19,15 +25,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * (same harness idiom as block-registry.page-only-launch.test.ts).
  */
 
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    blockUserSubscription: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-  },
-}));
-
 vi.mock('@prisma/client', () => {
   function sql(strings: TemplateStringsArray, ...values: unknown[]) {
     let out = '';
@@ -46,21 +43,6 @@ vi.mock('@prisma/client', () => {
   return { Prisma: { sql } };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  },
-  sysRedis: { sMembers: vi.fn(async () => []) },
-  REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'packed:caches:block-registry', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
 
 /** Reconstruct the assembled SQL string from the captured Prisma.sql object. */

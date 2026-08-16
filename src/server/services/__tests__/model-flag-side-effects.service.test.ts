@@ -7,43 +7,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // service/db/search dependencies are stubbed out below to keep this a real
 // unit test rather than an integration test.
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-  });
-  return {
-    mockDbRead: { model: mk(), modelVersion: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      model: mk(),
-      modelVersion: mk(),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-  };
-});
-
 const {
   mockModelTagRefresh,
   mockModelVotableBust,
-  mockRedisDel,
   mockModelsQueueUpdate,
   mockQueueImageSearchIndexUpdate,
   mockBustMvCache,
 } = vi.hoisted(() => ({
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
-  mockRedisDel: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockBustMvCache: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: vi.fn(),
   getDbWithoutLag: vi.fn(async () => mockDbRead),
@@ -60,10 +37,7 @@ vi.mock('~/server/redis/caches', () => ({
   userBasicCache: {},
   userModelCountCache: { refresh: vi.fn() },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { del: mockRedisDel },
-  REDIS_KEYS: { MODEL: { GALLERY_SETTINGS: 'model:gallery-settings' } },
-}));
+
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
@@ -123,6 +97,11 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import { applyModelFlagSideEffects } from '~/server/services/model.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedisDel = redisMock.redis.del;
 
 const baseBefore = {
   poi: false,

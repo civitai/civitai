@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ChallengeJudgeService from '~/server/services/challenge-judge.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The judge row is the ONLY source of the engine here: the real
 // `challengeJudgingEngineForCreate` runs against this mocked read, so a create path that stopped
 // consulting the judge fails these tests rather than quietly writing a hardcoded value.
-const { mockDbRead, mockDbWrite, mockTx, JUDGE_USER_ID, CREATOR_USER_ID } = vi.hoisted(() => {
+const { mockTx, JUDGE_USER_ID, CREATOR_USER_ID } = vi.hoisted(() => {
   const JUDGE_USER_ID = 8_675_309;
   const CREATOR_USER_ID = 42;
   const tx = {
@@ -16,23 +17,20 @@ const { mockDbRead, mockDbWrite, mockTx, JUDGE_USER_ID, CREATOR_USER_ID } = vi.h
     JUDGE_USER_ID,
     CREATOR_USER_ID,
     mockTx: tx,
-    mockDbRead: {
-      challenge: { findUnique: vi.fn() },
-      challengeJudge: { findUnique: vi.fn() },
-      image: { findFirst: vi.fn().mockResolvedValue({ id: 1 }) },
-    },
-    mockDbWrite: { $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) },
   };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+// Not canonical defaults, so they have to be said explicitly: the cover-image lookup returns a
+// row, and the transaction runs its callback against this file's own `tx`.
+mockDbRead.image.findFirst.mockResolvedValue({ id: 1 });
+mockDbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(mockTx));
 
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: {},
   isFlipt: vi.fn().mockResolvedValue(false),
 }));
-
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   claimChallengeForCompletion: vi.fn(),

@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // deleteImageFromS3 used to end in `catch (e) { /* do nothing */ }`. deleteImages removes the
 // DB row before it runs, so a swallowed failure left a permanently public CDN object (urls are
@@ -9,28 +12,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // (unblock-image-nsfwlevel-reset.test.ts): stub env + infra clients + the event-engine-common
 // submodule so importing it boots no real infra.
 
-const {
-  mockLogToAxiom,
-  mockFindFirst,
-  mockFetch,
-  mockB2Send,
-  mockResolveMediaLocation,
-  mockGetB2ImageS3Client,
-} = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn(async () => undefined),
-  mockFindFirst: vi.fn(),
-  mockFetch: vi.fn(async () => ({ ok: true })),
-  // Typed to take the command so `mock.calls[0][0].input` is assertable — an untyped `vi.fn()`
-  // here gives `calls` an empty tuple type and the bucket/key assertions stop compiling.
-  mockB2Send: vi.fn(async (command: { input: Record<string, unknown> }) => ({
-    Key: command.input.Key,
-  })),
-  mockResolveMediaLocation: vi.fn(),
-  // A vi.fn rather than a fixed arrow so a test can make the client CONSTRUCTOR throw — the real
-  // one does exactly that when B2 credentials are absent, which is the case the removed
-  // `env.S3_IMAGE_B2_ACCESS_KEY` guard used to swallow.
-  mockGetB2ImageS3Client: vi.fn(),
-}));
+const { mockFetch, mockB2Send, mockResolveMediaLocation, mockGetB2ImageS3Client } = vi.hoisted(
+  () => ({
+    mockFetch: vi.fn(async () => ({ ok: true })),
+    // Typed to take the command so `mock.calls[0][0].input` is assertable — an untyped `vi.fn()`
+    // here gives `calls` an empty tuple type and the bucket/key assertions stop compiling.
+    mockB2Send: vi.fn(async (command: { input: Record<string, unknown> }) => ({
+      Key: command.input.Key,
+    })),
+    mockResolveMediaLocation: vi.fn(),
+    // A vi.fn rather than a fixed arrow so a test can make the client CONSTRUCTOR throw — the real
+    // one does exactly that when B2 credentials are absent, which is the case the removed
+    // `env.S3_IMAGE_B2_ACCESS_KEY` guard used to swallow.
+    mockGetB2ImageS3Client: vi.fn(),
+  })
+);
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
   const handler: ProxyHandler<any> = {
@@ -51,10 +47,7 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
   }, handler);
 }
 
-const dbWrite = makePermissive({ image: makePermissive({ findFirst: mockFindFirst }) });
-const dbRead = makePermissive();
-
-vi.mock('~/server/db/client', () => ({ dbRead, dbWrite }));
+const mockFindFirst = dbMock.dbWrite.image.findFirst;
 
 // event-engine-common is a git submodule, not checked out by default.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -119,23 +112,6 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: makePermissive({ insert: async () => undefined }),
-}));
-
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: makePermissive({ packed: makePermissive() }),
-    sysRedis: makePermissive(),
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-  };
-});
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: mockLogToAxiom,
 }));
 
 vi.mock('~/server/search-index', async (importOriginal) => ({

@@ -1,5 +1,8 @@
 import type { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
 
 // getInfiniteChallenges: the content-level gate must test the CHALLENGE's own rating
 // (`Challenge.nsfwLevel` — the single highest level its `allowedNsfwLevel` permits) and not only
@@ -7,28 +10,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // surface for a PG/PG-13 viewer. The cover predicate stays alongside it so a challenge that
 // under-declares its rating still can't leak an NSFW cover into an SFW feed. Mocking shape mirrors
 // challenge-feed-block-exclusion.service.test.ts.
-const {
-  mockDbRead,
-  mockHiddenUsersGetCached,
-  mockBlockedByUsersGetCached,
-  mockBlockedUsersGetCached,
-} = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRaw: vi.fn(),
-    modelVersion: { findMany: vi.fn() },
-    image: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(() => []) },
-    challenge: { findUnique: vi.fn() },
-    collectionItem: { count: vi.fn() },
-  },
-  mockHiddenUsersGetCached: vi.fn(() => [] as { id: number }[]),
-  mockBlockedByUsersGetCached: vi.fn(() => [] as { id: number }[]),
-  mockBlockedUsersGetCached: vi.fn(() => [] as { id: number }[]),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {},
-}));
+const { mockHiddenUsersGetCached, mockBlockedByUsersGetCached, mockBlockedUsersGetCached } =
+  vi.hoisted(() => ({
+    mockHiddenUsersGetCached: vi.fn(() => [] as { id: number }[]),
+    mockBlockedByUsersGetCached: vi.fn(() => [] as { id: number }[]),
+    mockBlockedUsersGetCached: vi.fn(() => [] as { id: number }[]),
+  }));
 
 vi.mock('~/server/services/user-preferences.service', () => ({
   HiddenUsers: { getCached: mockHiddenUsersGetCached },
@@ -103,10 +90,6 @@ vi.mock('~/server/services/challenge-judge.service', () => ({
 
 vi.mock('~/server/services/text-moderation.service', () => ({
   submitTextModeration: vi.fn(),
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(),
 }));
 
 vi.mock('~/utils/errorHandling', () => ({

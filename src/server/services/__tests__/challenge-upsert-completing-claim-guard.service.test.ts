@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // Regression guard for the second half of the "claimed-for-completion gets clobbered" defect.
 //
@@ -13,14 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // the stuck-challenge reset keys off. It is now a status-predicated `updateMany` + `count === 0`,
 // matching the Scheduled-only edit path elsewhere in this service.
 
-const {
-  mockDbRead,
-  mockDbWrite,
-  mockTx,
-  mockCreateImage,
-  mockGenerateThemeElements,
-  mockLogToAxiom,
-} = vi.hoisted(() => {
+const { mockTx, mockCreateImage, mockGenerateThemeElements } = vi.hoisted(() => {
   const tx = {
     challenge: {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -35,18 +34,13 @@ const {
   };
   return {
     mockTx: tx,
-    mockDbRead: {
-      challenge: { findUnique: vi.fn() },
-      challengeJudge: { findUnique: vi.fn().mockResolvedValue({ userId: 1 }) },
-    },
-    mockDbWrite: { $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) },
     mockCreateImage: vi.fn(),
     mockGenerateThemeElements: vi.fn().mockResolvedValue([]),
-    mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+mockDbRead.challengeJudge.findUnique.mockResolvedValue({ userId: 1 });
+mockDbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(mockTx));
 
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: {},
@@ -56,7 +50,6 @@ vi.mock('~/server/flipt/client', () => ({
 // Must resolve a promise, not undefined: production `logToAxiom` is async and the guard chains
 // `.catch()` on it (as two other sites in challenge.service.ts do). A bare `vi.fn()` returns
 // undefined and TypeErrors — which is also what proves the guard path is genuinely exercised.
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   claimChallengeForCompletion: vi.fn(),

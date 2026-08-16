@@ -28,7 +28,7 @@ const E = 105; // Recommended only (outside input)
 const F = 106; // resource review but recommended:false (must never appear)
 const Z = 999; // in input but user has NO engagement
 
-const { mockDb, listModelEngagementsMock } = vi.hoisted(() => {
+const { listModelEngagementsMock, reviewRowsFixture } = vi.hoisted(() => {
   const U = 1;
   const OU = 2;
   type EngRow = { userId: number; modelId: number; type: string };
@@ -63,31 +63,18 @@ const { mockDb, listModelEngagementsMock } = vi.hoisted(() => {
           .map((r) => ({ modelId: r.modelId, type: r.type }));
       }
     ),
-    mockDb: {
-      // Kept only to prove the engagement read NO LONGER goes through Prisma.
-      modelEngagement: {
-        findMany: vi.fn(async () => {
-          throw new Error('modelEngagement.findMany must not be called — ported to Kysely');
-        }),
-      },
-      resourceReview: {
-        findMany: vi.fn(async ({ where }: any) => {
-          const ids = inArr(where, 'modelId');
-          return reviewRows
-            .filter(
-              (r) =>
-                r.userId === where.userId &&
-                (where.recommended === undefined || r.recommended === where.recommended) &&
-                (!ids || ids.includes(r.modelId))
-            )
-            .map((r) => ({ modelId: r.modelId, modelVersionId: r.modelVersionId }));
-        }),
-      },
-    },
+    reviewRowsFixture: (where: any) =>
+      reviewRows
+        .filter(
+          (r) =>
+            r.userId === where.userId &&
+            (where.recommended === undefined || r.recommended === where.recommended) &&
+            (!inArr(where, 'modelId') || inArr(where, 'modelId')!.includes(r.modelId))
+        )
+        .map((r) => ({ modelId: r.modelId, modelVersionId: r.modelVersionId })),
   };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 // The engagement read runs through @civitai/db-queries over the app's own pg pool, bypassing the
 // Prisma query engine. Mocked at that seam so these tests keep exercising the service's shaping
 // and the bounded filters it passes down.
@@ -117,6 +104,15 @@ import { getResourceReviewsByUserId } from '~/server/services/resourceReview.ser
 // at `kyselyWrite` failed 1 test on pre-port code and passed the whole suite after the port; and
 // the first cut of this fix used `toHaveBeenCalledWith` and that same mutant survived it.
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDb = dbMock.dbRead;
+mockDb.resourceReview.findMany.mockImplementation(async ({ where }: any) =>
+  reviewRowsFixture(where)
+);
+// Kept only to prove the engagement read NO LONGER goes through Prisma.
+mockDb.modelEngagement.findMany.mockImplementation(async () => {
+  throw new Error('modelEngagement.findMany must not be called — ported to Kysely');
+});
 
 const WRONG_TIER =
   'ported read was handed a client other than kyselyRead (kyselyWrite / kyselyReadLong routes it ' +

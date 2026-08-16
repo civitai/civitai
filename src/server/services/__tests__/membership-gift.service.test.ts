@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import dayjs from 'dayjs';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
+// Every asserted call in this file is one `membership-gift.service` spells as `dbWrite`.
+const mockDbWrite = dbMock.dbWrite;
 
 const {
-  mockDbWrite,
   mockStripe,
   mockCreateCustomer,
   mockGetPlans,
@@ -10,26 +13,7 @@ const {
   mockSendReceivedEmail,
   mockSendSentEmail,
 } = vi.hoisted(() => {
-  const mockMembershipGift = {
-    findUnique: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    findMany: vi.fn(),
-  };
-  const mockCustomerSubscription = {
-    findUnique: vi.fn(),
-  };
-  const mockUser = {
-    findUnique: vi.fn(),
-  };
-
   return {
-    mockDbWrite: {
-      membershipGift: mockMembershipGift,
-      customerSubscription: mockCustomerSubscription,
-      user: mockUser,
-    },
     mockStripe: {
       subscriptions: {
         retrieve: vi.fn(),
@@ -65,11 +49,6 @@ const {
   };
 });
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: mockDbWrite,
-  dbRead: mockDbWrite,
-}));
-
 vi.mock('~/server/utils/get-server-stripe', () => ({
   getServerStripe: vi.fn().mockResolvedValue(mockStripe),
 }));
@@ -100,10 +79,6 @@ vi.mock('~/server/utils/subscription.utils', () => ({
 
 vi.mock('~/server/auth/session-invalidation', () => ({
   refreshSession: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/utils/url-helpers', () => ({

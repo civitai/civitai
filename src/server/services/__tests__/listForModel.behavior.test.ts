@@ -10,6 +10,29 @@ import {
   seedSubscription,
   truncateAll,
 } from './listForModel.harness';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+dbMock.dbRead.$queryRaw.mockImplementation(
+  (strings: TemplateStringsArray, ...values: unknown[]) => {
+    // installPgliteQueryRaw is re-imported here (not the harness symbol) to
+    // avoid pulling the harness module through the hoist boundary; the bridge
+    // logic is tiny and identical.
+    let sql = '';
+    for (let i = 0; i < strings.length; i++) {
+      sql += strings[i];
+      if (i < values.length) sql += `$${i + 1}`;
+    }
+    return holder.db.query(sql, values as unknown[]).then((r) => r.rows);
+  }
+);
+dbMock.dbRead.modelVersion.findMany.mockImplementation(async () => []);
+redisMock.redis.packed.get.mockImplementation(async () => null);
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
+redisMock.redis.get.mockImplementation(async () => null);
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.del.mockImplementation(async () => 0);
+redisMock.redis.scanIterator.mockImplementation(async function* () {});
+redisMock.sysRedis.sMembers.mockImplementation(async () => [] as string[]);
 
 // Spinning up the in-process PGlite (WASM Postgres) + schema in beforeAll, and
 // the second PGlite in the bridge sanity test, can exceed the default 10s
@@ -39,40 +62,6 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const holder = vi.hoisted(() => {
   return { db: null as unknown as import('@electric-sql/pglite').PGlite };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
-      // installPgliteQueryRaw is re-imported here (not the harness symbol) to
-      // avoid pulling the harness module through the hoist boundary; the bridge
-      // logic is tiny and identical.
-      let sql = '';
-      for (let i = 0; i < strings.length; i++) {
-        sql += strings[i];
-        if (i < values.length) sql += `$${i + 1}`;
-      }
-      return holder.db.query(sql, values as unknown[]).then((r) => r.rows);
-    },
-    modelVersion: { findMany: async () => [] },
-  },
-  dbWrite: {},
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: async () => null, set: async () => undefined },
-    get: async () => null,
-    set: async () => undefined,
-    del: async () => 0,
-    scanIterator: async function* () {},
-  },
-  // Empty kill list → empty (non-sentinel) Set → nothing suppressed.
-  sysRedis: { sMembers: async () => [] as string[] },
-  REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'packed:caches:block-registry', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
 
 const SLOT = 'model.sidebar_top';
 const OWNER = 100;
@@ -354,65 +343,59 @@ describe('listForModel suppressor-gap bugs (assert desired behavior)', () => {
   // suppressors now re-check the pinned row's own target_model_types /
   // target_base_models, so a non-applicable pin neither renders nor
   // suppresses. (Was `it.fails` while the bug reproduced.)
-  it(
-    'H2: a type-filtered pin that does NOT match this model must NOT suppress the blanket',
-    async () => {
-      await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
-      await seedAppBlock(db, { id: 'ab_1', blockId: 'blk_1', manifest: manifestG });
-      // A PINNED row whose own type filter says "Checkpoint only" — but this
-      // model is a LORA, so per its own filters the pin does NOT apply here.
-      await seedSubscription(db, {
-        id: 'sub_pin_filtered',
-        userId: OWNER,
-        appBlockId: 'ab_1',
-        scope: 'publisher_all_my_models',
-        slotId: SLOT,
-        targetModelIds: [MODEL_ID],
-        targetModelTypes: ['Checkpoint'],
-        blockInstanceId: 'bki_pinned_filtered',
-      });
-      // Blanket-publisher sub for the same app+owner — SHOULD render because
-      // the pin doesn't actually apply to this LORA model.
-      await seedSubscription(db, {
-        id: 'sub_blanket',
-        userId: OWNER,
-        appBlockId: 'ab_1',
-        scope: 'publisher_all_my_models',
-        slotId: null,
-        targetModelIds: [],
-      });
+  it('H2: a type-filtered pin that does NOT match this model must NOT suppress the blanket', async () => {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    await seedAppBlock(db, { id: 'ab_1', blockId: 'blk_1', manifest: manifestG });
+    // A PINNED row whose own type filter says "Checkpoint only" — but this
+    // model is a LORA, so per its own filters the pin does NOT apply here.
+    await seedSubscription(db, {
+      id: 'sub_pin_filtered',
+      userId: OWNER,
+      appBlockId: 'ab_1',
+      scope: 'publisher_all_my_models',
+      slotId: SLOT,
+      targetModelIds: [MODEL_ID],
+      targetModelTypes: ['Checkpoint'],
+      blockInstanceId: 'bki_pinned_filtered',
+    });
+    // Blanket-publisher sub for the same app+owner — SHOULD render because
+    // the pin doesn't actually apply to this LORA model.
+    await seedSubscription(db, {
+      id: 'sub_blanket',
+      userId: OWNER,
+      appBlockId: 'ab_1',
+      scope: 'publisher_all_my_models',
+      slotId: null,
+      targetModelIds: [],
+    });
 
-      const rows = await listForModel({ modelType: 'LORA' });
-      // DESIRED: blanket renders (pin's own filter excludes this model, so the
-      // pin's rank-1 SELECT returns nothing AND it must not suppress rank-2).
-      expect(ids(rows)).toEqual(['bus_pub_sub_blanket']);
-    }
-  );
+    const rows = await listForModel({ modelType: 'LORA' });
+    // DESIRED: blanket renders (pin's own filter excludes this model, so the
+    // pin's rank-1 SELECT returns nothing AND it must not suppress rank-2).
+    expect(ids(rows)).toEqual(['bus_pub_sub_blanket']);
+  });
 
   // H2 FIXED 2026-05-31 — same fix covers the rank-3 platform default path.
-  it(
-    'H2: a type-filtered pin that does NOT match this model must NOT suppress the platform default',
-    async () => {
-      await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
-      await seedAppBlock(db, { id: 'ab_1', blockId: 'blk_1', manifest: manifestG });
-      await seedSubscription(db, {
-        id: 'sub_pin_filtered',
-        userId: OWNER,
-        appBlockId: 'ab_1',
-        scope: 'publisher_all_my_models',
-        slotId: SLOT,
-        targetModelIds: [MODEL_ID],
-        targetModelTypes: ['Checkpoint'],
-        blockInstanceId: 'bki_pinned_filtered',
-      });
-      await seedPlatformDefault(db, { appBlockId: 'ab_1', slotId: SLOT });
+  it('H2: a type-filtered pin that does NOT match this model must NOT suppress the platform default', async () => {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    await seedAppBlock(db, { id: 'ab_1', blockId: 'blk_1', manifest: manifestG });
+    await seedSubscription(db, {
+      id: 'sub_pin_filtered',
+      userId: OWNER,
+      appBlockId: 'ab_1',
+      scope: 'publisher_all_my_models',
+      slotId: SLOT,
+      targetModelIds: [MODEL_ID],
+      targetModelTypes: ['Checkpoint'],
+      blockInstanceId: 'bki_pinned_filtered',
+    });
+    await seedPlatformDefault(db, { appBlockId: 'ab_1', slotId: SLOT });
 
-      const rows = await listForModel({ modelType: 'LORA' });
-      // DESIRED: platform default renders; the non-applicable pin must not
-      // blank the slot.
-      expect(ids(rows)).toEqual(['pdb_ab_1']);
-    }
-  );
+    const rows = await listForModel({ modelType: 'LORA' });
+    // DESIRED: platform default renders; the non-applicable pin must not
+    // blank the slot.
+    expect(ids(rows)).toEqual(['pdb_ab_1']);
+  });
 
   // H2b RE-ANALYSED 2026-05-31: NOT a bug — corrected from an it.fails.
   // The rank-2/3 NOT EXISTS suppressors are keyed on app_block_id, so a pin
@@ -422,39 +405,36 @@ describe('listForModel suppressor-gap bugs (assert desired behavior)', () => {
   // fallback is equally over-rated and correctly absent too. An empty slot
   // is the RIGHT outcome here: pinning must not bypass content rating. (A
   // DIFFERENT, lower-rated app is never suppressed — see the control below.)
-  it(
-    'H2b: a same-app over-rated pin correctly yields an empty slot (pinning does not bypass content rating)',
-    async () => {
-      await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
-      // Single app block, x-rated. Both the pin and the platform default point
-      // at it.
-      await seedAppBlock(db, { id: 'ab_x', blockId: 'blk_x', manifest: manifestX });
-      // Pinned sub for THIS app on THIS model — suppresses the rank-3 default
-      // in SQL (NOT EXISTS keyed on app_block_id).
-      await seedSubscription(db, {
-        id: 'sub_pin',
-        userId: OWNER,
-        appBlockId: 'ab_x',
-        scope: 'publisher_all_my_models',
-        slotId: SLOT,
-        targetModelIds: [MODEL_ID],
-        blockInstanceId: 'bki_pin_x',
-      });
-      // Platform default for the SAME app — suppressed in SQL by the pin, then
-      // the only surviving row (the pin) is dropped by the JS content-rating
-      // filter on a low-nsfw model → empty slot.
-      await seedPlatformDefault(db, { appBlockId: 'ab_x', slotId: SLOT });
+  it('H2b: a same-app over-rated pin correctly yields an empty slot (pinning does not bypass content rating)', async () => {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    // Single app block, x-rated. Both the pin and the platform default point
+    // at it.
+    await seedAppBlock(db, { id: 'ab_x', blockId: 'blk_x', manifest: manifestX });
+    // Pinned sub for THIS app on THIS model — suppresses the rank-3 default
+    // in SQL (NOT EXISTS keyed on app_block_id).
+    await seedSubscription(db, {
+      id: 'sub_pin',
+      userId: OWNER,
+      appBlockId: 'ab_x',
+      scope: 'publisher_all_my_models',
+      slotId: SLOT,
+      targetModelIds: [MODEL_ID],
+      blockInstanceId: 'bki_pin_x',
+    });
+    // Platform default for the SAME app — suppressed in SQL by the pin, then
+    // the only surviving row (the pin) is dropped by the JS content-rating
+    // filter on a low-nsfw model → empty slot.
+    await seedPlatformDefault(db, { appBlockId: 'ab_x', slotId: SLOT });
 
-      // Low-nsfw model: 'pg' ceiling. rank-1 pin (x-rated) survives SQL but is
-      // dropped by the JS content-rating filter; rank-3 default (also x-rated
-      // here, but the point is the suppression) was already removed in SQL.
-      const rows = await listForModel({ modelNsfwLevel: 1 });
-      // CORRECT: an x-rated app must not show on a pg model whether it's
-      // pinned or defaulted — both point at the same over-rated app_block,
-      // so the empty slot is the intended content-rating behavior, not a gap.
-      expect(rows).toEqual([]);
-    }
-  );
+    // Low-nsfw model: 'pg' ceiling. rank-1 pin (x-rated) survives SQL but is
+    // dropped by the JS content-rating filter; rank-3 default (also x-rated
+    // here, but the point is the suppression) was already removed in SQL.
+    const rows = await listForModel({ modelNsfwLevel: 1 });
+    // CORRECT: an x-rated app must not show on a pg model whether it's
+    // pinned or defaulted — both point at the same over-rated app_block,
+    // so the empty slot is the intended content-rating behavior, not a gap.
+    expect(rows).toEqual([]);
+  });
 
   // CONTROL (green): the H2b empty-slot only happens for a SAME-app fallback.
   // A DIFFERENT-app g-rated blanket survives even when an x-rated pin is

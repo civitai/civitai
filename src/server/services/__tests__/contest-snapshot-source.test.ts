@@ -1,12 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 vi.mock('~/server/db/db-helpers', () => ({ dbKV: { get: vi.fn(), set: vi.fn() } }));
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return { ...actual, redis: { packed: { get: vi.fn(), set: vi.fn() }, del: vi.fn() } };
-});
-
 const COLLECTION_ID = 4242;
 const TAKEN_AT = '2026-08-05T11:22:33.444Z';
 

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from 'vitest';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
 const {
-  mockDbWrite,
   mockClickhouse,
   mockCreateBuzzTransaction,
   mockGetCounterPartyBuzzTransactions,
@@ -15,7 +15,6 @@ const {
   mockCreateNotification,
   mockPayToTipaltiAccount,
   mockSignalClient,
-  mockSysRedis,
   mockFetchThroughCache,
   mockBustFetchThroughCache,
   mockClearCacheByPattern,
@@ -30,20 +29,6 @@ const {
   };
 
   return {
-    mockDbWrite: {
-      user: { findFirstOrThrow: vi.fn(), findFirst: vi.fn() },
-      customerSubscription: { findFirst: vi.fn() },
-      cashWithdrawal: {
-        findMany: vi.fn(),
-        findUniqueOrThrow: vi.fn(),
-        create: vi.fn(),
-        update: vi.fn(),
-      },
-      userPaymentConfiguration: { findUnique: vi.fn() },
-      $executeRaw: vi.fn(),
-      $queryRaw: vi.fn(),
-      $queryRawUnsafe: vi.fn(),
-    },
     mockClickhouse: {
       $query: vi.fn().mockResolvedValue([]),
     },
@@ -61,7 +46,6 @@ const {
       paymentRefCode: 'ref-1',
     }),
     mockSignalClient: { topicSend: vi.fn() },
-    mockSysRedis: { get: vi.fn().mockResolvedValue(null) },
     mockFetchThroughCache: vi.fn(async (_key: string, fn: () => Promise<any>) => fn()),
     mockBustFetchThroughCache: vi.fn().mockResolvedValue(undefined),
     mockClearCacheByPattern: vi.fn().mockResolvedValue(undefined),
@@ -71,8 +55,6 @@ const {
   };
 });
 
-// ── Module mocks ───────────────────────────────────────────────────────────────
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
@@ -95,21 +77,6 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   clearCacheByPattern: mockClearCacheByPattern,
   createCachedObject: mockCreateCachedObject,
 }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CREATOR_PROGRAM: {
-      CAPS: 'cp:caps',
-      BANKED: 'cp:banked',
-      CASH: 'cp:cash',
-      POOL_VALUE: 'cp:pool-value',
-      POOL_SIZE: 'cp:pool-size',
-      POOL_FORECAST: 'cp:pool-forecast',
-      PREV_MONTH_STATS: 'cp:prev-month-stats',
-    },
-  },
-  REDIS_SYS_KEYS: { CREATOR_PROGRAM: { FLIP_PHASES: 'cp:flip' } },
-  sysRedis: mockSysRedis,
-}));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: mockGetHighestTierSubscription,
 }));
@@ -130,6 +97,10 @@ import {
   joinCreatorsProgram,
   withdrawCash,
 } from '~/server/services/creator-program.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbWrite = dbMock.dbWrite;
+const mockSysRedis = redisMock.sysRedis;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const userId = 42;
@@ -363,8 +334,10 @@ describe('bankBuzz', () => {
   it('busts banked and pool size caches after banking', async () => {
     await bankBuzz(userId, 10000, 'yellow');
 
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(`cp:banked:${userId}`);
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith('cp:pool-size');
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`
+    );
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
   });
 
   it('sends compensation pool update signal after banking', async () => {
@@ -477,8 +450,10 @@ describe('extractBuzz', () => {
 
     await extractBuzz(userId);
 
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(`cp:banked:${userId}`);
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith('cp:pool-size');
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`
+    );
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
   });
 });
 
@@ -507,12 +482,12 @@ describe('getCompensationPool', () => {
 
     // fetchThroughCache should be called for pool value and forecast (not size)
     expect(mockFetchThroughCache).toHaveBeenCalledWith(
-      'cp:pool-value',
+      REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE,
       expect.any(Function),
       expect.any(Object)
     );
     expect(mockFetchThroughCache).toHaveBeenCalledWith(
-      'cp:pool-forecast',
+      REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST,
       expect.any(Function),
       expect.any(Object)
     );

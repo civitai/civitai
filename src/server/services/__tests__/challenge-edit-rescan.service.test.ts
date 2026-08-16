@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.$transaction.mockImplementation(
+  async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx)
+);
 
 // Regression coverage for the edit→scan dedup deadlock: an edit that leaves the moderated text
 // (title/theme/description/invitation) unchanged must NOT reset ingestion to Pending. The re-scan
 // submit dedups on contentHash against the already-Succeeded EntityModeration row, so no webhook
 // ever fires to flip ingestion back to Scanned — the challenge would sit hidden until the
 // activation job voids it.
-const { mockDbRead, mockDbWrite, mockTx, mockSubmitTextModeration } = vi.hoisted(() => {
+const { mockTx, mockSubmitTextModeration } = vi.hoisted(() => {
   const mockTx = {
     challenge: {
       updateMany: vi.fn(),
@@ -15,23 +22,9 @@ const { mockDbRead, mockDbWrite, mockTx, mockSubmitTextModeration } = vi.hoisted
   };
   return {
     mockTx,
-    mockDbRead: {
-      $queryRaw: vi.fn(),
-      challenge: { findUnique: vi.fn() },
-      collectionItem: { count: vi.fn() },
-      image: { findUnique: vi.fn(), findFirst: vi.fn() },
-    },
-    mockDbWrite: {
-      $transaction: vi.fn(async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx)),
-    },
     mockSubmitTextModeration: vi.fn(),
   };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: mockDbWrite,
-}));
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -97,10 +90,6 @@ vi.mock('~/server/services/challenge-judge.service', () => ({
 
 vi.mock('~/server/services/text-moderation.service', () => ({
   submitTextModeration: mockSubmitTextModeration,
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(),
 }));
 
 vi.mock('~/utils/errorHandling', () => ({
@@ -258,9 +247,9 @@ describe('upsertUserChallenge (edit branch) — moderator edit access', () => {
   });
 
   it('rejects a non-owner without moderator status', async () => {
-    await expect(
-      upsertUserChallenge({ ...baseEditInput, userId: 222 } as never)
-    ).rejects.toThrow('You can only edit your own challenges.');
+    await expect(upsertUserChallenge({ ...baseEditInput, userId: 222 } as never)).rejects.toThrow(
+      'You can only edit your own challenges.'
+    );
     expect(mockTx.challenge.updateMany).not.toHaveBeenCalled();
   });
 

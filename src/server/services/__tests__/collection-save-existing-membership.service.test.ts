@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as SearchIndex from '~/server/search-index';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
 import { AUTO_FEATURE_NOTE_PREFIX } from '~/server/common/auto-feature';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // Saving an item to a collection sends the item's whole desired membership, so collections it is ALREADY
 // in ride along in the payload. Those are no-op upserts — re-running the contest gates on them fails the
@@ -9,25 +12,6 @@ import { AUTO_FEATURE_NOTE_PREFIX } from '~/server/common/auto-feature';
 // creator whose models were in the Krea 2 event collection: adding one to their own collection 400'd with
 // "Collection is not accepting submissions at this time".
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: {
-    collection: { findMany: vi.fn() },
-    collectionItem: { findMany: vi.fn(), count: vi.fn() },
-    challenge: { findFirst: vi.fn() },
-    user: { findUnique: vi.fn(), findFirst: vi.fn() },
-    model: { findMany: vi.fn() },
-    modelVersion: { findMany: vi.fn() },
-    $queryRaw: vi.fn(),
-  },
-  mockDbWrite: {
-    $executeRaw: vi.fn(),
-    $transaction: vi.fn(),
-    collectionItem: { deleteMany: vi.fn(), updateMany: vi.fn() },
-    collectionContributor: { upsert: vi.fn() },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },

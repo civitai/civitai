@@ -1,21 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AUTO_FEATURE_NOTE_PREFIX } from '~/server/common/auto-feature';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // `permissions.writeReview` is granted to every authenticated user on a `write: Review`
 // collection (and `permissions.write` likewise on `write: Public`), independent of ownership.
 // Removal must not accept those as authorization — a write grant lets you ADD an item, not
 // delete somebody else's.
-
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn(), user: { findFirst: vi.fn() } },
-  mockDbWrite: {
-    $queryRaw: vi.fn(),
-    collectionItem: { updateMany: vi.fn(), deleteMany: vi.fn() },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
 const { removeCollectionItem } = await import('~/server/services/collection.service');
 

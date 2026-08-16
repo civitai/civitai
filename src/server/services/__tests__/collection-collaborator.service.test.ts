@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as SessionClientModule from '~/server/auth/session-client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // `dbRead.collection.findUnique`, `dbRead.collectionContributor.findMany`, and
 // `dbWrite.collectionInvite.deleteMany` aren't in the original brief's mock shape but the
@@ -9,45 +12,14 @@ import type * as SessionClientModule from '~/server/auth/session-client';
 // removal); stubbed here so those calls don't crash the suite. The `dbRead` trio also backs
 // `countCollaborators`, which reads the caps off the replica. The owner-lookup default of
 // OWNER_ID lets every test that targets someone other than the owner pass through untouched.
-const { mockDbRead, mockDbWrite, mockGetPermissions, mockCreateNotification, mockGetSessionUser } =
-  vi.hoisted(() => {
-    const OWNER_ID = 999;
-    return {
-      mockDbRead: {
-        collection: {
-          findUnique: vi
-            .fn()
-            .mockResolvedValue({ userId: OWNER_ID, read: 'Private', write: 'Private', mode: null }),
-        },
-        collectionContributor: { findMany: vi.fn().mockResolvedValue([]) },
-        collectionInvite: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
-        collectionItem: { groupBy: vi.fn().mockResolvedValue([]) },
-        userEngagement: { findFirst: vi.fn().mockResolvedValue(null) },
-      },
-      mockDbWrite: {
-        collection: { findUnique: vi.fn() },
-        collectionInvite: {
-          upsert: vi.fn(),
-          update: vi.fn(),
-          findUnique: vi.fn(),
-          findMany: vi.fn(),
-          deleteMany: vi.fn(),
-        },
-        collectionContributor: {
-          upsert: vi.fn(),
-          delete: vi.fn(),
-          findUnique: vi.fn(),
-          findMany: vi.fn(),
-        },
-        $transaction: vi.fn(),
-      },
-      mockGetPermissions: vi.fn(),
-      mockCreateNotification: vi.fn(),
-      mockGetSessionUser: vi.fn(),
-    };
-  });
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+const { mockGetPermissions, mockCreateNotification, mockGetSessionUser } = vi.hoisted(() => {
+  const OWNER_ID = 999;
+  return {
+    mockGetPermissions: vi.fn(),
+    mockCreateNotification: vi.fn(),
+    mockGetSessionUser: vi.fn(),
+  };
+});
 
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
@@ -77,6 +49,14 @@ const COLLECTION_ID = 10;
 const OWNER_ID = 999;
 const MANAGER_ID = 777;
 const TARGET_ID = 555;
+
+// The owner-lookup default every test that targets someone else passes through.
+mockDbRead.collection.findUnique.mockResolvedValue({
+  userId: OWNER_ID,
+  read: 'Private',
+  write: 'Private',
+  mode: null,
+});
 
 function asOwner() {
   mockGetPermissions.mockResolvedValue({

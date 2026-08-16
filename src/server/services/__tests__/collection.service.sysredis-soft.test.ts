@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * STEP-6 sysRedis soft-dependency (Group B) — getCollectionRandomSeed.
@@ -14,25 +15,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `withSysReadDeadline(...)` wrap were removed the caller would hang → timeout.
  */
 
-const { mockGet, mockSet, mockWithSysReadDeadline, mockLogSysRedisFailOpen } = vi.hoisted(() => ({
-  mockGet: vi.fn(),
-  mockSet: vi.fn(async () => 'OK'),
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({
   mockLogSysRedisFailOpen: vi.fn(),
 }));
 
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { get: vi.fn(), set: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: { get: mockGet, set: mockSet },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-    withSysReadDeadline: mockWithSysReadDeadline,
-  };
-});
+const mockGet = redisMock.sysRedis.get;
+const mockSet = redisMock.sysRedis.set;
+const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
@@ -44,7 +33,7 @@ vi.mock('@civitai/db', () => ({
   loadDbEnv: vi.fn(() => ({})),
 }));
 
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   preventReplicationLag: vi.fn(),

@@ -83,12 +83,6 @@ vi.mock('~/utils/delivery-worker', () => ({
   resolveDownloadUrl: resolveDownloadUrlMock,
 }));
 
-// The global setup mocks logToAxiom but not safeError (used in the resolve
-// catch). Provide both so the unresolvable-URL path logs without throwing.
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-  safeError: (err: unknown) => ({ name: 'Error', message: String(err) }),
-}));
 
 function publishedModelVersion(overrides: Record<string, unknown> = {}) {
   return {

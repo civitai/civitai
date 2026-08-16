@@ -4,20 +4,8 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 // returns one row per bid the user placed. These tests pin the JS half of that split —
 // the threshold/`additionalPriceNeeded` arithmetic that used to run over every bid of
 // every auction the user had ever touched.
-const { queryRaw, auctionFindMany, modelVersionFindMany, imagesFetch } = vi.hoisted(() => ({
-  queryRaw: vi.fn(),
-  auctionFindMany: vi.fn(),
-  modelVersionFindMany: vi.fn(async () => [] as unknown[]),
+const { imagesFetch } = vi.hoisted(() => ({
   imagesFetch: vi.fn(async () => ({} as Record<number, unknown>)),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    $queryRaw: queryRaw,
-    auction: { findMany: auctionFindMany },
-    modelVersion: { findMany: modelVersionFindMany },
-  },
-  dbRead: {},
 }));
 
 // image.service's real import graph (-> event-engine-common) is heavy; only the cache the
@@ -29,6 +17,11 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/utils/signal-client', () => ({ signalClient: { send: vi.fn(), topicSend: vi.fn() } }));
 
 import { getMyBids } from '~/server/services/auction.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const queryRaw = dbMock.dbWrite.$queryRaw;
+const auctionFindMany = dbMock.dbWrite.auction.findMany;
+const modelVersionFindMany = dbMock.dbWrite.modelVersion.findMany;
+dbMock.dbWrite.modelVersion.findMany.mockImplementation(async () => [] as unknown[]);
 
 const NOW = new Date('2026-07-20T12:00:00Z');
 
