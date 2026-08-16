@@ -19,13 +19,13 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 **1. `block-registry.service.ts` takes its client as a parameter.** Five call sites do
 
 ```ts
-const db = opts.db === 'read' ? dbRead : dbWrite;   // :1362, :1819, :1887, :1928
+const db = opts.db === 'read' ? dbRead : dbWrite; // :1362, :1819, :1887, :1928
 const db = opts?.db === 'write' ? dbWrite : dbRead; // :2032  — note the INVERTED default
 ```
 
 and pass `db` down (`applyPinnedVersion(live, appBlockId, pinnedVersion, db)`). So a grep for
 `dbRead.appBlockPublishRequest.findFirst` finds **nothing**, and the client a given test exercises
-is a fact about the *test's* call, not about the service.
+is a fact about the _test's_ call, not about the service.
 
 **2. Routing an alias wrongly is silent for a negative assertion.** A positive assertion goes red
 when the call lands on the other node. `expect(mockDb.appBlockReview.create).not.toHaveBeenCalled()`
@@ -39,16 +39,16 @@ them, that is too pessimistic: every case here is statically determinable, becau
 six passes a `db` option at all.** Verified by grepping each file for `db: 'read'` / `db: 'write'` —
 zero hits. So each entry point falls to its own default, and those defaults are fixed:
 
-| entry point | client when no `db` option is passed |
-|---|---|
-| `BlockRegistry.resolveBlockInstance` | **`dbWrite`** (`opts.db === 'read' ? dbRead : dbWrite`) |
-| `BlockRegistry.applyPinnedVersion` | inherits the caller's — from `resolveBlockInstance`, **`dbWrite`** |
-| `BlockRegistry.getFeaturedBlocks` | `dbRead.$queryRaw` only |
-| `BlockRegistry.getMarketplaceMeta` | `dbRead.appBlock.findUnique` |
-| `BlockRegistry.setMarketplaceMeta` | `dbWrite.appBlock.*` |
-| `upsertAppBlockReview` | `dbWrite` for `findUnique`/`create`/`update`; `dbRead` for `findMany` and a second `findUnique` |
-| `setAppReviewExcluded` | `dbWrite.appBlockReview.update` |
-| `bustAppRatingCache` | `dbRead.appBlock.findUnique`, `dbRead.blockUserSubscription.findFirst` |
+| entry point                          | client when no `db` option is passed                                                            |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `BlockRegistry.resolveBlockInstance` | **`dbWrite`** (`opts.db === 'read' ? dbRead : dbWrite`)                                         |
+| `BlockRegistry.applyPinnedVersion`   | inherits the caller's — from `resolveBlockInstance`, **`dbWrite`**                              |
+| `BlockRegistry.getFeaturedBlocks`    | `dbRead.$queryRaw` only                                                                         |
+| `BlockRegistry.getMarketplaceMeta`   | `dbRead.appBlock.findUnique`                                                                    |
+| `BlockRegistry.setMarketplaceMeta`   | `dbWrite.appBlock.*`                                                                            |
+| `upsertAppBlockReview`               | `dbWrite` for `findUnique`/`create`/`update`; `dbRead` for `findMany` and a second `findUnique` |
+| `setAppReviewExcluded`               | `dbWrite.appBlockReview.update`                                                                 |
+| `bustAppRatingCache`                 | `dbRead.appBlock.findUnique`, `dbRead.blockUserSubscription.findFirst`                          |
 
 **The `:2032` inversion is the trap.** Four sites default to `dbWrite` and one defaults to `dbRead`.
 Anyone who learns "the default is write" from the first four and applies it to the fifth gets a
@@ -60,7 +60,7 @@ Found later, and it is the more common of the two. `getDbWithoutLag` (`db/db-lag
 returns `dbRead` or `dbWrite` depending on runtime state:
 
 ```ts
-if (env.REPLICATION_LAG_DELAY <= 0) return dbRead;                 // production: ALWAYS taken (default 0)
+if (env.REPLICATION_LAG_DELAY <= 0) return dbRead; // production: ALWAYS taken (default 0)
 return (await lagTracker.isStale(lagKey(type, id))) ? dbWrite : dbRead;
 ```
 
@@ -77,10 +77,10 @@ is not equivalent. Fixing that is a shared-mock change, not a slice change.
 
 **Affected here, and NOT to be split by inspection — TWO files, not the five first claimed:**
 
-| file | entry point | why |
-|---|---|---|
-| `model-version.blue-buzz-purchase` | `earlyAccessPurchase` (`:2003`) | reads through `getVersionById`, which is `forceWriteDb ? dbWrite : await getDbWithoutLag(…)` |
-| `model-version.purge-by-hash` | `publishModelVersionById` (`:1420`) | calls `getDbWithoutLag` directly |
+| file                               | entry point                         | why                                                                                          |
+| ---------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------- |
+| `model-version.blue-buzz-purchase` | `earlyAccessPurchase` (`:2003`)     | reads through `getVersionById`, which is `forceWriteDb ? dbWrite : await getDbWithoutLag(…)` |
+| `model-version.purge-by-hash`      | `publishModelVersionById` (`:1420`) | calls `getDbWithoutLag` directly                                                             |
 
 🔴 **The other three RESOLVE by entry point and are ordinary conversions.** I filed them here on a
 whole-module scan, which is the mistake this section is about:
@@ -91,7 +91,7 @@ whole-module scan, which is the mistake this section is about:
   `getDbWithoutLag` at all.**
 
 **`BOTH` from a whole-module scan is not a verdict, it is an unanswered question.** What resolves it
-is the entry point the *test* imports. A file belongs in this section only when that entry point
+is the entry point the _test_ imports. A file belongs in this section only when that entry point
 itself defers the choice to runtime — a caller's `db` option, or replication lag — never because a
 large module happens to contain both spellings.
 
@@ -105,6 +105,7 @@ population at risk cannot be read off which files converted cleanly.
 ## Per file
 
 ### `block-registry.pinned-version.test.ts` — 4 cases
+
 Drives `BlockRegistry.resolveBlockInstance` and `BlockRegistry.applyPinnedVersion`, no `db` option →
 **`dbWrite`** for `blockUserSubscription.findUnique` and `appBlockPublishRequest.findFirst`.
 `model.findUnique` resolves to `dbRead` in the service source directly.
@@ -115,6 +116,7 @@ it through the parameterised `db`, which here is `dbWrite`. This is the single m
 assertion in the bucket.
 
 ### `block-registry.resolve-instance.test.ts` — 27 cases
+
 All through `resolveBlockInstance`, no `db` option → **`dbWrite`** for
 `blockUserSubscription.findUnique` / `.findFirst` and `platformDefaultBlock.*`; `model.findUnique`
 and `modelVersion.findFirst` are spelled `dbRead` in the source.
@@ -123,6 +125,7 @@ and `modelVersion.findFirst` are spelled `dbRead` in the source.
 must be `mockDbWrite`.
 
 ### `block-registry.marketplace-meta.test.ts` — 14 cases
+
 Three entry points with **different** clients: `getFeaturedBlocks` → `dbRead.$queryRaw`,
 `getMarketplaceMeta` → `dbRead.appBlock.findUnique`, `setMarketplaceMeta` → `dbWrite.appBlock.*`.
 This is the one file where `appBlock.findUnique` genuinely appears on **both** clients, so the split
@@ -132,10 +135,12 @@ has to follow the case's entry point rather than the path.
 `dbWrite`-only, so this one is safe to route mechanically.
 
 ### `block-registry.spend-cap-config.test.ts` — 15 cases
+
 `appBlock.update` → `dbWrite`; `appBlock.findUnique` → follows the entry point as above.
 🔴 Same `appBlock.update` negative assertion; same reasoning.
 
 ### `appBlockReview.service.test.ts` — 17 cases
+
 `upsertAppBlockReview` uses **both** clients for `appBlockReview.findUnique` — `dbWrite` for the
 existence check, `dbRead` for a later read. Splitting by path alone is wrong here; split by which
 call the case is asserting.
@@ -143,6 +148,7 @@ call the case is asserting.
 inside `upsertAppBlockReview`, so mechanical routing is safe for those six.
 
 ### `appBlockReview.collaborator-self-review.test.ts` — 11 cases
+
 `appBlock.findUnique` and `blockUserSubscription.findFirst` → `dbRead` (via `bustAppRatingCache`);
 `appBlockReview.create` → `dbWrite`.
 🔴 Negative assertion on `appCollaborator.findMany`, which **appears on neither client in the

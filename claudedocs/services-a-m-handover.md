@@ -2,7 +2,7 @@
 
 josh, 2026-08-15, continued and closed out by liz through batches 6–9 (her sections are marked).
 Kept as a LOG rather than rewritten to current state: which claims were superseded, and by what, is
-the thing a successor most needs — josh's *"the three easiest remaining files"* with the ✅ beneath
+the thing a successor most needs — josh's _"the three easiest remaining files"_ with the ✅ beneath
 it is a corrected prediction, and a corrected prediction is evidence about the method. Branch
 `perf/test-mock-migration-services-a-m`, now based on `perf/test-mock-system` at `17f994221e` — the
 `withSysReadDeadline` seam commit. Everything below is the state at handover plus the reasoning that
@@ -20,12 +20,12 @@ candidate, and a probe that had to FAIL. No claim here rests on a failure count 
 any width — those are not instruments under `--no-isolate` (96 / 379 / 121 failures on an identical
 tree, same tenancy, elise 2026-08-15).
 
-| batch | files | result |
-|---|---|---|
-| 6 | 3 `withSysReadDeadline` seam | 4/4/4 both halves, 3/3 predictions |
-| 7 | 6 ordinary (bucket 4 minus `model-file-scan`) | 22/7/4/11/22/4 both halves, 6/6 predictions |
-| 8 | `model-file-scan` (1,439 lines) | 66 both halves, matching a static prior stated first |
-| 9 | 6 parameterised-client | 11/17/14/4/27/15 — **4/6 predictions; see the red below** |
+| batch | files                                         | result                                                    |
+| ----- | --------------------------------------------- | --------------------------------------------------------- |
+| 6     | 3 `withSysReadDeadline` seam                  | 4/4/4 both halves, 3/3 predictions                        |
+| 7     | 6 ordinary (bucket 4 minus `model-file-scan`) | 22/7/4/11/22/4 both halves, 6/6 predictions               |
+| 8     | `model-file-scan` (1,439 lines)               | 66 both halves, matching a static prior stated first      |
+| 9     | 6 parameterised-client                        | 11/17/14/4/27/15 — **4/6 predictions; see the red below** |
 
 ⚠️ **129 is the count of files that EVER carried a direct canonical mock, and it is not the count of
 files in the directory.** Re-derived independently off the allowlist at the branch base
@@ -68,7 +68,7 @@ and then uses that local for **everything on the path**:
 :1461   db.modelVersion.findFirst
 ```
 
-The analysis says *"`model.findUnique` resolves to `dbRead` in the service source directly"*. **It
+The analysis says _"`model.findUnique` resolves to `dbRead` in the service source directly"_. **It
 does not — not on this path.** The `dbRead.model.findUnique` spelling it cites is at `:2617`, in a
 function these tests never call. Routing `model` / `modelVersion` to dbRead made the code read the
 canonical `null` on a client it never touches, and `if (!model) return null` fired everywhere.
@@ -89,11 +89,11 @@ path at once.
 
 Batch 9's probe, three mutations in one run:
 
-| | mutation | observed |
-|---|---|---|
-| **A** | the two DANGEROUS negatives (`appBlockPublishRequest.findFirst`) mis-routed to dbRead | **PASSED** |
-| **B** | three SAFE negatives (`appBlock.update`, dbWrite-only) mis-routed the same way | **PASSED**, 14/14 |
-| **C** | the dangerous one asserted POSITIVELY on dbWrite, where the code does not call it | **FAILED** |
+|       | mutation                                                                              | observed          |
+| ----- | ------------------------------------------------------------------------------------- | ----------------- |
+| **A** | the two DANGEROUS negatives (`appBlockPublishRequest.findFirst`) mis-routed to dbRead | **PASSED**        |
+| **B** | three SAFE negatives (`appBlock.update`, dbWrite-only) mis-routed the same way        | **PASSED**, 14/14 |
+| **C** | the dangerous one asserted POSITIVELY on dbWrite, where the code does not call it     | **FAILED**        |
 
 **A and B both passing is the result.** A passing mis-route carries no information, because the safe
 case passes identically — so only **C** discriminates, and it is the only evidence available for the
@@ -114,13 +114,13 @@ decide, not just what the answer was.**
 
 `model-version.blue-buzz-purchase`, `model-version.purge-by-hash`.
 
-**Discriminator:** take the functions the *test file imports*, and ask whether that function's body
+**Discriminator:** take the functions the _test file imports_, and ask whether that function's body
 reaches `getDbWithoutLag` (directly or through a helper like `getVersionById`). If it does, which
 client runs is decided by replication-lag state at call time and **cannot be resolved by reading**.
 
 ⚠️ **A `vi.mock('~/server/db/db-lag-helpers', …)` in the test is NOT the pin it looks like — check
 what the mock REPLACES.** The parameterised-client analysis notes the already-converted files were
-safe because they mock that module directly; that is true of *those* files and does not generalise.
+safe because they mock that module directly; that is true of _those_ files and does not generalise.
 `model-version.purge-by-hash` and `model-version.deregister` both carry such a mock and neither is
 pinned by it — both use `importOriginal` and override **only `preventModelVersionLag`**, leaving
 `getDbWithoutLag` real. `model-early-access-refund` is the pinned shape
@@ -180,12 +180,12 @@ failure mode is a hang cannot demonstrate that a guard fails fast**, which was t
 
 Use `mockResolvedValue`, which fails on a **value**:
 
-| file | probe | observed |
-|---|---|---|
+| file               | probe                         | observed                                                                             |
+| ------------------ | ----------------------------- | ------------------------------------------------------------------------------------ |
 | `content-markdown` | seam resolves the frontmatter | `promise resolved "{ title: 'Region Warning', …}" instead of rejecting` — **7.1 ms** |
-| `collection` | seam resolves `'12345'` | `expected 12345 to be 496339` — **9.6 ms** |
+| `collection`       | seam resolves `'12345'`       | `expected 12345 to be 496339` — **9.6 ms**                                           |
 
-Both fail *specifically because the timeout branch was not taken*, and the mutation is surgical —
+Both fail _specifically because the timeout branch was not taken_, and the mutation is surgical —
 exactly one test per file reds, the other three stay green, so it is not a file-wide break that would
 fail for any reason. **`daily-challenge` is deliberately NOT probed**: its fail-open collapses a
 resolved non-JSON string to `null` as well, so the probe cannot distinguish the branches there. An
@@ -222,7 +222,7 @@ files 1–6, batch 8 = `model-file-scan` alone (1,439 lines, larger than the oth
 - **`model-file.service`'s local is named `mockDbRead` and serves writes.** `count` `:599`,
   `findFirst` `:617` and `findMany` `:36` are **dbRead**; `findUnique` and `update` are **dbWrite**
   via `markFileReplaced` `:334`/`:347` and `restoreReplacedFile` `:368`/`:382`. ⚠️ The file's own
-  comment says *"these official-file helpers only touch dbRead"* — **true of the two functions it was
+  comment says _"these official-file helpers only touch dbRead"_ — **true of the two functions it was
   written for and false of the file as it now stands.** Delete it with the conversion; a stale comment
   that reads as a routing fact is worse than none.
 - **`model-version.deregister`** — `deleteVersionById` `:1047` is **dbWrite only**, so the `dbRead`
@@ -232,13 +232,13 @@ files 1–6, batch 8 = `model-file-scan` alone (1,439 lines, larger than the oth
 
 **`$transaction`, checked per file rather than pattern-matched** (recipe 4):
 
-| file | shape | inherit the canonical default? |
-|---|---|---|
-| `coinbase.service` | tx member **is** `mockDbWrite.redeemableCode`, and the service touches only `tx.redeemableCode.create` `:248` | **yes** |
-| `model-version.deregister` | `wireTransaction()` is already `cb(mockDbWrite)` | **yes** |
-| `commentsv2.blockCheck` | `tx` a separate object; every assertion is on `db.tx.*`, i.e. *"inside the transaction"* | **no — keep a local `tx`** |
-| `commentsv2.appListing` | same | **no** |
-| `model-early-access-refund` | `mockTx` is a fresh `mk()`, not `mockDbWrite.model` | **no** |
+| file                        | shape                                                                                                         | inherit the canonical default? |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `coinbase.service`          | tx member **is** `mockDbWrite.redeemableCode`, and the service touches only `tx.redeemableCode.create` `:248` | **yes**                        |
+| `model-version.deregister`  | `wireTransaction()` is already `cb(mockDbWrite)`                                                              | **yes**                        |
+| `commentsv2.blockCheck`     | `tx` a separate object; every assertion is on `db.tx.*`, i.e. _"inside the transaction"_                      | **no — keep a local `tx`**     |
+| `commentsv2.appListing`     | same                                                                                                          | **no**                         |
+| `model-early-access-refund` | `mockTx` is a fresh `mk()`, not `mockDbWrite.model`                                                           | **no**                         |
 
 ### Bucket 5 — migrated but permanently isolated (1 file, already counted as done)
 
@@ -254,13 +254,13 @@ in this class and disagree on the value; this is the only one in services. A rea
 is the honest number, not a regression.** Every refusal below was added after catching the tool
 wrong on a real file:
 
-| refusal | the case that taught it |
-|---|---|
-| leaf carrying non-default behaviour, extracted with **balanced parens** | a lazy `vi.fn\([^;]*?\)` stops inside an arrow's own parameter list and hands the check a truncated call that reads as behaviour-free; it cleared five files it existed to stop |
-| leaf that is a **bare identifier declared elsewhere** | `minor-hash` — deleting the client literal left two spies alive, armed by `beforeEach`, wired to nothing, and the primary-vs-replica re-read got the canonical `null`. **Behaviour-free is not the same as safe to delete** |
-| one local bound to **both** clients | binding it twice picks whichever came last, silently choosing a client — the collision the split exists to surface |
-| **ES6 shorthand** (`{ groupBy }`) | parsed as no entries, so a spy declared elsewhere was silently orphaned |
-| factory with a **block body** | `() => { … return { … } }` opened on the block's brace, read an empty object, found no exports to object to, and **deleted the whole factory with every local it named**. Caught by reading a diff, not by any check |
+| refusal                                                                 | the case that taught it                                                                                                                                                                                                     |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| leaf carrying non-default behaviour, extracted with **balanced parens** | a lazy `vi.fn\([^;]*?\)` stops inside an arrow's own parameter list and hands the check a truncated call that reads as behaviour-free; it cleared five files it existed to stop                                             |
+| leaf that is a **bare identifier declared elsewhere**                   | `minor-hash` — deleting the client literal left two spies alive, armed by `beforeEach`, wired to nothing, and the primary-vs-replica re-read got the canonical `null`. **Behaviour-free is not the same as safe to delete** |
+| one local bound to **both** clients                                     | binding it twice picks whichever came last, silently choosing a client — the collision the split exists to surface                                                                                                          |
+| **ES6 shorthand** (`{ groupBy }`)                                       | parsed as no entries, so a spy declared elsewhere was silently orphaned                                                                                                                                                     |
+| factory with a **block body**                                           | `() => { … return { … } }` opened on the block's brace, read an empty object, found no exports to object to, and **deleted the whole factory with every local it named**. Caught by reading a diff, not by any check        |
 
 ## Two instruments that will mislead a successor
 
@@ -293,7 +293,7 @@ disagree you do not get to guess which.**
 **Neither is about this slice, and neither is documented anywhere else.**
 
 🔴 **A canonical mock cannot statically import anything that reads mocked env at module scope.**
-`redis.mock.ts` is loaded from `setup.ts`, which is *earlier* than every hoisted `vi.mock` factory
+`redis.mock.ts` is loaded from `setup.ts`, which is _earlier_ than every hoisted `vi.mock` factory
 setup registers — so a static `import` of a module whose own top level reads `env` evaluates before
 the env mock's factory has initialised. The failure is
 `ReferenceError: Cannot access '__vi_import_N__' before initialization`, and it presents as
@@ -326,12 +326,12 @@ literal-grep classification of "where is this constant used" is a lower bound on
 fails silently, and it fails in the reassuring direction — "0 sites, fixture-only" is exactly what it
 reports for a constant used everywhere. Four instances now:
 
-| constant | how production uses it | a literal grep would report |
-|---|---|---|
-| `cp:banked` (`creator-program`) | `` `cp:banked:${userId}` `` | 0 — it was 6 sites and 3 red tests |
-| `REDIS_KEYS.MODEL.GALLERY_SETTINGS` | `` `${…}:${id}` `` ×3, `model.service.ts:2098/:3574/:3977` | 0 |
-| `REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_PROCESSED` | `` `${…}:${event.workflowId}` ``, `model-file-scan.service.ts:474` | 0 |
-| `REDIS_SYS_KEYS.CONTENT.REGION_WARNING` | passed whole, `content.service.ts:203` | 1 (the case where it works) |
+| constant                                            | how production uses it                                             | a literal grep would report        |
+| --------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------- |
+| `cp:banked` (`creator-program`)                     | `` `cp:banked:${userId}` ``                                        | 0 — it was 6 sites and 3 red tests |
+| `REDIS_KEYS.MODEL.GALLERY_SETTINGS`                 | `` `${…}:${id}` `` ×3, `model.service.ts:2098/:3574/:3977`         | 0                                  |
+| `REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_PROCESSED` | `` `${…}:${event.workflowId}` ``, `model-file-scan.service.ts:474` | 0                                  |
+| `REDIS_SYS_KEYS.CONTENT.REGION_WARNING`             | passed whole, `content.service.ts:203`                             | 1 (the case where it works)        |
 
 The middle two are byte-identical to the real table and so cost nothing — **that is luck, not a
 result.** Two genuine drifts found on this slice, both inert, both cleared by reading every use
@@ -421,7 +421,7 @@ stronger than "must stay".** The canonical `env` proxy **does** honour post-hoc 
 `overrides.has(prop)` first, with `defineProperty` and `deleteProperty` traps landing in the same
 map. (Verified here by reading it, not taken on report.)
 
-That does **not** rescue a lift — the proxy honours assignment *to `env`*, and it cannot honour
+That does **not** rescue a lift — the proxy honours assignment _to `env`_, and it cannot honour
 assignment to a different object that used to be the mock, which is exactly what a lift leaves
 `envValues` as. **But it does mean the file is convertible by REWRITE**: move the mutations into
 `setEnv({…})` or a direct `env.X = …` inside the case that needs them, and the not-configured branch
@@ -429,10 +429,10 @@ stays reachable.
 
 **So: this file must not be LIFTED. Converting it properly is a rewrite, and the rewrite needs its
 own probe** — one that makes the not-configured case FAIL after conversion. That was out of scope
-for a two-file unblocking task, and *a refusal to do it the cheap way is not a claim that it cannot
-be done*. Do not record this as permanently refused; nobody has earned that.
+for a two-file unblocking task, and _a refusal to do it the cheap way is not a claim that it cannot
+be done_. Do not record this as permanently refused; nobody has earned that.
 
-The logging half is the *fix* for that family rather than a risk to it, and it was verified rather
+The logging half is the _fix_ for that family rather than a risk to it, and it was verified rather
 than argued: pointing `logToAxiom` at an unrelated `vi.fn()` reds **7 of 13**, which proves the
 module calls the canonical node instead of a spy bound by per-file re-instantiation. **The file was
 green before the conversion and green after, and neither green was informative — the mutation is the
@@ -446,7 +446,7 @@ spy could not promise. So converting logging while keeping env is not half a job
 split, and the canonical mock **removes** the hazard rather than dodging it.
 
 ⚠️ **One claim of mine in this section is reasoned, not independently confirmed**, and the reviewer
-was right to label it: that a per-file `~/env/server` mock *forces* the consuming module to
+was right to label it: that a per-file `~/env/server` mock _forces_ the consuming module to
 re-instantiate under `isolate: false`. It is the standard account of how the `deregisterBatch` /
 `deregister` failure worked, and nothing here depends on it — the `Map`-cached identity above makes
 the binding correct either way. Recorded as reasoned so nobody quotes it as measured.

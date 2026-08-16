@@ -34,7 +34,10 @@ const close = (src, open) => {
   for (let i = open; i < src.length; i++) {
     const c = src[i];
     if (pair[c]) stack.push(pair[c]);
-    else if (c === stack[stack.length - 1]) { stack.pop(); if (!stack.length) return i; }
+    else if (c === stack[stack.length - 1]) {
+      stack.pop();
+      if (!stack.length) return i;
+    }
   }
   return -1;
 };
@@ -53,7 +56,11 @@ function entries(src, open) {
       // how a spy declared elsewhere gets silently orphaned (mark hit the same shape in a
       // classifier). Rewrite it to the long form before the key/value scan.
       const sh = /^([A-Za-z_$][\w$]*)\s*(?=[,}])/.exec(src.slice(i));
-      if (sh && /[{,\s]/.test(src[i - 1] ?? '') && !/^(async|await|return|new|typeof)$/.test(sh[1])) {
+      if (
+        sh &&
+        /[{,\s]/.test(src[i - 1] ?? '') &&
+        !/^(async|await|return|new|typeof)$/.test(sh[1])
+      ) {
         out.push({ key: sh[1], value: sh[1], start: i, end: i + sh[0].length });
         i += sh[0].length - 1;
         continue;
@@ -63,7 +70,10 @@ function entries(src, open) {
         const vs = i + m[0].length;
         let ve;
         if ('({['.includes(src[vs])) ve = close(src, vs) + 1;
-        else { ve = vs; while (ve < end && !',\n'.includes(src[ve])) ve++; }
+        else {
+          ve = vs;
+          while (ve < end && !',\n'.includes(src[ve])) ve++;
+        }
         out.push({ key: m[1], value: src.slice(vs, ve).trim(), start: i, end: ve });
         i = ve;
       }
@@ -75,15 +85,20 @@ function entries(src, open) {
 const isSpy = (v) => /^vi\.fn\(/.test(v);
 function spyIsDefault(v) {
   // `vi.fn().mockResolvedValue(undefined)` is the canonical logToAxiom default spelled long-hand.
-  const chained = /^vi\.fn\(\)\.mock(?:ResolvedValue|ReturnValue)\((undefined|null|\[\]|0)?\)$/.exec(v.trim());
+  const chained =
+    /^vi\.fn\(\)\.mock(?:ResolvedValue|ReturnValue)\((undefined|null|\[\]|0)?\)$/.exec(v.trim());
   if (chained) return true;
-  const inner = v.replace(/^vi\.fn\(/, '').replace(/\)$/, '').trim();
+  const inner = v
+    .replace(/^vi\.fn\(/, '')
+    .replace(/\)$/, '')
+    .trim();
   if (!inner) return true;
   const body = inner.replace(/^(?:async\s*)?\([^)]*\)\s*(?::[^=]*)?=>\s*/, '').trim();
   return DEFAULT_INNER.test(body);
 }
 
-let ok = 0, refused = 0;
+let ok = 0,
+  refused = 0;
 for (const file of files) {
   let src = fs.readFileSync(file, 'utf8');
   const bindings = [];
@@ -110,14 +125,26 @@ for (const file of files) {
     // cleared this way and only caught by reading the diff.
     const arrow = src.indexOf('=>', callOpen);
     const afterArrow = src.slice(arrow + 2, callEnd).replace(/^\s*/, '');
-    if (!afterArrow.startsWith('({')) { bad = `${spec}: factory has a block body, not \`() => ({ … })\``; break; }
+    if (!afterArrow.startsWith('({')) {
+      bad = `${spec}: factory has a block body, not \`() => ({ … })\``;
+      break;
+    }
     const objOpen = src.indexOf('{', arrow + 2);
-    if (objOpen === -1 || objOpen > callEnd) { bad = `${spec}: factory is not an object literal`; break; }
+    if (objOpen === -1 || objOpen > callEnd) {
+      bad = `${spec}: factory is not an object literal`;
+      break;
+    }
 
     for (const e of entries(src, objOpen)) {
-      if (CONSTANT_KEYS.test(e.key)) { drift.push(`${spec}.${e.key}`); continue; }
+      if (CONSTANT_KEYS.test(e.key)) {
+        drift.push(`${spec}.${e.key}`);
+        continue;
+      }
       const target = roots[e.key];
-      if (!target) { bad = `${spec}: factory declares "${e.key}", which the canonical mock does not own`; break; }
+      if (!target) {
+        bad = `${spec}: factory declares "${e.key}", which the canonical mock does not own`;
+        break;
+      }
       needImports.add(target.split('.')[0]);
 
       if (/^[A-Za-z_$][\w$]*$/.test(e.value)) {
@@ -127,7 +154,10 @@ for (const file of files) {
         const walk = (open, path) => {
           for (const leaf of entries(src, open)) {
             if (isSpy(leaf.value)) {
-              if (!spyIsDefault(leaf.value)) { bad = `${spec}.${[...path, leaf.key].join('.')} carries behaviour`; return; }
+              if (!spyIsDefault(leaf.value)) {
+                bad = `${spec}.${[...path, leaf.key].join('.')} carries behaviour`;
+                return;
+              }
             } else if (/^[A-Za-z_$][\w$]*$/.test(leaf.value)) {
               bindings.push([leaf.value, `${target}.${[...path, leaf.key].join('.')}`]);
             } else if (leaf.value.startsWith('{')) {
@@ -141,7 +171,10 @@ for (const file of files) {
         walk(src.indexOf('{', e.start + e.key.length), []);
         if (bad) break;
       } else if (isSpy(e.value)) {
-        if (!spyIsDefault(e.value)) { bad = `${spec}.${e.key} carries behaviour`; break; }
+        if (!spyIsDefault(e.value)) {
+          bad = `${spec}.${e.key} carries behaviour`;
+          break;
+        }
       } else {
         bad = `${spec}.${e.key} is neither a local nor a literal`;
         break;
@@ -151,8 +184,19 @@ for (const file of files) {
     cuts.push([at, callEnd + (src[callEnd + 1] === ';' ? 2 : 1)]);
   }
 
-  if (bad) { console.log('REFUSED', file.replace('src/server/services/__tests__/', '').padEnd(52), bad); refused++; continue; }
-  if (!cuts.length) { console.log('SKIP   ', file.replace('src/server/services/__tests__/', ''), 'no canonical vi.mock'); continue; }
+  if (bad) {
+    console.log('REFUSED', file.replace('src/server/services/__tests__/', '').padEnd(52), bad);
+    refused++;
+    continue;
+  }
+  if (!cuts.length) {
+    console.log(
+      'SKIP   ',
+      file.replace('src/server/services/__tests__/', ''),
+      'no canonical vi.mock'
+    );
+    continue;
+  }
 
   // 🔴 One local serving two clients is an ALIAS, and binding it here would silently pick
   // whichever came last — the collision the split exists to surface. Which client the code
@@ -166,22 +210,34 @@ for (const file of files) {
     }
     byLocal.set(l, t);
   }
-  if (bad) { console.log('REFUSED', file.replace('src/server/services/__tests__/', '').padEnd(52), bad); refused++; continue; }
+  if (bad) {
+    console.log('REFUSED', file.replace('src/server/services/__tests__/', '').padEnd(52), bad);
+    refused++;
+    continue;
+  }
 
   // every local we bind must have a behaviour-free declaration, which we then remove
   const removals = [];
   for (const [local] of bindings) {
     // `mockX: { … }` / `mockX: vi.fn(…)` in a hoisted object, or a module-scope const of either.
     const hoisted = new RegExp(`\\n\\s*${local}:\\s*(?:vi\\.fn)?[{(]`).exec(src);
-    const constDecl = new RegExp(`\\n(?:const|let)\\s+${local}(?::[^=]+)?\\s*=\\s*(?:vi\\.fn)?[{(]`).exec(src);
+    const constDecl = new RegExp(
+      `\\n(?:const|let)\\s+${local}(?::[^=]+)?\\s*=\\s*(?:vi\\.fn)?[{(]`
+    ).exec(src);
     const hit = hoisted ?? constDecl;
-    if (!hit) { bad = `no declaration found for ${local}`; break; }
+    if (!hit) {
+      bad = `no declaration found for ${local}`;
+      break;
+    }
     const braceAt = hit.index + hit[0].length - 1;
     let end = close(src, braceAt);
     // a chained `.mockResolvedValue(…)` belongs to the declaration too
     const chain = /^\.mock\w+\(/.exec(src.slice(end + 1));
     if (chain) end = close(src, end + chain[0].length);
-    if (end === -1) { bad = `unbalanced declaration for ${local}`; break; }
+    if (end === -1) {
+      bad = `unbalanced declaration for ${local}`;
+      break;
+    }
     // Balanced extraction: a lazy `[^;]*?` stops inside an arrow body's own parens and hands
     // spyIsDefault a truncated call, which then reads as a bare default. That is how
     // `vi.fn(async (cb) => cb(tx))` slipped through as behaviour-free.
@@ -212,7 +268,10 @@ for (const file of files) {
       let full = decl.slice(k, callEnd + 1);
       let stop = callEnd;
       const chained = /^\.mock\w+\(/.exec(decl.slice(callEnd + 1));
-      if (chained) { stop = close(decl, callEnd + chained[0].length); full = decl.slice(k, stop + 1); }
+      if (chained) {
+        stop = close(decl, callEnd + chained[0].length);
+        full = decl.slice(k, stop + 1);
+      }
       if (spyIsDefault(full)) continue;
 
       // the property path this spy sits at, read backwards from the call
@@ -228,24 +287,51 @@ for (const file of files) {
         if (opens <= 1) break;
       }
       if (!path.length || path[0] === local) path.shift();
-      if (!path.length) { bad = `${local}: cannot locate the path of ${full.slice(0, 40)}`; break; }
+      if (!path.length) {
+        bad = `${local}: cannot locate the path of ${full.slice(0, 40)}`;
+        break;
+      }
 
-      const free = [...new Set([...full.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map((m) => m[1]))]
-        .filter((n) => !/^(vi|fn|async|await|return|const|let|new|typeof|unknown|any|void|Promise|null|undefined|true|false|number|string|boolean|mock\w*)$/.test(n));
-      const unresolved = free.filter((n) => !new RegExp(`(?:const|let)\\s+${n}\\b|\\b${n}\\s*[,}]`).test(src.slice(0, hit.index)) && !hoistedExports.has(n));
-      if (unresolved.length) { bad = `${local}.${path.join('.')} names ${unresolved.join(', ')} which the factory scoped`; break; }
+      const free = [
+        ...new Set([...full.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map((m) => m[1])),
+      ].filter(
+        (n) =>
+          !/^(vi|fn|async|await|return|const|let|new|typeof|unknown|any|void|Promise|null|undefined|true|false|number|string|boolean|mock\w*)$/.test(
+            n
+          )
+      );
+      const unresolved = free.filter(
+        (n) =>
+          !new RegExp(`(?:const|let)\\s+${n}\\b|\\b${n}\\s*[,}]`).test(src.slice(0, hit.index)) &&
+          !hoistedExports.has(n)
+      );
+      if (unresolved.length) {
+        bad = `${local}.${path.join('.')} names ${unresolved.join(', ')} which the factory scoped`;
+        break;
+      }
 
-      preserve.push(`${target}.${path.join('.')}${full.slice('vi.fn'.length).replace(/^\(/, '.mockImplementation(').replace(/^\.mockImplementation\(\)/, '')};`);
+      preserve.push(
+        `${target}.${path.join('.')}${full
+          .slice('vi.fn'.length)
+          .replace(/^\(/, '.mockImplementation(')
+          .replace(/^\.mockImplementation\(\)/, '')};`
+      );
     }
     if (bad) break;
     const tail = src.slice(end + 1).match(/^[,;]?\n/)?.[0] ?? '';
     removals.push([hit.index + 1, end + 1 + tail.length]);
   }
-  if (bad) { console.log('REFUSED', file.replace('src/server/services/__tests__/', '').padEnd(52), bad); refused++; continue; }
+  if (bad) {
+    console.log('REFUSED', file.replace('src/server/services/__tests__/', '').padEnd(52), bad);
+    refused++;
+    continue;
+  }
 
-  for (const [a, b] of [...cuts, ...removals].sort((x, y) => y[0] - x[0])) src = src.slice(0, a) + src.slice(b);
+  for (const [a, b] of [...cuts, ...removals].sort((x, y) => y[0] - x[0]))
+    src = src.slice(0, a) + src.slice(b);
   // an emptied destructuring is dropped; a partly-emptied one keeps its remaining names
-  for (const [local] of bindings) src = src.replace(new RegExp(`(const \\{[^}]*?)\\b${local}\\b,?\\s*`), '$1');
+  for (const [local] of bindings)
+    src = src.replace(new RegExp(`(const \\{[^}]*?)\\b${local}\\b,?\\s*`), '$1');
   // An emptied destructuring leaves `const { } = vi.hoisted(…)`, which is valid and useless.
   // Remove the whole call, whatever its body shape.
   for (;;) {
@@ -258,21 +344,37 @@ for (const file of files) {
   }
 
   const header =
-    [...needImports].map((n) => IMPORTS[n]).join('\n') + '\n' +
-    bindings.map(([l, t]) => `const ${l} = ${t};`).join('\n') + '\n' +
+    [...needImports].map((n) => IMPORTS[n]).join('\n') +
+    '\n' +
+    bindings.map(([l, t]) => `const ${l} = ${t};`).join('\n') +
+    '\n' +
     (preserve.length ? preserve.join('\n') + '\n' : '');
   const anchors = [...src.matchAll(/^(?:import [^\n]*;|\} from '[^']*';)\n/gm)];
   const last = anchors.pop();
-  if (!last) { console.log('REFUSED', file, 'no import anchor'); refused++; continue; }
+  if (!last) {
+    console.log('REFUSED', file, 'no import anchor');
+    refused++;
+    continue;
+  }
   src = src.slice(0, last.index + last[0].length) + header + src.slice(last.index + last[0].length);
 
   if (/vi\.mock\('~\/server\/(db|redis|logging)\/client'/.test(src)) {
-    console.log('REFUSED', file.replace('src/server/services/__tests__/', ''), 'a canonical vi.mock survived');
+    console.log(
+      'REFUSED',
+      file.replace('src/server/services/__tests__/', ''),
+      'a canonical vi.mock survived'
+    );
     refused++;
     continue;
   }
   if (WRITE) fs.writeFileSync(file, src);
   ok++;
-  console.log('ok     ', file.replace('src/server/services/__tests__/', '').padEnd(52), bindings.length, 'bindings', drift.length ? `drift:${drift.join(',')}` : '');
+  console.log(
+    'ok     ',
+    file.replace('src/server/services/__tests__/', '').padEnd(52),
+    bindings.length,
+    'bindings',
+    drift.length ? `drift:${drift.join(',')}` : ''
+  );
 }
 console.log(`\n${ok} convertible, ${refused} refused${WRITE ? ' (written)' : ' (dry)'}`);
