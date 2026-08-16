@@ -7,7 +7,13 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { IconDropletHalf2, IconFlipHorizontal, IconMessage, IconTrash } from '@tabler/icons-react';
+import {
+  IconAlertTriangleFilled,
+  IconDropletHalf2,
+  IconFlipHorizontal,
+  IconMessage,
+  IconTrash,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -646,6 +652,29 @@ export function DraftSticker({
           </UnstyledButton>
         )}
 
+        {/* Above the button, and above it in both states: this is who the press
+            underneath it pays, so it reads as a label on the button rather than
+            a footnote after the decision.
+
+            On its own dark chip rather than over the artwork: this sits on
+            whatever the creator uploaded, and yellow on light work is as
+            unreadable as dimmed was on dark. */}
+        {payout && (
+          <div className="max-w-[240px] truncate rounded-full bg-black/80 px-2 py-0.5 text-center">
+            {/* One line, because it fits on one: the cluster is at least as wide
+                as the button under it, which is wider than this sentence for any
+                ordinary name. Still capped and truncated — the cluster is
+                `w-max`, so an unbounded name widens it, and the cluster's width
+                is half of the overlap test that decides whether the button flips
+                above the sticker. */}
+            <Text size="xs" fw={500} c="yellow.4" className="leading-tight" title={payout.name}>
+              {payout.lead}
+              {payout.name ? ' ' : ''}
+              {payout.name && <span className="font-bold">{payout.name}</span>}
+            </Text>
+          </div>
+        )}
+
         {/* Bought before it can be placed, and arranged before either. Dragging
             it out first is the point: you see what it looks like where you want
             it, and only then decide it is worth two payments. */}
@@ -695,44 +724,11 @@ export function DraftSticker({
             buys a sticker to put it here and then meets another price has been
             surprised with their own money. */}
         {draft.purchase && (
-          <div className="rounded-lg bg-black/80 px-2 py-0.5 text-center">
+          <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
+            <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
             <Text size="xs" c="gray.3" className="leading-tight">
               Then {numberWithCommas(price)} Buzz to place it
             </Text>
-          </div>
-        )}
-
-        {/* On its own dark chip rather than over the artwork: this sits on
-            whatever the creator uploaded, and yellow on light work is as
-            unreadable as dimmed was on dark.
-            Rounded as a box rather than a pill once it is two lines: a
-            full-round radius on a two-line chip bows its short sides inward. */}
-        {payout && (
-          <div
-            className={clsx(
-              'bg-black/80 px-2 py-0.5 text-center',
-              payout.name ? 'rounded-lg' : 'rounded-full'
-            )}
-          >
-            <Text size="xs" fw={500} c="yellow.4" className="leading-tight">
-              {payout.lead}
-            </Text>
-            {/* Capped and truncated, and not only for looks: the wrapper is
-                `w-max`, so an unbounded name widens the whole cluster — and the
-                cluster's width is half of the overlap test that decides whether
-                the button flips above the sticker. A long name would make it
-                flip on images where it does not need to. */}
-            {payout.name && (
-              <Text
-                size="xs"
-                fw={700}
-                c="yellow.4"
-                className="max-w-[168px] truncate leading-tight"
-                title={payout.name}
-              >
-                {payout.name}
-              </Text>
-            )}
           </div>
         )}
       </div>
