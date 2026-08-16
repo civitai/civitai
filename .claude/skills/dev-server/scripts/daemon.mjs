@@ -60,7 +60,20 @@ function loadSkillConfig() {
     perBranchDistDir: false,
     killOnBranchSwitch: false,
     autoInstall: true,
-    prewarmRoutes: [],
+    // NOT empty by default. `_app` SSR-fetches /api/user/settings on every page render and gives
+    // up after APP_SETTINGS_FETCH_TIMEOUT_MS (8s). On a cold build dir that fetch is what triggers
+    // the on-demand COMPILE of that route, and the compile does not fit in the budget — measured
+    // on this repo at 15.4s and 28.6s — so every render in flight degrades to a signed-out page
+    // and the server looks broken while being perfectly healthy.
+    //
+    // Compiling it once, up front, on prewarm's 300s budget removes the whole failure. Measured,
+    // same worktree, same cold `.next`, four concurrent /home requests: without this, four
+    // `[_app] settings bootstrap fetch failed` and the settings route taking 15.4s per render;
+    // with it, zero failures and 162-200ms per render.
+    //
+    // It stays FIRST in the list: any page route ahead of it would trigger the same compile from
+    // inside a render, which is the thing being avoided.
+    prewarmRoutes: ['/api/user/settings'],
     prewarmTimeout: 300000,
     testConcurrency: 1,
     prodGroups: [],
@@ -741,6 +754,11 @@ class DevSession {
               this.ready = true;
               this.readyAt = new Date().toISOString();
               this.addLog('info', 'Server ready (detected from logs)');
+              // Prewarming used to happen only on the health-check path, so a checkout with no
+              // skill `.env` — which is every fresh one, the file is gitignored — reached ready
+              // and warmed nothing. That is exactly the configuration the settings compile
+              // deadlock needs (see PREWARM_ROUTES below).
+              this.prewarm();
               break;
             }
           }
