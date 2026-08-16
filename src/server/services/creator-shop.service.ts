@@ -1208,6 +1208,7 @@ export const getCommunityCosmetics = async ({
   owned,
   limited,
   acceptsBlueBuzz,
+  query,
   stickersEnabled,
   packsEnabled,
 }: GetCommunityCosmeticsInput & {
@@ -1292,6 +1293,19 @@ export const getCommunityCosmetics = async ({
         : []),
       ...(viewerId && owned === 'owned'
         ? [{ cosmetic: { UserCosmetic: { some: { userId: viewerId } } } }]
+        : []),
+      // In `AND` rather than beside the branches above: a second top-level `OR`
+      // key would replace the creator/pack one and widen the feed to every
+      // official item.
+      ...(query
+        ? [
+            {
+              OR: [
+                { title: { contains: query, mode: Prisma.QueryMode.insensitive } },
+                { cosmetic: { name: { contains: query, mode: Prisma.QueryMode.insensitive } } },
+              ],
+            },
+          ]
         : []),
     ],
   };

@@ -1,25 +1,28 @@
 import {
   Button,
+  Chip,
   CloseButton,
   HoverCard,
   Loader,
   ScrollArea,
-  Switch,
   Text,
   TextInput,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useMutateCosmeticShop, useQueryShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCommunityCosmetics } from '~/components/CreatorShop/creator-shop.util';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { browseShopItems } from '~/components/Shop/shop-browse';
+import { StickerBuyButton } from '~/components/Sticker/StickerBuyButton';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
 import { CosmeticShopSort } from '~/server/common/enums';
 import type { StickerCosmetic } from '~/server/selectors/cosmetic.selector';
+import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -27,6 +30,9 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 
 /** The single page of the community catalog this panel holds client-side. */
 const COMMUNITY_PAGE_SIZE = 100;
+
+const matches = (query: string, ...fields: (string | null | undefined)[]) =>
+  !query || fields.some((field) => field?.toLowerCase().includes(query));
 
 type Tile = {
   shopItemId: number;
@@ -36,6 +42,7 @@ type Tile = {
   data: StickerCosmetic['data'];
   cosmeticData: unknown;
   viaShopUserId?: number;
+  acceptsBlue: boolean;
   owned: boolean;
 };
 
@@ -58,7 +65,12 @@ export function StickerShopPanel({
 }) {
   const [search, setSearch] = useState('');
   const [showOwned, setShowOwned] = useState(false);
+  // The community half searches server-side, so this is a request per keystroke
+  // without the debounce. The official half is already in memory and filters
+  // off `search` directly, so typing still feels immediate there.
+  const [debouncedSearch] = useDebouncedValue(search.trim(), 300);
 
+  const [domainBuzzType] = useAvailableBuzz();
   const ownedCosmeticIds = useOwnedCosmeticIds();
   const { cosmeticShopSections, isLoading: loadingOfficial } = useQueryShop({
     cosmeticTypes: [CosmeticType.Sticker],
@@ -73,10 +85,12 @@ export function StickerShopPanel({
     limit: COMMUNITY_PAGE_SIZE,
     page: 1,
     owned: showOwned ? undefined : 'notOwned',
+    query: debouncedSearch || undefined,
   });
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
 
   const isLoading = loadingOfficial || loadingCommunity;
+  const query = search.trim().toLowerCase();
 
   const tiles = useMemo(() => {
     // Most-sold first, matching the order the community half is already asking
@@ -92,14 +106,20 @@ export function StickerShopPanel({
       sort: CosmeticShopSort.MostPopular,
       ownedCosmeticIds,
       wishlistedIds: new Set<number>(),
-    }).map(({ shopItem }) => ({
-      shopItemId: shopItem.id,
-      cosmeticId: shopItem.cosmeticId,
-      title: shopItem.title,
-      unitAmount: shopItem.unitAmount,
-      cosmeticData: shopItem.cosmetic?.data,
-      viaShopUserId: CIVITAI_SHOP_ATTRIBUTION,
-    }));
+    })
+      // Only this half is filtered here. The community half asked the server for
+      // the search and got back what matched — re-testing those titles locally
+      // would drop the ones that matched on the cosmetic's own name.
+      .filter(({ shopItem }) => matches(query, shopItem.title, shopItem.cosmetic?.name))
+      .map(({ shopItem }) => ({
+        shopItemId: shopItem.id,
+        cosmeticId: shopItem.cosmeticId,
+        title: shopItem.title,
+        unitAmount: shopItem.unitAmount,
+        cosmeticData: shopItem.cosmetic?.data,
+        meta: shopItem.meta,
+        viaShopUserId: CIVITAI_SHOP_ATTRIBUTION,
+      }));
 
     const community = communityItems.map((item) => ({
       shopItemId: item.id,
@@ -107,19 +127,18 @@ export function StickerShopPanel({
       title: item.title,
       unitAmount: item.unitAmount,
       cosmeticData: item.cosmetic?.data,
+      meta: item.meta,
       // Attributes the sale to the shop it was bought from, the same way the
       // storefront grid does.
       viaShopUserId: item.addedById ?? undefined,
     }));
 
     const seen = new Set<number>();
-    const query = search.trim().toLowerCase();
 
     return [...official, ...community].reduce<Tile[]>((acc, entry) => {
       if (entry.cosmeticId == null || seen.has(entry.shopItemId)) return acc;
       const data = entry.cosmeticData as StickerCosmetic['data'] | undefined;
       if (!data?.url) return acc;
-      if (query && !`${entry.title} ${data.slug ?? ''}`.toLowerCase().includes(query)) return acc;
 
       seen.add(entry.shopItemId);
       acc.push({
@@ -130,15 +149,22 @@ export function StickerShopPanel({
         data,
         cosmeticData: entry.cosmeticData,
         viaShopUserId: entry.viaShopUserId,
+        acceptsBlue: !!(entry.meta as CosmeticShopItemMeta | null)?.acceptsBlueBuzz,
         owned: ownedCosmeticIds.has(entry.cosmeticId),
       });
       return acc;
     }, []);
-  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, search, showOwned]);
+  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, query, showOwned]);
 
   const buy = async (tile: Tile) => {
     try {
-      await purchaseShopItem({ shopItemId: tile.shopItemId, viaShopUserId: tile.viaShopUserId });
+      await purchaseShopItem({
+        shopItemId: tile.shopItemId,
+        viaShopUserId: tile.viaShopUserId,
+        // The server refuses 'blue-first' on an item that hasn't opted in, so
+        // this is sent only where the listing says it is accepted.
+        payWith: tile.acceptsBlue ? 'blue-first' : undefined,
+      });
       showSuccessNotification({
         title: 'Sticker purchased',
         message: `${tile.title} is in your stickers below.`,
@@ -163,12 +189,9 @@ export function StickerShopPanel({
           onChange={(event) => setSearch(event.currentTarget.value)}
           aria-label="Search stickers"
         />
-        <Switch
-          size="xs"
-          label="Owned"
-          checked={showOwned}
-          onChange={(event) => setShowOwned(event.currentTarget.checked)}
-        />
+        <Chip size="xs" checked={showOwned} onChange={setShowOwned}>
+          Show owned
+        </Chip>
         <CloseButton onClick={onClose} aria-label="Close the sticker shop" />
       </div>
 
@@ -237,13 +260,17 @@ export function StickerShopPanel({
                         Buy uses
                       </Button>
                     ) : (
-                      <BuzzTransactionButton
-                        size="compact-xs"
-                        className="w-full"
-                        buzzAmount={tile.unitAmount}
-                        label=""
+                      <StickerBuyButton
+                        amount={tile.unitAmount}
+                        // Blue first where the seller takes it, which is also
+                        // what the button colours itself from — so the bolt is
+                        // the colour of the Buzz this purchase will actually
+                        // spend, not of the domain it happens to be on.
+                        accountTypes={
+                          tile.acceptsBlue ? ['blue', domainBuzzType] : [domainBuzzType]
+                        }
                         loading={purchasingShopItem}
-                        onPerformTransaction={() => buy(tile)}
+                        onBuy={() => buy(tile)}
                       />
                     )}
                   </div>
