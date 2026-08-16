@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { getListingDetail } from '~/server/services/blocks/app-listing.service';
+import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { isHostForColor } from '~/server/utils/server-domain';
@@ -82,6 +83,9 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
 
     // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
     const scope = await resolveStoreVisibilityScope({ user });
+    // See the sibling `index.ts` + store-scope.metrics: recorded so an ABSENT scope
+    // is distinguishable from a resolved one in production (civitai#3983).
+    recordStoreScopeApplied(scope, 'rest-detail');
     if (scope === 'none') {
       return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));
     }
