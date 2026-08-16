@@ -1,17 +1,17 @@
-import { CloseButton, Group, ScrollArea, Text } from '@mantine/core';
+import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon } from '@mantine/core';
+import { IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
+import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
+import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
-import { StickerTopUp } from '~/components/Sticker/StickerTopUp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  pointerOverSurface,
-  useStickerPlacementDraftStore,
-} from '~/store/sticker-placement-draft.store';
+import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
+import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -30,26 +30,13 @@ import { trpc } from '~/utils/trpc';
 export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const { sticker, isLoading } = useOwnedSticker();
-  // The sticker they tried to place with nothing left. Buying uses here rather
-  // than sending them to the shop is the point — a tray they have to leave is a
-  // placement they don't make.
-  const [topUp, setTopUp] = useState<ResolvedSticker | null>(null);
-  // Being dragged, but not yet on the image. The only feedback during that
-  // stretch, since nothing is drawn on the image until the pointer arrives.
-  const [dragging, setDragging] = useState<number | null>(null);
-  const endGrab = useRef<(() => void) | null>(null);
+  const [shopping, setShopping] = useState(false);
   const trayRef = useRef<HTMLDivElement>(null);
-
-  // A gesture in flight when the tray closes would leave window listeners behind
-  // and could drop a sticker onto an image nobody is looking at any more.
-  useEffect(() => () => endGrab.current?.(), []);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
   const drafts = useStickerPlacementDraftStore((state) => state.drafts);
-  const begin = useStickerPlacementDraftStore((state) => state.begin);
   const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
-  const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
   const setTray = useStickerPlacementDraftStore((state) => state.setTray);
 
   // Bound to this bar's own image, not merely to "a session exists". The
@@ -65,7 +52,12 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // the target alone: a panel that has been put away is not an obstacle the buy
   // button should still be avoiding.
   useEffect(() => {
-    if (!showing) return;
+    if (!showing) {
+      // The panel is state, not markup: without this it survives the tray being
+      // put away and is still open on the next image opened.
+      setShopping(false);
+      return;
+    }
     setTray(trayRef.current);
     return () => setTray(null);
   }, [showing, setTray]);
@@ -74,6 +66,57 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
+  // The creator's ceiling, not just the global one. Read before the early return
+  // below, because the pickup gesture is a hook and cannot be conditional.
+  const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
+  const { grab, dragging } = useStickerDragOut(maxScale);
+
+  // Asked for every owned sticker rather than only the spent ones, because the
+  // list of spent ones changes as drafts are laid down — keying the query on it
+  // would refetch mid-arrangement, and the answer is the same either way.
+  // Capped at what the schema accepts. Past it the whole query fails zod, and
+  // the failure is invisible — `offers` stays undefined and the pack option
+  // silently never appears for anyone with a large collection. Newest-obtained
+  // first, which is the order the row is already in.
+  const ownedIds = useMemo(
+    () => sticker.slice(0, STICKER_OFFER_LIMIT).map((option) => option.id),
+    [sticker]
+  );
+  const { data: offers } = trpc.cosmetic.getStickerOffers.useQuery(
+    { ids: ownedIds },
+    { enabled: !!currentUser && !!ownedIds.length, staleTime: 60_000 }
+  );
+  /**
+   * What a spent sticker's draft may be refilled with. The listing is offered
+   * only while it is genuinely on sale — a delisted or sold-out one would show a
+   * price the purchase then refuses.
+   *
+   * `pricePerUse` falls back to the owned payload's copy so the single-use price
+   * is there on the first frame, before the offers query lands.
+   */
+  const refillOffer = (cosmeticId: number, ownedPricePerUse?: number) => {
+    const offer = offers?.find((entry) => entry.cosmeticId === cosmeticId);
+    const listing = offer?.listing;
+
+    return {
+      refill: true,
+      perUse: offer?.pricePerUse ?? ownedPricePerUse,
+      ...(listing
+        ? {
+            pack: {
+              shopItemId: listing.shopItemId,
+              unitAmount: listing.unitAmount,
+              acceptsBlue: listing.acceptsBlue,
+              uses: listing.uses,
+              viaShopUserId: listing.viaShopUserId ?? undefined,
+            },
+          }
+        : {}),
+      // `undefined` until the offers land, which shows no attribution rather
+      // than crediting the wrong party while it is unknown.
+      creatorUsername: offer ? offer.creatorUsername : undefined,
+    };
+  };
 
   if (!showing) return null;
 
@@ -90,73 +133,6 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     return Math.max(remaining - drafted, 0);
   };
 
-  const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
-
-  /**
-   * A sticker reaches the image by being dragged onto it, and by nothing else.
-   *
-   * Pressing one creates no draft. The draft comes into existence on the first
-   * pointer move that lands inside the media box, positioned under the cursor;
-   * a press that never gets there — a plain click, or a drag released outside —
-   * leaves the image untouched. Creating it on pointer-down put a sticker in the
-   * middle of someone's work before they had chosen anywhere and then teleported
-   * it, which is the thing being fixed rather than a detail of when it renders.
-   */
-  const grab = (cosmeticId: number) => (event: React.PointerEvent) => {
-    // No pickup while a drag is already in flight. The layer holds one gesture,
-    // so the sticker this created would be dropped on the image and then never
-    // follow anything — placed, stationary, with no cue that it went wrong.
-    //
-    // Gated on a live gesture rather than on `event.isPrimary`, which looks
-    // equivalent and is not: a mouse is primary no matter how many touches are
-    // down, so a trackpad pickup during a touch drag walked straight past it —
-    // and a palm resting on a tablet makes the dragging finger non-primary, so
-    // it silently dropped pickups that were perfectly fine.
-    if (useStickerPlacementDraftStore.getState().interaction) return;
-
-    event.preventDefault();
-    endGrab.current?.();
-    setDragging(cosmeticId);
-    const { pointerId } = event;
-
-    // Captured here, on the tray button, for the same reason the sticker
-    // captures its own: this drag ends up owned by the layer's gesture, which is
-    // refused outright while another is live, so a pointerup that never arrives
-    // would strand it and refuse everything after. Capture makes that delivery
-    // guaranteed. Released implicitly on the up that ends the drag.
-    try {
-      event.currentTarget.setPointerCapture(pointerId);
-    } catch {
-      // Pointer already gone; teardown below still runs on up/cancel.
-    }
-
-    const onMove = (move: PointerEvent) => {
-      if (move.pointerId !== pointerId) return;
-      const at = pointerOverSurface(move.clientX, move.clientY);
-      if (!at) return;
-      begin(cosmeticId, at, maxScale);
-      // Handing the drag to the layer, which owns it from here — along with the
-      // pointer holding it, so the layer arms against this finger rather than
-      // whichever one moves next. Armed only once the sticker exists on the
-      // image, so there is never a live move gesture with nothing to move.
-      setInteraction('move', pointerId);
-      teardown();
-    };
-
-    const teardown = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', teardown);
-      window.removeEventListener('pointercancel', teardown);
-      endGrab.current = null;
-      setDragging(null);
-    };
-
-    endGrab.current = teardown;
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', teardown);
-    window.addEventListener('pointercancel', teardown);
-  };
-
   const price = space?.price ?? 0;
   // Says the panel can be got out of the way, and that more than one is allowed,
   // only once there is something that would survive it. Before that both are
@@ -170,44 +146,61 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     // at full width rather than at the visible panel's `max-w-xl`: this root
     // spans the viewport and takes the clicks across all of it.
     <div ref={trayRef} className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
-      <div className="w-full max-w-xl overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
-        <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
-          <div className="flex-1">
-            <Text size="sm" fw={600}>
-              {instruction}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {price} Buzz + one use
-              {space?.mode === 'review' &&
-                ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
-            </Text>
-          </div>
-          <CloseButton
-            onClick={closeTray}
-            aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
-          />
-        </div>
-
-        {topUp ? (
-          <div className="p-3">
-            <StickerTopUp
-              sticker={topUp}
-              onCancel={() => setTopUp(null)}
-              // Returns to the row rather than starting a draft. Convenient as
-              // that would be, it would put a sticker on the image with no drag
-              // — the one thing `grab` above promises cannot happen — and a
-              // purchase confirmation is not a placement gesture.
-              onPurchased={() => setTopUp(null)}
+      <div className="flex w-full max-w-xl flex-col">
+        {/* Above the tray, not in place of it: the row of what you own is the
+            thing you are shopping to add to, so it stays visible while you buy. */}
+        {shopping && <StickerShopPanel maxScale={maxScale} onClose={() => setShopping(false)} />}
+        <div className="overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
+          <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
+            <div className="flex-1">
+              <Text size="sm" fw={600}>
+                {instruction}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {price} Buzz + one use
+                {space?.mode === 'review' &&
+                  ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
+              </Text>
+            </div>
+            <CloseButton
+              onClick={closeTray}
+              aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
             />
           </div>
-        ) : (
+
           <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
             <Group gap="xs" wrap="nowrap" p="xs">
               {isLoading && <Text size="sm">Loading your stickers…</Text>}
+
+              {/* Ahead of the stickers, so it stays put as the row grows. */}
+              {!isLoading && !!sticker.length && (
+                <StickerShopTile open={shopping} onClick={() => setShopping((open) => !open)} />
+              )}
+
+              {/* Owning nothing is the one state where the tile is not enough —
+                  there is nothing beside it to explain it, so it gets said. */}
               {!isLoading && !sticker.length && (
-                <Text size="sm" c="dimmed">
-                  You don&apos;t own any stickers yet.
-                </Text>
+                <div className="flex items-center gap-3 px-1 py-2">
+                  <ThemeIcon size={40} radius="xl" variant="light" color="yellow">
+                    <IconSticker size={22} />
+                  </ThemeIcon>
+                  <div className="flex flex-col items-start gap-1">
+                    <Text size="sm" fw={500}>
+                      No stickers yet
+                    </Text>
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      color="yellow"
+                      leftSection={<IconPlus size={14} stroke={2.5} />}
+                      onClick={() => {
+                        setShopping(true);
+                      }}
+                    >
+                      Browse the sticker shop
+                    </Button>
+                  </div>
+                </div>
               )}
               {sticker.map((option) => {
                 const remaining = balanceFor(option.id);
@@ -216,10 +209,15 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   <button
                     key={option.id}
                     type="button"
-                    // An exhausted sticker opens the top-up instead of doing
-                    // nothing. It stays a pointer-down like the others so the two
-                    // outcomes of pressing a sticker share one gesture.
-                    onPointerDown={exhausted ? () => setTopUp(option) : grab(option.id)}
+                    // An exhausted sticker drags out like any other. What is
+                    // different is the draft it makes: it carries the price of
+                    // one more use, and asks for that before it can be placed.
+                    // Arranging it first is the point — the same argument as
+                    // buying one from the shop, and the same gesture.
+                    onPointerDown={grab(
+                      option.id,
+                      exhausted ? refillOffer(option.id, option.pricePerUse) : undefined
+                    )}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
                       drafts.some((draft) => draft.cosmeticId === option.id) ||
@@ -243,7 +241,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
               })}
             </Group>
           </ScrollArea.Autosize>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -1,13 +1,20 @@
 import {
   ActionIcon,
   Popover,
+  SegmentedControl,
   Slider,
   Text,
   Textarea,
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { IconDropletHalf2, IconFlipHorizontal, IconMessage, IconTrash } from '@tabler/icons-react';
+import {
+  IconAlertTriangleFilled,
+  IconDropletHalf2,
+  IconFlipHorizontal,
+  IconMessage,
+  IconTrash,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -22,9 +29,11 @@ import {
   placeButtonBoxes,
   shouldFlipPlaceButton,
 } from '~/components/Sticker/place-button-position';
-import { payoutCopy } from '~/components/Sticker/payout-copy';
+import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
+import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-copy';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
+import { useBuyStickerUses } from '~/components/Sticker/sticker.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -32,6 +41,9 @@ import {
   STICKER_COMMENT_MAX_LENGTH,
   STICKER_PLACEMENT_MIN_OPACITY,
 } from '~/shared/utils/sticker-placement';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import {
   pointerToSurfaceFraction,
@@ -50,6 +62,21 @@ const NOTE_WIDTH = 220;
 
 /** `mt-2`, in pixels, and the clearance the flipped side is built from. */
 const BUY_BUTTON_GAP = 8;
+
+/**
+ * A purchase's idempotency key, which the server refuses a repeat of.
+ *
+ * Feature-detected for the same reason the draft ids are: `crypto.randomUUID`
+ * is undefined outside a secure context, and throwing here would take down the
+ * purchase button on any http origin that is not localhost. The fallback is
+ * still unique per page — and a key that repeats across sessions would only ever
+ * refuse a charge, never duplicate one.
+ */
+let purchaseKeySequence = 0;
+const nextPurchaseKey = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `00000000-0000-4000-8000-${String(++purchaseKeySequence).padStart(12, '0')}`;
 
 /**
  * The nearest ancestor that clips — the carousel's viewport on the image detail
@@ -109,12 +136,102 @@ export function DraftSticker({
   ownerUsername: string | null | undefined;
   onGesture: StartGesture;
 }) {
-  const payout = payoutCopy(ownerShare, ownerUsername);
+  // While the sticker is unbought the chip names who that payment goes to — the
+  // sticker's maker — not who the later placement pays. Two payments, two
+  // recipients, and only one of them is being made right now.
+  const payout = draft.purchase
+    ? stickerPurchaseCopy(draft.purchase.creatorUsername)
+    : payoutCopy(ownerShare, ownerUsername);
+  const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
+  const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
+  const queryUtils = trpc.useUtils();
+  // One buying intent, minted with the draft and reused by every press on it.
+  // The server refuses a repeat of the same key, so a double-click or a retry
+  // after a timeout cannot be charged twice.
+  const purchaseKey = useRef(nextPurchaseKey());
+  const buyUses = useBuyStickerUses();
+
+  const buySticker = async () => {
+    const pack = draft.purchase?.pack;
+    if (!pack) return;
+
+    try {
+      await purchaseShopItem({
+        shopItemId: pack.shopItemId,
+        viaShopUserId: pack.viaShopUserId,
+        payWith: pack.acceptsBlue ? 'blue-first' : undefined,
+        // One key per draft, minted once: a double-click, a retry, or a second
+        // tab replaying this purchase is one intent and must be charged once.
+        // Stickers can be bought repeatedly now, so nothing else refuses it.
+        idempotencyKey: purchaseKey.current,
+        // The number this button is showing. A listing re-priced while the panel
+        // sat open must refuse rather than charge something else.
+        expectedUnitAmount: pack.unitAmount,
+      });
+      // A pack grants the sticker itself, so every draft of it becomes
+      // placeable — but the balance behind them has to be refetched, or the
+      // tray keeps calling this sticker spent and offering to sell it again.
+      await queryUtils.cosmetic.getStickerBalances.invalidate();
+      markPurchased(draft.cosmeticId);
+      showSuccessNotification({
+        title: 'Sticker purchased',
+        message: 'Place it whenever you like — it stays where you put it.',
+      });
+    } catch (error) {
+      showErrorNotification({
+        title: 'Could not buy that sticker',
+        error: error instanceof Error ? error : new Error('Purchase failed'),
+      });
+    }
+  };
+
+  // Only the one use this draft will spend. Buying a stack you may not place is
+  // the shop's business, not this button's — the sticker is already arranged and
+  // the next press after this one is Place.
+  const buyOneUse = async () => {
+    const perUse = draft.purchase?.perUse;
+    if (perUse == null) return;
+
+    try {
+      await buyUses.mutateAsync({
+        cosmeticId: draft.cosmeticId,
+        quantity: 1,
+        // What the button charged for. The server refuses if the creator has
+        // moved the price since this rendered.
+        expectedPricePerUse: perUse,
+        payWith: 'default',
+      });
+      // This draft only. One use funds one placement, so lifting the gate from
+      // every draft of the sticker would show a Place button on stickers that
+      // cannot be placed — the server refuses them at `assertHasUse`, after the
+      // button has already claimed they were paid for.
+      markPurchased(draft.cosmeticId, draft.id);
+    } catch (error) {
+      showErrorNotification({
+        title: 'Could not buy a use',
+        error: error instanceof Error ? error : new Error('Purchase failed'),
+      });
+    }
+  };
+
   const select = useStickerPlacementDraftStore((state) => state.select);
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
   const move = useStickerPlacementDraftStore((state) => state.move);
   const place = useCreateStickerPlacement(draft.id);
   const spendTypes = useAvailableBuzz();
+
+  // Which of the two refill prices is being offered. Defaults to the single
+  // use: it is the cheaper of the two and exactly what placing this draft
+  // spends, so the larger commitment is the one you have to ask for.
+  const [buyMode, setBuyMode] = useState<'use' | 'pack'>('use');
+  const canBuyUse = draft.purchase?.perUse != null;
+  const canBuyPack = !!draft.purchase?.pack;
+  const offersBoth = canBuyUse && canBuyPack;
+  // A first purchase has no per-use option at all — you cannot top up a sticker
+  // you do not own — so the toggle's value only decides anything when both are
+  // open.
+  const effectiveMode = offersBoth ? buyMode : canBuyPack ? 'pack' : 'use';
+  const packUses = draft.purchase?.pack?.uses;
 
   // Local to the draft rather than in the store: it is written once, read once
   // at purchase, and putting it in the store would make every keystroke a
@@ -610,66 +727,107 @@ export function DraftSticker({
           </UnstyledButton>
         )}
 
-        <BuzzTransactionButton
-          size="sm"
-          style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-          buzzAmount={price}
-          // Says what it means. `BuzzTransactionButton` already ran the pair
-          // through `useAvailableBuzz`, which strips both and appends the
-          // domain's, so this renders identically — the pair was never the hole.
-          // That was server-side, where the escrow drew from both.
-          accountTypes={spendTypes}
-          label="Place"
-          loading={place.isPending}
-          onPerformTransaction={() =>
-            place.mutate({
-              imageId: draft.imageId,
-              data: {
-                cosmeticId: draft.cosmeticId,
-                x: draft.x,
-                y: draft.y,
-                scale: draft.scale,
-                rotation: draft.rotation,
-                flip: draft.flip,
-                opacity: draft.opacity,
-                // Sent only when there is something to send, so an opened-then-
-                // abandoned field is the same as never opening it.
-                ...(note.trim() ? { comment: note } : {}),
-              },
-            })
-          }
-        />
-        {/* On its own dark chip rather than over the artwork: this sits on
-            whatever the creator uploaded, and yellow on light work is as
-            unreadable as dimmed was on dark.
-            Rounded as a box rather than a pill once it is two lines: a
-            full-round radius on a two-line chip bows its short sides inward. */}
+        {/* Above the button in both states: this is who the press underneath it
+            pays, so it reads as a label on the button rather than a footnote
+            after the decision. Capped and truncated because the cluster is
+            `w-max`, and its width feeds the overlap test that decides whether
+            the button flips above the sticker. */}
         {payout && (
-          <div
-            className={clsx(
-              'bg-black/80 px-2 py-0.5 text-center',
-              payout.name ? 'rounded-lg' : 'rounded-full'
-            )}
-          >
-            <Text size="xs" fw={500} c="yellow.4" className="leading-tight">
+          <div className="max-w-[240px] truncate rounded-full bg-black/80 px-2 py-0.5 text-center">
+            <Text size="xs" fw={500} c="yellow.4" className="leading-tight" title={payout.name}>
               {payout.lead}
+              {payout.name ? ' ' : ''}
+              {payout.name && <span className="font-bold">{payout.name}</span>}
             </Text>
-            {/* Capped and truncated, and not only for looks: the wrapper is
-                `w-max`, so an unbounded name widens the whole cluster — and the
-                cluster's width is half of the overlap test that decides whether
-                the button flips above the sticker. A long name would make it
-                flip on images where it does not need to. */}
-            {payout.name && (
-              <Text
-                size="xs"
-                fw={700}
-                c="yellow.4"
-                className="max-w-[168px] truncate leading-tight"
-                title={payout.name}
-              >
-                {payout.name}
-              </Text>
-            )}
+          </div>
+        )}
+
+        {/* Both ways to pay for a spent sticker, where both are open. One use is
+            what placing this draft actually costs; the pack is the listing's own
+            price, offered only while it is genuinely on sale. */}
+        {offersBoth && (
+          <SegmentedControl
+            size="xs"
+            radius="xl"
+            value={buyMode}
+            onChange={(value) => setBuyMode(value as 'use' | 'pack')}
+            data={[
+              { label: '1 use', value: 'use' },
+              {
+                label: packUses == null ? 'Pack' : `${numberWithCommas(packUses)} uses`,
+                value: 'pack',
+              },
+            ]}
+          />
+        )}
+
+        {draft.purchase && effectiveMode === 'pack' && draft.purchase.pack ? (
+          <BuzzTransactionButton
+            size="sm"
+            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+            buzzAmount={draft.purchase.pack.unitAmount}
+            accountTypes={draft.purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
+            label={draft.purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
+            loading={purchasingShopItem}
+            onPerformTransaction={buySticker}
+          />
+        ) : draft.purchase ? (
+          // Owned, and out of uses. One use, because one is what placing this
+          // draft spends.
+          <BuzzTransactionButton
+            size="sm"
+            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+            buzzAmount={draft.purchase.perUse ?? 0}
+            accountTypes={spendTypes}
+            label="Buy a use"
+            loading={buyUses.isPending}
+            // A sticker sold before per-use pricing existed has no price to
+            // charge, and the listing price is not a stand-in for one. Says so
+            // rather than offering a button that cannot work.
+            error={
+              draft.purchase.perUse == null
+                ? 'This sticker sells no extra uses, and it is not on sale right now'
+                : undefined
+            }
+            onPerformTransaction={buyOneUse}
+          />
+        ) : (
+          <BuzzTransactionButton
+            size="sm"
+            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+            buzzAmount={price}
+            accountTypes={spendTypes}
+            label="Place"
+            loading={place.isPending}
+            onPerformTransaction={() =>
+              place.mutate({
+                imageId: draft.imageId,
+                data: {
+                  cosmeticId: draft.cosmeticId,
+                  x: draft.x,
+                  y: draft.y,
+                  scale: draft.scale,
+                  rotation: draft.rotation,
+                  flip: draft.flip,
+                  opacity: draft.opacity,
+                  // Sent only when there is something to send, so an opened-then-
+                  // abandoned field is the same as never opening it.
+                  ...(note.trim() ? { comment: note } : {}),
+                },
+              })
+            }
+          />
+        )}
+
+        {/* The second payment, said before the first one is made. Someone who
+            buys a sticker to put it here and then meets another price has been
+            surprised with their own money. */}
+        {draft.purchase && (
+          <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
+            <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
+            <Text size="xs" c="gray.3" className="leading-tight">
+              Then {numberWithCommas(price)} Buzz to place it
+            </Text>
           </div>
         )}
       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { payoutCopy } from '~/components/Sticker/payout-copy';
+import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-copy';
 
 describe('payoutCopy', () => {
   // The whole reason the name is there. "The creator" is read while looking at
@@ -41,5 +41,28 @@ describe('payoutCopy', () => {
   // instead of "100% of proceeds", which would be the same number said worse.
   it('treats anything at or above the whole as all of it', () => {
     expect(payoutCopy(1.0000001, null)).toEqual({ lead: 'All proceeds go to the creator' });
+  });
+});
+
+describe('stickerPurchaseCopy', () => {
+  // Read while three parties are in play — the image's owner, the sticker's
+  // maker, and the site — with two payments about to happen in sequence.
+  // "The creator" would name none of them unambiguously.
+  it('names the sticker maker', () => {
+    expect(stickerPurchaseCopy('justin')).toEqual({ lead: 'This goes to', name: '@justin' });
+  });
+
+  // Not a fallback: an official sticker genuinely has no maker to pay, and
+  // saying so is more honest than a dangling "This goes to".
+  it('says Civitai when there is explicitly no maker', () => {
+    for (const missing of [null, ''])
+      expect(stickerPurchaseCopy(missing)).toEqual({ lead: 'This goes to Civitai' });
+  });
+
+  // The distinction the whole signature exists for. A top-up dragged from the
+  // owned row has no creator in its payload, and crediting the site there would
+  // name the wrong recipient of real money.
+  it('says nothing when the maker is unknown rather than absent', () => {
+    expect(stickerPurchaseCopy(undefined)).toBeNull();
   });
 });

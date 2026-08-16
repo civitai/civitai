@@ -31,3 +31,27 @@ export function payoutCopy(
   // dangling "go to".
   return ownerUsername ? { lead, name: `@${ownerUsername}` } : { lead: `${lead} the creator` };
 }
+
+/**
+ * The same chip, for the step before: buying the sticker itself.
+ *
+ * Named rather than "the creator" for the reason above, and more sharply here —
+ * at this moment there are three parties in play (the image's owner, the
+ * sticker's maker, and the site) and the buyer is about to pay two of them in
+ * sequence. An official sticker has no maker to name, and "Civitai" is the true
+ * answer there rather than a fallback.
+ */
+export function stickerPurchaseCopy(creatorUsername: string | null | undefined): {
+  lead: string;
+  name?: string;
+} | null {
+  // `undefined` is "not known here" and `null` is "there is no maker". The two
+  // must not collapse: the owned-sticker payload carries no creator, and
+  // defaulting it to the site would credit Civitai for a sticker somebody else
+  // drew — a claim about money, made where the money is about to move.
+  if (creatorUsername === undefined) return null;
+
+  return creatorUsername
+    ? { lead: 'This goes to', name: `@${creatorUsername}` }
+    : { lead: 'This goes to Civitai' };
+}
