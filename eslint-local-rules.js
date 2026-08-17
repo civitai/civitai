@@ -39,6 +39,34 @@
  *     it. I/O between it and `commit()` burns the same budget, invisibly.
  *   - a named (non-inline) callback, same as the Prisma gap noted below.
  *
+ * KNOWN GAPS in WHICH AWAITED EXPRESSIONS ARE READ (the shapes below are inside
+ * a correctly-detected callback; the rule simply cannot see the call):
+ *   - the awaited value came from a VARIABLE: `const p = bustUserSettings(id);
+ *     await p;` — resolving it needs scope analysis this rule does not do. Same
+ *     for an array built in a variable: `await Promise.all(jobs)`.
+ *   - a combinator argument that is neither an array literal nor an inline
+ *     `.map`/`.flatMap` callback: `await Promise.all(ids.map(makeJob))`,
+ *     `await Promise.all([...jobs, bust(id)])` (the SPREAD element specifically —
+ *     the sibling elements beside it ARE read).
+ *   - `await (cond ? bustUserSettings(id) : Promise.resolve())` — a conditional
+ *     is not unwrapped.
+ *   - a call reached through a locally aliased binding: `const b =
+ *     bustUserSettings; await b(id);` — detection is by CALLED NAME, never
+ *     resolved to an import.
+ * 🔴 A shape absent from BOTH lists above is NOT thereby covered. These are the
+ * ones someone went looking for; the honest summary of this rule is that it reads
+ * a curated set of syntactic shapes, so treat a clean run as "none of the shapes
+ * below the awaits I can read", not "no I/O in any transaction".
+ *
+ * DELIBERATELY out of scope, not a gap: an UN-AWAITED call —
+ * `void bustUserSettings(id)`, `logToAxiom({})` on its own line, or
+ * `bustUserSettings(id).catch(noop)`. Those do not consume the transaction's
+ * wall-clock budget, and "make pure-logging calls fire-and-forget" is one of the
+ * two fixes this rule's own message prescribes. Flagging them would flag the
+ * remedy. (A fire-and-forget write is a different hazard — it can outlive a
+ * rolled-back transaction — but it is not THIS rule's, and it has no timeout to
+ * blow.) Pinned by a `valid` case in the rule's test file.
+ *
  * Interactive transactions hold a DB connection open under a wall-clock
  * timeout (Prisma default 5000ms, or an explicit `{ timeout }`). An awaited
  * network call inside the callback (HTTP fetch, image scanner, Buzz API,
@@ -54,6 +82,34 @@
  * Detection is a curated denylist of known I/O call names (low false-positive,
  * extend as new I/O helpers appear). Calls on the transaction client itself
  * (`tx.*`, including `tx.$queryRaw` / `tx.$executeRaw`) are always allowed.
+ *
+ * An `await` is read through three wrappers before the denylist is consulted:
+ * `.catch()/.then()/.finally()`; `Promise.all/allSettled/race/any` over an ARRAY
+ * LITERAL, whose elements are then each read the same way; and an inline
+ * `.map`/`.flatMap` callback with a concise (non-block) body passed to one of
+ * those combinators. One `await` can therefore report several calls. The
+ * combinator forms were added because `await Promise.all([cache.refresh(id),
+ * bustUserSettings(id)])` — the exact line in model.service.ts that motivated
+ * adding those two names to the denylist — passes its I/O as ARGUMENTS and so
+ * was invisible to the plain awaited-call walk. Measured on the pre-change rule:
+ * that shape produced 0 hits while the three direct-await cases beside it all
+ * flagged. Read the two gap lists above for what this still does not see.
+ *
+ * Blast radius of adding the combinator forms, measured over every .ts/.tsx under
+ * `src/` and `packages/` (5,310 files, 0 parse errors) with the rule run in
+ * isolation, immediately before and after the change: 6 reports -> 7. The one new
+ * report is a TRUE positive that was invisible before —
+ * `invalidateManyImageExistence(imageIds)` (N Redis `set`s) sharing a
+ * `Promise.all` with a legitimate `tx.image.deleteMany` inside
+ * `deleteBountyEntry`'s Prisma transaction, src/server/services/bountyEntry.service.ts.
+ * It is left reported rather than fixed here: hoisting a cache invalidation out of
+ * a transaction is a behaviour change to bounty deletion and wants its own diff,
+ * the same treatment `bugReportCounter` got from no-module-scope-cache. The rule
+ * is 'warn' and the file pre-exists, so it annotates and blocks nothing — see the
+ * severity note in .eslintrc.js.
+ *
+ * Re-derive that census rather than trusting the numbers above; they move.
+ *
  * Intentional exceptions should use:
  *   // eslint-disable-next-line local-rules/no-io-in-transaction -- <reason>
  */
@@ -94,6 +150,29 @@ const IO_CALL_NAMES = new Set([
 // underlying call (e.g. `await foo().catch(() => null)` -> inspect `foo()`).
 const PASSTHROUGH_MEMBERS = new Set(['catch', 'then', 'finally']);
 
+/**
+ * `Promise.<x>(...)` statics that AWAIT their operands as a unit. An
+ * `await Promise.all([bust(id), refresh(id)])` puts both calls on the
+ * transaction's clock exactly as two consecutive `await`s would — the calls are
+ * ARGUMENTS rather than the awaited expression, which is the only reason the
+ * plain awaited-call walk missed them. `race`/`any` are included because the
+ * operands still all START inside the transaction; settling early does not
+ * cancel the losers, so their latency is on the same budget as the winner's.
+ */
+const PROMISE_COMBINATORS = new Set(['all', 'allSettled', 'race', 'any']);
+
+/**
+ * Array methods that invoke their callback SYNCHRONOUSLY, so
+ * `Promise.all(ids.map((i) => bust(i)))` really does run `bust` inside the
+ * transaction. Restricted to these two on purpose: a callback passed to anything
+ * else (`register(cb)`, `on('x', cb)`, `describe(cb)`) may be stored and run
+ * later, and reading it would report deferred work that never touches the
+ * transaction's budget. Only the CONCISE-body form needs reading here: the
+ * block-bodied `ids.map(async (i) => { await bust(i); })` is already reported by
+ * the function-stack walk, so reading it here too would report it twice.
+ */
+const EAGER_ITERATION_METHODS = new Set(['map', 'flatMap']);
+
 /** Walk a member chain to its root object identifier name (e.g. tx.user.x -> "tx"). */
 function rootObjectName(node) {
   let cur = node;
@@ -113,12 +192,66 @@ function calleeName(callExpr) {
   return null;
 }
 
+/** `Promise.all(...)` / `.allSettled` / `.race` / `.any`. */
+function isPromiseCombinatorCall(expr) {
+  const callee = expr.callee;
+  return (
+    callee &&
+    callee.type === 'MemberExpression' &&
+    callee.object &&
+    callee.object.type === 'Identifier' &&
+    callee.object.name === 'Promise' &&
+    callee.property &&
+    callee.property.type === 'Identifier' &&
+    PROMISE_COMBINATORS.has(callee.property.name)
+  );
+}
+
 /**
- * Resolve the "effective" I/O call inside an awaited expression, unwrapping
- * `.catch()/.then()/.finally()` passthroughs. Returns { name, node } or null.
+ * For a combinator argument, the expression(s) that are evaluated inside the
+ * transaction: an array literal's own elements, or an eagerly-invoked
+ * `.map`/`.flatMap` callback's concise body.
  */
-function resolveIoCall(expr, txParamNames) {
-  if (!expr || expr.type !== 'CallExpression') return null;
+function combinatorOperands(arg) {
+  if (!arg) return [];
+  if (arg.type === 'ArrayExpression') {
+    // Returned whole. A hole (`[, x]`) is null and a `...spread` is a
+    // SpreadElement — neither is a CallExpression, so `collectIoCalls` drops both
+    // on its own; filtering them here would be an unkillable no-op. The spread's
+    // own array stays unresolvable (KNOWN GAPS), but its SIBLINGS are read.
+    return arg.elements;
+  }
+  if (
+    arg.type === 'CallExpression' &&
+    arg.callee.type === 'MemberExpression' &&
+    arg.callee.property &&
+    arg.callee.property.type === 'Identifier' &&
+    EAGER_ITERATION_METHODS.has(arg.callee.property.name)
+  ) {
+    // The callback's BODY, whatever it is. A CONCISE body is an expression, so an
+    // I/O call there is read. A BLOCK body is a BlockStatement and a non-function
+    // argument has no `body` at all — `collectIoCalls` drops both, which is not an
+    // accident: the block-bodied form's `await` is already reported by the
+    // function-stack walk, and descending into it here would report the same call
+    // TWICE. (An earlier draft filtered these out explicitly; that filter could not
+    // be killed by any mutation, because it only ever removed nodes
+    // `collectIoCalls` was going to reject anyway.)
+    return (arg.arguments || []).map((cb) => cb.body);
+  }
+  return [];
+}
+
+/**
+ * Collect every I/O call an awaited expression puts on the transaction's clock,
+ * unwrapping `.catch()/.then()/.finally()` passthroughs and descending through
+ * `Promise.all([...])`-style combinators. Appends `{ name, node }` to `out`.
+ *
+ * `depth` bounds the recursion: the shapes above nest (a combinator inside a
+ * `.catch()` inside a combinator), and a bound keeps a pathological or
+ * self-referential source from blowing the stack inside a lint run.
+ */
+function collectIoCalls(expr, txParamNames, out, depth) {
+  if (!expr || expr.type !== 'CallExpression' || depth > 8) return out;
   const name = calleeName(expr);
 
   // Unwrap promise passthroughs: await foo().catch(...) -> inspect foo()
@@ -128,15 +261,26 @@ function resolveIoCall(expr, txParamNames) {
     expr.callee.type === 'MemberExpression' &&
     expr.callee.object
   ) {
-    return resolveIoCall(expr.callee.object, txParamNames);
+    return collectIoCalls(expr.callee.object, txParamNames, out, depth + 1);
+  }
+
+  // `await Promise.all([bust(id), refresh(id)])` — the calls are arguments, not
+  // the awaited expression, but every one of them runs on the txn's budget.
+  if (isPromiseCombinatorCall(expr)) {
+    for (const arg of expr.arguments || []) {
+      for (const operand of combinatorOperands(arg)) {
+        collectIoCalls(operand, txParamNames, out, depth + 1);
+      }
+    }
+    return out;
   }
 
   // Allow calls on the transaction client itself: tx.*(...), tx.$queryRaw`...`
   const root = rootObjectName(expr.callee);
-  if (root && txParamNames.has(root)) return null;
+  if (root && txParamNames.has(root)) return out;
 
-  if (name && IO_CALL_NAMES.has(name)) return { name, node: expr };
-  return null;
+  if (name && IO_CALL_NAMES.has(name)) out.push({ name, node: expr });
+  return out;
 }
 
 const noIoInTransaction = {
@@ -234,8 +378,9 @@ const noIoInTransaction = {
       AwaitExpression(node) {
         if (txStack.length === 0) return;
         const txParamNames = txStack[txStack.length - 1];
-        const io = resolveIoCall(node.argument, txParamNames);
-        if (io) {
+        // One await can carry several I/O calls (`Promise.all([a(), b()])`), and
+        // each is a separate thing to move out — report them individually.
+        for (const io of collectIoCalls(node.argument, txParamNames, [], 0)) {
           context.report({ node: io.node, messageId: 'ioInTx', data: { name: io.name } });
         }
       },
