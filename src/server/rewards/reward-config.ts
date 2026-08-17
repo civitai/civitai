@@ -1,16 +1,27 @@
 import { z } from 'zod';
+import {
+  MAX_AWARD_AMOUNT,
+  MAX_CAP,
+  OVERRIDE_FIELDS,
+  REWARD_CONFIG_CONFLICT,
+} from '~/shared/constants/reward-config.constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { rewardConfigReadFailedCounter } from '~/server/prom/client';
+import { throwConflictError } from '~/server/utils/errorHandling';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
+import { hashifyObject } from '~/utils/string-helpers';
 
 export const REWARD_CONFIG_KEY = 'rewards:config';
 
-// Live award amounts run 1..500 and caps 25..1500, so these leave room for a
-// deliberate order-of-magnitude change while refusing the operator typo that
-// adds a zero to the largest of them.
-export const MAX_AWARD_AMOUNT = 5_000;
-export const MAX_CAP = 100_000;
+// Re-exported so existing importers of this module keep working; the definitions
+// live in a neutral module the panel can read without pulling in db clients.
+export {
+  MAX_AWARD_AMOUNT,
+  MAX_CAP,
+  OVERRIDE_FIELDS,
+  REWARD_CONFIG_CONFLICT,
+} from '~/shared/constants/reward-config.constants';
 
 /**
  * The single definition of an operator override. `setRewardConfig` validates
@@ -48,12 +59,18 @@ export const rewardConfigSchema = z.object({
  */
 export const storedRewardConfigSchema = rewardConfigSchema.strict();
 
+/** The write input: the row, plus the two guards. */
+export const setRewardConfigSchema = rewardConfigSchema.extend({
+  /** The `hash` from `getStoredRewardConfig`. Omit for an unconditional write. */
+  expectedHash: z.string().optional(),
+  /** Save over a row that cannot be parsed, and therefore could not be shown. */
+  force: z.boolean().optional(),
+});
+
 export type RewardOverride = z.infer<typeof rewardOverrideSchema>;
 /** The honoured override plus the names of the fields that were refused. */
 export type RewardConfigEntry = { override: RewardOverride; rejected: string[] };
 export type RewardConfig = Record<string, RewardConfigEntry>;
-
-const OVERRIDE_FIELDS = ['enabled', 'awardAmount', 'cap'] as const;
 
 export type RewardDefaults = {
   awardAmount: number;
@@ -235,6 +252,8 @@ export type StoredRewardConfig = {
   value: unknown;
   /** True when the row would not survive `setRewardConfig`. */
   malformed: boolean;
+  /** Identifies this version of the row for the concurrency check on write. */
+  hash: string;
 };
 
 /**
@@ -247,18 +266,36 @@ export type StoredRewardConfig = {
  * fails the parse. Rendering `{}` for it would show an editor a lossless-looking
  * empty form whose first save wipes every other reward's override.
  *
- * ⚠️ Two moderators editing at once are last-write-wins; there is no version
- * guard on the row. `malformed` is an ingredient for an editor to refuse a save,
- * not a control — nothing enforces it yet.
+ * `hash` identifies the row the caller saw. Hand it back to `setRewardConfig`
+ * and a write that would clobber someone else's edit is refused instead.
  *
  * ⚠️ The value is UNPARSED, so a hand-written row can carry a `__proto__` own
  * key through to the caller. Harmless to render; not harmless to spread or
  * deep-merge. (The parsed paths drop it rather than assigning it.)
  */
 export async function getStoredRewardConfig(): Promise<StoredRewardConfig> {
-  const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
+  // 🔴 The PRIMARY, not `dbRead`. This hash is a version token, and a replica
+  // serves it from before another moderator's write: the second moderator loads
+  // a stale row with a matching stale hash, edits for as long as they like, and
+  // the guard passes on save because both sides came from the same stale read.
+  // No concurrency window is required — only that the LOAD fell inside one.
+  const row = await dbWrite.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
   const value = row?.value ?? {};
-  return { value, malformed: !storedRewardConfigSchema.safeParse(value).success };
+  return {
+    value,
+    malformed: !storedRewardConfigSchema.safeParse(value).success,
+    hash: rewardConfigHash(value),
+  };
+}
+
+/**
+ * Identifies a stored row for the concurrency check. Both callers normalise an
+ * absent row to `{}` before hashing, so there is no nullish case to handle here
+ * — `hashifyObject` would return '' for one, and a guard for it would be
+ * unreachable code that reads as though it were load-bearing.
+ */
+function rewardConfigHash(value: unknown) {
+  return String(hashifyObject(value));
 }
 
 /**
@@ -269,13 +306,45 @@ export async function getStoredRewardConfig(): Promise<StoredRewardConfig> {
  *
  * Only invalidates the caller's own cache — other pods pick the change up within
  * `CONFIG_TTL_MS`.
+ *
+ * 🔴 This REPLACES the row. A caller sending only the rewards it changed erases
+ * every other reward's override, so the panel always submits the whole map.
+ *
+ * Two guards, because they fail differently and neither covers the other:
+ *
+ * - `expectedHash` is the ordinary case. A panel makes two moderators on the same
+ *   screen normal rather than theoretical, and last-write-wins between them is
+ *   silent. Omit it and the write is unconditional, which is what a script wants.
+ * - `force` is the pathological one. A row that does not parse cannot be shown
+ *   faithfully in an editor, so overwriting it blind would discard whatever the
+ *   operator could not see. Refused unless someone says explicitly to do it.
  */
-export async function setRewardConfig(config: z.infer<typeof rewardConfigSchema>, userId: number) {
+export async function setRewardConfig(
+  config: z.infer<typeof rewardConfigSchema>,
+  userId: number,
+  { expectedHash, force = false }: { expectedHash?: string; force?: boolean } = {}
+) {
   const value = storedRewardConfigSchema.parse(config);
 
-  // Read the prior row for the audit line. Not a version guard — this is still an
-  // unconditional replace, and two moderators editing at once are last-write-wins.
-  const previous = (await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } }))?.value;
+  // The primary, for the reason given on `getStoredRewardConfig`: a guard that
+  // reads a replica passes on a stale row, and this one decides whether another
+  // moderator's write survives.
+  const row = await dbWrite.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
+  // Normalised exactly as the reader normalises it. Gating the malformed check on
+  // the RAW value instead makes a row present as JSON `null` report readable to
+  // the panel — clean form, no force button — while refusing every save it makes,
+  // with the only control that could pass `force` not rendered.
+  const previous = row?.value ?? {};
+
+  // Ordered so an unreadable row is reported as unreadable even when the hash is
+  // ALSO stale. Both are true at once for anyone who loaded before someone else
+  // broke the row, and only one of the two messages names an action that works:
+  // reloading an unreadable row gets you the same unreadable row.
+  if (!force && !storedRewardConfigSchema.safeParse(previous).success)
+    throw throwConflictError(REWARD_CONFIG_CONFLICT.unreadable);
+
+  if (expectedHash !== undefined && expectedHash !== rewardConfigHash(previous))
+    throw throwConflictError(REWARD_CONFIG_CONFLICT.stale);
 
   await dbWrite.keyValue.upsert({
     where: { key: REWARD_CONFIG_KEY },

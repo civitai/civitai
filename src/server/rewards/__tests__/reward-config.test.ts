@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { REWARD_CONFIG_CONFLICT } from '~/shared/constants/reward-config.constants';
 import {
   getStoredRewardConfig,
   invalidateRewardConfigCache,
@@ -19,7 +20,14 @@ import {
 const DEFAULTS = { awardAmount: 10, cap: 30, capOverridable: true } as const;
 
 const findUnique = dbMock.dbRead.keyValue.findUnique;
-const storedConfig = (value: unknown) => findUnique.mockResolvedValue({ value });
+const findUniqueWrite = dbMock.dbWrite.keyValue.findUnique;
+// The hot read path (`resolveRewardConfig`) uses the replica; the version guard
+// and the editor read use the primary. Seeding both keeps every test about the
+// behaviour under test rather than about which client it happened to reach for.
+const storedConfig = (value: unknown) => {
+  findUnique.mockResolvedValue({ value });
+  findUniqueWrite.mockResolvedValue({ value });
+};
 const resolve = (overrides?: Partial<typeof DEFAULTS>) =>
   resolveRewardConfig('testReward', { ...DEFAULTS, ...overrides });
 
@@ -27,6 +35,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   invalidateRewardConfigCache();
   findUnique.mockResolvedValue(null);
+  findUniqueWrite.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -368,7 +377,7 @@ describe('setRewardConfig', () => {
 
   // A money-affecting moderator change with no attribution is not auditable.
   it('records who made the change and what it replaced', async () => {
-    findUnique.mockResolvedValue({ value: { rewards: { testReward: { awardAmount: 4 } } } });
+    storedConfig({ rewards: { testReward: { awardAmount: 4 } } });
 
     await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID);
 
@@ -457,12 +466,133 @@ describe('setRewardConfig', () => {
   });
 });
 
+// A panel makes two moderators on the same screen ordinary rather than
+// theoretical, and `set` replaces the whole row, so losing that race silently
+// discards the other person's edit.
+describe('setRewardConfig concurrency and malformed guards', () => {
+  const upsert = dbMock.dbWrite.keyValue.upsert;
+  const MOD_ID = 99;
+
+  const withStored = async (value: unknown) => {
+    storedConfig(value);
+    return (await getStoredRewardConfig()).hash;
+  };
+
+  it('writes when the row is the one the caller read', async () => {
+    const hash = await withStored({ rewards: { testReward: { awardAmount: 4 } } });
+
+    await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID, {
+      expectedHash: hash,
+    });
+
+    expect(upsert).toHaveBeenCalled();
+  });
+
+  it('refuses when the row moved under the caller', async () => {
+    const stale = await withStored({ rewards: { testReward: { awardAmount: 4 } } });
+    storedConfig({ rewards: { testReward: { awardAmount: 5 } } });
+
+    await expect(
+      setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID, {
+        expectedHash: stale,
+      })
+    ).rejects.toThrow(REWARD_CONFIG_CONFLICT.stale);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes an absent row from an unreadable one', async () => {
+    findUniqueWrite.mockResolvedValue(null);
+    const absent = (await getStoredRewardConfig()).hash;
+    const unreadable = await withStored({ rewards: 'all of them' });
+
+    expect(absent).not.toBe(unreadable);
+  });
+
+  it('writes unconditionally when no hash is supplied', async () => {
+    await withStored({ rewards: { testReward: { awardAmount: 4 } } });
+
+    await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID);
+
+    expect(upsert).toHaveBeenCalled();
+  });
+
+  // Overwriting a row nobody could render discards values the operator was never
+  // shown, so it takes an explicit instruction rather than a normal save.
+  it('refuses to save over a row that cannot be read', async () => {
+    storedConfig({ rewards: { testReward: { enabled: 'false' } } });
+
+    await expect(
+      setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID)
+    ).rejects.toThrow(REWARD_CONFIG_CONFLICT.unreadable);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('saves over an unreadable row when forced', async () => {
+    storedConfig({ rewards: { testReward: { enabled: 'false' } } });
+
+    await setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID, { force: true });
+
+    expect(upsert).toHaveBeenCalled();
+  });
+
+  it('does not treat an absent row as unreadable', async () => {
+    findUniqueWrite.mockResolvedValue(null);
+
+    await setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID);
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  // A row PRESENT holding JSON `null`. The reader normalises `?? {}` before both
+  // its checks, so it reports the row readable — clean form, Save enabled, and no
+  // force button rendered. Gating this check on the raw value instead then
+  // refuses every save that form can make, with the only control that could pass
+  // `force` not on screen.
+  it('agrees with the reader about a row that is present and null', async () => {
+    storedConfig(null);
+
+    const stored = await getStoredRewardConfig();
+    expect(stored.malformed).toBe(false);
+
+    await setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID, {
+      expectedHash: stored.hash,
+    });
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  // Both conditions hold for anyone who loaded before someone else broke the row.
+  // Only one of the two messages names an action that works — reloading an
+  // unreadable row returns the same unreadable row.
+  it('reports an unreadable row as unreadable even when the hash is also stale', async () => {
+    const stale = await withStored({ rewards: { testReward: { awardAmount: 4 } } });
+    storedConfig({ rewards: { testReward: { enabled: 'false' } } });
+
+    await expect(setRewardConfig({ rewards: {} }, MOD_ID, { expectedHash: stale })).rejects.toThrow(
+      /cannot be read/
+    );
+  });
+
+  // The concurrency guard decides whether another moderator's write survives, so
+  // reading it off a replica passes on a row from before their save.
+  it('reads the row it guards against from the primary', async () => {
+    storedConfig({ rewards: {} });
+    dbMock.dbWrite.keyValue.findUnique.mockResolvedValue({ value: { rewards: {} } });
+
+    await getStoredRewardConfig();
+    await setRewardConfig({ rewards: {} }, MOD_ID);
+
+    expect(dbMock.dbWrite.keyValue.findUnique).toHaveBeenCalledTimes(2);
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+});
+
 describe('getStoredRewardConfig', () => {
   it('returns the row as written, for an editor to render', async () => {
     const stored = { rewards: { testReward: { enabled: false, cap: 8 } } };
     storedConfig(stored);
 
-    expect(await getStoredRewardConfig()).toEqual({ value: stored, malformed: false });
+    expect(await getStoredRewardConfig()).toMatchObject({ value: stored, malformed: false });
   });
 
   // `setRewardConfig` replaces the whole row, so an editor shown `{}` for a row it
@@ -474,13 +604,13 @@ describe('getStoredRewardConfig', () => {
     };
     storedConfig(stored);
 
-    expect(await getStoredRewardConfig()).toEqual({ value: stored, malformed: true });
+    expect(await getStoredRewardConfig()).toMatchObject({ value: stored, malformed: true });
   });
 
   it('does not throw on a row that is not even an object', async () => {
     storedConfig('disabled');
 
-    expect(await getStoredRewardConfig()).toEqual({ value: 'disabled', malformed: true });
+    expect(await getStoredRewardConfig()).toMatchObject({ value: 'disabled', malformed: true });
   });
 
   // Uncached on purpose: an operator fixing a refused field needs what is in the
@@ -491,6 +621,6 @@ describe('getStoredRewardConfig', () => {
     await getStoredRewardConfig();
     await getStoredRewardConfig();
 
-    expect(findUnique).toHaveBeenCalledTimes(2);
+    expect(findUniqueWrite).toHaveBeenCalledTimes(2);
   });
 });

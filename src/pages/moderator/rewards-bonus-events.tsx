@@ -18,6 +18,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import { RewardConfigPanel } from '~/components/Rewards/RewardConfigPanel';
 import { RewardsBonusEventEditModal } from '~/components/RewardsBonusEvent/RewardsBonusEventEditModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -85,120 +86,124 @@ export default function RewardsBonusEventsPage() {
 
   return (
     <>
-      <Meta title="Rewards Bonus Events - Moderator" deIndex />
+      <Meta title="Rewards - Moderator" deIndex />
       <Container size="lg" py="md">
-        <Stack gap="md">
-          <Group justify="space-between" align="center">
-            <Stack gap={0}>
-              <Title order={2}>Rewards Bonus Events</Title>
-              <Text size="sm" c="dimmed">
-                Site-wide multipliers on Blue Buzz rewards, across every reward type.
-                Highest-multiplier active event wins. The multiplier scales each reward&apos;s daily
-                cap as well as its award, so a 100/day cap is 800/day for a member on a 4x tier
-                during a 2x event.
-              </Text>
-            </Stack>
-            <Button leftSection={<IconPlus size={16} />} onClick={() => openEdit()}>
-              New Event
-            </Button>
-          </Group>
+        <Stack gap="xl">
+          <RewardConfigPanel />
 
-          {isLoading ? (
-            <PageLoader />
-          ) : !data || data.items.length === 0 ? (
-            <Center py="xl">
-              <Text c="dimmed">No rewards bonus events yet.</Text>
-            </Center>
-          ) : (
-            <Table striped withTableBorder>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>Multiplier</Table.Th>
-                  <Table.Th>Window</Table.Th>
-                  <Table.Th>Article</Table.Th>
-                  <Table.Th style={{ width: 100 }}>Actions</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {data.items.map((event) => {
-                  const active = isActive(event);
-                  return (
-                    <Table.Tr key={event.id}>
-                      <Table.Td>
-                        {active ? (
-                          <Badge color="green">Active</Badge>
-                        ) : event.enabled ? (
-                          <Badge color="yellow">Scheduled</Badge>
-                        ) : (
-                          <Badge color="gray">Disabled</Badge>
-                        )}
-                      </Table.Td>
-                      <Table.Td>
-                        <Stack gap={0}>
-                          <Text size="sm" fw={600}>
-                            {event.name}
-                          </Text>
-                          {event.bannerLabel ? (
-                            <Text size="xs" c="dimmed">
-                              Banner: {event.bannerLabel}
-                            </Text>
-                          ) : null}
-                        </Stack>
-                      </Table.Td>
-                      <Table.Td>{formatMultiplier(event.multiplier)}</Table.Td>
-                      <Table.Td>
-                        <Text size="xs">
-                          {event.startsAt ? formatDate(event.startsAt) : 'now'}
-                          {' → '}
-                          {event.endsAt ? formatDate(event.endsAt) : 'no end'}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        {event.articleId ? (
-                          <Text size="xs">
-                            <a
-                              href={`/articles/${event.articleId}`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              #{event.articleId}
-                            </a>
-                          </Text>
-                        ) : (
-                          <Text size="xs" c="dimmed">
-                            —
-                          </Text>
-                        )}
-                      </Table.Td>
-                      <Table.Td>
-                        <Group gap={4} wrap="nowrap">
-                          <LegacyActionIcon onClick={() => openEdit(event)}>
-                            <IconPencil size={16} />
-                          </LegacyActionIcon>
-                          <PopConfirm
-                            onConfirm={() => deleteMutation.mutate({ id: event.id })}
-                            withinPortal
-                          >
-                            <LegacyActionIcon loading={deleteMutation.isPending} color="red">
-                              <IconTrash size={16} />
-                            </LegacyActionIcon>
-                          </PopConfirm>
-                        </Group>
-                      </Table.Td>
-                    </Table.Tr>
-                  );
-                })}
-              </Table.Tbody>
-            </Table>
-          )}
-
-          {data && data.totalPages > 1 && (
-            <Group justify="end">
-              <Pagination value={page} total={data.totalPages} onChange={handlePage} />
+          <Stack gap="md">
+            <Group justify="space-between" align="center">
+              <Stack gap={0}>
+                <Title order={2}>Rewards Bonus Events</Title>
+                <Text size="sm" c="dimmed">
+                  Site-wide multipliers on Blue Buzz rewards, across every reward type.
+                  Highest-multiplier active event wins. The multiplier scales each reward&apos;s
+                  daily cap as well as its award, so a 100/day cap is 800/day for a member on a 4x
+                  tier during a 2x event.
+                </Text>
+              </Stack>
+              <Button leftSection={<IconPlus size={16} />} onClick={() => openEdit()}>
+                New Event
+              </Button>
             </Group>
-          )}
+
+            {isLoading ? (
+              <PageLoader />
+            ) : !data || data.items.length === 0 ? (
+              <Center py="xl">
+                <Text c="dimmed">No rewards bonus events yet.</Text>
+              </Center>
+            ) : (
+              <Table striped withTableBorder>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>Multiplier</Table.Th>
+                    <Table.Th>Window</Table.Th>
+                    <Table.Th>Article</Table.Th>
+                    <Table.Th style={{ width: 100 }}>Actions</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {data.items.map((event) => {
+                    const active = isActive(event);
+                    return (
+                      <Table.Tr key={event.id}>
+                        <Table.Td>
+                          {active ? (
+                            <Badge color="green">Active</Badge>
+                          ) : event.enabled ? (
+                            <Badge color="yellow">Scheduled</Badge>
+                          ) : (
+                            <Badge color="gray">Disabled</Badge>
+                          )}
+                        </Table.Td>
+                        <Table.Td>
+                          <Stack gap={0}>
+                            <Text size="sm" fw={600}>
+                              {event.name}
+                            </Text>
+                            {event.bannerLabel ? (
+                              <Text size="xs" c="dimmed">
+                                Banner: {event.bannerLabel}
+                              </Text>
+                            ) : null}
+                          </Stack>
+                        </Table.Td>
+                        <Table.Td>{formatMultiplier(event.multiplier)}</Table.Td>
+                        <Table.Td>
+                          <Text size="xs">
+                            {event.startsAt ? formatDate(event.startsAt) : 'now'}
+                            {' → '}
+                            {event.endsAt ? formatDate(event.endsAt) : 'no end'}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          {event.articleId ? (
+                            <Text size="xs">
+                              <a
+                                href={`/articles/${event.articleId}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                #{event.articleId}
+                              </a>
+                            </Text>
+                          ) : (
+                            <Text size="xs" c="dimmed">
+                              —
+                            </Text>
+                          )}
+                        </Table.Td>
+                        <Table.Td>
+                          <Group gap={4} wrap="nowrap">
+                            <LegacyActionIcon onClick={() => openEdit(event)}>
+                              <IconPencil size={16} />
+                            </LegacyActionIcon>
+                            <PopConfirm
+                              onConfirm={() => deleteMutation.mutate({ id: event.id })}
+                              withinPortal
+                            >
+                              <LegacyActionIcon loading={deleteMutation.isPending} color="red">
+                                <IconTrash size={16} />
+                              </LegacyActionIcon>
+                            </PopConfirm>
+                          </Group>
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+            )}
+
+            {data && data.totalPages > 1 && (
+              <Group justify="end">
+                <Pagination value={page} total={data.totalPages} onChange={handlePage} />
+              </Group>
+            )}
+          </Stack>
         </Stack>
       </Container>
     </>
