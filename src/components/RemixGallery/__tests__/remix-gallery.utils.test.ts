@@ -112,29 +112,40 @@ describe('freeSubmissionOffer', () => {
       // Fixtures that break one condition at a time pass under any order, so
       // the two-line swap that inverts the ladder would go unnoticed.
       const expected = ladder.find(([name]) => name === first)![1];
-      const { reason } = freeSubmissionOffer({
+      const { available, reason } = freeSubmissionOffer({
         ...eligible,
         ...broken[first],
         ...broken[second],
       });
 
+      // `available` on every branch, not only on the happy one. The modal reads
+      // it to decide whether the free button works, and a rung returning a
+      // refusal reason alongside `available: true` would offer a submission the
+      // claim then refuses — the state the docstring calls impossible and which
+      // nothing asserted on four of six outcomes.
+      expect(available).toBe(false);
       expect(reason).toMatch(expected);
     }
   );
 
-  it('reports the longest-lasting refusal when EVERY condition fails', () => {
-    // The transitive check the pairwise cases cannot make on their own.
-    const { reason } = freeSubmissionOffer({
-      ...eligible,
-      ...broken.verified,
-      ...broken.usedHere,
-      ...broken.freeSlots,
-      ...broken.allowanceRemaining,
-      ...broken.freeSlotsRemaining,
-    });
+  it.each(ladder.map((entry, index) => [entry[0], index] as const))(
+    'reports %s over every rung BELOW it, all set at once',
+    (name, index) => {
+      // A suffix cascade rather than one all-true case. All-true asserts only
+      // that rung 1 wins, so a swap anywhere among the rest leaves it green —
+      // it reads as a transitivity check and is not one. Breaking every rung
+      // from this one down, for each rung in turn, is the check that
+      // discriminates: any reordering changes at least one winner.
+      const { available, reason } = freeSubmissionOffer(
+        ladder
+          .slice(index)
+          .reduce((input, [rung]) => ({ ...input, ...broken[rung] }), { ...eligible })
+      );
 
-    expect(reason).toMatch(/where we can check/i);
-  });
+      expect(available).toBe(false);
+      expect(reason).toMatch(ladder[index][1]);
+    }
+  );
 
   it('reads the reset moment off the server date rather than naming a timezone', () => {
     // "midnight UTC" is true of the rule and misleading to a person, and it is a
@@ -150,13 +161,6 @@ describe('freeSubmissionOffer', () => {
 
   it('offers free when every condition holds', () => {
     expect(freeSubmissionOffer(eligible)).toEqual({ available: true, reason: null });
-  });
-
-  it('never returns a reason alongside an offer', () => {
-    // The two are read by different bits of the card, so a state carrying both
-    // would render a refusal under a working free button.
-    const offer = freeSubmissionOffer(eligible);
-    expect(offer.available).toBe(offer.reason === null);
   });
 
   it('refuses an unverified remix and names paying as the alternative', () => {

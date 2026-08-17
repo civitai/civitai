@@ -210,7 +210,10 @@ export const freeRefusalExplanation = (fresh: FreeSubmissionInputs) =>
  * holds no policy about which refusals money solves.
  */
 export function freeRefusalOutcome(explained: string | null, serverMessage: string) {
-  if (explained)
+  // `!== null`, not truthiness. They agree today only because every rung returns
+  // a sentence; a rung that ever returned an empty string would silently take
+  // the server branch, which is the branch that says "we could not explain this".
+  if (explained !== null)
     return { title: 'That free slot got away', message: explained, fallBackToPaid: true };
 
   // The server's own words, unedited. It is the only party that knows, and

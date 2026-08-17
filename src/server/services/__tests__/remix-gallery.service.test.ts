@@ -261,6 +261,36 @@ const submit = (over: Partial<Parameters<typeof createRemixGallerySubmission>[0]
     ...over,
   });
 
+/**
+ * The SQL a raw query actually carries, as one string.
+ *
+ * Nested `Prisma.sql` fragments arrive as VALUES rather than as part of the
+ * template's string array, so flattening is what makes an assertion see a
+ * predicate that lives inside a fragment at all.
+ *
+ * At module scope because two suites need it and both encode the same guess
+ * about Prisma's internals — `strings` and `values` on a fragment. When that
+ * shape changes, one copy gets fixed and the other keeps passing over SQL it can
+ * no longer read.
+ */
+const flatten = (value: unknown): string => {
+  if (Array.isArray(value)) return value.map(flatten).join(' ');
+  if (value && typeof value === 'object' && 'strings' in value)
+    return [
+      flatten((value as { strings: unknown }).strings),
+      flatten((value as { values?: unknown }).values ?? []),
+    ].join(' ');
+  return typeof value === 'string' ? value : '';
+};
+
+/** The bound parameters, which `flatten` drops — it keeps only strings. */
+const boundValues = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) return value.flatMap(boundValues);
+  if (value && typeof value === 'object' && 'strings' in value)
+    return boundValues((value as { values?: unknown }).values ?? []);
+  return [value];
+};
+
 describe('content level rules', () => {
   it('refuses an unrated submission under BOTH rules', () => {
     // The one that reads like an edge case and is not: 0 means unscanned, not
@@ -492,20 +522,6 @@ describe('the ceiling is applied on read, not only on the mutation', () => {
   // from a read query and every other test in this file still passes, while
   // entries approved before a host was flagged keep rendering — and the owner
   // cannot take them down for a week.
-  //
-  // Nested `Prisma.sql` fragments arrive as VALUES rather than as part of the
-  // template's string array, so flattening them is what makes this see the
-  // predicate at all.
-  const flatten = (value: unknown): string => {
-    if (Array.isArray(value)) return value.map(flatten).join(' ');
-    if (value && typeof value === 'object' && 'strings' in value)
-      return [
-        flatten((value as { strings: unknown }).strings),
-        flatten((value as { values?: unknown }).values ?? []),
-      ].join(' ');
-    return typeof value === 'string' ? value : '';
-  };
-
   const sqlFrom = () => queryRaw.mock.calls.map(flatten).join(' ');
 
   /**
@@ -1875,27 +1891,6 @@ describe('what the public visibility query says about free capacity', () => {
 });
 
 describe('the free eligibility listing', () => {
-  // Nested `Prisma.sql` fragments arrive as VALUES rather than as part of the
-  // template's string array, so flattening is what makes the assertions below
-  // see the predicate at all. Same helper as the ceiling suite above, and the
-  // same reason: a rendered template does not read like the source.
-  const flatten = (value: unknown): string => {
-    if (Array.isArray(value)) return value.map(flatten).join(' ');
-    if (value && typeof value === 'object' && 'strings' in value)
-      return [
-        flatten((value as { strings: unknown }).strings),
-        flatten((value as { values?: unknown }).values ?? []),
-      ].join(' ');
-    return typeof value === 'string' ? value : '';
-  };
-
-  const boundValues = (value: unknown): unknown[] => {
-    if (Array.isArray(value)) return value.flatMap(boundValues);
-    if (value && typeof value === 'object' && 'strings' in value)
-      return boundValues((value as { values?: unknown }).values ?? []);
-    return [value];
-  };
-
   const eligibility = () =>
     getRemixGalleryFreeEligibility({
       hostImageId: HOST_IMAGE,
@@ -1930,6 +1925,24 @@ describe('the free eligibility listing', () => {
     expect(sql).toContain('= ANY(');
     expect(sql).not.toContain('@>');
     expect(boundValues(queryRaw.mock.calls)).toContain(HOST_IMAGE);
+  });
+
+  it('asks only about the candidates it was given', async () => {
+    // The `IN` list is the only thing bounding the work: a jsonb containment
+    // test runs per row, so without it the query answers for every image the
+    // placer owns. Delete the clause and the `userId` scope still holds — this
+    // is about cost and about answering a question nobody asked, not a leak.
+    await getRemixGalleryFreeEligibility({
+      hostImageId: HOST_IMAGE,
+      placerId: PLACER,
+      imageIds: [REMIX_IMAGE, REMIX_IMAGE + 1],
+    });
+
+    const sql = queryRaw.mock.calls.map(flatten).join(' ');
+    expect(sql).toContain('i.id IN (');
+    expect(boundValues(queryRaw.mock.calls)).toEqual(
+      expect.arrayContaining([REMIX_IMAGE, REMIX_IMAGE + 1])
+    );
   });
 
   it('runs no query at all for an empty candidate list', async () => {

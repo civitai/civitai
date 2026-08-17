@@ -1,5 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { submitToRemixGallerySchema } from '~/server/schema/placement.schema';
+import {
+  getRemixGalleryFreeEligibilitySchema,
+  submitToRemixGallerySchema,
+} from '~/server/schema/placement.schema';
+
+describe('getRemixGalleryFreeEligibilitySchema', () => {
+  it('bounds the candidate list', () => {
+    // The only ceiling on the work: the service runs a jsonb containment test
+    // per row, so the cap is what stops one request probing an arbitrary slice
+    // of somebody's library. It is a claim the service's own docstring makes
+    // about this file, and nothing asserted it.
+    const ids = Array.from({ length: 201 }, (_, index) => index + 1);
+
+    expect(
+      getRemixGalleryFreeEligibilitySchema.safeParse({ hostImageId: 1, imageIds: ids }).success
+    ).toBe(false);
+    expect(
+      getRemixGalleryFreeEligibilitySchema.safeParse({
+        hostImageId: 1,
+        imageIds: ids.slice(0, 200),
+      }).success
+    ).toBe(true);
+  });
+
+  it('accepts the empty list the picker opens with', () => {
+    // Nothing selected is the modal's first render, and the service answers it
+    // without a query at all. A minimum here would make that state an error.
+    expect(
+      getRemixGalleryFreeEligibilitySchema.safeParse({ hostImageId: 1, imageIds: [] }).success
+    ).toBe(true);
+  });
+});
 
 /**
  * The submission contract, at the boundary where a client's payload becomes an

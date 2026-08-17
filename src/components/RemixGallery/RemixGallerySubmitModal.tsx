@@ -397,6 +397,31 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             submission still costs them their one placement for the day, decline
             or not. Hidden entirely when the gallery takes no free submissions at
             all: a control with one reachable answer is not a choice. */}
+        {/* 🔴 Outside the block below, and that is the point rather than layout.
+            The choice is hidden when the creator takes no free submissions —
+            and `freeSlots <= 0` is ALSO one of the rungs that can explain a
+            refusal, when a creator closes their free capacity mid-modal. Nested,
+            the same fresh read that produces this message unmounts the thing
+            rendering it: the submission fails, the toast is suppressed because
+            the refusal was explained, and the only visible change is the control
+            quietly turning into a Buzz button. That is the same shape as the bug
+            this message exists to fix — written for somebody, shown to nobody. */}
+        {freeRefusal && (
+          <>
+            <Divider />
+            <Group gap="xs" wrap="nowrap" align="flex-start" className="shrink-0 px-4 pt-3">
+              <IconAlertTriangle
+                size={14}
+                className="text-yellow-500"
+                style={{ flexShrink: 0, marginTop: 2 }}
+              />
+              <Text size="xs" c="yellow">
+                {freeRefusal} Nothing was spent — you can still submit with Buzz.
+              </Text>
+            </Group>
+          </>
+        )}
+
         {selected != null && takesFree && (
           <>
             <Divider />
@@ -429,25 +454,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 </Text>
               )}
 
-              {/* The refusal that just happened, in the words the re-read
-                  produced rather than a fixed sentence about slots — the reason
-                  is not always the slots, and saying so when it is not is how
-                  this shipped wrong the first time. Nothing was spent either
-                  way: the claim refuses before it inserts. */}
-              {freeRefusal && (
-                <Group gap="xs" wrap="nowrap" align="flex-start">
-                  <IconAlertTriangle
-                    size={14}
-                    className="text-yellow-500"
-                    style={{ flexShrink: 0, marginTop: 2 }}
-                  />
-                  <Text size="xs" c="yellow">
-                    {freeRefusal} Nothing was spent — you can still submit with Buzz.
-                  </Text>
-                </Group>
-              )}
-
-              {method === 'paid' && freeUnavailableReason && (
+              {method === 'paid' && !freeRefusal && freeUnavailableReason && (
                 <Text size="xs" c="dimmed">
                   {freeUnavailableReason}
                 </Text>
