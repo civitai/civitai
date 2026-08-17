@@ -69,6 +69,7 @@ declare global {
         resolutions: client.Counter<string>;
         applied: client.Counter<string>;
         divergence: client.Counter<string>;
+        publicCatalog: client.Counter<string>;
       }
     | undefined;
 }
@@ -103,6 +104,18 @@ const metrics =
         'hold it. Any non-zero rate means the page gate and the read path disagree for a ' +
         'real viewer — alert on it.',
       labelNames: ['flag'],
+    }),
+    publicCatalog: new client.Counter({
+      name: PROM_PREFIX + 'store_public_catalog_decisions_total',
+      help:
+        'Cumulative PUBLIC App-catalog grant decisions at the /api/v1/apps REST endpoints, ' +
+        'by outcome and entrypoint. `granted` = a caller who resolved no scope of their own ' +
+        'was served the public catalog (the intended steady state); `withheld` = the ' +
+        'apps-public-catalog-disabled kill switch was on; `privileged` = the caller resolved ' +
+        'a real scope and was passed through untouched. This is the ONLY signal that says ' +
+        'whether the public catalog is actually open — a `withheld` rate rising from zero is ' +
+        'the kill switch having been thrown, deliberately or not.',
+      labelNames: ['outcome', 'entrypoint'],
     }),
   });
 
@@ -143,6 +156,31 @@ export function recordStoreScopeApplied(
 export function recordStoreScopeResolution(scope: string, principal: StoreScopePrincipal): void {
   try {
     metrics.resolutions.inc({ scope, principal });
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+/** The three ways the public-catalog grant can answer. Bounded on purpose. */
+export type PublicCatalogOutcome = 'granted' | 'withheld' | 'privileged';
+
+/**
+ * Record one public-catalog grant decision (see
+ * `~/server/services/blocks/public-apps-catalog`). Never throws — telemetry must not
+ * break a read.
+ *
+ * Read as a PAIR with `store_scope_applied_total`: that counter says what the
+ * resolver produced, this one says what the public REST surface decided to do about
+ * it. `applied{scope="absent"}` with `decisions{outcome="granted"}` is the known,
+ * open #3983 resolver defect being absorbed by the deliberate grant — not a new
+ * exposure, because `absent` and a resolved `none` take the identical branch.
+ */
+export function recordPublicCatalogDecision(
+  outcome: PublicCatalogOutcome,
+  entrypoint: StoreScopeEntrypoint
+): void {
+  try {
+    metrics.publicCatalog.inc({ outcome, entrypoint });
   } catch {
     /* never throw from telemetry */
   }

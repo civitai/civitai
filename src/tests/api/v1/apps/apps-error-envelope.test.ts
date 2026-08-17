@@ -17,14 +17,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *      machine-readable `code`, and a real 200 does NOT carry it.
  */
 
-const { mockResolveScope, mockDetail, mockRateLimit, mockIsHostForColor, mockLogToAxiom } =
-  vi.hoisted(() => ({
-    mockResolveScope: vi.fn(),
-    mockDetail: vi.fn(),
-    mockRateLimit: vi.fn(),
-    mockIsHostForColor: vi.fn(),
-    mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
-  }));
+const {
+  mockResolveScope,
+  mockDetail,
+  mockRateLimit,
+  mockIsHostForColor,
+  mockLogToAxiom,
+  mockIsFlipt,
+} = vi.hoisted(() => ({
+  mockResolveScope: vi.fn(),
+  mockDetail: vi.fn(),
+  mockRateLimit: vi.fn(),
+  mockIsHostForColor: vi.fn(),
+  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
+  mockIsFlipt: vi.fn(),
+}));
 
 // Keep the REAL handleEndpointError — that is the whole point of this suite.
 // Only the auth wrapper is stubbed (it would need a live session + db).
@@ -59,6 +66,13 @@ vi.mock('~/server/services/blocks/app-listing.service', () => ({
 }));
 vi.mock('~/server/utils/apps-catalog-rate-limit', () => ({
   enforceAppsCatalogRateLimit: mockRateLimit,
+}));
+// The public-catalog kill switch, so the scope-gate 404 branch stays REACHABLE:
+// with the switch off (its dark/absent state) an anonymous caller is served the
+// public catalog, so `none` at this handler now means "the grant was withheld".
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  isFlipt: mockIsFlipt,
 }));
 
 import { TRPCError } from '@trpc/server';
@@ -194,6 +208,8 @@ beforeEach(() => {
   mockResolveScope.mockImplementation(async ({ user }: { user?: { isModerator?: boolean } }) =>
     user?.isModerator ? 'full' : 'none'
   );
+  // Kill switch OFF = the public catalog is open (its absent/dark state).
+  mockIsFlipt.mockResolvedValue(false);
   mockDetail.mockResolvedValue({ id: 'al_a', serialId: 1, slug: 'a', kind: 'onsite', name: 'a' });
 });
 
@@ -226,7 +242,10 @@ describe('GET /api/v1/apps/{slug} — error envelope + disclosure', () => {
     expect(bad.res._status()).toBe(400);
     expectErrorEnvelope(bad.res._json(), '400', 'BAD_REQUEST', ZOD_FLATTEN);
 
-    // 404 — out-of-scope caller (the default-closed scope gate).
+    // 404 — the SCOPE-GATE branch. Reached by withholding the public-catalog grant
+    // (kill switch on), which is now the only way a caller with no scope of their
+    // own gets `none` at this handler.
+    mockIsFlipt.mockResolvedValueOnce(true);
     const scoped = createMocks({ query: { slug: 'secret-app' } });
     await (detailHandler as unknown as Handler)(scoped.req, scoped.res, undefined);
     expect(scoped.res._status()).toBe(404);
