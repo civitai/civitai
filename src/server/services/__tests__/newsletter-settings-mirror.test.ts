@@ -27,10 +27,27 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * on the pre-change code too.
  */
 
+/**
+ * `~/server/db/client` and `~/server/logging/client` are NOT mocked here. Both have a
+ * canonical mock registered globally in src/__tests__/setup.ts, and mocking them per file
+ * is what `no-direct-shared-module-mock` forbids — see docs/testing/shared-module-mocks.md.
+ * `dbRead` is unused by the path under test (only `getSubscription` touches it) so nothing
+ * from `db.mock` is imported either.
+ *
+ * 🔴 Consequence worth stating, because it makes one assertion below STRONGER rather than
+ * weaker: the canonical logging registration spreads the ORIGINAL module and overrides only
+ * `logToAxiom`, so `safeError` is the REAL implementation. An earlier draft of this file
+ * stubbed `safeError` to `{ message }` and then asserted the payload equalled `{ message }`
+ * — an expectation derived from the stub rather than from anything the code does. The
+ * codemod refused to convert that mock for exactly this reason ("factory replaces `safeError`
+ * with behaviour — it is a control surface, not a redundant re-export"), which was correct.
+ * The assertion now runs the real `safeError` and pins the fields it actually produces.
+ */
 const setUserSetting = vi.fn();
 const setSubscription = vi.fn();
-const logToAxiom = vi.fn(() => Promise.resolve());
 
+// Neither specifier below has a canonical mock: `~/server/services/user.service` is on the
+// PENDING list (counted, not enforced) and `~/server/integrations/beehiiv` is unguarded.
 vi.mock('~/server/services/user.service', () => ({
   setUserSetting: (...args: unknown[]) => setUserSetting(...args),
 }));
@@ -42,16 +59,10 @@ vi.mock('~/server/integrations/beehiiv', () => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { user: { findFirst: vi.fn() } },
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => logToAxiom(...args),
-  safeError: (error: unknown) => ({ message: (error as Error)?.message }),
-}));
-
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { updateSubscription } from '~/server/services/newsletter.service';
+
+const logToAxiom = loggingMock.logToAxiom;
 
 const ARGS = { email: 'someone@example.com', userId: 7, subscribed: true };
 
@@ -107,7 +118,11 @@ describe('updateSubscription — the settings mirror write', () => {
     expect(logToAxiom).toHaveBeenCalledTimes(1);
     const [payload] = logToAxiom.mock.calls[0] as [Record<string, unknown>];
     expect(payload.type).toBe('newsletter.settings-mirror.failed');
-    expect(payload.error).toEqual({ message: 'No user with id 7' });
+    // The REAL `safeError` (the canonical logging mock overrides only `logToAxiom`), so this
+    // pins what actually reaches Axiom rather than what a local stub was told to return.
+    // `toMatchObject` because the real helper also carries `stack` and the cause/inner
+    // fields, none of which this test should freeze.
+    expect(payload.error).toMatchObject({ name: 'Error', message: 'No user with id 7' });
     // The Beehiiv side already committed and must NOT be retried or rolled back by
     // the mirror's failure.
     expect(setSubscription).toHaveBeenCalledTimes(1);
