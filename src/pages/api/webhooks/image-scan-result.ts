@@ -51,7 +51,6 @@ import {
   TagType,
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
-import { withRetries } from '~/utils/errorHandling';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -262,17 +261,14 @@ function parsePerceptualHash(hash: string) {
 async function isBlocked(hash: bigint) {
   if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
 
-  const client = clickhouse;
-  // `$query` has no retry of its own and the observed failure is a dropped socket.
-  const rows = await withRetries(
-    () => client.$query<{ count: number }>`
-      SELECT cast(count() as int) as count
-      FROM blocked_images
-      WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
-    `,
-    2,
-    250
-  );
+  // One attempt on purpose. Nothing consumes this result — the blocking update it feeds is
+  // commented out — so retrying buys a log line, and against a hung ClickHouse rather than a
+  // refused one it would hold the request for a multiple of the client timeout.
+  const rows = await clickhouse.$query<{ count: number }>`
+    SELECT cast(count() as int) as count
+    FROM blocked_images
+    WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
+  `;
 
   return (rows?.[0]?.count ?? 0) > 0;
 }
@@ -949,8 +945,22 @@ async function processScanResult({
     case TagSource.ImageHash: {
       if (!hash) throw new Error('missing hash from ImageHash scan');
       const pHash = parsePerceptualHash(hash);
+      if (pHash === undefined) {
+        // Acked rather than rejected, so a hasher regression emitting blanks is otherwise
+        // invisible: the rows go out scanned with a null pHash and the scanner never retries.
+        logToAxiom(
+          {
+            name: 'image-phash-match',
+            type: 'warning',
+            message: 'blank hash from ImageHash scan',
+            imageId: id,
+            source: 'webhook-legacy',
+          },
+          'webhooks'
+        ).catch(() => null);
+      }
       // Nothing branches on this result — the blocking update below is commented out — so a
-      // ClickHouse blip must not discard a scan result. Same reasoning as `getIsImageBlocked`.
+      // ClickHouse blip must not discard a scan result.
       const blocked =
         pHash === undefined
           ? false

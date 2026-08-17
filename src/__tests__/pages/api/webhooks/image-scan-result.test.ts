@@ -156,18 +156,13 @@ vi.mock('~/env/server', () => ({
   ),
 }));
 
-// Namespace proxy rather than a hand-listed mock: the module also re-exports the Tracker, and
-// importing it for real builds a live ClickHouse client.
-vi.mock('~/server/clickhouse/client', () => {
-  const known: Record<string, unknown> = { clickhouse: { $query: mockClickhouseQuery } };
-  return new Proxy(known, {
-    get(target, prop) {
-      if (typeof prop !== 'string' || prop === 'then' || prop === '__esModule') return undefined;
-      if (!(prop in target)) target[prop] = vi.fn();
-      return target[prop];
-    },
-  });
-});
+// Mocked rather than imported for real, which would build a live ClickHouse client. Deliberately
+// NOT a namespace proxy: this makes `clickhouse` truthy for the whole suite, so every
+// `if (!clickhouse) return` guard in the handler's graph now falls through to this object. A
+// call it does not stub should fail loudly here rather than auto-vivify into a silent no-op.
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: { $query: mockClickhouseQuery },
+}));
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => {
   const actual = await importOriginal<any>();
@@ -602,19 +597,21 @@ describe('image-scan-result webhook - pipeline tests', () => {
       const update = imageUpdates.find((u) => u.text.includes('jsonb_build_object'));
       expect(update).toBeDefined();
       expect(update!.text).not.toContain('"pHash"');
+      expect(
+        mockLogToAxiom.mock.calls.some(
+          (call) => call[0]?.message === 'blank hash from ImageHash scan'
+        )
+      ).toBe(true);
     });
 
-    it('retries the blocklist lookup after a dropped socket', async () => {
+    it('does not re-run the blocklist lookup after a failure', async () => {
       envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
-      mockClickhouseQuery
-        .mockRejectedValueOnce(new Error('socket hang up'))
-        .mockResolvedValue([{ count: 0 }]);
+      mockClickhouseQuery.mockRejectedValue(new Error('socket hang up'));
 
       const req = runWebhook({ id: 15, status: 0, source: TagSource.ImageHash, hash: '42' });
       await req.promise;
 
-      expect(mockClickhouseQuery).toHaveBeenCalledTimes(2);
-      expect(req.res.status).toHaveBeenCalledWith(200);
+      expect(mockClickhouseQuery).toHaveBeenCalledTimes(1);
     });
 
     it('completes the scan when the blocklist lookup fails', async () => {
