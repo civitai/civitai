@@ -113,12 +113,12 @@
       </div>
     </StatCard>
     {#if data.allTime}
-      <!-- Both come from the image_metrics_user rollup — images only, so the labels say so. Comments on models,
-           posts and articles aren't counted (see the round-5 checklist). -->
-      <StatCard label="All-time image reactions" icon={IconHeart} color="#ff6b6b">
+      <!-- These two have different scopes and the labels have to carry it: reactions are all-content, comments are
+           images only. Comments on models, posts and articles still aren't counted. -->
+      <StatCard label="All-time reactions (all content)" icon={IconHeart} color="#ff6b6b">
         <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.reactions)}</p>
       </StatCard>
-      <StatCard label="All-time image comments" icon={IconMessage} color="#20c997">
+      <StatCard label="All-time image comments (incl. replies)" icon={IconMessage} color="#20c997">
         <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.comments)}</p>
       </StatCard>
     {/if}

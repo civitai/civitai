@@ -38,9 +38,10 @@ export type ContentAnalytics = {
   totals: ContentTotals;
 };
 
-// All-time reactions + comments on the creator's content. Reactions come from `reactions_owner_scores` (the same
-// owner-keyed rollup behind `UserMetric.reactionCount`, so this tile agrees with the creator's profile). Comments are
-// still the `image_metrics_user` backfill, which nothing writes any more — see the note on the fetch below.
+// The two halves of this type have different scopes and every label that renders them has to say so. `reactions` is
+// **all content** — `reactions_owner_scores` aggregates `reactions.ownerId` across images, models, articles and the
+// rest, which is what `UserMetric.reactionCount` uses, so this agrees with the creator's profile. `comments` is
+// **images only**, counted in Postgres.
 export type AllTimeTotals = { reactions: number; comments: number };
 
 // Cached read-through wrappers. The named args double as the cache key; the TTL scales with the range span
@@ -77,24 +78,41 @@ export const getReactionAudienceSplit = createCache({
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
+// Comments come from Postgres, not ClickHouse, because no ClickHouse table can answer this correctly:
+//
+//   - `image_metrics_user` (what this read until now) is a dead one-off backfill. Nothing writes it, and its max
+//     userId is 9.66M against current ids past 12.5M — frozen for everyone it covers, **0** for everyone newer.
+//   - `comments` looks like the replacement and is a trap. Its `entityId` is the **CommentV2 id**, not the entity
+//     commented on, for every `type` except `Model`. The tell: 970,679 rows of `type = 'Image'` over 970,422
+//     distinct entityIds, and Image/Post/Comment/Review/Bounty all share one id range (45,825–2,309,025) that
+//     overlaps between them, while real image ids are past 139M. Joining it to `images_created.id` does not error —
+//     ids that low exist — it silently credits each comment to whatever ancient image shares its number.
+//   - `entityMetricTotal_v3` carries two per-image comment metrics and neither survives a ground-truth check:
+//     across four creators `commentCount` ran -6% to +79% against Postgres and `Comment` was short by up to 97%.
+//
+// `Thread.commentCount` is a maintained counter that matches a raw `CommentV2` count exactly. Summing it over the
+// image's own thread **and its descendants** counts threaded replies, which the label has to say (see the callers).
+// Measured on prod: 2.1–2.3s at the platform's two heaviest creators, behind this 1h cache.
 export const getAllTimeTotals = createCache({
-  name: 'analytics:alltime:v2',
+  name: 'analytics:alltime:v3',
   fetch: async ({ userId }: { userId: number }): Promise<AllTimeTotals> => {
     const uid = Number(userId);
-    const ch = getClickhouse();
-    // `image_metrics_user` is a dead one-off backfill — nothing writes it and its max userId is 9.66M against
-    // current ids past 12.5M, so this comments number is frozen and reads 0 for newer creators. Needs a real source.
-    const [reactionRows, commentRows] = await Promise.all([
-      ch.$query<{ reactions: number | string }>(
+    const [reactionRows, commentResult] = await Promise.all([
+      getClickhouse().$query<{ reactions: number | string }>(
         `SELECT sum(score) AS reactions FROM reactions_owner_scores WHERE ownerId = ${uid}`
       ),
-      ch.$query<{ comments: number | string }>(
-        `SELECT sumMerge(comments) AS comments FROM image_metrics_user WHERE userId = ${uid}`
-      ),
+      sql<{ comments: number | string }>`
+        WITH roots AS (
+          SELECT t.id FROM "Thread" t JOIN "Image" i ON i.id = t."imageId" WHERE i."userId" = ${uid}
+        )
+        SELECT coalesce(sum(t."commentCount"), 0) AS comments
+        FROM "Thread" t
+        WHERE t.id IN (SELECT id FROM roots) OR t."rootThreadId" IN (SELECT id FROM roots)
+      `.execute(dbRead),
     ]);
     return {
       reactions: Number(reactionRows[0]?.reactions ?? 0),
-      comments: Number(commentRows[0]?.comments ?? 0),
+      comments: Number(commentResult.rows[0]?.comments ?? 0),
     };
   },
   ttlSeconds: 3600,

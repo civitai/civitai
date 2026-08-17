@@ -183,10 +183,13 @@
     {/each}
   </section>
   {#if data.allTime}
+    <!-- The two halves have different scopes, so the sentence names each one. Reactions are all-content (that is
+         what `reactions_owner_scores` aggregates, and it keeps this in agreement with the profile); comments are
+         images only, replies included. -->
     <p class="mb-6 text-xs text-dark-3">
-      All-time on your images: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong>
-      reactions ·
-      <strong class="text-dark-1">{num(data.allTime.comments)}</strong> comments
+      All-time: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong>
+      reactions across your content ·
+      <strong class="text-dark-1">{num(data.allTime.comments)}</strong> comments and replies on your images
     </p>
   {/if}
 
