@@ -87,8 +87,12 @@ export const getReactionAudienceSplit = createCache({
 //     distinct entityIds, and Image/Post/Comment/Review/Bounty all share one id range (45,825–2,309,025) that
 //     overlaps between them, while real image ids are past 139M. Joining it to `images_created.id` does not error —
 //     ids that low exist — it silently credits each comment to whatever ancient image shares its number.
-//   - `entityMetricTotal_v3` carries two per-image comment metrics and neither survives a ground-truth check:
-//     across four creators `commentCount` ran -6% to +79% against Postgres and `Comment` was short by up to 97%.
+//   - `entityMetricTotal_v3` carries two per-image comment metrics — `Comment` (2023-02-15 to 2025-11-06) and
+//     `commentCount` (2025-11-06 on, from the event-engine CDC handler). They are two eras of one measurement,
+//     not a live one and a dead one. Summing both still fails a ground-truth check across four creators:
+//     -11%, +18%, +27%, +30% against Postgres. Consistent with the pipeline's delete path — it resolves an
+//     image's owner by reading `Image`, which is already gone on a cascade delete, so the -1 is dropped and the
+//     total ratchets up. Three of the four errors are positive.
 //
 // Do not generalise that middle point to `reactions`, which sits beside `comments` and looks like it. Its
 // `entityId` **is** the entity reacted to, and each `type` keeps to its own id space rather than sharing one:
