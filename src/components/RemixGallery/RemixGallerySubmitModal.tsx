@@ -140,7 +140,21 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
        * shown. Falls back to showing it if the re-read itself fails, because
        * silence is the one outcome that leaves nobody informed.
        */
-      const explained =
+      /**
+       * 🔴 The FRESH `paidOpen` travels out beside the explanation, because the
+       * rendered one is not merely stale — `getRemixGalleryVisibility.useQuery`
+       * passes no options, so it inherits `staleTime: Infinity` with no refetch
+       * on focus. A modal left open across a price change keeps the render value
+       * for the whole session, which is why this handler re-fetches at all.
+       *
+       * Using the stale flag here while the explanation beside it used the fresh
+       * one produced the exact failure `paidOpen` was added to prevent: an owner
+       * clearing their price mid-submission got "you can still submit with Buzz"
+       * and a control moved to paid, then `submissionMethod` pulled it back to
+       * free-disabled on the next render — a banner pointing at a button that is
+       * not on the screen.
+       */
+      const refusal =
         method === 'free' && selected != null
           ? await utils.placement.getRemixGalleryVisibility
               .fetch({ imageId: hostImageId })
@@ -150,24 +164,31 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                   imageIds: [selected],
                 });
 
-                return space.freeSlotsRemaining == null
-                  ? null
-                  : freeRefusalExplanation({
-                      verified: standing.verifiedImageIds.includes(selected),
-                      freeSlots: space.freeSlots,
-                      freeSlotsRemaining: space.freeSlotsRemaining,
-                      allowanceRemaining: standing.allowance.remaining,
-                      usedHere: standing.usedHere,
-                      resetsAt: standing.allowance.resetsAt,
-                      paidOpen: paidSubmissionOpen(space.price),
-                    });
+                const freshPaidOpen = paidSubmissionOpen(space.price);
+                return {
+                  paidOpen: freshPaidOpen,
+                  explained:
+                    space.freeSlotsRemaining == null
+                      ? null
+                      : freeRefusalExplanation({
+                          verified: standing.verifiedImageIds.includes(selected),
+                          freeSlots: space.freeSlots,
+                          freeSlotsRemaining: space.freeSlotsRemaining,
+                          allowanceRemaining: standing.allowance.remaining,
+                          usedHere: standing.usedHere,
+                          resetsAt: standing.allowance.resetsAt,
+                          paidOpen: freshPaidOpen,
+                        }),
+                };
               })
               // A failed re-read explains nothing, which lands on the server's
-              // own message — the outcome that leaves somebody informed.
-              .catch(() => null)
-          : null;
+              // own message — the outcome that leaves somebody informed. The
+              // render value is all that is left to decide the rest on.
+              .catch(() => ({ paidOpen, explained: null }))
+          : { paidOpen, explained: null };
 
-      const outcome = freeRefusalOutcome(explained, error.message, paidOpen);
+      const explained = refusal.explained;
+      const outcome = freeRefusalOutcome(explained, error.message, refusal.paidOpen);
       if (outcome.fallBackToPaid) setChosen('paid');
 
       // Keyed on whether we could explain it, NOT on whether we moved the

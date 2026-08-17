@@ -145,10 +145,10 @@ export function freeSubmissionOffer({
     return {
       available: false,
       // 🔴 The alternative is only named when it exists. On an unpriced or
-      // below-floor gallery the card holds on free with every control disabled
-      // and `BuzzTransactionButton` never mounted — so the unconditional version
-      // of this sentence pointed at a Buzz control that is not on the screen,
-      // for a submission the server would refuse anyway.
+      // below-floor gallery the paid control is unusable — either not mounted at
+      // all, or mounted disabled when the card falls through to paid — so the
+      // unconditional version of this sentence pointed at a Buzz control nobody
+      // can press, for a submission the server would refuse anyway.
       reason: paidOpen
         ? 'Free submissions are for remixes made from this image here on the site, where we can check. Anything else can still be submitted with Buzz.'
         : 'Free submissions are for remixes made from this image here on the site, where we can check — and this creator is not taking paid submissions either.',

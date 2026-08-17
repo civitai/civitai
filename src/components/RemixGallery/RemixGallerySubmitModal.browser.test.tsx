@@ -268,6 +268,26 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
     expect(mocks.showError).not.toHaveBeenCalled();
   });
 
+  test('decides the alternative from the FRESH price, not the rendered one', async () => {
+    // 🔴 The only case where fresh and stale disagree, and the suite had none:
+    // every other fixture gives `nextVisibility` the same price as `visibility`.
+    //
+    // Not a millisecond race either. `getRemixGalleryVisibility.useQuery` passes
+    // no options, so it inherits `staleTime: Infinity` with no refetch on focus
+    // — a modal left open across a price change holds the render value for the
+    // whole session. An owner clearing their price mid-submission is the case.
+    mocks.nextVisibility = { ...mocks.visibility, price: null, freeSlotsRemaining: 0 };
+    mocks.refuseWith = 'remix gallery: the free slots on this one are taken';
+    await openAndPick();
+    await page.getByRole('button', { name: /submit for free/i }).click();
+
+    // Decided off the fresh price: paid is closed now, so the banner must not
+    // point at Buzz and the control must not move there.
+    await expect.element(page.getByText(/not taking paid submissions/i)).toBeInTheDocument();
+    await expect.element(page.getByText(/still submit with Buzz/i)).not.toBeInTheDocument();
+    await expect.element(page.getByTestId('buzz-submit')).not.toBeInTheDocument();
+  });
+
   test('moves the control to paid when paid IS open', async () => {
     // `setChosen('paid')` was asserted by nothing in either file — the other
     // cases here all read the banner, which `setFreeRefusal` sets independently.
@@ -279,6 +299,28 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
     await page.getByRole('button', { name: /submit for free/i }).click();
 
     await expect.element(page.getByTestId('buzz-submit')).toBeInTheDocument();
+  });
+
+  test('holds on free rather than offering a paid button that cannot work', async () => {
+    // 🔴 A STATIC fixture, no click and no refusal: free is unavailable from
+    // first paint (`usedHere`) and paid is closed (`price: null`), which is
+    // `submissionMethod(null, false, false, true)`.
+    //
+    // With the rule, that resolves to free — a plain Button. Without it, to
+    // paid, and the `BuzzTransactionButton` stub mounts its testid. So this
+    // reaches the rule with no cache write-through at all, which is what the
+    // previous version of this comment wrongly said was impossible.
+    mocks.visibility = { ...mocks.visibility, price: null };
+    mocks.eligibility = { ...mocks.eligibility, usedHere: true };
+    await openAndPick();
+
+    await expect.element(page.getByTestId('buzz-submit')).not.toBeInTheDocument();
+    // And the reason renders beside the disabled control, which is the whole
+    // justification for holding there: three dead buttons and no explanation is
+    // worse than the paid button this replaced.
+    await expect.element(page.getByText(/once per gallery/i)).toBeInTheDocument();
+    // Not a claim about spending, on a path that cannot be pressed.
+    await expect.element(page.getByText(/spends a free placement/i)).not.toBeInTheDocument();
   });
 
   /**
