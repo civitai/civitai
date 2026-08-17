@@ -20,32 +20,61 @@ import { DETAIL_PREDICATE, ID_PATTERN, parseArgs } from './backfill-model3d-view
 
 type Row = { entityId: number; createdDate: string; views: number };
 
+// A dev server or preview deploy on a tracking branch writes to the SAME
+// ClickHouse as prod, so one developer opening a 3D model page puts a real
+// Model3DView row in `views`. Taking a bare min() over those would move the
+// detected cutover back to that day and quietly drop every day between it and
+// the real one. Production traffic on this surface runs ~2,700 views/day, so a
+// day is only the cutover if it clears a floor no incidental page load reaches.
+const MIN_ROWS_FOR_A_TRACKED_DAY = 50;
+
 async function main() {
   const { until, from, dryRun } = parseArgs(process.argv.slice(2));
   if (!clickhouse) throw new Error('ClickHouse client not initialized');
 
   console.log(`Range: [${from}, ${until})  ${dryRun ? '(dry run)' : ''}`);
 
-  // The constant is only a guess until tracking is live. The first day `views`
-  // actually holds a Model3DView IS the cutover; if it disagrees with the
+  // The constant is only a guess until tracking is live: the first day `views`
+  // holds real Model3DView traffic IS the cutover. If it disagrees with the
   // constant, one of the two spans is wrong — a gap if the deploy slipped past
   // it, an overlap if it landed early. Neither is visible once rows are written.
-  const live = await clickhouse.$query<{ firstDay: string; rows: number }>(`
-    SELECT min(createdDate) AS firstDay, count() AS rows
+  const byDay = await clickhouse.$query<{ createdDate: string; rows: number }>(`
+    SELECT createdDate, count() AS rows
     FROM default.views WHERE type = 'Model3DView'
+    GROUP BY createdDate ORDER BY createdDate
   `);
-  if (!Number(live?.[0]?.rows ?? 0))
-    throw new Error(
-      `No Model3DView rows in \`views\` yet. Deploy tracking first, then run this — ` +
-        `until tracking is live there is nothing to confirm the backfill's stopping point against.`
+  const trackedDays = (byDay ?? []).filter((d) => Number(d.rows) >= MIN_ROWS_FOR_A_TRACKED_DAY);
+  const firstTrackedDay = trackedDays[0]?.createdDate;
+
+  const strays = (byDay ?? []).filter(
+    (d) =>
+      Number(d.rows) < MIN_ROWS_FOR_A_TRACKED_DAY &&
+      (!firstTrackedDay || d.createdDate < firstTrackedDay)
+  );
+  if (strays.length)
+    console.warn(
+      `WARNING: ${strays.length} low-volume Model3DView day(s) before the cutover, ignored as ` +
+        `incidental (dev server or preview traffic): ` +
+        strays.map((d) => `${d.createdDate}=${d.rows}`).join(', ') +
+        `. They are in \`views\` and in \`daily_views\`; delete them if you want the pre-cutover span clean.`
     );
-  const firstTrackedDay = live[0].firstDay;
-  if (firstTrackedDay !== until)
+
+  if (!firstTrackedDay) {
+    const msg =
+      `No day in \`views\` has ${MIN_ROWS_FOR_A_TRACKED_DAY}+ Model3DView rows yet. Deploy tracking ` +
+      `first, then run this — until tracking is live there is nothing to confirm the stopping point against.`;
+    if (!dryRun) throw new Error(msg);
+    console.warn(`WARNING (dry run, continuing): ${msg}`);
+  } else if (firstTrackedDay !== until) {
     throw new Error(
-      `Cutover mismatch: first tracked day is ${firstTrackedDay}, --until is ${until}. ` +
-        `Set MODEL3D_VIEW_TRACKING_CUTOVER to ${firstTrackedDay} and redeploy, then re-run. ` +
-        `Backfilling to the wrong boundary leaves a permanently missing or doubled day.`
+      `Cutover mismatch: first tracked day is ${firstTrackedDay}, --until is ${until}.\n` +
+        `  ${firstTrackedDay} is almost certainly PARTIAL — tracking started mid-day, so beacons cover only\n` +
+        `  the hours after the deploy and pageViews covers the hours before. Pick one deliberately:\n` +
+        `    (a) set the constant to ${firstTrackedDay} — that day keeps only post-deploy views, the rest is lost;\n` +
+        `    (b) set it to the next UTC midnight and re-run after that day closes — no loss, one day's delay.\n` +
+        `  Do not treat (a) as the default fix just because it clears this error.`
     );
+  }
 
   const existing = await clickhouse.$query<{ rows: number }>(`
     SELECT count() AS rows FROM default.daily_views
@@ -58,7 +87,9 @@ async function main() {
         `Refusing to run — this table sums on insert, so a re-run would inflate every day it touches.`
     );
 
-  const candidates =
+  // Coerce rather than trusting the shape: count() is UInt64 and only arrives as
+  // a JS number because the shared client sets output_format_json_quote_64bit_integers.
+  const candidates: Row[] = (
     (await clickhouse.$query<Row>(`
       SELECT
         toUInt32(extract(path, '${ID_PATTERN}')) AS entityId,
@@ -70,7 +101,12 @@ async function main() {
         AND ${DETAIL_PREDICATE}
       GROUP BY entityId, createdDate
       ORDER BY createdDate, entityId
-    `)) ?? [];
+    `)) ?? []
+  ).map((r) => ({
+    entityId: Number(r.entityId),
+    createdDate: r.createdDate,
+    views: Number(r.views),
+  }));
 
   if (!candidates.length) {
     console.log('Nothing to backfill.');
@@ -121,10 +157,22 @@ async function main() {
   // Read the whole written range back rather than assuming it, and sum across
   // parts: SummingMergeTree merges in the background, so a raw row read can show
   // either the pre- or post-merge shape and both look reasonable.
-  const readback = await clickhouse.$query<{ rows: number; views: number }>(`
-    SELECT count() AS rows, sum(views) AS views FROM default.daily_views
-    WHERE entityType = 'Model3D' AND createdDate >= '${from}' AND createdDate < '${until}'
-  `);
+  //
+  // `select_sequential_consistency` because prod is a two-replica SharedMergeTree
+  // behind a load balancer: the insert and this read are separate requests and
+  // can land on different replicas, so a committed write is not necessarily
+  // visible to the next query. Without it this reports a false failure — and the
+  // pre-flight guard above then blocks the retry, since the rows really are there.
+  // `$query` takes no settings, so this goes through the underlying client.
+  const readbackResult = await clickhouse.query({
+    query: `
+      SELECT count() AS rows, sum(views) AS views FROM default.daily_views
+      WHERE entityType = 'Model3D' AND createdDate >= '${from}' AND createdDate < '${until}'
+    `,
+    format: 'JSONEachRow',
+    clickhouse_settings: { select_sequential_consistency: 1 },
+  });
+  const readback = await readbackResult.json<{ rows: number | string; views: number | string }>();
   const actualRows = Number(readback?.[0]?.rows ?? 0);
   const actualViews = Number(readback?.[0]?.views ?? 0);
 

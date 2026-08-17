@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { MODEL3D_VIEW_TRACKING_CUTOVER } from '@civitai/shared';
-import { DEFAULT_FROM, parseArgs } from '../oneoffs/backfill-model3d-views.helpers';
+import {
+  DEFAULT_FROM,
+  DETAIL_PREDICATE,
+  parseArgs,
+} from '../oneoffs/backfill-model3d-views.helpers';
 
 const CUTOVER = MODEL3D_VIEW_TRACKING_CUTOVER;
 
@@ -44,5 +48,18 @@ describe('parseArgs', () => {
 
   it('picks up --dry-run', () => {
     expect(parseArgs(['--until', CUTOVER, '--dry-run']).dryRun).toBe(true);
+  });
+});
+
+describe('DETAIL_PREDICATE', () => {
+  // A shape check, deliberately: the predicate is evaluated by ClickHouse's RE2
+  // and never by Node, so no Node assertion can prove how it matches (that is
+  // verified against prod). This one still earns its place — it fails if the
+  // exclusion clause is removed, which is the plausible edit, since an
+  // id-anchored regex looks sufficient until you notice /3d-models/1/edit and
+  // /3d-models/1/my-slug are the same shape.
+  it('excludes the owner surfaces by name', () => {
+    expect(DETAIL_PREDICATE).toContain('(edit|reviews)');
+    expect(DETAIL_PREDICATE).toMatch(/AND NOT match\(/);
   });
 });

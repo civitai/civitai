@@ -1,6 +1,6 @@
 -- Model3D view tracking — ClickHouse enum widening.
 --
--- APPLY ALL FOUR STEPS BEFORE DEPLOYING THE CODE THAT EMITS Model3DView, and run
+-- APPLY EVERY STEP BELOW BEFORE DEPLOYING THE CODE THAT EMITS Model3DView, and run
 -- steps 1-3 back to back without a pause. Between step 2 and step 3, `views`
 -- accepts a Model3D row while `daily_views_mv`'s declared header still holds
 -- nine arms — and if the MV push converts to its own header (the reason step 3
