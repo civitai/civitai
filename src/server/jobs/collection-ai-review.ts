@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
-import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { CollectionItemRejectionReason, CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
@@ -249,10 +249,15 @@ async function applyOutcomes({
   for (const write of writes) {
     try {
       await updateCollectionItemsStatus({
-        input: { collectionId, collectionItemIds: write.ids, status: write.status },
+        input: {
+          collectionId,
+          collectionItemIds: write.ids,
+          status: write.status,
+          rejectionReason: write.reason ? CollectionItemRejectionReason.Automated : undefined,
+          rejectionDetail: write.reason,
+        },
         userId: SYSTEM_USER_ID,
         isSystem: true,
-        reason: write.reason,
       });
     } catch (error) {
       logToAxiom({

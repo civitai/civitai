@@ -77,6 +77,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { resolveRejectionCopy } from '~/shared/constants/collection-rejection.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
   ChallengeSource,
@@ -2284,7 +2285,6 @@ export const updateCollectionItemsStatus = async ({
   userId,
   isModerator,
   isSystem,
-  reason,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
@@ -2294,9 +2294,13 @@ export const updateCollectionItemsStatus = async ({
    * Never accept this from a tRPC input.
    */
   isSystem?: boolean;
-  reason?: string;
 }) => {
-  const { collectionId, collectionItemIds, status } = input;
+  const { collectionId, collectionItemIds, status, rejectionReason, rejectionDetail } = input;
+
+  const isRejection = status === CollectionItemStatus.REJECTED;
+  const persistedReason = isRejection ? rejectionReason ?? null : null;
+  const persistedDetail = isRejection ? rejectionDetail?.trim() || null : null;
+  const reason = resolveRejectionCopy({ reason: persistedReason, detail: persistedDetail });
 
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
@@ -2385,7 +2389,9 @@ export const updateCollectionItemsStatus = async ({
       SET "reviewedById" = ${userId},
       "reviewedAt" = ${new Date()},
       "updatedAt" = ${new Date()},
-      "status" = ${status}::"CollectionItemStatus"
+      "status" = ${status}::"CollectionItemStatus",
+      "rejectionReason" = ${persistedReason}::"CollectionItemRejectionReason",
+      "rejectionDetail" = ${persistedDetail}
       WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
     `;
   }
