@@ -5,13 +5,30 @@
 -- SD 1.5 / SDXL 1.0 the model page published the licence addendum "Do not run the Model on the
 -- Civitai platform for generation" beside it. Coverage now requires RentCivit specifically.
 --
--- APPLY ORDER: the trained-model permission backfill
--- (/api/admin/temp/backfill-trained-model-permissions) must run BEFORE this view is replaced.
--- Those models carry a defaulted `{Sell}` rather than a creator's choice, and applying this first
--- removes ~65,000 of them from the generator on a permission nobody set.
+-- APPLY ORDER — all four steps, in this order:
+--
+--   1. DEPLOY the release carrying the corrected `@default([Image, RentCivit, Rent, Sell])`. The
+--      old default is what production writes until then, so a view swapped in ahead of the deploy
+--      leaves every newly-trained LoRA uncovered the moment it is created.
+--   2. RUN /api/admin/temp/backfill-trained-model-permissions?action=repair. Those models carry a
+--      defaulted `{Sell}` rather than a creator's choice; without this, applying the view removes
+--      ~65,000 of them from the generator on a permission nobody set.
+--   3. APPLY this migration.
+--   4. PURGE both caches that store `covered`, and run ?action=reindex:
+--        packed:generation:resource-data-3  (resourceDataCache, TTL 1h) — this is the one the
+--          generator itself reads; `generation.service.ts` rejects on `!x.covered`, so a version
+--          that just lost coverage stays generatable for up to an hour without this.
+--        packed:caches:data-for-model       (dataForModelsCache, TTL 1d) — the model page's
+--          Create button.
+--      ?action=reindex queues the uncovered models into the search index, which otherwise keeps
+--      serving canGenerate: true for them under the on-site-generation filter.
 --
 -- The two branches above the catch-all are deliberately untouched: EcosystemCheckpoints and
 -- ExternalGeneration are mod-curated routes onto first-party engines, not creator-licensed weights.
+
+-- Wrapped: these are applied by hand, statement by statement, and a DROP that lands without its
+-- CREATE takes down every consumer of the view.
+BEGIN;
 
 DROP VIEW "GenerationCoverage";
 
@@ -78,3 +95,5 @@ WHERE
       OR m.type = 'Upscaler'::"ModelType"
     )
   );
+
+COMMIT;
