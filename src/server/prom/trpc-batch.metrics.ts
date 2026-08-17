@@ -1,6 +1,6 @@
 import client from 'prom-client';
 import type { NextApiRequest } from 'next';
-import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
+import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 
 // ---------------------------------------------------------------------------
 // tRPC batch-width observability + the over-cap request marker
@@ -30,9 +30,12 @@ import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 const NAME = 'civitai_app_trpc_batch_width';
 
 /** Histogram buckets. Dense below the cap (where legitimate traffic lives), sparse above it
- *  (where only rejected traffic lands) — 30 is a bucket edge so `le="30"` reads directly as
- *  "accepted", and 25 sits just under it so the approach to the cap is visible before anything
- *  is actually clipped. */
+ *  (where only rejected traffic lands) — the DEFAULT cap is a bucket edge so `le="<cap>"` reads
+ *  directly as "accepted", and 25 sits just under it so the approach to the cap is visible
+ *  before anything is actually clipped. Pinned by a test: dropping the cap's own edge silently
+ *  destroys that reading. (Buckets are static, so an env override of `TRPC_MAX_BATCH_SIZE`
+ *  moves the effective cap OFF a bucket edge — the `over_limit` label stays exact, only the
+ *  `le=` reading becomes approximate.) */
 export const TRPC_BATCH_WIDTH_BUCKETS = [1, 2, 3, 5, 10, 20, 25, 30, 50, 100, 150, 250];
 
 declare global {
@@ -44,8 +47,13 @@ declare global {
 // instead of throwing prom-client's duplicate-registration error (same trap documented for
 // `httpErrorCounter` in http-errors.ts and `instrumentationRegistry` in prom/client.ts). The
 // `??` short-circuits BEFORE `new client.Histogram`, so the constructor runs once.
+//
+// `existingHistogram` is captured so the seeding below can tell "this module evaluation CREATED
+// the histogram" from "it found one that has been counting". See `seedTrpcBatchWidthSeries`.
+const existingHistogram = globalThis.__civitaiTrpcBatchWidthHistogram;
+
 export const trpcBatchWidthHistogram: client.Histogram<string> =
-  globalThis.__civitaiTrpcBatchWidthHistogram ??
+  existingHistogram ??
   (globalThis.__civitaiTrpcBatchWidthHistogram = new client.Histogram({
     name: NAME,
     help:
@@ -71,8 +79,18 @@ const CLIENT_LABELS = ['web', 'other', 'none'] as const;
  * `over_limit="true"` would read `no data` until the first over-cap request ever seen by this
  * pod — indistinguishable from "the cap is not wired up" or "this module never loaded", on the
  * exact series whose job is to be read as evidence. Seeding makes a genuine zero observable as
- * a zero. (Same reasoning, and the same fix, as the generation-model-substitution counters
- * seeded from `src/pages/api/metrics.ts`.)
+ * a zero. (Same reasoning as the generation-model-substitution counters, but NOT the same
+ * mechanism — see below.)
+ *
+ * 🔴 THIS IS DESTRUCTIVE AND MUST ONLY RUN ON A FRESHLY-CREATED HISTOGRAM.
+ * `generation-model-substitution.metrics.ts` seeds with `counter.inc({...}, 0)`, which is a
+ * genuine no-op on a series that already exists. `Histogram.zero(labels)` is not: prom-client
+ * implements it as an unconditional (re)initialisation of that label set's buckets, sum and
+ * count, so calling it on a live series WIPES everything accumulated under those labels. This
+ * module is pinned on `globalThis` precisely because it can be evaluated more than once (HMR,
+ * a second request-graph eval) — an unconditional module-scope seed would therefore reset all
+ * six series on the second evaluation, and the resulting hole would look exactly like the
+ * "the cap never fired" reading the seeding exists to prevent.
  */
 function seedTrpcBatchWidthSeries(): void {
   try {
@@ -84,14 +102,23 @@ function seedTrpcBatchWidthSeries(): void {
   }
 }
 
-seedTrpcBatchWidthSeries();
+// Only when THIS evaluation constructed the histogram. A re-evaluation reuses the pinned
+// instance, whose series are already present (and possibly non-zero) — re-seeding would erase
+// them. `__resetTrpcBatchMetricsForTest` is the deliberate exception: it resets on purpose.
+if (!existingHistogram) seedTrpcBatchWidthSeries();
 
 const COMMA = 44; // ','.charCodeAt(0)
 
 /**
- * Count `,` separators without allocating. `split(',')` would build an N-element array of
- * substrings per batched request purely to read `.length`; this reads the same number off the
- * string already in memory.
+ * Count `,` separators without allocating an intermediate array. `split(',')` builds an
+ * N-element array of substrings per batched request purely to read `.length`; this reads the
+ * same number off the string already in memory.
+ *
+ * ⚠️ NOT a throughput win — the opposite, measured: at width 200 this scan takes ~2266ns
+ * against `split(',').length`'s ~1885ns, because V8's `split` is native. The reason to keep it
+ * is ALLOCATION, not speed: no garbage per request on a main-thread-CPU-sensitive path. Both
+ * numbers are noise next to the request they measure; do not "optimise" either way on this
+ * comment alone.
  */
 function countSeparators(s: string): number {
   let n = 0;
@@ -153,16 +180,27 @@ export function boundedClientLabel(raw: string | string[] | undefined): string {
 
 /**
  * Observe one request's batch width and return it. Never throws — a telemetry failure must not
- * break a request. On an internal failure it returns 1, which is the SAFE direction: 1 can
- * never be mistaken for an over-cap request, so a broken metric degrades to "log this error
- * normally" rather than to "silently suppress a log".
+ * break a request.
+ *
+ * 🔴 THE CATCH'S RETURN VALUE IS A SAFETY PROPERTY, NOT A PLACEHOLDER. It returns 1, which is
+ * under any positive cap, so a failed measurement can never mark a request over-cap and a
+ * broken metric degrades to "log this error normally". A value ABOVE the cap here would invert
+ * that: every request whose measurement threw would be marked over-cap, arming the `onError`
+ * skip and suppressing the Axiom ingest for every `BAD_REQUEST` in the process — the log-storm
+ * guard turned into a blanket log-suppressor, silently. Pinned by a test that forces the throw.
  */
 export function observeTrpcBatchWidth(req: NextApiRequest): number {
   try {
     const width = computeBatchWidth(req);
     trpcBatchWidthHistogram.observe(
       {
-        over_limit: width > TRPC_MAX_BATCH_SIZE ? 'true' : 'false',
+        // The EFFECTIVE cap, not the compiled-in constant: the route builds `maxBatchSize` from
+        // the same `getTrpcMaxBatchSize()`, so `over_limit` labels exactly the requests tRPC
+        // will reject. Reading the constant here instead would mislabel every request between
+        // the two values whenever the env var overrides it — and, worse, would arm the
+        // `onError` log-skip on requests tRPC ACCEPTED, silently suppressing genuine
+        // BAD_REQUESTs from their procedures.
+        over_limit: width > getTrpcMaxBatchSize() ? 'true' : 'false',
         client: boundedClientLabel(req?.headers?.['x-client']),
       },
       width
@@ -198,7 +236,7 @@ export function observeTrpcBatchWidth(req: NextApiRequest): number {
 // skip would silently never fire.
 const OVER_CAP_MARKER = Symbol.for('civitai.trpc.batchOverCap');
 
-/** Mark a request as having exceeded `TRPC_MAX_BATCH_SIZE`. Never throws. */
+/** Mark a request as having exceeded the effective batch cap. Never throws. */
 export function markTrpcBatchOverCap(req: unknown): void {
   try {
     (req as Record<symbol, unknown>)[OVER_CAP_MARKER] = true;
@@ -220,18 +258,23 @@ export function isTrpcBatchOverCap(req: unknown): boolean {
  * The whole per-request entry point: observe the batch width, and mark the request when it
  * exceeds the cap. Returns the width.
  *
- * 🔴 The `width > cap` branch lives HERE rather than in the route on purpose. A Next API page
- * cannot be loaded in a unit test (its module graph pulls `appRouter` + `createContext`), so a
- * branch written inline in the route is only ever pinnable by reading the source — and a
- * mutation that deleted the marking survived a full green suite exactly that way. The marking
- * is what arms the log-storm skip, so losing it fails SILENTLY: the cap still works, the metric
- * still moves, and every rejected batch quietly starts paying a stack capture + Axiom ingest
- * again. Keeping the branch in this module makes it behaviourally testable, and leaves the
- * route with one unconditional call.
+ * 🔴 The `width > cap` branch lives HERE rather than in the route on purpose: it keeps the route
+ * to one unconditional call, and it is what makes the branch drivable in isolation. Losing the
+ * marking fails SILENTLY — the cap still works, the metric still moves, and every rejected batch
+ * quietly resumes paying a stack capture + Axiom ingest — so it needs a behavioural pin, and a
+ * mutation that deleted it did once survive a fully green suite.
+ *
+ * (The route itself IS unit-loadable, contrary to an earlier note here: mocking `~/server/routers`,
+ * `~/server/createContext` and the adapter is enough, and `trpc-handler-wiring.test.ts` does
+ * exactly that to assert the route calls this before delegating. Both pins are kept — this one
+ * covers the branch, that one covers the wiring.)
+ *
+ * Uses the EFFECTIVE cap so the marker cannot disagree with what tRPC enforced; see the
+ * `over_limit` note in `observeTrpcBatchWidth`.
  */
 export function instrumentTrpcBatchRequest(req: NextApiRequest): number {
   const width = observeTrpcBatchWidth(req);
-  if (width > TRPC_MAX_BATCH_SIZE) markTrpcBatchOverCap(req);
+  if (width > getTrpcMaxBatchSize()) markTrpcBatchOverCap(req);
   return width;
 }
 

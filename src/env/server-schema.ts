@@ -1,6 +1,7 @@
 // @ts-check
 import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
+import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import {
   commaDelimitedStringArray,
   commaDelimitedStringObject,
@@ -406,6 +407,16 @@ export const serverSchema = z
     STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
     STORAGE_RESOLVER_AUTH: z.string().optional(), // Basic auth credentials (username:password)
     TRPC_ORIGINS: commaDelimitedStringArray().default([]),
+    // Server-side cap on how many procedure calls ONE batched tRPC request may carry
+    // (`maxBatchSize` on the adapter). Defaults to the compiled-in constant that the browser
+    // batch link also mirrors, so an unset env is byte-identical to hardcoding it; the env var
+    // exists so the cap can be corrected with a config change instead of an image build plus a
+    // canary rollout. Positive-integer guard for the same reason as IMAGE_SCANNING_MAX_PER_RUN:
+    // 0 or a non-number would disable the cap (or reject every batch) silently, so a bad
+    // hand-tune must fail loudly at boot. 🔴 RAISING is a safe rollback; LOWERING below the
+    // compiled-in constant is a tightening that 400s batches already-loaded browsers can still
+    // build — see `getTrpcMaxBatchSize` in `src/server/trpc/batch-cap.ts`.
+    TRPC_MAX_BATCH_SIZE: z.coerce.number().int().positive().default(TRPC_MAX_BATCH_SIZE),
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),

@@ -303,14 +303,24 @@ function terminatingLink({
       url,
       headers,
       maxURLLength: 2083,
-      // Mirror the server's `maxBatchSize` (`src/pages/api/trpc/[trpc].ts`) from the SAME
-      // constant. tRPC requires the client limit be <= the server's: without this the browser
-      // would happily coalesce more operations than the server accepts and 400 itself, failing
+      // Mirror the server's `maxBatchSize` default (`src/pages/api/trpc/[trpc].ts`) from the
+      // SAME constant. tRPC requires the client limit be <= the server's: without this the
+      // browser could coalesce more operations than the server accepts and 400 itself, failing
       // every query in the batch. With it, the link's dataloader SPLITS an over-wide fan-out
       // into several <=cap requests instead — `groupItems` starts a new group whenever
       // `validate` rejects, and only ever rejects a lone operation, which can't happen here
-      // (one op is always <= the cap). That makes every first-party fan-out structurally safe
-      // under the cap, regardless of how wide any individual `useQueries` call gets.
+      // (one op is always <= the cap).
+      //
+      // ⚠️ DEFENCE IN DEPTH, not the primary bound. `maxURLLength: 2083` above already binds
+      // the fan-out shapes this app actually emits — the two `useQueries` sites reach the URL
+      // cap at 22–29 operations, i.e. BELOW `maxItems`, so today the URL budget is what splits
+      // them and this line never fires. It becomes load-bearing for short-path, no-input
+      // procedures (≈147 ops fit under the URL cap) and after the `trpcBatching` flag ramps
+      // past its current mod-only audience.
+      //
+      // 🔴 The server cap is env-overridable and this one is not (a browser bundle cannot read
+      // server env), so the two can diverge. Raising the server's is safe; lowering it below
+      // this constant means an already-loaded bundle can build a batch the server rejects.
       maxItems: TRPC_MAX_BATCH_SIZE,
     }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),

@@ -873,21 +873,25 @@ function DisplayMessages({
   //      then, grab the content
   //      then, grab the user info from chatMembers (but what if its not there?)
   // DISTINCT reply targets, in INSERTION ORDER. `chats` comes from a query with no explicit
-  // limit (the schema default is 1000), and several messages commonly reply to the SAME
-  // message, so the un-deduplicated list fired one `getMessageById` per REPLY rather than per
-  // replied-to message. Those extra queries were never even read: the lookup below is
-  // `replyIds.indexOf(...)`, which always resolves to the first occurrence — so deduplicating
-  // is behaviour-identical and removes pure fan-out.
+  // limit (the schema default is 1000), and several messages commonly reply to the SAME message.
+  //
+  // ⚠️ This does NOT reduce the number of tRPC operations, and the batch width was never
+  // inflated by the duplicates: `@tanstack/query-core` collapses identical query keys, so N
+  // `useQueries` entries for the same `messageId` were already one cache entry and one fetch.
+  // What deduplicating removes is the per-duplicate query OBSERVER (and the array churn behind
+  // it) — marginally cheaper, behaviour-identical. It is behaviour-identical in the other
+  // direction too: the lookup below is `replyIds.indexOf(...)`, which always resolved to the
+  // first occurrence, so the duplicate entries were never read either.
   //
   // Insertion order, NOT sorted — same reasoning as `useStickerCosmetics` in
   // `src/components/Sticker/sticker.util.ts`: this list GROWS as the chat pages, and sorting
   // would shift positions of already-fetched entries every time an older id arrives.
   //
-  // Width still scales with the number of distinct replies in a long chat. That is safe under
-  // the batch-size cap because the batch link is capped at `TRPC_MAX_BATCH_SIZE` items and its
-  // dataloader SPLITS a wider fan-out across several requests rather than rejecting it (see
-  // `maxItems` in `src/utils/trpc.ts`). The real fix is a bulk `chat.getMessagesByIds`, which
-  // would make this one query regardless of width — deliberately left as a follow-up.
+  // The real fan-out (one operation per DISTINCT replied-to message) still scales with a long
+  // chat. That is bounded on the wire by the batch link's `maxURLLength` and `maxItems` (see
+  // `src/utils/trpc.ts`), whose dataloader SPLITS a wide fan-out across several requests rather
+  // than rejecting it. The real fix is a bulk `chat.getMessagesByIds`, which would make this one
+  // query regardless of width — deliberately left as a follow-up.
   const replyIds = useMemo(
     () => [
       ...new Set(

@@ -13,7 +13,7 @@ import {
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
 import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/trpc-serialize-log';
-import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
+import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 
 export const config = {
   api: {
@@ -34,11 +34,21 @@ const trpcHandler = createNextApiHandler({
   // Bound how many procedure calls ONE HTTP request may carry. Batching otherwise decouples
   // request rate from actual work — every request-counting control sees 1 where the server does
   // N — and N is chosen by whoever builds the URL, not by our client bundle. tRPC checks this in
-  // `getRequestInfo`, i.e. BEFORE `createContext`, so an over-cap request costs URL parsing and
-  // nothing else. The browser's batch link mirrors the same constant via `maxItems` (see
-  // `src/utils/trpc.ts`); tRPC requires the client limit be <= the server's, or the browser 400s
-  // itself. Both read one constant so they cannot drift apart.
-  maxBatchSize: TRPC_MAX_BATCH_SIZE,
+  // `getRequestInfo`, i.e. BEFORE `createContext`, so an over-cap request resolves zero
+  // procedures and creates no context.
+  //
+  // ⚠️ On a GET that means it costs URL parsing and nothing else. On a POST — legitimate here,
+  // `allowMethodOverride: true` lets a query carry its input in the body — Next has already
+  // parsed the body (up to the 17mb `sizeLimit` above) before this handler runs, and the adapter
+  // re-stringifies it before `resolveResponse`; the cap cannot avoid that. What it does avoid is
+  // the N-procedure amplification, on both methods.
+  //
+  // Env-overridable (`TRPC_MAX_BATCH_SIZE`, default = the shared constant), so a correction is a
+  // config change rather than a build + canary. The browser's batch link mirrors the compiled-in
+  // constant via `maxItems` (see `src/utils/trpc.ts`); tRPC requires the client limit be <= the
+  // server's — which is why RAISING this is safe and lowering it below the constant is not. See
+  // `getTrpcMaxBatchSize`.
+  maxBatchSize: getTrpcMaxBatchSize(),
   responseMeta: ({ ctx, type, errors }) => {
     const headers: Record<string, string> = {};
     const willEdgeCache = ctx?.cache && !!ctx?.cache.edgeTTL && ctx?.cache.edgeTTL > 0;
@@ -69,7 +79,7 @@ const trpcHandler = createNextApiHandler({
 
     if (isProd) {
       // Batch-cap rejection (see `maxBatchSize` above). The whole point of the cap is that an
-      // over-wide batch is rejected before any work happens; paying a stack capture +
+      // over-wide batch resolves no procedures; paying a stack capture +
       // JSON.stringify(input) + an Axiom ingest per reject would put that cost straight back —
       // on the event loop, once per request, during exactly the sustained abuse the cap exists
       // to make cheap. The signal is not lost: `civitai_app_trpc_batch_width` observes every
