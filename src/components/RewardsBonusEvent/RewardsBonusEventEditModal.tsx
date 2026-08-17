@@ -4,14 +4,7 @@ import { useMemo } from 'react';
 import { Controller } from 'react-hook-form';
 import * as z from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import {
-  Form,
-  InputCheckbox,
-  InputSelect,
-  InputText,
-  InputTextArea,
-  useForm,
-} from '~/libs/form';
+import { Form, InputCheckbox, InputSelect, InputText, InputTextArea, useForm } from '~/libs/form';
 import {
   REWARDS_BONUS_MULTIPLIER_OPTIONS,
   type UpsertRewardsBonusEventSchema,
@@ -145,7 +138,7 @@ export function RewardsBonusEventEditModal({
         <InputSelect
           name="multiplier"
           label="Multiplier"
-          description="Global Blue Buzz reward multiplier while this event is active."
+          description="Global Blue Buzz reward multiplier while this event is active — every reward type, not one feature. It scales each reward's daily CAP as well as its award, so a 100/day cap becomes 800/day for a member on a 4x tier during a 2x event."
           data={multiplierOptions}
           withAsterisk
         />
@@ -182,9 +175,7 @@ export function RewardsBonusEventEditModal({
               const startsAtValue = form.watch('startsAt');
               const today = dayjs().startOf('day').toDate();
               const minEndDate =
-                startsAtValue && startsAtValue.getTime() > today.getTime()
-                  ? startsAtValue
-                  : today;
+                startsAtValue && startsAtValue.getTime() > today.getTime() ? startsAtValue : today;
               return (
                 <DatePickerInput
                   label="Ends at"

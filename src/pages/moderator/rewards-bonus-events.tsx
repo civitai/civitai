@@ -92,7 +92,10 @@ export default function RewardsBonusEventsPage() {
             <Stack gap={0}>
               <Title order={2}>Rewards Bonus Events</Title>
               <Text size="sm" c="dimmed">
-                Site-wide multipliers on Blue Buzz rewards. Highest-multiplier active event wins.
+                Site-wide multipliers on Blue Buzz rewards, across every reward type.
+                Highest-multiplier active event wins. The multiplier scales each reward&apos;s daily
+                cap as well as its award, so a 100/day cap is 800/day for a member on a 4x tier
+                during a 2x event.
               </Text>
             </Stack>
             <Button leftSection={<IconPlus size={16} />} onClick={() => openEdit()}>
