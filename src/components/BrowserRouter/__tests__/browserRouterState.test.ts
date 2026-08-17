@@ -177,14 +177,15 @@ describe('resolveRouteChangeState', () => {
     expect(result.state).toEqual({ prev: { asPath: '/models/827184' } });
   });
 
-  it('keeps no param of the route being left', () => {
-    // The pop resolved in the popstate handler carried `id: 'project'` from the
-    // OUTGOING pattern; nothing of it may survive into what we publish.
+  it('publishes only what Next has, so nothing can be merged over it', () => {
+    // Not a re-derivation: the query is copied whole. A reader who reintroduced a
+    // merge would have somewhere for an outgoing-route param to come back in.
     const result = resolveRouteChangeState(
       { asPath: '/comics/project/55/chapter/2', query: { id: '55', chapterPosition: '2' } },
       {}
     );
-    expect(result.query).toEqual({ id: 55, chapterPosition: 2 });
+    expect(Object.keys(result.query)).toEqual(['id', 'chapterPosition']);
+    expect(result.query.id).toBe(55);
   });
 });
 
