@@ -29,6 +29,7 @@ import {
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
@@ -36,8 +37,8 @@ import {
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
-import { getRecommendLabel } from '~/components/Apps/appListingCardView';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
 import {
   canOwnerEditListing,
   type DetailActionMode,
@@ -285,47 +286,43 @@ function HeroCover({
  * cannot supply.
  *
  * 🔴 OMITTED ENTIRELY IN `preview` — see the posture note on the body. Both numbers are
- * review/usage aggregates that a shadow listing structurally does not have.
+ * review/usage aggregates that a shadow listing structurally does not have. That
+ * omission is DECIDED IN `buildListingStatChips`, not here: this component renders
+ * whatever list it is given and renders nothing for an empty one, so the posture rule
+ * is covered by the blocking node project rather than only by the browser suite CI
+ * does not run.
+ *
+ * 🔴 The hover MESSAGE is likewise decided there and passed through UNCONDITIONALLY.
+ * `StatHoverCard` renders `message` INSTEAD of `value`, so a ternary that supplied the
+ * message only when there were no reviews made the percentage unreachable on every
+ * listing that had one. Do not reintroduce a condition here — see that module's header.
  */
-function StatChips({ detail }: { detail: ListingDetail }) {
-  // The card's percentage label ("87% recommend (340)") is retained HERE, in the hover
-  // card, rather than in the header text — the header now reads the Steam-style word
-  // label in the Details rail, matching the model page. `getRecommendLabel` itself is
-  // UNCHANGED and still backs the store grid cards; adding a second return shape for
-  // this one surface would have changed every card.
-  const recommendDetail = getRecommendLabel(detail.recommend, detail.reviewCount);
+function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolean }) {
+  const chips = buildListingStatChips(detail, { preview });
+  if (chips.length === 0) return null;
+
+  const glyph: Record<ListingStatChip['key'], ReactNode> = {
+    recommend: <IconThumbUp size={18} />,
+    installs: <IconDownload size={18} />,
+  };
+
   return (
     <Group gap={4} wrap="wrap">
-      <StatHoverCard
-        label="Recommendations"
-        value={detail.recommend.recommendedCount}
-        message={detail.recommend.recommendPct == null ? recommendDetail : undefined}
-      >
-        <div>
-          <IconBadge
-            radius="sm"
-            size="lg"
-            icon={<IconThumbUp size={18} />}
-            data-listing-stat="recommend"
-            aria-label={`${detail.recommend.recommendedCount.toLocaleString()} recommendations`}
-          >
-            <Text size="sm">{detail.recommend.recommendedCount.toLocaleString()}</Text>
-          </IconBadge>
-        </div>
-      </StatHoverCard>
-      <StatHoverCard label="Installs" value={detail.installCount}>
-        <div>
-          <IconBadge
-            radius="sm"
-            size="lg"
-            icon={<IconDownload size={18} />}
-            data-listing-stat="installs"
-            aria-label={`${detail.installCount.toLocaleString()} installs`}
-          >
-            <Text size="sm">{detail.installCount.toLocaleString()}</Text>
-          </IconBadge>
-        </div>
-      </StatHoverCard>
+      {chips.map((chip) => (
+        <StatHoverCard key={chip.key} label={chip.label} value={chip.value} message={chip.message}>
+          <div>
+            <IconBadge
+              radius="sm"
+              size="lg"
+              icon={glyph[chip.key]}
+              data-listing-stat={chip.key}
+              aria-label={chip.ariaLabel}
+            >
+              <Text size="sm">{chip.value.toLocaleString()}</Text>
+            </IconBadge>
+          </div>
+        </StatHoverCard>
+      ))}
     </Group>
   );
 }
@@ -372,7 +369,15 @@ function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
  * than rendering a broken `<img>`. Plain `<img>` (mirrors AppDetailsModal / the
  * live detail): the URL is a CDN edge URL, not a configured Next/Image domain.
  */
-function ScreenshotTile({ shot, name, index }: { shot: ListingGalleryScreenshot; name: string; index: number }) {
+function ScreenshotTile({
+  shot,
+  name,
+  index,
+}: {
+  shot: ListingGalleryScreenshot;
+  name: string;
+  index: number;
+}) {
   const [broken, setBroken] = useState(false);
   if (broken) return null;
   return (
@@ -396,7 +401,13 @@ function ScreenshotTile({ shot, name, index }: { shot: ListingGalleryScreenshot;
 
 /** Screenshot gallery — reuses AppDetailsModal's SimpleGrid pattern. Empty/broken
  *  URLs are skipped; the whole section is hidden when nothing remains. */
-function ScreenshotGallery({ screenshots, name }: { screenshots: ListingGalleryScreenshot[]; name: string }) {
+function ScreenshotGallery({
+  screenshots,
+  name,
+}: {
+  screenshots: ListingGalleryScreenshot[];
+  name: string;
+}) {
   const shots = screenshots.filter((s) => !!s.url);
   if (shots.length === 0) return null;
   return (
@@ -725,7 +736,7 @@ export function AppListingDetailBody({
                   page; in preview that rail is omitted, so the lightweight chip stands
                   in rather than leaving a moderator with no submitter at all. */}
               {preview && <CreatorChip creator={detail.creator} />}
-              {!preview && <StatChips detail={detail} />}
+              <StatChips detail={detail} preview={preview} />
             </Stack>
           </Group>
 
@@ -734,7 +745,11 @@ export function AppListingDetailBody({
               right-rail action card, never buried in here. */}
           {showMenu && (
             <Box style={{ flexShrink: 0 }}>
-              <Menu position="bottom-end" transitionProps={{ transition: 'pop-top-right' }} withinPortal>
+              <Menu
+                position="bottom-end"
+                transitionProps={{ transition: 'pop-top-right' }}
+                withinPortal
+              >
                 <Menu.Target>
                   <LegacyActionIcon
                     variant="light"

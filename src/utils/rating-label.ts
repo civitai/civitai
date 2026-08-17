@@ -16,9 +16,18 @@ import type { MantineColor } from '@mantine/core';
  * byte-identical logic and the model page's rendered labels cannot have changed.
  * `__tests__/rating-label.test.ts` pins every boundary and every count bucket.
  *
- * The ONLY consumers are asserted as a ledger in that same test file — it fails when
- * the caller set grows OR shrinks, so a third surface has to opt in on purpose rather
- * than by copy-paste.
+ * `__tests__/rating-label.test.ts` asserts TWO things, and the second exists because
+ * the first was measurably not enough:
+ *   - the IMPORTER LEDGER — the caller set exactly, failing when it grows or shrinks;
+ *   - that NO file in `src/` embeds a ladder of its own without importing this one.
+ *     An importer ledger is structurally blind to a COPY (not importing is what a copy
+ *     does), and a drifted copy planted in `components/Apps/` passed all 49 tests. The
+ *     second scan looks for this ladder's OUTPUT ALPHABET in the source text instead.
+ *
+ * 🔴 KNOWN, NOT YET CONSOLIDATED: `pages/3d-models/[id]/[[...slug]].tsx` defines
+ * `sentimentLabel`, a third ladder on a 0–100 scale with different bands and a sixth
+ * label. It predates this extraction, the scan DOES flag it, and it is allowlisted by
+ * name in that test file with the follow-up recorded there — not silently tolerated.
  */
 export type RatingLabel = {
   /** Display copy, e.g. `Very Positive`. Rendered `tt="capitalize"` by both callers. */

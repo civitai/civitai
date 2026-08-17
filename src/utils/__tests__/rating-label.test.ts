@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
+import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { getRatingLabel } from '~/utils/rating-label';
 
 /**
@@ -165,21 +167,94 @@ describe('getRatingLabel — count-bucket edges', () => {
  * file.
  *
  * "One rule, one place" is only true while every surface that renders a rating verdict
- * IMPORTS this module. A fourth surface that copies the thresholds instead would leave
- * every test above green while the two ladders drift. So the caller set is asserted as
- * an exact list: it fails when the set GROWS (someone wired up a new consumer without
- * deciding to) and when it SHRINKS (someone inlined a copy back).
+ * IMPORTS this module. A surface that COPIES the thresholds instead would leave every
+ * test above green while the two ladders drift. So two things are asserted:
+ *   (a) the IMPORTER set, exactly — it fails when the set grows (a consumer wired up
+ *       without anyone deciding to) and when it shrinks (a copy inlined back);
+ *   (b) that no file in `src/` embeds a rating ladder WITHOUT importing this one.
  *
- * A structural check alone type-checks past a wrong ARGUMENT, so the behavioural case
- * below it feeds one input through both call sites' own arithmetic and asserts they
- * land on the same word.
+ * 🔴 (b) EXISTS BECAUSE (a) ALONE WAS WALKABLE, AND THAT WAS MEASURED, NOT FEARED. An
+ * earlier version of this block detected consumers with `text.includes(
+ * '~/utils/rating-label')` and asserted only the importer list. A drifted COPY of the
+ * ladder planted at `components/Apps/copiedLadder.ts`, importing nothing, passed all 49
+ * tests — the exact scenario the docstring claimed to prevent. Two independent faults,
+ * both fixed here:
+ *
+ *   1. A copy is INVISIBLE to an importer list. Not importing is what a copy DOES; a
+ *      ledger of importers is structurally blind to it. Hence the second scan, which
+ *      looks for the ladder's own OUTPUT ALPHABET in the source text rather than for
+ *      the module path.
+ *   2. A bare `includes` counted a mere textual MENTION as a consumer. The first
+ *      attempt at that mutant died only because its comment named the module path —
+ *      i.e. the guard fired on prose, not on a dependency. Any doc reference registered
+ *      as a caller, and a doc reference beside a copy would have masked it. The
+ *      importer scan now matches an `import` / `require` FORM, not a substring.
  */
 describe('🔴 the rating ladder has exactly the callers it is supposed to have', () => {
   const SRC = path.resolve(__dirname, '../..');
 
-  /** Every file under `src/` that imports `~/utils/rating-label`, repo-relative. */
-  function importers(): string[] {
-    const out: string[] = [];
+  /** This module's own path, relative to `src/` — never a "consumer" of itself. */
+  const LADDER_MODULE = 'utils/rating-label.ts';
+
+  /**
+   * A real dependency on the module: `from '~/utils/rating-label'`, a dynamic
+   * `import(...)`, a `require(...)`, or a side-effect `import '...'`. Deliberately NOT
+   * a substring test — see fault 2 in the block docstring.
+   */
+  const IMPORT_FORM =
+    /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(['"`])~\/utils\/rating-label\1/;
+
+  /**
+   * The ladder's OUTPUT ALPHABET — every word label `getRatingLabel` can return.
+   *
+   * This is what a copy cannot avoid carrying: thresholds can be re-spelled (`0.2` →
+   * `20`, a 0–100 scale), the function can be renamed, the branches can be reordered —
+   * but a surface rendering this verdict has to spell these words. Matched only as a
+   * WHOLE quoted string literal and case-insensitively, so a 0–100-scaled copy with
+   * lowercased copy is still caught while prose ("relocate this very negative-cache
+   * bug", measured in `apps-pipeline.service.ts`) is not.
+   */
+  const LADDER_LABELS = [
+    'Mixed',
+    'Negative',
+    'Very Negative',
+    'Overwhelmingly negative',
+    'Mostly negative',
+    'Mostly Positive',
+    'Positive',
+    'Very Positive',
+    'Overwhelmingly Positive',
+  ];
+
+  /**
+   * How many DISTINCT ladder labels a file must quote before it counts as embedding a
+   * ladder. 3 was chosen from the measured distribution over all of `src/`, not picked:
+   * the real ladders score 6–9 and the highest-scoring innocent file scores 2 (three
+   * files quoting `'positive'` + `'negative'` as generation-prompt keys). So the
+   * threshold sits in a gap, with margin on both sides — asserted below rather than
+   * asserted about.
+   */
+  const LADDER_LABEL_THRESHOLD = 3;
+
+  /**
+   * 🔴 KNOWN, DELIBERATELY-TOLERATED SECOND LADDER — a FOLLOW-UP, not an exemption.
+   *
+   * `pages/3d-models/[id]/[[...slug]].tsx` defines `sentimentLabel`, a drifted third
+   * ladder on a 0–100 scale with different bands and a sixth label ("Too few reviews").
+   * It PREDATES this module's extraction and consolidating it is out of scope for the
+   * change that added this guard — folding a 0–100 ladder with different bands into the
+   * 0–1 one is a behaviour change to a live page, not a refactor.
+   *
+   * It is listed HERE, explicitly, rather than dodged by weakening the scan: the scan
+   * DOES flag it (asserted below, so this entry can never rot into dead weight), and
+   * when the consolidation lands, removing the file's own ladder makes that assertion
+   * fail and this entry has to come out with it.
+   */
+  const KNOWN_UNSHARED_LADDERS = ['pages/3d-models/[id]/[[...slug]].tsx'];
+
+  /** Every `.ts`/`.tsx` file under `src/`, repo-relative to `src/`, with its text. */
+  function sources(): Array<{ rel: string; text: string }> {
+    const out: Array<{ rel: string; text: string }> = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
@@ -188,12 +263,34 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
           continue;
         }
         if (!/\.tsx?$/.test(entry.name)) continue;
-        const text = fs.readFileSync(full, 'utf8');
-        if (text.includes('~/utils/rating-label')) out.push(path.relative(SRC, full));
+        out.push({ rel: path.relative(SRC, full), text: fs.readFileSync(full, 'utf8') });
       }
     };
     walk(SRC);
-    return out.sort();
+    return out.sort((a, b) => a.rel.localeCompare(b.rel));
+  }
+
+  /** Distinct ladder labels quoted as whole string literals in `text`. */
+  function quotedLadderLabels(text: string): string[] {
+    return LADDER_LABELS.filter((label) =>
+      new RegExp(`(["'\`])${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\1`, 'i').test(text)
+    );
+  }
+
+  /** Every file under `src/` that really IMPORTS the shared ladder. */
+  function importers(): string[] {
+    return sources()
+      .filter((f) => IMPORT_FORM.test(f.text))
+      .map((f) => f.rel);
+  }
+
+  /** Files that embed a ladder of their own without importing the shared one. */
+  function unsharedLadders(): string[] {
+    return sources()
+      .filter((f) => f.rel !== LADDER_MODULE)
+      .filter((f) => !IMPORT_FORM.test(f.text))
+      .filter((f) => quotedLadderLabels(f.text).length >= LADDER_LABEL_THRESHOLD)
+      .map((f) => f.rel);
   }
 
   it('the scanner can actually find an importer (positive control)', () => {
@@ -204,8 +301,18 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
     expect(found).toContain('utils/__tests__/rating-label.test.ts');
   });
 
+  it('🔴 a textual MENTION is not a consumer (the matcher fires on the import FORM)', () => {
+    // Fault 2, pinned. Both strings below name the module; only one depends on it.
+    expect("import { getRatingLabel } from '~/utils/rating-label';").toMatch(IMPORT_FORM);
+    expect("const m = await import('~/utils/rating-label');").toMatch(IMPORT_FORM);
+    expect('// see `~/utils/rating-label` for the shared ladder').not.toMatch(IMPORT_FORM);
+    expect(' * The word label comes from ~/utils/rating-label, not a local copy.').not.toMatch(
+      IMPORT_FORM
+    );
+  });
+
   it('EXACTLY these files consume the shared ladder', () => {
-    expect(importers()).toEqual(
+    expect(importers().sort()).toEqual(
       [
         // The model version page's review link — the ladder's original home.
         'components/Model/ModelVersions/ModelVersionReview.tsx',
@@ -215,6 +322,59 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
         'utils/__tests__/rating-label.test.ts',
       ].sort()
     );
+  });
+
+  it('🔴 the copied-ladder scan can SEE a ladder (positive control)', () => {
+    // The assertion two tests down is a zero, so on its own it is indistinguishable
+    // from a scan wired to nothing. Drive it with the real module's own source — the
+    // canonical positive — and with a MINIMAL drifted copy of the shape it exists to
+    // catch: renamed function, re-scaled thresholds, no import.
+    const ladderSource = fs.readFileSync(path.resolve(SRC, LADDER_MODULE), 'utf8');
+    expect(quotedLadderLabels(ladderSource).length).toBeGreaterThanOrEqual(LADDER_LABEL_THRESHOLD);
+
+    const drifted = [
+      'function verdict(pct: number, n: number) {',
+      "  if (pct < 25) return 'Mostly negative';",
+      "  if (pct < 70) return 'Mixed';",
+      "  if (n < 50) return 'Positive';",
+      "  return 'Very Positive';",
+      '}',
+    ].join('\n');
+    expect(quotedLadderLabels(drifted).length).toBeGreaterThanOrEqual(LADDER_LABEL_THRESHOLD);
+    expect(drifted).not.toMatch(IMPORT_FORM);
+
+    // …and the NEGATIVE control: the scan must not fire on prose that merely uses these
+    // words, which is why the labels are matched as whole QUOTED literals. This exact
+    // sentence lives in `server/services/blocks/apps-pipeline.service.ts`.
+    expect(quotedLadderLabels(' * relocate this very negative-cache bug')).toEqual([]);
+    // Two generic labels are not a ladder — this is the shape of the highest-scoring
+    // innocent files in `src/` (generation-prompt keys), and it must stay under the bar.
+    expect(
+      quotedLadderLabels(`const k = { positive: 'positive', negative: 'negative' };`).length
+    ).toBeLessThan(LADDER_LABEL_THRESHOLD);
+  });
+
+  it('🔴 the tolerated 3d-models ladder is still THERE and still FLAGGED (allowlist is live)', () => {
+    // An allowlist entry that no longer matches anything is dead weight that silently
+    // widens the guard. Assert the file exists, still embeds its own ladder, and still
+    // does not import the shared one — so when the consolidation follow-up lands, THIS
+    // fails and the entry has to be removed with it.
+    for (const rel of KNOWN_UNSHARED_LADDERS) {
+      const text = fs.readFileSync(path.resolve(SRC, rel), 'utf8');
+      expect(quotedLadderLabels(text).length, rel).toBeGreaterThanOrEqual(LADDER_LABEL_THRESHOLD);
+      expect(text, rel).not.toMatch(IMPORT_FORM);
+    }
+  });
+
+  it('🔴 NO file embeds a rating ladder without importing the shared one', () => {
+    expect(
+      unsharedLadders(),
+      "A file spells the shared ladder's word labels but does not import " +
+        '`~/utils/rating-label`. That is a SECOND ladder, and two ladders drift — which ' +
+        'is the whole reason this module exists. Import it, or (if the surface genuinely ' +
+        'needs different bands) add the file to KNOWN_UNSHARED_LADDERS with a comment ' +
+        'naming the consolidation follow-up.'
+    ).toEqual(KNOWN_UNSHARED_LADDERS);
   });
 
   it('ModelVersionReview no longer defines a ladder of its own', () => {
@@ -229,25 +389,140 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
     expect(src).toMatch(/getRatingLabel\(/);
   });
 
-  it('BEHAVIOURAL: both call sites reduce the same reviews to the same word', () => {
-    // `ModelVersionReview` computes `positiveRating = up / (up + down)` and
-    // `totalCount = up + down`. The listing detail hands the server-computed
-    // `recommendPct` + `reviewCount`. Feed one population through both arithmetics
-    // and require the SAME label — a structural import check cannot see a wrong
-    // argument (e.g. passing the percentage as 87 instead of 0.87).
-    const up = 431;
-    const down = 68;
-    const fromModelPage = getRatingLabel({
-      positiveRating: up / (up + down),
-      totalCount: up + down,
+  /**
+   * 🔴 BEHAVIOURAL, and this time it means it.
+   *
+   * The test this replaces built `fromModelPage` and `fromListing` from BYTE-IDENTICAL
+   * expressions and imported neither call site — `f(x) === f(x)`, which is true for
+   * every possible implementation and could not fail. Its comment claimed it caught a
+   * wrong ARGUMENT (a percentage passed as `87` instead of `0.87`); it could not see
+   * one, because no call site's arithmetic was ever executed.
+   *
+   * Both call sites are imported and RUN here instead:
+   *   - `ModelVersionReview` is invoked as a plain function. A React function component
+   *     is just a function returning an element tree, so calling it executes the real
+   *     `up / (up + down)` arithmetic and the real `getRatingLabel(...)` call with no
+   *     DOM, no provider and no renderer. The verdict is then read back off the tree.
+   *   - `buildListingDetailRows` is the listing's real call site, executing the real
+   *     `recommendPct` / `reviewCount` hand-off.
+   *
+   * One population, two independent paths, one required answer.
+   */
+  describe('🔴 BEHAVIOURAL: both call sites reduce the same reviews to the same word', () => {
+    // 431 up / 68 down → 0.86373 across 499 reviews. Distinct from every ladder
+    // constant (10 / 50 / 500 / 0.2 / 0.4 / 0.7 / 0.8 / 0.95).
+    const UP = 431;
+    const DOWN = 68; // → 499 reviews at 0.86373
+
+    /** Depth-first walk of a React element tree, yielding every node. */
+    function nodes(el: unknown): unknown[] {
+      if (el == null || typeof el !== 'object') return [];
+      if (Array.isArray(el)) return el.flatMap(nodes);
+      const props = (el as { props?: Record<string, unknown> }).props;
+      return [el, ...(props ? nodes(props.children) : [])];
+    }
+
+    /** The model page renders the verdict as an `Anchor` with `c={color}`. */
+    function modelPageVerdict(up: number, down: number): { label: string; color: unknown } {
+      const tree = ModelVersionReview({
+        modelId: 1,
+        versionId: 2,
+        thumbsUpCount: up,
+        thumbsDownCount: down,
+      });
+      const hit = nodes(tree).find((n) => {
+        const props = (n as { props?: Record<string, unknown> }).props;
+        return (
+          !!props &&
+          typeof props.c === 'string' &&
+          typeof props.children === 'string' &&
+          props.tt === 'capitalize'
+        );
+      }) as { props: { c: string; children: string } };
+      return { label: hit.props.children, color: hit.props.c };
+    }
+
+    /** The listing renders it as the `reviews` row's value + colour. */
+    function listingVerdict(up: number, down: number): { label: string; color: unknown } {
+      const total = up + down;
+      const row = buildListingDetailRows(
+        {
+          kindData: { kind: 'onsite', appBlockId: 'ab_1', hasPage: true, liveUrl: 'https://a.b' },
+          category: null,
+          contentRating: null,
+          recommend: { recommendedCount: up, notRecommendedCount: down, recommendPct: up / total },
+          reviewCount: total,
+          installCount: 0,
+          updatedAt: '2026-03-04T05:06:07.000Z',
+        } as Parameters<typeof buildListingDetailRows>[0],
+        { formatDate: (iso) => iso }
+      ).find((r) => r.key === 'reviews');
+      // The listing row appends the count — strip it to compare the WORD.
+      return { label: String(row?.value).replace(/\s*\(.*\)$/, ''), color: row?.color };
+    }
+
+    it('POSITIVE CONTROL: each extractor really reads a verdict off its own call site', () => {
+      // Both helpers above search a structure. A search that finds nothing would make
+      // the agreement assertion below `undefined === undefined` — green, meaningless.
+      expect(modelPageVerdict(UP, DOWN).label).toBeTruthy();
+      expect(listingVerdict(UP, DOWN).label).toBeTruthy();
+      // …and they track the input rather than returning a constant: a different
+      // population must yield a DIFFERENT word from each.
+      expect(modelPageVerdict(4, 133).label).not.toBe(modelPageVerdict(UP, DOWN).label);
+      expect(listingVerdict(4, 133).label).not.toBe(listingVerdict(UP, DOWN).label);
     });
-    const fromListing = getRatingLabel({
-      positiveRating: up / (up + down), // == the server's recommendPct
-      totalCount: up + down, // == reviewCount
+
+    it('the same population yields the same verdict from both real call sites', () => {
+      expect(modelPageVerdict(UP, DOWN)).toEqual(listingVerdict(UP, DOWN));
+      // Pinned as a literal so "they agree" cannot be satisfied by both being wrong in
+      // the same way. 431/499 = 0.8637 → the 0.8–0.95 band at 499 reviews.
+      expect(modelPageVerdict(UP, DOWN)).toEqual({ label: 'Very Positive', color: 'green' });
     });
-    expect(fromModelPage).toEqual(fromListing);
-    // Pinned as a literal so "they agree" cannot be satisfied by both being wrong in
-    // the same way. 431/499 = 0.8637 → the 0.8–0.95 band at 499 reviews.
-    expect(fromModelPage).toEqual({ label: 'Very Positive', color: 'green' });
+
+    it('they agree across every band, not just the one the literal pins', () => {
+      // A single population can agree by luck. Sweep one that lands in each band.
+      for (const [up, down] of [
+        [0, 137],
+        [40, 97],
+        [70, 67],
+        [110, 27],
+        [131, 6],
+        [2000, 11],
+      ] as const) {
+        const key = `${up}/${up + down}`;
+        expect(modelPageVerdict(up, down), key).toEqual(listingVerdict(up, down));
+      }
+    });
+
+    it('🔴 and a 0–100 percentage passed where a 0–1 proportion belongs is CAUGHT', () => {
+      // The wrong-argument case the replaced test claimed to cover. Feeding the
+      // listing's own arithmetic a percentage (86.37) instead of a proportion (0.8637)
+      // sends it to the top of the ladder regardless of the real rating, and the two
+      // call sites then DISAGREE — which is exactly the signal that mattered.
+      const scaled = buildListingDetailRows(
+        {
+          kindData: { kind: 'onsite', appBlockId: 'ab_1', hasPage: true, liveUrl: 'https://a.b' },
+          category: null,
+          contentRating: null,
+          recommend: {
+            recommendedCount: 4,
+            notRecommendedCount: 133,
+            recommendPct: (4 / 137) * 100,
+          },
+          reviewCount: 137,
+          installCount: 0,
+          updatedAt: '2026-03-04T05:06:07.000Z',
+        } as Parameters<typeof buildListingDetailRows>[0],
+        { formatDate: (iso) => iso }
+      ).find((r) => r.key === 'reviews');
+      const mispassed = {
+        label: String(scaled?.value).replace(/\s*\(.*\)$/, ''),
+        color: scaled?.color,
+      };
+      expect(mispassed).not.toEqual(modelPageVerdict(4, 133));
+      // Named explicitly so the failure reads as "a percentage reached the ladder".
+      expect(mispassed.label).toBe('Very Positive');
+      expect(modelPageVerdict(4, 133).label).toBe('Very Negative');
+    });
   });
 });
