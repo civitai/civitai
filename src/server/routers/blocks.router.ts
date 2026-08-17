@@ -7997,9 +7997,9 @@ async function maybeAutoClaimDailyBoost({
     return undefined;
   }
 
-  // Already claimed today, or the reward has no payout (e.g. user is
-  // rewardsIneligible — multiplier zeroed the amount).
-  if (boostDetails.awarded > 0 || boostDetails.awardAmount <= 0) return undefined;
+  // Disabled at runtime, already claimed today, or the reward has no payout
+  // (e.g. user is rewardsIneligible — multiplier zeroed the amount).
+  if (!boostDetails || boostDetails.awarded > 0 || boostDetails.awardAmount <= 0) return undefined;
 
   // Balance already covers the cost — boost would just sit unused today.
   if (balanceSum >= cost) return undefined;

@@ -13,6 +13,8 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
+import type { ResolvedRewardConfig } from '~/server/rewards/reward-config';
+import { resolveRewardConfig } from '~/server/rewards/reward-config';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
@@ -83,24 +85,32 @@ export function createBuzzEvent<T>({
   const types = [type];
   if (isProcessable) types.push(...(buzzEvent.includeTypes ?? []));
 
+  const capEntries = 'caps' in buzzEvent ? buzzEvent.caps ?? [] : [];
+  // One number cannot say whether it means the daily cap or the monthly one, so
+  // a multi-entry table refuses the override rather than guessing an entry.
+  const capOverridable = isOnDemand || capEntries.length === 1;
+  const defaultCap =
+    'cap' in buzzEvent ? buzzEvent.cap : capEntries.length === 1 ? capEntries[0].amount : undefined;
+
+  const resolveConfig = () =>
+    resolveRewardConfig(type, { awardAmount, cap: defaultCap, capOverridable });
+
   const getUserRewardDetails = async (userId: number) => {
+    const config = await resolveConfig();
+    // A reward disabled at runtime must not stay advertised with an amount and
+    // a cap that will never pay.
+    if (!config.enabled) return null;
+
+    const intervalCap = capEntries.filter((cap) => !!cap.interval)?.[0];
     const data = {
       // We'll return the event details
       // so that they can be presented on the UI.
       type,
-      awardAmount,
+      awardAmount: config.awardAmount,
       description,
       onDemand: isOnDemand,
-      cap:
-        'cap' in buzzEvent
-          ? buzzEvent.cap
-          : 'caps' in buzzEvent
-          ? buzzEvent.caps?.filter((cap) => !!cap.interval)?.[0]?.amount
-          : undefined,
-      interval:
-        'caps' in buzzEvent
-          ? buzzEvent.caps?.filter((cap) => !!cap.interval)?.[0]?.interval
-          : undefined,
+      cap: config.cap ?? intervalCap?.amount,
+      interval: intervalCap?.interval,
       triggerDescription: buzzEvent.triggerDescription,
       tooltip: buzzEvent.tooltip,
       // -1 determines that this award is not on demand, as such, would require a full
@@ -186,13 +196,17 @@ export function createBuzzEvent<T>({
     );
   };
 
-  const processOnDemand = async (key: BuzzEventKey, multiplier: number) => {
+  const processOnDemand = async (
+    key: BuzzEventKey,
+    multiplier: number,
+    config: ResolvedRewardConfig
+  ) => {
     if (!isOnDemand) return false;
 
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
-    const effectiveAward = Math.ceil(awardAmount * multiplier);
-    const effectiveCap = Math.ceil((buzzEvent.cap ?? Infinity) * multiplier);
+    const effectiveAward = Math.ceil(config.awardAmount * multiplier);
+    const effectiveCap = Math.ceil((config.cap ?? Infinity) * multiplier);
     const now = Date.now().toString();
     const endOfDay = Math.floor(new Date().setUTCHours(23, 59, 59, 999) / 1000);
 
@@ -214,6 +228,13 @@ export function createBuzzEvent<T>({
 
   const apply = async (input: T, tracking?: { ip?: string }) => {
     if (!clickhouse) return;
+
+    // Gate before `getKey`. A disabled reward must cost one early return, not a
+    // getKey query, a multiplier lookup (Redis + DB), a Redis dedup script and a
+    // ClickHouse insert — `orchestrator.router` calls this once per feedback
+    // patch inside a live generation mutation.
+    const config = await resolveConfig();
+    if (!config.enabled) return;
 
     // Fail-soft (resolution): getKey / getMultipliersForUser / getTransactionDetails hit the DB/Redis/CH and
     // run SYNCHRONOUSLY inside the triggering user mutation (collection.saveItem, toggleFollow, post.update,
@@ -249,7 +270,7 @@ export function createBuzzEvent<T>({
     const key = { type, ...definedKey } as BuzzEventKey;
     const event: BuzzEventLog = {
       ...key,
-      awardAmount,
+      awardAmount: config.awardAmount,
       multiplier: rewardsMultiplier,
       status: 'pending',
       ip: ['::1', ''].includes(ip ?? '') ? undefined : ip,
@@ -257,7 +278,7 @@ export function createBuzzEvent<T>({
     };
 
     if (isOnDemand) {
-      const toAward = await processOnDemand(key, rewardsMultiplier);
+      const toAward = await processOnDemand(key, rewardsMultiplier, config);
       if (toAward === false) return; // already awarded
 
       event.status = toAward > 0 ? 'awarded' : 'capped';
@@ -324,6 +345,28 @@ export function createBuzzEvent<T>({
 
   const process = async (ctx: ProcessingContext) => {
     if (!isProcessable || !clickhouse) return;
+
+    const config = await resolveConfig();
+    // `apply` only writes a `pending` row for a processable reward; this job is
+    // what pays it. So gating `apply` alone still pays out everything already in
+    // the pipe when the reward was turned off. Skipping those rows would strand
+    // them, because the job scans `time >= lastUpdate` and never looks back —
+    // hence a terminal `unqualified`, the state `process` already uses for
+    // "seen, earns nothing".
+    //
+    // This lives in the reader rather than in a sweep hung off the config write:
+    // the row is a `KeyValue` that gets edited from Retool or psql, where no
+    // application code runs at all, and a per-run check also cannot lose the
+    // race against rows written between the flip and the next run.
+    if (!config.enabled) {
+      for (const event of ctx.toProcess) {
+        event.status = 'unqualified';
+        event.awardAmount = 0;
+      }
+      await updateBuzzEvents(ctx.toProcess);
+      return;
+    }
+
     await buzzEvent.preprocess?.(ctx);
     const targeted = ctx.toProcess.filter((event) => event.status !== 'unqualified');
 
@@ -373,7 +416,8 @@ export function createBuzzEvent<T>({
           const prevAward = prevAwards[key] ?? 0;
 
           // Determine amount remaining against cap
-          const remaining = Math.max(amount - prevAward, 0);
+          const capAmount = capOverridable ? config.cap ?? amount : amount;
+          const remaining = Math.max(capAmount - prevAward, 0);
           event.awardAmount = Math.min(event.awardAmount, remaining);
         }
       }
@@ -410,7 +454,7 @@ export function createBuzzEvent<T>({
           for (const event of chunk) {
             if (event.status !== 'unqualified') {
               event.status = 'pending';
-              event.awardAmount = awardAmount;
+              event.awardAmount = config.awardAmount;
             }
           }
           await updateBuzzEvents(chunk);
@@ -427,12 +471,31 @@ export function createBuzzEvent<T>({
     }
   };
 
+  /**
+   * The operator's answer to "which rewards are on, and at what amounts?".
+   * Resolves through the same `resolveConfig` the grant path uses, so what it
+   * reports and what gets paid cannot drift.
+   */
+  const describeConfig = async () => {
+    const config = await resolveConfig();
+    return {
+      type,
+      visible,
+      onDemand: isOnDemand,
+      capOverridable,
+      defaults: { awardAmount, cap: defaultCap },
+      effective: { enabled: config.enabled, awardAmount: config.awardAmount, cap: config.cap },
+      rejected: config.rejected,
+    };
+  };
+
   return {
     types,
     visible,
     apply,
     process,
     getUserRewardDetails,
+    describeConfig,
   };
 }
 
