@@ -27,21 +27,23 @@
   } = $props();
 
   let confirming = $state(false);
+
+  // The confirm button must NOT clear `confirming` in its own click handler. Svelte flushes effects
+  // synchronously after a DOM event handler, so doing that unmounts the submitter through the `{#if}`
+  // before the browser runs the form's activation behaviour — the submit never fires and "Yes, delete"
+  // behaves exactly like Cancel, silently. It is closed when the write finishes instead.
+  let wasSubmitting = $state(false);
+  $effect(() => {
+    if (wasSubmitting && !submitting) confirming = false;
+    wasSubmitting = submitting;
+  });
 </script>
 
 {#if confirming}
   <span class="text-sm text-red-300">
     {label} {count} {noun}{count === 1 ? '' : 's'}?
   </span>
-  <Button
-    type="submit"
-    {name}
-    {value}
-    size="sm"
-    variant="destructive"
-    disabled={submitting}
-    onclick={() => (confirming = false)}
-  >
+  <Button type="submit" {name} {value} size="sm" variant="destructive" disabled={submitting}>
     Yes, {label.toLowerCase()}
   </Button>
   <Button type="button" size="sm" variant="outline" onclick={() => (confirming = false)}>
