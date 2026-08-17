@@ -423,14 +423,17 @@ export const modifyUserHandler = async ({
     });
 
     if (!!status && status !== ChatMemberStatus.Invited) {
-      // we want to await here to avoid race conditions
+      // Awaited to order the group change before the system message below, but
+      // swallowed like every other emit here: the membership row is already
+      // written, and letting an unreachable signals service throw reported the
+      // action as failed after it had actually succeeded.
       await withSignals(() =>
         fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
           method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
         })
-      );
+      ).catch(() => undefined);
 
       if (status !== ChatMemberStatus.Ignored) {
         await createMessage({
