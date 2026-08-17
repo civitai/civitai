@@ -323,8 +323,28 @@ describe('createFreePlacement — the lock', () => {
     // prefix, which passes on precisely the broken form.
     expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledTimes(1);
     const [statement] = dbMock.dbWrite.$executeRawUnsafe.mock.calls[0];
+    // WHAT the statement is, kept alongside the two checks on how it is sent.
+    // Without it `SET LOCAL statement_timeout = '3s'` passes, and so does
+    // `SET lock_timeout = '3s'` — which on a pooled connection leaks a 3s lock
+    // timeout onto every later statement borrowing that backend, well outside
+    // this feature. The `$1` fix replaced this assertion instead of joining it;
+    // when tightening a test, add and keep.
+    expect(statement).toContain('SET LOCAL lock_timeout');
     expect(statement).toContain(`'3s'`);
     expect(statement).not.toContain('$1');
+  });
+
+  // The `SET` is on `$executeRawUnsafe` and the locks are on `$executeRaw`, so
+  // no per-mock call count can see their relative order. Move the `SET` below
+  // both acquisitions and every other assertion in this file stays green while
+  // the timeout is inert for the first and most contended wait — which is the
+  // entire reason the statement exists.
+  it('sets the timeout before it waits on anything', async () => {
+    await claim();
+
+    expect(dbMock.dbWrite.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+      executeRaw.mock.invocationCallOrder[0]
+    );
   });
 
   it('takes the placer lock first and the target lock second', async () => {
