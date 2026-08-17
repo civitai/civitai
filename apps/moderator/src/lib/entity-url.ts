@@ -30,6 +30,19 @@ export function entityUrl(
   return entityId && segment ? `${civitaiUrl}/${segment}/${entityId}` : null;
 }
 
+// Linking a comment to its ENTITY leaves the moderator scrolling a thread for the row they were already
+// looking at. Both comment tables have a deep link and neither is derivable from `entityUrl`.
+
+/** Legacy `Comment` (model threads): opens the thread dialog with the row highlighted. */
+export const modelCommentUrl = (civitaiUrl: string, modelId: number, commentId: number) =>
+  `${civitaiUrl}/models/${modelId}?dialog=commentThread&highlight=${commentId}`;
+
+/** `CommentV2` (image, article, post, bounty, …). The main app resolves the thread server-side and
+ *  redirects with the comment pinned, so this works for entity types that have no standalone page and
+ *  for replies buried past the first page of a thread — neither of which a built URL can reach. */
+export const commentV2Url = (civitaiUrl: string, commentId: number) =>
+  `${civitaiUrl}/comments/v2/${commentId}`;
+
 /** A user's profile, optionally a section of it (`models`, `images`, `posts`, …). Encoded — usernames
  *  allow characters that change the path when left raw, which the previous `$lib/articles` copy did. */
 export function userUrl(civitaiUrl: string, username: string, section?: string | null): string {

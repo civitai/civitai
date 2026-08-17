@@ -3,7 +3,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { LINK_CLASS, dateTime, plainText } from '$lib/format';
-  import { entityUrl } from '$lib/entity-url';
+  import { commentV2Url, entityUrl, modelCommentUrl } from '$lib/entity-url';
   import type { Account } from './user-account';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { FormResult } from './form-result';
@@ -42,7 +42,8 @@
   } = $props();
 
   const error = $derived(form?.scope === 'content' ? form.error : null);
-  const modelUrl = (modelId: number | null) => (modelId ? `${civitaiUrl}/models/${modelId}` : null);
+  const modelUrl = (modelId: number | null, commentId: number) =>
+    modelId ? modelCommentUrl(civitaiUrl, modelId, commentId) : null;
   const CHECKBOX = 'accent-blue-500 mr-1';
 </script>
 
@@ -89,8 +90,8 @@
                         class={CHECKBOX}
                       />
                     {/if}
-                    {#if modelUrl(c.modelId)}
-                      <a href={modelUrl(c.modelId)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+                    {#if modelUrl(c.modelId, c.id)}
+                      <a href={modelUrl(c.modelId, c.id)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
                         model {c.modelId}
                       </a>
                     {/if}
@@ -154,18 +155,20 @@
                         class={CHECKBOX}
                       />
                     {/if}
-                    {#if entityUrl(civitaiUrl, c.entityType, c.entityId)}
-                      <a
-                        href={entityUrl(civitaiUrl, c.entityType, c.entityId)}
-                        target="_blank"
-                        rel="noreferrer"
-                        class={LINK_CLASS}
-                      >
+                    <!-- Always linkable, even for an entity type with no page of its own: the resolver
+                         works from the comment id, so the label degrades but the link does not. -->
+                    <a
+                      href={commentV2Url(civitaiUrl, c.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      class={LINK_CLASS}
+                    >
+                      {#if entityUrl(civitaiUrl, c.entityType, c.entityId)}
                         {c.entityType} {c.entityId}
-                      </a>
-                    {:else}
-                      <span class="text-xs text-dark-2">thread {c.threadId}</span>
-                    {/if}
+                      {:else}
+                        thread {c.threadId}
+                      {/if}
+                    </a>
                     {#if c.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
                     <span class="text-xs text-dark-2">{dateTime(c.createdAt)}</span>
                   </div>
