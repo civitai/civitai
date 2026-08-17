@@ -1,0 +1,162 @@
+import { useEffect, useRef } from 'react';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { recordImpression } from '~/components/TrackView/impressionBuffer';
+import type { ImpressionEntityType } from '~/server/schema/track.schema';
+
+export type ImpressionTarget = { entityType: ImpressionEntityType; entityId: number };
+
+// What counts as an impression. Both halves are load-bearing:
+//
+// - HALF the card visible, so a sliver clipped at the edge of the viewport is not
+//   an impression.
+// - for a CONTINUOUS second, so scrolling past at speed is not one either.
+//
+// Anything looser produces a number nobody can defend — "was on screen for one
+// frame during a flick scroll" is not reach. Changing either constant changes
+// what every historical impression number meant, so they are stated in the PR and
+// in the Creator Studio label rather than left implicit here.
+const VISIBLE_FRACTION = 0.5;
+const DWELL_MS = 1000;
+
+// The shared feed observer (IntersectionObserverProvider) is deliberately eager —
+// `rootMargin: '100% 0px'` — because it drives rendering and wants a full viewport
+// of warning. Reusing it here would count a screenful of cards ABOVE and BELOW
+// the viewport as seen, in both scroll directions. Impressions need their own
+// observer with no margin.
+type ElementState = { targets: ImpressionTarget[]; timer: ReturnType<typeof setTimeout> | null };
+
+type Registry = {
+  observer: IntersectionObserver;
+  elements: Map<Element, ElementState>;
+  intersecting: Set<Element>;
+};
+
+// One observer per scroll root shared by every card under it. A feed mounts
+// hundreds of cards, and an observer each would be hundreds of observers.
+const registries = new Map<Element | null, Registry>();
+let visibilityBound = false;
+
+function armDwell(registry: Registry, element: Element, state: ElementState) {
+  if (state.timer !== null) return;
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    for (const target of state.targets) recordImpression(target.entityType, target.entityId);
+    // Recorded — stop watching. The session-level dedupe in the buffer would drop
+    // a repeat anyway; this just avoids re-arming the timer on every scroll.
+    registry.observer.unobserve(element);
+    registry.elements.delete(element);
+    registry.intersecting.delete(element);
+  }, DWELL_MS);
+}
+
+function disarmDwell(state: ElementState) {
+  if (state.timer === null) return;
+  clearTimeout(state.timer);
+  state.timer = null;
+}
+
+// A hidden tab keeps its IntersectionObserver entries intersecting — nothing
+// scrolls, so nothing fires — which means a dwell timer armed just before the tab
+// was backgrounded would mature while nobody is looking. Timers are dropped on
+// hide and re-armed on return, so the dwell always describes a second of visible
+// time rather than a second of elapsed time.
+function bindVisibility() {
+  if (visibilityBound || typeof document === 'undefined') return;
+  visibilityBound = true;
+  document.addEventListener('visibilitychange', () => {
+    const hidden = document.visibilityState === 'hidden';
+    for (const registry of registries.values()) {
+      for (const element of registry.intersecting) {
+        const state = registry.elements.get(element);
+        if (!state) continue;
+        if (hidden) disarmDwell(state);
+        else armDwell(registry, element, state);
+      }
+    }
+  });
+}
+
+function getRegistry(root: Element | null): Registry {
+  const existing = registries.get(root);
+  if (existing) return existing;
+
+  const elements = new Map<Element, ElementState>();
+  const intersecting = new Set<Element>();
+  const registry: Registry = {
+    observer: null as unknown as IntersectionObserver,
+    elements,
+    intersecting,
+  };
+
+  registry.observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const state = elements.get(entry.target);
+        if (!state) continue;
+        if (entry.isIntersecting) {
+          intersecting.add(entry.target);
+          if (document.visibilityState === 'visible') armDwell(registry, entry.target, state);
+        } else {
+          intersecting.delete(entry.target);
+          disarmDwell(state);
+        }
+      }
+    },
+    { root, threshold: VISIBLE_FRACTION }
+  );
+
+  registries.set(root, registry);
+  return registry;
+}
+
+/**
+ * Report that this element's entities were seen, once it has been half visible
+ * for a continuous second.
+ *
+ * Takes a LIST because one card can present more than one entity: a model card
+ * shows a model AND whichever cover image the viewer's browsing level selected,
+ * and both were genuinely seen. Recording only the card's own entity would leave
+ * the image — the thing that actually drew the eye, and whose creator wants the
+ * number — invisible.
+ */
+export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
+  targets: ImpressionTarget[] | undefined
+) {
+  const ref = useRef<T>(null);
+  const features = useFeatureFlags();
+  const enabled = features.feedImpressions && !!targets?.length;
+
+  // Keeps the observed element stable across renders: the array is rebuilt every
+  // render by every caller, so depending on its identity would re-observe
+  // constantly. The ids inside it do not change for the life of a mounted card.
+  const targetsRef = useRef(targets);
+  targetsRef.current = targets;
+
+  // Identity of the entities, not of the array. A recycled card (virtualised
+  // feeds reuse DOM nodes for new data) must re-observe; a re-render must not.
+  const key = targets?.map((t) => `${t.entityType}:${t.entityId}`).join(',') ?? '';
+
+  const node = useScrollAreaRef();
+
+  useEffect(() => {
+    if (!enabled) return;
+    const element = ref.current;
+    if (!element || typeof IntersectionObserver === 'undefined') return;
+
+    bindVisibility();
+    const registry = getRegistry(node?.current ?? null);
+    const state: ElementState = { targets: targetsRef.current ?? [], timer: null };
+    registry.elements.set(element, state);
+    registry.observer.observe(element);
+
+    return () => {
+      disarmDwell(state);
+      registry.observer.unobserve(element);
+      registry.elements.delete(element);
+      registry.intersecting.delete(element);
+    };
+  }, [enabled, key, node]);
+
+  return ref;
+}

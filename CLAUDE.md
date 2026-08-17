@@ -549,6 +549,7 @@ Operational runbooks, security reviews, incident handoffs, and content-policy re
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](docs/features/monetization-rules.md) |
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](docs/features/entity-metrics.md) |
+| Feed Impressions | [docs/features/feed-impressions.md](docs/features/feed-impressions.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |

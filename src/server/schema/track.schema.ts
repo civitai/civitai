@@ -595,6 +595,71 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   generatorSubmitSchema,
 ]);
 
+// Feed impression event — an entity was actually SEEN in a feed, as opposed to
+// opened. `views` only records the latter, so every view count on the platform
+// undercounts reach by however often people scroll past without clicking.
+//
+// One event carries MANY entities. That is the whole reason impressions are
+// affordable: a feed session generates one impression every few hundred ms, and
+// a per-entity event would put that rate on the wire. The browser instead holds
+// a deduplicated set and ships it as a single array (see impressionBuffer.ts),
+// so the request rate is set by the flush interval, not by scroll speed.
+export const IMPRESSION_ENTITY_TYPES = [
+  'Image',
+  'Model',
+  'Post',
+  'Article',
+  'Collection',
+  'Bounty',
+  'BountyEntry',
+  'User',
+] as const;
+export type ImpressionEntityType = (typeof IMPRESSION_ENTITY_TYPES)[number];
+
+// Where the impression happened. Becomes a LowCardinality(String) column, so it
+// is a closed enum rather than free text — a tampered client cannot introduce a
+// new value and blow up the column's dictionary.
+export const IMPRESSION_SURFACES = [
+  'home',
+  'images',
+  'videos',
+  'posts',
+  'models',
+  'articles',
+  'collections',
+  'bounties',
+  'search',
+  'user',
+  'other',
+] as const;
+export type ImpressionSurface = (typeof IMPRESSION_SURFACES)[number];
+
+// Entities per event. The browser flushes at this cap; the ceiling exists so a
+// tampered body can't turn one request into an unbounded ClickHouse insert.
+export const IMPRESSION_ENTITIES_MAX = 250;
+
+export const trackImpressionSchema = z.object({
+  // Random per-tab token, minted client-side and never persisted. NOT an
+  // identifier: it exists so the SAME entity seen repeatedly during one browsing
+  // session collapses to one impression, and so a batch redelivered by the
+  // at-least-once transport can be recognised as a duplicate at read time
+  // (`uniqExact(sessionKey)` over the raw table) rather than double-counted.
+  sessionKey: z.string().min(1).max(32),
+  // `.catch` rather than a hard reject: an unrecognised surface must not 400 a
+  // batch that is otherwise full of good events.
+  surface: z.enum(IMPRESSION_SURFACES).catch('other'),
+  entities: z
+    .array(
+      z.object({
+        entityType: z.enum(IMPRESSION_ENTITY_TYPES),
+        entityId: z.number().int().positive(),
+      })
+    )
+    .min(1)
+    .max(IMPRESSION_ENTITIES_MAX),
+});
+export type TrackImpressionInput = z.infer<typeof trackImpressionSchema>;
+
 // One coalesced telemetry event in a /api/track/batch payload. `kind` selects the
 // destination (search -> Tracker.search, action -> Tracker.action) and `data` is
 // the EXACT existing per-event input for that destination. No field is added,
@@ -602,6 +667,7 @@ export const trackActionSchema = z.discriminatedUnion('type', [
 export const trackBatchEventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('search'), data: trackSearchSchema }),
   z.object({ kind: z.literal('action'), data: trackActionSchema }),
+  z.object({ kind: z.literal('impression'), data: trackImpressionSchema }),
 ]);
 export type TrackBatchEvent = z.infer<typeof trackBatchEventSchema>;
 

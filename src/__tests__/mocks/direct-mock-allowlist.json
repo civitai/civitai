@@ -20,10 +20,10 @@
   ],
   "totals": {
     "canonicalFiles": 218,
-    "pendingFiles": 398,
-    "allFiles": 485,
+    "pendingFiles": 399,
+    "allFiles": 486,
     "canonicalSites": 288,
-    "pendingSites": 869
+    "pendingSites": 870
   },
   "bySpecifier": {
     "~/server/db/client": 135,
@@ -32,7 +32,7 @@
     "~/env/server": 108,
     "~/server/services/buzz.service": 99,
     "~/server/services/image.service": 89,
-    "~/server/clickhouse/client": 78,
+    "~/server/clickhouse/client": 79,
     "~/server/services/notification.service": 77,
     "~/server/services/user.service": 75,
     "~/server/search-index": 65,
@@ -302,6 +302,7 @@
     "src/server/auth/__tests__/session-metrics.test.ts",
     "src/server/auth/__tests__/session-verifier.test.ts",
     "src/server/clickhouse/__tests__/tracker.awaitDelivery.test.ts",
+    "src/server/clickhouse/__tests__/tracker.impressions.test.ts",
     "src/server/cloudflare/__tests__/client.purgeCache.test.ts",
     "src/server/controllers/__tests__/buzz.controller.tip.test.ts",
     "src/server/controllers/__tests__/image.controller.feed-source.test.ts",

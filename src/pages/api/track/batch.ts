@@ -69,6 +69,10 @@ export default PublicEndpoint(
         // Fire-and-forget: dispatches the insert without awaiting the round-trip,
         // exactly as the tRPC resolver (`ctx.track.search(input)`) did.
         void tracker.search(event.data);
+      } else if (event.kind === 'impression') {
+        // One event, many rows — the array is expanded into a single batched
+        // insert by Tracker.impressions.
+        void tracker.impressions(event.data);
       } else {
         void tracker.action(event.data);
       }

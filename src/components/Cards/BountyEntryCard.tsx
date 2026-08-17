@@ -40,6 +40,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
 
   return (
     <FeedCard
+      impressions={[{ entityType: 'BountyEntry', entityId: data.id }]}
       aspectRatio="portrait"
       href={`/bounties/${data.bountyId}/entries/${data.id}`}
       pos="relative"

@@ -12,6 +12,7 @@ import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { sleep } from '~/utils/errorHandling';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
@@ -418,7 +419,14 @@ export class Tracker {
 
   private async sendMany(
     table: string,
-    data: object[] | ((args: { session: Session | null; actor: TrackRequest }) => object[])
+    data: object[] | ((args: { session: Session | null; actor: TrackRequest }) => object[]),
+    /**
+     * Per-insert ClickHouse settings. Exists for tables written by MANY pods on a
+     * short interval: without `async_insert`, each pod's flush is its own part,
+     * and the table hits the too-many-parts ceiling on part count rather than on
+     * row volume. Server-side buffering merges those into shared batches.
+     */
+    settings?: Record<string, string | number>
   ) {
     if (!clickhouse) return;
     await this.resolveSession();
@@ -430,6 +438,7 @@ export class Tracker {
         table,
         values,
         format: 'JSONEachRow',
+        ...(settings ? { clickhouse_settings: settings } : {}),
       });
     } catch (e) {
       const error = e as Error;
@@ -472,18 +481,22 @@ export class Tracker {
   private async trackMany(
     table: string,
     custom: object[] | ((session: Session | null) => object[]),
-    options?: { skipActorMeta: boolean }
+    options?: { skipActorMeta?: boolean; settings?: Record<string, string | number> }
   ) {
-    const { skipActorMeta = false } = options ?? {};
+    const { skipActorMeta = false, settings } = options ?? {};
 
-    await this.sendMany(table, ({ session, actor }) => {
-      const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
-      const customData = typeof custom === 'function' ? custom(session) : custom;
-      return customData.map((custom) => ({
-        ...actorMeta,
-        ...custom,
-      }));
-    });
+    await this.sendMany(
+      table,
+      ({ session, actor }) => {
+        const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
+        const customData = typeof custom === 'function' ? custom(session) : custom;
+        return customData.map((custom) => ({
+          ...actorMeta,
+          ...custom,
+        }));
+      },
+      settings
+    );
   }
 
   public view(values: {
@@ -500,6 +513,35 @@ export class Tracker {
     details?: Record<string, unknown>;
   }) {
     return this.track('views', values);
+  }
+
+  // Feed impressions — entities SEEN in a feed rather than opened. Deliberately
+  // its own table: impressions outnumber views by roughly an order of magnitude,
+  // so folding them into `views` would silently redefine every view number on the
+  // platform (and the three materialized views built on it) overnight.
+  //
+  // Uses trackMany, NOT track. `track` posts one HTTP request per row to the
+  // tracker service, which is what makes the single-event methods above viable at
+  // their volume and would make this one ruinous: a 250-entity flush would become
+  // 250 outbound requests, so client-side batching would buy nothing. trackMany
+  // sends the whole array as one insert, so one browser flush is one insert.
+  public impressions(values: {
+    sessionKey: string;
+    surface: ImpressionSurface;
+    entities: { entityType: ImpressionEntityType; entityId: number }[];
+  }) {
+    const { sessionKey, surface, entities } = values;
+    return this.trackMany(
+      'impressions',
+      entities.map(({ entityType, entityId }) => ({ entityType, entityId, sessionKey, surface })),
+      // Every web pod flushes impressions independently on a short interval, so
+      // the part count — not the row count — is the binding constraint. Buffering
+      // server-side merges the fleet's flushes into shared batches.
+      // `wait_for_async_insert: 0` keeps this fire-and-forget like every other
+      // tracker call; the cost is that a buffer lost on a ClickHouse restart takes
+      // its impressions with it, which is the right trade for telemetry.
+      { settings: { async_insert: 1, wait_for_async_insert: 0 } }
+    );
   }
 
   // App Blocks Analytics Phase 2 — block render/impression event. Fired once per

@@ -62,6 +62,7 @@ export function GenericImageCard({
 
   const cardContent = (
     <FeedCard
+      impressions={[{ entityType: 'Image', entityId: image.id }]}
       style={{
         cursor: disabled ? 'initial' : undefined,
       }}
