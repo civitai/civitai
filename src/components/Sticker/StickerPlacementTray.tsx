@@ -3,10 +3,14 @@ import { IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { freeOfferFor } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
-import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
+import {
+  useFreePlacementStanding,
+  useImagePlacementSpace,
+} from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -63,6 +67,10 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   }, [showing, setTray]);
 
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
+  // Same query key as the layer's, so this shares its cache rather than making a
+  // second request. Here it only decides one clause of one sentence; the choice
+  // itself is made on the draft, where the mode is also shown.
+  const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
@@ -134,6 +142,9 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   };
 
   const price = space?.price ?? 0;
+  // The same predicate the draft's own control uses, so the sentence here and
+  // the button down there cannot disagree about what is on offer.
+  const freeAvailable = !!freeOfferFor(space, standing);
   // Says the panel can be got out of the way, and that more than one is allowed,
   // only once there is something that would survive it. Before that both are
   // instructions about nothing.
@@ -157,7 +168,15 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 {instruction}
               </Text>
               <Text size="xs" c="dimmed">
-                {price} Buzz + one use
+                {/* The use is the constant. A free placement is free of the
+                    creator's price and of nothing else, and saying so here
+                    stops the tray and the Place button disagreeing about what
+                    a sticker costs. What the free option means — instant or
+                    reviewed — is said on the option itself, where it is
+                    chosen. */}
+                {freeAvailable
+                  ? `Free, or ${price} Buzz · one use either way`
+                  : `${price} Buzz + one use`}
                 {space?.mode === 'review' &&
                   ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
               </Text>

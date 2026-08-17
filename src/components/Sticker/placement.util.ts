@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useCallback, useMemo } from 'react';
+import { freeRefusalMessage } from '~/components/Sticker/free-offer';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -179,6 +180,25 @@ export function useForgetStickerPlacement() {
   );
 }
 
+/**
+ * Where the viewer stands against the free tier on one image.
+ *
+ * Its own query rather than folded into the space: the space is public and
+ * cached per image, and this is per viewer — merging them would make one
+ * person's allowance part of a payload every other viewer of that image shares.
+ *
+ * **A listing.** Whatever it says, the claim re-decides all of it under a lock,
+ * so this only ever chooses which offer to show — never whether one is allowed.
+ */
+export function useFreePlacementStanding(imageId?: number) {
+  const { data, isLoading } = trpc.placement.getFreeStanding.useQuery(
+    { surface: 'sticker', targetType: 'image', targetId: imageId as number },
+    { enabled: !!imageId, staleTime: 60_000 }
+  );
+
+  return { standing: data, isLoading };
+}
+
 export function useImagePlacementSpace(imageId?: number) {
   const { data, isLoading } = trpc.placement.getSpace.useQuery(
     { surface: 'sticker', targetType: 'image', targetId: imageId as number },
@@ -194,7 +214,16 @@ export function useImagePlacementSpace(imageId?: number) {
  * One hook rather than the mutation inline, so the tray and the sticker's own
  * buy button cannot drift into two versions of what happens on success.
  */
-export function useCreateStickerPlacement(draftId: string) {
+export function useCreateStickerPlacement(
+  draftId: string,
+  /**
+   * Called when a free claim was refused, so the control can settle on the paid
+   * option. Losing the last slot to someone else is an ordinary race rather than
+   * a fault, and leaving the control on an offer that no longer exists would
+   * make the next press fail the same way.
+   */
+  onFreeRefused?: () => void
+) {
   const utils = trpc.useUtils();
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
 
@@ -226,10 +255,42 @@ export function useCreateStickerPlacement(draftId: string) {
       // would draw the same sticker twice with one of them uncommitted.
       cancelDraft(draftId);
     },
-    onError: (error) =>
+    onError: async (error, variables) => {
+      if (!variables.free)
+        return showErrorNotification({
+          title: "Couldn't place that sticker",
+          error: new Error(error.message),
+        });
+
+      // Re-read before saying anything. The refusal does not name which of the
+      // three free-tier rules stopped it, and the numbers this control rendered
+      // are stale by construction — so the honest sentence comes from fresh
+      // state, not from the server's prose. The invalidation is also what makes
+      // the free option disappear on its own where it genuinely has.
+      const target = {
+        surface: 'sticker' as const,
+        targetType: 'image' as const,
+        targetId: variables.imageId,
+      };
+      await Promise.all([
+        utils.placement.getSpace.invalidate(target),
+        utils.placement.getFreeStanding.invalidate(target),
+      ]);
+
+      // Falls back to paid rather than erroring out, which is the cross-surface
+      // rule: the placement the person arranged is still available, it just
+      // costs Buzz now, and making them start over would throw away the
+      // arrangement over a race they did not lose anything to.
+      onFreeRefused?.();
       showErrorNotification({
-        title: "Couldn't place that sticker",
-        error: new Error(error.message),
-      }),
+        title: 'That one has to be paid for',
+        error: new Error(
+          freeRefusalMessage(
+            utils.placement.getFreeStanding.getData(target),
+            utils.placement.getSpace.getData(target)
+          )
+        ),
+      });
+    },
   });
 }

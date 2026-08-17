@@ -24,6 +24,10 @@ import {
   submitToRemixGallerySchema,
   suspendPlacerSchema,
 } from '~/server/schema/placement.schema';
+import {
+  getFreePlacementAllowance,
+  hasUsedFreePlacementOn,
+} from '~/server/services/free-placement.service';
 import { placementPriceRange } from '~/server/services/placement.service';
 import {
   clearPlacementSpace,
@@ -167,6 +171,34 @@ export const placementRouter = router({
     return setPlacementSpace({ ...input, userId: ctx.user.id });
   }),
 
+  /**
+   * Where the viewer stands against the free tier on one target: their daily
+   * allowance, and whether they have already spent a free placement here.
+   *
+   * **A listing.** Both halves read a replica and are stale the moment they
+   * return; the refusals live in `createFreePlacement`, under a lock, in the
+   * transaction that inserts. This exists so the choice can be offered with the
+   * numbers visible — an allowance spent silently is the worst version of a
+   * scarce thing — and for no other purpose.
+   *
+   * Takes the target rather than being sticker-specific, because the allowance
+   * is one placement a day across the whole site and both surfaces need to say
+   * so. Surface-agnostic by reusing what PR 1 already exposes, not by anything
+   * new sitting between the two.
+   *
+   * `placerId` is the session's. Off the input it would read anyone's allowance.
+   */
+  getFreeStanding: protectedProcedure
+    .input(getPlacementSpaceSchema)
+    .query(async ({ input, ctx }) => {
+      const [allowance, usedHere] = await Promise.all([
+        getFreePlacementAllowance({ placerId: ctx.user.id }),
+        hasUsedFreePlacementOn({ ...input, placerId: ctx.user.id }),
+      ]);
+
+      return { ...allowance, usedHere };
+    }),
+
   getStickerPlacements: publicProcedure
     .input(getStickerPlacementsSchema)
     .query(({ input, ctx }) =>
@@ -201,6 +233,11 @@ export const placementRouter = router({
       assertPlacementEnabled(ctx);
       return createStickerPlacement({
         ...input,
+        // After the spread, and the schema has no `placerId` to strip anyway —
+        // both, because this is the id the whole free tier is scoped by and
+        // every check downstream is a statement about it rather than a check of
+        // it. Read off the payload it would spend someone else's daily
+        // allowance and place under their name with nothing raising.
         placerId: ctx.user.id,
         isModerator: ctx.user.isModerator,
         // From the request's own domain, never the input: `...input` spreads

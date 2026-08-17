@@ -37,6 +37,10 @@ export const placementNotifications = createNotificationProcessor({
         JOIN "User" u ON u.id = p."placerId"
         WHERE p.surface = 'sticker'
           AND p."targetType" = 'image'
+          -- Paid rows only. A free one carries amount 0, so without this it
+          -- reads "wants to place a sticker on your image for 0 Buzz" and is
+          -- silenced by the toggle for the paid kind.
+          AND p.free = false
           -- Only rows that are still waiting. A placement approved, declined or
           -- expired between the last run and this one has already been answered,
           -- and telling someone to review it sends them to a dead link.
@@ -55,6 +59,71 @@ export const placementNotifications = createNotificationProcessor({
         'sticker-placement-pending' "type",
         details
       FROM data
+      -- A row means opted OUT. There is no global filter — every processor that
+      -- honours its own toggle writes this clause itself — so without it the
+      -- setting renders, saves, and does nothing. Kept on one line because the
+      -- notification-settings-polarity guard matches the clause as a literal.
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'sticker-placement-pending')
+    `,
+  },
+
+  /**
+   * Its own type, not a branch of the paid one, because it is a different
+   * decision to make and a different one to mute.
+   *
+   * A creator who has opened free capacity has said yes to the free tier in
+   * particular, and one who wants only the paid queue in their notifications
+   * needs to be able to say so without silencing the placements they are being
+   * paid for. One type with a branching message would make those two settings
+   * the same switch.
+   *
+   * The message carries no amount for the obvious reason and one less obvious
+   * one: "0 Buzz" reads as a bug rather than as the offer, and the thing worth
+   * saying instead is that a slot is being held while they decide.
+   *
+   * Only ever fires for a review-mode space. An auto space approves the row at
+   * the call site before the job next runs, and `status = 'pending'` is what
+   * keeps this from telling someone to review something already live.
+   */
+  'sticker-placement-free-pending': {
+    displayName: 'Free sticker awaiting your review',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.placerUsername} wants to place a free sticker on your image`,
+      url: `/images/${details.imageId}`,
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."ownerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'placerId', p."placerId",
+            'placerUsername', u.username
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."placerId"
+        WHERE p.surface = 'sticker'
+          AND p."targetType" = 'image'
+          AND p.free = true
+          AND p.status = 'pending'
+          -- Written by the same INSERT that creates a free row rather than
+          -- stamped afterwards, so unlike the paid path there is no window where
+          -- this is null. Kept anyway: it is the one column that says the row is
+          -- reachable by the expiry sweep, and a free row that is not would hold
+          -- one of the creator's slots forever.
+          AND p."expiresAt" IS NOT NULL
+          AND p."createdAt" > '${lastSent}'
+      )
+      SELECT
+        CONCAT('sticker-placement-free-pending:',"placementId") "key",
+        "userId",
+        'sticker-placement-free-pending' "type",
+        details
+      FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'sticker-placement-free-pending')
     `,
   },
 

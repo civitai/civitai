@@ -19,6 +19,8 @@ const SELLER = 63;
 const IMAGE = 74;
 const COSMETIC = 85;
 const PLACEMENT = 96;
+/** Distinct from `PLACEMENT`: the two creation routes must not be confusable. */
+const FREE_PLACEMENT = 107;
 
 /**
  * `setPrice` is what the owner asks; `price` is `min(setPrice, cap)` — what a
@@ -47,6 +49,22 @@ vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSp
 
 const spendStickerUsesFor = vi.fn(async () => undefined);
 vi.mock('~/server/services/sticker.service', () => ({ spendStickerUsesFor }));
+
+/**
+ * The whole free claim, stubbed at its own boundary.
+ *
+ * Deliberately not re-implemented here: the daily allowance, never-twice-here
+ * and the slot count are decided inside it under a lock, and a fake that
+ * enforced them would let this file pass while the service checked nothing. What
+ * these tests are for is the part that is genuinely this service's — that it
+ * routes through the claim rather than around it, and what it does after one
+ * succeeds.
+ */
+const createFreePlacement = vi.fn<PrismaStub<{ id: number }>>(async () => {
+  calls.push('claim');
+  return { id: FREE_PLACEMENT };
+});
+vi.mock('~/server/services/free-placement.service', () => ({ createFreePlacement }));
 
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
@@ -82,6 +100,10 @@ const imageFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
 const placementFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
 const placementUpdate = vi.fn<PrismaStub<object>>(async () => ({}));
 const placementUpdateMany = vi.fn<PrismaStub<{ count: number }>>(async () => ({ count: 1 }));
+const placementDeleteMany = vi.fn<PrismaStub<{ count: number }>>(async () => {
+  calls.push('discard');
+  return { count: 1 };
+});
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: {
@@ -92,6 +114,7 @@ vi.mock('~/server/db/client', () => ({
       findUnique: placementFindUnique,
       update: placementUpdate,
       updateMany: placementUpdateMany,
+      deleteMany: placementDeleteMany,
     },
   },
   dbRead: {
@@ -1355,5 +1378,213 @@ describe('getPendingStickerPlacements domain ceiling', () => {
       withinViewerLevel: false,
       url: 'asset',
     });
+  });
+});
+
+/**
+ * The free path: same placement, taken out of the creator's free capacity.
+ *
+ * `createFreePlacement` is stubbed, so nothing here asserts the three free-tier
+ * refusals — those belong to `free-placement.service.test.ts`, where they can be
+ * tested against the lock and the transaction that actually enforce them. What
+ * is this service's own is everything around the claim: routing through it
+ * rather than around it, spending the use, and the settle a claim deliberately
+ * does not do.
+ */
+describe('the free path', () => {
+  const freeInput: CreateStickerPlacement = { ...placeInput, free: true };
+
+  beforeEach(() => {
+    givenStickerAndBalance();
+  });
+
+  it('claims through createFreePlacement rather than writing its own row', async () => {
+    const result = await createStickerPlacement(freeInput);
+
+    expect(result).toEqual({ placementId: FREE_PLACEMENT, status: 'pending' });
+    // The two things a second creation route would show up as. A free branch
+    // that built the row itself would have to re-implement the daily allowance,
+    // never-twice-here and the slot count outside the lock that makes them true.
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+  });
+
+  it('hands the claim the session placer and the sticker seller, and no space', async () => {
+    await createStickerPlacement(freeInput);
+
+    const args = createFreePlacement.mock.calls[0][0] as Record<string, unknown>;
+    expect(args).toMatchObject({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: IMAGE,
+      placerId: PLACER,
+      sellerId: SELLER,
+    });
+    // Not a resolved space. One alongside a separate target id is two facts
+    // that can disagree, and the claim resolves from the id on purpose.
+    expect(args).not.toHaveProperty('space');
+    expect(args).not.toHaveProperty('ownerId');
+  });
+
+  it('spends a use, because free is free of Buzz and of nothing else', async () => {
+    await createStickerPlacement(freeInput);
+
+    expect(spendStickerUsesFor).toHaveBeenCalledWith({
+      userId: PLACER,
+      counts: new Map([[COSMETIC, 1]]),
+    });
+    // After the claim: a spend before it would take a use for a placement the
+    // slot count then refuses.
+    expect(calls).toEqual(['claim', 'spend']);
+  });
+
+  /**
+   * The hazard this path was written around.
+   *
+   * `createFreePlacement` always writes `pending` and never settles, and
+   * sticker's `allowedModes` includes `auto` — so without this the free sticker
+   * sits pending for the full expiry window holding one of the creator's slots,
+   * while the placer has been told it is live and the creator watches a queue
+   * they turned off. Nothing throws in either direction, which is why it is
+   * asserted rather than assumed.
+   */
+  it('approves a free placement on an auto space, which the claim will not do', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
+
+    const result = await createStickerPlacement(freeInput);
+
+    expect(settlePlacement).toHaveBeenCalledWith({
+      placementId: FREE_PLACEMENT,
+      action: 'approve',
+      actorId: OWNER,
+    });
+    expect(result.status).toBe('approved');
+    // Last, so nothing can put a placement live before the use behind it is
+    // spent.
+    expect(calls).toEqual(['claim', 'spend', 'settle:approve']);
+  });
+
+  it('leaves a free placement on a review space pending', async () => {
+    const result = await createStickerPlacement(freeInput);
+
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(result.status).toBe('pending');
+  });
+
+  /**
+   * The unwind deletes rather than expiring, and that is a decision about the
+   * placer's day rather than about tidiness: the daily allowance counts on
+   * `createdAt` across every status, so an expired row is indistinguishable
+   * from one a creator declined. A free row has no escrow legs to preserve, so
+   * the delete destroys nothing.
+   */
+  it('deletes the row when the use spend fails, rather than expiring it', async () => {
+    spendStickerUsesFor.mockRejectedValueOnce(new Error('no uses left'));
+
+    await expect(createStickerPlacement(freeInput)).rejects.toThrow(/no uses left/);
+
+    expect(placementDeleteMany).toHaveBeenCalledWith({
+      // Scoped, so a claim someone has since acted on cannot be deleted out
+      // from under them.
+      where: { id: FREE_PLACEMENT, free: true, status: 'pending' },
+    });
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('does not approve a placement whose use spend failed', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
+    spendStickerUsesFor.mockRejectedValueOnce(new Error('no uses left'));
+
+    await expect(createStickerPlacement(freeInput)).rejects.toThrow(/no uses left/);
+
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(calls).toEqual(['claim', 'discard']);
+  });
+
+  it('refuses without spending a use when the claim refuses', async () => {
+    createFreePlacement.mockRejectedValueOnce(
+      new Error('placement: the free slots on this one are taken')
+    );
+
+    await expect(createStickerPlacement(freeInput)).rejects.toThrow(/free slots/);
+
+    expect(spendStickerUsesFor).not.toHaveBeenCalled();
+    expect(placementDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it('places free on a space that has never been priced', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, setPrice: null, price: null });
+
+    // The price refusal gates the offer that needs one. A creator can open free
+    // capacity without ever setting a price, and refusing here would close the
+    // free tier on exactly the spaces it was built for.
+    await expect(createStickerPlacement(freeInput)).resolves.toMatchObject({
+      placementId: FREE_PLACEMENT,
+    });
+  });
+
+  it('still refuses a sticker the placer does not own', async () => {
+    queryRaw.mockReset();
+    givenStickerAndBalance({ owned: false, createdById: SELLER });
+
+    await expect(createStickerPlacement(freeInput)).rejects.toThrow(/do not own that sticker/);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a sticker larger than the creator allows', async () => {
+    await expect(
+      createStickerPlacement({ ...freeInput, data: { ...freeInput.data, scale: 0.99 } })
+    ).rejects.toThrow(/allows stickers up to/);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The removal lock's copy, which was justified by a payment a free row never
+ * made.
+ *
+ * The week itself is unchanged — Justin's call, 2026-08-17 — so what is asserted
+ * here is only that the reason given is true of the row it is given for. A
+ * stated reason that is false is worse than a shorter one, because it is what a
+ * support answer repeats back.
+ */
+describe('the removal lock explains itself truthfully on a free row', () => {
+  const approvedAt = new Date(Date.now() - 60_000);
+  const remove = () =>
+    actOnStickerPlacement({ placementId: PLACEMENT, action: 'remove', userId: OWNER });
+
+  const givenApproved = (free: boolean) =>
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      placerId: PLACER,
+      targetId: IMAGE,
+      amount: free ? 0 : PRICE,
+      status: 'approved',
+      surface: 'sticker',
+      free,
+      data: { cosmeticId: COSMETIC, x: 0.1, y: 0.1, scale: 0.2, rotation: 0 },
+      createdAt: approvedAt,
+      resolvedAt: approvedAt,
+    });
+
+  it('does not claim someone paid for a free placement', async () => {
+    givenApproved(true);
+
+    await expect(remove()).rejects.toThrow(/commitment to keep it up for a week/);
+    await expect(remove()).rejects.not.toThrow(/paid/);
+  });
+
+  it('keeps the paid reason on a paid placement', async () => {
+    givenApproved(false);
+
+    await expect(remove()).rejects.toThrow(/Someone paid to place it/);
+  });
+
+  it('refuses both for the same week, whatever the reason says', async () => {
+    givenApproved(true);
+
+    await expect(remove()).rejects.toThrow(/can be removed from/);
+    expect(placementUpdateMany).not.toHaveBeenCalled();
   });
 });

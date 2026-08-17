@@ -51,6 +51,18 @@ export const stickerPlacementDataSchema = z.object({
 export const createStickerPlacementSchema = z.object({
   imageId: z.number().int().positive(),
   data: stickerPlacementDataSchema,
+  /**
+   * Take the creator's free capacity rather than paying their price.
+   *
+   * Safe to accept from the client because it selects a path, not an outcome:
+   * everything that makes a free placement legal is re-decided by
+   * `createFreePlacement` under a lock. Defaulted false so a client cached from
+   * before the free tier existed still places a paid sticker.
+   *
+   * 🔴 There is deliberately no `placerId` here, and there must never be one —
+   * see the note on `CreateStickerPlacement`.
+   */
+  free: z.boolean().default(false),
 });
 export type CreateStickerPlacementInput = z.infer<typeof createStickerPlacementSchema>;
 
