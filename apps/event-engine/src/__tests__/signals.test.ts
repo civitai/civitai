@@ -1,12 +1,10 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { SignalsService } from './signals';
-
-/**
- * These tests use Node's built-in test runner (`node:test`) so they need no
- * extra dev dependency / jest-transform wiring. Run with the repo's `tsx`:
- *   pnpm --filter @civitai/event-engine exec tsx --test src/common/services/signals.test.ts
- */
+// Deliberately outside `src/common`: that directory is a hand-vendored copy of
+// event-engine-common that has already diverged from it, and the upstream has no tests. A
+// re-vendor would clobber a test living there — and because the CI ledger derives what it
+// expects from what is on disk, event-engine would drop out of the apps job silently rather
+// than turning red.
+import { expect, test } from 'vitest';
+import { SignalsService } from '@/common/services/signals';
 
 const originalFetch = globalThis.fetch;
 
@@ -39,11 +37,11 @@ test('retries once on ECONNRESET and succeeds on the second attempt (never throw
     }) as typeof fetch,
     async () => {
       const svc = new SignalsService('http://signals.local', true);
-      // Must resolve without throwing.
-      await assert.doesNotReject(svc.sendSignal('topic-1', 'metric:update', { a: 1 }));
+      // Must resolve without throwing; a rejection fails the test with the real error.
+      await svc.sendSignal('topic-1', 'metric:update', { a: 1 });
     }
   );
-  assert.equal(calls, 2, 'fetch should be attempted twice (initial + one retry)');
+  expect(calls, 'fetch should be attempted twice (initial + one retry)').toBe(2);
 });
 
 test('does NOT retry a non-transient error and rethrows it', async () => {
@@ -55,10 +53,10 @@ test('does NOT retry a non-transient error and rethrows it', async () => {
     }) as typeof fetch,
     async () => {
       const svc = new SignalsService('http://signals.local', true);
-      await assert.rejects(svc.sendSignal('topic-2', 'metric:update', { a: 1 }), /boom/);
+      await expect(svc.sendSignal('topic-2', 'metric:update', { a: 1 })).rejects.toThrow(/boom/);
     }
   );
-  assert.equal(calls, 1, 'non-transient error should not be retried');
+  expect(calls, 'non-transient error should not be retried').toBe(1);
 });
 
 test('retries at most once, then rethrows on a second consecutive ECONNRESET', async () => {
@@ -70,10 +68,12 @@ test('retries at most once, then rethrows on a second consecutive ECONNRESET', a
     }) as typeof fetch,
     async () => {
       const svc = new SignalsService('http://signals.local', true);
-      await assert.rejects(svc.sendSignal('topic-3', 'metric:update', { a: 1 }), /ECONNRESET/);
+      await expect(svc.sendSignal('topic-3', 'metric:update', { a: 1 })).rejects.toThrow(
+        /ECONNRESET/
+      );
     }
   );
-  assert.equal(calls, 2, 'should attempt exactly twice, then give up');
+  expect(calls, 'should attempt exactly twice, then give up').toBe(2);
 });
 
 test('is a no-op (never throws) when disabled / no URL configured', async () => {
@@ -85,8 +85,8 @@ test('is a no-op (never throws) when disabled / no URL configured', async () => 
     }) as typeof fetch,
     async () => {
       const svc = new SignalsService('', true); // disabled: no URL
-      await assert.doesNotReject(svc.sendSignal('topic-4', 'metric:update', { a: 1 }));
+      await svc.sendSignal('topic-4', 'metric:update', { a: 1 });
     }
   );
-  assert.equal(calls, 0, 'disabled service should not call fetch');
+  expect(calls, 'disabled service should not call fetch').toBe(0);
 });

@@ -270,10 +270,8 @@ export default defineConfig({
       'packages/*/vitest.config.mts',
       // The `apps/*` suites, on exactly the same footing and for exactly the same reason:
       // nothing in CI invoked them either. Same CONFIG-FILE glob, same rationale — a bare
-      // `apps/*` glob would adopt `event-engine` and `moderator`, which have no vitest
-      // config, and hand them a default `include` they were never written against.
-      // (`apps/event-engine` does own one test file, but it is a `node:test` suite by
-      // deliberate choice — see its header — so Vitest is the wrong runner for it.)
+      // `apps/*` glob would adopt `moderator`, which has no vitest config, and hand it a
+      // default `include` it was never written against.
       //
       // Unlike the packages, these set `test.name` themselves (`app:auth`,
       // `app:notifications`, ...) rather than inheriting their `package.json` name. That is
