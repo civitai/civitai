@@ -257,8 +257,10 @@
             </a>
           </li>
           <!-- Retool's sidebar puts Bulk Image Manager third. It leaves the page, carrying the account
-               with it, so it renders in position rather than as a section of its own. -->
-          {#if s.slug === 'socials' && data.result}
+               with it, so it renders in position rather than as a section of its own.
+               Anchored to a slug that is IN `SECTIONS`: it was pinned to `socials`, and retiring that
+               section silently removed the only render site this link has. -->
+          {#if s.slug === 'basic' && data.result}
             <li>
               <a
                 href={SECTION_LINKS['bulk-image-manager'].href(data.result.identity.id)}

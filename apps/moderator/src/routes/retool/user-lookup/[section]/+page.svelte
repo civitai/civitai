@@ -93,7 +93,8 @@
       />
       <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} {form} />
       <AddressesPanel {signals} />
-    {:else if section === 'socials'}
+      <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
+           held nothing but a link list, and a tab per list is a click that buys nothing. -->
       <SocialsPanel
         {signals}
         userId={result.identity.id}

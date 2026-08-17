@@ -17,9 +17,13 @@ export const SECTION_LINKS: Record<string, SectionLink> = {
   },
 };
 
+// 'socials' is deliberately absent: the profile fields it used to carry (avatar, bio, location) now
+// render on Basic, which left a tab holding nothing but a link list. It folds in there instead. The
+// slug still RESOLVES — a pasted link to it redirects — so old URLs in tickets do not 404.
+export const RETIRED_SECTIONS: Record<string, string> = { socials: 'basic' };
+
 export const SECTIONS: Section[] = [
   { slug: 'basic', label: 'Basic User Information' },
-  { slug: 'socials', label: 'Socials & Bio' },
   { slug: 'content', label: 'Content Overview' },
   { slug: 'buzz', label: 'Buzz' },
   { slug: 'prompts', label: 'Prompt Audit' },

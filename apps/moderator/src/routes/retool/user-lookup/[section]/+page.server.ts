@@ -1,9 +1,9 @@
-import { error, fail } from '@sveltejs/kit';
+import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { CAPABILITIES, canAccess, canUse, denied } from '$lib/server/access';
 import { parseForm, userIdSchema } from '$lib/server/query';
-import { isSection } from '../sections';
+import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
   addUserNote,
   sendModNotification,
@@ -46,7 +46,11 @@ import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, url }) => {
+  // A retired section keeps working: its slug is in tickets and pasted lookup URLs, and 404ing one
+  // reads as the account being gone rather than the tab having moved.
+  const moved = RETIRED_SECTIONS[params.section];
+  if (moved) redirect(307, `/retool/user-lookup/${moved}${url.search}`);
   if (!isSection(params.section)) error(404, 'Unknown section');
   return { section: params.section };
 };
@@ -197,7 +201,8 @@ export const actions: Actions = {
   // moderator without it gets a clear refusal from the API rather than a silent no-op — but that is the
   // other app's permission, not ours, so the local capability is what decides who sees the form at all.
   updateIdentity: async ({ request, locals }) => {
-    if (!canUse(locals.user, CAPABILITIES.editIdentity)) return identityFail(denied(CAPABILITIES.editIdentity));
+    if (!canUse(locals.user, CAPABILITIES.editIdentity))
+      return identityFail(denied(CAPABILITIES.editIdentity));
     const input = parseForm(
       userIdSchema.extend({
         username: z.string().trim().min(1).max(50).optional(),
@@ -408,9 +413,15 @@ export const actions: Actions = {
           .string()
           .trim()
           .max(300)
-          .refine((v) => v === '' || v.startsWith('/') || /^https:\/\/[a-z0-9.-]*civitai\.(com|red)\//i.test(v), {
-            message: 'Link must be a relative path or a civitai URL.',
-          })
+          .refine(
+            (v) =>
+              v === '' ||
+              v.startsWith('/') ||
+              /^https:\/\/[a-z0-9.-]*civitai\.(com|red)\//i.test(v),
+            {
+              message: 'Link must be a relative path or a civitai URL.',
+            }
+          )
           .optional(),
       }),
       await request.formData()
@@ -445,7 +456,8 @@ export const actions: Actions = {
   },
 
   grantCosmetic: async ({ request, locals }) => {
-    if (!canUse(locals.user, CAPABILITIES.grantCosmetics)) return shopFail(denied(CAPABILITIES.grantCosmetics));
+    if (!canUse(locals.user, CAPABILITIES.grantCosmetics))
+      return shopFail(denied(CAPABILITIES.grantCosmetics));
     const input = parseForm(
       userIdSchema.extend({ cosmeticId: z.coerce.number().int().positive() }),
       await request.formData()
