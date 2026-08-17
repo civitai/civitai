@@ -5,11 +5,10 @@
  * so the unified generate/whatif pipeline (`generateFromGraph` /
  * `whatIfFromGraph`) can submit it like any other ecosystem step.
  *
- * Why a thin wrapper: the existing `polyGen.handler.ts` (legacy bespoke path)
- * already builds the Meshy/Fal input shape from the RHF form schema. The
- * graph snapshot has the same shape by the time it reaches us — both come
- * from `model3dGenerationSchema` originally — so we just feed it into
- * `toMeshyPolyGenInput` and wrap the result in a `polyGen` step.
+ * The graph carries BOTH Meshy versions (see `polygen-graph.ts`), so this
+ * branches on `polygenVersion` and hands off to the matching input builder:
+ *   v6 → `toMeshyPolyGenInput`   (textTo3D | imageTo3D)
+ *   v7 → `toMeshyV7PolyGenInput` (imageTo3D | multiImageTo3D, by image count)
  *
  * The legacy file (`polyGen.handler.ts`) is kept for `handlePolyGenWorkflowResult`
  * (orchestrator webhook → Draft Model3D row). Only the submit-from-form path
@@ -19,6 +18,8 @@
 import type {
   MeshyImageTo3dFalPolyGenInput,
   MeshyTextTo3dFalPolyGenInput,
+  MeshyV7ImageTo3dFalPolyGenInput,
+  MeshyV7MultiImageTo3dFalPolyGenInput,
   PolyGenStepTemplate,
 } from '@civitai/client';
 import { defineHandler } from './handler-factory';
@@ -28,36 +29,56 @@ import {
   toMeshyPolyGenInput,
   type Model3DGenerationSchema,
 } from '~/server/orchestrator/polygen/polygen.schema';
+import {
+  toMeshyV7PolyGenInput,
+  type PolyGenV7GenerationSchema,
+} from '~/server/orchestrator/polygen/polygen-v7.schema';
 import { buildModel3DPreviewStep } from './model3d-preview';
 
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 type PolyGenCtx = EcosystemGraphOutput & { ecosystem: 'PolyGen' };
 
+type SourceImage = { url: string; width: number; height: number };
+
 /**
  * Build a `PolyGenStepTemplate` from a validated polygen-graph snapshot.
  *
- * The snapshot mostly mirrors `Model3DGenerationSchema` already; the one
- * twist is that the graph uses `polygenMode` (avoids clashing with the
- * standard `mode` Controller in GenerationForm.tsx) — we map it back to
- * `mode` here before handing off to the shared input builder.
+ * The snapshot mostly mirrors the orchestrator schemas already; the twists are
+ * that the graph uses `polygenMode` (avoids clashing with the standard `mode`
+ * Controller in GenerationForm.tsx) and carries `images` where the schemas want
+ * `sourceImage` (v6) / `sourceImages` (v7).
  */
 export const createPolyGenInput = defineHandler<PolyGenCtx, StepInput[]>((data, ctx) => {
-  const { polygenMode, ...rest } = data as PolyGenCtx & { polygenMode?: 'preview' | 'full' };
+  const { polygenMode, ...rest } = data as PolyGenCtx & {
+    polygenMode?: 'preview' | 'full';
+    polygenVersion?: 'v6' | 'v7';
+  };
+  const images = (data as { images?: SourceImage[] }).images ?? [];
 
-  // The orchestrator schema discriminates on `process` and speaks `sourceImage`;
-  // derive both from `workflow` + `images[0]` (the graph carries neither).
-  const process = data.workflow.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
-  const sourceImage = process === 'imageTo3D' ? data.images?.[0] : undefined;
-  const schemaShape = {
-    ...rest,
-    process,
-    ...(polygenMode !== undefined ? { mode: polygenMode } : {}),
-    ...(sourceImage ? { sourceImage } : {}),
-  } as unknown as Model3DGenerationSchema;
-
-  const input = toMeshyPolyGenInput(schemaShape) as
+  let input:
     | MeshyTextTo3dFalPolyGenInput
-    | MeshyImageTo3dFalPolyGenInput;
+    | MeshyImageTo3dFalPolyGenInput
+    | MeshyV7ImageTo3dFalPolyGenInput
+    | MeshyV7MultiImageTo3dFalPolyGenInput;
+
+  if ((data as { polygenVersion?: string }).polygenVersion === 'v7') {
+    // v7 is image-driven only; the operation follows the image count.
+    input = toMeshyV7PolyGenInput({
+      ...rest,
+      sourceImages: images,
+    } as unknown as PolyGenV7GenerationSchema);
+  } else {
+    // The v6 schema discriminates on `process` and speaks `sourceImage`; derive
+    // both from `workflow` + `images[0]` (the graph carries neither).
+    const process = data.workflow.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
+    const sourceImage = process === 'imageTo3D' ? images[0] : undefined;
+    input = toMeshyPolyGenInput({
+      ...rest,
+      process,
+      ...(polygenMode !== undefined ? { mode: polygenMode } : {}),
+      ...(sourceImage ? { sourceImage } : {}),
+    } as unknown as Model3DGenerationSchema);
+  }
 
   const polyGenStep: PolyGenStepTemplate = {
     $type: 'polyGen',

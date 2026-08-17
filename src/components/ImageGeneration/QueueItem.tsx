@@ -209,9 +209,14 @@ export function QueueItem({
             (replayParams?.workflow as string | undefined) ??
             // Tripo/Hunyuan3D are image-to-3D only; only PolyGen (Meshy) has a
             // text-to-3D branch, so consult its `process` for those items.
+            // `multiImageTo3D` is Meshy v7's multi-view operation — also
+            // image-driven, so it must not fall through to txt2model3d.
             (replayEcosystem !== 'PolyGen' ||
             request.steps.some(
-              (s) => s.$type === 'polyGen' && (s.params as any)?.process === 'imageTo3D'
+              (s) =>
+                s.$type === 'polyGen' &&
+                ((s.params as any)?.process === 'imageTo3D' ||
+                  (s.params as any)?.process === 'multiImageTo3D')
             )
               ? 'img2model3d'
               : 'txt2model3d'),
@@ -271,6 +276,8 @@ export function QueueItem({
   const polyGenChipLabel =
     polyGenProcess === 'imageTo3D'
       ? 'Image to 3D'
+      : polyGenProcess === 'multiImageTo3D'
+      ? 'Images to 3D'
       : polyGenProcess === 'textTo3D'
       ? 'Text to 3D'
       : polyGenStep

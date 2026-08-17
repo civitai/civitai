@@ -418,11 +418,15 @@ const featureFlags = createFeatureFlags({
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
   // Per-model 3D generator gates, layered UNDER `model3dGenerator` (which gates
-  // the whole 3D surface). Let Tripo & Hunyuan3D ship dark and roll out
-  // independently of Meshy (PolyGen) via Flipt. Off ⇒ the ecosystem is hidden
-  // from the img2model3d picker and rejected on submit (see ecosystem-graph.ts).
+  // the whole 3D surface), so each can ship dark and roll out independently via
+  // Flipt. Tripo & Hunyuan3D are whole ecosystems — off ⇒ hidden from the
+  // img2model3d picker and rejected on submit (see ecosystem-graph.ts).
+  // `meshyV7Generator` instead gates ONE version inside PolyGen: off ⇒ v7 is
+  // dropped from the version options, which both hides it and makes a submitted
+  // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
   tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
   hunyuan3dGenerator: { availability: ['mod'], fliptKey: 'hunyuan3d-generator' },
+  meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
   // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
   // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
   // is unaffected when this is off. Mod-only until the `grok-imagine-2` Flipt
