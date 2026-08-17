@@ -40,6 +40,7 @@ const makeImage = () => ({
   modelVersionIdsManual: [],
   publishedAt: new Date('2026-07-01T00:00:00.000Z'),
   collectionItemStatus: null,
+  collectionItemAddedById: null,
   user: {
     id: 500,
     username: 'creator',
@@ -110,6 +111,8 @@ describe('image-infinite-wire', () => {
         'modelVersionIdsManual',
         'publishedAt',
         'collectionItemStatus',
+        // Read by the collection page's remove rule — whoever added an item may remove it.
+        'collectionItemAddedById',
         'user',
         'stats',
         'reactions',

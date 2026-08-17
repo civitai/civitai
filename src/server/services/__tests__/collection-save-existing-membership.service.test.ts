@@ -140,9 +140,15 @@ const removeFrom = ({
 // Submitting to someone else's collection follows it. That follow is a side effect of the entry landing,
 // so a save that writes nothing must not leave the user following anything.
 const OTHER_COLLECTION_ID = 55501;
-const saveToOthersCollection = ({ write }: { write: 'Public' | 'Private' }) => {
+const saveToOthersCollection = ({
+  write,
+  metadata = {},
+}: {
+  write: 'Public' | 'Private';
+  metadata?: Record<string, unknown>;
+}) => {
   mockDbRead.collection.findMany.mockResolvedValue([
-    collectionRow({ id: OTHER_COLLECTION_ID, userId: 999, write }),
+    collectionRow({ id: OTHER_COLLECTION_ID, userId: 999, write, metadata }),
   ]);
   mockDbRead.collectionItem.findMany.mockResolvedValue([]);
   mockDbRead.$queryRaw.mockResolvedValue([
@@ -191,6 +197,103 @@ describe('saveItemInCollections follow-on-submission', () => {
       /no changes were made/i
     );
     expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
+  });
+
+  // The challenge jobs set this so a daily-challenge entry doesn't add the challenge collection to
+  // every entrant's list — the largest source of the flooding that following-on-submission causes.
+  it('does not follow a collection whose metadata disables it', async () => {
+    await expect(
+      saveToOthersCollection({ write: 'Public', metadata: { disableFollowOnSubmission: true } })
+    ).resolves.toBeDefined();
+    expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// `writeReview` is granted to everyone on a write:Review collection, its owner and managers
+// included, so reading it alone filed the people who work the queue into their own queue.
+const REVIEW_COLLECTION_ID = 55502;
+const saveToReviewCollection = ({
+  collectionOwnerId,
+  contributorPermissions = null,
+}: {
+  collectionOwnerId: number;
+  contributorPermissions?: string[] | null;
+}) => {
+  mockDbRead.collection.findMany.mockResolvedValue([
+    collectionRow({ id: REVIEW_COLLECTION_ID, userId: collectionOwnerId, write: 'Review' }),
+  ]);
+  mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+  mockDbRead.collectionItem.count.mockResolvedValue(0);
+  mockDbRead.model.findMany.mockResolvedValue([{ id: MODEL_ID, userId: USER_ID }]);
+  mockDbRead.modelVersion.findMany.mockResolvedValue([]);
+  mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
+  mockDbRead.$queryRaw.mockResolvedValue([
+    {
+      id: REVIEW_COLLECTION_ID,
+      userId: collectionOwnerId,
+      write: 'Review',
+      read: 'Public',
+      type: 'Model',
+      mode: null,
+      contributorPermissions,
+    },
+  ]);
+  mockDbWrite.$executeRaw.mockReturnValue('insert' as never);
+  mockDbWrite.$transaction.mockResolvedValue([]);
+
+  return saveItemInCollections({
+    input: {
+      modelId: MODEL_ID,
+      type: 'Model',
+      userId: USER_ID,
+      collections: [{ collectionId: REVIEW_COLLECTION_ID }],
+      removeFromCollectionIds: [],
+    },
+  } as never);
+};
+
+// The rows are handed to the INSERT as a jsonb payload rather than as prisma arguments, so the
+// status has to be read back out of it.
+const insertedStatuses = (): string[] =>
+  mockDbWrite.$executeRaw.mock.calls
+    .flatMap((call) => call.slice(1))
+    .filter((value): value is string => typeof value === 'string' && value.startsWith('['))
+    .flatMap((value) => JSON.parse(value) as { status: string }[])
+    .map((row) => row.status);
+
+describe('saveItemInCollections review queue', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('queues a stranger submitting to a review collection', async () => {
+    await saveToReviewCollection({ collectionOwnerId: 999 });
+    expect(insertedStatuses()).toEqual(['REVIEW']);
+  });
+
+  it('accepts the collection owner submitting to their own review collection', async () => {
+    await saveToReviewCollection({ collectionOwnerId: USER_ID });
+    expect(insertedStatuses()).toEqual(['ACCEPTED']);
+  });
+
+  // An invited collaborator is someone the collection vouched for; the queue is for the public.
+  // ADD is beyond the free grant on a write:Review collection, which is what marks the row as a
+  // seat rather than a follow.
+  it('accepts an invited collaborator on a review collection', async () => {
+    await saveToReviewCollection({
+      collectionOwnerId: 999,
+      contributorPermissions: ['VIEW', 'ADD'],
+    });
+    expect(insertedStatuses()).toEqual(['ACCEPTED']);
+  });
+
+  // A follower on the same collection holds exactly the free grant, so they stay in the queue.
+  it('queues a follower whose row only mirrors the free grant', async () => {
+    await saveToReviewCollection({
+      collectionOwnerId: 999,
+      contributorPermissions: ['VIEW', 'ADD_REVIEW'],
+    });
+    expect(insertedStatuses()).toEqual(['REVIEW']);
   });
 });
 

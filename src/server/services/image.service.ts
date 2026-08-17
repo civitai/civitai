@@ -1460,6 +1460,7 @@ type GetAllImagesRaw = {
   hasPositivePrompt?: boolean;
   collectionItemNote?: string | null;
   collectionItemStatus?: CollectionItemStatus | null;
+  collectionItemAddedById?: number | null;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1942,12 +1943,13 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", note, status, "sortKey"
+          SELECT "imageId", note, status, "addedById", "sortKey"
           FROM (
             SELECT
               ci."imageId",
               ci.note,
               ci.status,
+              ci."addedById",
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -2207,7 +2209,9 @@ export const getAllImages = async (
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${Prisma.raw(
-        collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : ''
+        collectionId
+          ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus", ct."addedById" as "collectionItemAddedById"'
+          : ''
       )}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
@@ -2422,6 +2426,9 @@ export const getAllImages = async (
         // Model" chip on the feed-modal path. See the model3dId override below.
         model3dId?: number | null;
         collectionItemStatus?: CollectionItemStatus | null;
+        // Who put the item in the collection — the removal rule accepts them, so the card needs
+        // it to offer the action. Only present on a collection-filtered feed.
+        collectionItemAddedById?: number | null;
       }
     > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
       const judgeScore = parseJudgeScore(collectionItemNote ?? null);
