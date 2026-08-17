@@ -6,16 +6,17 @@
  * something to show on day one.
  *
  * Usage:
- *   npx ts-node scripts/oneoffs/backfill-model3d-views.ts --until 2026-08-18 --dry-run
- *   npx ts-node scripts/oneoffs/backfill-model3d-views.ts --until 2026-08-18
+ *   npm run tsscript scripts/oneoffs/backfill-model3d-views.ts -- --until 2026-08-18 --dry-run
+ *   npm run tsscript scripts/oneoffs/backfill-model3d-views.ts -- --until 2026-08-18
  *
- * Requires the ClickHouse enum widening in scripts/oneoffs/model3d-view-tracking.sql
- * to have been applied first — `daily_views.entityType` cannot hold 'Model3D' until then.
+ * Run this LAST: after the enum widening (scripts/oneoffs/model3d-view-tracking.sql)
+ * and after the tracking code is deployed. It verifies against live data that the
+ * cutover constant is the real first tracked day rather than trusting it.
  */
 
 import { clickhouse } from '~/server/clickhouse/client';
 import { getClient } from '~/server/db/db-helpers';
-import { DETAIL_PREDICATE, parseArgs, previousDay } from './backfill-model3d-views.helpers';
+import { DETAIL_PREDICATE, ID_PATTERN, parseArgs } from './backfill-model3d-views.helpers';
 
 type Row = { entityId: number; createdDate: string; views: number };
 
@@ -25,9 +26,28 @@ async function main() {
 
   console.log(`Range: [${from}, ${until})  ${dryRun ? '(dry run)' : ''}`);
 
-  // Refuse rather than double-count. `daily_views` is a SummingMergeTree, so a
-  // second run does not overwrite — it adds, and the result looks plausible.
-  const existing = await clickhouse.$query<{ rows: string }>(`
+  // The constant is only a guess until tracking is live. The first day `views`
+  // actually holds a Model3DView IS the cutover; if it disagrees with the
+  // constant, one of the two spans is wrong — a gap if the deploy slipped past
+  // it, an overlap if it landed early. Neither is visible once rows are written.
+  const live = await clickhouse.$query<{ firstDay: string; rows: number }>(`
+    SELECT min(createdDate) AS firstDay, count() AS rows
+    FROM default.views WHERE type = 'Model3DView'
+  `);
+  if (!Number(live?.[0]?.rows ?? 0))
+    throw new Error(
+      `No Model3DView rows in \`views\` yet. Deploy tracking first, then run this — ` +
+        `until tracking is live there is nothing to confirm the backfill's stopping point against.`
+    );
+  const firstTrackedDay = live[0].firstDay;
+  if (firstTrackedDay !== until)
+    throw new Error(
+      `Cutover mismatch: first tracked day is ${firstTrackedDay}, --until is ${until}. ` +
+        `Set MODEL3D_VIEW_TRACKING_CUTOVER to ${firstTrackedDay} and redeploy, then re-run. ` +
+        `Backfilling to the wrong boundary leaves a permanently missing or doubled day.`
+    );
+
+  const existing = await clickhouse.$query<{ rows: number }>(`
     SELECT count() AS rows FROM default.daily_views
     WHERE entityType = 'Model3D' AND createdDate >= '${from}' AND createdDate < '${until}'
   `);
@@ -38,35 +58,27 @@ async function main() {
         `Refusing to run — this table sums on insert, so a re-run would inflate every day it touches.`
     );
 
-  const aggregated = await clickhouse.$query<{
-    entityId: string;
-    createdDate: string;
-    views: string;
-  }>(`
-    SELECT
-      toUInt32(extract(path, '^/3d-models/([0-9]+)')) AS entityId,
-      toDate(time) AS createdDate,
-      count() AS views
-    FROM default.pageViews
-    WHERE toDate(time) >= '${from}' AND toDate(time) < '${until}'
-      AND path LIKE '/3d-models%'
-      AND ${DETAIL_PREDICATE}
-    GROUP BY entityId, createdDate
-    ORDER BY createdDate, entityId
-  `);
-
-  const candidates: Row[] = (aggregated ?? []).map((r) => ({
-    entityId: Number(r.entityId),
-    createdDate: r.createdDate,
-    views: Number(r.views),
-  }));
+  const candidates =
+    (await clickhouse.$query<Row>(`
+      SELECT
+        toUInt32(extract(path, '${ID_PATTERN}')) AS entityId,
+        toDate(time) AS createdDate,
+        count() AS views
+      FROM default.pageViews
+      WHERE toDate(time) >= '${from}' AND toDate(time) < '${until}'
+        AND path LIKE '/3d-models%'
+        AND ${DETAIL_PREDICATE}
+      GROUP BY entityId, createdDate
+      ORDER BY createdDate, entityId
+    `)) ?? [];
 
   if (!candidates.length) {
     console.log('Nothing to backfill.');
     return;
   }
 
-  // Ownership and existence live in Postgres; ClickHouse has no Model3D table.
+  // ClickHouse has no Model3D table, so a path id that resolves to nothing can
+  // only be caught here.
   const pg = getClient({ instance: 'primaryRead' });
   const ids = [...new Set(candidates.map((r) => r.entityId))];
   const { rows: known } = await pg.query<{ id: number }>(
@@ -86,50 +98,49 @@ async function main() {
       `[${unmappedIds.join(', ')}]`
   );
 
-  const boundaryDay = previousDay(until);
-  const expectedBoundary = mapped
-    .filter((r) => r.createdDate === boundaryDay)
-    .reduce((sum, r) => sum + r.views, 0);
+  const expectedRows = mapped.length;
+  const expectedViews = mapped.reduce((sum, r) => sum + r.views, 0);
 
   if (dryRun) {
-    const total = mapped.reduce((sum, r) => sum + r.views, 0);
-    console.log(`[DRY RUN] Would insert ${mapped.length} rows / ${total} views.`);
-    console.log(`[DRY RUN] Boundary day ${boundaryDay} would hold ${expectedBoundary} views.`);
+    console.log(`[DRY RUN] Would insert ${expectedRows} rows / ${expectedViews} views.`);
     return;
   }
 
+  // The shared client is built with `wait_for_async_insert: 0`, so by default
+  // `insert` resolves once the server has buffered the batch — before it is
+  // queryable, and without surfacing a server-side insert error at all. The
+  // verification below would then race the flush and report a false failure on a
+  // run that actually succeeded. Wait for this one.
   await clickhouse.insert({
     table: 'daily_views',
     values: mapped.map((r) => ({ entityType: 'Model3D', ...r })),
     format: 'JSONEachRow',
+    clickhouse_settings: { async_insert: 0, wait_for_async_insert: 1 },
   });
 
-  // Read the boundary day back rather than assuming it. SummingMergeTree merges
-  // in the background, so this must sum across parts — a raw row read can show
+  // Read the whole written range back rather than assuming it, and sum across
+  // parts: SummingMergeTree merges in the background, so a raw row read can show
   // either the pre- or post-merge shape and both look reasonable.
-  const readback = await clickhouse.$query<{ views: string }>(`
-    SELECT sum(views) AS views FROM default.daily_views
-    WHERE entityType = 'Model3D' AND createdDate = '${boundaryDay}'
+  const readback = await clickhouse.$query<{ rows: number; views: number }>(`
+    SELECT count() AS rows, sum(views) AS views FROM default.daily_views
+    WHERE entityType = 'Model3D' AND createdDate >= '${from}' AND createdDate < '${until}'
   `);
-  const actualBoundary = Number(readback?.[0]?.views ?? 0);
+  const actualRows = Number(readback?.[0]?.rows ?? 0);
+  const actualViews = Number(readback?.[0]?.views ?? 0);
 
-  console.log(
-    `Boundary day ${boundaryDay}: expected ${expectedBoundary}, stored ${actualBoundary}.`
-  );
-  if (actualBoundary !== expectedBoundary)
+  if (actualRows !== expectedRows || actualViews !== expectedViews)
     throw new Error(
-      `Boundary mismatch on ${boundaryDay}: expected ${expectedBoundary}, found ${actualBoundary}. ` +
+      `Write verification failed for [${from}, ${until}): expected ${expectedRows} rows / ` +
+        `${expectedViews} views, found ${actualRows} / ${actualViews}. ` +
         `Inspect before re-running — this table sums, so a blind retry compounds the error.`
     );
 
-  console.log(`Inserted ${mapped.length} rows.`);
+  console.log(`Inserted ${expectedRows} rows / ${expectedViews} views, verified.`);
 }
 
-if (require.main === module) {
-  main()
-    .then(() => process.exit(0))
-    .catch((e) => {
-      console.error(e instanceof Error ? e.message : e);
-      process.exit(1);
-    });
-}
+main()
+  .then(() => process.exit(0))
+  .catch((e) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });

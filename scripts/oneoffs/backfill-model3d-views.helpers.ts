@@ -6,16 +6,20 @@ import { MODEL3D_VIEW_TRACKING_CUTOVER } from '@civitai/shared';
 // First Model3D row in production. Nothing can have been viewed before it.
 export const DEFAULT_FROM = '2026-06-19';
 
+// The filter and the id extraction must stay in lockstep: a path the filter
+// admits but this pattern misses yields '', and toUInt32('') throws mid-query
+// over 570M rows. Derived from one constant so they cannot drift.
+export const ID_PATTERN = '^/3d-models/([0-9]+)';
+
 // Detail pages only. `/3d-models/<id>/edit` and `/3d-models/<id>/reviews` are
 // structurally identical to a slug segment, so they have to be excluded by name
 // rather than by shape — an anchored id regex alone still matches them.
 //
-// Evaluated by ClickHouse's RE2, not by Node. Verified against 30 days of prod
-// `pageViews`: 82,319 rows counted across 426 ids, 399 rows excluded as
-// edit/reviews, 21 junk rows (`/3d-models#`, `/3d-modelshttps:/...`) excluded.
+// Evaluated by ClickHouse's RE2, never by Node: a unit test of this string
+// proves nothing about how it matches.
 export const DETAIL_PREDICATE = `
-  match(path, '^/3d-models/[0-9]+([/?#]|$)')
-  AND NOT match(path, '^/3d-models/[0-9]+/(edit|reviews)([/?#]|$)')
+  match(path, '${ID_PATTERN}([/?#]|$)')
+  AND NOT match(path, '${ID_PATTERN}/(edit|reviews)([/?#]|$)')
 `;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -35,8 +39,6 @@ export function parseArgs(argv: string[]) {
   if (!DATE_RE.test(from)) throw new Error(`--from must be YYYY-MM-DD, got "${from}"`);
   if (from >= until) throw new Error(`--from (${from}) must be strictly before --until (${until})`);
 
-  // The cutover is the contract between this backfill and live tracking. Letting
-  // them disagree is how you get a duplicated or missing day that nothing detects.
   if (until !== MODEL3D_VIEW_TRACKING_CUTOVER)
     throw new Error(
       `--until must equal MODEL3D_VIEW_TRACKING_CUTOVER (${MODEL3D_VIEW_TRACKING_CUTOVER}), got "${until}". ` +
@@ -44,10 +46,4 @@ export function parseArgs(argv: string[]) {
     );
 
   return { until, from, dryRun };
-}
-
-export function previousDay(date: string) {
-  const d = new Date(`${date}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
 }

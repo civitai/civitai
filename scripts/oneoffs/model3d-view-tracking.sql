@@ -1,6 +1,14 @@
 -- Model3D view tracking — ClickHouse enum widening.
 --
--- APPLY ORDER (across the three tracking PRs):
+-- APPLY ALL FOUR STEPS BEFORE DEPLOYING THE CODE THAT EMITS Model3DView, and run
+-- steps 1-3 back to back without a pause. Between step 2 and step 3, `views`
+-- accepts a Model3D row while `daily_views_mv`'s declared header still holds
+-- nine arms — and if the MV push converts to its own header (the reason step 3
+-- exists), that push fails. Every view type on the site shares that insert path,
+-- and the client is configured `wait_for_async_insert: 0`, so the failure
+-- surfaces in Axiom and nowhere a human is looking.
+--
+-- APPLY ORDER ACROSS THE THREE TRACKING PRs:
 --   1. Scarlet's comics DDL FIRST (src/server/clickhouse/migrations/2026-08-17-comic-views.sql
 --      on feat/comic-view-tracking, PR #3993) — it takes enum indexes 10 and 11.
 --   2. Then this file. It takes index 12.
@@ -15,13 +23,17 @@
 -- `views.type`, and `daily_views.entityType` (a separate enum on a separate
 -- table). All three are restated below.
 --
--- ⚠️ Step 0 is not optional. Run it and confirm the current types match what
--- this file expects before running anything else.
---
--- Appending enum values is metadata-only on both tables: no data rewrite, no
--- part mutation, no downtime.
+-- Appending is metadata-only ONLY because every existing name→index pair is
+-- preserved. `entityType` is a sorting-key column in both tables, so renumbering
+-- or dropping an arm turns this from a metadata change into a rewrite of 1.68B
+-- `daily_views` rows and the whole of `views`.
 
--- === Step 0: confirm current state (read-only, run before anything else) =====
+-- === Step 0: confirm the starting state (read-only) =========================
+-- EXPECTED: all three types end at 'BountyEntry' = 9 / 'BountyEntryView' = 9 if
+-- Scarlet's file has not run yet, or at 'ComicChapter' = 11 /
+-- 'ComicChapterView' = 11 if it has. Anything carrying an arm past 11 means a
+-- migration this file does not know about has claimed indexes — STOP and
+-- reconcile, because the statements below would overwrite it.
 SELECT table, name, type FROM system.columns
 WHERE database = 'default'
   AND ((table = 'views' AND name IN ('type', 'entityType'))
@@ -29,12 +41,9 @@ WHERE database = 'default'
 ORDER BY table, name;
 
 -- === Step 1: widen the MV target BEFORE the source ==========================
--- `daily_views` is the sole materialized-view target carrying an Enum8 (verified
--- against the other six MVs reading `views`: uniqueViewsDaily stores `type` as
--- String, user_views/views_images_counts_mv compare the enum but store neither,
--- and cohorts_first_seen/cohorts_monthly_activity/daily_user_counts_mv never
--- reference it). If `views` were widened first, the first Model3D row would
--- reach a target that cannot represent it.
+-- `daily_views` is the sole materialized-view target carrying an Enum8. If
+-- `views` were widened first, the first Model3D row would reach a target that
+-- cannot represent it.
 ALTER TABLE default.daily_views
   MODIFY COLUMN entityType Enum8(
     'User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5,
@@ -60,20 +69,13 @@ ALTER TABLE default.views
 
 -- === Step 3: re-resolve the MV's own stored structure — AFTER steps 1 AND 2 ==
 -- `daily_views_mv` is a TO-materialized-view whose CREATE statement declares its
--- own copy of the Enum8. Steps 1 and 2 do not rewrite that metadata, and if the
--- MV converts pushed blocks to its declared structure rather than re-reading the
--- target's, a Model3D row would fail the MV push — failing the insert into
--- `views` for every view type, not just this one.
+-- own copy of the Enum8, which steps 1 and 2 do not rewrite.
 --
--- MODIFY QUERY re-derives the stored structure from the RESULT TYPES OF ITS
--- SELECT, and that SELECT reads `default.views`. Running it before step 2 would
+-- MODIFY QUERY re-derives that stored structure from the RESULT TYPES OF ITS
+-- SELECT, and the SELECT reads `default.views`. Running it before step 2 would
 -- re-derive the old nine-value enum off the un-widened source, pinning in place
 -- exactly the stale metadata this step exists to clear — and doing so in a way
--- that looks handled. It must come last. (Caught by @scarlet; I had it between
--- steps 1 and 2.)
---
--- The SELECT is the existing one restated byte-for-byte: this changes no
--- behaviour, only the declared structure. Metadata-only.
+-- that looks handled. It must come last.
 ALTER TABLE default.daily_views_mv
   MODIFY QUERY
     SELECT entityType, entityId, createdDate, count(*) AS views
@@ -81,8 +83,8 @@ ALTER TABLE default.daily_views_mv
     GROUP BY 1, 2, 3;
 
 -- === Step 4: verify (read-only) =============================================
--- Expect three rows, each type ending in 'Model3D' = 12 / 'Model3DView' = 12 AND
--- still carrying Scarlet's 10 and 11.
+-- Expect three rows, each carrying 'Model3D' = 12 / 'Model3DView' = 12 AND still
+-- carrying Scarlet's 10 and 11.
 SELECT table, name, type FROM system.columns
 WHERE database = 'default'
   AND ((table = 'views' AND name IN ('type', 'entityType'))
