@@ -633,9 +633,31 @@ export const appListingsRouter = router({
    * CALLER'S OWN listing only — nothing here is exposed to a public listing DTO);
    * typed failures map via `mapOffsiteError` (NOT_OWNED→FORBIDDEN, NOT_FOUND when no
    * listing row exists for the app).
+   *
+   * Rate-limited because the SLUG arm resolves any top-level listing and its two
+   * outcomes are distinguishable (NOT_OWNED→FORBIDDEN vs NOT_FOUND), i.e. it answers
+   * "does this slug exist?" for rows the public catalogue never shows — civitai#4003.
+   * Bounding is defence-in-depth, not closure: `submitExternalListing`'s
+   * `slugTakenError` is the same oracle at 10/hour. See the enforcement matrix in
+   * `app-listings.router.getMyListingForApp.rate-limit.test.ts` — both numbers are
+   * pinned there, so change them together.
    */
   getMyListingForApp: appDeveloperProcedure
     .meta(listingMediaCliScope)
+    .use(
+      rateLimit({
+        // A READ limit, shaped like this router's other reads (`getAppDetail`,
+        // `listAvailable`, `listReviews` are all 60/60) rather than like the hourly
+        // write caps — it must not interrupt authoring. The media editor invalidates
+        // this query after EVERY asset mutation, and the heaviest legitimate burst
+        // (a screenshot batch + icon + cover + reorders) is well under a refetch a
+        // second; the CLI calls it once per `app listing`. 60/60 clears both with
+        // room, while turning an unbounded enumeration into a metered one.
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many listing lookups — slow down.',
+      })
+    )
     .input(getMyListingForAppSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
