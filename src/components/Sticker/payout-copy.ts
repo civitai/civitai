@@ -56,13 +56,27 @@ export function declineConsequence(free: boolean | undefined) {
  * The queue row's headline, which is the only money statement on the card the
  * Approve and Decline buttons sit under.
  *
- * A free row carries `amount: 0`, enforced by the DB — so "paid 0 Buzz" is not a
- * cosmetic slip. It is the page the free-placement notification sends the creator
- * to: the notification says the placement was free and the card then asserts a
- * payment of zero, immediately above an irreversible choice.
+ * Paid rows only. A free row carries `amount: 0`, enforced by the DB, so this
+ * sentence would assert a payment of zero on the page the free-placement
+ * notification sends the creator to — immediately above an irreversible choice.
+ * The caller says nothing about money on a free row and badges it instead.
  */
-export const placementPaymentSummary = (free: boolean, amount: number) =>
-  free ? 'placed this free' : `paid ${amount} Buzz`;
+export const placementPaymentSummary = (amount: number) => `paid ${amount} Buzz`;
+
+/**
+ * Which of those a queue row says, which is the branch that must not be lost.
+ *
+ * Here rather than as a ternary in the page: `src/pages` cannot carry a test —
+ * Next treats every file under it as a route — so a `row.free ?` inline is a
+ * money statement with nothing able to assert it. Dropping the free arm makes
+ * the card read "paid 0 Buzz" over a free placement, on the page a "your
+ * placement was free" notification links to, immediately above an irreversible
+ * choice. Typecheck and every test still pass.
+ *
+ * The free arm names no amount at all — the badge beside it carries the fact.
+ */
+export const placementAmountLine = (free: boolean, amount: number) =>
+  free ? 'placed this' : placementPaymentSummary(amount);
 
 /**
  * What a moderator take-down does to the money.

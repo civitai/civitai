@@ -3,6 +3,7 @@ import {
   declineConsequence,
   moderatorTakedownConsequence,
   payoutCopy,
+  placementAmountLine,
   placementPaymentSummary,
   removalConsequence,
   removalLockReason,
@@ -142,19 +143,34 @@ describe('the removal copy', () => {
  */
 describe('placementPaymentSummary', () => {
   it('states the amount on a paid placement', () => {
-    expect(placementPaymentSummary(false, 700)).toBe('paid 700 Buzz');
+    expect(placementPaymentSummary(700)).toBe('paid 700 Buzz');
+  });
+});
+
+/**
+ * The branch itself, which used to live inside `placementPaymentSummary` and
+ * then briefly inside the page — where nothing can test it, because Next treats
+ * every file under `src/pages` as a route.
+ *
+ * Both arms are asserted on purpose. Testing only the free one leaves the paid
+ * line free to stop naming an amount; testing only the paid one leaves the free
+ * row free to go back to claiming a payment of zero.
+ */
+describe('placementAmountLine', () => {
+  /**
+   * A free row is `amount: 0`, DB-enforced. Say the amount and the card asserts
+   * a payment of zero directly above an irreversible choice, on the page a
+   * notification saying "free" has just linked to.
+   */
+  it('names no amount on a free placement', () => {
+    const line = placementAmountLine(true, 0);
+
+    expect(line).toBe('placed this');
+    expect(line).not.toMatch(/paid|Buzz|0/);
   });
 
-  /**
-   * A free row is `amount: 0`, DB-enforced. Unbranched, this card asserted a
-   * payment of zero directly above an irreversible choice, on the page a
-   * notification saying "free" had just linked to.
-   */
-  it('claims no payment on a free one, and names no amount', () => {
-    const free = placementPaymentSummary(true, 0);
-
-    expect(free).toBe('placed this free');
-    expect(free).not.toMatch(/paid|Buzz|0/);
+  it('still states the amount on a paid one', () => {
+    expect(placementAmountLine(false, 700)).toBe('paid 700 Buzz');
   });
 });
 

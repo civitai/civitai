@@ -16,6 +16,10 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useState } from 'react';
+import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
+import { PlacementFreeFilter } from '~/components/Placement/PlacementFreeFilter';
+import { visibleQueueRows } from '~/components/Placement/free-filter';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
@@ -179,6 +183,12 @@ function ReceivedTab({
 }) {
   const utils = trpc.useUtils();
   const withheldHref = useWithheldHref();
+  const [showFree, setShowFree] = useState(true);
+
+  // Filtered here rather than in the parent so the tab's own badge keeps
+  // counting everything waiting: hiding the free ones is a view of the queue,
+  // not a statement about how much is in it.
+  const visible = visibleQueueRows(rows, showFree);
 
   const act = trpc.placement.actOnRemixGallerySubmission.useMutation({
     onSuccess: (_result, variables) => {
@@ -242,6 +252,12 @@ function ReceivedTab({
 
   return (
     <Stack gap="md">
+      {rows.some((row) => row.free) && (
+        <Group justify="flex-end">
+          <PlacementFreeFilter show={showFree} onChange={setShowFree} noun="submissions" />
+        </Group>
+      )}
+
       {!rows.length && (
         <Text size="sm" c="dimmed">
           Nothing on this page can be shown — the images behind these submissions are gone or still
@@ -249,7 +265,16 @@ function ReceivedTab({
         </Text>
       )}
 
-      {rows.map((row) => (
+      {/* Said separately from the line above it, which is about rows the server
+          dropped. An empty queue because the owner hid the free ones is their
+          own doing, and telling them their images are gone would be false. */}
+      {!!rows.length && !visible.length && (
+        <Text size="sm" c="dimmed">
+          Every submission waiting on you is a free one, and free ones are hidden.
+        </Text>
+      )}
+
+      {visible.map((row) => (
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Group gap="sm" wrap="nowrap" align="flex-start">
@@ -273,9 +298,7 @@ function ReceivedTab({
                 {/* Nothing was paid on a free row, so a Buzz chip there reads
                     as an offer of 0 rather than as a different kind of offer. */}
                 {row.free ? (
-                  <Badge size="sm" variant="light" color="green" className="w-fit">
-                    Free submission
-                  </Badge>
+                  <PlacementFreeBadge noun="submission" />
                 ) : (
                   <Group gap={4}>
                     <CurrencyIcon currency={Currency.BUZZ} size={12} />
