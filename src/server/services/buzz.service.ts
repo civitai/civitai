@@ -52,6 +52,7 @@ import {
   BuzzTypes,
   buzzSpendTypes,
   CASH_SETTLED_ALIASES,
+  coercePurchasedBuzzType,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
@@ -1003,7 +1004,7 @@ export async function completeStripeBuzzTransaction({
       amount: buzzAmount,
       fromAccountId: 0,
       toAccountId: userId,
-      toAccountType: (metadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
+      toAccountType: coercePurchasedBuzzType(metadata.buzzType),
       type: TransactionType.Purchase,
       description: `Purchase of ${amount} Buzz via Stripe. ${
         purchasesMultiplier && purchasesMultiplier > 1
