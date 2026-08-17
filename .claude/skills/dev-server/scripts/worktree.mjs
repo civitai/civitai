@@ -11,7 +11,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { readdirSync, lstatSync, rmdirSync, rmSync, existsSync } from 'fs';
+import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync } from 'fs';
 import { resolve, sep } from 'path';
 
 function git(args, cwd) {
@@ -77,6 +77,23 @@ function findReparsePoints(root) {
     }
   }
   return found.sort((a, b) => b.split(sep).length - a.split(sep).length);
+}
+
+/**
+ * Removes the link itself, never its target. Which call does that is platform-specific and each
+ * one errors on the other's link type: a POSIX symlink needs `unlink` and gives ENOTDIR to
+ * `rmdir`, a Windows directory junction is the reverse and gives EPERM to `unlink`. Trying only
+ * `rmdir` is what made `wt rm` unusable on macOS against any tree that had been `pnpm install`ed.
+ */
+function unlinkReparsePoint(link) {
+  try {
+    if (process.platform === 'win32') rmdirSync(link);
+    else unlinkSync(link);
+  } catch (err) {
+    if (err.code !== 'ENOTDIR' && err.code !== 'EPERM' && err.code !== 'EISDIR') throw err;
+    if (process.platform === 'win32') unlinkSync(link);
+    else rmdirSync(link);
+  }
 }
 
 /**
@@ -224,7 +241,7 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
     const links = findReparsePoints(target);
     console.log(`reparse points: ${links.length}`);
     for (const link of links) {
-      rmdirSync(link); // link-only; a recursive delete would walk THROUGH it
+      unlinkReparsePoint(link);
     }
     const left = findReparsePoints(target);
     if (left.length) {
