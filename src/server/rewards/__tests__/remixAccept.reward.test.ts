@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // What is under test is the reward's own definition — who is paid, in what
-// currency, keyed on what, and against which cap. `base.reward` reaches
-// ClickHouse and the buzz service to do it, so both are spread from the real
-// module with only the two functions this suite observes replaced. Hand-listing
-// their exports instead would break the whole FILE — 0 collected, nothing red —
-// the day either module grows one, and `~/server/prom/client` is already stubbed
-// globally in `src/__tests__/setup.ts`, so it needs nothing here at all.
-import type * as ClickHouseClient from '~/server/clickhouse/client';
-import type * as BuzzService from '~/server/services/buzz.service';
-
+// currency, keyed on what, and against which cap. `base.reward` pulls a live
+// client out of the two modules below, so both are hand-written rather than
+// spread from `importOriginal`: the spread loads the real graph, which is the
+// client construction the mock exists to avoid (1.8s → 15.6s of import here).
+//
+// What makes a hand-written factory safe is `base.reward.mock-surface.test.ts`,
+// which reads `base.reward`'s imports as source and fails if either module's
+// surface grows past what these factories provide. Without that guard this
+// shape breaks the whole FILE — 0 collected, nothing red — the first time it
+// drifts. Change either factory only together with that file's
+// `MOCKED_MODULE_SURFACE`.
+//
+// `~/server/prom/client` needs nothing here: `src/__tests__/setup.ts` already
+// stubs it, and hand-listing three of its ~40 exports narrowed that stub.
 const h = vi.hoisted(() => ({
   insert: vi.fn(async () => undefined),
   createBuzzTransactionMany: vi.fn(async () => undefined),
@@ -17,12 +22,10 @@ const h = vi.hoisted(() => ({
 }));
 const { createBuzzTransactionMany, getMultipliersForUser } = h;
 
-vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof ClickHouseClient>()),
+vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: (...args: unknown[]) => h.insert(...args) },
 }));
-vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof BuzzService>()),
+vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: h.createBuzzTransactionMany,
   getMultipliersForUser: h.getMultipliersForUser,
 }));
