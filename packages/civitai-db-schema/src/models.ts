@@ -1985,6 +1985,8 @@ export interface AppBlockPublishRequest {
   rejectionReason: string | null;
   approvalNotes: string | null;
   forgejoCommitSha: string | null;
+  sourceCommit: string | null;
+  sourceDirty: boolean | null;
   deployState: string | null;
   deployDetail: string | null;
   deployUpdatedAt: Date | null;

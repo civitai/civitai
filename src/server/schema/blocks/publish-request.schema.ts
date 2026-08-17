@@ -57,9 +57,85 @@ export const submitVersionSchema = z.object({
     .string()
     .min(1)
     .max(Math.ceil((MAX_BUNDLE_SIZE_BYTES * 4) / 3) + 16),
+  // #4059 build provenance. Both OPTIONAL: a client that sends neither submits
+  // exactly as it did before this existed, and this must never become a submit
+  // gate — an author whose tooling predates it, or who builds outside a git
+  // checkout, still ships.
+  //
+  // 🔴 UNTRUSTED CLIENT CLAIM. The server validates the SHAPE and stores the
+  // value; it CANNOT confirm the uploaded bundle was actually built from this
+  // commit, and a client is free to send a sha it never built from. Nothing
+  // downstream — UI, API, CLI — may render or describe these as verified. They
+  // are a diagnosis aid for deploy-vs-source drift, not an attestation.
+  //
+  // 🔴 NOT `forgejoCommitSha`, which this row also carries. That one is
+  // SERVER-side, written on approve after the platform's own Forgejo commit
+  // succeeded — a fact about a different repository. Never alias, default, or
+  // fall back between the two.
+  //
+  // A malformed value REJECTS the request rather than being dropped. Zod's
+  // default object mode strips unknown keys silently, which is exactly how a
+  // provenance-sending client would look like it worked while storing nothing —
+  // the inert-feature shape this field exists to close. So the regex is a hard
+  // 400: lowercase 40-hex only (git's own canonical rendering; accepting
+  // uppercase too would mean the same commit is two distinct strings in the
+  // column and a lookup has to normalise).
+  sourceCommit: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/)
+    .optional(),
+  // Whether the client's work tree had uncommitted changes at build time.
+  // Tri-state at rest: absent/null = UNKNOWN, false = the client asserted CLEAN,
+  // true = the client asserted DIRTY. `false` and `null` are DIFFERENT answers
+  // and stay distinguishable end to end — do not `?? false` this anywhere.
+  sourceDirty: z.boolean().optional(),
 });
 
 export type SubmitVersionInput = z.infer<typeof submitVersionSchema>;
+
+/**
+ * Per-field hints for a `submitVersionSchema` rejection. Only the #4059
+ * provenance fields appear here, on purpose — see below.
+ */
+const SUBMIT_VERSION_FIELD_HINTS: Record<string, string> = {
+  sourceCommit: 'sourceCommit must be a 40-character lowercase hex git commit sha',
+  sourceDirty: 'sourceDirty must be a boolean',
+};
+
+/** The message both submit routes have always returned for a parse failure. */
+export const INVALID_BUNDLE_MESSAGE = 'Invalid bundle payload';
+
+/**
+ * Render a `submitVersionSchema` parse failure as a message that NAMES the field
+ * that failed.
+ *
+ * 🔴 Why this exists: both submit routes answered EVERY parse failure with the
+ * flat `'Invalid bundle payload'`. Once the schema also validates provenance, a
+ * client whose `sourceCommit` was the wrong shape would be told its BUNDLE was
+ * bad and go hunting the zip — the diagnosis cost this feature exists to remove,
+ * re-created one layer up.
+ *
+ * Genuine bundle failures are UNCHANGED: any issue touching `bundleBase64`
+ * (or an unrecognised path, e.g. a non-object body) still yields exactly
+ * `INVALID_BUNDLE_MESSAGE`, so nothing that used to read that string reads
+ * something else now. Only a failure confined to the provenance fields gets the
+ * named message.
+ *
+ * One copy, called from both routes: the predicate was open-coded at two call
+ * sites already and would have drifted at the next edit.
+ */
+export function submitVersionParseErrorMessage(error: z.ZodError): string {
+  const fields = new Set(
+    error.issues.map((issue) => (typeof issue.path[0] === 'string' ? issue.path[0] : ''))
+  );
+  const named = [...fields].filter((f) => f in SUBMIT_VERSION_FIELD_HINTS);
+  // A bundle problem (or anything unrecognised) wins — bundle behaviour is frozen.
+  if (named.length === 0 || named.length !== fields.size) return INVALID_BUNDLE_MESSAGE;
+  return `Invalid submit payload: ${named
+    .sort()
+    .map((f) => SUBMIT_VERSION_FIELD_HINTS[f])
+    .join('; ')}`;
+}
 
 export const withdrawRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),

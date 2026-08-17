@@ -3076,6 +3076,15 @@ describe('recordPendingFromPush', () => {
     // Push-originated marker: empty bundle pointers.
     expect(createArg.data.bundleKey).toBe('');
     expect(createArg.data.bundleSha256).toBe('');
+    // 🔴 #4059: this path has NO client and NO author work tree, so it sets
+    // NEITHER provenance column — they stay NULL (unknown). `forgejoCommitSha`
+    // above is a SERVER-side commit in the platform's own repo; copying it into
+    // `sourceCommit` would manufacture a claim about an author's tree that
+    // nobody made. Asserted `toBeUndefined()` and separately asserted NOT EQUAL
+    // to the forgejo sha, so a fallback between the two cannot pass here.
+    expect(createArg.data.sourceCommit).toBeUndefined();
+    expect(createArg.data.sourceDirty).toBeUndefined();
+    expect(createArg.data.sourceCommit).not.toBe(pushArgs.sha);
   });
 
   it('(c) create throws P2002 → re-reads the EXACT-sha winner and returns its id', async () => {
