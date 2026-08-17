@@ -1,18 +1,17 @@
 import { useEffect, useMemo } from 'react';
-import { create } from 'zustand';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { useAppContext } from '~/providers/AppProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { AnnouncementType } from '~/server/schema/announcement.schema';
 import { trpc } from '~/utils/trpc';
-import type { DismissedByType } from '~/components/Announcements/announcements-dismissed-cookie';
 import {
   migrateLegacyLocalStorageToCookie,
   readDismissedCookieClient,
   writeDismissedCookieClient,
 } from '~/components/Announcements/announcements-dismissed-cookie';
 import { resolveAnnouncementExposure } from '~/components/Announcements/announcements-exposure';
+import { createDismissalStore } from '~/store/dismissal-store';
 
 // The announcements query is SSR-seeded (see AppProvider / `/api/user/settings`).
 // A non-zero staleTime is what actually skips the per-bootstrap fetch: with
@@ -38,25 +37,19 @@ migrateLegacyLocalStorageToCookie();
 // it too. On the server there is no `document.cookie`, so the store initializes
 // empty; SSR rendering reads the per-request dismissed value threaded through
 // AppProvider context (`announcementsDismissed`) instead of this store.
-export const useAnnouncementsStore = create<{
-  dismissed: DismissedByType;
-}>(() => ({
-  dismissed: readDismissedCookieClient(),
-}));
+//
+// The set semantics (add, prune, single-writer) come from the shared dismissal
+// store; the cookie stays behind an adapter so `parseDismissedCookieValue`
+// remains the one parser both server and client use.
+const announcementDismissals = createDismissalStore<number, AnnouncementType>({
+  storage: { read: readDismissedCookieClient, write: writeDismissedCookieClient },
+  defaultBucket: 'site',
+});
 
-// Single writer for the dismissed set: update the store AND persist the cookie so
-// the server sees the change on the next request.
-function setDismissed(dismissed: DismissedByType) {
-  useAnnouncementsStore.setState({ dismissed });
-  writeDismissedCookieClient(dismissed);
-}
+export const useAnnouncementsStore = announcementDismissals.useStore;
 
 export function dismissAnnouncements(ids: number | number[], type: AnnouncementType = 'site') {
-  const { dismissed } = useAnnouncementsStore.getState();
-  setDismissed({
-    ...dismissed,
-    [type]: [...new Set(dismissed[type].concat(ids))],
-  });
+  announcementDismissals.dismiss(ids, type);
 }
 
 export function useGetAnnouncements(type: AnnouncementType = 'site') {
@@ -88,16 +81,14 @@ export function useGetAnnouncements(type: AnnouncementType = 'site') {
   );
 
   // v5: query onSettled removed — prune this type's dismissed ids to those still
-  // present once data loads. Only WRITE (store + cookie) when something actually
-  // pruned, to avoid a gratuitous cookie write on every mount.
+  // present once data loads. The store writes only when something was actually
+  // stale, so a mount that prunes nothing doesn't touch the cookie.
   useEffect(() => {
     if (!typed.length) return;
-    const announcementIds = typed.map((x) => x.id);
-    const { dismissed } = useAnnouncementsStore.getState();
-    const pruned = dismissed[type].filter((id) => announcementIds.includes(id));
-    if (pruned.length !== dismissed[type].length) {
-      setDismissed({ ...dismissed, [type]: pruned });
-    }
+    announcementDismissals.prune(
+      typed.map((x) => x.id),
+      type
+    );
   }, [typed, type]);
 
   // SSR-exact dismiss (durable feed-CLS fix), gated on `feedReserveCls` for the

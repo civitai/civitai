@@ -78,7 +78,6 @@ import { FormFooter, MetadataExtractionFooter } from './FormFooter';
 import { GenerationLayout, GenerationFooter } from './GenerationLayout';
 import {
   ResourceAlerts,
-  ExperimentalModelAlert,
   GrokEcosystemAlert,
   SeedanceImg2VidAlert,
   ReadyAlert,
@@ -680,22 +679,11 @@ export function GenerationForm() {
               )}
             />
 
-            {/* Experimental Ecosystem Alert */}
-            <MultiController
+            {/* Grok terms warning */}
+            <Controller
               graph={graph}
-              names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
-              render={({ values }) => (
-                <>
-                  <ExperimentalModelAlert
-                    ecosystem={values.ecosystem}
-                    workflow={values.workflow}
-                    model={values.model}
-                    resources={values.resources}
-                    vae={values.vae}
-                  />
-                  <GrokEcosystemAlert ecosystem={values.ecosystem} />
-                </>
-              )}
+              name="ecosystem"
+              render={({ value }) => <GrokEcosystemAlert ecosystem={value} />}
             />
 
             {/* Seedance img2vid copyright-filter warning */}

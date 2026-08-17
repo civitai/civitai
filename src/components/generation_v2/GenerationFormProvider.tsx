@@ -55,6 +55,7 @@ import type { GenerationResource } from '~/shared/types/generation.types';
 import { type VersionGroup, getAllVersionIds } from '~/shared/data-graph/generation/common';
 import { decodeGenerationHandoff, GENERATION_HANDOFF_PARAM } from './utils/generation-url-handoff';
 import { setGenerationSnapshotCache } from './utils/generation-snapshot-cache';
+import { ExperimentalRulesSync } from './Experimental';
 
 // =============================================================================
 // Constants
@@ -946,6 +947,7 @@ export function GenerationFormProvider({
 }: GenerationFormProviderProps) {
   return (
     <InnerProvider defaultValues={defaultValues} debug={debug} skipStorage={skipStorage}>
+      <ExperimentalRulesSync />
       {children}
     </InnerProvider>
   );

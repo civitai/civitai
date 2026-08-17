@@ -4,18 +4,17 @@
  * Displays alerts related to selected resources including:
  * - Unstable resources (high failure rate)
  * - Content restricted resources (minor/SFW flagged)
- * - Experimental alerts (ecosystem config + `experimental` gate rules)
  * - Ready state alerts (resources need to be downloaded)
+ *
+ * Experimental state is not here — it lives in `Experimental.tsx`, marked by a
+ * flask at each level a rule can target and warned about above the submit row.
  */
 
 import { Alert, List, Text } from '@mantine/core';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { ecosystemByKey, isEcosystemExperimental } from '~/shared/constants/basemodel.constants';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
-import { experimentalTargets } from '~/shared/data-graph/generation/gates';
 import { useWhatIfContext } from './WhatIfProvider';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 // =============================================================================
 // Types
@@ -53,23 +52,6 @@ function isResourceInfo(value: unknown): value is ResourceInfo {
     'model' in value &&
     typeof (value as ResourceInfo).model === 'object'
   );
-}
-
-/**
- * IDs of every selected resource. Separate from `getSelectedResources` because
- * the graph's resource value is minimal (`{ id, model: { type } }`) — `name`
- * arrives only via server enrichment, so a name-shaped guard misses any
- * resource the graph set itself, such as an ecosystem's default checkpoint.
- */
-function getSelectedResourceIds(model: unknown, resources: unknown, vae: unknown): number[] {
-  const hasId = (value: unknown): value is { id: number } =>
-    value !== null &&
-    typeof value === 'object' &&
-    'id' in value &&
-    typeof (value as { id: unknown }).id === 'number';
-
-  const candidates = [model, ...(Array.isArray(resources) ? resources : []), vae];
-  return candidates.filter(hasId).map((r) => r.id);
 }
 
 function getSelectedResources(model: unknown, resources: unknown, vae: unknown): ResourceInfo[] {
@@ -160,77 +142,6 @@ export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
         </Alert>
       )}
     </div>
-  );
-}
-
-// =============================================================================
-// Experimental Model Alert
-// =============================================================================
-
-interface ExperimentalModelAlertProps {
-  /** The ecosystem key (e.g., 'Qwen', 'SD3') */
-  ecosystem?: string;
-  /** The selected workflow key (e.g., 'txt2img', 'img2vid') */
-  workflow?: string;
-  /** The selected checkpoint / additional resources / VAE */
-  model?: unknown;
-  resources?: unknown;
-  vae?: unknown;
-}
-
-/**
- * Displays an alert when the current selection is flagged experimental.
- *
- * Sources unioned: the static `isEcosystemExperimental` check (derived from
- * base-model `experimental` flags), and any gate rule with
- * `presentation: 'experimental'` — which can target the ecosystem, the
- * workflow, or a specific model version, and whose optional message replaces
- * the default copy.
- */
-export function ExperimentalModelAlert({
-  ecosystem,
-  workflow,
-  model,
-  resources,
-  vae,
-}: ExperimentalModelAlertProps) {
-  const { gateRules = [] } = useGenerationConfig();
-  const targets = experimentalTargets(gateRules);
-
-  const staticEcosystem = !!ecosystem && isEcosystemExperimental(ecosystem);
-
-  // Every rule match, so the dismiss key changes when a different thing is what's
-  // experimental — dismissing the Flux warning shouldn't pre-dismiss the next one.
-  const matches: { key: string; message?: string }[] = [];
-  if (ecosystem && targets.ecosystems.has(ecosystem))
-    matches.push({ key: `eco:${ecosystem}`, message: targets.ecosystems.get(ecosystem) });
-  if (workflow && targets.workflows.has(workflow))
-    matches.push({ key: `wf:${workflow}`, message: targets.workflows.get(workflow) });
-  for (const id of getSelectedResourceIds(model, resources, vae))
-    if (targets.modelVersionIds.has(id))
-      matches.push({ key: `mv:${id}`, message: targets.modelVersionIds.get(id) });
-
-  if (!staticEcosystem && !matches.length) return null;
-
-  const displayName = ecosystem
-    ? ecosystemByKey.get(ecosystem)?.displayName ?? ecosystem
-    : undefined;
-  const dismissId = [...(staticEcosystem ? [`eco:${ecosystem}`] : []), ...matches.map((m) => m.key)]
-    .filter((key, i, all) => all.indexOf(key) === i)
-    .join('|');
-  const message = matches.find((m) => m.message)?.message;
-  const subject =
-    staticEcosystem || (ecosystem && targets.ecosystems.has(ecosystem))
-      ? `${displayName} support`
-      : 'Your current selection';
-
-  return (
-    <DismissibleAlert color="yellow" title="Experimental Build" radius="md" id={dismissId}>
-      <Text size="xs">
-        {message ??
-          `${subject} is currently in an experimental phase. Some features may not work as expected. Please report any issues you encounter.`}
-      </Text>
-    </DismissibleAlert>
   );
 }
 

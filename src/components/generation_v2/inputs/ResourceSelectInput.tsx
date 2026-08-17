@@ -32,6 +32,7 @@ import {
   getStatusClasses,
   isResourceDisabled,
 } from './ResourceItemContent';
+import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 import {
   needsHydration,
   resolveResourceOptions,
@@ -316,7 +317,17 @@ export function ResourceSelectInput({
             value={value?.id?.toString() ?? ''}
             onChange={handleVersionChange}
             data={versions.map(({ label, value: versionValue }) => ({
-              label,
+              // Marked per option, so which version is experimental is legible
+              // before switching to it — not only once it's selected.
+              label: (
+                <span className="inline-flex items-center gap-1">
+                  {label}
+                  <ExperimentalFlask
+                    target={{ kind: 'modelVersion', key: versionValue }}
+                    size={14}
+                  />
+                </span>
+              ),
               value: versionValue.toString(),
             }))}
           />
