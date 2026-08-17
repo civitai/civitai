@@ -11,6 +11,7 @@ export const addViewSchema = z.object({
     'ArticleView',
     'BountyView',
     'BountyEntryView',
+    'Model3DView',
   ]),
   entityType: z.enum([
     'User',
@@ -21,6 +22,7 @@ export const addViewSchema = z.object({
     'Article',
     'Bounty',
     'BountyEntry',
+    'Model3D',
   ]),
   entityId: z.number(),
   ads: z.enum(['Member', 'Blocked', 'Served', 'Off']).optional(),

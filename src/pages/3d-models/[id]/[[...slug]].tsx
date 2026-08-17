@@ -63,6 +63,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -359,6 +360,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         deIndex: isDraft || isUnpublished,
       }}
     >
+      <TrackView entityId={model3d.id} entityType="Model3D" type="Model3DView" />
       <Container size="xl" pos="relative" className="pb-8">
         <LoadingOverlay visible={isRefetching} />
 
