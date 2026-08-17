@@ -26,15 +26,20 @@
 -- The two branches above the catch-all are deliberately untouched: EcosystemCheckpoints and
 -- ExternalGeneration are mod-curated routes onto first-party engines, not creator-licensed weights.
 
--- One statement, not DROP + CREATE. Only the WHERE clause moves - the output columns keep their
--- names, types and order - so REPLACE is legal, and it leaves no window in which the view does not
--- exist. A transaction would not be equivalent here: this is applied by hand, and a client that
--- opens a connection per statement commits the bare BEGIN and then autocommits the DROP alone.
+-- REPLACE, not DROP + CREATE: only the WHERE clause moves and the output columns keep their names,
+-- types and order, so REPLACE is legal and leaves no window in which the view does not exist.
 --
 -- GenerationCoverage is on the hot read path (resource-data.redis.ts, caches.ts, model.service.ts,
--- v1/model-versions/mini/[id].ts), and REPLACE still takes ACCESS EXCLUSIVE. Bound the wait so one
--- long-running reader makes this abort instead of queueing every generation read behind it.
-SET lock_timeout = '3s';
+-- v1/model-versions/mini/[id].ts), and REPLACE still takes ACCESS EXCLUSIVE. lock_timeout bounds
+-- the wait so one long-running reader makes this abort rather than queueing every generation read
+-- behind it - and it must be SET LOCAL inside the transaction, because applied by hand through a
+-- client that opens a connection per statement a bare `SET` lands in a session the REPLACE never
+-- sees, leaving it to wait forever under the server default.
+--
+-- The transaction is safe here in a way it would not be around a DROP: if the BEGIN is autocommitted
+-- on its own, nothing has been taken away, and the REPLACE either lands whole or not at all.
+BEGIN;
+SET LOCAL lock_timeout = '3s';
 
 CREATE OR REPLACE VIEW "GenerationCoverage"("modelId", "modelVersionId", covered) AS
 SELECT
@@ -99,3 +104,5 @@ WHERE
       OR m.type = 'Upscaler'::"ModelType"
     )
   );
+
+COMMIT;

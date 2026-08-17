@@ -24,13 +24,24 @@ import { booleanString } from '~/utils/zod-helpers';
  * prod replica that is 2,577 of 124,334 candidates, and widening them would overwrite a stated
  * permission, which is the opposite of what this change is for.
  *
- * Created-uploadType models with the same value are also left alone: nothing rules out an API
- * client having set them deliberately.
+ * Created-uploadType models with the same value are left alone: nothing rules out an API client
+ * having set them deliberately, and no mechanism is known that would produce `{Sell}` on them by
+ * accident.
  *
- * ⚠️ The candidate set spans every status except Deleted, not only Published — on the prod replica
- * 121,754 rows, of which 65,974 are Published and the rest Draft / Unpublished /
- * UnpublishedViolation / Scheduled / Training. Unpublished and violation-removed models are
- * included on purpose: a restored model must not come back carrying a licence its creator never set.
+ * ⚠️ That argument is not airtight for Trained uploads either, and the asymmetry is deliberate
+ * rather than overlooked. The cascade lives only in the form's `onChange`; `licensingSchema` and
+ * `upsertModel` apply none server-side, so an owner who posts `allowCommercialUse: ['Sell']`
+ * directly is indistinguishable from a defaulted row and gets widened against their intent. The
+ * difference is that on Trained uploads a mechanism is demonstrated - the wizard sends no field at
+ * all - and it accounts for the whole population, while on Created uploads there is none. Repairing
+ * a deliberate API write would be wrong; the judgement is that it is rare against 121k defaulted
+ * rows, and the changed ids are recorded so it can be undone per model.
+ *
+ * ⚠️ The candidate set spans every status, not only Published — on the prod replica 121,754 rows
+ * excluding Deleted, of which 65,974 are Published and the rest Draft / Unpublished /
+ * UnpublishedViolation / Scheduled / Training, plus ~25k Deleted. Removed and deleted models are
+ * included on purpose: `restoreModelById` un-deletes, and a restored model must not come back
+ * carrying a licence its creator never set and no Create button to go with it.
  *
  * reindex — queue models that WITHHOLD RentCivit for a search-index update.
  *
@@ -58,10 +69,15 @@ import { booleanString } from '~/utils/zod-helpers';
  *              and queue modelsSearchIndex updates for them.
  *   - reindex: queue modelsSearchIndex updates only.
  *
- * Both responses return every id touched, and each batch logs its ids and its last id — a mass
- * licence change needs a record of which rows moved, and a run this long can outlive the request.
+ * A live response returns `changedIds` — the rows the UPDATE actually moved, via RETURNING, not the
+ * ids attempted — and each batch logs the same plus its `lastId`. A mass licence change needs a
+ * record of which rows moved, and a run this long can outlive the request.
  * `limit` alone only chunks `repair`, which is self-consuming (a repaired row stops matching);
  * `reindex` is not, so chunking it needs `afterId` from the previous batch's `lastId`.
+ *
+ * `reindex` refuses with 409 while the old view is still in place, rather than trusting the runbook:
+ * run early, the sync job recomputes canGenerate from the old view and writes back the `true` this
+ * is meant to clear.
  *
  * ⚠️ The UPDATE is raw SQL and so writes no `diffEntityChanges` entry, though `allowCommercialUse`
  * is a watched field. That is deliberate — routing 121k rows through the diffing path to record a
@@ -96,7 +112,6 @@ export default WebhookEndpoint(async (req, res) => {
           FROM "Model" m
           WHERE m."uploadType" = 'Trained'
             AND m."allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
-            AND m.status != 'Deleted'
             AND m."createdAt" >= ${CASCADE_LANDED_AT}
             AND m.id > ${params.afterId}
           ORDER BY m.id
@@ -111,6 +126,29 @@ export default WebhookEndpoint(async (req, res) => {
           ORDER BY m.id
         `;
 
+  // Run before the view is replaced and this is worse than useless: the sync job recomputes
+  // canGenerate from the OLD view, writes back the `true` it is meant to clear, and drops the queue
+  // entry - so the models are never re-queued and stay listed under the on-site-generation filter.
+  // Ask the view itself whether it has been replaced yet rather than trusting the runbook.
+  if (params.action === 'reindex') {
+    const [stale] = await dbRead.$queryRaw<{ one: number }[]>`
+      SELECT 1 AS one
+      FROM "GenerationCoverage" gc
+      JOIN "Model" m ON m.id = gc."modelId"
+      WHERE gc.covered
+        AND NOT (m."allowCommercialUse" && ARRAY['RentCivit']::"CommercialUse"[])
+        AND m."allowCommercialUse" && ARRAY['Rent', 'Sell']::"CommercialUse"[]
+      LIMIT 1
+    `;
+    if (stale) {
+      return res.status(409).json({
+        error:
+          'GenerationCoverage still grants coverage without RentCivit — apply the migration first, ' +
+          'then reindex. Running now would re-write canGenerate: true from the old view.',
+      });
+    }
+  }
+
   const modelIds = (params.limit ? candidates.slice(0, params.limit) : candidates).map((r) => r.id);
 
   if (params.dryRun) {
@@ -123,32 +161,42 @@ export default WebhookEndpoint(async (req, res) => {
     });
   }
 
-  let totalUpdated = 0;
+  const changedIds: number[] = [];
 
   for (let i = 0; i < modelIds.length; i += params.batchSize) {
     const batch = modelIds.slice(i, i + params.batchSize);
 
-    if (params.action === 'repair') {
-      // Re-check the value in the UPDATE: a creator editing one of these between the read above and
-      // this write has made a deliberate choice, and it must win over the repair.
-      totalUpdated += await dbWrite.$executeRaw`
-        UPDATE "Model"
-        SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell']::"CommercialUse"[]
-        WHERE id = ANY(${batch}::int[])
-          AND "allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
-      `;
-    }
+    // RETURNING, not a count: the re-checked WHERE means the ids attempted are not the ids changed,
+    // and a record that names a creator whose row never moved is worse than no record.
+    // Re-checking is the point — a creator editing one of these between the read above and this
+    // write has made a deliberate choice, and it must win over the repair.
+    const changed =
+      params.action === 'repair'
+        ? await dbWrite.$queryRaw<{ id: number }[]>`
+            UPDATE "Model"
+            SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell']::"CommercialUse"[]
+            WHERE id = ANY(${batch}::int[])
+              AND "allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
+            RETURNING id
+          `
+        : batch.map((id) => ({ id }));
 
-    await modelsSearchIndex.queueUpdate(
-      batch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
+    const changedBatch = changed.map((r) => r.id);
+    changedIds.push(...changedBatch);
+
+    if (changedBatch.length) {
+      await modelsSearchIndex.queueUpdate(
+        changedBatch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
+    }
 
     // Ids per batch, not just a count: a run long enough to outlive the ingress timeout returns
     // nothing, and then the log is the only record of which licences moved.
     console.log(
       `backfill-trained-model-permissions (${params.action}): ` +
-        `batch ${Math.floor(i / params.batchSize) + 1} — ${batch.length} models — ` +
-        `lastId ${batch[batch.length - 1]} — ids ${batch.join(',')}`
+        `batch ${Math.floor(i / params.batchSize) + 1} — ${changedBatch.length} of ${
+          batch.length
+        } models — lastId ${batch[batch.length - 1]} — ids ${changedBatch.join(',')}`
     );
   }
 
@@ -157,7 +205,7 @@ export default WebhookEndpoint(async (req, res) => {
     action: params.action,
     totalCandidates: candidates.length,
     totalSelected: modelIds.length,
-    totalUpdated,
-    modelIds,
+    totalChanged: changedIds.length,
+    changedIds,
   });
 });
