@@ -157,8 +157,7 @@ describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
       setUsingNextRouter(false);
       Router.asPath = originalAsPath;
       Router.query = originalQuery;
-      if (passThrough) on.mockImplementation(passThrough);
-      else on.mockReset();
+      on.mockImplementation(passThrough ?? (() => undefined));
       window.history.replaceState(originalState, '');
     }
   });

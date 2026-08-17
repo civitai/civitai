@@ -49,7 +49,8 @@ export function resolveLocationChangeState(
 ): BrowserRouterState {
   const locationHref = `${currentLocation.pathname}${currentLocation.search}`;
   const urlSource: string = eventState?.url ?? historyState?.url ?? locationHref;
-  const [, queryString] = urlSource.split('?');
+  const [, search] = urlSource.split('?');
+  const queryString = search?.split('#')[0];
   const asPath = eventState?.as ?? locationHref;
   return {
     asPath,
@@ -90,8 +91,12 @@ export function resolveRouteChangeState(
 /**
  * `/images/[imageId]` + `/images/123` → `{ imageId: '123' }`.
  *
- * Self-guarding: a pattern that doesn't match the path yields nothing, so a pop
- * to a *different* route contributes no stale params.
+ * A pattern that doesn't match the path yields nothing. That is not a guarantee
+ * of the right param on the `resolveLocationChangeState` path: the pattern there
+ * is the OUTGOING route, and two patterns can both match one path
+ * (`/comics/[id]/[[...slug]]` reads `/comics/project/55/chapter/2` as
+ * `id: 'project'`). Only `resolveRouteChangeState`, which takes Next's own
+ * query, is free of that.
  *
  * Round-tripped through `QS` so params land as the same types the rest of the
  * query does — the matcher yields strings, and consumers pass these straight to

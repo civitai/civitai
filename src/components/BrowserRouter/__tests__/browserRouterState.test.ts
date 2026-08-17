@@ -205,4 +205,21 @@ describe('a URL fragment', () => {
     );
     expect(result.query.imageId).toBe(135356251);
   });
+
+  it('does not end up on the last query param either', () => {
+    // The query string is everything after `?`, fragment included, and it is
+    // spread over the path params — so this shadowed the fix above.
+    const eventState = {
+      as: '/models/827184?modelVersionId=5#reviews',
+      url: '/models/[id]?modelVersionId=5#reviews',
+      state: {},
+    };
+    const result = resolveLocationChangeState(
+      eventState,
+      eventState,
+      { pathname: '/models/827184', search: '?modelVersionId=5' },
+      '/models/[id]'
+    );
+    expect(result.query.modelVersionId).toBe(5);
+  });
 });
