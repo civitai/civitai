@@ -9,6 +9,7 @@
 export const VIEW_ENTITY = {
   image: 'Image',
   article: 'Article',
+  model: 'Model',
   comicProject: 'ComicProject',
   comicChapter: 'ComicChapter',
   model3d: 'Model3D',

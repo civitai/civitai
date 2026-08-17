@@ -16,6 +16,7 @@
     IconEye,
     IconUser,
     IconLayoutGrid,
+    IconBox,
   } from '@tabler/icons-svelte';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
@@ -116,6 +117,13 @@
               ]
             : []),
           {
+            label: 'Model views',
+            value: data.analytics.totals.modelViews,
+            prev: data.analyticsPrev?.totals.modelViews ?? null,
+            icon: IconBox,
+            color: '#748ffc',
+          },
+          {
             label: 'Article views',
             value: data.analytics.totals.articleViews,
             prev: data.analyticsPrev?.totals.articleViews ?? null,
@@ -187,6 +195,12 @@
             series: data.analytics.profileViews,
             prev: data.analyticsPrev?.profileViews,
             color: 4,
+          },
+          {
+            title: 'Model views',
+            series: data.analytics.modelViews,
+            prev: data.analyticsPrev?.modelViews,
+            color: 5,
           },
           {
             title: 'Article views',

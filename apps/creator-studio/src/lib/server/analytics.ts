@@ -32,6 +32,7 @@ export type ContentTotals = {
   profileViews: number;
   imageViews: number;
   articleViews: number;
+  modelViews: number;
   impressions: number;
 };
 export type ContentAnalytics = {
@@ -42,6 +43,7 @@ export type ContentAnalytics = {
   profileViews: TimePoint[];
   imageViews: TimePoint[];
   articleViews: TimePoint[];
+  modelViews: TimePoint[];
   /** Feed impressions on the creator's images. Null while the pipeline is dark — see impressionsTracking. */
   impressions: TimePoint[];
   /** False until any impression row exists at all, so the UI can say "not collecting yet" instead of "0". */
@@ -364,6 +366,27 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
     .sort((x, y) => y.views - x.views);
 }
 
+// Model views are creator-wide here, not per version. A view is of the *model* page, so hanging it off the
+// version rows on /analytics/models would repeat the same number once per version and double-count any sum.
+//
+// Ids come from Postgres for the same reason articles do: models are median 2 per creator (p99 197), so a
+// literal `IN` against `daily_views` keeps the primary key usable and includes today. The owner-keyed rollup
+// that images need would only pay for itself at the 13,991-model tail.
+async function modelIdsFor(uid: number): Promise<number[]> {
+  const rows = await dbRead.selectFrom('Model').where('userId', '=', uid).select(['id']).execute();
+  return rows.map((r) => r.id);
+}
+
+function modelViewsDailySql(ids: number[], from: string, to: string): string {
+  const fill = `ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
+  if (!ids.length) return `SELECT toDate('${from}') AS date, 0 AS value WHERE 0 ${fill}`;
+  return `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = '${
+    VIEW_ENTITY.model
+  }' AND entityId IN (${ids.join(
+    ','
+  )}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ${fill}`;
+}
+
 // Feed impressions on this creator's images. Reads `impressions_daily_by_owner`, whose primary key is
 // `(ownerId, entityType, createdDate)` — an owner-keyed rollup exists here for the same reason it does for
 // image views: a creator's ids are scattered across a 130M space, so per-entity lookup prunes nothing.
@@ -405,9 +428,9 @@ async function fetchContentAnalytics(
 
   // The article id list has to be resolved from Postgres before its ClickHouse query can be built, so it runs
   // ahead of the fan-out rather than inside it.
-  const articleIds = await articleIdsFor(uid);
+  const [articleIds, modelIds] = await Promise.all([articleIdsFor(uid), modelIdsFor(uid)]);
 
-  const [reactions, followers, images, posts, profileViews, imageViews, articleViews] =
+  const [reactions, followers, images, posts, profileViews, imageViews, articleViews, modelViews] =
     await Promise.all([
       series(
         `${netReactionsDailySql(
@@ -424,6 +447,7 @@ async function fetchContentAnalytics(
       series(seriesSql('views', 'time', `entityType = 'User' AND entityId = ${uid}`, from, to)),
       series(ownerViewsDailySql(uid, from, to)),
       series(articleViewsDailySql(articleIds, from, to)),
+      series(modelViewsDailySql(modelIds, from, to)),
     ]);
 
   const [impressions, impressionsTracking] = await Promise.all([
@@ -440,6 +464,7 @@ async function fetchContentAnalytics(
     profileViews,
     imageViews,
     articleViews,
+    modelViews,
     impressions,
     impressionsTracking,
     totals: {
@@ -450,6 +475,7 @@ async function fetchContentAnalytics(
       profileViews: sum(profileViews),
       imageViews: sum(imageViews),
       articleViews: sum(articleViews),
+      modelViews: sum(modelViews),
       impressions: sum(impressions),
     },
   };
@@ -966,6 +992,7 @@ async function fetchContentTotals(
     profileViews,
     imageViews,
     articleViews,
+    modelViews: 0,
     impressions: 0,
   };
 }
