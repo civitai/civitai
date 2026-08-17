@@ -8,7 +8,6 @@ import {
   ManualHandlerConfig,
   ManualHandler
 } from '../types/handlers'
-import { Operation } from '../types/events'
 
 /**
  * Base handler factory that provides common patterns for metric event processing

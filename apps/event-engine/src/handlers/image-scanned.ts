@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unused-vars -- WIP stub (see the TODOs in the processor).
+   The scan fields are destructured ready for the handling that is not written yet. */
 import { logger } from '@/utils/logger';
 import { createEventHandler } from './base'
 import { WorkflowMessage, createWorkflowSample } from '@/types/events'

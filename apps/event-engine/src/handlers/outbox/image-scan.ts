@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/no-unused-vars -- WIP stub. The processor body below is
+   commented out until the old ingestion service is removed from prod; these imports and
+   destructured bindings are the ones it uses, so removing them would have to be undone. */
 import { createOutboxHandler } from '../base'
 import { withKafka } from '@/services/spine'
 import { getImageUrl } from '@/utils/media';
