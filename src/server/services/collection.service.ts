@@ -612,19 +612,23 @@ export const getUserCollectionsWithPermissions = async <
   const ownerIds = Array.from(
     new Set(collections.map((c) => c.userId).filter((id) => id !== userId))
   );
-  const owners = ownerIds.length
-    ? await dbRead.user.findMany({
-        where: { id: { in: ownerIds } },
-        select: { id: true, username: true },
-      })
-    : [];
+  const ownerUsernames = new Map(
+    ownerIds.length
+      ? (
+          await dbRead.user.findMany({
+            where: { id: { in: ownerIds } },
+            select: { id: true, username: true },
+          })
+        ).map((owner) => [owner.id, owner.username])
+      : []
+  );
 
   // Return user collections first && add isOwner  property
   return collections
     .map((collection) => ({
       ...collection,
       isOwner: collection.userId === userId,
-      ownerUsername: owners.find((o) => o.id === collection.userId)?.username ?? null,
+      ownerUsername: ownerUsernames.get(collection.userId) ?? null,
       image: images.find((i) => i.id === collection.imageId),
       tags: collectionTags
         .filter((t) => t.collectionId === collection.id)
