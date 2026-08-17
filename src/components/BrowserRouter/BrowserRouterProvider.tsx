@@ -74,15 +74,17 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     const handleRouteChangeComplete = () => {
-      // Both sources have to describe the entry we are on: `Router` supplies the
-      // path and query, `history.state` the payload, and two pops in quick
-      // succession can otherwise pair one entry's query with another's state.
+      // The payload has to come from the popstate snapshot: Next's `changeState`
+      // replaces `history.state` wholesale, with no `state` key, before it emits
+      // this event — so by now the entry's own payload exists nowhere else.
       if (
         stateRef.current &&
         stateRef.current.asPath === history.state?.as &&
         Router.asPath === history.state?.as
       )
-        useBrowserRouterState.setState(resolveRouteChangeState(Router, history.state?.state ?? {}));
+        useBrowserRouterState.setState(
+          resolveRouteChangeState(Router, stateRef.current.state ?? {})
+        );
 
       setUsingNextRouter(false);
     };

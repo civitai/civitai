@@ -30,16 +30,18 @@ import { renderWithProviders } from '../../../test/component-setup';
 // window `error` event, so an onError spy is NOT a reliable guard here.)
 
 function AsPathProbe() {
-  const { asPath, query } = useBrowserRouter();
+  const { asPath, query, state } = useBrowserRouter();
   return (
     <>
       <div data-testid="aspath">{asPath}</div>
       <div data-testid="imageid">{String(query.imageId)}</div>
+      <div data-testid="prev">{String(state?.prev?.asPath)}</div>
     </>
   );
 }
 const probeText = () => page.getByTestId('aspath').element().textContent;
 const imageIdText = () => page.getByTestId('imageid').element().textContent;
+const prevText = () => page.getByTestId('prev').element().textContent;
 
 describe('BrowserRouterProvider + ClientHistoryStore popstate handling (Safari null state)', () => {
   test('a back navigation with null history.state degrades to the current location instead of crashing', async () => {
@@ -136,12 +138,22 @@ describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
       // The pop: leaving `/models/[id]`, landing on `/images/135356251`. Next
       // takes this one, which is what defers the commit to `routeChangeComplete`.
       setUsingNextRouter(true);
-      const popped = { as: '/images/135356251', url: '/images/135356251', state: {} };
+      const popped = {
+        as: '/images/135356251',
+        url: '/images/135356251',
+        state: { prev: { asPath: '/models/827184' } },
+      };
       window.history.replaceState(popped, '');
       window.dispatchEvent(new PopStateEvent('popstate', { state: popped }));
 
       // Next finishes: it has interpolated `imageId` into its own query, and only
-      // then emits `routeChangeComplete`.
+      // then emits `routeChangeComplete`. Its `changeState` has already replaced
+      // `history.state` with its own shape — note there is no `state` key, so the
+      // entry's payload now exists only in the popstate snapshot.
+      window.history.replaceState(
+        { url: '/images/[imageId]', as: '/images/135356251', options: {}, __N: true, key: 'k' },
+        ''
+      );
       Router.asPath = '/images/135356251';
       Router.query = { imageId: '135356251' };
       expect(handlers.length).toBeGreaterThan(0);
@@ -153,6 +165,8 @@ describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
       // The regression: this read `undefined` and `/images/[imageId]` rendered
       // `<NotFound />`.
       expect(imageIdText()).toBe('135356251');
+      // And the entry's payload survives, which routed dialogs are handed as props.
+      expect(prevText()).toBe('/models/827184');
     } finally {
       setUsingNextRouter(false);
       Router.asPath = originalAsPath;
