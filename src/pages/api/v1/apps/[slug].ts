@@ -83,7 +83,8 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     const limited = await enforceAppsCatalogRateLimit({ req, res, user, log: req.log });
     if (limited) return;
 
-    // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
+    // The caller's OWN scope — see the sibling `index.ts`. Typed `unknown`; never
+    // branched on until it has been through the public-catalog decision below.
     const rawScope: unknown = await resolveStoreVisibilityScope({ user });
     // See the sibling `index.ts` + store-scope.metrics: recorded BEFORE narrowing so
     // an ABSENT scope is distinguishable from a resolved one in production (#3983).
