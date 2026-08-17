@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { getListingDetail } from '~/server/services/blocks/app-listing.service';
 import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
+import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { isHostForColor } from '~/server/utils/server-domain';
@@ -82,10 +83,14 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     if (limited) return;
 
     // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
-    const scope = await resolveStoreVisibilityScope({ user });
-    // See the sibling `index.ts` + store-scope.metrics: recorded so an ABSENT scope
-    // is distinguishable from a resolved one in production (civitai#3983).
-    recordStoreScopeApplied(scope, 'rest-detail');
+    const rawScope: unknown = await resolveStoreVisibilityScope({ user });
+    // See the sibling `index.ts` + store-scope.metrics: recorded BEFORE narrowing so
+    // an ABSENT scope is distinguishable from a resolved one in production (#3983).
+    recordStoreScopeApplied(rawScope as string | undefined, 'rest-detail');
+    // 🔴 FAIL CLOSED independently of the resolver — see the sibling `index.ts`. An
+    // absent scope used to slip past this negative test and meet `getListingDetail`'s
+    // `?? 'full'`, serving an on-site listing's detail to an unauthenticated caller.
+    const scope = narrowStoreScope(rawScope);
     if (scope === 'none') {
       return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));
     }

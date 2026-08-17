@@ -7,11 +7,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *
  * The security crux is the DEFAULT-CLOSED per-user scope gate: an anonymous /
  * non-privileged caller resolves scope `none` and MUST receive the empty page /
- * 404 — NEVER the full catalog — even though the underlying listing service
- * defaults to `full`. The load-bearing guards (`does NOT leak the catalog to
- * anon`) mock the service to return NON-empty data and assert the handler still
- * returns nothing for an unscoped caller, so deleting the scope wiring fails the
- * test.
+ * 404 — NEVER the full catalog. The load-bearing guards (`does NOT leak the
+ * catalog to anon`) mock the service to return NON-empty data and assert the
+ * handler still returns nothing for an unscoped caller, so deleting the scope
+ * wiring fails the test.
+ *
+ * 🔴 WHAT THIS SUITE STRUCTURALLY CANNOT SEE, and did not see for the whole life of
+ * civitai#3983: its resolver mock only ever returns `full` or `none`, so the case
+ * production actually hit — the resolver returning NOTHING — is not exercised here
+ * at all. The listing service used to turn that missing value into `full`. The
+ * absent-scope cases live in `apps.absent-scope-fail-closed.test.ts`; keep them
+ * there rather than assuming this suite covers them.
  */
 
 const {
@@ -32,8 +38,10 @@ const {
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   MixedAuthEndpoint: (handler: unknown) => handler,
-  handleEndpointError: (res: { status: (n: number) => { json: (b: unknown) => unknown } }, e: unknown) =>
-    res.status(500).json({ message: (e as Error)?.message ?? 'error' }),
+  handleEndpointError: (
+    res: { status: (n: number) => { json: (b: unknown) => unknown } },
+    e: unknown
+  ) => res.status(500).json({ message: (e as Error)?.message ?? 'error' }),
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   resolveStoreVisibilityScope: mockResolveScope,
@@ -231,10 +239,12 @@ describe('GET /api/v1/apps (list)', () => {
   });
 
   it('429 when rate-limited: the limiter short-circuits before any scope/service work', async () => {
-    mockRateLimit.mockImplementationOnce(async ({ res }: { res: { status: (n: number) => { json: (b: unknown) => unknown } } }) => {
-      res.status(429).json({ message: 'Rate limit exceeded' });
-      return true;
-    });
+    mockRateLimit.mockImplementationOnce(
+      async ({ res }: { res: { status: (n: number) => { json: (b: unknown) => unknown } } }) => {
+        res.status(429).json({ message: 'Rate limit exceeded' });
+        return true;
+      }
+    );
     const { req, res } = createMocks();
     await (listHandler as unknown as Handler)(req, res, MOD);
     expect(res._status()).toBe(429);
@@ -287,16 +297,21 @@ describe('GET /api/v1/apps/{slug} (detail)', () => {
   });
 
   it('invalid/expired token → anonymous → 404 (not a 500)', async () => {
-    const { req, res } = createMocks({ query: { slug: 'my-app' }, headers: { authorization: 'Bearer garbage' } });
+    const { req, res } = createMocks({
+      query: { slug: 'my-app' },
+      headers: { authorization: 'Bearer garbage' },
+    });
     await (detailHandler as unknown as Handler)(req, res, undefined);
     expect(res._status()).toBe(404);
   });
 
   it('429 when rate-limited: short-circuits before scope/service', async () => {
-    mockRateLimit.mockImplementationOnce(async ({ res }: { res: { status: (n: number) => { json: (b: unknown) => unknown } } }) => {
-      res.status(429).json({ message: 'Rate limit exceeded' });
-      return true;
-    });
+    mockRateLimit.mockImplementationOnce(
+      async ({ res }: { res: { status: (n: number) => { json: (b: unknown) => unknown } } }) => {
+        res.status(429).json({ message: 'Rate limit exceeded' });
+        return true;
+      }
+    );
     const { req, res } = createMocks({ query: { slug: 'my-app' } });
     await (detailHandler as unknown as Handler)(req, res, MOD);
     expect(res._status()).toBe(429);

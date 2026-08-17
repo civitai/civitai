@@ -6,6 +6,10 @@ import {
   recordStoreScopeResolution,
 } from '~/server/prom/store-scope.metrics';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
+import {
+  narrowStoreScope,
+  type StoreVisibilityScope as StoreVisibilityScopeValue,
+} from '~/shared/utils/store-visibility-scope';
 
 const APP_BLOCKS_FLAG = 'app-blocks-enabled';
 
@@ -700,14 +704,14 @@ export async function isExternalListingsPublicEnabled(opts?: {
 }
 
 /**
- * The store read-path VISIBILITY SCOPE resolved once per request, then threaded
- * into every store read proc + the data-layer kind predicate:
- *   - `full`            — the caller sees ALL kinds (today's mod/tester gate).
- *   - `public-external` — the caller sees ONLY `kind='offsite'` approved listings
- *     (both `connect` and `external-link` sub-kinds); onsite is excluded.
- *   - `none`            — the caller sees NOTHING (dark; today's public default).
+ * The store read-path VISIBILITY SCOPE. Re-exported from the dependency-free
+ * `~/shared/utils/store-visibility-scope`, which owns the closed value set, the
+ * runtime membership test and the ONE fail-closed narrowing rule — so the data
+ * layer and the client can share them without importing this server module.
+ * Existing `import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag'`
+ * call sites keep working unchanged.
  */
-export type StoreVisibilityScope = 'full' | 'public-external' | 'none';
+export type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 
 /**
  * Resolve the {@link StoreVisibilityScope} for a store read request. The two flags
@@ -737,20 +741,44 @@ export type StoreVisibilityScope = 'full' | 'public-external' | 'none';
  */
 export async function resolveStoreVisibilityScope(opts?: {
   user?: SessionUser;
-}): Promise<StoreVisibilityScope> {
-  const scope = await resolveStoreVisibilityScopeUninstrumented(opts);
+}): Promise<StoreVisibilityScopeValue> {
+  const raw = (await resolveStoreVisibilityScopeUninstrumented(opts)) as unknown;
   // Instrumentation is deliberately at THIS choke point and nowhere else: it is the
   // single place both read paths (tRPC middleware + the REST handlers) and the SSR
   // store pages agree on, so one counter covers every entry point and cannot drift
   // the way per-call-site logging would.
-  recordStoreScopeResolution(scope, opts?.user ? 'user' : 'anon');
+  //
+  // 🔴 RECORD THE RAW VALUE, BEFORE NARROWING. `civitai_app_store_scope_resolutions_total`
+  // is the only instrument that can say what this function actually produced; if it
+  // recorded the narrowed answer, a value that is not a scope at all would be
+  // indistinguishable from a legitimately-resolved `none` and civitai#3983's central
+  // observation (`{principal="anon", scope="undefined"}`) would have been erased by
+  // the very change that closed the exposure.
+  recordStoreScopeResolution(raw as string, opts?.user ? 'user' : 'anon');
+  // 🔴 ENFORCE THE DECLARED CONTRACT AT RUNTIME, FAILING CLOSED. Every branch below
+  // returns a literal, so this narrowing is unreachable by inspection — and in
+  // production it is not: the counter above records `undefined` for the anonymous
+  // principal on this exact build, and both REST entry points independently record
+  // `absent` at their branch. Until that mechanism is identified, a declared return
+  // type is a claim, not a guarantee, and the fail-open half of the split (the
+  // listing service's `?? 'full'`) served the whole approved catalog — on-site apps
+  // included — to unauthenticated callers. An uninterpretable value is not evidence
+  // of an entitlement: it resolves to `none`.
+  //
+  // No extra log is emitted here on purpose. The counter above already carries the
+  // discriminator — prom-client renders the raw label verbatim, so `scope="undefined"`,
+  // `scope="[object Promise]"` and `scope="<unknown-string>"` are three different
+  // series — and this runs on an unauthenticated, public endpoint where a per-request
+  // log would be unbounded. Alert on
+  // `store_scope_resolutions_total{scope!~"full|public-external|none"}`.
+  const scope = narrowStoreScope(raw);
   if (scope === 'none' && opts?.user) reportSilentStoreGate(opts.user);
   return scope;
 }
 
 async function resolveStoreVisibilityScopeUninstrumented(opts?: {
   user?: SessionUser;
-}): Promise<StoreVisibilityScope> {
+}): Promise<StoreVisibilityScopeValue> {
   // Axis 1 — the existing catalog-visibility gate (mods + app-dev-testers). MUST be
   // checked FIRST so a privileged viewer always gets `full`, never `public-external`
   // (the external flag can only ever LIFT a non-privileged viewer, never narrow a mod).

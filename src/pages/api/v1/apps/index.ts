@@ -3,6 +3,7 @@ import { getAppListingsListQuery } from '~/server/schema/blocks/app-listing-read
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
 import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
+import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { getNextPage } from '~/server/utils/pagination-helpers';
@@ -26,9 +27,16 @@ import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelo
  * ## Visibility — per-user SCOPE, DEFAULT CLOSED (the security crux)
  * The catalog is gated by `resolveStoreVisibilityScope({ user })` — the SAME
  * helper the store tRPC read middleware uses — and its result is passed
- * EXPLICITLY to the listing service. The service is scope-parametric and
- * defaults to `full`, so the scope MUST be threaded through: never let an
- * unscoped caller fall through to the full catalog.
+ * EXPLICITLY to the listing service.
+ *
+ * 🔴 The scope is NARROWED (`narrowStoreScope`) before it is branched on, and the
+ * listing service now defaults an absent scope to `none` rather than `full`. Both
+ * changes are civitai#3983: on the serving build this endpoint received NO scope at
+ * all for an anonymous caller, the old `scope === 'none'` negative test admitted it,
+ * and the service's old `?? 'full'` turned that missing value into the whole approved
+ * catalog — on-site apps included — for an unauthenticated request. Either guard
+ * alone would have prevented it; both exist so a future consumer inherits the
+ * fail-closed direction by default instead of re-deriving it.
  *   - `none`            → empty page (anon / non-privileged, pre-launch default).
  *   - `full`            → the whole approved catalog (mods + app-dev-testers).
  *   - `public-external` → offsite listings only (once the public flag opens).
@@ -87,12 +95,18 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     if (limited) return;
 
     // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
-    const scope = await resolveStoreVisibilityScope({ user });
-    // Record what this entry point actually branched on. 🔴 The listing service
-    // defaults an ABSENT scope to `full`, so "no scope arrived" and "resolved full"
-    // produce the identical response here — `recordStoreScopeApplied` is what keeps
-    // those two apart in production (see store-scope.metrics; civitai#3983).
-    recordStoreScopeApplied(scope, 'rest-list');
+    const rawScope: unknown = await resolveStoreVisibilityScope({ user });
+    // Record what this entry point actually branched on, BEFORE narrowing — an
+    // ABSENT scope must stay distinguishable from a resolved `none` in production
+    // (see store-scope.metrics; civitai#3983).
+    recordStoreScopeApplied(rawScope as string | undefined, 'rest-list');
+    // 🔴 FAIL CLOSED, independently of the resolver. `scope === 'none'` is a NEGATIVE
+    // test: it admits every value that is not the string `none`, including the
+    // `undefined` production actually carries here — which then met the listing
+    // service's `?? 'full'` and served the whole approved catalog, on-site apps
+    // included, to an unauthenticated caller. Narrowing first makes the branch an
+    // ALLOWLIST over the closed set: anything uninterpretable is `none`.
+    const scope = narrowStoreScope(rawScope);
     if (scope === 'none') {
       // Anon / non-privileged pre-launch → empty page, NEVER the full catalog.
       return res
