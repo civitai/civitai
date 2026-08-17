@@ -9,13 +9,15 @@ const {
   mockInsertTagsOnImageNew,
   mockUpsertTagsOnImageNew,
   mockLogToAxiom,
+  mockClickhouseQuery,
+  envOverrides,
   tagsDb,
 } = vi.hoisted(() => {
   const tagsDb = [
     { id: 100, name: 'hate symbols', nsfwLevel: 32 }, // Blocked
-    { id: 200, name: 'teen', nsfwLevel: 1 },         // PG
+    { id: 200, name: 'teen', nsfwLevel: 1 }, // PG
     { id: 300, name: 'potential celebrity', nsfwLevel: 1 }, // PG
-    { id: 400, name: 'some-tag', nsfwLevel: 8 },      // X
+    { id: 400, name: 'some-tag', nsfwLevel: 8 }, // X
     { id: 1001, name: 'pg', nsfwLevel: 1 },
     { id: 1002, name: 'pg-13', nsfwLevel: 2 },
     { id: 1003, name: 'r', nsfwLevel: 4 },
@@ -109,6 +111,8 @@ const {
 
   return {
     tagsDb,
+    envOverrides: { BLOCKED_IMAGE_HASH_CHECK: false } as { BLOCKED_IMAGE_HASH_CHECK: boolean },
+    mockClickhouseQuery: vi.fn().mockResolvedValue([{ count: 0 }]),
     mockDbWrite: createDbMock(),
     mockInsertTagsOnImageNew: vi.fn().mockResolvedValue(undefined),
     mockUpsertTagsOnImageNew: vi.fn().mockResolvedValue(undefined),
@@ -134,19 +138,36 @@ vi.mock('~/server/logging/client', () => ({
 }));
 
 vi.mock('~/env/server', () => ({
-  env: new Proxy({}, {
-    get(target, prop: string) {
-      if (prop === 'WEBHOOK_TOKEN') return 'mock-webhook-token';
-      if (prop === 'BLOCKED_IMAGE_HASH_CHECK') return false;
-      if (prop === 'LOGGING') return [];
-      if (prop === 'EMAIL_PORT') return 587;
-      if (prop === 'DATABASE_SSL') return false;
-      if (prop.endsWith('URL') || prop.endsWith('_URL') || prop.endsWith('ENDPOINT')) return 'http://localhost:3000';
-      if (prop.endsWith('CONCURRENCY')) return 5;
-      return 'mock-value';
-    },
-  }),
+  env: new Proxy(
+    {},
+    {
+      get(target, prop: string) {
+        if (prop === 'WEBHOOK_TOKEN') return 'mock-webhook-token';
+        if (prop === 'BLOCKED_IMAGE_HASH_CHECK') return envOverrides.BLOCKED_IMAGE_HASH_CHECK;
+        if (prop === 'LOGGING') return [];
+        if (prop === 'EMAIL_PORT') return 587;
+        if (prop === 'DATABASE_SSL') return false;
+        if (prop.endsWith('URL') || prop.endsWith('_URL') || prop.endsWith('ENDPOINT'))
+          return 'http://localhost:3000';
+        if (prop.endsWith('CONCURRENCY')) return 5;
+        return 'mock-value';
+      },
+    }
+  ),
 }));
+
+// Namespace proxy rather than a hand-listed mock: the module also re-exports the Tracker, and
+// importing it for real builds a live ClickHouse client.
+vi.mock('~/server/clickhouse/client', () => {
+  const known: Record<string, unknown> = { clickhouse: { $query: mockClickhouseQuery } };
+  return new Proxy(known, {
+    get(target, prop) {
+      if (typeof prop !== 'string' || prop === 'then' || prop === '__esModule') return undefined;
+      if (!(prop in target)) target[prop] = vi.fn();
+      return target[prop];
+    },
+  });
+});
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => {
   const actual = await importOriginal<any>();
@@ -236,13 +257,38 @@ vi.mock('~/server/services/image.service', () => ({
   imageScanTypes: [3, 9], // ImageScanType.WD14, ImageScanType.SpineRating
 }));
 
+// Render a Prisma tagged-template call the way the driver does: nested `Prisma.sql` fragments
+// are inlined, every interpolated value becomes a `$n` placeholder. A value that shows up in
+// `text` rather than `params` is being concatenated into SQL, which is what the injection tests
+// below assert against.
+const renderSql = (strings: readonly string[], values: any[]): { text: string; params: any[] } => {
+  let text = '';
+  const params: any[] = [];
+  strings.forEach((part, i) => {
+    text += part;
+    if (i >= values.length) return;
+    const value = values[i];
+    if (value && Array.isArray(value.strings) && Array.isArray(value.values)) {
+      const inner = renderSql(value.strings, value.values);
+      text += inner.text.replace(/\$(\d+)/g, (_m, n) => `$${params.length + Number(n)}`);
+      params.push(...inner.params);
+    } else {
+      params.push(value);
+      text += `$${params.length}`;
+    }
+  });
+  return { text, params };
+};
+
 describe('image-scan-result webhook - pipeline tests', () => {
   const imageDbState = new Map<number, any>();
+  const imageUpdates: { text: string; params: any[] }[] = [];
 
   const getImageState = (id: number) => {
     if (!imageDbState.has(id)) {
       // Set initial scans: Image 2, 5, 6, 7 have SpineRating pre-completed
-      const scans = (id === 2 || id === 5 || id === 6 || id === 7) ? { [TagSource.SpineRating]: Date.now() } : {};
+      const scans =
+        id === 2 || id === 5 || id === 6 || id === 7 ? { [TagSource.SpineRating]: Date.now() } : {};
       imageDbState.set(id, {
         id,
         createdAt: new Date(),
@@ -264,10 +310,15 @@ describe('image-scan-result webhook - pipeline tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     imageDbState.clear();
+    imageUpdates.length = 0;
+    envOverrides.BLOCKED_IMAGE_HASH_CHECK = false;
+    mockClickhouseQuery.mockResolvedValue([{ count: 0 }]);
 
-    mockDbWrite.image.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => {
-      return getImageState(where.id);
-    });
+    mockDbWrite.image.findUnique.mockImplementation(
+      async ({ where }: { where: { id: number } }) => {
+        return getImageState(where.id);
+      }
+    );
 
     mockDbWrite.tag.findMany.mockImplementation(async ({ where }: any) => {
       if (where.name?.in) {
@@ -281,34 +332,27 @@ describe('image-scan-result webhook - pipeline tests', () => {
       return [];
     });
 
-    mockDbWrite.$queryRawUnsafe.mockImplementation(async (query: string) => {
-      const match = query.match(/WHERE id = (\d+)/) || query.match(/id = (\d+)/) || query.match(/id IN \((\d+)\)/);
-      const id = match ? parseInt(match[1], 10) : 1;
-      const state = getImageState(id);
-
-      let source: string | undefined;
-      if (query.includes('Clavata')) source = 'Clavata';
-      else if (query.includes('WD14')) source = 'WD14';
-      else if (query.includes('SpineRating')) source = 'SpineRating';
-
-      if (source) {
-        state.scanJobs.scans[source] = Date.now();
-      }
-
-      return [
-        {
-          scanJobs: state.scanJobs,
-          type: 'image',
-        },
-      ];
-    });
-
     mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
       const queryString = Array.isArray(query)
         ? query.join('')
         : query?.strings
         ? query.strings.join('')
         : String(query);
+
+      if (queryString.includes('UPDATE "Image"')) {
+        const rendered = renderSql(Array.isArray(query) ? query : query.strings, values);
+        imageUpdates.push(rendered);
+
+        const idIndex = rendered.text.match(/id = \$(\d+)/);
+        const id = idIndex ? rendered.params[Number(idIndex[1]) - 1] : 1;
+        const state = getImageState(id);
+
+        const sourceIndex = rendered.text.match(/jsonb_build_object\(\$(\d+)::text/);
+        const source = sourceIndex ? rendered.params[Number(sourceIndex[1]) - 1] : undefined;
+        if (source) state.scanJobs.scans[source] = Date.now();
+
+        return [{ scanJobs: state.scanJobs, type: 'image' }];
+      }
 
       if (queryString.includes('is_new_user')) {
         return [{ isNewUser: false }];
@@ -328,7 +372,7 @@ describe('image-scan-result webhook - pipeline tests', () => {
         return insertedTags
           .filter((t) => t.imageId === imageId && !t.disabled)
           .map((t) => {
-            const tagInfo = tagsDb.find(td => td.id === t.tagId);
+            const tagInfo = tagsDb.find((td) => td.id === t.tagId);
             return {
               id: t.tagId,
               name: tagInfo?.name ?? 'unknown-tag',
@@ -428,9 +472,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
     await req.promise;
 
     expect(req.res.status).toHaveBeenCalledWith(200);
-    expect(mockDbWrite.$queryRawUnsafe).toHaveBeenCalled();
-    const queryCall = mockDbWrite.$queryRawUnsafe.mock.calls.find((call: any) =>
-      call[0].includes('retryCount') && call[0].includes('4')
+    const queryCall = imageUpdates.find(
+      (update) => update.text.includes('retryCount') && update.params.includes(4)
     );
     expect(queryCall).toBeDefined();
   });
@@ -493,5 +536,57 @@ describe('image-scan-result webhook - pipeline tests', () => {
     const updateForImage7 = dbUpdates.find((call: any) => call[0].where.id === 7);
     expect(updateForImage7).toBeDefined();
     expect(updateForImage7[0].data.nsfwLevel).toBeUndefined(); // locked, so undefined (not updated)
+  });
+
+  describe('webhook body strings never reach SQL text', () => {
+    const INJECTED = `1 OR 1=1) < 5 AND disabled = false -- `;
+
+    it('rejects a non-numeric hash before it can reach the ClickHouse query', async () => {
+      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
+
+      const req = runWebhook({
+        id: 8,
+        status: 0,
+        source: TagSource.ImageHash,
+        hash: INJECTED,
+      });
+      await req.promise;
+
+      expect(mockClickhouseQuery).not.toHaveBeenCalled();
+      expect(req.res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('passes a valid hash to ClickHouse as digits only', async () => {
+      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
+
+      const req = runWebhook({
+        id: 9,
+        status: 0,
+        source: TagSource.ImageHash,
+        hash: '-1234567890123456789',
+      });
+      await req.promise;
+
+      expect(mockClickhouseQuery).toHaveBeenCalled();
+      const [strings, ...values] = mockClickhouseQuery.mock.calls[0];
+      expect(strings.join('?')).toContain('bitXor(hash, ?)');
+      expect(values).toEqual([-1234567890123456789n]);
+    });
+
+    it('sends the scanner-supplied model id as a parameter, not as SQL text', async () => {
+      const req = runWebhook({
+        id: 10,
+        status: 0,
+        source: TagSource.WD14,
+        tags: [],
+        context: { movie_rating: 'PG', movie_rating_model_id: `x'; DROP TABLE "Image"; --` },
+      });
+      await req.promise;
+
+      const update = imageUpdates.find((u) => u.text.includes('"aiModel"'));
+      expect(update).toBeDefined();
+      expect(update!.text).not.toContain('DROP TABLE');
+      expect(update!.params).toContain(`x'; DROP TABLE "Image"; --`);
+    });
   });
 });

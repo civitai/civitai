@@ -1,5 +1,5 @@
 import { isDev } from '~/env/other';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -237,7 +237,17 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 // 1-10:  The images are visually almost identical
 // 11-20: The images are visually similar
 // 21-30: The images are visually somewhat similar
-async function isBlocked(hash: string) {
+function parsePerceptualHash(hash: string) {
+  try {
+    return BigInt(hash);
+  } catch {
+    throw new Error('invalid hash from ImageHash scan');
+  }
+}
+
+// `$query` interpolates into the SQL text rather than binding parameters, so this must
+// only ever be handed a bigint — never the raw string off the webhook body.
+async function isBlocked(hash: bigint) {
   if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
 
   const [{ count }] = await clickhouse.$query<{ count: number }>`
@@ -836,17 +846,19 @@ async function updateImageScanJobs({
   whereIngestionIn?: ImageIngestionStatus[];
 }) {
   // Build scanJobs update SQL by composing jsonb operations
-  const scanJobsOps: { path: string; value: string }[] = [];
+  const scanJobsOps: { path: Prisma.Sql; value: Prisma.Sql }[] = [];
   if (source) {
     scanJobsOps.push({
-      path: `'{scans}'`,
-      value: `COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb`,
+      path: Prisma.sql`'{scans}'`,
+      value: Prisma.sql`COALESCE("scanJobs"->'scans', '{}') || jsonb_build_object(${source}::text, ${String(
+        Date.now()
+      )}::bigint)`,
     });
   }
   if (incrementRetryCount) {
     scanJobsOps.push({
-      path: `'{retryCount}'`,
-      value: `to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)`,
+      path: Prisma.sql`'{retryCount}'`,
+      value: Prisma.sql`to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)`,
     });
   }
   if (!scanJobsOps.length) {
@@ -854,34 +866,39 @@ async function updateImageScanJobs({
   }
   // Nest jsonb_set calls: jsonb_set(jsonb_set(base, path1, val1), path2, val2)
   const scanJobsSql = scanJobsOps.reduce(
-    (acc, op) => `jsonb_set(${acc}, ${op.path}, ${op.value})`,
-    `COALESCE("scanJobs", '{}')`
+    (acc, op) => Prisma.sql`jsonb_set(${acc}, ${op.path}, ${op.value})`,
+    Prisma.sql`COALESCE("scanJobs", '{}')`
   );
 
-  // Build WHERE clause dynamically
-  const whereConditions = [`id = ${id}`];
-  if (whereIngestionIn?.length) {
-    whereConditions.push(`ingestion IN (${whereIngestionIn.map((s) => `'${s}'`).join(', ')})`);
-  }
-  const whereClause = whereConditions.join(' AND ');
+  const setClauses: Prisma.Sql[] = [];
+  if (pHash) setClauses.push(Prisma.sql`"pHash" = ${pHash}`);
+  if (ingestion) setClauses.push(Prisma.sql`"ingestion" = ${ingestion}::"ImageIngestionStatus"`);
+  if (nsfwLevel) setClauses.push(Prisma.sql`"nsfwLevel" = ${nsfwLevel}`);
+  if (blockedFor) setClauses.push(Prisma.sql`"blockedFor" = ${blockedFor}`);
+  if (aiRating) setClauses.push(Prisma.sql`"aiNsfwLevel" = ${aiRating}`);
+  if (aiModel) setClauses.push(Prisma.sql`"aiModel" = ${aiModel}`);
+  setClauses.push(Prisma.sql`"scanJobs" = ${scanJobsSql}`);
 
-  const result = await dbWrite.$queryRawUnsafe<
+  const whereConditions = [Prisma.sql`id = ${id}`];
+  if (whereIngestionIn?.length) {
+    whereConditions.push(
+      Prisma.sql`ingestion IN (${Prisma.join(
+        whereIngestionIn.map((s) => Prisma.sql`${s}::"ImageIngestionStatus"`)
+      )})`
+    );
+  }
+
+  const result = await dbWrite.$queryRaw<
     {
       scanJobs: { scans?: Record<string, TagSource> };
       type: MediaType;
     }[]
-  >(`
+  >`
       UPDATE "Image" SET
-      ${pHash ? `"pHash" = ${pHash},` : ''}
-      ${ingestion ? `"ingestion" = '${ingestion}',` : ''}
-      ${nsfwLevel ? `"nsfwLevel" = ${nsfwLevel},` : ''}
-      ${blockedFor ? `"blockedFor" = '${blockedFor}',` : ''}
-      ${aiRating ? `"aiNsfwLevel" = ${aiRating},` : ''}
-      ${aiModel ? `"aiModel" = '${aiModel}',` : ''}
-      "scanJobs" = ${scanJobsSql}
-      WHERE ${whereClause}
+      ${Prisma.join(setClauses, ', ')}
+      WHERE ${Prisma.join(whereConditions, ' AND ')}
       RETURNING "scanJobs", type;
-    `);
+    `;
 
   return result[0]?.type === 'video'
     ? getHasRequiredVideoScans(result[0]?.scanJobs?.scans)
@@ -911,8 +928,8 @@ async function processScanResult({
   switch (source) {
     case TagSource.ImageHash: {
       if (!hash) throw new Error('missing hash from ImageHash scan');
-      const blocked = await isBlocked(hash);
-      const pHash = BigInt(hash);
+      const pHash = parsePerceptualHash(hash);
+      const blocked = await isBlocked(pHash);
       if (blocked) {
         logToAxiom(
           {
