@@ -133,6 +133,9 @@ export function createBuzzEvent<T>({
       // clickhouse query to determine the awarded amount. For the time being, this won't be
       // done.
       awarded: -1,
+      // How many times the reward fired today, which is NOT derivable from
+      // `awarded`: a grant the cap trimmed to zero happened but paid nothing.
+      awardedCount: -1,
       accountType: buzzEvent.toAccountType ?? 'blue',
     };
 
@@ -178,8 +181,10 @@ export function createBuzzEvent<T>({
 
     // Read the same per-entry amounts the Lua enforces the cap against, or the
     // UI reports a different day total than the one being paid.
+    const entries = Object.values(typeCache);
+    data.awardedCount = entries.length;
     data.awarded = Math.min(
-      Object.values(typeCache).reduce<number>(
+      entries.reduce<number>(
         (sum, entry) => sum + (parseEntryAmount(entry) ?? data.awardAmount),
         0
       ),

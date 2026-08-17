@@ -7999,7 +7999,13 @@ async function maybeAutoClaimDailyBoost({
 
   // Disabled at runtime, already claimed today, or the reward has no payout
   // (e.g. user is rewardsIneligible — multiplier zeroed the amount).
-  if (!boostDetails || boostDetails.awarded > 0 || boostDetails.awardAmount <= 0) return undefined;
+  //
+  // Gated on the claim COUNT, not on `awarded > 0`: a claim the cap trimmed to
+  // zero still consumed the day's dedup entry, so an amount-based check would
+  // pass, `apply` would no-op against the dedup guard, and the iframe would be
+  // told Buzz was claimed on every submit for the rest of the day.
+  if (!boostDetails || boostDetails.awardedCount > 0 || boostDetails.awardAmount <= 0)
+    return undefined;
 
   // Balance already covers the cost — boost would just sit unused today.
   if (balanceSum >= cost) return undefined;

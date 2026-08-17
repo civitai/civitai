@@ -334,6 +334,20 @@ describe('the cap is never overshot, whatever the operator sets', () => {
     expect((await onDemandReward().getUserRewardDetails(1))?.awarded).toBe(10);
   });
 
+  // `awarded` stopped being a proxy for "did it fire today" the moment entries
+  // recorded what they paid: a grant the cap trimmed to zero happened and paid
+  // nothing. `blocks.router`'s autoclaim gates on this rather than on the amount.
+  it('counts a claim that the cap trimmed to zero', async () => {
+    configure({ testOnDemandReward: { awardAmount: 3, cap: 0 } });
+    const reward = onDemandReward();
+
+    await reward.apply({ userId: 1, entityId: 1 });
+    const details = await reward.getUserRewardDetails(1);
+
+    expect(details?.awarded).toBe(0);
+    expect(details?.awardedCount).toBe(1);
+  });
+
   it('reports the same day total to the user as it paid', async () => {
     configure({ testOnDemandReward: { awardAmount: 3, cap: 10 } });
     const reward = onDemandReward();
@@ -410,25 +424,84 @@ describe('getUserRewardDetails() stops advertising a disabled reward', () => {
 // Change-detectors, deliberately. The unit suite cannot run the script, so these
 // are the only thing standing between a revert of it and a green run — the model
 // in `runLua` above would go on producing the right numbers from the wrong code.
+//
+// 🔴 The first version of this block pinned only the two lines THIS work changed,
+// and a reviewer executing the script found two survivors in the lines it did not:
+// deleting `- awarded` from the cap arithmetic removed the daily cap entirely, and
+// deleting the dedup block removed the double-award guard — both green, the second
+// because the model implements dedup itself and kept returning -1 for code that no
+// longer did. Anchoring what you edited is the natural failure here, because
+// nothing in your attention points at the rest. Hence the whole-body pin below,
+// which covers the properties nobody thought to enumerate.
 describe('the on-demand Lua keeps the properties the model assumes', () => {
+  const line = (needle: string) => expect(ON_DEMAND_REWARD_SCRIPT).toContain(needle);
+
+  it('refuses a duplicate event, which is the whole reason the script is atomic', () => {
+    expect(ON_DEMAND_REWARD_SCRIPT).toMatch(/if cache\[ARGV\[2\]\] then\s+return -1/);
+  });
+
   it('records what each entry paid, not when it happened', () => {
-    expect(ON_DEMAND_REWARD_SCRIPT).toContain("cache[ARGV[2]] = 'a:' .. tostring(toAward)");
+    line("cache[ARGV[2]] = 'a:' .. tostring(toAward)");
   });
 
   it('sums the entries rather than counting them against the current award', () => {
-    expect(ON_DEMAND_REWARD_SCRIPT).toContain('for _, entry in pairs(cache) do');
-    expect(ON_DEMAND_REWARD_SCRIPT).toContain("string.match(tostring(entry), '^a:(%d+)$')");
+    line('local awarded = 0');
+    line('for _, entry in pairs(cache) do');
+    line("string.match(tostring(entry), '^a:(%d+)$')");
     // The accumulation itself, not just the parse above it: replacing this one
     // line with `awarded + tonumber(ARGV[3])` restores the count-based reading
     // while leaving every other line of the script intact.
-    expect(ON_DEMAND_REWARD_SCRIPT).toContain(
-      'awarded = awarded + (paid and tonumber(paid) or tonumber(ARGV[3]))'
-    );
-    expect(ON_DEMAND_REWARD_SCRIPT).not.toMatch(/count \* tonumber/);
+    line('awarded = awarded + (paid and tonumber(paid) or tonumber(ARGV[3]))');
   });
 
-  it('reads a finite cap, since tonumber("Infinity") is nil in Lua', () => {
-    expect(ON_DEMAND_REWARD_SCRIPT).toContain('tonumber(ARGV[4])');
+  // Anchored on the operators, not on `ARGV[4]`: that name survives the deletion
+  // of the subtraction it was supposed to protect, which is how a mutant that
+  // abolished the daily cap passed.
+  it('subtracts what was already earned from the cap', () => {
+    line('local remaining = math.max(tonumber(ARGV[4]) - awarded, 0)');
+  });
+
+  it('never grants more than the cap left', () => {
+    line('local toAward = math.min(tonumber(ARGV[3]), remaining)');
+  });
+
+  it('persists the updated hash and expires it at end of day', () => {
+    line("redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(cache))");
+    // Without this the hash never expires and the daily cap never resets.
+    line("redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[5]))");
+  });
+
+  it('returns the trimmed amount, not the requested one', () => {
+    line('return toAward');
+  });
+
+  // The backstop for every property above and every one not listed. A reviewer
+  // found two holes by executing mutants; assume there are more nobody tried.
+  // This fails on any edit to the script including a reformat, which is the safe
+  // direction: updating it forces re-deriving the model in `runLua` beside it.
+  it('matches the script this suite was written against, line for line', () => {
+    const body = ON_DEMAND_REWARD_SCRIPT.split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('--'));
+
+    expect(body).toEqual([
+      "local cacheJson = redis.call('HGET', KEYS[1], ARGV[1])",
+      "local cache = cjson.decode(cacheJson or '{}')",
+      'if cache[ARGV[2]] then',
+      'return -1',
+      'end',
+      'local awarded = 0',
+      'for _, entry in pairs(cache) do',
+      "local paid = string.match(tostring(entry), '^a:(%d+)$')",
+      'awarded = awarded + (paid and tonumber(paid) or tonumber(ARGV[3]))',
+      'end',
+      'local remaining = math.max(tonumber(ARGV[4]) - awarded, 0)',
+      'local toAward = math.min(tonumber(ARGV[3]), remaining)',
+      "cache[ARGV[2]] = 'a:' .. tostring(toAward)",
+      "redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(cache))",
+      "redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[5]))",
+      'return toAward',
+    ]);
   });
 });
 

@@ -61,6 +61,11 @@ const warnedMultiCap = new Set<string>();
 // `enabled` is on, so a transient KeyValue blip would resume paying every reward
 // an operator had turned off, and `process` would then pay out what `apply`
 // wrote during the blip.
+//
+// ⚠️ This narrows the fail-open window, it does not close it. A pod that has
+// never completed a successful read — a cold start during an outage — has no last
+// good config and still falls back to compiled defaults, i.e. everything enabled.
+// `reward_config_read_failed_total` is what makes that visible.
 let lastGoodConfig: RewardConfig | null = null;
 
 const warn = (message: string, data: MixedObject) => {
@@ -97,9 +102,14 @@ function usableOverride(type: string, value: unknown): RewardConfigEntry {
   const parsed = rewardOverrideSchema.safeParse(value);
   if (parsed.success) return { override: parsed.data, rejected: [] };
 
+  // A whole entry that is not an object disables the reward, for the same reason
+  // an unreadable `enabled` does — one level up. `{"dailyBoost": false}` is the
+  // shorthand an operator reaches for when they want a reward off, and so are
+  // `null` and `"disabled"`; resolving any of them to ON leaves the reward paying
+  // against an edit that reads, to whoever made it, like it worked.
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    warn('Ignoring malformed reward override', { rewardType: type, stored: value });
-    return { override: {}, rejected: [...OVERRIDE_FIELDS] };
+    warn('Malformed reward override, disabling the reward', { rewardType: type, stored: value });
+    return { override: { enabled: false }, rejected: [...OVERRIDE_FIELDS] };
   }
 
   const record = value as MixedObject;
@@ -125,6 +135,12 @@ function usableOverride(type: string, value: unknown): RewardConfigEntry {
   return { override, rejected };
 }
 
+function buildConfig(rewards: Record<string, unknown>): RewardConfig {
+  const config: RewardConfig = {};
+  for (const [type, value] of Object.entries(rewards)) config[type] = usableOverride(type, value);
+  return config;
+}
+
 async function loadConfig(): Promise<RewardConfig> {
   const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
   const envelope = z
@@ -136,11 +152,7 @@ async function loadConfig(): Promise<RewardConfig> {
     return {};
   }
 
-  const config: RewardConfig = {};
-  for (const [type, value] of Object.entries(envelope.data.rewards ?? {}))
-    config[type] = usableOverride(type, value);
-
-  return config;
+  return buildConfig(envelope.data.rewards ?? {});
 }
 
 // Cache the parsed config, not the resolved decision: `resolveRewardConfig`
@@ -175,15 +187,30 @@ async function getRewardConfig(): Promise<RewardConfig> {
   }
 }
 
+export type StoredRewardConfig = {
+  /** The row exactly as written. Not narrowed to the schema — see below. */
+  value: unknown;
+  /** True when the row would not survive `setRewardConfig`. */
+  malformed: boolean;
+};
+
 /**
- * The stored row exactly as written, for an editor to render. Uncached and
- * unsanitised on purpose: an operator fixing a refused field needs to see what
- * is actually in the row, not what the read path salvaged from it.
+ * The stored row exactly as written, for an editor to render. Uncached, so an
+ * operator fixing a refused field sees the row rather than a minute-old copy.
+ *
+ * 🔴 Returns the RAW value on a parse failure rather than an empty config.
+ * `setRewardConfig` has replace semantics, and the row this feature exists to
+ * fix — `enabled: "false"` from a Retool text field — is exactly the row that
+ * fails the parse. Rendering `{}` for it would show an editor a lossless-looking
+ * empty form whose first save wipes every other reward's override.
+ *
+ * ⚠️ Two moderators editing at once are last-write-wins; there is no version
+ * guard on the row.
  */
-export async function getStoredRewardConfig(): Promise<z.infer<typeof rewardConfigSchema>> {
+export async function getStoredRewardConfig(): Promise<StoredRewardConfig> {
   const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
-  const parsed = rewardConfigSchema.safeParse(row?.value ?? {});
-  return parsed.success ? parsed.data : {};
+  const value = row?.value ?? {};
+  return { value, malformed: !rewardConfigSchema.safeParse(value).success };
 }
 
 /**
@@ -205,6 +232,10 @@ export async function setRewardConfig(config: z.infer<typeof rewardConfigSchema>
   });
 
   invalidateRewardConfigCache();
+  // Seed the fallback from what was just written. Clearing it and leaving it null
+  // means a failed read on this pod moments later falls back to compiled defaults
+  // — re-enabling the very reward this call just turned off.
+  lastGoodConfig = buildConfig(value.rewards ?? {});
   return value;
 }
 

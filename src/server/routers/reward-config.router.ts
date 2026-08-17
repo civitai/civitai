@@ -7,8 +7,9 @@ import {
 import { moderatorProcedure, router } from '~/server/trpc';
 
 export const rewardConfigRouter = router({
-  // `stored` is the row as written, for the editor's inputs; `rewards` is what
-  // the grant path actually resolved, including any field it refused.
+  // `stored` is the row as written — raw, and flagged when it would not survive
+  // `set`, so an editor can refuse to save over a row it cannot faithfully show.
+  // `rewards` is what the grant path actually resolved, including refused fields.
   get: moderatorProcedure.query(async () => ({
     stored: await getStoredRewardConfig(),
     rewards: (await Promise.all(Object.values(rewardImports).map((x) => x.describeConfig()))).sort(

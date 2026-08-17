@@ -1,11 +1,14 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
+  getStoredRewardConfig,
   invalidateRewardConfigCache,
   MAX_AWARD_AMOUNT,
   MAX_CAP,
   resolveRewardConfig,
+  REWARD_CONFIG_KEY,
   rewardOverrideSchema,
+  setRewardConfig,
 } from '~/server/rewards/reward-config';
 
 // The compiled definition's values. Every fallback below asserts against THIS
@@ -122,14 +125,29 @@ describe('resolveRewardConfig', () => {
     expect(config.rejected).toEqual(['awardAmount']);
   });
 
-  it('treats a non-object entry as no override at all', async () => {
-    storedConfig({ rewards: { testReward: 'off' } });
+  // `{"dailyBoost": false}` is the shorthand an operator reaches for when they
+  // want a reward off. Resolving the whole-entry case to ON leaves it paying
+  // against an edit that reads, to whoever made it, like it worked — the same
+  // hole `coerceEnabled` closes for the field, one level up.
+  it('disables the reward when the whole entry is unreadable', async () => {
+    for (const entry of [false, true, 'off', 'disabled', null, 0, 42, []]) {
+      invalidateRewardConfigCache();
+      storedConfig({ rewards: { testReward: entry } });
 
-    expect(await resolve()).toMatchObject({
-      enabled: true,
-      awardAmount: DEFAULTS.awardAmount,
-      cap: DEFAULTS.cap,
-    });
+      const config = await resolve();
+
+      expect(config.enabled).toBe(false);
+      expect(config.rejected).toContain('enabled');
+      // The amounts still fall back rather than going to zero.
+      expect(config.awardAmount).toBe(DEFAULTS.awardAmount);
+      expect(config.cap).toBe(DEFAULTS.cap);
+    }
+  });
+
+  it('leaves a reward on for an empty object, which says nothing either way', async () => {
+    storedConfig({ rewards: { testReward: {} } });
+
+    expect(await resolve()).toMatchObject({ enabled: true, rejected: [] });
   });
 
   // A Retool text field produces the string, not the boolean. Falling back to the
@@ -252,10 +270,7 @@ describe('reward config cache', () => {
 });
 
 describe('rewardOverrideSchema', () => {
-  // The admin mutation validates writes with this same schema. If it stopped
-  // being the single definition, what can be stored and what gets honoured
-  // would drift apart.
-  it('rejects at write time exactly what the read path refuses', () => {
+  it('accepts and rejects the values the read path accepts and rejects', () => {
     expect(rewardOverrideSchema.safeParse({ awardAmount: MAX_AWARD_AMOUNT + 1 }).success).toBe(
       false
     );
@@ -265,5 +280,120 @@ describe('rewardOverrideSchema', () => {
     expect(rewardOverrideSchema.safeParse({ enabled: false, awardAmount: 4, cap: 8 }).success).toBe(
       true
     );
+  });
+});
+
+// The read path salvaging a bad row is what makes the write path's strictness
+// load-bearing: a row that reaches disk must be one the read path honours in
+// FULL, or an operator's edit half-applies and the surviving half is invisible.
+// Asserting the schema alone would leave that binding to a comment — replacing
+// `rewardConfigSchema.parse` with a passthrough has to turn something red.
+describe('setRewardConfig', () => {
+  const upsert = dbMock.dbWrite.keyValue.upsert;
+
+  it('refuses the whole write when any field is out of bounds', async () => {
+    await expect(
+      setRewardConfig({ rewards: { testReward: { awardAmount: MAX_AWARD_AMOUNT + 1 } } } as never)
+    ).rejects.toThrow();
+
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cap the read path would refuse', async () => {
+    await expect(
+      setRewardConfig({ rewards: { testReward: { cap: MAX_CAP + 1 } } } as never)
+    ).rejects.toThrow();
+
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  // The read path coerces `"false"` because Retool produces it; the write path
+  // does not, because an editor sending a string means the editor is wrong.
+  it('refuses a stringly-typed `enabled` that the read path would coerce', async () => {
+    await expect(
+      setRewardConfig({ rewards: { testReward: { enabled: 'false' } } } as never)
+    ).rejects.toThrow();
+
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses one bad reward even when another in the same row is valid', async () => {
+    await expect(
+      setRewardConfig({
+        rewards: { good: { enabled: false }, bad: { awardAmount: -1 } },
+      } as never)
+    ).rejects.toThrow();
+
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('writes a valid row under the key the read path reads', async () => {
+    const config = { rewards: { testReward: { enabled: false, awardAmount: 4, cap: 8 } } };
+
+    await setRewardConfig(config);
+
+    expect(upsert).toHaveBeenCalledWith({
+      where: { key: REWARD_CONFIG_KEY },
+      create: { key: REWARD_CONFIG_KEY, value: config },
+      update: { value: config },
+    });
+  });
+
+  it('takes effect on the writing pod immediately rather than after the TTL', async () => {
+    storedConfig({ rewards: { testReward: { awardAmount: 4 } } });
+    expect((await resolve()).awardAmount).toBe(4);
+
+    storedConfig({ rewards: { testReward: { awardAmount: 7 } } });
+    await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } });
+
+    expect((await resolve()).awardAmount).toBe(7);
+  });
+
+  // Invalidating clears the last-good fallback too, so without seeding it here a
+  // read failure moments after the write re-enables the reward just disabled.
+  it('leaves the reward it just disabled disabled when the next read fails', async () => {
+    await setRewardConfig({ rewards: { testReward: { enabled: false, awardAmount: 4 } } });
+
+    findUnique.mockRejectedValue(new Error('KeyValue unavailable'));
+
+    expect(await resolve()).toMatchObject({ enabled: false, awardAmount: 4 });
+  });
+});
+
+describe('getStoredRewardConfig', () => {
+  it('returns the row as written, for an editor to render', async () => {
+    const stored = { rewards: { testReward: { enabled: false, cap: 8 } } };
+    storedConfig(stored);
+
+    expect(await getStoredRewardConfig()).toEqual({ value: stored, malformed: false });
+  });
+
+  // `setRewardConfig` replaces the whole row, so an editor shown `{}` for a row it
+  // could not parse would wipe every other reward's override on its first save —
+  // and `enabled: "false"` from a Retool text field is exactly such a row.
+  it('returns the RAW row when it would not survive a write, never an empty one', async () => {
+    const stored = {
+      rewards: { testReward: { enabled: 'false' }, otherReward: { awardAmount: 4 } },
+    };
+    storedConfig(stored);
+
+    expect(await getStoredRewardConfig()).toEqual({ value: stored, malformed: true });
+  });
+
+  it('does not throw on a row that is not even an object', async () => {
+    storedConfig('disabled');
+
+    expect(await getStoredRewardConfig()).toEqual({ value: 'disabled', malformed: true });
+  });
+
+  // Uncached on purpose: an operator fixing a refused field needs what is in the
+  // row, not what the read path salvaged, and not a minute-old copy of either.
+  it('reads through on every call', async () => {
+    storedConfig({ rewards: {} });
+
+    await getStoredRewardConfig();
+    await getStoredRewardConfig();
+
+    expect(findUnique).toHaveBeenCalledTimes(2);
   });
 });
