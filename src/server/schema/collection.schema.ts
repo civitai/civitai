@@ -170,6 +170,7 @@ export const collectionMetadataSchema = z
     bannerPosition: z.string().optional(),
     judgesApplyBrowsingLevel: z.boolean().optional(),
     judgesCanScoreEntries: z.boolean().optional(),
+    disableFollowOnSubmission: z.boolean().optional(),
     disableTagRequired: z.boolean().optional(),
     youtubeSupportEnabled: z.boolean().optional(),
     vimeoSupportEnabled: z.boolean().optional(),

@@ -861,6 +861,12 @@ export const saveItemInCollections = async ({
   });
   const permissionsMap = new Map(permissionsArray.map((p) => [p.collectionId, p]));
 
+  // Submitting to a collection you don't already follow follows it — but that's a side effect of the
+  // entry landing, so it's collected here and applied after the write. Doing it inline left a user
+  // following collections they never joined whenever the save went on to write nothing (no write
+  // permission on any of them, or the empty-transaction guard below).
+  const followCollectionIds: number[] = [];
+
   const data = (
     await Promise.all(
       upsertCollectionItems.map(async (upsertCollection) => {
@@ -901,6 +907,20 @@ export const saveItemInCollections = async ({
 
         if (!permission.writeReview && !permission.write) {
           return null;
+        }
+
+        // Queued rather than written: applied once the entry is actually in. `follow`/`manage` is what
+        // addContributorToCollection would throw on, and a missing grant must not fail a save that has
+        // already succeeded — so an ineligible collection is simply not followed. Skipping anyone who
+        // already holds a row also keeps the upsert, which REPLACES permissions, off a collaborator's seat.
+        const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
+        if (
+          !permission.isContributor &&
+          !permission.isOwner &&
+          !metadata?.disableFollowOnSubmission &&
+          (permission.follow || permission.manage)
+        ) {
+          followCollectionIds.push(collectionId);
         }
 
         return {
@@ -1007,6 +1027,19 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+
+  if (followCollectionIds.length > 0) {
+    await Promise.all(
+      followCollectionIds.map((collectionId) =>
+        addContributorToCollection({
+          targetUserId: userId,
+          userId,
+          collectionId,
+          permissionFlags: permissionsMap.get(collectionId),
+        })
+      )
+    );
+  }
 
   if (itemKey === 'imageId' && input.imageId) {
     const imageId = input.imageId;
@@ -2972,6 +3005,19 @@ export const bulkSaveItems = async ({
 
   if (collection.tags.length > 0 && tagId && !collection.tags.find((t) => t.tag.id === tagId)) {
     throw throwBadRequestError('The tag provided is not allowed in this collection');
+  }
+
+  if (
+    !permissions.isContributor &&
+    !permissions.isOwner &&
+    !(collection.metadata as CollectionMetadataSchema)?.disableFollowOnSubmission
+  ) {
+    // Make sure to follow the collection
+    await addContributorToCollection({
+      targetUserId: userId,
+      userId: userId,
+      collectionId,
+    });
   }
 
   const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;

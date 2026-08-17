@@ -153,13 +153,18 @@ const removeFrom = ({
   } as never);
 };
 
-// Submitting to someone else's collection is not joining it: following is its own action, taken
-// deliberately. Auto-following every submitter filled their collection list with collections they
-// had only posted to once.
+// Submitting to someone else's collection follows it. That follow is a side effect of the entry landing,
+// so a save that writes nothing must not leave the user following anything.
 const OTHER_COLLECTION_ID = 55501;
-const saveToOthersCollection = ({ write }: { write: 'Public' | 'Private' }) => {
+const saveToOthersCollection = ({
+  write,
+  metadata = {},
+}: {
+  write: 'Public' | 'Private';
+  metadata?: Record<string, unknown>;
+}) => {
   mockDbRead.collection.findMany.mockResolvedValue([
-    collectionRow({ id: OTHER_COLLECTION_ID, userId: 999, write }),
+    collectionRow({ id: OTHER_COLLECTION_ID, userId: 999, write, metadata }),
   ]);
   mockDbRead.collectionItem.findMany.mockResolvedValue([]);
   mockDbRead.$queryRaw.mockResolvedValue([
@@ -192,15 +197,30 @@ describe('saveItemInCollections follow-on-submission', () => {
     vi.clearAllMocks();
   });
 
-  it('does not follow the collection it wrote the entry to', async () => {
+  it('follows the collection once the entry is written', async () => {
     await expect(saveToOthersCollection({ write: 'Public' })).resolves.toBeDefined();
-    expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
+    expect(mockDbWrite.collectionContributor.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId_collectionId: { userId: USER_ID, collectionId: OTHER_COLLECTION_ID } },
+      })
+    );
   });
 
   it('does not follow a collection the save could not write to', async () => {
+    // read:Public grants `follow`, so the follow itself is permitted — but nothing was submitted, and
+    // following a collection the user never managed to post to is not what they asked for.
     await expect(saveToOthersCollection({ write: 'Private' })).rejects.toThrow(
       /no changes were made/i
     );
+    expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
+  });
+
+  // The challenge jobs set this so a daily-challenge entry doesn't add the challenge collection to
+  // every entrant's list — the largest source of the flooding that following-on-submission causes.
+  it('does not follow a collection whose metadata disables it', async () => {
+    await expect(
+      saveToOthersCollection({ write: 'Public', metadata: { disableFollowOnSubmission: true } })
+    ).resolves.toBeDefined();
     expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
   });
 });

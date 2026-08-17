@@ -276,11 +276,21 @@ function CollectionListForm({
         (collection) => !collection.isOwner && collection.mode === CollectionMode.Contest
       )
     : [];
-  const contributingCollections = visible.filter(
+  const otherCollections = visible.filter(
     (collection) =>
       !collection.isOwner &&
       !(includeActiveContests && collection.mode === CollectionMode.Contest)
   );
+  // Submitting follows, so most of these are collections the user followed by posting to them, not
+  // ones they were invited to — one "Shared with you" heading over both is wrong about the follows.
+  // Held together until the permission map lands, because splitting on half-loaded data walks rows
+  // from one group to the other as it arrives.
+  const sharedCollections = loadingPermissions
+    ? otherCollections
+    : otherCollections.filter((c) => permissionsByCollectionId.get(c.id)?.isCollaborator);
+  const followedCollections = loadingPermissions
+    ? []
+    : otherCollections.filter((c) => !permissionsByCollectionId.get(c.id)?.isCollaborator);
   // While permission data for a collection is unknown, treat it as closed rather than open —
   // it must never be briefly selectable before flipping to disabled once data arrives. A lapse
   // keeps write for the owner and for elevated collaborators, so it only closes the picker for
@@ -433,7 +443,8 @@ function CollectionListForm({
 
   const groups = [
     { key: 'owned', label: 'Your collections', items: ownedCollections },
-    { key: 'shared', label: 'Shared with you', items: contributingCollections },
+    { key: 'shared', label: 'Shared with you', items: sharedCollections },
+    { key: 'following', label: 'Collections you follow', items: followedCollections },
     {
       key: 'contests',
       label: 'Active contests',

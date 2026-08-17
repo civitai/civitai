@@ -57,21 +57,34 @@ everyone for free? `freeGrantBaseline(collection)` derives that free set from th
 `read`/`write` columns, and `hasElevatedPermission(permissions, baseline)` applies it. Derive the
 baseline from those columns, never from a runtime-filtered permission array.
 
-## Submitting is not following
+## Submitting follows the collection
 
-Saving an entry used to write a follow row for the submitter. It doesn't any more: following is its
-own action, and auto-following filled a user's collection list with collections they had posted to
-once. Two consequences worth knowing:
+Saving an entry writes a follow row for the submitter, and that row is what keeps the collection in
+their save picker afterwards. It is deliberate: without it, a collection you want to keep posting to
+is unreachable from the picker the moment you close the page you found it on — the picker only ever
+lists collections you hold a row on, and it does not search the ones you don't.
 
-- The save picker lists what the user owns, what has been shared with them, and — on model saves —
-  active contests. It does **not** search collections they hold no row on, and its search box only
-  filters the list it already has. Following is what puts an open collection back in the picker: a
-  follower's row on a `write: Public` collection carries `ADD`, so it comes through the contributor
-  branch. Submitting alone no longer does that.
-- Open collections carry a **Submit an entry** button on the collection page, the same entry point
-  contests have always had. Before, a collection asking for submissions had no way to take one from
-  its own page. It covers Image and Post collections; a Model collection is still submitted to
-  through the picker, which is why following matters there.
+Two properties the implementation depends on:
+
+- **The follow is a side effect of the entry landing.** `saveItemInCollections` queues the ids and
+  applies them after the write, so a save that goes on to write nothing — no write grant anywhere,
+  or the empty-transaction guard — leaves the user following nothing.
+- **Anyone who already holds a row is skipped.** `addContributorToCollection` upserts and
+  **replaces** the target's permissions, so following a collaborator's own seat would strip it back
+  to the free grant. The `!isContributor && !isOwner` guard is what stops that.
+
+A follow row is not a collaborator row and does not change where an entry lands. On a `write: Review`
+collection a follower gets exactly `[VIEW, ADD_REVIEW]` — the free grant — so `isCollaboratorRow`
+stays false on both halves (not elevated, no accepted seat) and they keep queuing. See
+[Where a submission lands](#where-a-submission-lands).
+
+`metadata.disableFollowOnSubmission` opts a collection out. The challenge jobs set it on every
+challenge collection they create, which is the one place the flooding is worst: without it every
+entrant in a daily challenge picks up a follow they never asked for.
+
+Open collections also carry a **Submit an entry** button on the collection page, the same entry point
+contests have always had. Before, a collection asking for submissions had no way to take one from its
+own page. It covers Image and Post collections; a Model collection is submitted to through the picker.
 
 ## Where a submission lands
 
@@ -292,11 +305,13 @@ no collaborators.
 
 Known gaps, roughly in the order they'd block a release.
 
-- **An open collection you submitted to but didn't follow is only reachable from its own page.**
-  Submitting no longer follows, and the picker deliberately doesn't offer collections you hold no
-  row on, so nothing in the picker leads back to one. Following is the fix a user has today.
-  Whether the picker should surface them some other way — recently submitted to, explicitly
-  bookmarked — is an open product call.
+- **Submitting still follows, so a user's collection list still fills up with collections they
+  posted to once.** Justin called that out on the 2026-08-14 walkthrough. It was removed on this
+  branch and put back: without the follow, the picker only lists collections you already hold a row
+  on and offers no way to search the rest, so a collection you meant to keep posting to becomes
+  unreachable — a worse failure than a long list. The list needs its own answer (an unfollow
+  affordance in the picker, separating "submitted to" from "followed", or a
+  `disableFollowOnSubmission` default per collection type) rather than dropping the follow.
 - **`getMyInvites` truncates at 50 silently.** The cap bounds the per-invite roster reads, but
   nothing tells a user with more than 50 pending invites that they are seeing a subset.
 - **Collection items are read straight from the database, not the feed index.** Flagged as
