@@ -7,6 +7,11 @@ const ACCEPT_AWARD = 20;
 // this is a total: 20 Buzz for each of the first 5 accepts per UTC day.
 //   ⚠️ At `cap === ACCEPT_AWARD` the first accept of the day would exhaust it and
 //   every later one would award 0, which is not the reward that was designed.
+//   ⚠️ This is 100/day for REMIX accepts, not for accepting placements. The
+//   sticker accept reward carries its own separate 100/day against its own type
+//   key, so a creator running both surfaces can earn 200 in a day — and both
+//   numbers multiply by membership tier and again by any global bonus event.
+//   The two caps matching today is a coincidence, not a shared limit.
 const DAILY_ACCEPT_CEILING = ACCEPT_AWARD * 5;
 
 /**
