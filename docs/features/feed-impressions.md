@@ -213,8 +213,34 @@ Studio exists to serve.
 ## Rollout
 
 Ships dark behind the `feedImpressions` feature flag (Flipt key
-`feed-impressions`). Off means the browser never observes at all, rather than
-dropping rows server-side, so the kill switch removes the client cost too.
+`feed-impressions`, created at 0%). Off means the browser never observes at all,
+rather than dropping rows server-side, so the kill switch removes the client cost
+too. Ramp by raising the threshold percentage; roll back by setting it to 0.
+
+🔴 **Do not verify a write by reading it back.** The shared ClickHouse client runs
+`async_insert: 1, wait_for_async_insert: 0`, so `insert()` resolves once the row is
+**buffered**, not once it is queryable — and server-side insert errors never reach
+the caller, they go to Axiom. Two consequences that bite exactly during a rollout:
+
+- A `SELECT count()` shortly after enabling the flag can legitimately return **0**
+  for traffic that wrote successfully. Give it time, or set
+  `wait_for_async_insert` on that specific call.
+- **"No errors" is not evidence that writes are arriving.** If impressions stop,
+  the absence of exceptions says nothing. That is the strongest argument for
+  alerting on the rollup refresh rather than trusting silence.
+
+(Found by @scarlet on a backfill whose post-write check would have reported zero
+for a run that had written everything; relayed by @fredrick.)
+
+### Pre-ramp check that is NOT done
+
+Virtualised feed rows set `content-visibility: auto`, and the impression observer
+targets a card *inside* that subtree. Reasoning says this is fine — by the time a
+row is in the viewport the browser has already rendered it — but "skipped content
+reports a zero-size intersection rect" is real browser behaviour, and the failure
+mode here is **silent zero impressions on the main image feed**, not an error.
+Nothing in the test suite covers it: the suites are node-env with a hand-rolled
+fake DOM. Verify in a real browser at a small percentage before ramping wide.
 
 ## Reading the number
 
