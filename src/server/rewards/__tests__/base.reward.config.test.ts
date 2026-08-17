@@ -291,13 +291,14 @@ describe('the cap is never overshot, whatever the operator sets', () => {
   // thing that drives `remaining` negative. Without it the `Math.max(…, 0)` floor
   // in both the script and the model beside it is unreachable, so a mutant that
   // removes it survives and the reward starts paying negative Buzz.
-  // The cap must be lowered to exactly one below what was paid. Any deeper and
-  // the negative is invisible: `apply` treats every non-positive result as
-  // capped, so the floor's absence changes nothing observable. At -1 it collides
-  // with the script's ALREADY-AWARDED sentinel — `apply` returns early believing
-  // the event was a duplicate, and the entry is written as `a:-1`, which
-  // `parseEntryAmount` cannot read and the day total then counts as a full award.
-  it('pays nothing, and corrupts nothing, when a cap drops just below what was paid', async () => {
+  // Without the floor, `remaining` goes negative and the entry is written `a:-5`.
+  // `parseEntryAmount`'s `^a:(\d+)$` refuses the minus, so the day total treats
+  // that entry as a LEGACY one and counts it as a whole award. No payment is
+  // made either way — `apply` reads every non-positive result as capped — so the
+  // corrupted total is the only observable, and it appears at any negative depth.
+  // (Exactly -1 additionally collides with the script's already-awarded sentinel.
+  // Real, but not what this test measures, and not why the numbers below work.)
+  it('pays nothing, and corrupts nothing, when a cap drops below what was paid', async () => {
     configure({ testOnDemandReward: { awardAmount: 3, cap: 10 } });
     for (let i = 0; i < 4; i++) await onDemandReward().apply({ userId: 1, entityId: i });
     const paidBefore = paidSoFar().reduce((a, b) => a + b, 0);
@@ -309,10 +310,10 @@ describe('the cap is never overshot, whatever the operator sets', () => {
 
     expect(paidSoFar().reduce((a, b) => a + b, 0)).toBe(paidBefore);
 
-    // Raise the cap again to read the day back: while the cap sits below the
-    // total, `Math.min` clamps both the right and the wrong answer to the cap and
-    // the assertion proves nothing. Above it, an `a:-1` entry shows up — it is
-    // unparseable, so the total counts it as a whole award instead.
+    // Structurally required, not defensive: `getUserRewardDetails` clamps with
+    // `Math.min(sum, cap)`, so reading the day back while the cap is still below
+    // the total reports the cap. Deleting this re-raise turns the test red on
+    // correct code.
     invalidateRewardConfigCache();
     configure({ testOnDemandReward: { awardAmount: 3, cap: 100 } });
 
