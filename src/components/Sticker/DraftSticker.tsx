@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Button,
   Popover,
   SegmentedControl,
   Slider,
@@ -30,6 +31,11 @@ import {
   shouldFlipPlaceButton,
 } from '~/components/Sticker/place-button-position';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
+import {
+  FREE_REVIEW_CAVEAT,
+  freeOptionLabel,
+  isPlacingFree,
+} from '~/components/Sticker/free-offer';
 import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-copy';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
@@ -122,6 +128,7 @@ export function DraftSticker({
   selected,
   dressed,
   price,
+  freeOffer,
   ownerShare,
   ownerUsername,
   onGesture,
@@ -132,16 +139,16 @@ export function DraftSticker({
   selected: boolean;
   dressed: StickerTreatment;
   price: number;
+  /**
+   * The free option, when this creator has a slot open and the placer still has
+   * their day. `null` means paid is the only offer — including while the
+   * standing query is still in flight.
+   */
+  freeOffer: { instant: boolean } | null;
   ownerShare: number | undefined;
   ownerUsername: string | null | undefined;
   onGesture: StartGesture;
 }) {
-  // While the sticker is unbought the chip names who that payment goes to — the
-  // sticker's maker — not who the later placement pays. Two payments, two
-  // recipients, and only one of them is being made right now.
-  const payout = draft.purchase
-    ? stickerPurchaseCopy(draft.purchase.creatorUsername)
-    : payoutCopy(ownerShare, ownerUsername);
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const queryUtils = trpc.useUtils();
@@ -217,8 +224,33 @@ export function DraftSticker({
   const select = useStickerPlacementDraftStore((state) => state.select);
   const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
   const move = useStickerPlacementDraftStore((state) => state.move);
-  const place = useCreateStickerPlacement(draft.id);
+
+  // `null` until somebody presses the control, which is what lets the default
+  // track an offer that arrives with a query rather than freezing whatever was
+  // known on the first render. See `isPlacingFree`.
+  const [payChoice, setPayChoice] = useState<'free' | 'paid' | null>(null);
+  const placingFree = isPlacingFree(payChoice, freeOffer);
+  const payMode = placingFree ? 'free' : 'paid';
+
+  // Settling on paid after a refused claim, rather than leaving the control on
+  // an offer that is gone. Passed down rather than handled here because the
+  // mutation is the only thing that knows the claim was refused.
+  const place = useCreateStickerPlacement(draft.id, () => setPayChoice('paid'));
   const spendTypes = useAvailableBuzz();
+
+  // While the sticker is unbought the chip names who that payment goes to — the
+  // sticker's maker — not who the later placement pays. Two payments, two
+  // recipients, and only one of them is being made right now.
+  //
+  // Nothing at all on a free placement: there are no proceeds to split, so a
+  // share of them is a claim about money that does not move. PR 3's accept
+  // reward is the creator's side of a free placement and is not derived from
+  // this split, so it does not belong in this sentence either.
+  const payout = draft.purchase
+    ? stickerPurchaseCopy(draft.purchase.creatorUsername)
+    : placingFree
+    ? null
+    : payoutCopy(ownerShare, ownerUsername);
 
   // Which of the two refill prices is being offered. Defaults to the single
   // use: it is the cheaper of the two and exactly what placing this draft
@@ -473,6 +505,26 @@ export function DraftSticker({
     if (!useStickerPlacementDraftStore.getState().interaction) select(draft.id);
   };
 
+  // One payload for both buttons, so the two offers cannot drift into placing
+  // different stickers. `free` is the only thing that differs, and it selects a
+  // path rather than asserting anything — the server re-decides all of it.
+  const placementInput = () => ({
+    imageId: draft.imageId,
+    free: placingFree,
+    data: {
+      cosmeticId: draft.cosmeticId,
+      x: draft.x,
+      y: draft.y,
+      scale: draft.scale,
+      rotation: draft.rotation,
+      flip: draft.flip,
+      opacity: draft.opacity,
+      // Sent only when there is something to send, so an opened-then-abandoned
+      // field is the same as never opening it.
+      ...(note.trim() ? { comment: note } : {}),
+    },
+  });
+
   const flipControl = (
     <Tooltip label={draft.flip ? 'Unflip' : 'Flip'} withinPortal>
       <ActionIcon
@@ -686,9 +738,11 @@ export function DraftSticker({
             box is most of the frame, because almost every draft there is narrow.
             This cluster is the one piece of chrome that already knows where it
             is on screen: it measures itself against the tray and the clipping
-            ancestor and moves to whichever side is visible. Handing it the
-            controls means they inherit that, instead of a third set of
-            hand-derived offsets to get wrong. */}
+            ancestor and moves ABOVE or BELOW the sticker accordingly.
+            `shouldFlipPlaceButton` is vertical only — the horizontal position
+            follows the draft's own x with nothing clamping it — so handing it the
+            controls buys them the vertical avoidance and no more. Still better
+            than a third set of hand-derived offsets. */}
         {!panelsInside && (
           <div
             className="flex items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
@@ -761,6 +815,39 @@ export function DraftSticker({
           />
         )}
 
+        {/* The other two-way choice, and deliberately the same control as the
+            one above it: this is the same kind of decision — which of two
+            offers you are taking — made a step later, so giving it a different
+            shape would make them read as unrelated. They never coexist; the one
+            above only appears on a sticker that still has to be bought.
+
+            The free option carries the mode, which the sticker button upstream
+            deliberately does not. This is the last moment the placer can change
+            their mind, and it is what makes auto-accept and review read as two
+            different offers rather than a setting nobody can see. */}
+        {!draft.purchase && freeOffer && (
+          <SegmentedControl
+            size="xs"
+            radius="xl"
+            value={payMode}
+            onChange={(value) => setPayChoice(value as 'free' | 'paid')}
+            data={[
+              { label: freeOptionLabel(freeOffer.instant), value: 'free' },
+              { label: `${numberWithCommas(price)} Buzz`, value: 'paid' },
+            ]}
+          />
+        )}
+
+        {/* Only where it is true. On an auto-accept space the placement is live
+            the moment it is made, so there is no decline to warn about. */}
+        {placingFree && freeOffer && !freeOffer.instant && (
+          <div className="max-w-[240px] whitespace-normal rounded-lg bg-black/80 px-2 py-1 text-center">
+            <Text size="xs" c="gray.3" className="leading-tight">
+              {FREE_REVIEW_CAVEAT}
+            </Text>
+          </div>
+        )}
+
         {draft.purchase && effectiveMode === 'pack' && draft.purchase.pack ? (
           <BuzzTransactionButton
             size="sm"
@@ -791,6 +878,23 @@ export function DraftSticker({
             }
             onPerformTransaction={buyOneUse}
           />
+        ) : placingFree ? (
+          // Not a `BuzzTransactionButton`. That control exists to show a price
+          // and check a balance against it, and a free placement has neither —
+          // rendering it at zero would put a currency badge on something nobody
+          // is paying for, and its account picker would ask which Buzz to spend.
+          // The use it does spend is shown by the tray's own count, and refused
+          // by the server independently.
+          <Button
+            size="sm"
+            radius="xl"
+            color="yellow"
+            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+            loading={place.isPending}
+            onClick={() => place.mutate(placementInput())}
+          >
+            Place free
+          </Button>
         ) : (
           <BuzzTransactionButton
             size="sm"
@@ -799,23 +903,7 @@ export function DraftSticker({
             accountTypes={spendTypes}
             label="Place"
             loading={place.isPending}
-            onPerformTransaction={() =>
-              place.mutate({
-                imageId: draft.imageId,
-                data: {
-                  cosmeticId: draft.cosmeticId,
-                  x: draft.x,
-                  y: draft.y,
-                  scale: draft.scale,
-                  rotation: draft.rotation,
-                  flip: draft.flip,
-                  opacity: draft.opacity,
-                  // Sent only when there is something to send, so an opened-then-
-                  // abandoned field is the same as never opening it.
-                  ...(note.trim() ? { comment: note } : {}),
-                },
-              })
-            }
+            onPerformTransaction={() => place.mutate(placementInput())}
           />
         )}
 

@@ -348,9 +348,9 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                                 children: (
                                   <Text size="sm">
                                     Every pending submission rated above{' '}
-                                    {getBrowsingLevelLabel(acceptedMaxLevel)} is declined. Each one
-                                    keeps you the decline fee and returns the rest to its submitter.
-                                    This can&apos;t be undone.
+                                    {getBrowsingLevelLabel(acceptedMaxLevel)} is declined. Paid ones
+                                    keep you the decline fee and return the rest to their submitter;
+                                    free ones move no Buzz either way. This can&apos;t be undone.
                                   </Text>
                                 ),
                                 labels: { confirm: 'Decline them', cancel: 'Cancel' },
@@ -465,16 +465,30 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                               and marking those would turn a missing signal into a
                               verdict. */}
                           {row.data.derivedFromHost && <VerifiedRemixBadge />}
+                          {/* What this row IS, since the buttons no longer carry
+                              a number for it. Without this the queue shows a
+                              free submission as a paid one with its earnings
+                              missing, which reads as a bug rather than as a
+                              different kind of offer — and the notification that
+                              brought the owner here already called it free. */}
+                          {row.free && (
+                            <Badge size="sm" variant="light" color="green" className="w-fit">
+                              Free submission
+                            </Badge>
+                          )}
                         </Stack>
                       </Group>
                       {/* Stacked, and the same width, so the pair reads as one
                         decision with two answers rather than a row of buttons.
                         Keyed to the row and the action — bare `act.isPending`
                         spun every button in the queue on any one click. */}
-                      {/* Each answer carries what it pays, so the owner never has
-                          to know that declining still earns a fee — the numbers
-                          come from the server, computed with the settlement's own
-                          helpers against this row's amount. */}
+                      {/* A PAID row's answers each carry what they pay, so the
+                          owner never has to know that declining still earns a
+                          fee — the numbers come from the server, computed with
+                          the settlement's own helpers against this row's amount.
+                          A free row carries neither, because nothing was paid in
+                          and there is no fee to earn: `earnings` is null there
+                          and the badge above says what the row is instead. */}
                       <Stack gap={6} className="w-36 shrink-0">
                         {/* Approving is the one answer that needs the picture.
                             Declining does not — it is a refusal, and a rating is
@@ -509,7 +523,15 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                             fullWidth
                             classNames={{ label: 'w-full justify-between gap-2' }}
                             leftSection={<IconCheck size={14} />}
-                            rightSection={<EarningsChip amount={row.earnings.approve} />}
+                            // Nothing on a free row rather than a chip reading
+                            // "+0". `EarningsChip`'s `+` is what stops a bare
+                            // amount reading as a price; on a free submission it
+                            // makes the opposite false claim instead — that the
+                            // creator earns nothing for accepting. The badge
+                            // beside the submitter says what this row is.
+                            rightSection={
+                              row.earnings ? <EarningsChip amount={row.earnings.approve} /> : null
+                            }
                             loading={actingOn(row.id, 'approve')}
                             onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
                           >
@@ -522,7 +544,12 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                           variant="default"
                           classNames={{ label: 'w-full justify-between gap-2' }}
                           leftSection={<IconX size={14} />}
-                          rightSection={<EarningsChip amount={row.earnings.decline} />}
+                          // Same reason, and sharper here: a decline fee is the
+                          // submitter's money moving to the owner, and a free
+                          // submission has none to move.
+                          rightSection={
+                            row.earnings ? <EarningsChip amount={row.earnings.decline} /> : null
+                          }
                           loading={actingOn(row.id, 'decline')}
                           onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
                         >

@@ -3,10 +3,14 @@ import { IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { freeOfferFor, trayPriceLine, trayReviewLine } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
-import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
+import {
+  useFreePlacementStanding,
+  useImagePlacementSpace,
+} from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -63,6 +67,10 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   }, [showing, setTray]);
 
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
+  // Same query key as the layer's, so this shares its cache rather than making a
+  // second request. Here it only decides one clause of one sentence; the choice
+  // itself is made on the draft, where the mode is also shown.
+  const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
@@ -134,6 +142,9 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   };
 
   const price = space?.price ?? 0;
+  // The same predicate the draft's own control uses, so the sentence here and
+  // the button down there cannot disagree about what is on offer.
+  const freeAvailable = !!freeOfferFor(space, standing);
   // Says the panel can be got out of the way, and that more than one is allowed,
   // only once there is something that would survive it. Before that both are
   // instructions about nothing.
@@ -157,9 +168,16 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 {instruction}
               </Text>
               <Text size="xs" c="dimmed">
-                {price} Buzz + one use
+                {/* Both sentences come from `free-offer.ts`, where their
+                    branches are covered — inline here, dropping either ternary
+                    is a mutation nothing in the suite can observe, and what it
+                    produces is the exact contradiction these lines exist to
+                    prevent. The free half of the decline warning is
+                    FREE_REVIEW_CAVEAT itself rather than a paraphrase. */}
+                {trayPriceLine(freeAvailable, price)}
                 {space?.mode === 'review' &&
-                  ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
+                  ' · this creator reviews placements, so only you will see it until they approve.'}
+                {space?.mode === 'review' && trayReviewLine(freeAvailable)}
               </Text>
             </div>
             <CloseButton
