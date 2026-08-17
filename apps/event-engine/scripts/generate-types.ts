@@ -1,4 +1,4 @@
-import { EventHandler, ManualHandler, OutboxHandler } from '../src/types/handlers'
+import { EventHandler } from '../src/types/handlers'
 import { eventHandlers } from '../src/handlers'
 import { Operation } from '../src/types/events'
 import { faker } from '@faker-js/faker'
@@ -53,11 +53,11 @@ class DebugActions {
     })
   }
 
-  incMetricCache = (update: any) => {
+  incMetricCache = (_update: any) => {
     // We don't use this in our handlers typically
   }
 
-  feedUpdate = (entityType: string, entityId: number | null | undefined, type: string = 'update') => {
+  feedUpdate = (entityType: string, entityId: number | null | undefined, _type: string = 'update') => {
     // Feed updates don't generate metrics, just track that it was called
   }
 
@@ -119,7 +119,7 @@ const createMockDatabases = (debugConfig: any) => ({
       }
       return null
     },
-    exec: async (sql: string, params?: any[]): Promise<number> => {
+    exec: async (_sql: string, _params?: any[]): Promise<number> => {
       // Mock exec - return 1 row affected
       return 1
     }
@@ -131,7 +131,7 @@ const createMockDatabases = (debugConfig: any) => ({
       }
       return []
     },
-    insert: async (table: string, data: any[]): Promise<void> => {
+    insert: async (_table: string, _data: any[]): Promise<void> => {
       // Mock insert
     }
   }

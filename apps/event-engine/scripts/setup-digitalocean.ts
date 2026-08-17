@@ -118,7 +118,7 @@ Debezium Change Data Capture (CDC).
       'Image'
     ];
 
-    let missingTables = [];
+    const missingTables = [];
     for (const table of tables) {
       const result = await client.query(`
         SELECT EXISTS (

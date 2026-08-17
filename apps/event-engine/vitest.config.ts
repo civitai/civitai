@@ -17,6 +17,11 @@ export default defineConfig({
     // Required — see the `apps/*` note in the root vitest.config.mts.
     name: 'app:event-engine',
     environment: 'node',
-    include: ['src/**/*.{test,spec}.ts'],
+    // Deliberately as wide as the CI ledger's own detection regex
+    // (scripts/ci/assert-workspace-suites-ran.mjs), which scans the whole package. A test the
+    // ledger counts but this glob misses would run nowhere while the job stayed green — the
+    // ledger asserts the member is present, not that all of its tests ran.
+    include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)'],
+    exclude: ['node_modules/**', 'dist/**'],
   },
 });
