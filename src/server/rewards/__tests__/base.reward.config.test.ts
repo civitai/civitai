@@ -48,7 +48,7 @@ vi.mock('~/server/services/buzz.service', () => ({
   getMultipliersForUser: (...args: any[]) => h.getMultipliersForUser(...args),
 }));
 
-import { createBuzzEvent } from '~/server/rewards/base.reward';
+import { createBuzzEvent, ON_DEMAND_REWARD_SCRIPT } from '~/server/rewards/base.reward';
 import type { BuzzEventLog } from '~/server/rewards/base.reward';
 import { goodContentReward } from '~/server/rewards/passive/goodContent.reward';
 import { invalidateRewardConfigCache } from '~/server/rewards/reward-config';
@@ -161,6 +161,23 @@ describe('apply() is gated before it does any work', () => {
     ]);
   });
 
+  // `tonumber('Infinity')` is nil in Lua, so an uncapped reward passing Infinity
+  // throws out of the script and into the triggering user mutation.
+  it('passes a finite cap for a reward that has none', async () => {
+    const uncapped = createBuzzEvent<{ userId: number; entityId: number }>({
+      type: 'testUncappedReward',
+      description: 'Test uncapped on-demand reward',
+      awardAmount: 5,
+      onDemand: true,
+      getKey,
+    });
+
+    await uncapped.apply({ userId: 1, entityId: 42 });
+
+    const [, options] = h.evalImpl.mock.calls[0] as any[];
+    expect(Number.isFinite(Number(options.arguments[3]))).toBe(true);
+  });
+
   it('uses the compiled amount and cap when no row exists', async () => {
     await onDemandReward().apply({ userId: 1, entityId: 42 });
 
@@ -221,9 +238,12 @@ describe('process() does not pay out a disabled reward’s backlog', () => {
   });
 });
 
-// The Lua is the thing under test here, so these drive a real in-memory Redis
-// hash through it rather than stubbing its return value: the cap arithmetic and
-// the per-entry bookkeeping are the behaviour, not an implementation detail.
+// 🔴 Nothing here executes the Lua. There is no Lua interpreter and no Redis in
+// the unit suite, so `runLua` below is a MODEL of the script, and these tests
+// verify what `apply` does with what the script returns — which is where the
+// over-cap payment lived. The script's own two properties are pinned separately
+// by source assertions at the bottom of this file, because without them a revert
+// of the script passes everything here: the model would keep behaving correctly.
 describe('the cap is never overshot, whatever the operator sets', () => {
   const hash = new Map<string, string>();
 
@@ -287,6 +307,31 @@ describe('the cap is never overshot, whatever the operator sets', () => {
     for (let i = 5; i < 10; i++) await onDemandReward().apply({ userId: 1, entityId: i });
 
     expect(paidSoFar().reduce((a, b) => a + b, 0)).toBe(10);
+  });
+
+  it('does not apply the multiplier twice to a trimmed grant', async () => {
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: 2 });
+    configure({ testOnDemandReward: { awardAmount: 3, cap: 10 } });
+    const reward = onDemandReward();
+
+    // Effective award 6 against effective cap 20: three full grants, then 2.
+    for (let i = 0; i < 4; i++) await reward.apply({ userId: 1, entityId: i });
+
+    expect(paidSoFar()).toEqual([6, 6, 6, 2]);
+  });
+
+  // Guard against the cap's `Math.min` hiding a count-based total: with the cap
+  // reached, both readings collapse to the cap and the test proves nothing.
+  it('reports the day total from what was paid, not from the current award', async () => {
+    configure({ testOnDemandReward: { awardAmount: 2, cap: 100 } });
+    for (let i = 0; i < 5; i++) await onDemandReward().apply({ userId: 1, entityId: i });
+
+    invalidateRewardConfigCache();
+    configure({ testOnDemandReward: { awardAmount: 1, cap: 100 } });
+
+    // Five entries that paid 2 each. Counting them against the current award of
+    // 1 would report 5.
+    expect((await onDemandReward().getUserRewardDetails(1))?.awarded).toBe(10);
   });
 
   it('reports the same day total to the user as it paid', async () => {
@@ -359,6 +404,31 @@ describe('getUserRewardDetails() stops advertising a disabled reward', () => {
       awardAmount: AWARD_AMOUNT,
       cap: CAP,
     });
+  });
+});
+
+// Change-detectors, deliberately. The unit suite cannot run the script, so these
+// are the only thing standing between a revert of it and a green run — the model
+// in `runLua` above would go on producing the right numbers from the wrong code.
+describe('the on-demand Lua keeps the properties the model assumes', () => {
+  it('records what each entry paid, not when it happened', () => {
+    expect(ON_DEMAND_REWARD_SCRIPT).toContain("cache[ARGV[2]] = 'a:' .. tostring(toAward)");
+  });
+
+  it('sums the entries rather than counting them against the current award', () => {
+    expect(ON_DEMAND_REWARD_SCRIPT).toContain('for _, entry in pairs(cache) do');
+    expect(ON_DEMAND_REWARD_SCRIPT).toContain("string.match(tostring(entry), '^a:(%d+)$')");
+    // The accumulation itself, not just the parse above it: replacing this one
+    // line with `awarded + tonumber(ARGV[3])` restores the count-based reading
+    // while leaving every other line of the script intact.
+    expect(ON_DEMAND_REWARD_SCRIPT).toContain(
+      'awarded = awarded + (paid and tonumber(paid) or tonumber(ARGV[3]))'
+    );
+    expect(ON_DEMAND_REWARD_SCRIPT).not.toMatch(/count \* tonumber/);
+  });
+
+  it('reads a finite cap, since tonumber("Infinity") is nil in Lua', () => {
+    expect(ON_DEMAND_REWARD_SCRIPT).toContain('tonumber(ARGV[4])');
   });
 });
 

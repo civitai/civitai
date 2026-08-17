@@ -53,7 +53,7 @@ const log = (event: BuzzEventLog, data: MixedObject) => {
 // to reduce it. Entries written before this (timestamps) fall back to the old
 // count-based reading for the rest of the day; `rewardsDailyReset` clears the
 // hash at 00:00 UTC, after which every entry carries its own amount.
-const ON_DEMAND_REWARD_SCRIPT = `
+export const ON_DEMAND_REWARD_SCRIPT = `
   local cacheJson = redis.call('HGET', KEYS[1], ARGV[1])
   local cache = cjson.decode(cacheJson or '{}')
 
