@@ -421,9 +421,9 @@ importers:
       html-to-text:
         specifier: ^9.0.5
         version: 9.0.5
-      html2canvas:
-        specifier: 1.4.1
-        version: 1.4.1
+      html2canvas-pro:
+        specifier: 2.3.8
+        version: 2.3.8
       idb-keyval:
         specifier: ^6.2.0
         version: 6.2.2
@@ -8304,9 +8304,9 @@ packages:
   html-void-elements@3.0.0:
     resolution: {integrity: sha512-bEqo66MRXsUGxWHV5IP0PUiAWwoEjba4VCzg0LjFJBpchPaTfyfCKTG6bc5F8ucKec3q5y6qOdGyYTSBEvhCrg==}
 
-  html2canvas@1.4.1:
-    resolution: {integrity: sha512-fPU6BHNpsyIhr8yyMpTLLxAbkaK8ArIBcmZIRiBLiDhjeqvXolaEmDGmELFuX9I4xDcaKKcJl+TKZLqruBbmWA==}
-    engines: {node: '>=8.0.0'}
+  html2canvas-pro@2.3.8:
+    resolution: {integrity: sha512-z4qgQmElYHkF4m0yhL4gW+keDInZwDu070xwbAoTsssS+1ieVc8uoWOHGXF8ClaqEzw5puGclxwqZa7T4XR35A==}
+    engines: {node: '>=16.0.0'}
 
   htmlparser2@8.0.2:
     resolution: {integrity: sha512-GYdjWKDkbRLkZ5geuHs5NY1puJ+PXwP7+fHPRz06Eirsb9ugf6d8kkXav6ADhcODhFFPMIXyxkxSuMf3D6NCFA==}
@@ -21332,7 +21332,7 @@ snapshots:
 
   html-void-elements@3.0.0: {}
 
-  html2canvas@1.4.1:
+  html2canvas-pro@2.3.8:
     dependencies:
       css-line-break: 2.1.0
       text-segmentation: 1.0.3
