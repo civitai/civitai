@@ -304,12 +304,21 @@ Two ClickHouse-side ownership sources exist:
   owners, back to 2023-04-27**. (@fredrick found this; `user_model_posts` is
   existing precedent for treating the sibling `modelVersionEvents` as ownership.)
 
-Nothing else has one. For those, resolve ownership from Postgres at read time —
+For everything else, resolve ownership from Postgres at read time —
 `Article.userId`, `ComicProject.userId` — which is not a workaround but the better
 option for small id sets: ~70ms, and a literal `IN` keeps the primary key usable
 (articles measured 35ms at the platform's worst case). What Postgres cannot do is
 serve *this* MV, which needs an owner for every entity seen that day rather than
 for one creator's ids.
+
+**`Post` is the exception, and is the next arm someone will want.** Read-time id
+resolution works because creators hold few entities; posts are median 2 but **p99
+868, max 256,608** (@fredrick's measurement), so that tail behaves like images, not
+like articles. `default.posts` already carries `userId` and is shaped like
+`modelEvents` — 29.5M distinct posts, 135,498 with no `Create` row carrying a
+userId, and 10,537 (0.04%) where the latest non-zero actor disagrees with the
+creator. So the same **creator-first, latest-non-zero fallback** aggregate applies;
+do not reach for `any()` or a bare `argMax` there either.
 
 ### Model ownership: how to aggregate, and why not the obvious way
 
@@ -350,9 +359,32 @@ a product decision made by the data, not by preference — if transferred models
 should re-attribute, it needs `Transfer` to start recording the recipient, which is
 a change in the writer, not here.
 
+### What actually emits an impression
+
+`IMPRESSION_ENTITY_TYPES` is the set the schema *accepts*; it is not the set that
+occurs. On day one the emitters are:
+
+| Entity type | Emitted by |
+| --- | --- |
+| `Image` | every `AspectRatioImageCard` (automatic — it is the image the card renders), plus `GenericImageCard` |
+| `Model` | `ModelCard`, `Model3DCard` |
+| `Post` | `PostCard` |
+| `Article` | `ArticleCard` |
+| `Collection` | `CollectionCard` |
+| `Bounty` | `BountyCard` |
+| `BountyEntry` | `BountyEntryCard` |
+
+`User` and `ModelVersion` are in the enum but **nothing emits them** — there is no
+profile card in the feed shells today. Expect zero rows, not sparse rows. They stay
+in the enum because adding a value to a ClickHouse `Enum8` later is a metadata
+change to a 30-day table plus two rollups, and leaving room costs nothing.
+
+(If a profile card is ever added, `User` is the one entity where owner and entity
+are the same id, so it is attributable for free — no join, no ownership source.)
+
 ### Types tracked but not attributable
 
-For `Post`, `Article`, `Collection`, `Bounty`, `BountyEntry` and `User`, per-entity
+For `Post`, `Article`, `Collection`, `Bounty` and `BountyEntry`, per-entity
 impressions exist in `daily_impressions` and can be read directly; only the owner
 rollup has no arm. A creator-level number for those is **absent, not zero**, and
 consumers must render it as unknown — the Studio already carries a live example of
