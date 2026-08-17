@@ -132,16 +132,41 @@ describe('resolveRewardConfig', () => {
     });
   });
 
-  it('refuses a non-boolean `enabled` rather than reading it as truthy', async () => {
-    for (const enabled of ['false', 0, 'no']) {
+  // A Retool text field produces the string, not the boolean. Falling back to the
+  // compiled default here means falling back to ON, so the operator reads their
+  // edit back, believes the reward is off, and it keeps paying.
+  it('honours the string spellings of `enabled` an operator actually types', async () => {
+    for (const enabled of ['false', 'False', ' FALSE ']) {
+      invalidateRewardConfigCache();
+      storedConfig({ rewards: { testReward: { enabled } } });
+
+      expect(await resolve()).toMatchObject({ enabled: false, rejected: [] });
+    }
+
+    for (const enabled of ['true', 'TRUE']) {
+      invalidateRewardConfigCache();
+      storedConfig({ rewards: { testReward: { enabled } } });
+
+      expect(await resolve()).toMatchObject({ enabled: true, rejected: [] });
+    }
+  });
+
+  it('treats an unreadable `enabled` as off rather than leaving the reward paying', async () => {
+    for (const enabled of [0, 1, 'no', 'off', null, {}]) {
       invalidateRewardConfigCache();
       storedConfig({ rewards: { testReward: { enabled } } });
 
       const config = await resolve();
 
-      expect(config.enabled).toBe(true);
+      expect(config.enabled).toBe(false);
       expect(config.rejected).toContain('enabled');
     }
+  });
+
+  it('leaves a reward on when `enabled` is absent entirely', async () => {
+    storedConfig({ rewards: { testReward: { awardAmount: 4 } } });
+
+    expect(await resolve()).toMatchObject({ enabled: true, rejected: [] });
   });
 
   // One number cannot say whether it means the daily cap or the monthly one.
@@ -190,7 +215,7 @@ describe('reward config cache', () => {
   });
 
   // No negative caching: a transient KeyValue blip must not pin every reward to
-  // its compiled default for a full TTL.
+  // its fallback for a full TTL.
   it('does not cache a failed read', async () => {
     findUnique.mockRejectedValueOnce(new Error('KeyValue unavailable'));
 
@@ -199,6 +224,20 @@ describe('reward config cache', () => {
 
     storedConfig({ rewards: { testReward: { awardAmount: 7 } } });
     expect((await resolve()).awardAmount).toBe(7);
+  });
+
+  // Falling back to the compiled defaults fails OPEN: the compiled default for
+  // `enabled` is on, so a KeyValue blip would resume paying every reward an
+  // operator had turned off, and `process` would then pay the backlog.
+  it('keeps a disabled reward disabled when the read later fails', async () => {
+    storedConfig({ rewards: { testReward: { enabled: false, awardAmount: 4 } } });
+    expect((await resolve()).enabled).toBe(false);
+
+    findUnique.mockRejectedValue(new Error('KeyValue unavailable'));
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(120_000);
+
+    expect(await resolve()).toMatchObject({ enabled: false, awardAmount: 4 });
   });
 
   it('never throws out of a reward grant, whatever the row read does', async () => {

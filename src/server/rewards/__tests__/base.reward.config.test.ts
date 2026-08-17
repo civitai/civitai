@@ -221,6 +221,122 @@ describe('process() does not pay out a disabled reward’s backlog', () => {
   });
 });
 
+// The Lua is the thing under test here, so these drive a real in-memory Redis
+// hash through it rather than stubbing its return value: the cap arithmetic and
+// the per-entry bookkeeping are the behaviour, not an implementation detail.
+describe('the cap is never overshot, whatever the operator sets', () => {
+  const hash = new Map<string, string>();
+
+  const runLua = (_script: string, opts: { arguments: string[] }) => {
+    const [field, cacheKey, award, cap] = opts.arguments;
+    const entries = JSON.parse(hash.get(field) ?? '{}') as Record<string, string>;
+    if (entries[cacheKey] !== undefined) return -1;
+
+    const awarded = Object.values(entries).reduce((sum, entry) => {
+      const paid = /^a:(\d+)$/.exec(entry);
+      return sum + (paid ? Number(paid[1]) : Number(award));
+    }, 0);
+    const toAward = Math.min(Number(award), Math.max(Number(cap) - awarded, 0));
+
+    entries[cacheKey] = `a:${toAward}`;
+    hash.set(field, JSON.stringify(entries));
+    return toAward;
+  };
+
+  beforeEach(() => {
+    hash.clear();
+    h.evalImpl.mockImplementation(runLua as any);
+    h.hGetImpl.mockImplementation(async (_key: string, field: string) => hash.get(field) ?? '{}');
+  });
+
+  const paidSoFar = () =>
+    h.createBuzzTransactionMany.mock.calls.flatMap(([events]: any) =>
+      events.map((x: any) => x.amount)
+    );
+
+  it('pays only what the cap leaves when the award does not divide it', async () => {
+    // Award 3 against cap 10: three full grants, then 1, then nothing. Paying the
+    // whole award on the trimmed grant would total 12 against a cap of 10.
+    configure({ testOnDemandReward: { awardAmount: 3, cap: 10 } });
+    const reward = onDemandReward();
+
+    for (let i = 0; i < 5; i++) await reward.apply({ userId: 1, entityId: i });
+
+    expect(paidSoFar()).toEqual([3, 3, 3, 1]);
+    expect(paidSoFar().reduce((a, b) => a + b, 0)).toBe(10);
+  });
+
+  it('pays at most the cap when the award is raised above it', async () => {
+    configure({ testOnDemandReward: { awardAmount: 5000, cap: 500 } });
+
+    await onDemandReward().apply({ userId: 1, entityId: 1 });
+
+    expect(paidSoFar()).toEqual([500]);
+  });
+
+  // The day's entries record what they paid. Deriving earnings as
+  // `count * the current award` instead lets an operator LOWER the award and
+  // increase that day's payout.
+  it('does not re-price the day when the award is lowered mid-day', async () => {
+    configure({ testOnDemandReward: { awardAmount: 2, cap: 10 } });
+    for (let i = 0; i < 5; i++) await onDemandReward().apply({ userId: 1, entityId: i });
+    expect(paidSoFar().reduce((a, b) => a + b, 0)).toBe(10);
+
+    invalidateRewardConfigCache();
+    configure({ testOnDemandReward: { awardAmount: 1, cap: 10 } });
+    for (let i = 5; i < 10; i++) await onDemandReward().apply({ userId: 1, entityId: i });
+
+    expect(paidSoFar().reduce((a, b) => a + b, 0)).toBe(10);
+  });
+
+  it('reports the same day total to the user as it paid', async () => {
+    configure({ testOnDemandReward: { awardAmount: 3, cap: 10 } });
+    const reward = onDemandReward();
+    for (let i = 0; i < 5; i++) await reward.apply({ userId: 1, entityId: i });
+
+    const details = await reward.getUserRewardDetails(1);
+
+    expect(details?.awarded).toBe(paidSoFar().reduce((a, b) => a + b, 0));
+  });
+});
+
+describe('a multi-entry cap table refuses the override', () => {
+  const twoCapReward = () =>
+    createBuzzEvent<{ userId: number; entityId: number }>({
+      type: 'testTwoCapReward',
+      description: 'Test reward with a day cap and a per-entity cap',
+      awardAmount: AWARD_AMOUNT,
+      caps: [
+        { keyParts: ['toUserId'], interval: 'day', amount: 1000 },
+        { keyParts: ['forId'], amount: 200 },
+      ],
+      getKey,
+    });
+
+  // `capOverridable` is the only thing standing between an operator raising the
+  // monthly cap and silently raising the per-entity one by the same number.
+  it('leaves both caps at their compiled amounts', async () => {
+    configure({ testTwoCapReward: { cap: 5000 } });
+
+    const described = await twoCapReward().describeConfig();
+
+    expect(described.capOverridable).toBe(false);
+    expect(described.effective.cap).toBeUndefined();
+    expect(described.rejected).toContain('cap');
+  });
+
+  it('enforces the compiled per-entity cap during processing', async () => {
+    configure({ testTwoCapReward: { cap: 5000 } });
+    const toProcess = pendingEvents('testTwoCapReward');
+
+    await twoCapReward().process(processCtx(toProcess));
+
+    // The tighter compiled cap (200 on forId) still trims a 100-Buzz event pair
+    // to itself rather than to the operator's 5000.
+    expect(toProcess.every((x) => x.awardAmount <= 200)).toBe(true);
+  });
+});
+
 describe('getUserRewardDetails() stops advertising a disabled reward', () => {
   it('returns null so the reward leaves the user-facing list', async () => {
     configure({ testOnDemandReward: { enabled: false } });

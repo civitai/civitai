@@ -3028,6 +3028,25 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     expect(result.snapshot.workflowId).toBe('wf_real');
   });
 
+  // `getUserRewardDetails` returns null for a reward turned off through
+  // `rewards:config`. Without the null guard the submit 500s the first time
+  // anyone flips dailyBoost off.
+  it('submit still proceeds when the dailyBoost reward is disabled at runtime', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 5, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue(null);
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
+    expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
   it('does NOT claim when the boost would NOT close the gap (hopeless)', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
     happyVersionLookup();

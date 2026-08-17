@@ -33,7 +33,7 @@ const log = (event: BuzzEventLog, data: MixedObject) => {
     type: 'error',
     event: JSON.stringify(event),
     ...data,
-  }).catch();
+  }).catch(() => null);
 };
 
 // Lua script for atomic on-demand reward processing.
@@ -43,8 +43,16 @@ const log = (event: BuzzEventLog, data: MixedObject) => {
 // ARGV[2] = cache key (hashed event key for dedup)
 // ARGV[3] = effective award amount (already multiplied)
 // ARGV[4] = effective cap (already multiplied)
-// ARGV[5] = timestamp for cache entry
-// ARGV[6] = end-of-day unix timestamp for hash expiry
+// ARGV[5] = end-of-day unix timestamp for hash expiry
+//
+// Each dedup entry stores WHAT IT PAID (`a:<amount>`), not a timestamp. Deriving
+// the day's earnings as `entry count * the CURRENT award` instead means changing
+// the award mid-day rewrites history: at award 2 and cap 100, a user capped out
+// at 50 entries; drop the award to 1 to spend less and those same 50 entries
+// re-price to 50 earned, freeing 50 more — a day total of 150 from an edit meant
+// to reduce it. Entries written before this (timestamps) fall back to the old
+// count-based reading for the rest of the day; `rewardsDailyReset` clears the
+// hash at 00:00 UTC, after which every entry carries its own amount.
 const ON_DEMAND_REWARD_SCRIPT = `
   local cacheJson = redis.call('HGET', KEYS[1], ARGV[1])
   local cache = cjson.decode(cacheJson or '{}')
@@ -54,22 +62,30 @@ const ON_DEMAND_REWARD_SCRIPT = `
     return -1
   end
 
-  -- Count entries and enforce cap
-  local count = 0
-  for _ in pairs(cache) do count = count + 1 end
-  local awarded = count * tonumber(ARGV[3])
+  -- Sum what the day's entries actually paid, and enforce the cap against that
+  local awarded = 0
+  for _, entry in pairs(cache) do
+    local paid = string.match(tostring(entry), '^a:(%d+)$')
+    awarded = awarded + (paid and tonumber(paid) or tonumber(ARGV[3]))
+  end
   local remaining = math.max(tonumber(ARGV[4]) - awarded, 0)
   local toAward = math.min(tonumber(ARGV[3]), remaining)
 
   -- Update cache with new entry
-  cache[ARGV[2]] = ARGV[5]
+  cache[ARGV[2]] = 'a:' .. tostring(toAward)
   redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(cache))
 
   -- Set hash expiry to end of UTC day
-  redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[6]))
+  redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[5]))
 
   return toAward
 `;
+
+/** `a:<amount>` as written by the Lua; `undefined` for a legacy timestamp entry. */
+function parseEntryAmount(entry: unknown): number | undefined {
+  const match = /^a:(\d+)$/.exec(String(entry));
+  return match ? Number(match[1]) : undefined;
+}
 
 export function createBuzzEvent<T>({
   type,
@@ -159,9 +175,16 @@ export function createBuzzEvent<T>({
 
     const typeCacheJson = (await redis.hGet(REDIS_KEYS.BUZZ_EVENTS, `${userId}:${type}`)) ?? '{}';
     const typeCache = JSON.parse(typeCacheJson);
-    const eventCount = Object.keys(typeCache).length;
 
-    data.awarded = Math.min(eventCount * data.awardAmount, data.cap ?? Infinity);
+    // Read the same per-entry amounts the Lua enforces the cap against, or the
+    // UI reports a different day total than the one being paid.
+    data.awarded = Math.min(
+      Object.values(typeCache).reduce<number>(
+        (sum, entry) => sum + (parseEntryAmount(entry) ?? data.awardAmount),
+        0
+      ),
+      data.cap ?? Infinity
+    );
 
     return data;
   };
@@ -206,8 +229,10 @@ export function createBuzzEvent<T>({
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
     const effectiveAward = Math.ceil(config.awardAmount * multiplier);
-    const effectiveCap = Math.ceil((config.cap ?? Infinity) * multiplier);
-    const now = Date.now().toString();
+    // An uncapped reward needs a finite ceiling: `tonumber('Infinity')` is nil in
+    // Lua, which would throw out of the script and into the user's mutation.
+    const effectiveCap =
+      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * multiplier);
     const endOfDay = Math.floor(new Date().setUTCHours(23, 59, 59, 999) / 1000);
 
     const result = (await redis.eval(ON_DEMAND_REWARD_SCRIPT, {
@@ -217,13 +242,13 @@ export function createBuzzEvent<T>({
         cacheKey,
         String(effectiveAward),
         String(effectiveCap),
-        now,
         String(endOfDay),
       ],
     })) as number;
 
     if (result === -1) return false; // Already awarded
-    return result; // 0 (capped) or effectiveAward
+    // `toAward` is what the cap left, which is NOT always the full award.
+    return { toAward: result, effectiveAward };
   };
 
   const apply = async (input: T, tracking?: { ip?: string }) => {
@@ -258,7 +283,7 @@ export function createBuzzEvent<T>({
         rewardType: type,
         error: (error as Error)?.message,
         stack: (error as Error)?.stack,
-      }).catch();
+      }).catch(() => null);
       rewardFailedCounter?.inc?.();
       return null;
     });
@@ -278,13 +303,26 @@ export function createBuzzEvent<T>({
     };
 
     if (isOnDemand) {
-      const toAward = await processOnDemand(key, rewardsMultiplier, config);
-      if (toAward === false) return; // already awarded
+      const outcome = await processOnDemand(key, rewardsMultiplier, config);
+      if (outcome === false) return; // already awarded
+      const { toAward, effectiveAward } = outcome;
 
       event.status = toAward > 0 ? 'awarded' : 'capped';
-      // Keep base awardAmount and multiplier for ClickHouse storage consistency.
-      // processOnDemand already enforced the cap using multiplied values.
-      if (event.status === 'capped') event.awardAmount = 0;
+      if (event.status === 'capped') {
+        event.awardAmount = 0;
+      } else if (toAward < effectiveAward) {
+        // The cap trimmed this grant. Paying the full award here is how an award
+        // that does not divide its cap overshoots it — 34 grants of 3 against a
+        // cap of 100 paid 102, and an operator raising the award above the cap
+        // would pay the whole award on the first grant. `toAward` is already
+        // multiplied, so record it whole and neutralise the multiplier rather
+        // than applying it twice in `sendAward`.
+        event.awardAmount = toAward;
+        event.multiplier = 1;
+      }
+      // Otherwise keep the base awardAmount and multiplier for ClickHouse
+      // storage consistency; processOnDemand enforced the cap on the multiplied
+      // values and this grant was not trimmed.
     }
 
     // Fail-soft: the inline `apply` path runs synchronously inside user mutations

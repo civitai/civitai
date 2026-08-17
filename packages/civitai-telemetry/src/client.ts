@@ -180,6 +180,10 @@ export const rewardFailedCounter = registerCounter({
   name: 'reward_failed_total',
   help: 'Reward failed',
 });
+export const rewardConfigReadFailedCounter = registerCounter({
+  name: 'reward_config_read_failed_total',
+  help: 'Runtime reward-config read failed; rewards ran on the last good config',
+});
 
 export const clavataCounter = registerCounter({
   name: 'clavata_req_total',

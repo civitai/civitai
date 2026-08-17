@@ -1,6 +1,8 @@
 import { z } from 'zod';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { rewardConfigReadFailedCounter } from '~/server/prom/client';
+import { createTtlMemo } from '~/server/utils/ttl-memoize';
 
 export const REWARD_CONFIG_KEY = 'rewards:config';
 
@@ -11,9 +13,9 @@ export const MAX_AWARD_AMOUNT = 5_000;
 export const MAX_CAP = 100_000;
 
 /**
- * The single definition of an operator override. The admin mutation validates
- * writes with this same schema, so what can be stored and what will be honoured
- * cannot drift apart.
+ * The single definition of an operator override. `setRewardConfig` validates
+ * writes with this same schema, so a typo dies at write time rather than
+ * persisting as a row the read path quietly refuses.
  */
 export const rewardOverrideSchema = z.object({
   enabled: z.boolean().optional(),
@@ -50,24 +52,41 @@ export type ResolvedRewardConfig = {
   rejected: string[];
 };
 
-const CONFIG_TTL_MS = 60 * 1000;
+export const CONFIG_TTL_MS = 60 * 1000;
 
-type CacheEntry = { config: RewardConfig; expiresAt: number };
-
-// Cache the parsed config, not the resolved decision: `resolveRewardConfig`
-// still runs per call so a definition change or a differing default resolves
-// against the current values rather than a snapshot.
-let configCache: CacheEntry | null = null;
 const warnedMultiCap = new Set<string>();
 
-export function invalidateRewardConfigCache() {
-  configCache = null;
-  warnedMultiCap.clear();
-}
+// The last config we successfully read, kept as the fallback for a failed read.
+// Falling back to the COMPILED defaults instead would fail open: the default for
+// `enabled` is on, so a transient KeyValue blip would resume paying every reward
+// an operator had turned off, and `process` would then pay out what `apply`
+// wrote during the blip.
+let lastGoodConfig: RewardConfig | null = null;
 
 const warn = (message: string, data: MixedObject) => {
-  logToAxiom({ name: 'reward-config', type: 'warning', message, ...data }).catch();
+  logToAxiom({ name: 'reward-config', type: 'warning', message, ...data }).catch(() => null);
 };
+
+/**
+ * `enabled` is the one field where falling back to the compiled default is the
+ * wrong direction, because that default is ON. `"enabled": "false"` — what a
+ * text field in Retool produces — would leave the reward paying while the
+ * operator reads their edit back and believes it is off, with an Axiom warning
+ * as the only signal.
+ *
+ * So accept the spellings an operator actually types, and treat anything else
+ * PRESENT as off: a refused `enabled` stops the money and is loud. Absent still
+ * means on.
+ */
+function coerceEnabled(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return undefined;
+}
 
 /**
  * Keep the fields that parse rather than dropping the whole reward. An operator
@@ -89,6 +108,14 @@ function usableOverride(type: string, value: unknown): RewardConfigEntry {
 
   for (const field of OVERRIDE_FIELDS) {
     if (!(field in record)) continue;
+
+    if (field === 'enabled') {
+      const coerced = coerceEnabled(record.enabled);
+      override.enabled = coerced ?? false;
+      if (coerced === undefined) rejected.push('enabled');
+      continue;
+    }
+
     const result = rewardOverrideSchema.shape[field].safeParse(record[field]);
     if (result.success) Object.assign(override, { [field]: result.data });
     else rejected.push(field);
@@ -116,22 +143,69 @@ async function loadConfig(): Promise<RewardConfig> {
   return config;
 }
 
-async function getRewardConfig(): Promise<RewardConfig> {
-  const now = Date.now();
-  if (configCache && configCache.expiresAt > now) return configCache.config;
+// Cache the parsed config, not the resolved decision: `resolveRewardConfig`
+// still runs per call so a definition change or a differing default resolves
+// against the current values rather than a snapshot. `createTtlMemo` caches only
+// a RESOLVED value, so a failed read is retried on the next call rather than
+// pinning a fallback for a whole TTL.
+// The clock is read per call rather than captured at module load, so a test can
+// advance time instead of waiting out a real minute.
+const configMemo = createTtlMemo(loadConfig, CONFIG_TTL_MS, () => Date.now());
 
+export function invalidateRewardConfigCache() {
+  configMemo.clear();
+  warnedMultiCap.clear();
+  lastGoodConfig = null;
+}
+
+async function getRewardConfig(): Promise<RewardConfig> {
   try {
-    const config = await loadConfig();
-    configCache = { config, expiresAt: now + CONFIG_TTL_MS };
+    const config = await configMemo();
+    lastGoodConfig = config;
     return config;
   } catch (error) {
-    // No negative caching: a transient KeyValue failure must not pin every
-    // reward to its compiled default for a full TTL.
-    warn('Reward config read failed, using compiled defaults', {
+    // Alertable, not just an Axiom line nobody watches: on this path every
+    // disabled reward is running on a stale answer.
+    rewardConfigReadFailedCounter?.inc?.();
+    warn('Reward config read failed, using the last good config', {
       error: (error as Error)?.message,
+      haveLastGood: !!lastGoodConfig,
     });
-    return {};
+    return lastGoodConfig ?? {};
   }
+}
+
+/**
+ * The stored row exactly as written, for an editor to render. Uncached and
+ * unsanitised on purpose: an operator fixing a refused field needs to see what
+ * is actually in the row, not what the read path salvaged from it.
+ */
+export async function getStoredRewardConfig(): Promise<z.infer<typeof rewardConfigSchema>> {
+  const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
+  const parsed = rewardConfigSchema.safeParse(row?.value ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+/**
+ * Write-time validation is where an operator typo should die. The read path
+ * salvages what it can from a bad row because it must keep paying rewards; this
+ * refuses the whole write instead, so the row on disk is always one the read
+ * path will honour in full.
+ *
+ * Only invalidates the caller's own cache — other pods pick the change up within
+ * `CONFIG_TTL_MS`.
+ */
+export async function setRewardConfig(config: z.infer<typeof rewardConfigSchema>) {
+  const value = rewardConfigSchema.parse(config);
+
+  await dbWrite.keyValue.upsert({
+    where: { key: REWARD_CONFIG_KEY },
+    create: { key: REWARD_CONFIG_KEY, value },
+    update: { value },
+  });
+
+  invalidateRewardConfigCache();
+  return value;
 }
 
 /**
