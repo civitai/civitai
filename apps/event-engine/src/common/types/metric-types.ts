@@ -4,6 +4,16 @@
  * Generated: 2025-10-02T22:26:52.423Z
  *
  * Run 'npm run generate-types' to update this file.
+ *
+ * ⚠️ `User.commentCount` was added BY HAND (2026-08-16), and running the generator right now will
+ * not just re-add it — it rewrites far more than it should. On this commit the generator renames
+ * every Image reaction metric (`ReactionLike` → `Like`, `Comment` → `commentCount`, …), drops
+ * `downloadCount`/`generationCount` from Model and ModelVersion, and adds `ComicMetrics`. The
+ * renames break `src/common/feeds/images.feed.ts`, which still reads the old names, so `pnpm
+ * typecheck` fails on a clean regen. The generator derives types by running handlers against faker
+ * data, so it only ever sees metrics THIS app emits — anything written by the main app or a job is
+ * silently dropped. Fix the generator (or the feed) before trusting it again; until then a hand-edit
+ * is the smaller lie.
  */
 
 export type ArticleMetrics = {
@@ -97,6 +107,7 @@ export type TagMetrics = {
 export type UserMetrics = {
   articleCount: number
   bountyCount: number
+  commentCount: number
   followerCount: number
   followingCount: number
   hiddenCount: number
@@ -129,7 +140,7 @@ export const ENTITY_METRIC_TYPES = {
   ModelVersion: ['downloadCount', 'earnedAmount', 'generationCount', 'imageCount', 'ratingCount', 'thumbsDownCount', 'thumbsUpCount'],
   Post: ['Cry', 'Dislike', 'Heart', 'Laugh', 'Like', 'collectedCount', 'commentCount', 'reactionCount', 'tippedAmount', 'tippedCount'],
   Tag: ['followerCount', 'hiddenCount'],
-  User: ['articleCount', 'bountyCount', 'followerCount', 'followingCount', 'hiddenCount', 'reactionCount', 'tippedAmount', 'tippedCount', 'tipsGivenAmount', 'tipsGivenCount'],
+  User: ['articleCount', 'bountyCount', 'commentCount', 'followerCount', 'followingCount', 'hiddenCount', 'reactionCount', 'tippedAmount', 'tippedCount', 'tipsGivenAmount', 'tipsGivenCount'],
 } as const
 
 export type EntityType = keyof typeof ENTITY_METRIC_TYPES
