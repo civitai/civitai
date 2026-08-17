@@ -237,12 +237,13 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 // 1-10:  The images are visually almost identical
 // 11-20: The images are visually similar
 // 21-30: The images are visually somewhat similar
-// `BigInt('')` and `BigInt('  ')` are 0n, which would silently become a real Hamming
-// lookup against every blocked image within 4 bits of zero. Out-of-Int64 values would
-// reach ClickHouse and fail there, past the point this claims to have checked them.
+// `BigInt('  ')` is 0n, which would silently become a real Hamming lookup against every
+// blocked image within 4 bits of zero. Undefined rather than a throw, so a blank hash
+// still records the scan the way it did before the hash was parsed at all — a 400 here
+// makes the scanner redeliver the same unusable result forever.
 function parsePerceptualHash(hash: string) {
   const invalid = new Error('invalid hash from ImageHash scan');
-  if (!hash.trim()) throw invalid;
+  if (!hash.trim()) return undefined;
 
   let parsed: bigint;
   try {
@@ -941,7 +942,25 @@ async function processScanResult({
     case TagSource.ImageHash: {
       if (!hash) throw new Error('missing hash from ImageHash scan');
       const pHash = parsePerceptualHash(hash);
-      const blocked = await isBlocked(pHash);
+      // Nothing branches on this result — the blocking update below is commented out — so a
+      // ClickHouse blip must not discard a scan result. Same reasoning as `getIsImageBlocked`.
+      const blocked =
+        pHash === undefined
+          ? false
+          : await isBlocked(pHash).catch((error) => {
+              logToAxiom(
+                {
+                  name: 'image-phash-match',
+                  type: 'warning',
+                  message: 'pHash blocklist check failed',
+                  imageId: id,
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                  source: 'webhook-legacy',
+                },
+                'webhooks'
+              ).catch(() => null);
+              return false;
+            });
       if (blocked) {
         logToAxiom(
           {

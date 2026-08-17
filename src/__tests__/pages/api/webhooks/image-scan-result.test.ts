@@ -591,14 +591,30 @@ describe('image-scan-result webhook - pipeline tests', () => {
   });
 
   describe('perceptual hash handling', () => {
-    it('rejects a blank hash instead of looking up hashes near zero', async () => {
+    it('records the scan without a lookup when the hash is blank', async () => {
       envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
 
       const req = runWebhook({ id: 11, status: 0, source: TagSource.ImageHash, hash: '   ' });
       await req.promise;
 
       expect(mockClickhouseQuery).not.toHaveBeenCalled();
-      expect(req.res.status).toHaveBeenCalledWith(400);
+      expect(req.res.status).toHaveBeenCalledWith(200);
+      const update = imageUpdates.find((u) => u.text.includes('jsonb_build_object'));
+      expect(update).toBeDefined();
+      expect(update!.text).not.toContain('"pHash"');
+    });
+
+    it('completes the scan when the blocklist lookup fails', async () => {
+      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
+      mockClickhouseQuery.mockRejectedValue(new Error('socket hang up'));
+
+      const req = runWebhook({ id: 14, status: 0, source: TagSource.ImageHash, hash: '42' });
+      await req.promise;
+
+      expect(mockClickhouseQuery).toHaveBeenCalled();
+      expect(req.res.status).toHaveBeenCalledWith(200);
+      const update = imageUpdates.find((u) => u.params.includes(42n));
+      expect(update).toBeDefined();
     });
 
     it('rejects a hash wider than Int64 rather than letting ClickHouse reject it', async () => {
