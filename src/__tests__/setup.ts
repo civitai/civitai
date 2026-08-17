@@ -191,6 +191,12 @@ vi.mock('~/server/prom/client', () => ({
   vaultItemFailedCounter: promMetricStub(),
   rewardGivenCounter: promMetricStub(),
   rewardFailedCounter: promMetricStub(),
+  // Re-exported from '@civitai/telemetry/client' rather than declared in
+  // prom/client, so this module-replacing mock drops it. `base.reward` and
+  // `image.service` both call `.inc()` on it WITHOUT the `?.inc?.()` guard their
+  // neighbours use, so the first test to drive either fail-soft path dies here
+  // rather than on whatever it was written to check.
+  clickhouseFailSoftCounter: promMetricStub(),
   clavataCounter: promMetricStub(),
   cacheHitCounter: promMetricStub(),
   cacheMissCounter: promMetricStub(),

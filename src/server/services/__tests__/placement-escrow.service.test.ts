@@ -1,5 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// Mocked below; imported for the assertion that a swallowed reward failure is
+// still reported.
+import { logToAxiom } from '~/server/logging/client';
 // Stubbed globally in src/__tests__/setup.ts.
 import { placementUnfundedSettlementsGauge } from '~/server/prom/client';
 
@@ -1938,39 +1941,28 @@ describe('the accept reward', () => {
   );
 
   /**
-   * 🔴 **Auto-accept pays, and that is designed.**
+   * 🔴 **Auto-accept pays, and that is designed** — but read what this asserts.
    *
-   * On an `auto` space the approval arrives from `createStickerPlacement`
-   * settling inline at placement time, not from an owner action — so a reward
-   * hung off the owner's action handler would pay nothing on what is expected to
-   * be the majority path. Justin's decision, recorded in the intent doc: people
-   * switching from Review to Auto Accept to collect this is a fine outcome, not
-   * a leak.
+   * This service has no notion of space mode. Both sticker approve paths — the
+   * owner acting through `actOnStickerPlacement`, and `createStickerPlacement`
+   * settling inline at placement time when `space.mode === 'auto'` — arrive here
+   * as the identical call, which is exactly why the reward hangs off the settle
+   * rather than off either caller. So this cannot tell them apart, and is not
+   * named as though it can: what it pins is that **any** approve pays.
    *
-   * This exists because that intent otherwise lives only in a Discord thread. A
-   * reviewer reading the code alone has already once concluded that auto-mode
-   * paying looked like an oversight and recommended removing it. If you are here
-   * to delete this test, that is the conversation you are having.
+   * The auto half is pinned in two places that together need no inference:
+   * 'settles an auto space immediately' in sticker-placement.service.test.ts
+   * asserts that path issues exactly this settle, and this asserts that settle
+   * pays.
    *
-   * The other half of the path — that `createStickerPlacement` issues exactly
-   * this settle on an auto space — is pinned by 'settles an auto space
-   * immediately' in sticker-placement.service.test.ts.
+   * Written out because the intent otherwise lives only in a Discord thread.
+   * Justin's decision, in the intent doc: creators switching from Review to Auto
+   * Accept to collect this is a fine outcome, not a leak. A reviewer reading the
+   * code alone has already once read auto-mode paying as an oversight and
+   * recommended removing it. If you are here to make auto stop paying, that is
+   * the conversation you are having, and it is Justin's to have.
    */
-  it('pays on an auto-accept space, deliberately', async () => {
-    givenPlacement();
-    await hold();
-
-    // The call createStickerPlacement makes at placement time: the owner is
-    // recorded as the actor even though the placer's request is what ran it.
-    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
-
-    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
-  });
-
-  // The other approve path: the owner acting on a pending placement in a review
-  // space, via actOnStickerPlacement. Both paths reach settlement as the same
-  // call, which is exactly why the reward lives here and not at either caller.
-  it('pays on the owner review action too', async () => {
+  it('pays on any approve, whichever of the two sticker paths issued it', async () => {
     givenPlacement();
     await hold();
 
@@ -1996,6 +1988,12 @@ describe('the accept reward', () => {
    *
    * The consolidation is a recorded follow-up and is fine to do — but it must
    * MOVE the remix call, not add one. This test is what tells you which you did.
+   *
+   * ⚠️ The remix half is **inert until #4013 lands**: nothing on this branch can
+   * call `remixAcceptReward`, because the module it mocks does not exist here
+   * yet. Verified that this suite still collects all its tests with the mock in
+   * place (Vitest resolves a mocked path lazily), so it is a tripwire armed on
+   * merge rather than coverage you have today.
    */
   it('grants exactly one reward per surface, and never the other surface reward', async () => {
     givenPlacement({ id: 1, surface: 'sticker' });
@@ -2054,5 +2052,38 @@ describe('the accept reward', () => {
     expect(settled).toBe(true);
     expect(placement.status).toBe('approved');
     expect(legsFor(1)).toMatchObject({ toOwner: 700 });
+  });
+
+  /**
+   * The log is the entire compensation for swallowing the throw. Without it a
+   * reward that never arrived leaves no trace at all on a money path — and
+   * `.catch(() => null)` is a plausible-looking edit that produces exactly that
+   * while every other assertion here stays green.
+   *
+   * Rejected with a non-`Error` on purpose: that is what tells `.message` apart
+   * from the `instanceof` narrowing, and a bare `.message` logs `undefined` —
+   * the failure reads as "the reward failed, cause unknown", which is the shape
+   * that makes an outage unreadable at 3am.
+   */
+  it('reports a swallowed reward failure, whatever was thrown', async () => {
+    givenPlacement();
+    await hold();
+    applyAcceptReward.mockRejectedValue('clickhouse is gone');
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'placement-escrow',
+        message: 'accept reward failed',
+        placementId: 1,
+        error: 'clickhouse is gone',
+      })
+    );
   });
 });

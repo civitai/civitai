@@ -12,11 +12,13 @@ const h = vi.hoisted(() => ({
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: (...args: unknown[]) => h.insert(...(args as [])) },
 }));
-// Prom is NOT mocked here: src/__tests__/setup.ts already stubs every collector,
-// and a local factory listing three of them narrows that — the suite would stop
-// loading the first time base.reward touches a fourth. Neither ClickHouse nor
-// buzz.service is stubbed globally, and spreading the real module would build a
-// client at import, so those two stay hand-written.
+// Prom is NOT mocked here: setup.ts stubs it globally, including the
+// `clickhouseFailSoftCounter` this branch needs — which it was missing until
+// this PR added it, so a local three-item factory here would have been the
+// wider surface, not the narrower one. Neither ClickHouse nor buzz.service is
+// stubbed globally, and spreading either would build a real client at import,
+// so those two stay hand-written and base.reward.mock-surface.test.ts checks
+// them against what base.reward actually imports.
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => h.createBuzzTransactionMany(...(args as [])),
   getMultipliersForUser: (...args: unknown[]) => h.getMultipliersForUser(...(args as [])),
