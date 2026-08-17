@@ -5,6 +5,7 @@ import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { remixAcceptReward } from '~/server/rewards/active/remixAccept.reward';
 import { getAllImages } from '~/server/services/image.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
@@ -451,6 +452,31 @@ export async function actOnRemixGallerySubmission({
   // appeared to work and did not is what this cost us on chunk D.
   if (!result.settled)
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
+
+  // Fired only from behind that `settled` check, which is the whole double-pay
+  // guard: it is true for exactly one call in a placement's life. Re-presenting a
+  // placement this already paid for would spend a slot of the owner's daily cap
+  // and move no Buzz, silently — see `remixAcceptReward`.
+  //
+  // Swallowed rather than rethrown, unlike the reward's own inline fail-soft: the
+  // settle above already committed and paid out, so a throw here would report a
+  // failure for an approval that happened and cannot be retried.
+  if (action === 'approve')
+    await remixAcceptReward
+      .apply({
+        placementId: placement.id,
+        ownerId: placement.ownerId,
+        placerId: placement.placerId,
+      })
+      .catch((error) =>
+        logToAxiom({
+          name: 'remix-gallery',
+          type: 'error',
+          message: 'accept reward failed; the submission is approved and the owner unpaid',
+          placementId: placement.id,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => undefined)
+      );
 
   return result;
 }

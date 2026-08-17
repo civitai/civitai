@@ -43,6 +43,15 @@ vi.mock('~/server/services/placement-escrow.service', () => ({
 const assertCanPlace = vi.fn(async () => undefined);
 vi.mock('~/server/services/placement-moderation.service', () => ({ assertCanPlace }));
 
+// Stubbed rather than spread from the original: the real module loads
+// `base.reward`, which pulls the buzz service and its whole import graph into a
+// suite that mocks the escrow service precisely to keep it out. What the reward
+// itself does with these arguments is its own suite's job.
+const rewardApply = vi.fn(async () => undefined);
+vi.mock('~/server/rewards/active/remixAccept.reward', () => ({
+  remixAcceptReward: { apply: rewardApply },
+}));
+
 const resolvePlacementSpaceFor = vi.fn();
 vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSpaceFor }));
 
@@ -671,6 +680,7 @@ describe('owner actions', () => {
   const pending = {
     id: PLACEMENT,
     ownerId: OWNER,
+    placerId: PLACER,
     status: 'pending',
     surface: 'remixGallery',
     data: { imageId: REMIX_IMAGE },
@@ -689,6 +699,11 @@ describe('owner actions', () => {
     await expect(
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
     ).rejects.toThrow(/no longer exists/i);
+    // The remix accept reward is scoped by this refusal and by nothing else. A
+    // sticker approval that reached it would pay the remix reward on top of the
+    // sticker one, which is the shape a bad merge between the two reward changes
+    // would take.
+    expect(rewardApply).not.toHaveBeenCalled();
   });
 
   it('re-checks the submission at approval, because a rating can move', async () => {
@@ -733,6 +748,56 @@ describe('owner actions', () => {
     await expect(
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'decline', userId: OWNER })
     ).rejects.toThrow(/already resolved/i);
+  });
+
+  describe('accept reward', () => {
+    const approve = () =>
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+
+    beforeEach(() => {
+      placementFindUnique.mockResolvedValue(pending);
+    });
+
+    it('pays the owner for the accept, crediting the submitter as the cause', async () => {
+      await approve();
+      expect(rewardApply).toHaveBeenCalledWith({
+        placementId: PLACEMENT,
+        ownerId: OWNER,
+        placerId: PLACER,
+      });
+    });
+
+    it('pays nothing for a decline', async () => {
+      await actOnRemixGallerySubmission({
+        placementId: PLACEMENT,
+        action: 'decline',
+        userId: OWNER,
+      });
+      expect(rewardApply).not.toHaveBeenCalled();
+    });
+
+    // The whole double-pay guard. `settlePlacement` claims pending → approved
+    // with `WHERE status = 'pending'`, so exactly one call in a placement's life
+    // returns settled: true, and the reward hangs off that. Move it above this
+    // check and a re-settle re-presents a placement the reward already paid:
+    // the ledger refuses it as a duplicate, no buzz moves, and the owner has
+    // silently lost one of their five accepts for the day.
+    it('pays nothing when the settle claimed nothing', async () => {
+      settlePlacement.mockResolvedValue({ settled: false });
+      await expect(approve()).rejects.toThrow(/already resolved/i);
+      expect(rewardApply).not.toHaveBeenCalled();
+    });
+
+    // The approval already committed and paid out of escrow before this runs, and
+    // it cannot be retried. Reporting it as failed would tell the owner their
+    // accept did not happen when the entry is live in their gallery.
+    it('still reports the approval when the reward fails', async () => {
+      rewardApply.mockRejectedValueOnce(new Error('buzz service down'));
+      await expect(approve()).resolves.toMatchObject({ settled: true });
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringMatching(/reward failed/i) })
+      );
+    });
   });
 
   it('refuses to remove a live entry inside the removal lock', async () => {
