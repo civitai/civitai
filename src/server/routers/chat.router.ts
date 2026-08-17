@@ -2,6 +2,7 @@ import {
   clearChatHandler,
   createChatHandler,
   createMessageHandler,
+  deleteMessageHandler,
   getChatsForUserHandler,
   getInfiniteMessagesHandler,
   getMessageByIdHandler,
@@ -17,6 +18,7 @@ import {
   clearChatInput,
   createChatInput,
   createMessageInput,
+  deleteMessageInput,
   getInfiniteMessagesInput,
   getMessageByIdInput,
   isTypingInput,
@@ -73,6 +75,10 @@ export const chatRouter = router({
     .input(createMessageInput)
     .mutation(createMessageHandler),
   // updateMessage: guardedProcedure.input(updateMessageInput).mutation(updateMessageHandler),
+  deleteMessage: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(deleteMessageInput)
+    .mutation(deleteMessageHandler),
   isTyping: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(isTypingInput)

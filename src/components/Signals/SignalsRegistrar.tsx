@@ -3,7 +3,11 @@ import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { useBuzzSignalUpdate } from '~/components/Buzz/useBuzz';
 import { useCryptoDepositSignal } from '~/components/Signals/CryptoDepositSignal';
 import { useReferralSignals } from '~/components/Referrals/ReferralSignals';
-import { useChatNewMessageSignal, useChatNewRoomSignal } from '~/components/Chat/ChatSignals';
+import {
+  useChatMessageDeletedSignal,
+  useChatNewMessageSignal,
+  useChatNewRoomSignal,
+} from '~/components/Chat/ChatSignals';
 import { useNotificationSignal } from '~/components/Notifications/notifications.utils';
 import { useSessionRefreshSignal } from '~/components/Signals/SessionRefreshSignal';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
@@ -36,6 +40,7 @@ export function SignalsRegistrar() {
 
   useChatNewMessageSignal();
   useChatNewRoomSignal();
+  useChatMessageDeletedSignal();
 
   useMetricSignalsListener();
 

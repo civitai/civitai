@@ -7,6 +7,7 @@ import {
   IconBell,
   IconBellOff,
   IconDoorExit,
+  IconDots,
   IconFlag,
   IconPin,
   IconPinnedOff,
@@ -157,8 +158,8 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
       {!!chatObj && (
         <Menu withArrow position="bottom-end">
           <Menu.Target>
-            <LegacyActionIcon>
-              <IconSettings />
+            <LegacyActionIcon aria-label="Conversation options">
+              <IconDots />
             </LegacyActionIcon>
           </Menu.Target>
           <Menu.Dropdown>

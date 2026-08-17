@@ -1,48 +1,27 @@
-.chatMessage {
-  border-radius: var(--mantine-spacing-xs);
-  padding: calc(var(--mantine-spacing-xs) / 2) var(--mantine-spacing-xs);
-  width: max-content;
-  max-width: 70%;
-  white-space: pre-line;
-}
-
-.replyMessage {
-  text-overflow: ellipsis;
-  overflow: hidden;
-  overflow-wrap: normal;
-  background-color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-7));
-  font-size: var(--mantine-spacing-sm);
-}
-
-.stickerOnlyMessage {
-  background-color: transparent;
-  padding: 0;
-  max-width: 100%;
-}
-
-/* ---- flat grouped message rows ---- */
-
+/* Mono + tabular is what separates chrome from prose in the design. */
 .dayChip {
   align-self: center;
   border-radius: 100px;
-  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
-  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  border: 1px solid var(--chat-line);
+  background-color: var(--chat-panel);
   color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
   padding: 2px 12px;
   margin: 10px 0 4px;
+  font-family: var(--mantine-font-family-monospace);
   font-size: 10.5px;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
+/* Full-bleed, square: the hover band spanning the pane is the cue that the row
+   is one message. An inset rounded rect reads as a card instead. */
 .messageRow {
   position: relative;
-  padding: 6px 8px 3px;
-  border-radius: var(--mantine-radius-sm);
+  padding: 4px 14px 3px;
 
   &:hover,
   &:focus-within {
-    background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+    background-color: var(--chat-panel);
   }
 
   /* Consecutive messages from one sender collapse under a single header. */
@@ -56,8 +35,9 @@
 }
 
 .messageTime {
+  font-family: var(--mantine-font-family-monospace);
   font-size: 10px;
-  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  color: var(--chat-meta);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -84,12 +64,20 @@
     font-size: inherit;
     line-height: inherit;
   }
+
+  /* Must outrank the inherit rule above, which is also two classes deep. */
+  .jumboEmoji {
+    font-size: 38px;
+    line-height: 1.15;
+  }
 }
 
+/* A tint rather than a slab: the quote is a whisper attached to the message,
+   not a second card competing with it. */
 .replyQuote {
   display: block;
-  border-left: 2px solid var(--mantine-color-blue-5);
-  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  border-left: 2px solid var(--chat-accent);
+  background-color: light-dark(var(--mantine-color-blue-0), rgb(77 171 247 / 8%));
   border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
   padding: 3px 9px;
   margin: 2px 0 4px;
@@ -98,9 +86,10 @@
 
 .replyQuoteName {
   display: block;
-  color: var(--mantine-color-blue-5);
+  color: var(--chat-accent);
   font-weight: 600;
   font-size: 11px;
+  line-height: 1.4;
 }
 
 .replyQuoteText {
@@ -123,15 +112,15 @@
 .messageActions {
   position: absolute;
   top: -10px;
-  right: 10px;
+  right: 14px;
   display: none;
   gap: 2px;
   padding: 2px;
   z-index: 5;
   border-radius: var(--mantine-radius-sm);
-  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border: 1px solid var(--chat-line);
   background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
-  box-shadow: 0 4px 14px rgb(0 0 0 / 25%);
+  box-shadow: 0 4px 14px light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 45%));
 
   .messageRow:hover &,
   .messageRow:focus-within & {
@@ -142,9 +131,9 @@
 .systemNote {
   align-self: center;
   text-align: center;
-  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
-  border-top: 1px dashed light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
-  border-bottom: 1px dashed light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  color: var(--chat-meta);
+  border-top: 1px dashed var(--chat-line);
+  border-bottom: 1px dashed var(--chat-line);
   padding: 6px 4px;
   margin: 6px 0;
   width: 100%;
@@ -155,6 +144,10 @@
 .chatInput {
   border: none;
   background-color: transparent;
+  font-size: 13.5px;
+  line-height: 1.45;
+  min-height: 30px;
+  padding: 7px 4px;
 }
 
 .composerRow {
@@ -162,19 +155,27 @@
   align-items: flex-end;
   gap: 6px;
   margin: 8px;
-  padding: 4px 5px 4px 8px;
+  padding: 4px 5px 4px 4px;
   border-radius: 19px;
-  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
-  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  border: 1px solid var(--chat-line);
+  background-color: var(--chat-panel);
 
   &:focus-within {
-    border-color: var(--mantine-color-blue-5);
+    border-color: var(--chat-accent);
   }
 }
 
+/* Disabled has to stay a filled circle, or the composer loses its anchor the
+   moment the field is empty. */
+.sendButton:disabled,
+.sendButton[data-disabled] {
+  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  color: var(--chat-meta);
+}
+
 .replyStrip {
-  border-left: 2px solid var(--mantine-color-blue-5);
-  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  border-left: 2px solid var(--chat-accent);
+  background-color: light-dark(var(--mantine-color-blue-0), rgb(77 171 247 / 8%));
   border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
   margin: 8px 8px 0;
   padding-bottom: var(--mantine-spacing-xs);
@@ -184,21 +185,32 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 18px 6px;
+  padding: 0 14px 6px;
+}
+
+.hint {
+  font-size: 10.5px;
+  color: var(--chat-meta);
+
+  b {
+    color: light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0));
+    font-weight: 600;
+  }
 }
 
 .counter {
   margin-left: auto;
+  font-family: var(--mantine-font-family-monospace);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
-  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  color: var(--chat-meta);
 
   &.near {
-    color: var(--mantine-color-orange-5);
+    color: light-dark(var(--mantine-color-orange-8), var(--mantine-color-orange-4));
   }
 
   &.over {
-    color: var(--mantine-color-red-5);
+    color: light-dark(var(--mantine-color-red-8), var(--mantine-color-red-4));
     font-weight: 700;
   }
 }
@@ -207,10 +219,4 @@
   position: sticky;
   bottom: 0;
   display: inline-flex;
-  // Uncomment the following lines if needed:
-  // backdrop-filter: blur(16px);
-  // background-color: light-dark(
-  //   rgba(var(--mantine-color-green-7), 0.1),
-  //   rgba(var(--mantine-color-green-2), 0.1)
-  // );
 }

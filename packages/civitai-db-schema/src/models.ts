@@ -3716,6 +3716,7 @@ export interface ChatMessage {
   contentType: ChatMessageType;
   referenceMessageId: number | null;
   editedAt: Date | null;
+  deletedAt: Date | null;
   user?: User;
   chat?: Chat;
   referenceMessage?: ChatMessage | null;

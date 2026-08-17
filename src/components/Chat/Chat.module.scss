@@ -1,0 +1,48 @@
+/* Applied once at the chat window root so every pane inherits the same tokens.
+   Mantine's `c="blue"` resolves to blue-6 in light but blue-8 in dark, which is
+   near-invisible on a dark panel — hence an explicit accent rather than a role. */
+.surface {
+  --chat-accent: light-dark(var(--mantine-color-blue-7), var(--mantine-color-blue-4));
+  --chat-line: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  --chat-panel: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  --chat-meta: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+}
+
+.groupHead {
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--chat-line);
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--chat-meta);
+}
+
+/* A dot alone does not carry selection across four options with wrapping
+   descriptions — the row has to light up. */
+.option {
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid transparent;
+  padding: 7px 9px;
+
+  &:hover {
+    background-color: var(--chat-panel);
+  }
+
+  &.selected {
+    background-color: light-dark(var(--mantine-color-blue-0), rgb(34 139 230 / 15%));
+    border-color: light-dark(var(--mantine-color-blue-3), var(--mantine-color-blue-8));
+  }
+}
+
+/* Dashed marks it as the consequence of a choice rather than another setting. */
+.previewStrip {
+  margin-top: 3px;
+  padding: 9px 11px;
+  border-radius: var(--mantine-radius-sm);
+  background-color: var(--chat-panel);
+  border: 1px dashed var(--chat-line);
+  font-size: 12px;
+  line-height: 1.5;
+}

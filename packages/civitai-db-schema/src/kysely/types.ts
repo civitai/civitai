@@ -1625,6 +1625,7 @@ export type ChatMessage = {
   contentType: Generated<ChatMessageType>;
   referenceMessageId: number | null;
   editedAt: Timestamp | null;
+  deletedAt: Timestamp | null;
 };
 export type ChatReport = {
   chatId: number;

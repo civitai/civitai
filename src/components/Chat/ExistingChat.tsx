@@ -19,6 +19,7 @@ import {
   useComputedColorScheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowBack,
@@ -30,6 +31,7 @@ import {
   IconCircleX,
   IconCrown,
   IconSend,
+  IconTrash,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -75,6 +77,7 @@ import {
   stripStickerTokens,
 } from '~/shared/utils/sticker-token';
 import { MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
+import { isJumboEmojiText } from '~/shared/constants/base-emoji';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -89,24 +92,39 @@ const COUNTER_WARN_AT = 1800;
 
 const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 
+/**
+ * The detail sits behind a disclosure because this renders above every
+ * conversation: at full length it was the loudest thing in the pane and got
+ * read once, then dismissed. The claim and the report link stay in the line.
+ */
 function ScamWarningContent({ chatId }: { chatId: number }) {
+  const [expanded, setExpanded] = useState(false);
+
   return (
     <Text size="xs">
-      Beware of scam messages. Civitai staff will only message you from{' '}
+      Civitai staff only message you from{' '}
       <Text span c="red" fw={700}>
         red-nameplate
       </Text>{' '}
-      accounts and have a Civitai moderator badge next to their name (not the profile picture!). Do
-      not click unknown links or share payment info.{' '}
+      accounts.{' '}
+      {expanded && (
+        <>
+          They carry a Civitai moderator badge next to their name — not on the profile picture.
+          Never click unknown links or share payment info.{' '}
+        </>
+      )}
+      <Anchor component="button" type="button" size="xs" onClick={() => setExpanded((o) => !o)}>
+        {expanded ? 'Less' : 'More'}
+      </Anchor>
+      {' · '}
       <Anchor
         component="button"
         type="button"
         size="xs"
         onClick={() => openReportModal({ entityType: ReportEntity.Chat, entityId: chatId })}
       >
-        Report suspicious DMs
-      </Anchor>{' '}
-      immediately.
+        Report
+      </Anchor>
     </Text>
   );
 }
@@ -472,14 +490,16 @@ export function ExistingChat() {
             id="chat-scam-warning"
             className="shrink-0"
             color="yellow"
-            icon={<IconAlertTriangle className="shrink-0" size={20} />}
+            icon={<IconAlertTriangle className="shrink-0" size={16} />}
             size="sm"
-            p="xs"
-            m="xs"
+            py={6}
+            px="xs"
+            mx="sm"
+            mt="xs"
           >
             <ScamWarningContent chatId={existingChatId!} />
           </DismissibleAlert>
-          <Box p="sm" style={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
+          <Box py="sm" style={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
             {isRefetching || isLoading ? (
               <Center h="100%">
                 <Loader />
@@ -510,7 +530,7 @@ export function ExistingChat() {
               </Center>
             )}
             {!!typingText && (
-              <Group className={classes.isTypingBox}>
+              <Group px="sm" className={classes.isTypingBox}>
                 <Text size="xs">{typingText}</Text>
                 <Loader type="dots" />
               </Group>
@@ -788,6 +808,19 @@ function ChatInputBox({
   return (
     <>
       <div className={classes.composerRow}>
+        <StickerPicker
+          surface="chat"
+          disabled={isMuted}
+          // The trigger sits at the composer's left edge, so anchoring the
+          // dropdown's right edge to it throws the panel across the thread list.
+          position="top-start"
+          onSelect={(sticker) =>
+            handleChatTyping(
+              `${chatMsg}${chatMsg && !chatMsg.endsWith(' ') ? ' ' : ''}:${sticker.slug}: `
+            )
+          }
+          onSelectEmoji={(char) => handleChatTyping(`${chatMsg}${char}`)}
+        />
         <Textarea
           style={{ flexGrow: 1 }}
           disabled={isMuted}
@@ -807,19 +840,11 @@ function ChatInputBox({
           }}
           classNames={{ input: classes.chatInput }}
         />
-        <StickerPicker
-          surface="chat"
-          disabled={isMuted}
-          onSelect={(sticker) =>
-            handleChatTyping(
-              `${chatMsg}${chatMsg && !chatMsg.endsWith(' ') ? ' ' : ''}:${sticker.slug}: `
-            )
-          }
-        />
         <LegacyActionIcon
           radius="xl"
           size="lg"
           variant="filled"
+          className={classes.sendButton}
           onClick={sendMessage}
           disabled={isSending || !chatMsg.length || isMuted || isOverLimit}
           aria-label="Send"
@@ -828,6 +853,9 @@ function ChatInputBox({
         </LegacyActionIcon>
       </div>
       <div className={classes.composerFoot}>
+        <Text className={classes.hint}>
+          <b>Enter</b> to send · <b>Shift+Enter</b> for a new line
+        </Text>
         {isOverLimit && (
           <Text size="xs" c="red">
             Too long to send — trim {charCount - MAX_CHAT_MESSAGE_LENGTH} characters.
@@ -885,11 +913,8 @@ const EmbedMessage = ({ content }: { content: string }) => {
 
   return (
     <Group
-      style={{
-        alignSelf: 'center',
-        border: '1px solid gray',
-      }}
-      className={clsx(classes.chatMessage)}
+      style={{ alignSelf: 'center' }}
+      className={clsx(classes.chatMessage, classes.embedCard)}
       wrap="nowrap"
     >
       {(!!title || !!description) && (
@@ -919,6 +944,29 @@ function DisplayMessages({
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
 }) {
   const currentUser = useCurrentUser();
+  const queryUtils = trpc.useUtils();
+  const { mutate: deleteMessage } = trpc.chat.deleteMessage.useMutation({
+    onSuccess({ messageId, chatId }) {
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId },
+        produce((old) => {
+          if (!old) return old;
+          for (const page of old.pages) {
+            const idx = page.items.findIndex((m) => m.id === messageId);
+            if (idx !== -1) page.items.splice(idx, 1);
+          }
+        })
+      );
+      queryUtils.chat.getAllByUser.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to delete message.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
   const existingChatId = useChatStore((state) => state.existingChatId);
   const { data: userSettings } = trpc.chat.getUserSettings.useQuery();
   const domainColor = useDomainColor();
@@ -973,9 +1021,9 @@ function DisplayMessages({
                 component={div}
                 gap={0}
                 style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
-                initial={{ y: -20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ type: 'spring', duration: 0.4 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.12 }}
               >
                 {isSystemChat && c.contentType === ChatMessageType.Embed ? (
                   <EmbedMessage content={c.content} />
@@ -1003,17 +1051,17 @@ function DisplayMessages({
                     <div className={classes.messageBody}>
                       {!!c.referenceMessage && (
                         <div className={classes.replyQuote}>
-                          <Text className={classes.replyQuoteName}>
+                          <div className={classes.replyQuoteName}>
                             {quotedUser?.username ?? 'Unknown user'}
-                          </Text>
-                          <Text className={classes.replyQuoteText} component="div">
+                          </div>
+                          <div className={classes.replyQuoteText}>
                             <ChatMessageContent
                               content={c.referenceMessage.content}
                               blur={blur}
                               stickerSize={STICKER_SIZE.preview}
                               fallback={<em>Could not load message.</em>}
                             />
-                          </Text>
+                          </div>
                         </div>
                       )}
                       <Tooltip
@@ -1044,6 +1092,32 @@ function DisplayMessages({
                           <IconArrowBack size={16} />
                         </LegacyActionIcon>
                       </Tooltip>
+                      {(isMe || currentUser?.isModerator) && (
+                        <Tooltip label="Delete" withArrow openDelay={350}>
+                          <LegacyActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="red"
+                            aria-label="Delete message"
+                            onClick={() =>
+                              openConfirmModal({
+                                title: 'Delete this message?',
+                                children: (
+                                  <Text size="sm">
+                                    It disappears for everyone in this conversation.
+                                  </Text>
+                                ),
+                                centered: true,
+                                labels: { confirm: 'Delete', cancel: 'Cancel' },
+                                confirmProps: { color: 'red' },
+                                onConfirm: () => deleteMessage({ messageId: c.id }),
+                              })
+                            }
+                          >
+                            <IconTrash size={16} />
+                          </LegacyActionIcon>
+                        </Tooltip>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1118,7 +1192,15 @@ function ChatMessageContent({
                 size={stickerSize ?? (line.jumbo ? STICKER_SIZE.jumbo : STICKER_SIZE.inline)}
               />
             ) : (
-              <Text component="span" key={idx}>
+              <Text
+                component="span"
+                key={idx}
+                className={
+                  !stickerSize && line.parts.length === 1 && isJumboEmojiText(part.value)
+                    ? classes.jumboEmoji
+                    : undefined
+                }
+              >
                 <Linkify options={linkifyOptions}>{part.value}</Linkify>
               </Text>
             )

@@ -5260,7 +5260,7 @@ model ChatMessage {
   contentType        ChatMessageType @default(Markdown)
   referenceMessageId Int?
   editedAt           DateTime?
-  // TODO deletedAt DateTime
+  deletedAt          DateTime? // hidden from both sides; the row is retained for moderation
 
   user             User         @relation(fields: [userId], references: [id])
   chat             Chat         @relation(fields: [chatId], references: [id])

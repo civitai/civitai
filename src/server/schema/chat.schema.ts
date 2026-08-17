@@ -54,7 +54,14 @@ export const createMessageInput = z.object({
 export type UpdateMessageInput = z.infer<typeof updateMessageInput>;
 export const updateMessageInput = z.object({
   messageId: z.number(),
-  content: z.string().min(1),
+  // Was uncapped while `createMessageInput` capped at the same constant, so an
+  // edit could grow a message past a limit the send path enforces.
+  content: z.string().min(1).max(MAX_CHAT_MESSAGE_LENGTH),
+});
+
+export type DeleteMessageInput = z.infer<typeof deleteMessageInput>;
+export const deleteMessageInput = z.object({
+  messageId: z.number(),
 });
 
 export type GetInfiniteMessagesInput = z.infer<typeof getInfiniteMessagesInput>;

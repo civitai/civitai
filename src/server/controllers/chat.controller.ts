@@ -14,12 +14,14 @@ import type {
   IsTypingInput,
   isTypingOutput,
   ClearChatInput,
+  DeleteMessageInput,
   MarkChatReadInput,
   ModifyUserInput,
   UpdateMessageInput,
   UserSettingsChat,
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
+import { truncateAuditValue } from '~/server/common/chat-audit.constants';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
@@ -497,6 +499,17 @@ export const clearChatHandler = async ({
       data: { clearedAt, lastViewedMessageId: latestMessage?.id },
     });
 
+    await ctx.track
+      .chatAudit({
+        type: 'clear',
+        chatId,
+        userId,
+        oldValue: '',
+        newValue: '',
+        truncated: 0,
+      })
+      .catch(() => undefined);
+
     return { chatId, clearedAt };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -629,7 +642,7 @@ export const getInfiniteMessagesHandler = async ({
     const dateLimit = Object.keys(createdAt).length ? { createdAt } : {};
 
     const items = await dbWrite.chatMessage.findMany({
-      where: { chatId: input.chatId, ...dateLimit },
+      where: { chatId: input.chatId, deletedAt: null, ...dateLimit },
       take: input.limit + 1,
       cursor: input.cursor ? { id: input.cursor } : undefined,
       orderBy: [{ id: input.sortDirection }],
@@ -780,6 +793,72 @@ export const updateMessageHandler = async ({
       where: { id: input.messageId },
       data: { ...rest, editedAt: new Date() },
     });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+/**
+ * Delete a message.
+ *
+ * Hides it from everyone in the chat and retains the row: the delete is
+ * recorded, so a report filed against the thread afterwards still resolves to
+ * what was actually said. Authors delete their own; moderators delete anyone's.
+ */
+export const deleteMessageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: DeleteMessageInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    const { id: userId, isModerator } = ctx.user;
+
+    const existing = await dbWrite.chatMessage.findFirst({
+      where: { id: input.messageId },
+      select: { id: true, userId: true, chatId: true, content: true, deletedAt: true },
+    });
+
+    if (!existing || (existing.userId !== userId && !isModerator)) {
+      throw throwBadRequestError(`Could not find message with id: (${input.messageId})`);
+    }
+    if (existing.deletedAt) return { messageId: existing.id, chatId: existing.chatId };
+
+    const deletedAt = new Date();
+    await dbWrite.chatMessage.update({
+      where: { id: existing.id },
+      data: { deletedAt },
+    });
+
+    const { value, truncated } = truncateAuditValue(existing.content);
+    await ctx.track
+      .chatAudit({
+        type: 'delete',
+        chatId: existing.chatId,
+        messageId: existing.id,
+        userId,
+        oldValue: value,
+        newValue: '',
+        truncated,
+      })
+      .catch(() => undefined);
+
+    // Both sides need to drop it; without this the other participant keeps
+    // rendering a message that no longer exists for anyone.
+    withSignals(() =>
+      fetch(
+        `${env.SIGNALS_ENDPOINT}/groups/chat:${existing.chatId}/signals/${SignalMessages.ChatMessageDeleted}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId: existing.id, chatId: existing.chatId }),
+        }
+      )
+    ).catch(() => undefined);
+
+    return { messageId: existing.id, chatId: existing.chatId };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

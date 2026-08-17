@@ -21,6 +21,7 @@ import {
   IconCirclePlus,
   IconCloudOff,
   IconEye,
+  IconPin,
   IconPlugConnected,
   IconSearch,
   IconSettings,
@@ -371,25 +372,25 @@ export function ChatList() {
                       </Box>
                     </Indicator>
                     <Stack style={{ overflow: 'hidden' }} gap={0}>
-                      <Highlight
-                        size="sm"
-                        fw={500}
-                        style={{
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          minWidth: 0,
-                        }}
-                        c={hasMod ? 'red' : undefined}
-                        highlight={searchInput}
-                      >
-                        {otherMembers.map((cm) => cm.user.username).join(', ')}
-                      </Highlight>
-                      {!!myMember?.pinnedAt && (
-                        <Text size="10px" c="blue" fw={600} tt="uppercase" lh={1.2}>
-                          Pinned
-                        </Text>
-                      )}
+                      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                        <Highlight
+                          size="sm"
+                          fw={500}
+                          style={{
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            minWidth: 0,
+                          }}
+                          c={hasMod ? 'red' : undefined}
+                          highlight={searchInput}
+                        >
+                          {otherMembers.map((cm) => cm.user.username).join(', ')}
+                        </Highlight>
+                        {!!myMember?.pinnedAt && (
+                          <IconPin size={12} style={{ flex: 'none', opacity: 0.6 }} />
+                        )}
+                      </Group>
                       {/* TODO this is kind of a hack, we should be returning only valid latest message */}
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <BlurText

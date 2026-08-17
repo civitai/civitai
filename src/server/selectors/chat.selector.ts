@@ -55,6 +55,7 @@ export const latestChat = Prisma.validator<Prisma.ChatSelect>()({
     },
     where: {
       contentType: { not: ChatMessageType.Embed },
+      deletedAt: null,
     },
   },
 });

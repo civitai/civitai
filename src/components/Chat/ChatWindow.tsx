@@ -4,6 +4,7 @@ import React from 'react';
 import { ChatList } from '~/components/Chat/ChatList';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { ChatSettings } from '~/components/Chat/ChatSettings';
+import classes from './Chat.module.scss';
 import { ExistingChat } from '~/components/Chat/ExistingChat';
 import { NewChat } from '~/components/Chat/NewChat';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
@@ -13,7 +14,7 @@ registerCustomProtocol('civitai', true);
 
 export function ChatWindow() {
   return (
-    <ContainerProvider containerName="chat-window" className="size-full card">
+    <ContainerProvider containerName="chat-window" className={`size-full card ${classes.surface}`}>
       <ChatWindowContent />
     </ContainerProvider>
   );

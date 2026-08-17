@@ -111,6 +111,34 @@ export const useChatNewMessageSignal = () => {
   useSignalConnection(SignalMessages.ChatNewMessage, onUpdate);
 };
 
+/**
+ * A deleted message is hidden for everyone, so the other participant has to drop
+ * it too — otherwise they keep rendering something that no longer exists.
+ */
+export const useChatMessageDeletedSignal = () => {
+  const queryUtils = trpc.useUtils();
+
+  const onUpdate = useCallback(
+    ({ messageId, chatId }: { messageId: number; chatId: number }) => {
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId },
+        produce((old) => {
+          if (!old) return old;
+          for (const page of old.pages) {
+            const idx = page.items.findIndex((m) => m.id === messageId);
+            if (idx !== -1) page.items.splice(idx, 1);
+          }
+        })
+      );
+      // The list preview may have been quoting the message that just went away.
+      queryUtils.chat.getAllByUser.invalidate();
+    },
+    [queryUtils]
+  );
+
+  useSignalConnection(SignalMessages.ChatMessageDeleted, onUpdate);
+};
+
 export const useChatNewRoomSignal = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();

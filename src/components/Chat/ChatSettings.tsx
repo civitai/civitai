@@ -17,6 +17,7 @@ import type { ChatSettingsScope } from '~/components/Chat/ChatProvider';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { ChatDmPolicy, UserSettingsChat } from '~/server/schema/chat.schema';
@@ -25,6 +26,8 @@ import { ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './Chat.module.scss';
+import clsx from 'clsx';
 import { isDefined } from '~/utils/type-guards';
 
 const dmPolicyOptions: { value: ChatDmPolicy; label: string; description: string }[] = [
@@ -175,7 +178,17 @@ export function ChatSettings() {
               fullWidth
               data={[
                 { value: 'global', label: 'Global' },
-                { value: 'conversation', label: conversationName },
+                {
+                  value: 'conversation',
+                  label: (
+                    <Group gap={6} wrap="nowrap" justify="center">
+                      {otherMembers.length === 1 && (
+                        <UserAvatar user={otherMembers[0].user} size="xs" />
+                      )}
+                      <span>{conversationName}</span>
+                    </Group>
+                  ),
+                },
               ]}
             />
           )}
@@ -199,12 +212,14 @@ export function ChatSettings() {
                         value={option.value}
                         label={option.label}
                         description={option.description}
-                        className="rounded p-2 hover:bg-gray-1 dark:hover:bg-dark-6"
+                        className={clsx(classes.option, {
+                          [classes.selected]: option.value === myMember.notifyLevel,
+                        })}
                       />
                     ))}
                   </Stack>
                 </Radio.Group>
-                <Text size="xs" c="dimmed" mt="xs">
+                <Text component="div" className={classes.previewStrip}>
                   This overrides your global notification settings for this conversation only.
                 </Text>
               </SettingsGroup>
@@ -218,7 +233,7 @@ export function ChatSettings() {
                     modifyMembership({ chatMemberId: myMember.id, isPinned: checked })
                   }
                 />
-                <Text size="xs" c="dimmed">
+                <Text component="div" className={classes.previewStrip}>
                   Report, archive and delete live in the conversation&apos;s ⋯ menu.
                 </Text>
               </SettingsGroup>
@@ -306,11 +321,13 @@ function GlobalChatSettings({
 
 function SettingsGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <Paper withBorder radius="md" p="sm">
-      <Text size="xs" tt="uppercase" fw={600} c="dimmed" mb="xs">
+    <Paper withBorder radius="md" p={0}>
+      <Text component="div" className={classes.groupHead}>
         {title}
       </Text>
-      <Stack gap="xs">{children}</Stack>
+      <Stack gap="xs" px={13} py={11}>
+        {children}
+      </Stack>
     </Paper>
   );
 }
