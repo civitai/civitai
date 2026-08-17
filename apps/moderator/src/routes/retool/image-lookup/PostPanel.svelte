@@ -4,6 +4,8 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import { getBrowsingLevelLabel } from '@civitai/shared';
+  import { LINK_CLASS, dateTime } from '$lib/format';
+  import { userLookupUrl } from '$lib/entity-url';
   import type { PostLookupResult } from '$lib/server/image-lookup.service';
 
   let {
@@ -21,8 +23,6 @@
     result.images.filter((i) => i.tosViolation || i.blockedFor || i.needsReview).length
   );
 
-  const dateOf = (d: Date | string | null) =>
-    d ? new Date(d).toLocaleString() : '—';
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -33,7 +33,7 @@
       </h2>
       <p class="mt-1 text-sm text-dark-2">
         by
-        <a class="text-blue-400 hover:underline" href="/retool/user-lookup?q={post.userId}">
+        <a class={LINK_CLASS} href={userLookupUrl(post.userId)}>
           {post.username ?? `#${post.userId}`}
         </a>
         {#if post.userBannedAt}
@@ -67,8 +67,8 @@
   </div>
 
   <dl class="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
-    <div><dt class="text-dark-2">Created</dt><dd class="text-white">{dateOf(post.createdAt)}</dd></div>
-    <div><dt class="text-dark-2">Published</dt><dd class="text-white">{dateOf(post.publishedAt)}</dd></div>
+    <div><dt class="text-dark-2">Created</dt><dd class="text-white">{dateTime(post.createdAt)}</dd></div>
+    <div><dt class="text-dark-2">Published</dt><dd class="text-white">{dateTime(post.publishedAt)}</dd></div>
   </dl>
 
   {#if post.detail}
@@ -85,14 +85,15 @@
 
 {#snippet imageCard(item: Item)}
   <div class="flex flex-wrap items-center gap-1">
-    <Badge variant="secondary">{getBrowsingLevelLabel(item.nsfwLevel)}</Badge>
-    {#if item.tosViolation}<Badge class="bg-rose-800 text-white">ToS</Badge>{/if}
-    {#if item.blockedFor}<Badge class="bg-red-600 text-white">{item.blockedFor}</Badge>{/if}
-    {#if item.needsReview}<Badge class="bg-amber-500 text-black">{item.needsReview}</Badge>{/if}
-    {#if item.minor}<Badge class="bg-purple-600 text-white">Minor</Badge>{/if}
-    {#if item.poi}<Badge class="bg-blue-600 text-white">POI</Badge>{/if}
+    <!-- Same flag → same variant as SuspectPanel and Bulk Image Manager. A per-page palette makes
+         "purple means minor" a fact a moderator has to relearn on every screen. -->
+    {#if item.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
+    {#if item.blockedFor}<Badge variant="destructive">blocked: {item.blockedFor}</Badge>{/if}
+    {#if item.needsReview}<Badge variant="secondary">{item.needsReview}</Badge>{/if}
+    {#if item.minor}<Badge variant="secondary">minor</Badge>{/if}
+    {#if item.poi}<Badge variant="secondary">POI</Badge>{/if}
   </div>
-  <a class="mt-2 block text-xs text-blue-400 hover:underline" href="?q={item.id}">
+  <a class="mt-2 block text-xs {LINK_CLASS}" href="?q={item.id}">
     Image #{item.id} — full detail
   </a>
 {/snippet}

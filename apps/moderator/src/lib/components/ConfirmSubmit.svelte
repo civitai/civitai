@@ -31,11 +31,13 @@
   // The confirm button must NOT clear `confirming` in its own click handler. Svelte flushes effects
   // synchronously after a DOM event handler, so doing that unmounts the submitter through the `{#if}`
   // before the browser runs the form's activation behaviour — the submit never fires and "Yes, delete"
-  // behaves exactly like Cancel, silently. It is closed when the write finishes instead.
-  let wasSubmitting = $state(false);
+  // behaves exactly like Cancel, silently.
+  //
+  // Closed on the write finishing instead, via effect cleanup: the teardown runs when `submitting` goes
+  // false (and on unmount), so there is no mirrored state for the effect to both read and write.
   $effect(() => {
-    if (wasSubmitting && !submitting) confirming = false;
-    wasSubmitting = submitting;
+    if (!submitting) return;
+    return () => (confirming = false);
   });
 </script>
 

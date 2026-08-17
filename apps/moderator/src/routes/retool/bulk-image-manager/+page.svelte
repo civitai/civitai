@@ -244,7 +244,7 @@
       <Select.Root
         type="single"
         value={String(data.limit)}
-        onValueChange={(v) => navigate(data.q, Number(v))}
+        onValueChange={(v) => navigate(term.trim(), Number(v))}
       >
         <Select.Trigger class="w-32">{num(data.limit)} images</Select.Trigger>
         <Select.Content>

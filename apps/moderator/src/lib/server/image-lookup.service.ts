@@ -118,7 +118,7 @@ const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 // `Image.id` is a Postgres `integer`; anything larger errors the query instead of missing, which turned a
 // double-pasted id into a 500 rather than "no image matches".
 const MAX_INT = 2_147_483_647;
-const asId = (value: string) => {
+export const asId = (value: string) => {
   const n = Number(value);
   return Number.isInteger(n) && n > 0 && n <= MAX_INT ? n : null;
 };

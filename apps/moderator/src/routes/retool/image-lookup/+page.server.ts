@@ -5,6 +5,7 @@ import { canAccess } from '$lib/server/access';
 import { setImageFlag } from '$lib/server/user-actions.service';
 import { lookupQuerySchema, parseForm, parseQuery } from '$lib/server/query';
 import {
+  asId,
   getImageLookup,
   getPostLookup,
   resolveImageId,
@@ -20,12 +21,17 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // `?post=` is what the main app's "Lookup Post" control appends its id to. Kept distinct from `q` so a
   // bare number in the search box stays an image id — the overwhelmingly common case.
   const postParam = url.searchParams.get('post')?.trim() ?? '';
-  const postId = /^\d+$/.test(postParam) ? Number(postParam) : resolvePostId(q);
+  // `asId`, not `Number`: `Post.id` is a Postgres integer, so an over-long id ERRORS the comparison
+  // rather than missing it, and an uncaught throw in `load` renders a 500 instead of "no post matches".
+  const postId = /^\d+$/.test(postParam) ? asId(postParam) : resolvePostId(q);
 
   if (postId) {
     const post = await getPostLookup(postId);
     return {
-      q: q || String(postId),
+      // NOT the post id. `LookupSearch` replaces the whole query string on submit, so echoing it here
+      // meant pressing Search turned `?post=123` into `?q=123` — which resolves as an IMAGE id and
+      // renders an unrelated image with the flag actions live on it. PostPanel names the post instead.
+      q: '',
       result: null,
       post,
       postId,
