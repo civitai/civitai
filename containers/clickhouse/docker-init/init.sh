@@ -1469,22 +1469,43 @@ clickhouse client -n <<-EOSQL
                 impressions UInt64
                     )
     AS
-    WITH di AS (SELECT entityId, createdDate, sum(impressions) AS impressions
-                FROM default.daily_impressions
-                WHERE (entityType = 'Image')
-                  AND (createdDate >= (today() - 1))
-                  AND (createdDate < today())
-                GROUP BY entityId, createdDate)
-    SELECT ic.userId       AS ownerId,
-        'Image'         AS entityType,
-        di.createdDate  AS createdDate,
-        sum(di.impressions) AS impressions
-    FROM di
-            INNER JOIN (SELECT id, any(userId) AS userId
-                        FROM default.images_created
-                        WHERE id IN (SELECT entityId FROM di)
-                        GROUP BY id) AS ic ON di.entityId = ic.id
-    GROUP BY ownerId, createdDate;
+    WITH dimg AS (SELECT entityId, createdDate, sum(impressions) AS impressions
+                  FROM default.daily_impressions
+                  WHERE (entityType = 'Image')
+                    AND (createdDate >= (today() - 1))
+                    AND (createdDate < today())
+                  GROUP BY entityId, createdDate),
+        dmodel AS (SELECT entityId, createdDate, sum(impressions) AS impressions
+                   FROM default.daily_impressions
+                   WHERE (entityType = 'Model')
+                     AND (createdDate >= (today() - 1))
+                     AND (createdDate < today())
+                   GROUP BY entityId, createdDate)
+    SELECT ownerId, entityType, createdDate, sum(impressions) AS impressions
+    FROM (SELECT ic.userId      AS ownerId,
+                'Image'        AS entityType,
+                dimg.createdDate AS createdDate,
+                dimg.impressions AS impressions
+        FROM dimg
+                INNER JOIN (SELECT id, any(userId) AS userId
+                            FROM default.images_created
+                            WHERE id IN (SELECT entityId FROM dimg)
+                            GROUP BY id) AS ic ON dimg.entityId = ic.id
+        UNION ALL
+        SELECT mc.ownerId        AS ownerId,
+                'Model'          AS entityType,
+                dmodel.createdDate AS createdDate,
+                dmodel.impressions AS impressions
+        FROM dmodel
+                INNER JOIN (SELECT modelId,
+                                    argMinIf(userId, time, (type = 'Create') AND (userId != 0)) AS createUser,
+                                    argMaxIf(userId, time, userId != 0)                         AS fallbackUser,
+                                    if(createUser != 0, createUser, fallbackUser)               AS ownerId
+                            FROM default.modelEvents
+                            WHERE modelId IN (SELECT entityId FROM dmodel)
+                            GROUP BY modelId
+                            HAVING ownerId != 0) AS mc ON dmodel.entityId = mc.modelId)
+    GROUP BY ownerId, entityType, createdDate;
 
     CREATE MATERIALIZED VIEW default.modelVersionUniqueDownloads
                 (

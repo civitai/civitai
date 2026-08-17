@@ -238,23 +238,47 @@ TO default.impressions_daily_by_owner
     `createdDate` Date,
     `impressions` UInt64
 )
-AS WITH di AS (
+AS WITH dimg AS (
     SELECT entityId, createdDate, sum(impressions) AS impressions
     FROM default.daily_impressions
-    WHERE entityType = 'Image'
-      AND createdDate >= today() - 1
-      AND createdDate < today()
+    WHERE entityType = 'Image' AND createdDate >= today() - 1 AND createdDate < today()
+    GROUP BY entityId, createdDate
+), dmodel AS (
+    SELECT entityId, createdDate, sum(impressions) AS impressions
+    FROM default.daily_impressions
+    WHERE entityType = 'Model' AND createdDate >= today() - 1 AND createdDate < today()
     GROUP BY entityId, createdDate
 )
-SELECT ic.userId AS ownerId, 'Image' AS entityType, di.createdDate AS createdDate, sum(di.impressions) AS impressions
-FROM di
-INNER JOIN (
-    SELECT id, any(userId) AS userId
-    FROM default.images_created
-    WHERE id IN (SELECT entityId FROM di)
-    GROUP BY id
-) AS ic ON di.entityId = ic.id
-GROUP BY ownerId, createdDate;
+SELECT ownerId, entityType, createdDate, sum(impressions) AS impressions
+FROM (
+    SELECT ic.userId AS ownerId, 'Image' AS entityType, dimg.createdDate AS createdDate, dimg.impressions AS impressions
+    FROM dimg
+    INNER JOIN (
+        SELECT id, any(userId) AS userId
+        FROM default.images_created
+        WHERE id IN (SELECT entityId FROM dimg)
+        GROUP BY id
+    ) AS ic ON dimg.entityId = ic.id
+
+    UNION ALL
+
+    -- Creator-first, NOT argMax: a Transfer row carries userId = 0, and 1.7% of
+    -- models have a later non-zero actor who is a moderator rather than the owner.
+    -- See "Model ownership: how to aggregate" above for the measurements.
+    SELECT mc.ownerId AS ownerId, 'Model' AS entityType, dmodel.createdDate AS createdDate, dmodel.impressions AS impressions
+    FROM dmodel
+    INNER JOIN (
+        SELECT modelId,
+               argMinIf(userId, time, type = 'Create' AND userId != 0) AS createUser,
+               argMaxIf(userId, time, userId != 0)                     AS fallbackUser,
+               if(createUser != 0, createUser, fallbackUser)           AS ownerId
+        FROM default.modelEvents
+        WHERE modelId IN (SELECT entityId FROM dmodel)
+        GROUP BY modelId
+        HAVING ownerId != 0
+    ) AS mc ON dmodel.entityId = mc.modelId
+)
+GROUP BY ownerId, entityType, createdDate;
 ```
 
 ### Why the owner rollup is keyed by entity type but only populated for images
@@ -265,32 +289,73 @@ merging them produces a figure nobody can act on, and splitting it later means a
 second migration once the table has data. `ownerId` alone remains a valid key
 prefix if a merged total is ever wanted.
 
-Only the `Image` arm is populated today, because **`images_created` is the only
-per-entity ownership table in ClickHouse**. There is no `models_created`,
-`articles_created` or equivalent.
+`Image` and `Model` are populated. The other entity types are not, and the
+distinction is about ownership sources, not about tracking: **every** type in
+`IMPRESSION_ENTITY_TYPES` gets rows in `impressions` and `daily_impressions`. Only
+attribution to a creator is limited.
 
-This is a platform-wide gap rather than something local to impressions — three
-separate pieces of work hit it the same night from different directions
-(@fredrick's owner-keyed view counts, comic view tracking, and this). The
-conclusion, so the next person finds it instead of re-deriving it:
+Two ClickHouse-side ownership sources exist:
 
-- **Small id sets don't need a ClickHouse table.** Ownership resolves fine from
-  Postgres — `Article.userId`, `ComicProject.userId` — in ~70ms, and a literal
-  `IN` keeps the primary key usable (articles measured 35ms at the platform's
-  worst case). Prefer that at read time.
-- **The real gap is models specifically**, where the id set is large enough that
-  read-time resolution stops working. 2.13B model views are unsurfaced in Creator
-  Studio for exactly this reason.
-- **Neither helps a nightly rollup.** This MV needs an owner for *every* entity
-  seen that day, not for one creator's ids, so a Postgres round trip is not an
-  option inside the refresh whatever the entity type. A rollup arm for models
-  needs a ClickHouse-side ownership source; that is the piece nobody has built.
+- **Images** — `images_created`. A `ReplacingMergeTree` with unmerged duplicate
+  ids, so `GROUP BY id` first; no id has conflicting owners, so `any(userId)` is
+  safe there.
+- **Models** — `default.modelEvents`. It is the `models_created` equivalent, it
+  just isn't named like one: 6.4M rows, **2,761,871 distinct models / 420,576
+  owners, back to 2023-04-27**. (@fredrick found this; `user_model_posts` is
+  existing precedent for treating the sibling `modelVersionEvents` as ownership.)
 
-Adding an arm later is a `UNION ALL` in this MV plus whatever source resolves
-that type's owner; nothing about the table shape has to change.
+Nothing else has one. For those, resolve ownership from Postgres at read time —
+`Article.userId`, `ComicProject.userId` — which is not a workaround but the better
+option for small id sets: ~70ms, and a literal `IN` keeps the primary key usable
+(articles measured 35ms at the platform's worst case). What Postgres cannot do is
+serve *this* MV, which needs an owner for every entity seen that day rather than
+for one creator's ids.
 
-Until then, a non-Image number here is **absent, not zero**. Consumers must
-render it as unknown rather than as `0` — the Studio already carries a live
-example of what the other choice looks like a year later (`getAllTimeTotals`
-reads a dead backfill whose max userId is 9.66M against current ids past 12.5M,
-and has been silently returning 0 comments for every newer creator).
+### Model ownership: how to aggregate, and why not the obvious way
+
+🔴 **`any(userId)` is wrong for models, and so is a plain `argMax(userId, time)`.**
+Both look right. Measured against production:
+
+| | |
+| --- | --- |
+| `Transfer` events, all time | **42** — and **all 42 carry `userId = 0`** |
+| Models sent to owner `0` by plain `argMax(userId, time)` | 8 |
+| Models where latest-non-zero disagrees with the creator | **47,089 (1.7%)** |
+| Models with no `Create` event carrying a userId | 33,514 |
+| Models with no non-zero userId anywhere | 6 |
+
+Read those together. A `Transfer` row records that a transfer happened and
+**not who it went to** — the column is zero — so a latest-event aggregate does not
+follow ownership across a transfer, it loses the owner entirely. And the 1.7%
+disagreement is over a thousand times larger than the 42 transfers, so it is
+overwhelmingly moderators and other actors appearing on `Update` / `Archive` /
+`Takedown` rows, not owners changing. Taking the latest actor would silently
+attribute 47,089 models to whoever last touched them.
+
+So the aggregate is **creator-first, latest-non-zero as fallback**:
+
+```sql
+argMinIf(userId, time, type = 'Create' AND userId != 0) AS createUser,
+argMaxIf(userId, time, userId != 0)                     AS fallbackUser,
+if(createUser != 0, createUser, fallbackUser)           AS ownerId
+-- HAVING ownerId != 0
+```
+
+The fallback covers the 33,514 models with no usable `Create` row; 6 models remain
+unattributable and are dropped.
+
+**Consequence to state plainly: a transferred model's impressions stay with the
+original creator**, because ClickHouse holds no record of who received it. That is
+a product decision made by the data, not by preference — if transferred models
+should re-attribute, it needs `Transfer` to start recording the recipient, which is
+a change in the writer, not here.
+
+### Types tracked but not attributable
+
+For `Post`, `Article`, `Collection`, `Bounty`, `BountyEntry` and `User`, per-entity
+impressions exist in `daily_impressions` and can be read directly; only the owner
+rollup has no arm. A creator-level number for those is **absent, not zero**, and
+consumers must render it as unknown — the Studio already carries a live example of
+what the other choice looks like a year later (`getAllTimeTotals` reads a dead
+backfill whose max userId is 9.66M against current ids past 12.5M, and has been
+silently returning 0 comments for every newer creator).
