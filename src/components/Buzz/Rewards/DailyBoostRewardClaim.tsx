@@ -22,8 +22,13 @@ export function useDailyBoostReward() {
   const status = useGenerationStatus();
 
   const dailyBoostReward = rewards.find((reward) => reward.type === 'dailyBoost');
-  const isClaimed = dailyBoostReward ? dailyBoostReward.awarded > 0 : true;
-  const canShow = !!currentUser && !loadingRewards && !!status?.charge && !!dailyBoostReward && !isClaimed;
+  // Claimed means the reward fired today, not that it paid: a claim the cap
+  // trimmed to zero still consumed the day's dedup entry. Reading `awarded`
+  // leaves a button that never disappears, never pays, and reports success on
+  // every click until the daily reset.
+  const isClaimed = dailyBoostReward ? dailyBoostReward.awardedCount > 0 : true;
+  const canShow =
+    !!currentUser && !loadingRewards && !!status?.charge && !!dailyBoostReward && !isClaimed;
 
   return {
     canShow,

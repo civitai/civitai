@@ -191,6 +191,7 @@ vi.mock('~/server/prom/client', () => ({
   vaultItemFailedCounter: promMetricStub(),
   rewardGivenCounter: promMetricStub(),
   rewardFailedCounter: promMetricStub(),
+  rewardConfigReadFailedCounter: promMetricStub(),
   clavataCounter: promMetricStub(),
   cacheHitCounter: promMetricStub(),
   cacheMissCounter: promMetricStub(),

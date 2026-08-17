@@ -750,6 +750,7 @@ beforeEach(() => {
   mockDailyBoostApply.mockResolvedValue(undefined);
   mockDailyBoostGetDetails.mockResolvedValue({
     awarded: 0,
+    awardedCount: 0,
     awardAmount: 25,
     accountType: 'blue',
     type: 'dailyBoost',
@@ -2974,10 +2975,11 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
     happyVersionLookup();
     happyUser();
-    // Balance short of cost but boost is already claimed (awarded > 0).
+    // Balance short of cost but the boost already fired today.
     mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 10, blue: 0, green: 0 });
     mockDailyBoostGetDetails.mockResolvedValue({
       awarded: 25,
+      awardedCount: 1,
       awardAmount: 25,
       accountType: 'blue',
       type: 'dailyBoost',
@@ -3025,6 +3027,53 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
       amount: 25,
       accountType: 'blue',
     });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
+  // A claim the cap trimmed to zero still consumed the day's dedup entry, so it
+  // pays nothing on every later attempt. Gating on the amount instead of the
+  // count would tell the iframe Buzz was claimed on every submit for the rest of
+  // the day.
+  it('does NOT claim again after a claim that the cap trimmed to zero', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 5, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue({
+      awarded: 0,
+      awardedCount: 1,
+      awardAmount: 25,
+      accountType: 'blue',
+      type: 'dailyBoost',
+      description: 'd',
+      cap: 25,
+      onDemand: true,
+    });
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
+  });
+
+  // `getUserRewardDetails` returns null for a reward turned off through
+  // `rewards:config`. Without the null guard the submit 500s the first time
+  // anyone flips dailyBoost off.
+  it('submit still proceeds when the dailyBoost reward is disabled at runtime', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 5, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue(null);
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
     expect(result.snapshot.workflowId).toBe('wf_real');
   });
 
