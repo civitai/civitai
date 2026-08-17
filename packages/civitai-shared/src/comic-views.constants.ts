@@ -16,7 +16,17 @@
  * value, so the two cannot drift apart.
  *
  * Exclusive: this date is the first day of live tracking, and the last backfilled day is the one
- * before it. Set it to the deploy date before running the backfill.
+ * before it.
+ *
+ * It is OBSERVED, not chosen. The backfill refuses to run until `default.views` actually holds a
+ * comic row, then asserts that the first date one appears equals this value and names the correct
+ * one if it does not — so this is a checked contract rather than a date someone picked in advance.
+ * A guessed date fails silently in both directions: a day early and live rows land inside the
+ * backfilled window; a day late and that day gets neither backfill nor tracking. The boundary is
+ * UTC midnight, which falls the previous evening in US timezones, so a hand-picked date is
+ * ambiguous before a 20-30 minute deploy is even factored in.
+ *
+ * Placeholder until the tracking code deploys; the backfill will tell you the real value.
  */
 export const COMIC_VIEW_TRACKING_CUTOVER = '2026-08-18';
 

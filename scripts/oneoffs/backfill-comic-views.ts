@@ -7,15 +7,19 @@
  * it, so the series can start ~3.5 months back instead. Comic paths first appear 2026-02 and
  * only reach real volume in 2026-05; there is nothing older to recover.
  *
+ * Run order is forced and checked: apply the ClickHouse DDL, deploy the tracking code, let a real
+ * comic view land, THEN run this. It refuses while `views` holds no comic rows, because until then
+ * the cutover is a guess rather than a fact.
+ *
  * Usage:
  *   npm run tsscript scripts/oneoffs/backfill-comic-views.ts --until=YYYY-MM-DD [options]
  *
  * Options:
- *   --until=YYYY-MM-DD  REQUIRED, exclusive, and must equal COMIC_VIEW_TRACKING_CUTOVER in
- *                       @civitai/shared — that constant is what any chart reads to know where the
- *                       series changes meaning, so the two drifting apart puts the marker on the
- *                       wrong day. It is also the guard against counting the cutover day twice,
- *                       once from pageViews and once for real.
+ *   --until=YYYY-MM-DD  REQUIRED, exclusive. Must equal both COMIC_VIEW_TRACKING_CUTOVER in
+ *                       @civitai/shared AND the first date `views` actually holds a comic row.
+ *                       The constant is what any chart reads to know where the series changes
+ *                       meaning; checking it against live data as well is what stops the constant
+ *                       and the argument from being confidently wrong together.
  *   --from=YYYY-MM-DD   Inclusive lower bound (default 2026-02-01, the first comic pageView).
  *   --dry-run           Report what would be written, write nothing.
  *   --allow-rerun       Write even if comic rows already exist in the range. Only correct after
@@ -131,6 +135,24 @@ async function readChapterViews(): Promise<ChapterRow[]> {
   return (await res.json()) as ChapterRow[];
 }
 
+/**
+ * The first date `views` actually holds a comic row — i.e. the real day tracking started, as
+ * opposed to the day someone guessed in advance. Null until the tracking code has deployed.
+ */
+async function firstLiveComicViewDate(): Promise<string | null> {
+  const res = await clickhouse!.query({
+    query: `
+      SELECT toString(min(createdDate)) AS d
+      FROM default.views
+      WHERE entityType IN ('ComicProject', 'ComicChapter')
+    `,
+    format: 'JSONEachRow',
+  });
+  const rows = (await res.json()) as { d: string }[];
+  const d = rows[0]?.d;
+  return !d || d === '1970-01-01' ? null : d;
+}
+
 async function existingComicRows(): Promise<number> {
   const res = await clickhouse!.query({
     query: `
@@ -167,6 +189,30 @@ async function main() {
     `[backfill] range [${FROM}, ${UNTIL})  dryRun=${isDryRun} allowRerun=${allowRerun} ` +
       `includeReordered=${includeReordered}`
   );
+
+  // The cutover cannot be known in advance, only observed. A constant compared against --until
+  // only proves the two agree with each other — both can be wrong together, and the ways they go
+  // wrong are silent: deploy a day early and live rows land inside the backfill window; deploy a
+  // day late and that day gets neither backfill nor tracking, a permanently empty day nothing
+  // flags. The boundary is UTC midnight, which is the previous evening in Justin's local day, so
+  // "the 18th" picked by hand is already ambiguous before a 20-30 minute deploy is factored in.
+  //
+  // So: refuse until tracking has actually started, then make the observed first day the
+  // authority. This also forces the only correct order — DDL, deploy, backfill.
+  const liveFrom = await firstLiveComicViewDate();
+  if (!liveFrom) {
+    throw new Error(
+      `default.views holds no comic rows yet, so tracking has not started and the cutover is not ` +
+        `knowable. Apply the DDL, deploy the tracking code, let a real view land, then run this.`
+    );
+  }
+  if (liveFrom !== UNTIL) {
+    throw new Error(
+      `tracking actually started ${liveFrom}, not ${UNTIL}. Set COMIC_VIEW_TRACKING_CUTOVER to ` +
+        `'${liveFrom}' and re-run with --until=${liveFrom}. Backfilling to ${UNTIL} would ` +
+        `${liveFrom < UNTIL ? 'double-count the overlap' : 'leave a permanently empty gap'}.`
+    );
+  }
 
   const already = await existingComicRows();
   if (already > 0 && !allowRerun) {
@@ -325,6 +371,12 @@ async function main() {
     table: 'default.daily_views',
     values: rows,
     format: 'JSONEachRow',
+    // The shared client is built with async_insert 1 / wait_for_async_insert 0, so by default this
+    // await resolves once the server has BUFFERED the batch — not once it is queryable, and
+    // server-side insert errors never reach the caller at all. The boundary read below would then
+    // race the async flush and report 0 for a run that had in fact written everything, leaving the
+    // "already holds N rows" guard to refuse the retry. Override per call, not with a sleep.
+    clickhouse_settings: { async_insert: 0, wait_for_async_insert: 1 },
   });
   console.log(`[backfill] wrote ${rows.length} rows`);
 

@@ -388,7 +388,7 @@ clickhouse client -n <<-EOSQL
 
     create table if not exists default.daily_views
     (
-        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9, 'ComicProject' = 10, 'ComicChapter' = 11),
         entityId    UInt32,
         createdDate Date,
         views       UInt64
@@ -888,10 +888,10 @@ clickhouse client -n <<-EOSQL
 
     create table if not exists default.views
     (
-        type Enum8('ProfileView' = 1, 'ImageView' = 2, 'PostView' = 3, 'ModelView' = 4, 'ModelVersionView' = 5, 'ArticleView' = 6, 'CollectionView' = 7, 'BountyView' = 8, 'BountyEntryView' = 9),
+        type Enum8('ProfileView' = 1, 'ImageView' = 2, 'PostView' = 3, 'ModelView' = 4, 'ModelVersionView' = 5, 'ArticleView' = 6, 'CollectionView' = 7, 'BountyView' = 8, 'BountyEntryView' = 9, 'ComicProjectView' = 10, 'ComicChapterView' = 11),
         time          DateTime                                          default now(),
         userId        Int32                                             default 0,
-        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9, 'ComicProject' = 10, 'ComicChapter' = 11),
         entityId      Int32,
         ip            String                                            default '',
         userAgent     String                                            default '',
@@ -1384,7 +1384,7 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_views_mv
                 TO default.daily_views
                 (
-                entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+                entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9, 'ComicProject' = 10, 'ComicChapter' = 11),
                 entityId Int32,
                 createdDate Date,
                 views UInt64
