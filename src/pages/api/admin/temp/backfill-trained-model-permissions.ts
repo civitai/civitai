@@ -124,14 +124,27 @@ export default WebhookEndpoint(async (req, res) => {
   // the queue entry, so the models are never re-queued and stay listed under the on-site-generation
   // filter. Ask the view whether it has been replaced yet rather than trusting the runbook, and
   // refuse before paying for a ~63k-row scan.
-  if (params.action === 'reindex') {
+  //
+  // Live runs only. The predicate was chosen so it answers the same either side of the swap, and
+  // blocking the dry run takes that property away at the one moment an operator wants it — sizing
+  // the reindex set before the migration lands.
+  //
+  // The two exempt branches must be excluded or the probe outlives what it is testing: a curated
+  // EcosystemCheckpoint or an ExternalGeneration version stays covered under the NEW view without
+  // consulting `allowCommercialUse` at all, so one such row carrying a legacy permission set would
+  // make this 409 forever, telling the operator to apply a migration that is already applied.
+  // (0 such rows on the prod replica today — latent, not live.)
+  if (params.action === 'reindex' && !params.dryRun) {
     const [stale] = await dbRead.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one
       FROM "GenerationCoverage" gc
       JOIN "Model" m ON m.id = gc."modelId"
+      JOIN "ModelVersion" mv ON mv.id = gc."modelVersionId"
       WHERE gc.covered
         AND NOT (m."allowCommercialUse" && ARRAY['RentCivit']::"CommercialUse"[])
         AND m."allowCommercialUse" && ARRAY['Rent', 'Sell']::"CommercialUse"[]
+        AND mv."usageControl" <> 'ExternalGeneration'
+        AND mv.id NOT IN (SELECT id FROM "EcosystemCheckpoints")
       LIMIT 1
     `;
     if (stale) {
@@ -194,12 +207,20 @@ export default WebhookEndpoint(async (req, res) => {
     // explicit queueUpdate below is the ONLY route into the index — and `addToQueue` fails open on a
     // degraded sysRedis, dropping the enqueue silently while this still reports success. The bump
     // restores the delta scan as the backstop its own comment assumes exists.
+    //
+    // 🔴 Published rows ONLY, and the scoping is the point rather than caution. That delta scan
+    // reads `status = 'Published'` (models.search-index.ts), so bumping anything else buys no index
+    // coverage — while `remove-old-drafts` hard-deletes Draft/Deleted models on
+    // `updatedAt < now() - 30 days`, so a blanket bump would silently defer the reaper by a month
+    // across ~65k rows. Measured on the prod replica: 1,173 of this endpoint's own candidates are
+    // eligible for that job today, and every one of them would have been spared, deferring the
+    // cascade deletes and the storage reclamation they drive.
     const changed =
       params.action === 'repair'
         ? await dbWrite.$queryRaw<{ id: number }[]>`
             UPDATE "Model"
             SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell']::"CommercialUse"[],
-                "updatedAt" = NOW()
+                "updatedAt" = CASE WHEN status = 'Published' THEN NOW() ELSE "updatedAt" END
             WHERE id = ANY(${batch}::int[])
               AND "allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
             RETURNING id

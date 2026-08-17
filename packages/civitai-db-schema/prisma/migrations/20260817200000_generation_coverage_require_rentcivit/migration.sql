@@ -14,12 +14,16 @@
 --      defaulted `{Sell}` rather than a creator's choice; without this, applying the view removes
 --      ~65,000 of them from the generator on a permission nobody set.
 --   3. APPLY this migration.
---   4. PURGE both caches that store `covered`, and run ?action=reindex:
---        packed:generation:resource-data-3  (resourceDataCache, TTL 1h) — this is the one the
---          generator itself reads; `generation.service.ts` rejects on `!x.covered`, so a version
---          that just lost coverage stays generatable for up to an hour without this.
+--   4. PURGE the two caches that store `covered` BY KEY, not wholesale, and run ?action=reindex.
+--      ~2,415 versions actually change, and step 2's response carries their model ids:
+--        packed:generation:resource-data-3  (resourceDataCache, TTL 1h) — the one the generator
+--          itself reads; `generation.service.ts` rejects on `!x.covered`, so a version that just
+--          lost coverage stays generatable for up to an hour without this. 🔴 Flushing this key
+--          space wholesale makes every concurrent generation request rebuild from Postgres at
+--          once, joining ModelVersion against GenerationCoverage — a stampede on the hot path, in
+--          the same window the coverage change lands. Purge the affected ids.
 --        packed:caches:data-for-model       (dataForModelsCache, TTL 1d) — the model page's
---          Create button.
+--          Create button. Same reasoning, lower stakes.
 --      ?action=reindex queues the uncovered models into the search index, which otherwise keeps
 --      serving canGenerate: true for them under the on-site-generation filter.
 --
