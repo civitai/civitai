@@ -20,6 +20,7 @@ describe('what a refused free submission is told', () => {
     allowanceRemaining: 1,
     usedHere: false,
     resetsAt: new Date('2026-03-04T00:00:00Z'),
+    paidOpen: true,
   };
 
   it('explains nothing when the re-read says free was still on offer', () => {
@@ -174,6 +175,7 @@ describe('freeSubmissionOffer', () => {
     allowanceRemaining: 1,
     usedHere: false,
     resetsAt: RESETS_AT,
+    paidOpen: true,
   };
 
   /** Each condition on its own, so a pair can be built by merging two. */
@@ -267,6 +269,18 @@ describe('freeSubmissionOffer', () => {
     // an accusation, and it is the case a submitter is most likely to hit on
     // work they know they made.
     expect(reason).not.toMatch(/not a remix|isn't a remix/i);
+  });
+
+  it('does not name paying when paid is closed either', () => {
+    // 🔴 `freeRefusalOutcome` got this a round earlier and this rung did not.
+    // On an unpriced or below-floor gallery the card holds on free with every
+    // control disabled and no Buzz button mounted at all, so pointing at one is
+    // pointing off the screen — and at a submission the server would refuse.
+    const { reason } = freeSubmissionOffer({ ...eligible, verified: false, paidOpen: false });
+
+    expect(reason).toMatch(/where we can check/i);
+    expect(reason).not.toMatch(/can still be submitted with Buzz/i);
+    expect(reason).toMatch(/not taking paid submissions/i);
   });
 
   it('leads with verification even when a slot shortage is also true', () => {

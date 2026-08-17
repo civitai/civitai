@@ -87,15 +87,6 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   // would render "all taken right now" about a count we were not given.
   const slotsHeldKnown = visibility?.freeSlotsRemaining != null;
 
-  const offer = freeSubmissionOffer({
-    verified: selected != null && !!freeInfo?.verifiedImageIds.includes(selected),
-    freeSlots: visibility?.freeSlots ?? 0,
-    freeSlotsRemaining: visibility?.freeSlotsRemaining ?? 0,
-    allowanceRemaining: freeInfo?.allowance.remaining ?? 0,
-    usedHere: !!freeInfo?.usedHere,
-    resetsAt: freeInfo?.allowance.resetsAt ?? new Date(),
-  });
-  const freeAvailable = offer.available && slotsHeldKnown;
   // Not `visibility.open`, which is `mode !== 'off'` and says nothing about
   // price. A gallery can take free submissions and refuse every paid one.
   //
@@ -105,6 +96,17 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   // flipped. Unknown reads as open, which is the pre-existing behaviour and the
   // one that does not flash.
   const paidOpen = visibility ? paidSubmissionOpen(visibility.price) : true;
+
+  const offer = freeSubmissionOffer({
+    verified: selected != null && !!freeInfo?.verifiedImageIds.includes(selected),
+    freeSlots: visibility?.freeSlots ?? 0,
+    freeSlotsRemaining: visibility?.freeSlotsRemaining ?? 0,
+    allowanceRemaining: freeInfo?.allowance.remaining ?? 0,
+    usedHere: !!freeInfo?.usedHere,
+    resetsAt: freeInfo?.allowance.resetsAt ?? new Date(),
+    paidOpen,
+  });
+  const freeAvailable = offer.available && slotsHeldKnown;
   // Withheld while the answer is in flight, so the card says nothing rather than
   // briefly asserting a reason drawn from defaulted zeroes.
   const freeUnavailableReason =
@@ -157,6 +159,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                       allowanceRemaining: standing.allowance.remaining,
                       usedHere: standing.usedHere,
                       resetsAt: standing.allowance.resetsAt,
+                      paidOpen: paidSubmissionOpen(space.price),
                     });
               })
               // A failed re-read explains nothing, which lands on the server's
@@ -434,7 +437,10 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             free, and `takesFree` hides it on a gallery that takes no free
             submissions and no paid ones either — a dead end with no explanation.
             `offer.reason` is null whenever free is genuinely on offer, so this
-            cannot fire against a working button. */}
+            cannot fire against the FREE button. It can and should fire beside a
+            working PAID one — an unverified remix on an ordinarily-priced
+            gallery is the commonest case there is, and the sentence is the only
+            thing explaining why the free option is greyed out. */}
         {selected != null && !freeRefusal && freeUnavailableReason && (
           <>
             <Divider />

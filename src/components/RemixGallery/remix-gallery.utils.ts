@@ -80,6 +80,14 @@ export type FreeSubmissionInputs = {
   /** Free is once per gallery per placer, ever — not once per day. */
   usedHere: boolean;
   /**
+   * Whether the paid path would accept this submission — see
+   * `paidSubmissionOpen`. Here because the FIRST rung names paying as the
+   * alternative, and a gallery can take free submissions and refuse every paid
+   * one. `freeRefusalOutcome` got this a round earlier; this sentence did not,
+   * and the r6 gate widened the states it renders in.
+   */
+  paidOpen: boolean;
+  /**
    * When the allowance comes back, from `getFreePlacementAllowance` rather than
    * a sentence written here. The reset is midnight UTC today and that is a
    * server-side rule; a client that spells it out is asserting something it does
@@ -131,12 +139,19 @@ export function freeSubmissionOffer({
   allowanceRemaining,
   usedHere,
   resetsAt,
+  paidOpen,
 }: FreeSubmissionInputs): { available: boolean; reason: string | null } {
   if (!verified)
     return {
       available: false,
-      reason:
-        'Free submissions are for remixes made from this image here on the site, where we can check. Anything else can still be submitted with Buzz.',
+      // 🔴 The alternative is only named when it exists. On an unpriced or
+      // below-floor gallery the card holds on free with every control disabled
+      // and `BuzzTransactionButton` never mounted — so the unconditional version
+      // of this sentence pointed at a Buzz control that is not on the screen,
+      // for a submission the server would refuse anyway.
+      reason: paidOpen
+        ? 'Free submissions are for remixes made from this image here on the site, where we can check. Anything else can still be submitted with Buzz.'
+        : 'Free submissions are for remixes made from this image here on the site, where we can check — and this creator is not taking paid submissions either.',
     };
 
   if (usedHere)

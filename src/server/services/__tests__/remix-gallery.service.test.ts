@@ -2005,6 +2005,10 @@ describe('the reads a Buzz figure is rendered from', () => {
       viewerLevels: allBrowsingLevelsFlag,
     });
 
+    // The real assertion is the `afterEach` above, which inspects every select
+    // this call made. This only proves the read happened, so the hook has
+    // something to inspect — deleting it as pointless removes the guard's
+    // anchor with nothing turning red.
     expect(placementFindMany).toHaveBeenCalled();
   });
 
@@ -2021,6 +2025,7 @@ describe('the reads a Buzz figure is rendered from', () => {
       domainLevels: allBrowsingLevelsFlag,
     });
 
+    // Same as above: the `afterEach` holds the assertion. This is the anchor.
     expect(placementFindMany).toHaveBeenCalled();
   });
 });

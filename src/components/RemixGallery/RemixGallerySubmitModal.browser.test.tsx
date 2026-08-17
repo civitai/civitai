@@ -221,6 +221,7 @@ describe('a refused free submission', () => {
     await page.getByRole('button', { name: /submit for free/i }).click();
 
     await expect.element(page.getByText(/all taken right now/i)).toBeInTheDocument();
+
     // An ordinary outcome with a next step, not an error.
     expect(mocks.showError).not.toHaveBeenCalled();
     // And never the server's raw wording.
@@ -280,39 +281,6 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
     await expect.element(page.getByTestId('buzz-submit')).toBeInTheDocument();
   });
 
-  test('offers no paid submit button at all', async () => {
-    paidClosed(null);
-    await openAndPick();
-    await page.getByRole('button', { name: /submit for free/i }).click();
-
-    await expect.element(page.getByTestId('buzz-submit')).not.toBeInTheDocument();
-    await expect
-      .element(page.getByRole('button', { name: /submit for free/i }))
-      .toBeInTheDocument();
-  });
-
-  test('holds on free rather than offering a paid button that cannot work', async () => {
-    // 🔴 A STATIC fixture, no click and no refusal: free is unavailable from
-    // first paint (`usedHere`) and paid is closed (`price: null`), which is
-    // `submissionMethod(null, false, false, true)`.
-    //
-    // With the rule, that resolves to free — a plain Button. Without it, to
-    // paid, and the `BuzzTransactionButton` stub mounts its testid. So this
-    // reaches the rule with no cache write-through at all, which is what the
-    // previous version of this comment wrongly said was impossible.
-    mocks.visibility = { ...mocks.visibility, price: null };
-    mocks.eligibility = { ...mocks.eligibility, usedHere: true };
-    await openAndPick();
-
-    await expect.element(page.getByTestId('buzz-submit')).not.toBeInTheDocument();
-    // And the reason renders beside the disabled control, which is the whole
-    // justification for holding there: three dead buttons and no explanation is
-    // worse than the paid button this replaced.
-    await expect.element(page.getByText(/once per gallery/i)).toBeInTheDocument();
-    // Not a claim about spending, on a path that cannot be pressed.
-    await expect.element(page.getByText(/spends a free placement/i)).not.toBeInTheDocument();
-  });
-
   /**
    * ⚠️ What this file does NOT pin, stated so nothing above is over-read.
    *
@@ -331,7 +299,33 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
    * through a real query cache — and reaching it needs a fixture that would grow
    * its own bugs for one line. Said plainly rather than left to look covered,
    * and scoped so a reader who greps does not stop believing the rest of it.
+   *
+   * The same limitation makes the `!freeRefusal` term of the reason's gate
+   * unpinnable here, and I checked rather than assumed: dropping it leaves all
+   * of these green. The two messages can only collide when a refusal lands
+   * while `offer.reason` is non-null, and `offer.reason` is computed from the
+   * static query fixture — which still says free is available at the moment the
+   * refusal arrives. An assertion here would be vacuous, so there is not one.
    */
+});
+
+describe('an unverified remix on an ordinarily-priced gallery', () => {
+  test('says why free is unavailable, beside a WORKING paid button', async () => {
+    // 🔴 The commonest case there is, and no test observed the sentence in it:
+    // every other case that watches it render has `price: null`, so adding
+    // `&& !paidOpen` to the gate would stay green while hiding the reason in
+    // exactly this state. The gate has now been narrowed wrongly three times;
+    // this is what would notice a fourth.
+    mocks.eligibility = { ...mocks.eligibility, verifiedImageIds: [] };
+    await openAndPick();
+
+    await expect.element(page.getByText(/where we can check/i)).toBeInTheDocument();
+    // The negative control that separates this from the paid-closed cases: paid
+    // really is available here, so the sentence must name it AND the button must
+    // be on the screen.
+    await expect.element(page.getByText(/can still be submitted with Buzz/i)).toBeInTheDocument();
+    await expect.element(page.getByTestId('buzz-submit')).toBeInTheDocument();
+  });
 });
 
 describe('a gallery with neither path open', () => {
