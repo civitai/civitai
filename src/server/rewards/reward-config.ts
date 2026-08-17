@@ -17,15 +17,36 @@ export const MAX_CAP = 100_000;
  * writes with this same schema, so a typo dies at write time rather than
  * persisting as a row the read path quietly refuses.
  */
-export const rewardOverrideSchema = z.object({
-  enabled: z.boolean().optional(),
-  awardAmount: z.number().int().min(0).max(MAX_AWARD_AMOUNT).optional(),
-  cap: z.number().int().min(0).max(MAX_CAP).optional(),
-});
+// 🔴 `.strict()`, not the zod default. A non-strict object STRIPS an unknown key,
+// so `{"enable": false}` or `{"Enabled": false}` — a plausible hand-edit — would
+// parse clean to `{}` and resolve to enabled, with nothing rejected and nothing
+// logged. The operator's edit reads as applied and the reward keeps paying, which
+// is the exact hole this feature exists to close, one level in.
+export const rewardOverrideSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    awardAmount: z.number().int().min(0).max(MAX_AWARD_AMOUNT).optional(),
+    cap: z.number().int().min(0).max(MAX_CAP).optional(),
+  })
+  .strict();
 
+/**
+ * The tRPC input shape. NOT strict at the envelope: a base-procedure middleware
+ * adds `browsingLevel` to every input, and zod strips it here rather than
+ * refusing the call. The router passes only `rewards` on to the write, so the
+ * injected field cannot reach the row.
+ */
 export const rewardConfigSchema = z.object({
   rewards: z.record(z.string(), rewardOverrideSchema).optional(),
 });
+
+/**
+ * What a STORED row must look like. Strict, because a row written without the
+ * wrapper — `{"dailyBoost": {"enabled": false}}`, what someone hand-editing in
+ * Retool writes — would otherwise parse as an envelope with no `rewards` key,
+ * leave every reward on, and warn about nothing.
+ */
+export const storedRewardConfigSchema = rewardConfigSchema.strict();
 
 export type RewardOverride = z.infer<typeof rewardOverrideSchema>;
 /** The honoured override plus the names of the fields that were refused. */
@@ -115,9 +136,11 @@ function usableOverride(type: string, value: unknown): RewardConfigEntry {
   const record = value as MixedObject;
   const override: RewardOverride = {};
   const rejected: string[] = [];
+  let recognised = 0;
 
   for (const field of OVERRIDE_FIELDS) {
     if (!(field in record)) continue;
+    recognised++;
 
     if (field === 'enabled') {
       const coerced = coerceEnabled(record.enabled);
@@ -131,6 +154,18 @@ function usableOverride(type: string, value: unknown): RewardConfigEntry {
     else rejected.push(field);
   }
 
+  const unknown = Object.keys(record).filter(
+    (key) => !(OVERRIDE_FIELDS as readonly string[]).includes(key)
+  );
+  rejected.push(...unknown);
+
+  // An entry made ENTIRELY of keys we do not recognise is an instruction we
+  // cannot carry out — `{"enable": false}`, `{"disabled": true}` — so it disables
+  // rather than resolving to on. An entry that also sets a real field keeps that
+  // field and only reports the stray key: `{"cap": 8, "note": "launch"}` should
+  // not take a reward down.
+  if (recognised === 0 && unknown.length) override.enabled = false;
+
   warn('Rejected reward override fields', { rewardType: type, rejected, stored: record });
   return { override, rejected };
 }
@@ -141,14 +176,22 @@ function buildConfig(rewards: Record<string, unknown>): RewardConfig {
   return config;
 }
 
+// Strict, so a row missing the `rewards` wrapper is a parse failure that warns
+// rather than an envelope with no rewards in it that silently leaves every reward
+// enabled. The entries themselves stay `unknown` here — `usableOverride` salvages
+// them field by field, which the strict override schema would not.
+const envelopeSchema = z.object({ rewards: z.record(z.string(), z.unknown()).optional() }).strict();
+
 async function loadConfig(): Promise<RewardConfig> {
   const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
-  const envelope = z
-    .object({ rewards: z.record(z.string(), z.unknown()).optional() })
-    .safeParse(row?.value ?? {});
+  const stored = row?.value ?? {};
+  const envelope = envelopeSchema.safeParse(stored);
 
   if (!envelope.success) {
-    warn('Ignoring malformed reward config row', { stored: row?.value });
+    // Fail-open, and loudly so: we cannot tell which rewards this row meant.
+    warn('Ignoring malformed reward config row — every reward is running unconfigured', {
+      stored,
+    });
     return {};
   }
 
@@ -205,12 +248,17 @@ export type StoredRewardConfig = {
  * empty form whose first save wipes every other reward's override.
  *
  * ⚠️ Two moderators editing at once are last-write-wins; there is no version
- * guard on the row.
+ * guard on the row. `malformed` is an ingredient for an editor to refuse a save,
+ * not a control — nothing enforces it yet.
+ *
+ * ⚠️ The value is UNPARSED, so a hand-written row can carry a `__proto__` own
+ * key through to the caller. Harmless to render; not harmless to spread or
+ * deep-merge. (The parsed paths drop it rather than assigning it.)
  */
 export async function getStoredRewardConfig(): Promise<StoredRewardConfig> {
   const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
   const value = row?.value ?? {};
-  return { value, malformed: !rewardConfigSchema.safeParse(value).success };
+  return { value, malformed: !storedRewardConfigSchema.safeParse(value).success };
 }
 
 /**
@@ -222,14 +270,31 @@ export async function getStoredRewardConfig(): Promise<StoredRewardConfig> {
  * Only invalidates the caller's own cache — other pods pick the change up within
  * `CONFIG_TTL_MS`.
  */
-export async function setRewardConfig(config: z.infer<typeof rewardConfigSchema>) {
-  const value = rewardConfigSchema.parse(config);
+export async function setRewardConfig(config: z.infer<typeof rewardConfigSchema>, userId: number) {
+  const value = storedRewardConfigSchema.parse(config);
+
+  // Read the prior row for the audit line. Not a version guard — this is still an
+  // unconditional replace, and two moderators editing at once are last-write-wins.
+  const previous = (await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } }))?.value;
 
   await dbWrite.keyValue.upsert({
     where: { key: REWARD_CONFIG_KEY },
     create: { key: REWARD_CONFIG_KEY, value },
     update: { value },
   });
+
+  // A money-affecting change with no attribution is not auditable, and this one
+  // is reachable by any moderator. Axiom rather than `ctx.track`, because a new
+  // ClickHouse action outside the enum is dropped silently, and rather than
+  // `ModActivity`, whose unique key makes it a happened-once table.
+  logToAxiom({
+    name: 'reward-config',
+    type: 'info',
+    message: 'Reward config updated',
+    userId,
+    previous: JSON.stringify(previous ?? null),
+    value: JSON.stringify(value),
+  }).catch(() => null);
 
   invalidateRewardConfigCache();
   // Seed the fallback from what was just written. Clearing it and leaving it null

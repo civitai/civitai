@@ -286,6 +286,39 @@ describe('the cap is never overshot, whatever the operator sets', () => {
     expect(paidSoFar().reduce((a, b) => a + b, 0)).toBe(10);
   });
 
+  // Lowering a cap below what the day already paid is a first-week action on a
+  // feature whose whole purpose is changing caps at runtime, and it is the only
+  // thing that drives `remaining` negative. Without it the `Math.max(…, 0)` floor
+  // in both the script and the model beside it is unreachable, so a mutant that
+  // removes it survives and the reward starts paying negative Buzz.
+  // The cap must be lowered to exactly one below what was paid. Any deeper and
+  // the negative is invisible: `apply` treats every non-positive result as
+  // capped, so the floor's absence changes nothing observable. At -1 it collides
+  // with the script's ALREADY-AWARDED sentinel — `apply` returns early believing
+  // the event was a duplicate, and the entry is written as `a:-1`, which
+  // `parseEntryAmount` cannot read and the day total then counts as a full award.
+  it('pays nothing, and corrupts nothing, when a cap drops just below what was paid', async () => {
+    configure({ testOnDemandReward: { awardAmount: 3, cap: 10 } });
+    for (let i = 0; i < 4; i++) await onDemandReward().apply({ userId: 1, entityId: i });
+    const paidBefore = paidSoFar().reduce((a, b) => a + b, 0);
+    expect(paidBefore).toBe(10);
+
+    invalidateRewardConfigCache();
+    configure({ testOnDemandReward: { awardAmount: 3, cap: 9 } });
+    await onDemandReward().apply({ userId: 1, entityId: 99 });
+
+    expect(paidSoFar().reduce((a, b) => a + b, 0)).toBe(paidBefore);
+
+    // Raise the cap again to read the day back: while the cap sits below the
+    // total, `Math.min` clamps both the right and the wrong answer to the cap and
+    // the assertion proves nothing. Above it, an `a:-1` entry shows up — it is
+    // unparseable, so the total counts it as a whole award instead.
+    invalidateRewardConfigCache();
+    configure({ testOnDemandReward: { awardAmount: 3, cap: 100 } });
+
+    expect((await onDemandReward().getUserRewardDetails(1))?.awarded).toBe(paidBefore);
+  });
+
   it('pays at most the cap when the award is raised above it', async () => {
     configure({ testOnDemandReward: { awardAmount: 5000, cap: 500 } });
 
@@ -479,8 +512,21 @@ describe('the on-demand Lua keeps the properties the model assumes', () => {
   // found two holes by executing mutants; assume there are more nobody tried.
   // This fails on any edit to the script including a reformat, which is the safe
   // direction: updating it forces re-deriving the model in `runLua` beside it.
+  // 🔴 Lua block comments open with `--[[` and close with `--]]`, and BOTH
+  // delimiters start with `--`. A normaliser that drops every `--` line deletes
+  // exactly the two lines that neutralise everything between them, leaving the
+  // commented-out body in the array where it matches the expectation perfectly.
+  // Wrapping the dedup block that way killed the double-award guard in Redis and
+  // passed every assertion in this file, including the named one, whose regex
+  // still matched source Lua would never execute. Strip block comments before
+  // dropping line comments, and refuse the delimiter outright as the floor.
+  it('has no block comment neutralising part of the script', () => {
+    expect(ON_DEMAND_REWARD_SCRIPT).not.toContain('--[[');
+  });
+
   it('matches the script this suite was written against, line for line', () => {
-    const body = ON_DEMAND_REWARD_SCRIPT.split('\n')
+    const body = ON_DEMAND_REWARD_SCRIPT.replace(/--\[\[[\s\S]*?--\]\]/g, '')
+      .split('\n')
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith('--'));
 

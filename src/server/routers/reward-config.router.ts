@@ -16,5 +16,10 @@ export const rewardConfigRouter = router({
       (a, b) => a.type.localeCompare(b.type)
     ),
   })),
-  set: moderatorProcedure.input(rewardConfigSchema).mutation(({ input }) => setRewardConfig(input)),
+  // The input schema is what keeps the middleware's `browsingLevel` out of a row
+  // `set` replaces wholesale — zod strips unknown keys, and the router test
+  // asserts the service is called with the row alone.
+  set: moderatorProcedure
+    .input(rewardConfigSchema)
+    .mutation(({ input, ctx }) => setRewardConfig(input, ctx.user.id)),
 });

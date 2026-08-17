@@ -121,8 +121,9 @@ describe('rewardConfig.set', () => {
 
     await caller.set({ rewards: { testReward: { enabled: false, awardAmount: 4 } } });
 
-    expect(mockSetConfig).toHaveBeenCalledWith({
-      rewards: { testReward: { enabled: false, awardAmount: 4 } },
-    });
+    expect(mockSetConfig).toHaveBeenCalledWith(
+      { rewards: { testReward: { enabled: false, awardAmount: 4 } } },
+      1
+    );
   });
 });

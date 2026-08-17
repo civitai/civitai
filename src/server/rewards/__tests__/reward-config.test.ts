@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   getStoredRewardConfig,
   invalidateRewardConfigCache,
@@ -80,6 +81,10 @@ describe('resolveRewardConfig', () => {
 
       expect(config.awardAmount).toBe(DEFAULTS.awardAmount);
       expect(config.rejected).toContain('awardAmount');
+      // The other direction, which the rest of this file does not pin: a refused
+      // sibling must not take the reward down either. Everything else here is
+      // about fail-open; this is the fail-closed edge of the same function.
+      expect(config.enabled).toBe(true);
     }
   });
 
@@ -92,6 +97,7 @@ describe('resolveRewardConfig', () => {
 
       expect(config.cap).toBe(DEFAULTS.cap);
       expect(config.rejected).toContain('cap');
+      expect(config.enabled).toBe(true);
     }
   });
 
@@ -148,6 +154,58 @@ describe('resolveRewardConfig', () => {
     storedConfig({ rewards: { testReward: {} } });
 
     expect(await resolve()).toMatchObject({ enabled: true, rejected: [] });
+  });
+
+  // A non-strict object STRIPS an unknown key, so these would parse clean to `{}`
+  // and resolve to enabled with nothing rejected and nothing logged — the
+  // operator's edit reads as applied while the reward keeps paying.
+  it('disables on an entry made entirely of keys it does not recognise', async () => {
+    for (const entry of [{ enable: false }, { Enabled: false }, { disabled: true }]) {
+      invalidateRewardConfigCache();
+      storedConfig({ rewards: { testReward: entry } });
+
+      const config = await resolve();
+
+      expect(config.enabled).toBe(false);
+      expect(config.rejected).toEqual(Object.keys(entry));
+    }
+  });
+
+  // A stray annotation beside a real field should not take a reward down.
+  it('keeps the recognised fields and only reports the stray key', async () => {
+    storedConfig({ rewards: { testReward: { cap: 8, note: 'for the launch' } } });
+
+    expect(await resolve()).toMatchObject({ enabled: true, cap: 8, rejected: ['note'] });
+  });
+
+  // `usableOverride`'s doc promises a refused field does not re-enable a reward.
+  // The unpinned converse: it must not disable one either.
+  it('leaves a reward on when one field is refused and `enabled` is absent', async () => {
+    storedConfig({ rewards: { testReward: { awardAmount: -1, cap: 8 } } });
+
+    expect(await resolve()).toMatchObject({ enabled: true, cap: 8 });
+  });
+
+  // `{"dailyBoost": {...}}` — the row someone hand-editing in Retool writes. A
+  // non-strict envelope parses it as "no rewards key" and silently leaves
+  // everything on.
+  it('warns and runs unconfigured on a row written without the `rewards` wrapper', async () => {
+    storedConfig({ testReward: { enabled: false } });
+
+    expect(await resolve()).toMatchObject({
+      enabled: true,
+      awardAmount: DEFAULTS.awardAmount,
+    });
+    expect(await getStoredRewardConfig()).toMatchObject({ malformed: true });
+    // The WARNING is the whole difference a non-strict envelope makes: it would
+    // resolve to exactly the same values, silently. Asserting only the values
+    // tests nothing about the strictness.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'reward-config',
+        message: expect.stringContaining('malformed reward config row'),
+      })
+    );
   });
 
   // A Retool text field produces the string, not the boolean. Falling back to the
@@ -290,10 +348,46 @@ describe('rewardOverrideSchema', () => {
 // `rewardConfigSchema.parse` with a passthrough has to turn something red.
 describe('setRewardConfig', () => {
   const upsert = dbMock.dbWrite.keyValue.upsert;
+  const MOD_ID = 99;
+
+  it('refuses a key the read path would not recognise', async () => {
+    await expect(
+      setRewardConfig({ rewards: { testReward: { enable: false } } } as never, MOD_ID)
+    ).rejects.toThrow();
+
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a row written without the `rewards` wrapper', async () => {
+    await expect(
+      setRewardConfig({ testReward: { enabled: false } } as never, MOD_ID)
+    ).rejects.toThrow();
+
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  // A money-affecting moderator change with no attribution is not auditable.
+  it('records who made the change and what it replaced', async () => {
+    findUnique.mockResolvedValue({ value: { rewards: { testReward: { awardAmount: 4 } } } });
+
+    await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID);
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'reward-config',
+        userId: MOD_ID,
+        previous: JSON.stringify({ rewards: { testReward: { awardAmount: 4 } } }),
+        value: JSON.stringify({ rewards: { testReward: { awardAmount: 7 } } }),
+      })
+    );
+  });
 
   it('refuses the whole write when any field is out of bounds', async () => {
     await expect(
-      setRewardConfig({ rewards: { testReward: { awardAmount: MAX_AWARD_AMOUNT + 1 } } } as never)
+      setRewardConfig(
+        { rewards: { testReward: { awardAmount: MAX_AWARD_AMOUNT + 1 } } } as never,
+        MOD_ID
+      )
     ).rejects.toThrow();
 
     expect(upsert).not.toHaveBeenCalled();
@@ -301,7 +395,7 @@ describe('setRewardConfig', () => {
 
   it('refuses a cap the read path would refuse', async () => {
     await expect(
-      setRewardConfig({ rewards: { testReward: { cap: MAX_CAP + 1 } } } as never)
+      setRewardConfig({ rewards: { testReward: { cap: MAX_CAP + 1 } } } as never, MOD_ID)
     ).rejects.toThrow();
 
     expect(upsert).not.toHaveBeenCalled();
@@ -311,7 +405,7 @@ describe('setRewardConfig', () => {
   // does not, because an editor sending a string means the editor is wrong.
   it('refuses a stringly-typed `enabled` that the read path would coerce', async () => {
     await expect(
-      setRewardConfig({ rewards: { testReward: { enabled: 'false' } } } as never)
+      setRewardConfig({ rewards: { testReward: { enabled: 'false' } } } as never, MOD_ID)
     ).rejects.toThrow();
 
     expect(upsert).not.toHaveBeenCalled();
@@ -319,9 +413,12 @@ describe('setRewardConfig', () => {
 
   it('refuses one bad reward even when another in the same row is valid', async () => {
     await expect(
-      setRewardConfig({
-        rewards: { good: { enabled: false }, bad: { awardAmount: -1 } },
-      } as never)
+      setRewardConfig(
+        {
+          rewards: { good: { enabled: false }, bad: { awardAmount: -1 } },
+        } as never,
+        MOD_ID
+      )
     ).rejects.toThrow();
 
     expect(upsert).not.toHaveBeenCalled();
@@ -330,7 +427,7 @@ describe('setRewardConfig', () => {
   it('writes a valid row under the key the read path reads', async () => {
     const config = { rewards: { testReward: { enabled: false, awardAmount: 4, cap: 8 } } };
 
-    await setRewardConfig(config);
+    await setRewardConfig(config, MOD_ID);
 
     expect(upsert).toHaveBeenCalledWith({
       where: { key: REWARD_CONFIG_KEY },
@@ -344,7 +441,7 @@ describe('setRewardConfig', () => {
     expect((await resolve()).awardAmount).toBe(4);
 
     storedConfig({ rewards: { testReward: { awardAmount: 7 } } });
-    await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } });
+    await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID);
 
     expect((await resolve()).awardAmount).toBe(7);
   });
@@ -352,7 +449,7 @@ describe('setRewardConfig', () => {
   // Invalidating clears the last-good fallback too, so without seeding it here a
   // read failure moments after the write re-enables the reward just disabled.
   it('leaves the reward it just disabled disabled when the next read fails', async () => {
-    await setRewardConfig({ rewards: { testReward: { enabled: false, awardAmount: 4 } } });
+    await setRewardConfig({ rewards: { testReward: { enabled: false, awardAmount: 4 } } }, MOD_ID);
 
     findUnique.mockRejectedValue(new Error('KeyValue unavailable'));
 
