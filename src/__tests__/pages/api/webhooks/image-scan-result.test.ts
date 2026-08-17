@@ -604,6 +604,19 @@ describe('image-scan-result webhook - pipeline tests', () => {
       expect(update!.text).not.toContain('"pHash"');
     });
 
+    it('retries the blocklist lookup after a dropped socket', async () => {
+      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
+      mockClickhouseQuery
+        .mockRejectedValueOnce(new Error('socket hang up'))
+        .mockResolvedValue([{ count: 0 }]);
+
+      const req = runWebhook({ id: 15, status: 0, source: TagSource.ImageHash, hash: '42' });
+      await req.promise;
+
+      expect(mockClickhouseQuery).toHaveBeenCalledTimes(2);
+      expect(req.res.status).toHaveBeenCalledWith(200);
+    });
+
     it('completes the scan when the blocklist lookup fails', async () => {
       envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
       mockClickhouseQuery.mockRejectedValue(new Error('socket hang up'));

@@ -51,6 +51,7 @@ import {
   TagType,
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
+import { withRetries } from '~/utils/errorHandling';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -261,13 +262,19 @@ function parsePerceptualHash(hash: string) {
 async function isBlocked(hash: bigint) {
   if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
 
-  const [{ count }] = await clickhouse.$query<{ count: number }>`
-    SELECT cast(count() as int) as count
-    FROM blocked_images
-    WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
-  `;
+  const client = clickhouse;
+  // `$query` has no retry of its own and the observed failure is a dropped socket.
+  const rows = await withRetries(
+    () => client.$query<{ count: number }>`
+      SELECT cast(count() as int) as count
+      FROM blocked_images
+      WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
+    `,
+    2,
+    250
+  );
 
-  return count > 0;
+  return (rows?.[0]?.count ?? 0) > 0;
 }
 
 async function handleSuccess(args: BodyProps, req: NextApiRequest) {
