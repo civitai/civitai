@@ -11,6 +11,7 @@ import { tagSchema } from '~/server/schema/tag.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import {
   CollectionContributorPermission,
+  CollectionItemRejectionReason,
   CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
@@ -271,11 +272,25 @@ export const getAllCollectionItemsSchema = baseQuerySchema.extend({
 });
 
 export type UpdateCollectionItemsStatusInput = z.infer<typeof updateCollectionItemsStatusInput>;
-export const updateCollectionItemsStatusInput = z.object({
-  collectionId: z.number(),
-  collectionItemIds: z.array(z.number()),
-  status: z.enum(CollectionItemStatus),
-});
+export const updateCollectionItemsStatusInput = z
+  .object({
+    collectionId: z.number(),
+    collectionItemIds: z.array(z.number()),
+    status: z.enum(CollectionItemStatus),
+    rejectionReason: z.enum(CollectionItemRejectionReason).optional(),
+    rejectionDetail: z.string().trim().max(200).optional(),
+  })
+  // `Automated` belongs to the AI review job, which builds its input in-process and
+  // never parses it through here.
+  .refine(({ rejectionReason }) => rejectionReason !== CollectionItemRejectionReason.Automated, {
+    message: 'That reason is reserved for automated review.',
+    path: ['rejectionReason'],
+  })
+  .refine(
+    ({ rejectionReason, rejectionDetail }) =>
+      rejectionReason !== CollectionItemRejectionReason.Other || !!rejectionDetail?.length,
+    { message: 'Tell the submitter why.', path: ['rejectionDetail'] }
+  );
 
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
 export const addSimpleImagePostInput = z.object({
