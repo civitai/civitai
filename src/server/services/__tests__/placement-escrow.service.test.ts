@@ -14,6 +14,15 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
+// Wholesale on purpose: the real module loads `base.reward`, which builds a
+// ClickHouse client, redis handles and prom collectors at import time. The
+// reward's own behaviour is tested in stickerPlacementAccepted.reward.test.ts;
+// what this suite owns is WHEN settlement hands it a placement.
+const applyAcceptReward = vi.fn();
+vi.mock('~/server/rewards/active/stickerPlacementAccepted.reward', () => ({
+  stickerPlacementAcceptedReward: { apply: applyAcceptReward },
+}));
+
 // A real mutex, not a pass-through: the lock is what stops two callers both
 // reaching the Buzz call after one has claimed the ledger row, so a double that
 // always grants it would hide the defect it exists to prevent.
@@ -358,6 +367,7 @@ beforeEach(() => {
   configState.shares = { seller: 0, platform: 0.3 };
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 2, totalAmount: 0 });
   createBuzzTransaction.mockResolvedValue({ transactionId: 'buzz-tx' });
+  applyAcceptReward.mockResolvedValue(undefined);
   // The real response carries the legs it reversed. The double used to return
   // only the prefix, which let a refund that moved NOTHING look identical to one
   // that moved everything — the exact discrepancy the service now refuses on.
@@ -1847,5 +1857,98 @@ describe('a free placement never touches the money path', () => {
 
     expect(moneyMoved()).toBe(0);
     expect(legsFor(1)).toEqual({});
+  });
+});
+
+describe('the accept reward', () => {
+  const hold = () =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+  it('pays the owner of the space, for the placement, crediting the placer', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+    expect(applyAcceptReward).toHaveBeenCalledWith({
+      placementId: 1,
+      ownerId: OWNER,
+      placerId: PLACER,
+    });
+  });
+
+  it('pays it for a free placement too', async () => {
+    givenPlacement({ free: true, amount: 0 });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+  });
+
+  // The reason it hangs off `count > 0` and not off the callers. The ledger key
+  // never expires while the daily cap does, so a second presentation of the same
+  // placement on a later day spends a tenth of the owner's day and moves no Buzz.
+  it('pays nothing on a second approve of the same placement', async () => {
+    givenPlacement();
+    await hold();
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    applyAcceptReward.mockClear();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(false);
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  it.each(['decline', 'expire', 'removeByOwner', 'removeByModerator'] as const)(
+    'pays nothing when the placement settles as %s',
+    async (action) => {
+      givenPlacement();
+      await hold();
+
+      await settlePlacement({ placementId: 1, action, actorId: OWNER });
+
+      expect(applyAcceptReward).not.toHaveBeenCalled();
+    }
+  );
+
+  // The remix surface has its own reward, with its own amount and its own cap.
+  it('pays nothing on another surface', async () => {
+    givenPlacement({ surface: 'remixGallery' });
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  // The approval has already paid the owner out of escrow by this point. A
+  // throw here would 500 a request whose money has moved, and the caller would
+  // read that as the approval having failed.
+  it('does not fail the approval when the reward throws', async () => {
+    givenPlacement();
+    await hold();
+    applyAcceptReward.mockRejectedValue(new Error('clickhouse is gone'));
+
+    const { settled, placement } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(placement.status).toBe('approved');
+    expect(legsFor(1)).toMatchObject({ toOwner: 700 });
   });
 });

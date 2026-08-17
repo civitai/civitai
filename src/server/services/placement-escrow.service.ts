@@ -11,6 +11,7 @@ import {
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import { stickerPlacementAcceptedReward } from '~/server/rewards/active/stickerPlacementAccepted.reward';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { isPlacementSpendType } from '~/shared/constants/placement.constants';
@@ -623,7 +624,49 @@ export async function settlePlacement({
 
   await payOutPlacement(placement);
 
+  if (count > 0 && status === 'approved') await rewardAccepted(placement);
+
   return { settled: count > 0, placement };
+}
+
+/**
+ * The owner's reward for accepting a placement onto their space.
+ *
+ * Hung off `count > 0` rather than off the approve callers: that is the settle
+ * whose `WHERE status = 'pending'` matched, and it happens exactly once per
+ * placement no matter how many approvals race or how often a caller retries. The
+ * reward's ledger key never expires while its daily cap does, so a second
+ * presentation of the same placement would silently burn a tenth of the owner's
+ * day and pay nothing.
+ *
+ * Scoped by surface here rather than by where the call sits: the remix surface
+ * has its own reward with its own amount and cap, and the two are being written
+ * in parallel.
+ *
+ * After the payout, so a reward failure can never be why an approved placement
+ * went unpaid — and swallowed for the same reason the settle itself is not
+ * retried here: the money has already moved, and a throw would 500 an approval
+ * that succeeded. Routed to Axiom rather than dropped, since `base.reward`
+ * rethrows genuine ClickHouse schema breaks precisely so they stay visible.
+ */
+async function rewardAccepted(placement: PlacementRow) {
+  if (placement.surface !== 'sticker') return;
+
+  await stickerPlacementAcceptedReward
+    .apply({
+      placementId: placement.id,
+      ownerId: placement.ownerId,
+      placerId: placement.placerId,
+    })
+    .catch((error) =>
+      logToAxiom({
+        name: 'placement-escrow',
+        type: 'error',
+        message: 'accept reward failed',
+        placementId: placement.id,
+        error: (error as Error).message,
+      }).catch(() => null)
+    );
 }
 
 type PlacementRow = NonNullable<Awaited<ReturnType<typeof dbWrite.placement.findUnique>>>;
