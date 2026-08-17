@@ -37,7 +37,14 @@ C:\Dev\Repos\work\model-share\_local\docs\plans\<feature>.md
 Absolute path, from any worktree. 🔴 Never resolve `_local/` relatively — it exists only in the primary
 worktree, and a relative write silently creates a second private copy that nobody else reads.
 
-## 2. Fan out
+## 2. Fan out — all five at once, in one message
+
+🔴 **Launch every lane in a single message with multiple tool uses.** They are independent and share no
+state.
+
+A numbered list of steps reads as an instruction to run them one after another, so this is stated
+rather than left to inference: **do not spawn them sequentially.** A five-lane review that takes five
+times as long is the thing that makes people stop running it, and a review nobody runs finds nothing.
 
 | Agent | Reviews |
 | --- | --- |
@@ -47,6 +54,10 @@ worktree, and a relative write silently creates a second private copy that nobod
 | `civitai-test-review` | Tests that pass regardless of the code under them |
 | `civitai-intent-review` | Did the PR do what was actually asked |
 
+The first four are the **code lanes** — same input, four questions, launched together.
+`civitai-intent-review` launches alongside them but is **different in kind**: it reads the request
+rather than the code, and its findings stay a separate section at step 3.
+
 Give each the same scope: the file list, what the segment is meant to do, and anything it can't recover
 from the code — what was deliberately left out, what a reviewer already accepted.
 
@@ -54,30 +65,47 @@ Give `civitai-intent-review` the intent doc path and any mid-project scope chang
 conversation. It is the only one whose input is not in the repo, so it is the only one you can starve
 by accident.
 
-**Serial is the safe default.** Five at once is heavy. Spawn in parallel only for a small segment, and
-prefer pairing the cheap lanes (intent + test) if you do.
+**Solo mode is deliberately not offered.** Running one adversarial reviewer over everything was
+considered and rejected in favour of five parallel lanes — the lanes hold different concrete knowledge
+(which service, which trap, which measurement) and one agent carrying all of it dilutes each. This is a
+decision, not an omission; do not helpfully collapse them.
 
-Skip a lane when the diff genuinely can't contain its findings — no tests changed and none should have
-is a *finding for the test lane*, not a reason to skip it; no server code at all is a reason to skip
-perf. Say which you skipped and why.
+Skip a lane only when the diff genuinely cannot contain its findings — no server code at all is a
+reason to skip perf. "No tests changed" is *a finding for the test lane*, not a reason to skip it. Say
+which you skipped and why.
 
 ## 3. Consolidate
 
-Merge into one ranked list. **Do not relay five reports.**
+**Do not relay five reports.** Produce **three sections**, in this order:
+
+**A. Does it deliver the request** — `civitai-intent-review`'s output, on its own.
+
+Intent findings are **not ranked in with code defects**; they are not comparable and mixing them makes
+both harder to act on. "This doesn't do what was asked" and "this query is an N+1" call for different
+decisions from different people, and a merged list buries the first under the second. Carry the intent
+lane's confidence note with it — whether the doc was reviewer-authored or postdates the code changes
+what the whole section is worth.
+
+**B. Code findings** — the four code lanes, merged into one ranked list.
 
 - **Drop what you can disprove.** Read the code for anything that sounds wrong; agents produce
   plausible-but-false findings, and a fix applied to a non-bug is a new bug.
 - Deduplicate — the same defect commonly surfaces as reuse *and* perf (a rewritten query that the
   cached-by-id-array helper already answers), or safety *and* test (an unguarded path with a vacuous
   test over it).
-- Rank by consequence: money moving wrongly and content crossing a gate first, then a dropped
-  requirement, then production cost, then false confidence from a bad test, then reuse.
-- Keep `civitai-reuse-review`'s **"Pre-existing service duplication"** section separate and clearly
-  marked *not for this PR*. It is a map contribution, not a change request, and mixing it into the fix
-  list is how the whole list gets ignored.
-- 🔴 **Security findings stay out of the repo.** Do not paste an open safety finding into a PR body, a
-  commit message, or a file under `docs/`, `claudedocs/` or `.claude/` — this repo is public and
-  permanent. They live in the conversation until they are fixed.
+- Rank by consequence: money moving wrongly and content crossing a gate first, then production cost,
+  then false confidence from a bad test, then reuse.
+
+**C. Map contribution, not for this PR** — `civitai-reuse-review`'s "Pre-existing service duplication".
+
+It is a map contribution, not a change request; nobody is expected to fix it here. Mixing it into the
+fix list is how the whole list gets ignored.
+
+Across all three sections:
+
+🔴 **Security findings stay out of the repo.** Do not paste an open safety finding into a PR body, a
+commit message, or a file under `docs/`, `claudedocs/` or `.claude/` — this repo is public and
+permanent. They live in the conversation until they are fixed.
 
 ## 4. The fix loop
 
@@ -86,7 +114,8 @@ Merge into one ranked list. **Do not relay five reports.**
 1. Reviewer reports findings.
 2. **The implementer fixes them** — a different agent or a human, not the reviewer.
 3. Back to the reviewer, **against the updated diff only** — not a fresh read of the whole segment.
-   Re-reviewing everything each round is slow and re-litigates settled findings.
+   Re-reviewing everything each round is slow and re-litigates settled findings. Re-run only the lanes
+   whose findings were touched, and launch those together in one message as in step 2.
 4. Iterate.
 
 **A declined finding is a legitimate outcome, but it must come back with a reason.** The reviewer then
