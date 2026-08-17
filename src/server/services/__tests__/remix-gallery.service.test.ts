@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allBrowsingLevelsFlag,
@@ -23,6 +23,7 @@ const STRANGER = 63;
 const HOST_IMAGE = 74;
 const REMIX_IMAGE = 85;
 const PLACEMENT = 96;
+const FREE_PLACEMENT = 107;
 const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn(async () => ({ fee: 210, principal: 490 }));
@@ -50,6 +51,26 @@ vi.mock('~/server/services/placement-moderation.service', () => ({ assertCanPlac
 const rewardApply = vi.fn(async () => undefined);
 vi.mock('~/server/rewards/active/remixAccept.reward', () => ({
   remixAcceptReward: { apply: rewardApply },
+}));
+
+/**
+ * The free claim is the boundary this file tests against, not through. It owns
+ * an advisory-locked transaction and every refusal the paid path makes, all of
+ * which are `free-placement.service`'s own tests to keep — what matters here is
+ * that the free branch delegates to it with the right target instead of building
+ * a row of its own.
+ */
+const createFreePlacement = vi.fn(async () => ({ id: FREE_PLACEMENT }));
+const getFreePlacementAllowance = vi.fn(async () => ({
+  used: 0,
+  remaining: 1,
+  resetsAt: new Date('2026-01-02'),
+}));
+const hasUsedFreePlacementOn = vi.fn(async () => false);
+vi.mock('~/server/services/free-placement.service', () => ({
+  createFreePlacement,
+  getFreePlacementAllowance,
+  hasUsedFreePlacementOn,
 }));
 
 const resolvePlacementSpaceFor = vi.fn();
@@ -122,6 +143,8 @@ const {
   parseGalleryCursor,
   getRemixGallery,
   getRemixGalleryVisibility,
+  getRemixGalleryFreeEligibility,
+  getMyRemixGallerySubmissions,
   getPendingRemixGallerySubmissions,
   declineOutOfBandRemixGallerySubmissions,
 } = await import('~/server/services/remix-gallery.service');
@@ -175,7 +198,15 @@ const openSpace = {
   setPrice: PRICE,
   price: PRICE,
   cap: 1000,
+  freeSlots: 2,
+  freeSlotsRemaining: 1,
   settings: {},
+};
+
+/** A submission the server itself resolved as derived from the host image. */
+const verifiedSubmission: SubmissionFixture = {
+  ...goodSubmission,
+  sourceImageIds: [HOST_IMAGE],
 };
 
 /**
@@ -213,6 +244,8 @@ beforeEach(() => {
   placementCount.mockResolvedValue(0);
   placementFindFirst.mockResolvedValue(null);
   settlePlacement.mockResolvedValue({ settled: true });
+  createFreePlacement.mockResolvedValue({ id: FREE_PLACEMENT });
+  hasUsedFreePlacementOn.mockResolvedValue(false);
   holdPlacementEscrow.mockImplementation(async () => {
     calls.push('hold');
     return { fee: 210, principal: 490 };
@@ -228,6 +261,36 @@ const submit = (over: Partial<Parameters<typeof createRemixGallerySubmission>[0]
     imageId: REMIX_IMAGE,
     ...over,
   });
+
+/**
+ * The SQL a raw query actually carries, as one string.
+ *
+ * Nested `Prisma.sql` fragments arrive as VALUES rather than as part of the
+ * template's string array, so flattening is what makes an assertion see a
+ * predicate that lives inside a fragment at all.
+ *
+ * At module scope because two suites need it and both encode the same guess
+ * about Prisma's internals — `strings` and `values` on a fragment. When that
+ * shape changes, one copy gets fixed and the other keeps passing over SQL it can
+ * no longer read.
+ */
+const flatten = (value: unknown): string => {
+  if (Array.isArray(value)) return value.map(flatten).join(' ');
+  if (value && typeof value === 'object' && 'strings' in value)
+    return [
+      flatten((value as { strings: unknown }).strings),
+      flatten((value as { values?: unknown }).values ?? []),
+    ].join(' ');
+  return typeof value === 'string' ? value : '';
+};
+
+/** The bound parameters, which `flatten` drops — it keeps only strings. */
+const boundValues = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) return value.flatMap(boundValues);
+  if (value && typeof value === 'object' && 'strings' in value)
+    return boundValues((value as { values?: unknown }).values ?? []);
+  return [value];
+};
 
 describe('content level rules', () => {
   it('refuses an unrated submission under BOTH rules', () => {
@@ -460,20 +523,6 @@ describe('the ceiling is applied on read, not only on the mutation', () => {
   // from a read query and every other test in this file still passes, while
   // entries approved before a host was flagged keep rendering — and the owner
   // cannot take them down for a week.
-  //
-  // Nested `Prisma.sql` fragments arrive as VALUES rather than as part of the
-  // template's string array, so flattening them is what makes this see the
-  // predicate at all.
-  const flatten = (value: unknown): string => {
-    if (Array.isArray(value)) return value.map(flatten).join(' ');
-    if (value && typeof value === 'object' && 'strings' in value)
-      return [
-        flatten((value as { strings: unknown }).strings),
-        flatten((value as { values?: unknown }).values ?? []),
-      ].join(' ');
-    return typeof value === 'string' ? value : '';
-  };
-
   const sqlFrom = () => queryRaw.mock.calls.map(flatten).join(' ');
 
   /**
@@ -1650,5 +1699,511 @@ describe('declining everything out of band', () => {
     ).rejects.toThrow();
 
     expect(settlePlacement).not.toHaveBeenCalled();
+  });
+});
+
+describe('free submissions', () => {
+  const submitFree = (over: Partial<Parameters<typeof createRemixGallerySubmission>[0]> = {}) =>
+    submit({ free: true, ...over });
+
+  it('refuses a remix the server did not resolve as derived from the host', async () => {
+    // The gate the whole surface rests on. `sourceImageIds` is empty on the
+    // default fixture, which is what an off-site remix looks like — a real remix
+    // carrying no signal, which is why the refusal names paying as the
+    // alternative rather than calling it not a remix.
+    await expect(submitFree()).rejects.toThrow(/made from this image on-site/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the host is not among the inputs, only some other image', async () => {
+    // Derivation is membership, not "this generation had inputs at all". A remix
+    // built entirely from someone else's image would otherwise buy a free slot
+    // in a queue it has nothing to do with.
+    primeQueries({ submission: { ...goodSubmission, sourceImageIds: [STRANGER] } });
+    await expect(submitFree()).rejects.toThrow(/made from this image on-site/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('claims through the free primitive rather than writing its own row', async () => {
+    primeQueries({ submission: verifiedSubmission });
+
+    const result = await submitFree();
+
+    expect(result).toEqual({ id: FREE_PLACEMENT });
+    // No row of its own and no escrow: the three refusals the free tier adds
+    // have to hold together under the claim's lock, in the same transaction as
+    // its insert, and a row built here would be a second creation route.
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+
+    expect(createFreePlacement).toHaveBeenCalledWith({
+      surface: 'remixGallery',
+      targetType: 'image',
+      targetId: HOST_IMAGE,
+      placerId: PLACER,
+      data: { imageId: REMIX_IMAGE, remixOfId: null, derivedFromHost: true },
+    });
+  });
+
+  it('hands the claim the host image, never the submitted one', async () => {
+    // Both ids are in scope at the call site and swapping them is a one-token
+    // edit that type-checks: the placement would land on the submitter's own
+    // image, attributed to themselves, holding a slot on the wrong creator.
+    primeQueries({ submission: verifiedSubmission });
+    await submitFree();
+
+    const claim = createFreePlacement.mock.calls[0][0] as { targetId: number; placerId: number };
+    expect(claim.targetId).toBe(HOST_IMAGE);
+    expect(claim.targetId).not.toBe(REMIX_IMAGE);
+    expect(claim.placerId).toBe(PLACER);
+  });
+
+  it('does not let a free submission skip the one-per-gallery duplicate check', async () => {
+    // `createFreePlacement` bounds free rows per placer and per target, which is
+    // a different question from "is this picture already in this gallery" — a
+    // paid entry followed by a free one would otherwise put the same image in
+    // twice and defeat the rotation.
+    primeQueries({ submission: verifiedSubmission });
+    placementFindFirst.mockResolvedValue({ id: 1 });
+
+    await expect(submitFree()).rejects.toThrow(/already in this gallery/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['off', /not accepting/i],
+    ['auto', /need review/i],
+  ] as const)('refuses a free submission to a %s gallery', async (mode, message) => {
+    primeQueries({ submission: verifiedSubmission });
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, mode });
+
+    await expect(submitFree()).rejects.toThrow(message);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('refuses a free submission to your own gallery', async () => {
+    primeQueries({ submission: verifiedSubmission });
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, ownerId: PLACER });
+
+    await expect(submitFree()).rejects.toThrow(/your own gallery/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('applies every content rule to a free submission', async () => {
+    // Free is placement that costs no Buzz, not a lighter kind of placement.
+    // These are the checks a free path is most tempting to skip, because nobody
+    // is being charged for the refusal.
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, settings: { contentRule: 'any' } });
+    primeQueries({ submission: { ...verifiedSubmission, tosViolation: true } });
+    await expect(submitFree()).rejects.toThrow(/cannot be submitted/i);
+
+    resolvePlacementSpaceFor.mockResolvedValue(openSpace);
+    primeQueries({ submission: { ...verifiedSubmission, nsfwLevel: NsfwLevel.XXX } });
+    await expect(submitFree()).rejects.toThrow(/rating/i);
+
+    primeQueries({ submission: verifiedSubmission, hostShowable: false });
+    await expect(submitFree()).rejects.toThrow(/cannot show a gallery/i);
+
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['unpriced', null],
+    ['priced below the floor', 10],
+  ] as const)('accepts a free submission to a %s gallery', async (_label, price) => {
+    // The price is the PAID path's spam gate — nothing verifies that a paid
+    // submission is really a remix. A free one is gated on the server having
+    // verified exactly that, so refusing it over a price it does not pay would
+    // refuse it for a reason that does not apply.
+    primeQueries({ submission: verifiedSubmission });
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, price, setPrice: price });
+
+    await expect(submitFree()).resolves.toEqual({ id: FREE_PLACEMENT });
+    expect(createFreePlacement).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses a PAID submission to those same galleries', async () => {
+    // The other half of the pair above, which would also pass if the price
+    // checks had been deleted rather than moved onto the paid path.
+    // Re-primed between the two, because the raw-query fake answers by call
+    // index: without it the second submission reads the host row as its
+    // submission and fails on the wrong thing entirely.
+    primeQueries();
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, price: null, setPrice: null });
+    await expect(submit()).rejects.toThrow(/has not set a price/i);
+
+    primeQueries();
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, price: 10, setPrice: 10 });
+    await expect(submit()).rejects.toThrow(/not priced for submissions/i);
+  });
+
+  it('ignores expectedPrice on the free path instead of refusing on it', async () => {
+    // A client that keeps sending the price it rendered must not have a stale
+    // one turn a free submission into a refusal about money it is not spending.
+    primeQueries({ submission: verifiedSubmission });
+
+    await expect(submitFree({ expectedPrice: PRICE + 1 })).resolves.toEqual({ id: FREE_PLACEMENT });
+  });
+});
+
+describe('what the public visibility query says about free capacity', () => {
+  const visibility = (viewerId?: number) => {
+    // One row satisfying every raw read this path makes. The host has to come
+    // back SHOWABLE: an unresolvable host fails closed, which would make the
+    // withheld cases below pass for the wrong reason.
+    queryRaw.mockImplementation(async () => [
+      { exists: false, count: 0, nsfwLevel: NsfwLevel.PG, minor: false, showable: true },
+    ]);
+    return getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: allBrowsingLevelsFlag,
+      viewerId,
+      domainLevels: allBrowsingLevelsFlag,
+    });
+  };
+
+  it('publishes what the creator accepts', async () => {
+    // Their own setting on their own image, the same standing as `price`, and
+    // the only half a signed-out viewer needs: whether free is a thing here.
+    await expect(visibility()).resolves.toMatchObject({ freeSlots: openSpace.freeSlots });
+  });
+
+  it.each([
+    ['signed out', undefined],
+    ['the owner', OWNER],
+  ] as const)('withholds how many are currently HELD from %s', async (_who, viewerId) => {
+    // A count of pending and approved submissions on someone's image — the same
+    // fact `pendingCount` is owner-only to protect. Public, it would let anyone
+    // watch a creator's queue fill by polling an id.
+    await expect(visibility(viewerId)).resolves.toMatchObject({ freeSlotsRemaining: null });
+  });
+
+  it('gives it to the one viewer who has to act on it', async () => {
+    await expect(visibility(PLACER)).resolves.toMatchObject({
+      freeSlotsRemaining: openSpace.freeSlotsRemaining,
+    });
+  });
+
+  it('withholds it on a closed gallery even from a would-be submitter', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, mode: 'off' });
+    await expect(visibility(PLACER)).resolves.toMatchObject({ freeSlotsRemaining: null });
+  });
+});
+
+describe('what the owner’s review queue says a free submission is worth', () => {
+  const queueRow = (free: boolean) => ({
+    id: PLACEMENT,
+    targetId: HOST_IMAGE,
+    placerId: PLACER,
+    amount: free ? 0 : PRICE,
+    free,
+    data: { imageId: REMIX_IMAGE },
+    createdAt: new Date('2026-01-01'),
+    expiresAt: new Date('2026-01-03'),
+    placer: { id: PLACER, username: 'someone', image: null },
+  });
+
+  const queue = async (free: boolean) => {
+    // The listable-ids query first, then the images fetch; the rows come from
+    // `findMany`, which is a separate mock.
+    let call = 0;
+    queryRaw.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return [{ id: PLACEMENT, createdAt: new Date('2026-01-01') }];
+      return [
+        {
+          id: REMIX_IMAGE,
+          url: 'a',
+          width: 1,
+          height: 1,
+          type: 'image',
+          metadata: {},
+          nsfwLevel: 1,
+        },
+        {
+          id: HOST_IMAGE,
+          url: 'b',
+          width: 1,
+          height: 1,
+          type: 'image',
+          metadata: {},
+          nsfwLevel: 1,
+        },
+      ];
+    });
+    placementFindMany.mockResolvedValue([queueRow(free)]);
+
+    const { items } = await getPendingRemixGallerySubmissions({
+      ownerId: OWNER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+    return items[0];
+  };
+
+  it('selects `free`, so the queue can tell the two kinds apart at all', async () => {
+    await queue(true);
+
+    // Omitted from the select, the client cannot branch however it renders — and
+    // the row would show as a paid one with its earnings missing.
+    expect(placementFindMany.mock.calls[0][0].select).toMatchObject({ free: true });
+  });
+
+  it('quotes no earnings on a free row, rather than quoting zero', async () => {
+    // 🔴 Both numbers derive from `amount`, and a free row's is 0 by DB
+    // constraint. Rendered, that is "+0 Buzz" on Approve AND Decline: the
+    // decision surface for the whole free tier telling a creator they earn
+    // nothing, on a row the free notification just called a gift.
+    const row = await queue(true);
+
+    expect(row.free).toBe(true);
+    expect(row.earnings).toBeNull();
+  });
+
+  it('still quotes both numbers on a paid row', async () => {
+    const row = await queue(false);
+
+    expect(row.earnings).toMatchObject({ approve: expect.any(Number) });
+    expect(row.earnings!.approve).toBeGreaterThan(0);
+    expect(row.earnings!.decline).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * 🔴 Every `placement.findMany` ANY test in this file makes, checked after it
+ * runs: if the select asks for `amount`, it must also ask for `free`.
+ *
+ * `amount` is 0 on a free row by DB constraint, so a consumer that renders it
+ * without knowing the row is free shows "0 Buzz" — and the copy around it ("your
+ * Buzz is on its way back") is false outright. The owner queue was found by
+ * review; two more were found only by sweeping.
+ *
+ * An `afterEach` rather than one `it` per named function, and the difference is
+ * the point: a per-function test retires the worry for the functions somebody
+ * remembered to list, and a third select added tomorrow is looked at by neither.
+ * It also has to loop rather than `.find(...)` — first-match-wins would skip a
+ * second amount-carrying select inside the SAME function and stay green, which
+ * is this repo's catalogued hazard reproduced inside the guard written to close
+ * a sweep.
+ *
+ * ⚠️ What it still cannot see: a read no test in this file exercises. It is a
+ * guard over exercised reads, not over the service.
+ */
+afterEach(() => {
+  for (const [args] of placementFindMany.mock.calls as { select?: Record<string, unknown> }[][])
+    if (args?.select?.amount)
+      expect(args.select.free, 'a read carrying `amount` must also carry `free`').toBe(true);
+});
+
+describe('the reads a Buzz figure is rendered from', () => {
+  it('the submitter’s own submissions list', async () => {
+    placementFindMany.mockResolvedValue([]);
+    await getMyRemixGallerySubmissions({
+      placerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+
+    // The real assertion is the `afterEach` above, which inspects every select
+    // this call made. This only proves the read happened, so the hook has
+    // something to inspect — deleting it as pointless removes the guard's
+    // anchor with nothing turning red.
+    expect(placementFindMany).toHaveBeenCalled();
+  });
+
+  it('the submitter’s pending rows on the image detail card', async () => {
+    queryRaw.mockImplementation(async () => [
+      { exists: false, count: 0, nsfwLevel: NsfwLevel.PG, minor: false, showable: true },
+    ]);
+    placementFindMany.mockResolvedValue([]);
+
+    await getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: allBrowsingLevelsFlag,
+      viewerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+    });
+
+    // Same as above: the `afterEach` holds the assertion. This is the anchor.
+    expect(placementFindMany).toHaveBeenCalled();
+  });
+});
+
+describe('the free eligibility listing', () => {
+  const eligibility = () =>
+    getRemixGalleryFreeEligibility({
+      hostImageId: HOST_IMAGE,
+      placerId: PLACER,
+      imageIds: [REMIX_IMAGE],
+    });
+
+  beforeEach(() => queryRaw.mockResolvedValue([{ id: REMIX_IMAGE }]));
+
+  it('answers only for the viewer’s OWN images', async () => {
+    // The predicate this asserts is the whole reason the endpoint is not an
+    // oracle: without it, anyone could ask whether any image was generated from
+    // any other, which is a fact about someone else's generation inputs. Delete
+    // it and nothing else in this file notices.
+    await eligibility();
+
+    const sql = queryRaw.mock.calls.map(flatten).join(' ');
+    expect(sql).toContain('i."userId" =');
+    expect(boundValues(queryRaw.mock.calls)).toContain(PLACER);
+  });
+
+  it('reads derivation through the shared expression, not a containment test', async () => {
+    // `@>` on the raw JSON is NOT the same predicate — scalar containment is
+    // equality, so a non-array value would read as a match where this yields an
+    // empty array, and an array of strings goes the other way. The picker must
+    // offer exactly what the claim accepts, so both go through one expression.
+    await eligibility();
+
+    const sql = queryRaw.mock.calls.map(flatten).join(' ');
+    expect(sql).toContain('jsonb_array_elements');
+    expect(sql).toMatch(/jsonb_typeof\([\s\S]*'array'/);
+    expect(sql).toContain('= ANY(');
+    expect(sql).not.toContain('@>');
+    expect(boundValues(queryRaw.mock.calls)).toContain(HOST_IMAGE);
+  });
+
+  it('asks only about the candidates it was given', async () => {
+    // The `IN` list is the only thing bounding the work: a jsonb containment
+    // test runs per row, so without it the query answers for every image the
+    // placer owns. Delete the clause and the `userId` scope still holds — this
+    // is about cost and about answering a question nobody asked, not a leak.
+    await getRemixGalleryFreeEligibility({
+      hostImageId: HOST_IMAGE,
+      placerId: PLACER,
+      imageIds: [REMIX_IMAGE, REMIX_IMAGE + 1],
+    });
+
+    const sql = queryRaw.mock.calls.map(flatten).join(' ');
+    expect(sql).toContain('i.id IN (');
+    expect(boundValues(queryRaw.mock.calls)).toEqual(
+      expect.arrayContaining([REMIX_IMAGE, REMIX_IMAGE + 1])
+    );
+  });
+
+  it('scopes to the SESSION placer, never a caller-supplied one', async () => {
+    // Same two-mechanism defence as the submit path — the schema has no
+    // `placerId` and the router passes `ctx.user.id` — and the same reason it is
+    // asserted at the outcome: this endpoint answers a question about somebody's
+    // generation inputs, so a caller-chosen id would read another user's
+    // library. The submit path had this test; this one did not.
+    await getRemixGalleryFreeEligibility({
+      hostImageId: HOST_IMAGE,
+      placerId: PLACER,
+      imageIds: [REMIX_IMAGE],
+    });
+
+    expect(boundValues(queryRaw.mock.calls)).toContain(PLACER);
+    expect(boundValues(queryRaw.mock.calls)).not.toContain(STRANGER);
+    expect(hasUsedFreePlacementOn).toHaveBeenCalledWith(
+      expect.objectContaining({ placerId: PLACER })
+    );
+    expect(getFreePlacementAllowance).toHaveBeenCalledWith({ placerId: PLACER });
+  });
+
+  it('runs no query at all for an empty candidate list', async () => {
+    // `IN ()` is a syntax error, not an empty result, so the short-circuit is
+    // load-bearing rather than an optimisation — and the picker asks with
+    // nothing selected on every open.
+    const result = await getRemixGalleryFreeEligibility({
+      hostImageId: HOST_IMAGE,
+      placerId: PLACER,
+      imageIds: [],
+    });
+
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(result.verifiedImageIds).toEqual([]);
+  });
+
+  it('carries the allowance and the never-twice answer through unchanged', async () => {
+    getFreePlacementAllowance.mockResolvedValue({
+      used: 1,
+      remaining: 0,
+      resetsAt: new Date('2026-03-04'),
+    });
+    hasUsedFreePlacementOn.mockResolvedValue(true);
+
+    await expect(eligibility()).resolves.toEqual({
+      allowance: { used: 1, remaining: 0, resetsAt: new Date('2026-03-04') },
+      usedHere: true,
+      verifiedImageIds: [REMIX_IMAGE],
+    });
+  });
+
+  it('asks the never-twice question about THIS surface and THIS host', async () => {
+    // Free is scoped per surface and per target. Widen either and a placer who
+    // stickered an image is told they cannot submit a remix to it.
+    await eligibility();
+
+    expect(hasUsedFreePlacementOn).toHaveBeenCalledWith({
+      placerId: PLACER,
+      surface: 'remixGallery',
+      targetType: 'image',
+      targetId: HOST_IMAGE,
+    });
+  });
+});
+
+describe('the removal cooldown on a free entry', () => {
+  const approvedAt = new Date(Date.now() - 60 * 60 * 1000);
+
+  const arrangeApproved = (free: boolean) =>
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      placerId: PLACER,
+      targetId: HOST_IMAGE,
+      amount: free ? 0 : PRICE,
+      status: 'approved',
+      surface: 'remixGallery',
+      free,
+      data: { imageId: REMIX_IMAGE },
+      resolvedAt: approvedAt,
+      createdAt: approvedAt,
+    });
+
+  it('keeps the full week on a free entry, exactly as on a paid one', async () => {
+    // Justin's call, and asserted rather than assumed because both agents who
+    // looked at it recommended waiving it. Accepting a free remix therefore also
+    // holds one of the creator's free slots for the whole week — intended, not
+    // an oversight.
+    for (const free of [true, false]) {
+      arrangeApproved(free);
+      await expect(
+        actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+      ).rejects.toThrow(/can be removed from/i);
+    }
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('does not tell a creator that someone paid for a free entry', async () => {
+    // The copy is the whole change here, so it is the thing asserted. Left
+    // alone, the refusal justifies the week with a payment that never happened.
+    arrangeApproved(true);
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+    ).rejects.toThrow(/week-long commitment/i);
+
+    arrangeApproved(false);
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+    ).rejects.toThrow(/someone paid/i);
+  });
+
+  it('lets a moderator take a free entry down inside the week', async () => {
+    arrangeApproved(true);
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+    await expect(
+      actOnRemixGallerySubmission({
+        placementId: PLACEMENT,
+        action: 'remove',
+        userId: STRANGER,
+        isModerator: true,
+      })
+    ).resolves.toMatchObject({ removed: true });
   });
 });
