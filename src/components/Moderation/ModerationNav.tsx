@@ -119,6 +119,8 @@ export function ModerationNav() {
         .filter((i) => !i.hidden)
         .sort((a, b) => a.label.localeCompare(b.label))
         .map((link) => (
+          // Without break-inside-avoid an item can split across a column boundary,
+          // putting its label in one column and its padding in the next.
           <Menu.Item
             key={link.href}
             component={Link}
