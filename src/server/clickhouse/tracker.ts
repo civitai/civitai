@@ -12,6 +12,7 @@ import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { sleep } from '~/utils/errorHandling';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
@@ -56,6 +57,7 @@ export type ViewType =
   | 'CollectionView'
   | 'BountyView'
   | 'BountyEntryView'
+  | 'Model3DView'
   | 'ComicProjectView'
   | 'ComicChapterView';
 
@@ -63,8 +65,8 @@ export type ViewType =
  * The `entityType` arm of the ClickHouse `views` Enum8 — deliberately NOT the
  * Prisma `EntityType`, which this used to be typed as. Prisma's enum carries
  * values the ClickHouse column has never had (`Comment`, `CommentV2`,
- * `ResourceReview`, `ChatMessage`, `Model3D`, `UserProfile`), so it type-checked
- * rows the insert would reject. Keep this list in lockstep with the column.
+ * `ResourceReview`, `ChatMessage`, `UserProfile`), so it type-checked rows the
+ * insert would reject. Keep this list in lockstep with the column.
  */
 export type ViewEntityType =
   | 'User'
@@ -76,6 +78,7 @@ export type ViewEntityType =
   | 'Collection'
   | 'Bounty'
   | 'BountyEntry'
+  | 'Model3D'
   | 'ComicProject'
   | 'ComicChapter';
 
@@ -521,6 +524,43 @@ export class Tracker {
     details?: Record<string, unknown>;
   }) {
     return this.track('views', values);
+  }
+
+  // Feed impressions — entities SEEN in a feed rather than opened. Deliberately
+  // its own table: impressions outnumber views by roughly an order of magnitude,
+  // so folding them into `views` would silently redefine every view number on the
+  // platform (and the three materialized views built on it) overnight.
+  //
+  // Uses trackMany, NOT track. `track` posts one HTTP request per row to the
+  // tracker service, which is what makes the single-event methods above viable at
+  // their volume and would make this one ruinous: a 250-entity flush would become
+  // 250 outbound requests, so client-side batching would buy nothing. trackMany
+  // sends the whole array as one insert, so one browser flush is one insert.
+  //
+  // The part-count concern that volume raises — many pods each inserting on a
+  // short interval — is already handled: the shared client sets `async_insert`
+  // for every insert it makes (packages/civitai-clickhouse/src/client.ts).
+  public impressions(values: {
+    sessionKey: string;
+    surface: ImpressionSurface;
+    entities: { entityType: ImpressionEntityType; entityId: number }[];
+  }) {
+    const { sessionKey, surface, entities } = values;
+    return this.trackMany(
+      'impressions',
+      entities.map(({ entityType, entityId }) => ({ entityType, entityId, sessionKey, surface })),
+      // 🔴 `skipActorMeta` stamps userId only, dropping ip and userAgent. On this
+      // table that is not a detail: measured on `views`, ip is 4.74 B/row and
+      // userAgent 3.92 B/row out of 15.99 — together 54% of the stored bytes, for
+      // two columns an impression has no use for. Halving the row is worth more
+      // here than anywhere else on the platform because this table takes ~10x the
+      // `views` insert rate.
+      //
+      // It also means impressions carry no IP. Anything wanting per-viewer
+      // forensics on this data needs a deliberate decision to start collecting it,
+      // rather than finding it already there.
+      { skipActorMeta: true }
+    );
   }
 
   // App Blocks Analytics Phase 2 — block render/impression event. Fired once per

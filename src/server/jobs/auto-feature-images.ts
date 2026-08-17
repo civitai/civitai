@@ -1,4 +1,5 @@
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
 import { runAutoFeatureImages } from '~/server/services/auto-feature-images.service';
 import { createJob, getJobDate } from './job';
 
@@ -11,6 +12,12 @@ export const autoFeatureImages = createJob('auto-feature-images', '20 * * * *', 
 
   const [lastRun, setLastRun] = await getJobDate('job:auto-feature-images');
   const result = await runAutoFeatureImages({ lastRun });
+  // The flag being on is a statement of intent, so every bail below it is a fault rather than an
+  // off switch — and each one is otherwise indistinguishable from the job working. A missing config
+  // went unnoticed for three days once. `interval-not-elapsed` is the one that means "working",
+  // which caps this at the cron's 24/day.
+  if ('reason' in result && result.reason !== 'interval-not-elapsed')
+    logToAxiom({ type: 'job-misconfigured', name: 'auto-feature-images', reason: result.reason });
   // Only a run that got as far as scoring counts as a run; a config or eligibility miss must not
   // push the next attempt an interval away.
   if ('picked' in result) await setLastRun();

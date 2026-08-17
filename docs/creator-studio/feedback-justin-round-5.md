@@ -222,6 +222,16 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
     its line with "All-time on your images".) Note the asymmetry this exposes: the reactions **over-time chart**
     is all-content (via `reactions.ownerId`) while the all-time **card** is image-only.
     "Per-month graph" (longer monthly trend) also deferred. (`T:940–954`)
+  - **Correction (2026-08-16, PR #3998).** Two things above are wrong and the second one is a trap:
+    - `image_metrics_user` isn't merely image-only, it is **dead** — nothing writes it, max `userId` 9,659,529,
+      so it returned **0** for every creator who signed up since. The all-time comment count now comes from
+      Postgres (`CommentV2` over the image's thread and its replies, excluding the creator's own).
+    - The "root cause" reading of `comments` — `type` + `entityId` + commenter `userId` — assumes `entityId` is
+      the entity commented on. It **isn't**, for any `type` except `Model`; it is the `CommentV2` id. So the
+      proposed "denormalize `ownerId` onto comment events" fix is still right in spirit, but nothing can be
+      joined off `entityId` in the meantime, and a query that tries returns plausible wrong numbers rather than
+      none. Also corrected: the reactions cards were labelled image-only but `reactions_owner_scores` is
+      **all-content**, so both labels moved rather than the query.
 - [x] **[polish]** **Card color matches dashboard** — the audience cards' color differs from the
   dashboard stat cards; align (covered by the global card-color item). (`T:956–959`)
 

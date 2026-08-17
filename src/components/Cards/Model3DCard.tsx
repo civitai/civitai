@@ -73,8 +73,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
     { id },
     { enabled: previewing, staleTime: 5 * 60_000 }
   );
-  const primaryFile =
-    filesData?.files.find((f) => f.isPrimary) ?? filesData?.files[0] ?? null;
+  const primaryFile = filesData?.files.find((f) => f.isPrimary) ?? filesData?.files[0] ?? null;
   const previewUrl = primaryFile?.downloadUrl ?? primaryFile?.url ?? null;
 
   const downloadCount = metric?.downloadCount ?? 0;
@@ -98,6 +97,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
   return (
     <Box pos="relative">
       <AspectRatioImageCard
+        impression={{ entityType: 'Model', entityId: id }}
         href={getModel3DUrl({ id, name })}
         alt={name}
         contentType="model3d"
@@ -237,11 +237,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
                     is already on the allow-list in buzz.schema.ts and is
                     picked up by the Model3D metrics job, so a tap from here
                     flows all the way through to tippedAmountCount. */}
-                <InteractiveTipBuzzButton
-                  toUserId={user.id}
-                  entityType="Model3D"
-                  entityId={id}
-                >
+                <InteractiveTipBuzzButton toUserId={user.id} entityType="Model3D" entityId={id}>
                   <div className="flex items-center gap-0.5">
                     <IconBolt size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">

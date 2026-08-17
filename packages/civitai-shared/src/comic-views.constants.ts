@@ -2,7 +2,8 @@
  * The day comic view tracking went live.
  *
  * Comic views before this date do not exist as `views` rows — they are reconstructed from
- * `pageViews` paths by `scripts/oneoffs/backfill-comic-views.ts`, which writes straight into
+ * `pageViews` paths by the comic view backfill (civitai-scripts, `backfill/comic-views.js`), which
+ * writes straight into
  * `daily_views`. The reconstruction is close but not identical, and one difference is visible to
  * anyone reading a chart:
  *
@@ -18,9 +19,10 @@
  * Exclusive: this date is the first day of live tracking, and the last backfilled day is the one
  * before it.
  *
- * It is OBSERVED, not chosen. The backfill refuses to run until `default.views` actually holds a
- * comic row, then asserts that the first date one appears equals this value and names the correct
- * one if it does not — so this is a checked contract rather than a date someone picked in advance.
+ * It is OBSERVED, not chosen. The backfill (civitai-scripts, `backfill/comic-views.js`) refuses to
+ * run until `default.views` actually holds a day of real comic views, then asserts that the first
+ * such day equals this value and names the correct one if it does not — so this is a checked
+ * contract rather than a date someone picked in advance.
  * A guessed date fails silently in both directions: a day early and live rows land inside the
  * backfilled window; a day late and that day gets neither backfill nor tracking. The boundary is
  * UTC midnight, which falls the previous evening in US timezones, so a hand-picked date is

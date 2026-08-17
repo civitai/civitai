@@ -1,5 +1,15 @@
 # Migrating a test file onto the canonical shared mocks
 
+> ⚠️ **The bulk migration this was written for is STOPPED** (2026-08-16). It existed to make
+> `isolate: false` safe suite-wide; measurement showed the benefit is convex — 43% of files bought
+> 3% of the import saving, 100% buys 66% — so a partial migration is worth ~nothing and the full one
+> costs 601 files across 354 specifiers. `unit-fast` (#3975) was closed rather than merged.
+>
+> **This recipe is still current and still correct** for the case that remains: the
+> `no-direct-shared-module-mock` guard fails your build because you added a direct `vi.mock` of
+> `~/server/db/client`, `~/server/redis/client` or `~/server/logging/client`. Follow it for that.
+> Do not read it as a backlog to work through.
+
 The mechanism and the design are in [shared-module-mocks.md](./shared-module-mocks.md). This
 is the recipe: what to run, what to do by hand, and how to know you are done.
 

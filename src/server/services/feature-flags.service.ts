@@ -165,6 +165,13 @@ const featureFlags = createFeatureFlags({
   // dark-flag precedent.) No client bundle change is required (the feed already
   // renders any-length image arrays), so this is a pure server behavior flag.
   getAllModelImagesSlim: { availability: [], fliptKey: 'get-all-model-images-slim' },
+  // Feed impression tracking. Ships dark: this is the only new telemetry stream
+  // on the site whose volume is set by scrolling rather than by clicking, so the
+  // rollout wants a dial that does not need a deploy to turn back down. Ramp the
+  // `feed-impressions` cohort while watching the impressions table's insert rate
+  // and part count; instant rollback = set the cohort to 0, which stops the
+  // browser observing at all rather than merely dropping rows server-side.
+  feedImpressions: { availability: [], fliptKey: 'feed-impressions' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },

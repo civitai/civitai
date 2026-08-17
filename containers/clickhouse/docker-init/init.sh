@@ -388,7 +388,7 @@ clickhouse client -n <<-EOSQL
 
     create table if not exists default.daily_views
     (
-        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9, 'ComicProject' = 10, 'ComicChapter' = 11),
+        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9, 'ComicProject' = 10, 'ComicChapter' = 11, 'Model3D' = 12),
         entityId    UInt32,
         createdDate Date,
         views       UInt64
@@ -888,10 +888,10 @@ clickhouse client -n <<-EOSQL
 
     create table if not exists default.views
     (
-        type Enum8('ProfileView' = 1, 'ImageView' = 2, 'PostView' = 3, 'ModelView' = 4, 'ModelVersionView' = 5, 'ArticleView' = 6, 'CollectionView' = 7, 'BountyView' = 8, 'BountyEntryView' = 9, 'ComicProjectView' = 10, 'ComicChapterView' = 11),
+        type Enum8('ProfileView' = 1, 'ImageView' = 2, 'PostView' = 3, 'ModelView' = 4, 'ModelVersionView' = 5, 'ArticleView' = 6, 'CollectionView' = 7, 'BountyView' = 8, 'BountyEntryView' = 9, 'ComicProjectView' = 10, 'ComicChapterView' = 11, 'Model3DView' = 12),
         time          DateTime                                          default now(),
         userId        Int32                                             default 0,
-        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9, 'ComicProject' = 10, 'ComicChapter' = 11),
+        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9, 'ComicProject' = 10, 'ComicChapter' = 11, 'Model3D' = 12),
         entityId      Int32,
         ip            String                                            default '',
         userAgent     String                                            default '',
@@ -905,6 +905,46 @@ clickhouse client -n <<-EOSQL
         engine = MergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (time, entityType, entityId, userId)
+            SETTINGS index_granularity = 8192;
+
+    create table if not exists default.impressions
+    (
+        time        DateTime                                                                                                                                 default now(),
+        userId      Int32                                                                                                                                    default 0,
+        entityType LowCardinality(String),
+        entityId    Int32,
+        sessionKey  String                                                                                                                                   default '',
+        surface LowCardinality(String)                                                                                                                       default 'other',
+        createdDate Date materialized toDate(time)
+    )
+        engine = MergeTree()
+            PARTITION BY toYYYYMM(createdDate)
+            ORDER BY (time, entityType, entityId, userId)
+            TTL createdDate + INTERVAL 30 DAY
+            SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
+
+    create table if not exists default.daily_impressions
+    (
+        entityType LowCardinality(String),
+        entityId    Int32,
+        createdDate Date,
+        impressions UInt64
+    )
+        engine = SummingMergeTree()
+            PARTITION BY toYYYYMM(createdDate)
+            ORDER BY (entityType, entityId, createdDate)
+            SETTINGS index_granularity = 8192;
+
+    create table if not exists default.impressions_daily_by_owner
+    (
+        ownerId     Int32,
+        entityType LowCardinality(String),
+        createdDate Date,
+        impressions UInt64
+    )
+        engine = SummingMergeTree()
+            PARTITION BY toYYYYMM(createdDate)
+            ORDER BY (ownerId, entityType, createdDate)
             SETTINGS index_granularity = 8192;
 
     create table if not exists default.views_images_counts
@@ -1384,7 +1424,7 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_views_mv
                 TO default.daily_views
                 (
-                entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9, 'ComicProject' = 10, 'ComicChapter' = 11),
+                entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9, 'ComicProject' = 10, 'ComicChapter' = 11, 'Model3D' = 12),
                 entityId Int32,
                 createdDate Date,
                 views UInt64
@@ -1398,6 +1438,72 @@ clickhouse client -n <<-EOSQL
     GROUP BY 1,
             2,
             3;
+
+    CREATE MATERIALIZED VIEW default.daily_impressions_mv
+                TO default.daily_impressions
+                (
+                entityType LowCardinality(String),
+                entityId Int32,
+                createdDate Date,
+                impressions UInt64
+                    )
+    AS
+    SELECT entityType,
+        entityId,
+        createdDate,
+        count(*) AS impressions
+    FROM default.impressions
+    GROUP BY 1,
+            2,
+            3;
+
+    CREATE MATERIALIZED VIEW default.impressions_daily_by_owner_mv
+        REFRESH EVERY 1 DAY OFFSET 4 HOUR APPEND
+                TO default.impressions_daily_by_owner
+                (
+                ownerId Int32,
+                entityType LowCardinality(String),
+                createdDate Date,
+                impressions UInt64
+                    )
+    AS
+    WITH dimg AS (SELECT entityId, createdDate, sum(impressions) AS impressions
+                  FROM default.daily_impressions
+                  WHERE (entityType = 'Image')
+                    AND (createdDate >= (today() - 1))
+                    AND (createdDate < today())
+                  GROUP BY entityId, createdDate),
+        dmodel AS (SELECT entityId, createdDate, sum(impressions) AS impressions
+                   FROM default.daily_impressions
+                   WHERE (entityType = 'Model')
+                     AND (createdDate >= (today() - 1))
+                     AND (createdDate < today())
+                   GROUP BY entityId, createdDate)
+    SELECT ownerId, entityType, createdDate, sum(impressions) AS impressions
+    FROM (SELECT ic.userId      AS ownerId,
+                'Image'        AS entityType,
+                dimg.createdDate AS createdDate,
+                dimg.impressions AS impressions
+        FROM dimg
+                INNER JOIN (SELECT id, any(userId) AS userId
+                            FROM default.images_created
+                            WHERE id IN (SELECT entityId FROM dimg)
+                            GROUP BY id) AS ic ON dimg.entityId = ic.id
+        UNION ALL
+        SELECT mc.ownerId        AS ownerId,
+                'Model'          AS entityType,
+                dmodel.createdDate AS createdDate,
+                dmodel.impressions AS impressions
+        FROM dmodel
+                INNER JOIN (SELECT modelId,
+                                    argMinIf(userId, time, (type = 'Create') AND (userId != 0)) AS createUser,
+                                    argMaxIf(userId, time, userId != 0)                         AS fallbackUser,
+                                    if(createUser != 0, createUser, fallbackUser)               AS ownerId
+                            FROM default.modelEvents
+                            WHERE modelId IN (SELECT entityId FROM dmodel)
+                            GROUP BY modelId
+                            HAVING ownerId != 0) AS mc ON dmodel.entityId = mc.modelId)
+    GROUP BY ownerId, entityType, createdDate;
 
     CREATE MATERIALIZED VIEW default.modelVersionUniqueDownloads
                 (

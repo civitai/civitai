@@ -134,6 +134,7 @@ function ModelCardContent({ data }: Props) {
 
   return (
     <AspectRatioImageCard
+      impression={{ entityType: 'Model', entityId: data.id }}
       href={href}
       cosmetic={data.cosmetic?.data}
       contentType="model"

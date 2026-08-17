@@ -1,6 +1,7 @@
 import { Text } from '@mantine/core';
 import clsx from 'clsx';
 import React, { type Key } from 'react';
+import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 import type { DialogKey, DialogState } from '~/components/Dialog/routed-dialog/registry';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -75,6 +76,13 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   alwaysVisibleBadge?: boolean;
   /** Accessible fallback alt text when the image itself has no name (e.g. the card's title). */
   alt?: string;
+  /**
+   * The entity this card IS, for impression tracking. The image it renders is
+   * added automatically — a model card presents both a model and whichever cover
+   * image the viewer's browsing level selected, and the image's creator is
+   * entitled to that impression even though the card is not about the image.
+   */
+  impression?: ImpressionTarget;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -99,14 +107,30 @@ export function AspectRatioImageCard<T extends DialogKey>({
   explain,
   alwaysVisibleBadge,
   alt,
+  impression,
 }: AspectRatioImageCardProps<T>) {
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
+
+  // Rebuilt every render, deliberately not memoized: useTrackImpression keys its
+  // effect on the entity IDENTITIES rather than on the array's identity, so a new
+  // array per render costs nothing and a memo would only add a stale-deps hazard.
+  const impressions: ImpressionTarget[] | undefined =
+    impression || image
+      ? [
+          ...(impression ? [impression] : []),
+          // An image card passes its own image as `impression` too; the buffer
+          // dedupes on entity identity, so the duplicate costs nothing and no
+          // caller has to know whether the shell already covered it.
+          ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+        ]
+      : undefined;
 
   return (
     <AspectRatioCard
       aspectRatio={aspectRatio}
       cosmetic={cosmetic}
       className={className}
+      impressions={impressions}
       render={({ inView }) => {
         if (!inView) return null;
 

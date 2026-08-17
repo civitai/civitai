@@ -64,6 +64,7 @@ export const CollectionCard = memo(function CollectionCard({ data }: Props) {
 
   return (
     <FeedCard
+      impressions={[{ entityType: 'Collection', entityId: data.id }]}
       className={coverImages.length === 0 ? cardClasses.noImage : undefined}
       href={`/collections/${data.id}`}
     >

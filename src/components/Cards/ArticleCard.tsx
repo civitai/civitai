@@ -44,6 +44,7 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
 
   return (
     <AspectRatioImageCard
+      impression={{ entityType: 'Article', entityId: id }}
       href={`/articles/${id}/${slugit(title)}`}
       alt={title}
       aspectRatio={aspectRatio}

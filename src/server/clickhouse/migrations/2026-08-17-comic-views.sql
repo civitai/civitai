@@ -158,5 +158,8 @@ ALTER TABLE default.daily_views_mv
 --   DELETE FROM default.daily_views
 --   WHERE entityType IN ('ComicProject', 'ComicChapter') AND entityId = 0;
 --
--- Same applies to clearing a bad backfill run — see --allow-rerun in
--- scripts/oneoffs/backfill-comic-views.ts.
+-- Same applies to clearing a bad backfill run.
+--
+-- The backfill itself lives in the civitai-scripts repo, at backfill/comic-views.js. It refuses to
+-- run until tracking is deployed and a real comic view has landed, so the order is: this file,
+-- then deploy, then the backfill.
