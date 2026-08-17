@@ -950,8 +950,10 @@ async function processScanResult({
           'webhooks'
         ).catch(() => null);
       }
-      // Skipped at zero: `bitXor(hash, 0)` degenerates to `bitCount(hash) < 5`, which matches any
-      // low-popcount blocked hash rather than a near-duplicate of this image. Stored regardless.
+      // Skipped at zero because an all-zero hash is degenerate, not because it cannot match: it
+      // matches every blocked entry with under 5 set bits, and those matches say nothing about
+      // the image. Anything acting on this result rather than logging it needs that decided
+      // properly — a flat image currently bypasses the check. Stored either way.
       const blocked = !pHash
         ? false
         : await isBlocked(pHash).catch((error) => {
@@ -975,7 +977,7 @@ async function processScanResult({
             type: 'info',
             message: 'Image pHash matched a blocked image',
             imageId: id,
-            pHash: hash,
+            pHash: pHash?.toString(),
             source: 'webhook-legacy',
           },
           'webhooks'

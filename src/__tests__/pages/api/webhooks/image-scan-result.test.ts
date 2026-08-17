@@ -561,6 +561,20 @@ describe('image-scan-result webhook - pipeline tests', () => {
       expect(req.res.status).toHaveBeenCalledWith(400);
     });
 
+    it('logs a match against the parsed hash, not the string the scanner sent', async () => {
+      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
+      mockClickhouseQuery.mockResolvedValue([{ count: 1 }]);
+
+      const req = runWebhook({ id: 16, status: 0, source: TagSource.ImageHash, hash: ' 42 ' });
+      await req.promise;
+
+      const match = mockLogToAxiom.mock.calls.find(
+        (call) => call[0]?.message === 'Image pHash matched a blocked image'
+      );
+      expect(match).toBeDefined();
+      expect(match![0].pHash).toBe('42');
+    });
+
     it('passes a valid hash to ClickHouse as digits only', async () => {
       envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
 
