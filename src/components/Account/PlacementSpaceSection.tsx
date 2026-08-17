@@ -27,7 +27,11 @@ import { placementPriceCaption, PLACEMENT_SURFACES } from '~/shared/utils/placem
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SURFACES.sticker;
+const {
+  defaultMode: DEFAULT_MODE,
+  defaultPrice: DEFAULT_PRICE,
+  defaultFreeSlots: DEFAULT_FREE_SLOTS,
+} = PLACEMENT_SURFACES.sticker;
 
 /**
  * Account-level control over who may place stickers on this creator's images.
@@ -69,15 +73,22 @@ export function PlacementSpaceSection() {
   const [mode, setMode] = useState<string>(DEFAULT_MODE);
   const [price, setPrice] = useState<number | ''>(DEFAULT_PRICE ?? '');
   const [maxScale, setMaxScale] = useState(STICKER_PLACEMENT_DEFAULT_MAX_SCALE);
+  // Seeded from the surface default for the same reason as the mode: with no row
+  // the cascade resolves this space as taking one free sticker, and a control
+  // reading 0 would tell a creator their free slots are closed while they are
+  // open. The first commit then writes the number they are looking at.
+  const [freeSlots, setFreeSlots] = useState<number>(DEFAULT_FREE_SLOTS);
 
   useEffect(() => {
     if (!stored) {
       setMode(DEFAULT_MODE);
       setPrice(DEFAULT_PRICE ?? '');
+      setFreeSlots(DEFAULT_FREE_SLOTS);
       return;
     }
     setMode(stored.mode);
     setPrice(stored.price ?? '');
+    setFreeSlots(stored.freeSlots ?? DEFAULT_FREE_SLOTS);
     setMaxScale(stickerMaxScale(stored.settings as Record<string, unknown>));
   }, [stored]);
 
@@ -94,6 +105,7 @@ export function PlacementSpaceSection() {
       // page asserting a price the creator never chose — which the next commit
       // would then write into their row.
       setPrice(stored ? stored.price ?? '' : DEFAULT_PRICE ?? '');
+      setFreeSlots(stored?.freeSlots ?? DEFAULT_FREE_SLOTS);
       showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
     },
   });
@@ -107,6 +119,11 @@ export function PlacementSpaceSection() {
   if (spacesPending || spacesFailed) return null;
 
   const cap = range?.max ?? 0;
+  const freeSlotCap = range?.freeSlotCap ?? 0;
+  // What the server will actually honour. A stored count above the cap is left
+  // alone rather than rewritten — the same treatment as a price above its cap —
+  // so the page has to say the smaller number instead of the one on the row.
+  const effectiveFreeSlots = Math.min(freeSlots, freeSlotCap);
   const waiting = pending?.items.length ?? 0;
   // One page's worth is a floor, not a total. Badging it as an exact number
   // tells an owner with 200 waiting that they have 50, which is the same lie
@@ -118,9 +135,19 @@ export function PlacementSpaceSection() {
     range?.max ?? null
   );
 
-  const commit = (nextMode: string, nextPrice: number | '', nextMaxScale = maxScale) =>
+  const commit = (
+    nextMode: string,
+    nextPrice: number | '',
+    nextMaxScale = maxScale,
+    nextFreeSlots = freeSlots
+  ) =>
     save.mutate({
       settings: { maxScale: nextMaxScale },
+      // Always sent, unlike the price. There is no "unset" position on this
+      // control — 0 is the creator saying no rather than the absence of an
+      // answer — so leaving it out would mean the number on screen and the number
+      // stored disagree the moment they touch anything else.
+      freeSlots: nextFreeSlots,
       surface: 'sticker',
       entityType: 'user',
       // Keyed by the owner's own id; the service refuses any other, so this
@@ -238,6 +265,46 @@ export function PlacementSpaceSection() {
           of the size of the image
         </Text>
       </Stack>
+
+      {/* Hidden entirely at a cap of 0 rather than shown disabled: a control whose
+          every position means the same thing is asking a question with one
+          answer, and the cap moves on its own as a score or a membership does. */}
+      {freeSlotCap > 0 && mode !== 'off' && (
+        <Stack gap={4}>
+          <Group gap={4} wrap="nowrap">
+            <Text size="sm" fw={500}>
+              Free stickers you&apos;ll accept
+            </Text>
+            <InfoPopover size="xs" iconProps={{ size: 14 }} width={320}>
+              <Text size="sm" maw={300} style={{ whiteSpace: 'normal' }}>
+                People get one free placement a day, and these are the slots they can spend it on. A
+                slot is held while a placement waits for you, and comes back if you decline it or
+                let it expire. Your maximum is {freeSlotCap}, set by your creator score and
+                membership tier. Paid placements never use these up.
+              </Text>
+            </InfoPopover>
+          </Group>
+          <Slider
+            value={Math.min(freeSlots, freeSlotCap)}
+            onChange={setFreeSlots}
+            onChangeEnd={(value) => commit(mode, price, maxScale, value)}
+            min={0}
+            max={freeSlotCap}
+            step={1}
+            label={null}
+            marks={[
+              { value: 0, label: 'None' },
+              { value: freeSlotCap, label: `${freeSlotCap}` },
+            ]}
+          />
+          <Text size="sm" c="dimmed" mt={16}>
+            <Text span fw={600} c="var(--mantine-color-text)">
+              {effectiveFreeSlots}
+            </Text>{' '}
+            {effectiveFreeSlots === 1 ? 'free sticker' : 'free stickers'} per image
+          </Text>
+        </Stack>
+      )}
 
       {/* The queue is otherwise unreachable: the notification links to the image,
           and nothing else in the app points at it. */}

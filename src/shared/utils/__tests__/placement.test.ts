@@ -3,8 +3,14 @@ import type { PlacementOutcome, PlacementStatus } from '~/shared/utils/placement
 import {
   clampDeclineFeeRate,
   declineFeeAmount,
+  effectiveFreeSlots,
   effectivePlacementPrice,
+  FREE_PLACEMENTS_PER_DAY,
+  FREE_SLOT_HOLDING_STATUSES,
+  freePlacementDayStart,
   isPlacementSurface,
+  PLACEMENT_FREE_SLOT_CAP_TIERS,
+  placementFreeSlotCap,
   MAX_DECLINE_FEE_RATE,
   MIN_DECLINE_FEE_RATE,
   PLACEMENT_SURFACES,
@@ -328,6 +334,7 @@ describe('space resolution', () => {
     expect(resolvePlacementSpace('sticker', {})).toEqual({
       mode: PLACEMENT_SURFACES.sticker.defaultMode,
       price: PLACEMENT_SURFACES.sticker.defaultPrice,
+      freeSlots: PLACEMENT_SURFACES.sticker.defaultFreeSlots,
       settings: {},
     });
   });
@@ -405,7 +412,12 @@ describe('space resolution', () => {
       image: mode('auto'),
       user: mode('off', 250),
     });
-    expect(resolved).toEqual({ mode: 'auto', price: 250, settings: {} });
+    expect(resolved).toEqual({
+      mode: 'auto',
+      price: 250,
+      freeSlots: PLACEMENT_SURFACES.sticker.defaultFreeSlots,
+      settings: {},
+    });
   });
 
   it('merges settings per key, with the most specific level winning', () => {
@@ -442,5 +454,107 @@ describe('the surface table', () => {
       expect(config.defaultDeclineFeeRate).toBeLessThanOrEqual(MAX_DECLINE_FEE_RATE);
       expect(config.expiryHours).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('free capacity', () => {
+  // The two ends of the scale are decided and published; the middle is a
+  // judgement. Pinning both ends means a table edit that moves them is a
+  // deliberate change to this file rather than something a reviewer has to spot.
+  it('starts a new creator at one and tops out at ten', () => {
+    expect(placementFreeSlotCap(0, 'free')).toBe(1);
+    expect(placementFreeSlotCap(1_000_000, 'gold')).toBe(10);
+  });
+
+  it('never lets a lower tier or a lower score buy more slots', () => {
+    const tiers = ['free', 'bronze', 'silver', 'gold'] as const;
+    const scores = PLACEMENT_FREE_SLOT_CAP_TIERS.map((band) => band.minScore);
+
+    for (const score of scores)
+      for (let i = 1; i < tiers.length; i++)
+        expect(placementFreeSlotCap(score, tiers[i])).toBeGreaterThanOrEqual(
+          placementFreeSlotCap(score, tiers[i - 1])
+        );
+
+    for (const tier of tiers)
+      for (let i = 1; i < scores.length; i++)
+        expect(placementFreeSlotCap(scores[i], tier)).toBeGreaterThanOrEqual(
+          placementFreeSlotCap(scores[i - 1], tier)
+        );
+  });
+
+  // The same resolver as the price caps, deliberately — one mechanism, so a fix
+  // to the band-picking cannot land on one table and miss the other. This is what
+  // makes that reuse a fact rather than an intention.
+  it('is resolved by the price cap resolver, not a second one', () => {
+    for (const band of PLACEMENT_FREE_SLOT_CAP_TIERS)
+      expect(placementFreeSlotCap(band.minScore, 'gold')).toBe(
+        placementPriceCap(band.minScore, 'gold', PLACEMENT_FREE_SLOT_CAP_TIERS)
+      );
+  });
+
+  it('gives an unset space the surface default rather than nothing', () => {
+    for (const surface of placementSurfaces)
+      expect(effectiveFreeSlots(surface, null, 10)).toBe(
+        PLACEMENT_SURFACES[surface].defaultFreeSlots
+      );
+  });
+
+  // The distinction that lets this replace an on/off toggle instead of sitting
+  // beside one. Defaulting a stored 0 away would reopen a space its owner closed.
+  it('keeps an explicit zero, which is the creator saying no', () => {
+    expect(effectiveFreeSlots('sticker', 0, 10)).toBe(0);
+  });
+
+  it('ceilings a stored count without rewriting it', () => {
+    expect(effectiveFreeSlots('sticker', 8, 3)).toBe(3);
+  });
+
+  it('cannot go negative, however the cap is misconfigured', () => {
+    expect(effectiveFreeSlots('sticker', 4, -2)).toBe(0);
+  });
+
+  it('resolves image over post over account, independently of price', () => {
+    const resolved = resolvePlacementSpace('sticker', {
+      image: { mode: 'review', price: null, freeSlots: 2 },
+      post: { mode: 'review', price: 300, freeSlots: 5 },
+      user: { mode: 'review', price: 500, freeSlots: 9 },
+    });
+
+    expect(resolved.freeSlots).toBe(2);
+    // The price came from the post while the count came from the image, which is
+    // the whole reason these resolve separately: an owner who set their capacity
+    // once should keep it on an image they later reprice.
+    expect(resolved.price).toBe(300);
+  });
+
+  it('falls through a level that has not chosen', () => {
+    const resolved = resolvePlacementSpace('sticker', {
+      image: { mode: 'review', price: 100 },
+      user: { mode: 'review', price: 500, freeSlots: 6 },
+    });
+
+    expect(resolved.freeSlots).toBe(6);
+  });
+
+  // Pending is the point of the feature: without it fifty people submit into
+  // four slots and the creator gets a fifty-item review queue.
+  it('holds a slot while a placement is pending, and releases every other status', () => {
+    expect([...FREE_SLOT_HOLDING_STATUSES].sort()).toEqual(['approved', 'pending']);
+  });
+
+  it('starts the day at midnight UTC, wherever the placer is', () => {
+    const start = freePlacementDayStart(new Date('2026-08-17T23:59:59.999Z'));
+
+    expect(start.toISOString()).toBe('2026-08-17T00:00:00.000Z');
+    // A local-day boundary would let anyone willing to change timezone refresh
+    // the allowance twice, and would have two servers disagree about the day.
+    expect(freePlacementDayStart(new Date('2026-08-18T00:00:00.000Z')).toISOString()).toBe(
+      '2026-08-18T00:00:00.000Z'
+    );
+  });
+
+  it('is one placement a day, which is what makes free scarce', () => {
+    expect(FREE_PLACEMENTS_PER_DAY).toBe(1);
   });
 });

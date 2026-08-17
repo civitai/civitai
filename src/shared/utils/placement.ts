@@ -108,6 +108,7 @@ export const PLACEMENT_SURFACES = {
     // Changing this makes that copy false — change both or neither.
     defaultPlatformShare: 0,
     expiryHours: 48,
+    defaultFreeSlots: 1,
   },
   remixGallery: {
     label: 'remix galleries',
@@ -141,6 +142,7 @@ export const PLACEMENT_SURFACES = {
     // row: `approvalShares.remixGallery.platform`.
     defaultPlatformShare: 0,
     expiryHours: 48,
+    defaultFreeSlots: 1,
   },
 } as const satisfies Record<
   PlacementSurface,
@@ -166,6 +168,16 @@ export const PLACEMENT_SURFACES = {
     defaultSellerShare: number;
     defaultPlatformShare: number;
     expiryHours: number;
+    /**
+     * How many free placements a space accepts when its owner has never chosen.
+     *
+     * `1` rather than `0` because free capacity is opt-OUT, the same decision the
+     * gallery's `defaultMode` records: a creator who never opens these settings
+     * takes one free placement, which is what makes the habit reachable at all.
+     * It is still ceilinged by the score/tier cap, so the bottom band's range of
+     * 0-1 makes this both the default and the maximum for a new creator.
+     */
+    defaultFreeSlots: number;
   }
 >;
 
@@ -261,6 +273,17 @@ export type PlacementSpaceSettings = Record<string, unknown>;
 export type PlacementSpaceSetting = {
   mode: PlacementSpaceMode;
   price: number | null;
+  /**
+   * How many free placements this space accepts. `0` is a real answer — the
+   * creator taking none — which is why this replaces an on/off toggle rather
+   * than sitting beside one, and why `null` has to mean "unset" instead.
+   *
+   * A column rather than a key in `settings`. Both surfaces have the same
+   * concept and this layer reads it: `settings` is documented as surface-owned
+   * and never read here, so putting it there would either break that or force
+   * each surface to reimplement the reservation.
+   */
+  freeSlots?: number | null;
   settings?: PlacementSpaceSettings;
 };
 
@@ -288,6 +311,12 @@ export function resolvePlacementSpace(
     price:
       ordered.find((level) => level?.price != null)?.price ??
       PLACEMENT_SURFACES[surface].defaultPrice,
+    // Independently of `mode` and of `price`, for the same reason they are
+    // independent of each other: an owner who set their free capacity once, at
+    // the account level, should keep it on an image they later reprice.
+    freeSlots:
+      ordered.find((level) => level?.freeSlots != null)?.freeSlots ??
+      PLACEMENT_SURFACES[surface].defaultFreeSlots,
     // Merged per key, most specific last, rather than taking the first level
     // that has any settings at all: an owner who set a max size on their account
     // and something unrelated on one image should keep both.
@@ -449,6 +478,92 @@ export function placementPriceCap(
  */
 export const effectivePlacementPrice = (setPrice: number | null, cap: number) =>
   setPrice == null ? null : Math.max(Math.min(setPrice, cap), PLACEMENT_MIN_PRICE);
+
+// ---------------------------------------------------------------------------
+// Free capacity
+// ---------------------------------------------------------------------------
+
+/**
+ * How many free placements a creator may accept, capped by creator score and
+ * membership tier.
+ *
+ * Deliberately the same table shape, the same resolver (`placementPriceCap`) and
+ * the same `placement:config` override as the price caps above — this is the
+ * same idea applied to a different number, and a second mechanism for it would
+ * be two things to keep in agreement.
+ *
+ * The bottom band is 0-1: a brand-new creator takes one free placement, which is
+ * also `defaultFreeSlots`, so the default and the maximum coincide until they
+ * earn room to raise it. The top is 10, at gold on the highest score band.
+ *
+ * ⚠️ The middle bands are a judgement, not a measurement. The shape is the
+ * commitment: read at request time, overridable without a deploy, never written
+ * to a space or a placement row.
+ */
+export const PLACEMENT_FREE_SLOT_CAP_TIERS: PlacementPriceTier[] = [
+  { minScore: 0, caps: { free: 1, bronze: 2, silver: 3, gold: 4 } },
+  { minScore: 10_000, caps: { free: 2, bronze: 3, silver: 4, gold: 6 } },
+  { minScore: 25_000, caps: { free: 3, bronze: 4, silver: 6, gold: 8 } },
+  { minScore: 100_000, caps: { free: 4, bronze: 6, silver: 8, gold: 10 } },
+];
+
+/**
+ * The most free placements this creator may accept on one space.
+ *
+ * A thin naming of `placementPriceCap` over the free-slot table, not a second
+ * resolver: the band-picking rules (highest band at or below the score, unknown
+ * tier reads as free, a table with no zero band is unusable) are the same rules,
+ * and two copies of them would be free to drift.
+ */
+export const placementFreeSlotCap = (
+  score: number,
+  tier: PriceCapTier,
+  tiers: PlacementPriceTier[] = PLACEMENT_FREE_SLOT_CAP_TIERS
+) => placementPriceCap(score, tier, tiers);
+
+/**
+ * What a space actually accepts, computed at read like the effective price.
+ *
+ * An unset count resolves to the surface default rather than to zero, because
+ * free capacity is opt-out. `0` set explicitly is preserved — it is the creator
+ * saying no, and defaulting it away would reopen a space they closed.
+ */
+export const effectiveFreeSlots = (
+  surface: PlacementSurface,
+  setSlots: number | null,
+  cap: number
+) => Math.max(Math.min(setSlots ?? PLACEMENT_SURFACES[surface].defaultFreeSlots, cap), 0);
+
+/**
+ * How many free placements one placer may make in a UTC day, across every
+ * surface. The scarcity is the product: an unbounded free tier is a spam tier,
+ * and the people it costs are the creators who then close their spaces.
+ */
+export const FREE_PLACEMENTS_PER_DAY = 1;
+
+/**
+ * Midnight UTC for the day containing `at`.
+ *
+ * UTC rather than the placer's local day, so the allowance cannot be refreshed
+ * twice by moving timezone, and so two servers never disagree about which day a
+ * placement fell in.
+ */
+export function freePlacementDayStart(at: Date = new Date()) {
+  return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+}
+
+/**
+ * Statuses that hold a free slot.
+ *
+ * Pending is in the list and that is the entire point of the feature: without
+ * reservation, fifty people submit into four slots and the creator gets a
+ * fifty-item review queue, which is what the slider exists to prevent. Everything
+ * else — declined, expired, removed — releases the slot, immediately.
+ */
+export const FREE_SLOT_HOLDING_STATUSES = [
+  'pending',
+  'approved',
+] as const satisfies readonly PlacementStatus[];
 
 // ---------------------------------------------------------------------------
 // The split

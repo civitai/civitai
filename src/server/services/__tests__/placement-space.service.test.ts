@@ -10,10 +10,20 @@ const imageFindUnique = dbMock.dbWrite.image.findUnique;
 
 vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementService>()),
-  placementPriceRange: async () => ({ min: 0, max: 500, score: 0, tier: 'free' as const }),
+  placementPriceRange: async () => ({
+    min: 0,
+    max: 500,
+    freeSlotCap: capState.freeSlotCap,
+    score: 0,
+    tier: 'free' as const,
+  }),
 }));
 
-const { setPlacementSpace } = await import('~/server/services/placement-space.service');
+const capState = { freeSlotCap: 4 };
+
+const { resolvePlacementSpaceFor, setPlacementSpace } = await import(
+  '~/server/services/placement-space.service'
+);
 
 const OWNER = 7;
 const base = {
@@ -198,5 +208,130 @@ describe('setPlacementSpace — the price guard', () => {
     expect(PLACEMENT_SURFACES.remixGallery.defaultPrice!).toBeGreaterThanOrEqual(
       PLACEMENT_SURFACES.remixGallery.serverMinPrice
     );
+  });
+});
+
+describe('resolvePlacementSpaceFor — free capacity', () => {
+  const placementCount = dbMock.dbWrite.placement.count;
+
+  const resolve = () =>
+    resolvePlacementSpaceFor({ surface: 'sticker', targetType: 'image', targetId: 42 });
+
+  beforeEach(() => {
+    capState.freeSlotCap = 4;
+    imageFindUnique.mockResolvedValue({
+      id: 42,
+      userId: OWNER,
+      postId: null,
+      user: { username: 'creator' },
+    });
+    placementCount.mockResolvedValue(0);
+  });
+
+  it('gives an unconfigured space the surface default', async () => {
+    const space = await resolve();
+
+    expect(space.setFreeSlots).toBe(PLACEMENT_SURFACES.sticker.defaultFreeSlots);
+    expect(space.freeSlots).toBe(PLACEMENT_SURFACES.sticker.defaultFreeSlots);
+    expect(space.freeSlotsRemaining).toBe(PLACEMENT_SURFACES.sticker.defaultFreeSlots);
+  });
+
+  it('subtracts what is already reserved', async () => {
+    spaceFindMany.mockResolvedValue([
+      { entityType: 'image', mode: 'review', price: 100, freeSlots: 4 },
+    ]);
+    placementCount.mockResolvedValue(3);
+
+    expect((await resolve()).freeSlotsRemaining).toBe(1);
+  });
+
+  // Both statuses, and free rows only. A count that took every status would never
+  // release a slot after a decline; one that ignored `free` would let paid
+  // placements eat the free capacity, which the two counters exist to keep apart.
+  it('reserves against pending and approved free rows, and nothing else', async () => {
+    spaceFindMany.mockResolvedValue([
+      { entityType: 'image', mode: 'review', price: 100, freeSlots: 4 },
+    ]);
+
+    await resolve();
+
+    const { where } = placementCount.mock.calls[0][0];
+    expect(where).toMatchObject({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: 42,
+      free: true,
+    });
+    expect(where.status.in.slice().sort()).toEqual(['approved', 'pending']);
+  });
+
+  it('never reports negative room when the owner lowers their slider', async () => {
+    // Not a takeback: the placements they already accepted stay, and the space
+    // simply accepts nothing further until one is released.
+    spaceFindMany.mockResolvedValue([
+      { entityType: 'image', mode: 'review', price: 100, freeSlots: 1 },
+    ]);
+    placementCount.mockResolvedValue(3);
+
+    expect((await resolve()).freeSlotsRemaining).toBe(0);
+  });
+
+  it('ceilings a stored count at the cap without rewriting the row', async () => {
+    capState.freeSlotCap = 2;
+    spaceFindMany.mockResolvedValue([
+      { entityType: 'image', mode: 'review', price: 100, freeSlots: 9 },
+    ]);
+
+    const space = await resolve();
+
+    expect(space.setFreeSlots).toBe(9);
+    expect(space.freeSlots).toBe(2);
+  });
+
+  it('asks nothing of the database when the space takes no free placements', async () => {
+    spaceFindMany.mockResolvedValue([
+      { entityType: 'image', mode: 'review', price: 100, freeSlots: 0 },
+    ]);
+
+    const space = await resolve();
+
+    expect(space.freeSlotsRemaining).toBe(0);
+    // The answer is 0 whatever the count says, so the query is a round trip that
+    // cannot change it.
+    expect(placementCount).not.toHaveBeenCalled();
+  });
+});
+
+describe('setPlacementSpace — free slots', () => {
+  // The same three-way distinction as the price, and it has to be, because the
+  // per-image toggle sends `mode` and `price` and nothing else: without this an
+  // owner flipping one image on would silently clear their account-level count.
+  it('leaves a stored count alone when none is sent', async () => {
+    await setPlacementSpace({ ...base, mode: 'review' });
+
+    expect(priceWritten()).not.toHaveProperty('freeSlots');
+  });
+
+  it('clears a count to null so the level inherits again', async () => {
+    await setPlacementSpace({ ...base, mode: 'review', freeSlots: null });
+
+    expect(priceWritten()).toMatchObject({ freeSlots: null });
+  });
+
+  // Stored uncapped, exactly as the price is. A creator whose tier lapses and
+  // returns gets their number back rather than finding it silently rewritten to
+  // whatever their cap happened to be on the day they last saved.
+  it('stores a count above the current cap rather than refusing or clamping it', async () => {
+    await setPlacementSpace({ ...base, mode: 'review', freeSlots: 9 });
+
+    expect(priceWritten()).toMatchObject({ freeSlots: 9 });
+  });
+
+  // The state that replaces an on/off toggle. Written through, not treated as
+  // "unset", or the creator's no would resolve back to the surface default.
+  it('stores an explicit zero', async () => {
+    await setPlacementSpace({ ...base, mode: 'review', freeSlots: 0 });
+
+    expect(priceWritten()).toMatchObject({ freeSlots: 0 });
   });
 });

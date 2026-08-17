@@ -72,6 +72,13 @@ export const placementSpaceSchema = z
     // Distinguishes "leave whatever is set" from "clear it and inherit", which a
     // single optional number cannot: `undefined` keeps, `null` clears.
     price: z.number().int().min(0).nullable().optional(),
+    // Same three-way distinction as `price`, for the same reason: `undefined`
+    // keeps, `null` clears so the level inherits, a number sets. Bounded below
+    // only — the score/tier ceiling is applied at read, so refusing above it here
+    // would rewrite a creator's choice the moment their tier lapsed. The upper
+    // bound is a sanity limit on what may reach the column at all, well above the
+    // highest cap the table can produce.
+    freeSlots: z.number().int().min(0).max(1_000).nullable().optional(),
     // Surface-owned. Bounded here so a client cannot store a max size outside the
     // global limits; the reader clamps too, since the column is editable by hand.
     // Each surface reads only its own keys, so the union is carried rather than
