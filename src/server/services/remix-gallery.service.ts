@@ -64,6 +64,37 @@ type SubmissionImage = {
 };
 
 /**
+ * The ids the server verified this image was generated from.
+ *
+ * One definition, used by the mutation that decides and by the listing that
+ * offers — because "is this a remix of that" has to mean the same thing in both
+ * or the picker offers what the claim refuses.
+ *
+ * ⚠️ Not interchangeable with a bare `@>` containment test on the raw JSON, which
+ * is what a second copy naturally becomes. `'7'::jsonb @> '7'::jsonb` is true
+ * (scalar containment is equality), so a non-array value would read as a match
+ * where this yields `[]`; an array of strings goes the other way, matching here
+ * after the cast and not there. They agree today only because
+ * `sanitizeProvenance` happens to write an integer array.
+ *
+ * Parameterised by alias rather than written twice, for the reason `hostIsMinor`
+ * is: a hand-written duplicate is exactly the shape that drifts silently.
+ */
+const sourceImageIdsSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`ARRAY(
+    SELECT (value #>> '{}')::int
+    FROM jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(${t}.meta -> 'extra' -> 'sourceImageIds') = 'array'
+        THEN ${t}.meta -> 'extra' -> 'sourceImageIds'
+        ELSE '[]'::jsonb
+      END
+    )
+  )`;
+};
+
+/**
  * The submitted image, from the primary, with everything the refusals need.
  *
  * `dbWrite` rather than a replica for the same reason `assertCanPlace` uses it:
@@ -76,16 +107,7 @@ async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
            i.ingestion::text AS ingestion, i."needsReview",
            p."publishedAt",
            (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId",
-           ARRAY(
-             SELECT (value #>> '{}')::int
-             FROM jsonb_array_elements(
-               CASE
-                 WHEN jsonb_typeof(i.meta -> 'extra' -> 'sourceImageIds') = 'array'
-                 THEN i.meta -> 'extra' -> 'sourceImageIds'
-                 ELSE '[]'::jsonb
-               END
-             )
-           ) AS "sourceImageIds"
+           ${sourceImageIdsSql()} AS "sourceImageIds"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE i.id = ${imageId}
@@ -1433,17 +1455,23 @@ export async function getRemixGalleryVisibility({
     ownerId: space.ownerId,
     ownerUsername: owner?.username ?? null,
     ownerShare: space.ownerShare,
-    // Both, because `freeSlotsRemaining: 0` means two different things: the
-    // resolver short-circuits the reservation count at zero capacity, so it
-    // covers "this creator takes no free submissions" as well as "all of them
-    // are currently held". `freeSlots === 0` separates them, and the two states
-    // need different copy — one is a setting, the other is a queue.
-    //
-    // Already resolved by the call above, so exposing them costs nothing on a
-    // query every image-detail view runs. Display only: the refusal lives in
-    // `createFreePlacement`, under its lock.
+    // What the creator accepts is theirs to publish — it is a setting on their
+    // own image, the same standing as `price`.
     freeSlots: space.freeSlots,
-    freeSlotsRemaining: space.freeSlotsRemaining,
+    // How many are currently *held* is not. It is a count of pending and
+    // approved submissions on someone's image, which is the fact `pendingCount`
+    // above is owner-only to protect — a public number here would let anyone
+    // watch a creator's queue fill by polling an id.
+    //
+    // Withheld under the same rule as `maxSubmissionLevel`: signed in, gallery
+    // open, not your own. That is exactly the case the submit card needs, and
+    // nothing wider. `freeSlots` alone still tells a signed-out viewer whether
+    // the creator takes free submissions at all.
+    //
+    // Both are needed together because `freeSlotsRemaining: 0` means two things
+    // — the resolver short-circuits the reservation count at zero capacity — and
+    // the two need different copy: one is a setting, the other is a queue.
+    freeSlotsRemaining: canSubmitHere ? space.freeSlotsRemaining : null,
     declineFee,
     pendingCount,
     viewerPending,
@@ -1494,11 +1522,12 @@ export async function getRemixGalleryFreeEligibility({
           FROM "Image" i
           WHERE i.id IN (${Prisma.join(imageIds)})
             AND i."userId" = ${placerId}
-            -- The same fact the mutation gates on, read the same way: ids that
+            -- The same fact the mutation gates on, through the same expression
+            -- rather than a second reading of the same JSON: ids that
             -- sanitizeProvenance wrote after verifying a signed token or the
             -- workflow itself. A submitter editing their own image's meta cannot
             -- put one here, which is what makes the free gate mean anything.
-            AND (i.meta -> 'extra' -> 'sourceImageIds') @> ${String(hostImageId)}::jsonb
+            AND ${hostImageId} = ANY(${sourceImageIdsSql()})
         `
       : [],
   ]);

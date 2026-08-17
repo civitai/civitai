@@ -29,15 +29,27 @@ describe('remix gallery pending notifications', () => {
     expect(query).not.toContain('AND NOT p.free');
   });
 
-  it('honours the free type’s own toggle, which the paid ones do not have', async () => {
-    // A row in `UserNotificationSettings` means opted OUT. The paid types carry
-    // no such clause at all, so their toggles render and change nothing — this
-    // one is wired, and that difference is the point of giving free its own type.
-    expect(await queryFor('remix-gallery-free-pending')).toContain(
-      'NOT EXISTS (SELECT 1 FROM "UserNotificationSettings"'
-    );
-    expect(placementNotifications['remix-gallery-free-pending'].optIn).toBeFalsy();
-  });
+  it.each(['remix-gallery-pending', 'remix-gallery-free-pending'])(
+    '%s honours its own toggle',
+    async (type) => {
+      // A row in `UserNotificationSettings` means opted OUT, and there is no
+      // global filter — a processor without this clause renders a setting that
+      // saves and does nothing, which is what the paid type did until now.
+      //
+      // Asserted per type rather than once, because the two toggles are separate
+      // switches: silencing free submissions must not silence the paid queue a
+      // creator is being paid for.
+      // Pinned as ONE whole clause rather than by prefix. A prefix match stays
+      // green if the recipient column drifts to `p."placerId"` — silencing the
+      // submitter's setting instead of the owner's — or if the type string is
+      // copy-pasted from its sibling, which mutes the wrong toggle. Both are the
+      // realistic edits here, and neither changes the prefix.
+      expect(await queryFor(type)).toContain(
+        `NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = p."ownerId" AND type = '${type}')`
+      );
+      expect(placementNotifications[type].optIn).toBeFalsy();
+    }
+  );
 
   it('quotes no amount on a free submission', async () => {
     // A free row's `amount` is 0 and the DB enforces it, so any wording built

@@ -174,6 +174,17 @@ export const placementNotifications = createNotificationProcessor({
           -- gap sends someone to review a submission about to be unwound.
           AND p."expiresAt" IS NOT NULL
           AND p."createdAt" > '${lastSent}'
+          -- A row means opted OUT, and there is no global filter — every
+          -- processor that honours its own toggle writes this clause itself. It
+          -- was missing here, so the setting rendered, saved, and did nothing.
+          --
+          -- Scoped inside the CTE against p."ownerId" rather than outside it
+          -- against the projected "userId", which is where the sticker types put
+          -- theirs. Both are correct where they sit and they are NOT
+          -- interchangeable by inspection — do not harmonise one into the other
+          -- without checking what each is in scope of. On one line either way:
+          -- the polarity guard matches the clause as a literal.
+          AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = p."ownerId" AND type = 'remix-gallery-pending')
       )
       SELECT
         CONCAT('remix-gallery-pending:',"placementId") "key",

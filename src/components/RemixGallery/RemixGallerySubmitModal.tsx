@@ -19,7 +19,11 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { freeSubmissionOffer } from '~/components/RemixGallery/remix-gallery.utils';
+import {
+  freeRefusalExplanation,
+  freeRefusalOutcome,
+  freeSubmissionOffer,
+} from '~/components/RemixGallery/remix-gallery.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -44,8 +48,12 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
    * so a choice made about one remix must not carry to the next.
    */
   const [chosen, setChosen] = useState<'free' | 'paid' | null>(null);
-  /** Set only when a submission lost the race for the last free slot. */
-  const [lostFreeSlot, setLostFreeSlot] = useState(false);
+  /**
+   * Why a free submission was refused, when a re-read could explain it. Held
+   * here rather than shown as an error notification because it is an ordinary
+   * outcome with a next step — the paid option, already on screen.
+   */
+  const [freeRefusal, setFreeRefusal] = useState<string | null>(null);
 
   const { data: visibility, isError: visibilityFailed } =
     trpc.placement.getRemixGalleryVisibility.useQuery({ imageId: hostImageId });
@@ -71,17 +79,25 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
 
   const takesFree = (visibility?.freeSlots ?? 0) > 0;
 
+  // `null` rather than a number when the viewer may not be told how many of a
+  // creator's free slots are currently held — signed out, gallery closed, or
+  // their own image. Treated as "not on offer" rather than as zero, because zero
+  // would render "all taken right now" about a count we were not given.
+  const slotsHeldKnown = visibility?.freeSlotsRemaining != null;
+
   const offer = freeSubmissionOffer({
     verified: selected != null && !!freeInfo?.verifiedImageIds.includes(selected),
     freeSlots: visibility?.freeSlots ?? 0,
     freeSlotsRemaining: visibility?.freeSlotsRemaining ?? 0,
     allowanceRemaining: freeInfo?.allowance.remaining ?? 0,
     usedHere: !!freeInfo?.usedHere,
+    resetsAt: freeInfo?.allowance.resetsAt ?? new Date(),
   });
-  const freeAvailable = offer.available;
+  const freeAvailable = offer.available && slotsHeldKnown;
   // Withheld while the answer is in flight, so the card says nothing rather than
   // briefly asserting a reason drawn from defaulted zeroes.
-  const freeUnavailableReason = selected != null && freeInfo ? offer.reason : null;
+  const freeUnavailableReason =
+    selected != null && freeInfo && slotsHeldKnown ? offer.reason : null;
 
   // Free whenever it is available, unless the submitter said otherwise — and
   // never free once it stops being available, whatever they said. That second
@@ -100,24 +116,58 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
       utils.placement.invalidate();
       dialog.onClose();
     },
-    onError: (error) => {
-      // A free submission can be refused after the control offered it: every
-      // number the free option is built on is stale by construction, and the
-      // mutation re-counts under a lock. So a free failure re-reads and falls
-      // back to paid rather than surfacing the server's message — which is not
-      // copy anyone should be shown, and which the reason line below will
-      // restate correctly once the fresh numbers land.
-      if (method === 'free') {
-        utils.placement.invalidate();
-        setChosen('paid');
-        setLostFreeSlot(true);
-        return;
-      }
+    onError: async (error) => {
+      /**
+       * A free submission can be refused for two very different kinds of reason,
+       * and only one of them is an ordinary outcome.
+       *
+       * The free primitive re-counts under its lock, so losing the last slot —
+       * or the allowance, or the never-twice rule — is a race the control cannot
+       * win and should not report as an error. Everything else is a real refusal
+       * the submitter needs to read: unverified, a duplicate entry, an
+       * unpublished image, the content rule, a block.
+       *
+       * Told apart by re-reading rather than by matching the server's wording,
+       * which is prose it is free to change. If the fresh numbers still say free
+       * was on offer, the refusal was not about capacity and the message is
+       * shown. Falls back to showing it if the re-read itself fails, because
+       * silence is the one outcome that leaves nobody informed.
+       */
+      const explained =
+        method === 'free' && selected != null
+          ? await utils.placement.getRemixGalleryVisibility
+              .fetch({ imageId: hostImageId })
+              .then(async (space) => {
+                const standing = await utils.placement.getRemixGalleryFreeEligibility.fetch({
+                  hostImageId,
+                  imageIds: [selected],
+                });
 
-      showErrorNotification({
-        title: "Couldn't submit that",
-        error: new Error(error.message),
-      });
+                return space.freeSlotsRemaining == null
+                  ? null
+                  : freeRefusalExplanation({
+                      verified: standing.verifiedImageIds.includes(selected),
+                      freeSlots: space.freeSlots,
+                      freeSlotsRemaining: space.freeSlotsRemaining,
+                      allowanceRemaining: standing.allowance.remaining,
+                      usedHere: standing.usedHere,
+                      resetsAt: standing.allowance.resetsAt,
+                    });
+              })
+              // A failed re-read explains nothing, which lands on the server's
+              // own message — the outcome that leaves somebody informed.
+              .catch(() => null)
+          : null;
+
+      const outcome = freeRefusalOutcome(explained, error.message);
+      if (outcome.fallBackToPaid) setChosen('paid');
+      setFreeRefusal(outcome.fallBackToPaid ? outcome.message : null);
+
+      if (!outcome.fallBackToPaid)
+        showErrorNotification({
+          title: outcome.title,
+          error: new Error(outcome.message),
+        });
     },
   });
 
@@ -267,7 +317,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                       // Free eligibility is a property of the image, so a choice
                       // made about one remix must not carry to the next.
                       setChosen(null);
-                      setLostFreeSlot(false);
+                      setFreeRefusal(null);
                     }}
                     className={clsx(
                       'cursor-pointer',
@@ -368,14 +418,23 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 ]}
               />
 
+              {/* No number and no reset time written here. The allowance is a
+                  server-side rule and both of its facts already come back from
+                  `getFreePlacementAllowance`; a sentence that spells either one
+                  out is a claim this file cannot keep true. */}
               {method === 'free' && (
                 <Text size="xs" c="dimmed">
-                  This spends your one free placement for the day, and it is spent even if the
-                  creator declines.
+                  This spends a free placement from today&apos;s allowance, and it is spent even if
+                  the creator declines.
                 </Text>
               )}
 
-              {lostFreeSlot && (
+              {/* The refusal that just happened, in the words the re-read
+                  produced rather than a fixed sentence about slots — the reason
+                  is not always the slots, and saying so when it is not is how
+                  this shipped wrong the first time. Nothing was spent either
+                  way: the claim refuses before it inserts. */}
+              {freeRefusal && (
                 <Group gap="xs" wrap="nowrap" align="flex-start">
                   <IconAlertTriangle
                     size={14}
@@ -383,8 +442,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                     style={{ flexShrink: 0, marginTop: 2 }}
                   />
                   <Text size="xs" c="yellow">
-                    That didn&apos;t go through as a free submission — free is decided at the moment
-                    you submit. Nothing was spent. You can still submit with Buzz.
+                    {freeRefusal} Nothing was spent — you can still submit with Buzz.
                   </Text>
                 </Group>
               )}

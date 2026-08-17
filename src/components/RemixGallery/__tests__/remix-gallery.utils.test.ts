@@ -2,12 +2,75 @@ import { describe, expect, it } from 'vitest';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import {
   dedupeGalleryItems,
+  freeRefusalExplanation,
+  freeRefusalOutcome,
   freeSubmissionOffer,
   galleryDialogImages,
   trimToWholeRows,
 } from '~/components/RemixGallery/remix-gallery.utils';
 
+describe('what a refused free submission is told', () => {
+  const stillOffered = {
+    verified: true,
+    freeSlots: 3,
+    freeSlotsRemaining: 2,
+    allowanceRemaining: 1,
+    usedHere: false,
+    resetsAt: new Date('2026-03-04T00:00:00Z'),
+  };
+
+  it('explains nothing when the re-read says free was still on offer', () => {
+    // 🔴 The null is the fix. `freeSubmissionOffer` always has an answer, so a
+    // caller asking it AFTER a refusal is always given one — and the free path
+    // is refused for at least a dozen reasons it cannot see: unverified, a
+    // duplicate entry, an unpublished image, the content rule, a block, a
+    // moderator suspension. A shape that cannot say "I don't know" reports every
+    // one of those as whichever rung happens to be lowest.
+    expect(freeRefusalExplanation(stillOffered)).toBeNull();
+  });
+
+  it('explains a refusal the re-read does account for', () => {
+    expect(freeRefusalExplanation({ ...stillOffered, freeSlotsRemaining: 0 })).toMatch(
+      /all taken right now/i
+    );
+  });
+
+  it('shows the server’s own words when nothing explains it', () => {
+    // The message the careful copy lives in. Without this branch,
+    // `FREE_NEEDS_VERIFIED_REFUSAL` — the sentence explaining why paying is the
+    // alternative — reaches nobody, because this handler is its only path.
+    const outcome = freeRefusalOutcome(null, 'remix gallery: free submissions are for remixes…');
+
+    expect(outcome.message).toBe('remix gallery: free submissions are for remixes…');
+    expect(outcome.title).toMatch(/couldn't submit/i);
+  });
+
+  it('does NOT move the control to paid on an unexplained refusal', () => {
+    // Settling on paid asserts that money was the problem. For a blocked or
+    // suspended placer it is not: they press the paid button and meet the same
+    // refusal, having been told the opposite of what is wrong.
+    expect(
+      freeRefusalOutcome(null, 'remix gallery: you cannot place right now').fallBackToPaid
+    ).toBe(false);
+  });
+
+  it('moves the control to paid when the refusal WAS about free capacity', () => {
+    // Every rung is a limit on free capacity that Buzz is not subject to, so
+    // here the fall-back is a true statement about the next step.
+    const outcome = freeRefusalOutcome(
+      'The free slots on this image are all taken right now.',
+      'x'
+    );
+
+    expect(outcome.fallBackToPaid).toBe(true);
+    expect(outcome.message).toMatch(/all taken right now/i);
+    expect(outcome.message).not.toBe('x');
+  });
+});
+
 describe('freeSubmissionOffer', () => {
+  const RESETS_AT = new Date('2026-03-04T00:00:00Z');
+
   /** Everything satisfied, so each case below breaks exactly one thing. */
   const eligible = {
     verified: true,
@@ -15,7 +78,75 @@ describe('freeSubmissionOffer', () => {
     freeSlotsRemaining: 2,
     allowanceRemaining: 1,
     usedHere: false,
+    resetsAt: RESETS_AT,
   };
+
+  /** Each condition on its own, so a pair can be built by merging two. */
+  const broken = {
+    verified: { verified: false },
+    usedHere: { usedHere: true },
+    freeSlots: { freeSlots: 0, freeSlotsRemaining: 0 },
+    allowanceRemaining: { allowanceRemaining: 0 },
+    freeSlotsRemaining: { freeSlotsRemaining: 0 },
+  } as const;
+
+  /**
+   * The ladder, longest-lasting refusal first, with the fragment each one owns.
+   *
+   * The order is the design: a refusal that lifts tonight must never be reported
+   * over one that never lifts, or someone comes back tomorrow to be told the
+   * thing nobody told them today.
+   */
+  const ladder = [
+    ['verified', /where we can check/i],
+    ['usedHere', /once per gallery/i],
+    ['freeSlots', /doesn't take free/i],
+    ['allowanceRemaining', /used today's free placement/i],
+    ['freeSlotsRemaining', /all taken right now/i],
+  ] as const;
+
+  it.each(ladder.slice(0, -1).map((entry, index) => [entry[0], ladder[index + 1][0]] as const))(
+    'reports %s ahead of %s when BOTH are true',
+    (first, second) => {
+      // Both set at once, which is the only way an ordering can be asserted.
+      // Fixtures that break one condition at a time pass under any order, so
+      // the two-line swap that inverts the ladder would go unnoticed.
+      const expected = ladder.find(([name]) => name === first)![1];
+      const { reason } = freeSubmissionOffer({
+        ...eligible,
+        ...broken[first],
+        ...broken[second],
+      });
+
+      expect(reason).toMatch(expected);
+    }
+  );
+
+  it('reports the longest-lasting refusal when EVERY condition fails', () => {
+    // The transitive check the pairwise cases cannot make on their own.
+    const { reason } = freeSubmissionOffer({
+      ...eligible,
+      ...broken.verified,
+      ...broken.usedHere,
+      ...broken.freeSlots,
+      ...broken.allowanceRemaining,
+      ...broken.freeSlotsRemaining,
+    });
+
+    expect(reason).toMatch(/where we can check/i);
+  });
+
+  it('reads the reset moment off the server date rather than naming a timezone', () => {
+    // "midnight UTC" is true of the rule and misleading to a person, and it is a
+    // server-side rule this file must not restate — raise the reset and a
+    // hardcoded sentence goes quietly false.
+    const { reason } = freeSubmissionOffer({ ...eligible, ...broken.allowanceRemaining });
+
+    expect(reason).not.toMatch(/UTC/i);
+    expect(reason).toContain(
+      RESETS_AT.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+    );
+  });
 
   it('offers free when every condition holds', () => {
     expect(freeSubmissionOffer(eligible)).toEqual({ available: true, reason: null });
@@ -70,7 +201,7 @@ describe('freeSubmissionOffer', () => {
     // for both would tell half of them to wait for something that will not
     // happen.
     expect(freeSubmissionOffer({ ...eligible, allowanceRemaining: 0 }).reason).toMatch(
-      /midnight UTC/i
+      /comes back at/i
     );
     expect(freeSubmissionOffer({ ...eligible, usedHere: true }).reason).toMatch(
       /once per gallery/i

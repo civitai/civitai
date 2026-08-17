@@ -143,6 +143,7 @@ const {
   parseGalleryCursor,
   getRemixGallery,
   getRemixGalleryVisibility,
+  getRemixGalleryFreeEligibility,
   getPendingRemixGallerySubmissions,
   declineOutOfBandRemixGallerySubmissions,
 } = await import('~/server/services/remix-gallery.service');
@@ -1826,6 +1827,151 @@ describe('free submissions', () => {
     primeQueries({ submission: verifiedSubmission });
 
     await expect(submitFree({ expectedPrice: PRICE + 1 })).resolves.toEqual({ id: FREE_PLACEMENT });
+  });
+});
+
+describe('what the public visibility query says about free capacity', () => {
+  const visibility = (viewerId?: number) => {
+    // One row satisfying every raw read this path makes. The host has to come
+    // back SHOWABLE: an unresolvable host fails closed, which would make the
+    // withheld cases below pass for the wrong reason.
+    queryRaw.mockImplementation(async () => [
+      { exists: false, count: 0, nsfwLevel: NsfwLevel.PG, minor: false, showable: true },
+    ]);
+    return getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: allBrowsingLevelsFlag,
+      viewerId,
+      domainLevels: allBrowsingLevelsFlag,
+    });
+  };
+
+  it('publishes what the creator accepts', async () => {
+    // Their own setting on their own image, the same standing as `price`, and
+    // the only half a signed-out viewer needs: whether free is a thing here.
+    await expect(visibility()).resolves.toMatchObject({ freeSlots: openSpace.freeSlots });
+  });
+
+  it.each([
+    ['signed out', undefined],
+    ['the owner', OWNER],
+  ] as const)('withholds how many are currently HELD from %s', async (_who, viewerId) => {
+    // A count of pending and approved submissions on someone's image — the same
+    // fact `pendingCount` is owner-only to protect. Public, it would let anyone
+    // watch a creator's queue fill by polling an id.
+    await expect(visibility(viewerId)).resolves.toMatchObject({ freeSlotsRemaining: null });
+  });
+
+  it('gives it to the one viewer who has to act on it', async () => {
+    await expect(visibility(PLACER)).resolves.toMatchObject({
+      freeSlotsRemaining: openSpace.freeSlotsRemaining,
+    });
+  });
+
+  it('withholds it on a closed gallery even from a would-be submitter', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, mode: 'off' });
+    await expect(visibility(PLACER)).resolves.toMatchObject({ freeSlotsRemaining: null });
+  });
+});
+
+describe('the free eligibility listing', () => {
+  // Nested `Prisma.sql` fragments arrive as VALUES rather than as part of the
+  // template's string array, so flattening is what makes the assertions below
+  // see the predicate at all. Same helper as the ceiling suite above, and the
+  // same reason: a rendered template does not read like the source.
+  const flatten = (value: unknown): string => {
+    if (Array.isArray(value)) return value.map(flatten).join(' ');
+    if (value && typeof value === 'object' && 'strings' in value)
+      return [
+        flatten((value as { strings: unknown }).strings),
+        flatten((value as { values?: unknown }).values ?? []),
+      ].join(' ');
+    return typeof value === 'string' ? value : '';
+  };
+
+  const boundValues = (value: unknown): unknown[] => {
+    if (Array.isArray(value)) return value.flatMap(boundValues);
+    if (value && typeof value === 'object' && 'strings' in value)
+      return boundValues((value as { values?: unknown }).values ?? []);
+    return [value];
+  };
+
+  const eligibility = () =>
+    getRemixGalleryFreeEligibility({
+      hostImageId: HOST_IMAGE,
+      placerId: PLACER,
+      imageIds: [REMIX_IMAGE],
+    });
+
+  beforeEach(() => queryRaw.mockResolvedValue([{ id: REMIX_IMAGE }]));
+
+  it('answers only for the viewer’s OWN images', async () => {
+    // The predicate this asserts is the whole reason the endpoint is not an
+    // oracle: without it, anyone could ask whether any image was generated from
+    // any other, which is a fact about someone else's generation inputs. Delete
+    // it and nothing else in this file notices.
+    await eligibility();
+
+    const sql = queryRaw.mock.calls.map(flatten).join(' ');
+    expect(sql).toContain('i."userId" =');
+    expect(boundValues(queryRaw.mock.calls)).toContain(PLACER);
+  });
+
+  it('reads derivation through the shared expression, not a containment test', async () => {
+    // `@>` on the raw JSON is NOT the same predicate — scalar containment is
+    // equality, so a non-array value would read as a match where this yields an
+    // empty array, and an array of strings goes the other way. The picker must
+    // offer exactly what the claim accepts, so both go through one expression.
+    await eligibility();
+
+    const sql = queryRaw.mock.calls.map(flatten).join(' ');
+    expect(sql).toContain('jsonb_array_elements');
+    expect(sql).toMatch(/jsonb_typeof\([\s\S]*'array'/);
+    expect(sql).toContain('= ANY(');
+    expect(sql).not.toContain('@>');
+    expect(boundValues(queryRaw.mock.calls)).toContain(HOST_IMAGE);
+  });
+
+  it('runs no query at all for an empty candidate list', async () => {
+    // `IN ()` is a syntax error, not an empty result, so the short-circuit is
+    // load-bearing rather than an optimisation — and the picker asks with
+    // nothing selected on every open.
+    const result = await getRemixGalleryFreeEligibility({
+      hostImageId: HOST_IMAGE,
+      placerId: PLACER,
+      imageIds: [],
+    });
+
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(result.verifiedImageIds).toEqual([]);
+  });
+
+  it('carries the allowance and the never-twice answer through unchanged', async () => {
+    getFreePlacementAllowance.mockResolvedValue({
+      used: 1,
+      remaining: 0,
+      resetsAt: new Date('2026-03-04'),
+    });
+    hasUsedFreePlacementOn.mockResolvedValue(true);
+
+    await expect(eligibility()).resolves.toEqual({
+      allowance: { used: 1, remaining: 0, resetsAt: new Date('2026-03-04') },
+      usedHere: true,
+      verifiedImageIds: [REMIX_IMAGE],
+    });
+  });
+
+  it('asks the never-twice question about THIS surface and THIS host', async () => {
+    // Free is scoped per surface and per target. Widen either and a placer who
+    // stickered an image is told they cannot submit a remix to it.
+    await eligibility();
+
+    expect(hasUsedFreePlacementOn).toHaveBeenCalledWith({
+      placerId: PLACER,
+      surface: 'remixGallery',
+      targetType: 'image',
+      targetId: HOST_IMAGE,
+    });
   });
 });
 
