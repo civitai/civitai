@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars -- WIP stub (see the TODOs in the processor).
-   The scan fields are destructured ready for the handling that is not written yet. */
 import { logger } from '@/utils/logger';
 import { createEventHandler } from './base'
 import { WorkflowMessage, createWorkflowSample } from '@/types/events'
@@ -22,8 +20,12 @@ type ImageScannedMessage = WorkflowMessage<[
 
 export const imageScannedHandler = createEventHandler<ImageScannedMessage>({
   topics: ['orchestrator.imageScanned'],
+  // The three disables here are all the same reason: the TODOs below are unwritten, and these
+  // are the bindings the handling will use.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   processor: async ({ record, pg, actions }) => {
     // TODO briant: Implement image scanned processing logic
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { workflowId, status, metadata, outputs } = record;
 
     // Extract imageId from metadata
@@ -36,6 +38,7 @@ export const imageScannedHandler = createEventHandler<ImageScannedMessage>({
     // TODO: handle workflow status (e.g., only process if status is 'completed', appropriate handlding for 'failed', etc.)
 
     // Extract outputs from the workflow
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [{tags}, {nsfwLevel, isBlocked}, { hashes }] = outputs;
 
     // TODO: handle scanned image results

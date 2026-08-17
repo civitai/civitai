@@ -370,8 +370,7 @@ jobs:
     # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
     # no required_status_checks — it is a signal someone has to look at and dismiss.
     #
-    # `apps/event-engine` and `apps/moderator` are absent on purpose: neither has a vitest
-    # config, and event-engine's one test file is a `node:test` suite by deliberate choice.
+    # `apps/moderator` is absent on purpose: it has no vitest config, so nothing selects it.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

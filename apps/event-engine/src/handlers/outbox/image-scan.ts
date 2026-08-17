@@ -1,13 +1,15 @@
-/* eslint-disable @typescript-eslint/no-unused-vars -- WIP stub. The processor body below is
-   commented out until the old ingestion service is removed from prod; these imports and
-   destructured bindings are the ones it uses, so removing them would have to be undone. */
+// The three disables below are all the same reason: the processor body is commented out until
+// the old ingestion service is removed from prod, and these are the bindings it uses.
 import { createOutboxHandler } from '../base'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { withKafka } from '@/services/spine'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { getImageUrl } from '@/utils/media';
 
 export const postHandler = createOutboxHandler<{url: string}>({
   entityTypes: ['Image'],
   events: ['TO_SCAN'],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   processor: async ({ event, entityId, actions, details }) => {
     // TODO briant: Enable this when we have the old ingestion service removed from prod
     // Do nothing until we remove old image ingestion
