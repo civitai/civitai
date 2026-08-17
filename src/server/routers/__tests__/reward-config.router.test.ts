@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as RewardConfig from '~/server/rewards/reward-config';
 
 /**
  * The reward config decides what every Buzz reward pays, so `moderatorProcedure`
@@ -24,7 +25,7 @@ const { mockGetStored, mockSetConfig, mockDescribeConfig } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/rewards/reward-config', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/rewards/reward-config')>()),
+  ...(await importOriginal<typeof RewardConfig>()),
   getStoredRewardConfig: mockGetStored,
   setRewardConfig: mockSetConfig,
 }));
