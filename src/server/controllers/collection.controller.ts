@@ -461,8 +461,8 @@ export const followHandler = ({
 
   try {
     return addContributorToCollection({
-      targetUserId: input.userId || user?.id,
-      userId: user?.id,
+      targetUserId: user.id,
+      userId: user.id,
       collectionId,
     });
   } catch (error) {
@@ -482,8 +482,8 @@ export const unfollowHandler = ({
 
   try {
     return removeContributorFromCollection({
-      targetUserId: input.userId || user?.id,
-      userId: user?.id,
+      targetUserId: user.id,
+      userId: user.id,
       collectionId,
     });
   } catch (error) {

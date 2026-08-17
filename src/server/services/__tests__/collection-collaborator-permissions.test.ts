@@ -192,9 +192,10 @@ describe('collection collaborator permissions', () => {
   });
 });
 
-// I2: `collection.follow` takes an optional userId and uses it as the TARGET, while the
-// upsert REPLACES that user's permissions — so on any community collection a stranger could
-// rewrite a manager's row down to the collection's follow grant.
+// The upsert REPLACES the target's permissions, so a caller who can name someone else can rewrite
+// a manager's row down to the collection's follow grant. `collection.follow` no longer offers a
+// target (see collection.controller.follow-self-bind.test.ts); these pin the service's own rule for
+// the invite paths that still pass one.
 describe('addContributorToCollection authorization', () => {
   beforeEach(() => {
     vi.clearAllMocks();
