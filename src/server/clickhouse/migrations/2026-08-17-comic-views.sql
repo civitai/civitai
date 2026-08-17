@@ -13,6 +13,13 @@
 -- mutation is scheduled. Do NOT renumber or rename any existing value; that WOULD rewrite
 -- 7.6B rows.
 --
+-- Note that `entityType` is part of the SORTING KEY in both tables — `views` is
+-- ORDER BY (time, entityType, entityId, userId), `daily_views` is
+-- ORDER BY (entityType, entityId, createdDate). Extending an Enum8 on a key column is permitted
+-- as a safe key conversion and appending 10/11 preserves the ordinal ordering of every existing
+-- value, so the parts stay sorted and nothing is rewritten. Called out because a reader who
+-- assumes these are ordinary non-key columns would not think to check.
+--
 -- ⚠️ MODIFY COLUMN on an Enum8 REPLACES the type; it does not append to it. Every statement below
 -- restates the whole enum, which makes the ordering between separate migrations load-bearing: a
 -- later migration that restates the enum WITHOUT these arms silently deletes them and invalidates
@@ -142,5 +149,14 @@ ALTER TABLE default.daily_views_mv
 --   GROUP BY entityType, entityId;
 --
 -- Expect two rows. If the INSERT raises instead, step 3 was needed and was skipped.
--- The probe rows are harmless (entityId 0 matches nothing) but can be dropped with a
--- partition-scoped DELETE if you'd rather not leave them.
+--
+-- The probe rows are harmless — entityId 0 matches no project or chapter. To remove them, note
+-- that `daily_views` has NO PARTITION BY: it is a single `tuple()` partition holding ~1.68B rows,
+-- so there is nothing partition-scoped to drop and a DROP PARTITION would take the whole table.
+-- Use a lightweight delete:
+--
+--   DELETE FROM default.daily_views
+--   WHERE entityType IN ('ComicProject', 'ComicChapter') AND entityId = 0;
+--
+-- Same applies to clearing a bad backfill run — see --allow-rerun in
+-- scripts/oneoffs/backfill-comic-views.ts.

@@ -9,7 +9,10 @@
  */
 
 /**
- * `/comics/42` and `/comics/42/my-comic` — the project overview.
+ * The project overview: `/comics/42`, `/comics/42/my-comic`, and anything else under
+ * `/comics/<id>/` that the chapter pattern does not claim — because the page falls back to the
+ * overview whenever it cannot read a chapter position out of the path. Tried SECOND, so a real
+ * chapter path is never also counted as a project view.
  *
  * ⚠️ This matches on SHAPE, and it is only unambiguous because nothing static lives under
  * `/comics/<id>/`. The comic owner surface is `/comics/project/<id>/*`, excluded by name below.
@@ -19,10 +22,17 @@
  * Adding such a route means excluding it here by name. (The equivalent trap is live in
  * /3d-models, where `<id>/edit` and `<id>/<slug>` are genuinely indistinguishable by shape.)
  */
-export const PROJECT_PATH_RE = '^/comics/([0-9]+)(/[^/]*)?$';
+export const PROJECT_PATH_RE = '^/comics/([0-9]+)([/?#]|$)';
 
-/** `/comics/42/my-comic/3/chapter-3` — the chapter reader. The position is 1-INDEXED. */
-export const CHAPTER_PATH_RE = '^/comics/([0-9]+)/[^/]+/([0-9]+)(/|$)';
+/**
+ * `/comics/42/my-comic/3/chapter-3` — the chapter reader. The position is 1-INDEXED.
+ *
+ * The position is always the SECOND segment after the id, because that is what the page reads
+ * (`slug[1]`). A slug-less URL like `/comics/3156/1/chapter-1` therefore does NOT open chapter 1 —
+ * the page parses `slug[1]` = 'chapter-1', gets NaN, and renders the overview. Those URLs are
+ * matched by PROJECT_PATH_RE above, which is what the reader actually saw.
+ */
+export const CHAPTER_PATH_RE = '^/comics/([0-9]+)/[^/]+/([0-9]+)([/?#]|$)';
 
 export type ComicPageId =
   | { kind: 'project'; projectId: number }

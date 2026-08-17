@@ -60,11 +60,34 @@ describe('parseComicPageId', () => {
     expect(parseComicPageId('/comics/3203abc')).toEqual({ kind: 'other' });
   });
 
-  it('does not treat a chapter path as an overview of its project', () => {
-    // Both regexes can match a chapter path if project is tried first; the parse order decides.
-    // If this regresses, every chapter read is also counted as a project view and the two
-    // numbers Creator Studio labels separately become the same number.
-    expect(parseComicPageId('/comics/3318/the-incredulous/1/chapter-1').kind).toBe('chapter');
+  it('falls back to project for any other path under /comics/<id>/, as the page does', () => {
+    // The page reads the position from slug[1]. When that is not a number it renders the
+    // OVERVIEW, so these are project views, not chapter reads and not nothing. Prod has 663 of
+    // the slug-less shape; they used to match neither pattern and vanish before the pipeline,
+    // where even the unmapped counter could not see them.
+    expect(parseComicPageId('/comics/3156/1/chapter-1')).toEqual({
+      kind: 'project',
+      projectId: 3156,
+    });
+    expect(parseComicPageId('/comics/2502#')).toEqual({ kind: 'project', projectId: 2502 });
+    expect(parseComicPageId('/comics/424/slug/deep/deeper')).toEqual({
+      kind: 'project',
+      projectId: 424,
+    });
+  });
+
+  it('requires a delimiter after the chapter position', () => {
+    // Without the trailing (/|?|#|$) anchor, '/comics/424/slug/12abc' parses as position 12 —
+    // a real number attributed to a chapter the URL never named.
+    expect(parseComicPageId('/comics/424/slug/12abc')).toEqual({
+      kind: 'project',
+      projectId: 424,
+    });
+    expect(parseComicPageId('/comics/424/slug/12/name')).toEqual({
+      kind: 'chapter',
+      projectId: 424,
+      urlPosition: 12,
+    });
   });
 });
 

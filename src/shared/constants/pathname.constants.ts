@@ -23,6 +23,11 @@ export function getMatchingPathname(url: string) {
   return match ?? url;
 }
 
+// ⚠️ Comic routes are deliberately absent, and must stay absent until the comic view backfill has
+// run in prod. `getMatchingPathname` returns the url verbatim when nothing here matches, which is
+// the only reason `pageViews.pageId` holds literal `/comics/<id>/...` paths — and those paths are
+// the entire data source for scripts/oneoffs/backfill-comic-views.ts. Adding `/comics/[id]/...`
+// here collapses them to one templated pageId and destroys the history that script reconstructs.
 const pathnamesTokens = [
   '/moderator/test',
   '/404',
