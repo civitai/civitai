@@ -206,8 +206,10 @@ async function loadConfig(): Promise<RewardConfig> {
   const envelope = envelopeSchema.safeParse(stored);
 
   if (!envelope.success) {
-    // Not an object at all. Nothing here says which rewards were meant, so this
-    // is the one case with no better answer than running unconfigured.
+    // The row is not usable as an envelope: not an object at all, or `rewards`
+    // present but not a map (`{"rewards": "all of them"}`). Either way nothing
+    // here says which rewards were meant, so this is the one case with no better
+    // answer than running unconfigured.
     warn('Ignoring malformed reward config row — every reward is running unconfigured', {
       stored,
     });
@@ -218,11 +220,18 @@ async function loadConfig(): Promise<RewardConfig> {
   //
   // A strict envelope here threw the whole row away over one unrecognised key —
   // `{"rewards": {…}, "note": "for the launch"}` — and every reward an operator
-  // had turned off resumed paying. That is the same situation `usableOverride`
-  // already handles one level down, where the rule is "a stray key beside a real
-  // field keeps the real field", and it must fail the same way at both levels:
-  // the difference here is only that the blast radius is every reward at once,
-  // and the direction is paying rather than not paying.
+  // had turned off resumed paying. `usableOverride` already answers this one
+  // level down: **a stray key BESIDE a real field keeps the real field**. That
+  // rule holds at both levels, and it matters more here, because the blast
+  // radius is every reward at once and the direction is paying.
+  //
+  // ⚠️ The ALL-stray case deliberately diverges, and is not an oversight to
+  // harmonise. One level down, an entry of nothing but unknown keys DISABLES
+  // that reward — an instruction we cannot carry out, so we stop its money. Up
+  // here, a row with no `rewards` at all leaves every reward on compiled
+  // defaults, i.e. PAYING. The blast radius inverts the answer: there is no way
+  // to know which rewards a wrapper-less row meant, and disabling all of them
+  // over one stray key turns a typo into a site-wide reward outage.
   const strays = Object.keys(stored as MixedObject).filter((key) => key !== 'rewards');
 
   if (strays.length)
