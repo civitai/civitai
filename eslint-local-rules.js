@@ -246,12 +246,20 @@ function combinatorOperands(arg) {
  * unwrapping `.catch()/.then()/.finally()` passthroughs and descending through
  * `Promise.all([...])`-style combinators. Appends `{ name, node }` to `out`.
  *
- * `depth` bounds the recursion: the shapes above nest (a combinator inside a
- * `.catch()` inside a combinator), and a bound keeps a pathological or
- * self-referential source from blowing the stack inside a lint run.
+ * Unbounded on purpose. Every recursive step moves STRICTLY to a child node
+ * (`expr.callee.object`, or an operand of `expr`), and a parsed ESLint AST is
+ * finite and acyclic, so the recursion terminates at the tree's own depth — the
+ * `walkSkippingFunctions` helper further down this file recurses the same way. A
+ * draft carried a `depth > 8` cut-off with a comment about self-referential
+ * sources blowing the stack; nothing can produce that input, and removing it,
+ * loosening it to 1000, and dropping its increment on the passthrough branch all
+ * survived the rule's 54-test suite. Only tightening it to 1 was caught, i.e. it
+ * only ever measured itself. It went the way of the two other guards this rule
+ * shed for the same reason — a guard nothing can kill is not protection, it is a
+ * comment claiming protection.
  */
-function collectIoCalls(expr, txParamNames, out, depth) {
-  if (!expr || expr.type !== 'CallExpression' || depth > 8) return out;
+function collectIoCalls(expr, txParamNames, out) {
+  if (!expr || expr.type !== 'CallExpression') return out;
   const name = calleeName(expr);
 
   // Unwrap promise passthroughs: await foo().catch(...) -> inspect foo()
@@ -261,7 +269,7 @@ function collectIoCalls(expr, txParamNames, out, depth) {
     expr.callee.type === 'MemberExpression' &&
     expr.callee.object
   ) {
-    return collectIoCalls(expr.callee.object, txParamNames, out, depth + 1);
+    return collectIoCalls(expr.callee.object, txParamNames, out);
   }
 
   // `await Promise.all([bust(id), refresh(id)])` — the calls are arguments, not
@@ -269,7 +277,7 @@ function collectIoCalls(expr, txParamNames, out, depth) {
   if (isPromiseCombinatorCall(expr)) {
     for (const arg of expr.arguments || []) {
       for (const operand of combinatorOperands(arg)) {
-        collectIoCalls(operand, txParamNames, out, depth + 1);
+        collectIoCalls(operand, txParamNames, out);
       }
     }
     return out;
@@ -380,7 +388,7 @@ const noIoInTransaction = {
         const txParamNames = txStack[txStack.length - 1];
         // One await can carry several I/O calls (`Promise.all([a(), b()])`), and
         // each is a separate thing to move out — report them individually.
-        for (const io of collectIoCalls(node.argument, txParamNames, [], 0)) {
+        for (const io of collectIoCalls(node.argument, txParamNames, [])) {
           context.report({ node: io.node, messageId: 'ioInTx', data: { name: io.name } });
         }
       },

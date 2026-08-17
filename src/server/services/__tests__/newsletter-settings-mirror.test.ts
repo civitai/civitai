@@ -117,7 +117,14 @@ describe('updateSubscription — the settings mirror write', () => {
 
     expect(logToAxiom).toHaveBeenCalledTimes(1);
     const [payload] = logToAxiom.mock.calls[0] as [Record<string, unknown>];
-    expect(payload.type).toBe('newsletter.settings-mirror.failed');
+    // 🔴 `type` is the SEVERITY the log pipeline reads as the level, NOT a free-text
+    // event name — so it is asserted against a severity WORD. An earlier revision put
+    // the event name in `type`, which lands the line at no recognised level and makes
+    // it findable only by someone who already knows the string. Since "the failure is
+    // still recorded" is the entire justification for swallowing this error, that is
+    // the assertion that has to exist. The event name belongs in `name`.
+    expect(payload.type).toBe('warning');
+    expect(payload.name).toBe('newsletter-settings-mirror-failed');
     // The REAL `safeError` (the canonical logging mock overrides only `logToAxiom`), so this
     // pins what actually reaches Axiom rather than what a local stub was told to return.
     // `toMatchObject` because the real helper also carries `stack` and the cause/inner
