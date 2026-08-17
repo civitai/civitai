@@ -605,11 +605,17 @@ export function Collection({
     (!metadata.submissionStartDate || new Date(metadata.submissionStartDate) < new Date()) &&
     (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
 
+  // validateContestCollectionEntry applies the base-model list to model entries only, so on any
+  // other collection type a stored value advertises a restriction nothing enforces.
+  const showAllowedBaseModels =
+    !!metadata.baseModels?.length &&
+    (collectionType ?? CollectionType.Model) === CollectionType.Model;
+
   const submissionPeriod =
     metadata.submissionStartDate ||
     metadata.submissionEndDate ||
     metadata.maxItemsPerUser ||
-    metadata.baseModels?.length ? (
+    showAllowedBaseModels ? (
       <Popover
         zIndex={200}
         position="bottom-end"
@@ -640,8 +646,8 @@ export function Collection({
               <Text size="sm">Max items per user: {metadata.maxItemsPerUser}</Text>
             )}
 
-            {!!metadata.baseModels?.length && (
-              <Text size="sm">Allowed base models: {metadata.baseModels.join(', ')}</Text>
+            {showAllowedBaseModels && (
+              <Text size="sm">Allowed base models: {metadata.baseModels?.join(', ')}</Text>
             )}
           </Stack>
         </Popover.Dropdown>
