@@ -226,7 +226,11 @@ export const getMyListingForAppSchema = z
     appBlockId: z.string().min(1).max(64).optional(),
     // The slug arm resolves ANY top-level listing (civitai/civitai#3984): the W13
     // pre-approval draft of a FIRST-version on-site app (no AppBlock yet), and an
-    // OFF-SITE listing, which never has an AppBlock to be keyed by at all.
+    // OFF-SITE listing, which in practice carries no AppBlock to be keyed by (0 rows
+    // of the `kind:'offsite'` + non-null `appBlockId` shape in production, measured
+    // 2026-08-11 — empirical, not structural; `appBlockId` is NOT a kind
+    // discriminator, see schema.full.prisma). `appBlockId` takes precedence when
+    // both are supplied.
     slug: z.string().min(1).max(64).optional(),
   })
   .refine((v) => v.appBlockId != null || v.slug != null, {

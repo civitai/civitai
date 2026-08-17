@@ -540,9 +540,10 @@ function wireSlugLookup(rows: Array<Record<string, unknown>>) {
 
 // The SLUG resolver. Two callers share it: the W13 pre-approval draft of a FIRST-version
 // on-site app (no AppBlock yet, so `appBlockId` cannot address it *yet*), and an OFF-SITE
-// listing, which has no AppBlock *ever* — civitai/civitai#3984. These lock what the slug
-// arm admits (any top-level listing, either kind, any status) and what it refuses (a
-// shadow revision), and that ownership is still enforced on the widened path.
+// listing, which in practice carries no AppBlock at all — civitai/civitai#3984. These
+// lock what the slug arm admits (any top-level listing, either kind, any status) and what
+// it refuses (a shadow revision), that `appBlockId` takes PRECEDENCE over the slug, and
+// that ownership is still enforced on the widened path.
 describe('getMyListingForApp — slug resolver (any top-level listing, either kind)', () => {
   it('resolves the pending draft BY SLUG when only a slug is given (no appBlockId lookup)', async () => {
     // 🔴 The pre-approval draft carries `appBlockId: null`, so it has no OauthClient in
@@ -623,6 +624,79 @@ describe('getMyListingForApp — slug resolver (any top-level listing, either ki
     expect(editViewReads(mockRead)).toEqual(['apl_draft']);
   });
 
+  /**
+   * 🔴 SELECTOR PRECEDENCE — the OTHER half of `if (!listing && slug)`, and the half
+   * nothing pinned. The test above proves the slug arm RUNS on a miss; this one proves it
+   * does NOT run on a hit. Both selectors are optional and independent, so a caller can
+   * hand over an `appBlockId` and a slug that name DIFFERENT listings, and which one wins
+   * is a contract, not an implementation detail.
+   *
+   * Measured before this test existed: mutating `if (!listing && slug)` → `if (slug)`
+   * SURVIVED the whole 44-test battery. The slug row simply overwrote the block row and
+   * every assertion still held, because no case supplied two selectors that disagreed.
+   *
+   * The two rows are pairwise distinct on THREE observable fields — id, contentRating,
+   * and which listing's edit view is read — so no single hardcoded value can satisfy the
+   * assertions, and both rows are owned by the SAME user so ownership cannot be what
+   * decides the outcome.
+   */
+  it('🔴 PRECEDENCE: `appBlockId` WINS over a slug naming a DIFFERENT listing', async () => {
+    const blockRow = {
+      id: 'apl_block',
+      userId: OWNER,
+      kind: 'onsite',
+      slug: 'block-app',
+      appBlockId: 'my-block',
+      revisionOfId: null,
+      status: 'approved',
+      contentRating: 'pg13',
+      appBlock: { app: { userId: OWNER } },
+    };
+    const slugRow = {
+      id: 'apl_other',
+      userId: OWNER,
+      kind: 'offsite',
+      slug: 'other-app',
+      appBlockId: null,
+      revisionOfId: null,
+      status: 'approved',
+      contentRating: 'g',
+    };
+    const byId: Record<string, unknown> = { apl_block: blockRow, apl_other: slugRow };
+    const views: Record<string, unknown> = {
+      apl_block: editViewRow('apls_block'),
+      apl_other: editViewRow('apls_other'),
+    };
+    const impl = async (args: unknown) => {
+      const a = args as {
+        select?: Record<string, unknown>;
+        where?: { id?: string; appBlockId?: string };
+      };
+      if (a.where?.appBlockId != null) return blockRow;
+      if ('icon' in (a.select ?? {})) return views[a.where?.id ?? ''] ?? null;
+      // Both listings resolve their OWNER, so a mutant that lands on the slug row is
+      // refused by the identity assertions below rather than by NOT_OWNED.
+      return byId[a.where?.id ?? ''] ?? null;
+    };
+    mockRead.appListing.findUnique.mockImplementation(impl);
+    mockWrite.appListing.findUnique.mockImplementation(impl);
+    wireSlugLookup([slugRow]);
+    withShadow(null);
+
+    const res = await getMyListingForApp({
+      appBlockId: 'my-block',
+      slug: 'other-app',
+      userId: OWNER,
+    });
+
+    expect(res.appListingId).toBe('apl_block');
+    expect(res.contentRating).toBe('pg13');
+    // 🔴 SHORT-CIRCUIT, not last-write-wins: the slug query is never even issued.
+    expect(mockRead.appListing.findFirst).not.toHaveBeenCalled();
+    // …and the assets projected are the BLOCK listing's, not the slug listing's.
+    expect(editViewReads(mockRead)).toEqual(['apl_block']);
+  });
+
   it('a draft owned by ANOTHER user → NOT_OWNED (ownership still enforced on the slug path)', async () => {
     // The row is wired on BOTH lookups so the refusal is attributable to OWNERSHIP. With
     // only the slug lookup wired, the ownership resolve finds nothing and denies for
@@ -657,15 +731,24 @@ describe('getMyListingForApp — slug resolver (any top-level listing, either ki
 
   // -------------------------------------------------------------------------
   // 🔴 civitai/civitai#3984 — the arm used to read
-  // `{ slug, kind: 'onsite', appBlockId: null, status: 'draft' }`, which resolves
-  // NOTHING an OFF-SITE app can ever be: `kind: 'offsite'` is what it IS, and it has
-  // no AppBlock, so neither selector could address it and every listing-media surface
-  // hosted on this proc was unreachable for non-web clients. Measured against
-  // civitai.com at civitai/cli@1b20b99 (civitai/cli#422, #424): 4/4 off-site apps
-  // failed, 7/7 on-site passed, and `kind` predicted it exactly.
+  // `{ slug, kind: 'onsite', appBlockId: null, status: 'draft' }`, whose FIRST clause
+  // alone excludes every off-site listing: `kind: 'offsite'` is what it IS. And in
+  // practice an off-site listing carries no AppBlock either, so the other selector could
+  // not address it — every listing-media surface hosted on this proc was unreachable for
+  // non-web clients. Measured against civitai.com at civitai/cli@1b20b99
+  // (civitai/cli#422, #424): 4/4 off-site apps failed, 7/7 on-site passed, and `kind`
+  // predicted it exactly.
+  //
+  // 🟡 "off-site ⇒ no AppBlock" is EMPIRICAL, not structural, and this file does not
+  // depend on it: `appBlockId` is "set for EVERY backfilled row — on-site AND the #2821
+  // off-site rows … discriminate on `kind`, never on appBlockId nullness"
+  // (schema.full.prisma), and `mapAppBlockToListing` can mint `kind:'offsite'` with a
+  // non-null `appBlockId` — a shape measured at 0 rows in production on 2026-08-11
+  // (`appListingEditorTabs.ts`). The `kind` clause is what the widening had to drop;
+  // dropping the `appBlockId` clause covers the backfilled class too.
   // -------------------------------------------------------------------------
 
-  /** An OFF-SITE listing: no AppBlock, ever. The slug is its only handle. */
+  /** An OFF-SITE listing with no AppBlock — the common shape; the slug is its handle. */
   const offsiteRow = (overrides: Record<string, unknown> = {}) => ({
     id: 'apl_offsite',
     userId: OWNER,
@@ -747,6 +830,45 @@ describe('getMyListingForApp — slug resolver (any top-level listing, either ki
     ).toBe(false);
   });
 
+  /**
+   * 🔴 "ANY STATUS" IS A BEHAVIOURAL CLAIM, so it gets behavioural cases. Before these,
+   * the widening was only SPELLED — the sole thing that noticed a status narrowing was
+   * the structural `toHaveBeenCalledWith` pin on the draft case, and no case actually
+   * admitted a TERMINAL listing by slug. Measured: adding `status: { not: 'removed' }`
+   * back to the `where` killed exactly that one structural assertion and nothing else,
+   * so the `describe` title's "any status" was an unbacked claim.
+   *
+   * The two terminal statuses are the ones with something to say: they resolve, and come
+   * back as a VERDICT (`editBlockedReason`) rather than a throw — the same
+   * "don't collapse to NotFound" contract the `appBlockId` arm already has, now reachable
+   * by slug. One row per status, so a narrowing on EITHER one is caught.
+   */
+  it.each([
+    ['removed', 'this listing has been removed by a moderator and can no longer be edited'],
+    ['rejected', 'this listing was rejected; submit a new listing instead of editing it'],
+  ])(
+    '🔴 a %s listing RESOLVES BY SLUG and returns its editBlockedReason (any status)',
+    async (status, expected) => {
+      const dead = offsiteRow({ id: 'apl_dead', slug: 'dead-app', status });
+      wireSlugLookup([dead]);
+      wireFindUnique({
+        entry: null,
+        owned: dead,
+        viewByListingId: { apl_dead: editViewRow('apls_dead') },
+      });
+
+      const res = await getMyListingForApp({ slug: 'dead-app', userId: OWNER });
+
+      // It RESOLVED — a status narrowing on the `where` would throw NOT_FOUND here.
+      expect(res.appListingId).toBe('apl_dead');
+      expect(res.status).toBe(status);
+      // …and it came back as a verdict the surface can render, not an error.
+      expect(res.editBlockedReason).toBe(expected);
+      // Still a READ: a terminal listing must not mint a shadow on the way out.
+      expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    }
+  );
+
   it('🔴 a slug owned by ANOTHER user → NOT_OWNED, not NOT_FOUND (the gate, not the where)', async () => {
     // The BEHAVIOUR DELTA of #3984, pinned deliberately. Before, a stranger's slug was
     // filtered out by the `where` and reported NOT_FOUND; now the row resolves and the
@@ -767,10 +889,12 @@ describe('getMyListingForApp — slug resolver (any top-level listing, either ki
 
   it('🔴 a SHADOW revision’s synthetic `rev-` slug does NOT resolve → NOT_FOUND', async () => {
     // `revisionOfId: null` is the one clause that had to STAY, and it is not
-    // decoration: a shadow is `kind` = its parent's, `appBlockId` NULL, status
-    // `draft` — it MATCHED the old, apparently-narrower clause. The old comment's
-    // "only ever sees a parent" held only because nobody knows a `rev-<ulid>` slug.
-    // Now it holds by construction.
+    // decoration: a shadow is `kind: parent.kind`, `appBlockId` NULL, status `draft`
+    // (`beginListingRevision`). For an ON-SITE parent — the fixture below — that is
+    // exactly the old, apparently-narrower clause, so those shadows MATCHED it; a
+    // shadow of an OFF-SITE parent is `kind:'offsite'` and did not. Either way the old
+    // comment's "only ever sees a parent" held only because nobody knows a `rev-<ulid>`
+    // slug. Now it holds by construction, and this clause is the ONLY thing holding it.
     const shadow = {
       id: 'apl_shadow',
       userId: OWNER,

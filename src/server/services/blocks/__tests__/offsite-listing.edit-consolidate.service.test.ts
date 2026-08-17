@@ -294,8 +294,17 @@ describe('getMyListingForEdit', () => {
   });
 
   /**
-   * 🟡 CHARACTERIZATION TEST — this pins what the code DOES today. It is not an
-   * assertion about what it SHOULD do, and it should not be read as one.
+   * 🟢 THIS TEST ADDS NO COVERAGE — it is a LABEL on a path this file already exercises,
+   * and it is filed here so nobody counts it twice. Say it plainly: `ownedRow` DEFAULTS
+   * to `kind: 'offsite'` (see its definition), so the "APPROVED with NO prior shadow →
+   * CREATES one" case immediately above ALREADY drives an approved off-site listing
+   * through the entire shadow media path, and the "returns the listing's REAL kind —
+   * off-site" case already asserts the kind survives. Deleting the `it` below would not
+   * move a single line of coverage. It is kept for ONE reason: it names, in one place,
+   * the thing those two tests demonstrate incidentally, and it carries the open question.
+   *
+   * 🟡 CHARACTERIZATION — it pins what the code DOES today. It is not an assertion about
+   * what it SHOULD do, and it must not be read as one.
    *
    * `getMyListingForEdit` gates on ownership + status
    * (`loadOwnedEditableListing`, then the shadow / removed / rejected switch) and
@@ -313,10 +322,17 @@ describe('getMyListingForEdit', () => {
    * civitai/civitai#3984 for whoever owns the capability table): is off-site media
    * editing through the listing-keyed procs INTENDED — in which case the cell is
    * stale — or a gap the `listingMedia: false` cell believes is closed, in which
-   * case the missing check is in the services, not in the tab gate? Whichever
-   * answer lands, re-label or invert this test; do not silently delete it.
+   * case the missing check is in the services, not in the tab gate?
+   *
+   * 🔴 The evidence leans INTENDED, further than the question implies:
+   * `REVIEWABLE_LISTING_KINDS = ['onsite','offsite']` (`offsite-listing.service.ts`)
+   * means the revision submit → approve → apply chain accepts an off-site listing END TO
+   * END, not just the editor entry read. A media revision an off-site owner stages here
+   * can be submitted, reviewed and applied. So the `listingMedia: false` cell is a
+   * statement about ONE web tab, not about a closed service-side gap. Whichever answer
+   * lands, re-label or invert this test; do not silently delete it.
    */
-  it('CHARACTERIZATION: an APPROVED OFF-SITE listing gets the full shadow media path (no kind check)', async () => {
+  it('CHARACTERIZATION (already covered above): an APPROVED OFF-SITE listing gets the full shadow media path (no kind check)', async () => {
     wireFindUnique(ownedRow({ kind: 'offsite', status: 'approved' }), {
       apl_shadow_offsite: editViewRow('ss_shadow_offsite'),
     });
