@@ -285,17 +285,23 @@ describe("the creator's size limit", () => {
     expect(placementCreate).not.toHaveBeenCalled();
   });
 
-  it('lets a moderator exceed it', async () => {
+  /**
+   * The limit is the creator's, so nobody is above it — moderating someone's
+   * content is not a licence to put a bigger sticker on it.
+   *
+   * `isModerator` is no longer part of this input at all, and is sent here
+   * anyway, cast: a revert reinstating the exemption gives the field a reader
+   * again, and this is then the test that fails rather than one asserting a
+   * flag nothing looks at.
+   */
+  it('refuses a moderator the same way', async () => {
     resolvePlacementSpaceFor.mockResolvedValue(capped);
     givenStickerAndBalance();
 
     await expect(
-      createStickerPlacement({
-        ...placeInput,
-        data: OVERSIZE,
-        isModerator: true,
-      })
-    ).resolves.toMatchObject({ placementId: PLACEMENT });
+      createStickerPlacement({ ...placeInput, data: OVERSIZE, isModerator: true } as never)
+    ).rejects.toThrow(/up to 20%/);
+    expect(placementCreate).not.toHaveBeenCalled();
   });
 
   it('applies the default when the creator has set nothing', async () => {
