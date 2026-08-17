@@ -7,7 +7,7 @@
 # and Vite's loadEnv are dev-only; the prod node server reads process.env.
 
 ##### deps — install only the hub + its workspace deps (lean, frozen) ###########
-FROM node:22-alpine AS deps
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS deps
 RUN apk add --no-cache libc6-compat && corepack enable && corepack prepare pnpm@10.28.1 --activate
 WORKDIR /app
 
@@ -49,7 +49,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm --filter @civitai/creator-studio-app deploy --prod --legacy --ignore-scripts /app/deploy
 
 ##### runtime ###################################################################
-FROM node:22-alpine AS runtime
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S nodejs -g 1001 && adduser -S sveltekit -u 1001
