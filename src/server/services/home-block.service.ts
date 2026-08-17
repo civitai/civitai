@@ -870,6 +870,10 @@ async function updateFeaturedPool(
   const newMetadata: HomeBlockMetaSchema = {
     ...metadata,
     featuredCollections: {
+      // Spread first: this object is rebuilt field by field, so anything stored here that these
+      // endpoints don't know about is deleted by a pool edit. `autoFeature` was lost that way and
+      // the job it configures silently stopped for three days.
+      ...metadata.featuredCollections,
       collectionIds: nextIds,
       limit: metadata.featuredCollections?.limit ?? FEATURED_COLLECTIONS_DEFAULTS.limit,
       rows: metadata.featuredCollections?.rows ?? FEATURED_COLLECTIONS_DEFAULTS.rows,
