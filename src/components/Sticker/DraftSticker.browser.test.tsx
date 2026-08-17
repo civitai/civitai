@@ -165,18 +165,27 @@ const renderDraft = async (
  * through the ordinary locator with its full actionability check.
  *
  * (A locator click on the stub does not succeed in this harness: the cluster is
- * absolutely positioned inside the rotated draft and the paid variant ends up
- * unreachable. The mechanism is NOT established — `shouldFlipPlaceButton` cannot
- * fire here, since `tray` and `clip` are both null — and it is not the reason for
- * the exemption either way.)
+ * absolutely positioned inside the rotated draft, and the measured failure was a
+ * negative **x**. Nothing in the component moves it horizontally —
+ * `shouldFlipPlaceButton` is vertical only, as `DraftSticker.tsx` says where it is
+ * used — so the flip is not the cause. Beyond that the mechanism is unestablished,
+ * and it is not the reason for the exemption either way.)
  *
- * 🔴 **Four things end this exemption**, and any one of them means going back to a
+ * 🔴 **Five things end this exemption**, and any one of them means going back to a
  * locator click and solving the reachability properly:
  * 1. `BuzzTransactionButton` stops being mocked.
  * 2. Either helper is used to assert reachability, or enabled/disabled state,
  *    rather than the payload.
  * 3. The cluster gains an overlay, so a press could be intercepted.
  * 4. The pattern is copied into another file as habit.
+ * 5. **The paid control acquires an inert state.** The real button is
+ *    `disabled={… || !!error || isLoadingBalance || loading}` and routes its click
+ *    through `conditionalPerformTransaction`, which can open the buy-Buzz flow
+ *    INSTEAD of calling the handler. The stub honours none of that, and the draft
+ *    already passes `loading={place.isPending}` — so the moment an error or
+ *    disabled condition is added, or a test renders with `isPending: true`, a DOM
+ *    press fires a handler a real user could not fire and both payload tests
+ *    assert a send that cannot happen.
  */
 const pressPaid = async () => {
   const button = (await page.getByRole('button', { name: 'Place' }).element()) as HTMLElement;

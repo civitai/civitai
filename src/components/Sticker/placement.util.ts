@@ -286,9 +286,20 @@ export function useCreateStickerPlacement(
       // With the two-step version, hoisting the reads above the invalidation is a
       // mutation nothing can observe, and what it produces is exactly the stale
       // numbers this re-read exists to avoid.
+      //
+      // 🔴 **The catches are not defensive padding.** `invalidate` and `getData`
+      // were total — neither can reject — and `fetch` REJECTS on query error, with
+      // no try/catch in this handler. `getFreeStanding` is a protectedProcedure,
+      // so an expired session fails the placement and then fails this re-read too:
+      // unguarded, the rejection skips the notification entirely and somebody
+      // presses Place free, watches the button return to idle, and is told
+      // nothing. A failed re-read explains nothing, which is already what
+      // `freeRefusalMessage` says about `undefined` — every rung is guarded on
+      // `space &&` / `standing?.` — so it lands on the server's own message with
+      // no fall back to paid, which is the outcome that leaves someone informed.
       const [space, standing] = await Promise.all([
-        utils.placement.getSpace.fetch(target, { staleTime: 0 }),
-        utils.placement.getFreeStanding.fetch(target, { staleTime: 0 }),
+        utils.placement.getSpace.fetch(target, { staleTime: 0 }).catch(() => undefined),
+        utils.placement.getFreeStanding.fetch(target, { staleTime: 0 }).catch(() => undefined),
       ]);
 
       // Every OTHER image's cached standing is stale too, because the allowance
