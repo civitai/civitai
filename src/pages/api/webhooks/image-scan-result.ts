@@ -237,12 +237,22 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 // 1-10:  The images are visually almost identical
 // 11-20: The images are visually similar
 // 21-30: The images are visually somewhat similar
+// `BigInt('')` and `BigInt('  ')` are 0n, which would silently become a real Hamming
+// lookup against every blocked image within 4 bits of zero. Out-of-Int64 values would
+// reach ClickHouse and fail there, past the point this claims to have checked them.
 function parsePerceptualHash(hash: string) {
+  const invalid = new Error('invalid hash from ImageHash scan');
+  if (!hash.trim()) throw invalid;
+
+  let parsed: bigint;
   try {
-    return BigInt(hash);
+    parsed = BigInt(hash);
   } catch {
-    throw new Error('invalid hash from ImageHash scan');
+    throw invalid;
   }
+  if (BigInt.asIntN(64, parsed) !== parsed) throw invalid;
+
+  return parsed;
 }
 
 // `$query` interpolates into the SQL text rather than binding parameters, so this must
@@ -871,7 +881,9 @@ async function updateImageScanJobs({
   );
 
   const setClauses: Prisma.Sql[] = [];
-  if (pHash) setClauses.push(Prisma.sql`"pHash" = ${pHash}`);
+  // 0n is a legitimate hash (a flat image), and skipping it leaves the row scanned with a
+  // null pHash, which excludes it from blocklist matching for good.
+  if (pHash !== undefined) setClauses.push(Prisma.sql`"pHash" = ${pHash}`);
   if (ingestion) setClauses.push(Prisma.sql`"ingestion" = ${ingestion}::"ImageIngestionStatus"`);
   if (nsfwLevel) setClauses.push(Prisma.sql`"nsfwLevel" = ${nsfwLevel}`);
   if (blockedFor) setClauses.push(Prisma.sql`"blockedFor" = ${blockedFor}`);

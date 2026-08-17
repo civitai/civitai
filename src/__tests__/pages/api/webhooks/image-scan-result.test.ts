@@ -589,4 +589,40 @@ describe('image-scan-result webhook - pipeline tests', () => {
       expect(update!.params).toContain(`x'; DROP TABLE "Image"; --`);
     });
   });
+
+  describe('perceptual hash handling', () => {
+    it('rejects a blank hash instead of looking up hashes near zero', async () => {
+      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
+
+      const req = runWebhook({ id: 11, status: 0, source: TagSource.ImageHash, hash: '   ' });
+      await req.promise;
+
+      expect(mockClickhouseQuery).not.toHaveBeenCalled();
+      expect(req.res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('rejects a hash wider than Int64 rather than letting ClickHouse reject it', async () => {
+      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
+
+      const req = runWebhook({
+        id: 12,
+        status: 0,
+        source: TagSource.ImageHash,
+        hash: '99999999999999999999',
+      });
+      await req.promise;
+
+      expect(mockClickhouseQuery).not.toHaveBeenCalled();
+      expect(req.res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('writes a zero hash rather than leaving the column null', async () => {
+      const req = runWebhook({ id: 13, status: 0, source: TagSource.ImageHash, hash: '0' });
+      await req.promise;
+
+      const update = imageUpdates.find((u) => u.text.includes('"pHash"'));
+      expect(update).toBeDefined();
+      expect(update!.params).toContain(0n);
+    });
+  });
 });
