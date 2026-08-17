@@ -35,8 +35,13 @@
   }
 
   const submit: SubmitFunction = ({ formData }) => {
-    acted.set(Number(formData.get('id')), Number(formData.get('nsfwLevel')));
-    return async ({ update }) => update({ invalidateAll: false });
+    const id = Number(formData.get('id'));
+    acted.set(id, Number(formData.get('nsfwLevel')));
+    // See downleveled: an optimistic mark that survives a refusal makes the record wrong.
+    return async ({ result, update }) => {
+      if (result.type !== 'success') acted.delete(id);
+      await update({ invalidateAll: false });
+    };
   };
 
   const cardClass = (item: Item) => (acted.has(item.id) ? 'opacity-60' : '');

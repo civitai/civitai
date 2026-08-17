@@ -78,7 +78,12 @@
           : 'Rejected';
     for (const id of ids) acted.set(id, verdict);
     selected.clear();
-    return async ({ update }) => update({ invalidateAll: false });
+    // The whole batch reverts together: a rejected bulk action changed nothing, and marking any of it
+    // handled hides every one of those images from the moderator working the queue.
+    return async ({ result, update }) => {
+      if (result.type !== 'success') for (const id of ids) acted.delete(id);
+      await update({ invalidateAll: false });
+    };
   };
 
   const submit: SubmitFunction = ({ action, formData }) => {
@@ -92,7 +97,10 @@
           ? 'Approved'
           : 'Rejected';
     acted.set(imageId, verdict);
-    return async ({ update }) => update({ invalidateAll: false });
+    return async ({ result, update }) => {
+      if (result.type !== 'success') acted.delete(imageId);
+      await update({ invalidateAll: false });
+    };
   };
 
   // Optimistically-unpublished parent Model3D ids (the thumbnail affordance).

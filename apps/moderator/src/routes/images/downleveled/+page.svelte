@@ -33,8 +33,14 @@
   });
 
   const submit: SubmitFunction = ({ formData }) => {
-    acted.set(Number(formData.get('id')), Number(formData.get('nsfwLevel')));
-    return async ({ update }) => update({ invalidateAll: false });
+    const id = Number(formData.get('id'));
+    acted.set(id, Number(formData.get('nsfwLevel')));
+    // A refusal must un-dim the card. Left marked, the image reads as rated in the moderator's own
+    // record while it is still sitting in the queue unrated.
+    return async ({ result, update }) => {
+      if (result.type !== 'success') acted.delete(id);
+      await update({ invalidateAll: false });
+    };
   };
 
   function navigate(params: Record<string, string | number | null>) {

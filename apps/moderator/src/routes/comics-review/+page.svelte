@@ -9,9 +9,9 @@
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
-  import type { PageData } from './$types';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
   type Panel = PageData['items'][number];
 
   // panelId → verdict; optimistic (dims the card + shows the outcome), cleared on a fresh page/filter.
@@ -34,7 +34,12 @@
     (panelId: number, verdict: 'Approved' | 'Blocked'): SubmitFunction =>
     () => {
       acted.set(panelId, verdict);
-      return async ({ update }) => update({ invalidateAll: false });
+      return async ({ result, update }) => {
+        // Reverted before the result is applied. A mark left standing over a refusal is the operator's
+        // own record claiming they handled a panel that is still live, and the queue moves on past it.
+        if (result.type !== 'success') acted.delete(panelId);
+        await update({ invalidateAll: false });
+      };
     };
 
   const INGESTION_LABEL: Record<string, string> = {
@@ -89,6 +94,15 @@
     </select>
   </div>
 </header>
+
+{#if form?.error}
+  <div
+    class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+    role="alert"
+  >
+    {form.error}
+  </div>
+{/if}
 
 {#if data.items.length === 0}
   <div class="placeholder">No comic panels awaiting review.</div>
