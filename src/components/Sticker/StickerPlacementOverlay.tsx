@@ -7,6 +7,9 @@ import { orderPlacements, placementRevealDelays } from '~/components/Sticker/pla
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
+import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
+import { freeMarkerVisible } from '~/components/Sticker/free-marker';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   STILL_STICKER_TREATMENT,
   resolveTreatment,
@@ -173,6 +176,9 @@ export function StickerPlacementOverlay({
 
   // Ordered here rather than trusted from the caller: this component decides
   // what covers what, and the paint order of these elements IS that decision.
+  // Only for the moderator flag. Who the viewer is comes from `viewerId`, which
+  // the surfaces already pass and the server-side render has.
+  const currentUser = useCurrentUser();
   const ordered = useMemo(() => orderPlacements(placements), [placements]);
   // Off the full history, not off the visible slice: stepping through a replay
   // must not re-pace the stickers already on screen.
@@ -320,6 +326,15 @@ export function StickerPlacementOverlay({
           // would be a filter where a refusal is needed.
           const isOwner = placement.ownerId === viewerId;
 
+          const showsFree = freeMarkerVisible({
+            free: placement.free,
+            isPending: placement.isPending,
+            ownerId: placement.ownerId,
+            placerId: placement.placerId,
+            viewerId,
+            isModerator: currentUser?.isModerator,
+          });
+
           const dressed = resolveTreatment({
             treatment,
             surface,
@@ -408,6 +423,24 @@ export function StickerPlacementOverlay({
                     surface === 'card' ? 'inset-0' : '-inset-1'
                   )}
                 />
+              )}
+
+              {/* Centred under the sticker, directly above the owner's approve
+                  and decline controls — those are positioned off the sticker's
+                  measured height, so this rides the same edge they start from.
+
+                  Inside the artwork's box on a card for the same reason the
+                  pending ring is: a card clips anything outset. */}
+              {showsFree && (
+                <div
+                  className={clsx(
+                    'absolute left-1/2 -translate-x-1/2 whitespace-nowrap',
+                    interactive && 'pointer-events-auto',
+                    surface === 'card' ? 'bottom-0' : '-bottom-3'
+                  )}
+                >
+                  <PlacementFreeBadge noun="placement" solid />
+                </div>
               )}
             </div>
           );

@@ -142,19 +142,7 @@ describe('the removal copy', () => {
  */
 describe('placementPaymentSummary', () => {
   it('states the amount on a paid placement', () => {
-    expect(placementPaymentSummary(false, 700)).toBe('paid 700 Buzz');
-  });
-
-  /**
-   * A free row is `amount: 0`, DB-enforced. Unbranched, this card asserted a
-   * payment of zero directly above an irreversible choice, on the page a
-   * notification saying "free" had just linked to.
-   */
-  it('claims no payment on a free one, and names no amount', () => {
-    const free = placementPaymentSummary(true, 0);
-
-    expect(free).toBe('placed this free');
-    expect(free).not.toMatch(/paid|Buzz|0/);
+    expect(placementPaymentSummary(700)).toBe('paid 700 Buzz');
   });
 });
 

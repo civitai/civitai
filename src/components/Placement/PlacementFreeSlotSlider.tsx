@@ -63,6 +63,9 @@ export function PlacementFreeSlotSlider({
         </InfoPopover>
       </Group>
       <Slider
+        // The marks sit under the track and the caption sits on their row, same
+        // as the price slider. Without this they land on top of each other.
+        mb="lg"
         // The visible label is a sibling `Text`, so without this the thumb
         // reaches assistive tech — and any test driving it — as an unnamed
         // slider, indistinguishable from the price one beside it.
@@ -75,16 +78,17 @@ export function PlacementFreeSlotSlider({
         step={1}
         label={null}
         marks={[
-          { value: 0, label: 'None' },
+          { value: 0, label: '0' },
           { value: cap, label: `${cap}` },
         ]}
       />
-      {/* Clears the marks, which sit under the track. */}
-      <Text size="sm" c="dimmed" mt={16}>
-        <Text span fw={600} c="var(--mantine-color-text)">
-          {effective}
-        </Text>{' '}
-        {effective === 1 ? noun[0] : noun[1]} per image
+      {/* Sits on the marks' row in the same size and colour as the price
+          caption at each caller, so the two values on one settings page read as
+          one control rather than two. Bounded to the number and the unit for
+          the same reason `placementPriceCaption` is: the marks are pinned left
+          and right and this is centred between them. */}
+      <Text size="xs" ta="center" mt={-22} c="dimmed">
+        {effective} per image
       </Text>
     </Stack>
   );

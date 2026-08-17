@@ -56,13 +56,12 @@ export function declineConsequence(free: boolean | undefined) {
  * The queue row's headline, which is the only money statement on the card the
  * Approve and Decline buttons sit under.
  *
- * A free row carries `amount: 0`, enforced by the DB — so "paid 0 Buzz" is not a
- * cosmetic slip. It is the page the free-placement notification sends the creator
- * to: the notification says the placement was free and the card then asserts a
- * payment of zero, immediately above an irreversible choice.
+ * Paid rows only. A free row carries `amount: 0`, enforced by the DB, so this
+ * sentence would assert a payment of zero on the page the free-placement
+ * notification sends the creator to — immediately above an irreversible choice.
+ * The caller says nothing about money on a free row and badges it instead.
  */
-export const placementPaymentSummary = (free: boolean, amount: number) =>
-  free ? 'placed this free' : `paid ${amount} Buzz`;
+export const placementPaymentSummary = (amount: number) => `paid ${amount} Buzz`;
 
 /**
  * What a moderator take-down does to the money.
