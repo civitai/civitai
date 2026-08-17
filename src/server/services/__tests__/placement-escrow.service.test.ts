@@ -1,5 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// Mocked below; imported for the assertion that a swallowed reward failure is
+// still reported.
+import { logToAxiom } from '~/server/logging/client';
 // Stubbed globally in src/__tests__/setup.ts.
 import { placementUnfundedSettlementsGauge } from '~/server/prom/client';
 
@@ -13,6 +16,25 @@ vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction,
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+
+// Wholesale on purpose: the real module loads `base.reward`, which builds a
+// ClickHouse client, redis handles and prom collectors at import time. The
+// reward's own behaviour is tested in stickerPlacementAccepted.reward.test.ts;
+// what this suite owns is WHEN settlement hands it a placement.
+const applyAcceptReward = vi.fn();
+vi.mock('~/server/rewards/active/stickerPlacementAccepted.reward', () => ({
+  stickerPlacementAcceptedReward: { apply: applyAcceptReward },
+}));
+
+// The remix reward, which this service must NEVER grant — it is granted from
+// `actOnRemixGallerySubmission`, the only path by which a remix submission is
+// approved. Mocked here so the exclusivity test below observes the real shared
+// chokepoint: this suite is the only place that exercises it, since the remix
+// suite mocks `settlePlacement` wholesale and cannot see what it fires.
+const applyRemixReward = vi.fn();
+vi.mock('~/server/rewards/active/remixAccept.reward', () => ({
+  remixAcceptReward: { apply: applyRemixReward },
+}));
 
 // A real mutex, not a pass-through: the lock is what stops two callers both
 // reaching the Buzz call after one has claimed the ledger row, so a double that
@@ -358,6 +380,8 @@ beforeEach(() => {
   configState.shares = { seller: 0, platform: 0.3 };
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 2, totalAmount: 0 });
   createBuzzTransaction.mockResolvedValue({ transactionId: 'buzz-tx' });
+  applyAcceptReward.mockResolvedValue(undefined);
+  applyRemixReward.mockResolvedValue(undefined);
   // The real response carries the legs it reversed. The double used to return
   // only the prefix, which let a refund that moved NOTHING look identical to one
   // that moved everything — the exact discrepancy the service now refuses on.
@@ -1847,5 +1871,219 @@ describe('a free placement never touches the money path', () => {
 
     expect(moneyMoved()).toBe(0);
     expect(legsFor(1)).toEqual({});
+  });
+});
+
+describe('the accept reward', () => {
+  const hold = () =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+  it('pays the owner of the space, for the placement, crediting the placer', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+    expect(applyAcceptReward).toHaveBeenCalledWith({
+      placementId: 1,
+      ownerId: OWNER,
+      placerId: PLACER,
+    });
+  });
+
+  it('pays it for a free placement too', async () => {
+    givenPlacement({ free: true, amount: 0 });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+  });
+
+  // The reason it hangs off `count > 0` and not off the callers. The ledger key
+  // never expires while the daily cap does, so a second presentation of the same
+  // placement on a later day spends a tenth of the owner's day and moves no Buzz.
+  it('pays nothing on a second approve of the same placement', async () => {
+    givenPlacement();
+    await hold();
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    applyAcceptReward.mockClear();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(false);
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  it.each(['decline', 'expire', 'removeByOwner', 'removeByModerator'] as const)(
+    'pays nothing when the placement settles as %s',
+    async (action) => {
+      givenPlacement();
+      await hold();
+
+      const { settled } = await settlePlacement({ placementId: 1, action, actorId: OWNER });
+
+      // The settle has to have happened, or "the reward did not fire" is true of
+      // a call that did nothing at all and the assertion below proves nothing.
+      expect(settled).toBe(true);
+      expect(applyAcceptReward).not.toHaveBeenCalled();
+    }
+  );
+
+  /**
+   * 🔴 **Auto-accept pays, and that is designed** — but read what this asserts.
+   *
+   * This service has no notion of space mode. Both sticker approve paths — the
+   * owner acting through `actOnStickerPlacement`, and `createStickerPlacement`
+   * settling inline at placement time when `space.mode === 'auto'` — arrive here
+   * as the identical call, which is exactly why the reward hangs off the settle
+   * rather than off either caller. So this cannot tell them apart, and is not
+   * named as though it can: what it pins is that **any** approve pays.
+   *
+   * The auto half is pinned in two places that together need no inference:
+   * 'settles an auto space immediately' in sticker-placement.service.test.ts
+   * asserts that path issues exactly this settle, and this asserts that settle
+   * pays.
+   *
+   * Written out because the intent otherwise lives only in a Discord thread.
+   * Justin's decision, in the intent doc: creators switching from Review to Auto
+   * Accept to collect this is a fine outcome, not a leak. A reviewer reading the
+   * code alone has already once read auto-mode paying as an oversight and
+   * recommended removing it. If you are here to make auto stop paying, that is
+   * the conversation you are having, and it is Justin's to have.
+   */
+  it('pays on any approve, whichever of the two sticker paths issued it', async () => {
+    givenPlacement();
+    await hold();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 **Exactly one reward per surface, and this is the only place that can see
+   * it.** The tempting cleanup after both reward PRs land is to consolidate here
+   * — move the remix `apply` into `rewardAccepted` — and leave the call in
+   * `actOnRemixGallerySubmission` in place. That double-pays 20 Blue Buzz on
+   * every remix accept, and nothing else goes red: the remix suite mocks
+   * `settlePlacement` wholesale so it cannot observe this service firing
+   * anything, the two ledger keys differ by type, and the daily cap hash is
+   * keyed `userId:type` so both grants look legitimate to both caps.
+   *
+   * The consolidation is a recorded follow-up and is fine to do — but it must
+   * MOVE the remix call, not add one. This test is what tells you which you did.
+   *
+   * ⚠️ The remix half is **inert until #4013 lands**: nothing on this branch can
+   * call `remixAcceptReward`, because the module it mocks does not exist here
+   * yet. Verified that this suite still collects all its tests with the mock in
+   * place (Vitest resolves a mocked path lazily), so it is a tripwire armed on
+   * merge rather than coverage you have today.
+   */
+  it('grants exactly one reward per surface, and never the other surface reward', async () => {
+    givenPlacement({ id: 1, surface: 'sticker' });
+    givenPlacement({ id: 2, surface: 'remixGallery' });
+
+    const sticker = await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    expect(sticker.settled).toBe(true);
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+    expect(applyRemixReward).not.toHaveBeenCalled();
+
+    applyAcceptReward.mockClear();
+
+    const remix = await settlePlacement({ placementId: 2, action: 'approve', actorId: OWNER });
+    expect(remix.settled).toBe(true);
+    expect(applyRemixReward).not.toHaveBeenCalled();
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  // 🔴 If you are here because you added a `remixGallery` branch to
+  // `rewardAccepted`: that reward is already granted from
+  // `actOnRemixGallerySubmission`, the only path by which a remix submission is
+  // approved. A branch here does not replace that grant, it doubles it — and no
+  // guard either reward owns can tell: the types differ, so the ledger keys
+  // differ, and the daily cap hash is keyed `userId:type`. This test is the only
+  // thing standing between that edit and paying every remix approval twice.
+  it('pays nothing on a remix approval, which is granted from its own surface', async () => {
+    givenPlacement({ surface: 'remixGallery' });
+    await hold();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    // Establishes the approval actually happened, so this is "approved and paid
+    // nothing" rather than a call that quietly did nothing at all.
+    expect(settled).toBe(true);
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  // The approval has already paid the owner out of escrow by this point. A
+  // throw here would 500 a request whose money has moved, and the caller would
+  // read that as the approval having failed.
+  it('does not fail the approval when the reward throws', async () => {
+    givenPlacement();
+    await hold();
+    applyAcceptReward.mockRejectedValue(new Error('clickhouse is gone'));
+
+    const { settled, placement } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(placement.status).toBe('approved');
+    expect(legsFor(1)).toMatchObject({ toOwner: 700 });
+  });
+
+  /**
+   * The log is the entire compensation for swallowing the throw. Without it a
+   * reward that never arrived leaves no trace at all on a money path — and
+   * `.catch(() => null)` is a plausible-looking edit that produces exactly that
+   * while every other assertion here stays green.
+   *
+   * Rejected with a non-`Error` on purpose: that is what tells `.message` apart
+   * from the `instanceof` narrowing, and a bare `.message` logs `undefined` —
+   * the failure reads as "the reward failed, cause unknown", which is the shape
+   * that makes an outage unreadable at 3am.
+   */
+  it('reports a swallowed reward failure, whatever was thrown', async () => {
+    givenPlacement();
+    await hold();
+    applyAcceptReward.mockRejectedValue('clickhouse is gone');
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'placement-escrow',
+        message: 'accept reward failed',
+        placementId: 1,
+        error: 'clickhouse is gone',
+      })
+    );
   });
 });

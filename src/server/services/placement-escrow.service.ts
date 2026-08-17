@@ -11,6 +11,7 @@ import {
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import { stickerPlacementAcceptedReward } from '~/server/rewards/active/stickerPlacementAccepted.reward';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { isPlacementSpendType } from '~/shared/constants/placement.constants';
@@ -623,7 +624,55 @@ export async function settlePlacement({
 
   await payOutPlacement(placement);
 
+  if (count > 0 && status === 'approved') await rewardAccepted(placement);
+
   return { settled: count > 0, placement };
+}
+
+/**
+ * The owner's reward for accepting a placement onto their space.
+ *
+ * Hung off `count > 0` rather than off the approve callers: that is the settle
+ * whose `WHERE status = 'pending'` matched, and it happens exactly once per
+ * placement no matter how many approvals race or how often a caller retries. The
+ * reward's ledger key never expires while its daily cap does, so a second
+ * presentation of the same placement would silently burn a tenth of the owner's
+ * day and pay nothing.
+ *
+ * 🔴 **Sticker only, and no other surface may be added here.** The remix gallery
+ * reward is granted from `actOnRemixGallerySubmission`, which is the only way a
+ * remix submission is approved. A `remixGallery` branch in this function would
+ * not replace that call, it would double it — and nothing downstream catches a
+ * double: the two reward types have different `externalTransactionId`s, and the
+ * daily cap hash is keyed `userId:type`, so both grants look legitimate to every
+ * guard either reward has. A surface whose approvals arrive only through its own
+ * action handler belongs there, not here.
+ *
+ * After the payout, so a reward failure can never be why an approved placement
+ * went unpaid — and swallowed, because the money has already moved and a throw
+ * would 500 an approval that succeeded. Note what that costs: `base.reward`
+ * deliberately rethrows a genuine ClickHouse schema break so it surfaces as a
+ * 500, and this `.catch` takes that away. Such a break arrives here as an Axiom
+ * error rather than an alerting one, which is the trade this call site makes.
+ */
+async function rewardAccepted(placement: PlacementRow) {
+  if (placement.surface !== 'sticker') return;
+
+  await stickerPlacementAcceptedReward
+    .apply({
+      placementId: placement.id,
+      ownerId: placement.ownerId,
+      placerId: placement.placerId,
+    })
+    .catch((error) =>
+      logToAxiom({
+        name: 'placement-escrow',
+        type: 'error',
+        message: 'accept reward failed',
+        placementId: placement.id,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => null)
+    );
 }
 
 type PlacementRow = NonNullable<Awaited<ReturnType<typeof dbWrite.placement.findUnique>>>;
