@@ -35,7 +35,7 @@ export const imageScannedHandler = createEventHandler<ImageScannedMessage>({
     if (!imageId) {
       logger.warn(`[imageScannedHandler] Missing imageId in metadata for workflow ${workflowId}`);
       return;
-    };
+    }
 
     // TODO: handle workflow status (e.g., only process if status is 'completed', appropriate handlding for 'failed', etc.)
 

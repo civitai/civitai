@@ -1,7 +1,8 @@
-// Deliberately outside `src/common`: that directory is a vendored copy that
-// `scripts/sync-submodule.ts` re-syncs from event-engine-common, which has no tests. A test
-// living there would be deleted by a sync, and the CI ledger derives its expectations from
-// disk — so event-engine would drop out of the apps job silently rather than turning red.
+// Deliberately outside `src/common`: that directory is a hand-vendored copy of
+// event-engine-common that has already diverged from it, and the upstream has no tests. A
+// re-vendor would clobber a test living there — and because the CI ledger derives what it
+// expects from what is on disk, event-engine would drop out of the apps job silently rather
+// than turning red.
 import { expect, test } from 'vitest';
 import { SignalsService } from '@/common/services/signals';
 

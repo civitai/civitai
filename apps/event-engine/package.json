@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "setup:digitalocean": "tsx scripts/setup-digitalocean.ts",
     "setup:clickhouse-rollup": "tsx scripts/setup-clickhouse-rollup-view.ts",
     "setup:topics": "tsx scripts/create-kafka-topics.ts",

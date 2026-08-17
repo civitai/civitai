@@ -4,6 +4,10 @@
 // exited 2 without linting a single file.
 module.exports = {
   root: true,
+  // Without these the only error-level rule here is `no-unused-vars`, and CI's blocking
+  // "ESLint (added files)" gate would pass event-engine files while checking them for
+  // essentially nothing — a far weaker bar than the src/ and packages/ files beside them.
+  extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
   parser: '@typescript-eslint/parser',
   parserOptions: {
     ecmaVersion: 2022,
