@@ -61,7 +61,17 @@ async function moderatePanel(
   if (!imageId) return fail(400, { error: 'Missing image id.' });
 
   // acceptImage ignores ip/userAgent; blockImage uses them for the DeleteTOS analytics row.
-  await run({ imageId, userId: event.locals.user.id, ...getActorMeta(event) });
+  // Refused rather than thrown: an uncaught throw here renders a 500 page, which tells the moderator
+  // nothing about whether the panel was actioned and unmounts the queue they were working.
+  try {
+    await run({ imageId, userId: event.locals.user.id, ...getActorMeta(event) });
+  } catch (e) {
+    return fail(400, {
+      error:
+        e instanceof Error ? e.message : 'The action failed — re-check the panel before retrying.',
+      imageId,
+    });
+  }
   return { success: true, imageId };
 }
 
