@@ -151,7 +151,11 @@ here:
 
 - **Alert on the refresh, don't rely on someone noticing.** `system.view_refreshes`
   carries `last_refresh_result` and `exception` per view. A failed or missed
-  refresh needs to page inside the window, not be discovered after it.
+  refresh needs to page inside the window, not be discovered after it. The alert
+  is @fredrick's, written once over every row of that table rather than per view —
+  there are seven refreshable MVs in prod and none are currently alerted on, and
+  seven per-table alerts is how six get written and one does not. On the others a
+  failed refresh is a gap that re-derives; here it is a countdown.
 - **Re-run the duplicate audit on a schedule, not once.** It is only answerable
   inside the TTL, so a week-one measurement stops being evidence the moment the
   client's flush or dedupe behaviour changes.
@@ -263,8 +267,30 @@ prefix if a merged total is ever wanted.
 
 Only the `Image` arm is populated today, because **`images_created` is the only
 per-entity ownership table in ClickHouse**. There is no `models_created`,
-`articles_created` or equivalent, so there is nothing to join the other entity
-types against without inventing a new ownership feed — a bigger piece of work
-than this, and one that should be designed rather than bolted onto a refresh.
+`articles_created` or equivalent.
+
+This is a platform-wide gap rather than something local to impressions — three
+separate pieces of work hit it the same night from different directions
+(@fredrick's owner-keyed view counts, comic view tracking, and this). The
+conclusion, so the next person finds it instead of re-deriving it:
+
+- **Small id sets don't need a ClickHouse table.** Ownership resolves fine from
+  Postgres — `Article.userId`, `ComicProject.userId` — in ~70ms, and a literal
+  `IN` keeps the primary key usable (articles measured 35ms at the platform's
+  worst case). Prefer that at read time.
+- **The real gap is models specifically**, where the id set is large enough that
+  read-time resolution stops working. 2.13B model views are unsurfaced in Creator
+  Studio for exactly this reason.
+- **Neither helps a nightly rollup.** This MV needs an owner for *every* entity
+  seen that day, not for one creator's ids, so a Postgres round trip is not an
+  option inside the refresh whatever the entity type. A rollup arm for models
+  needs a ClickHouse-side ownership source; that is the piece nobody has built.
+
 Adding an arm later is a `UNION ALL` in this MV plus whatever source resolves
 that type's owner; nothing about the table shape has to change.
+
+Until then, a non-Image number here is **absent, not zero**. Consumers must
+render it as unknown rather than as `0` — the Studio already carries a live
+example of what the other choice looks like a year later (`getAllTimeTotals`
+reads a dead backfill whose max userId is 9.66M against current ids past 12.5M,
+and has been silently returning 0 comments for every newer creator).
