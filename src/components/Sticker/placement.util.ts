@@ -14,6 +14,15 @@ export type PlacedSticker = {
   ownerId: number;
   status: string;
   amount: number;
+  /**
+   * Placed against the creator's free capacity, so nothing was paid for it.
+   *
+   * On the listing rather than derived from `amount`, because every surface that
+   * reads this decides what to SAY about money — what a decline returns, why a
+   * removal is locked — and a zero is a number rather than the fact that answers
+   * that.
+   */
+  free: boolean;
   data: StickerPlacementData;
   /**
    * `Date` over superjson, a string out of anything that stringified the cache
@@ -274,7 +283,12 @@ export function useCreateStickerPlacement(
       };
       await Promise.all([
         utils.placement.getSpace.invalidate(target),
-        utils.placement.getFreeStanding.invalidate(target),
+        // Unkeyed, deliberately. The daily allowance is one placement a day
+        // across the whole site, so a target-scoped invalidation leaves every
+        // OTHER image's cached standing showing an allowance that is gone — and
+        // that stale number is what a control reads to decide whether to offer
+        // free at all. The space is per image and stays keyed.
+        utils.placement.getFreeStanding.invalidate(),
       ]);
 
       // 🔴 Only a refusal the re-read can account for falls back to paid. The

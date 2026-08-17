@@ -74,6 +74,49 @@ describe('the two sticker notifications are scoped apart', () => {
   });
 });
 
+/**
+ * Who hears about it, and where it sends them.
+ *
+ * Both are one identifier in a `jsonb_build_object`, and both swaps are green:
+ * `p."ownerId"` -> `p."placerId"` notifies the placer that they themselves want
+ * to place something, and `p."targetId"` -> `p.id` builds `/images/<placementId>`
+ * — a dead URL for the one person who has to act.
+ */
+describe('the free notification reaches the creator, about the right image', () => {
+  it.each(['sticker-placement-pending', 'sticker-placement-free-pending'])(
+    '%s notifies the owner, not the placer',
+    async (type) => {
+      const sql = await query(type);
+
+      expect(sql).toMatch(/p\."ownerId"\s+"userId"/);
+      // The placer is carried in the details for the message, so its presence is
+      // not the thing to assert — the recipient column is.
+      expect(sql).not.toMatch(/p\."placerId"\s+"userId"/);
+    }
+  );
+
+  it.each(['sticker-placement-pending', 'sticker-placement-free-pending'])(
+    '%s links to the image rather than to the placement',
+    async (type) => {
+      const sql = await query(type);
+
+      expect(sql).toMatch(/'imageId',\s*p\."targetId"/);
+      expect(sql).not.toMatch(/'imageId',\s*p\.id/);
+    }
+  );
+
+  it('sends the creator to the image, which is where the sticker is', () => {
+    const message = defs['sticker-placement-free-pending'].prepareMessage({
+      type: 'sticker-placement-free-pending',
+      details: { imageId: 74, placerId: 52, placerUsername: 'somebody' },
+    } as Parameters<Def['prepareMessage']>[0])!;
+
+    // Off `imageId`, so a details payload carrying the placement id cannot
+    // produce a URL that looks right and resolves to nothing.
+    expect(message.url).toBe('/images/74');
+  });
+});
+
 describe('each honours its own setting', () => {
   /**
    * 🔴 A settings row means opted OUT, and nothing applies that globally — every

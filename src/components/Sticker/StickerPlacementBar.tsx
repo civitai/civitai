@@ -147,15 +147,21 @@ export function StickerPlacementBar({
 
         {canPlace && (
           <Tooltip
-            // One idea, not two. Which offer is on the table is the whole
-            // content of this label, so it says that and leaves the mode —
-            // instant or reviewed — to the free option in the tray, where the
-            // placer is actually choosing what to spend.
-            label={
-              freeRemaining > 0
-                ? 'Place a sticker · free'
-                : `Place a sticker · ${space?.price} Buzz`
-            }
+            /**
+             * 🔴 The price, always — never "free".
+             *
+             * `freeRemaining` is the CREATOR's capacity and says nothing about
+             * this viewer: somebody who has spent today's allowance, or already
+             * free-placed on this image, would be promised free and then pay a
+             * number they were never shown. Only the standing query answers that,
+             * and this bar deliberately does not make it — it renders per feed
+             * card, so it would be one request per card.
+             *
+             * So the bar states the fact it has (the count beside this, which is
+             * about the creator) and makes no claim about the offer. The offer is
+             * made in the tray, where the standing is known.
+             */
+            label={`Place a sticker · ${space?.price} Buzz`}
             withArrow
           >
             <Button

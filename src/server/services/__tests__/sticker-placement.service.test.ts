@@ -1588,3 +1588,65 @@ describe('the removal lock explains itself truthfully on a free row', () => {
     expect(placementUpdateMany).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * What the free claim is actually handed.
+ *
+ * The tests above pin that the claim was CALLED and what happened after. Nothing
+ * pinned the payload, so deleting the normaliser or the note spread left every
+ * one of them green while free stickers landed at unnormalised coordinates, or
+ * silently without the note their placer wrote.
+ */
+describe('the payload handed to the free claim', () => {
+  beforeEach(() => {
+    givenStickerAndBalance();
+  });
+
+  const claimData = () =>
+    (createFreePlacement.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+
+  it('normalises the position rather than forwarding the raw draft', async () => {
+    await createStickerPlacement({
+      ...placeInput,
+      free: true,
+      // Past both bounds on purpose. The normaliser is the only thing between a
+      // drag that ran off the edge and a sticker rendered outside the image.
+      data: { ...placeInput.data, x: 1.4, y: -0.3, rotation: 15 },
+    });
+
+    const data = claimData();
+    expect(data.x).toBeLessThanOrEqual(1);
+    expect(data.x).toBeGreaterThanOrEqual(0);
+    expect(data.y).toBeLessThanOrEqual(1);
+    expect(data.y).toBeGreaterThanOrEqual(0);
+    // The cosmetic comes from the row the server loaded, not from the payload —
+    // the same id either way here, which is why the bounds above are what makes
+    // this test fail on a deleted normaliser.
+    expect(data.cosmeticId).toBe(COSMETIC);
+  });
+
+  it('carries the note the placer wrote', async () => {
+    await createStickerPlacement({
+      ...placeInput,
+      free: true,
+      data: { ...placeInput.data, comment: 'nice one' },
+    });
+
+    expect(claimData().comment).toBe('nice one');
+  });
+
+  /**
+   * Omitted rather than stored empty, so "left the field blank" and "typed only
+   * spaces" are the same row — the property the paid path already has, asserted
+   * here because the free path builds its own payload.
+   */
+  it('omits a note that is only whitespace', async () => {
+    await createStickerPlacement({
+      ...placeInput,
+      free: true,
+      data: { ...placeInput.data, comment: '   ' },
+    });
+
+    expect(claimData()).not.toHaveProperty('comment');
+  });
+});

@@ -33,6 +33,51 @@ export function payoutCopy(
 }
 
 /**
+ * What the owner is told a decline costs, which is a different fact on a free
+ * placement.
+ *
+ * The paid sentence — the placer keeps most of what they paid, a fee stays with
+ * you — is the escrow's two-hold structure, and a free row has neither hold. So
+ * on a free row it is not a rounding error in the wording, it is a false
+ * statement about money made at the moment somebody decides.
+ *
+ * ⚠️ **`undefined` is a real case, not a missing value.** A bulk decline can hold
+ * both kinds at once, where neither sentence is true of everything selected —
+ * so that branch says only what covers both rather than picking the majority.
+ */
+export function declineConsequence(free: boolean | undefined) {
+  if (free === true)
+    return 'No Buzz moves — nothing was paid for this one. Their free placement for today is still spent.';
+  if (free === false) return 'The placer keeps most of what they paid, and a fee stays with you.';
+  return 'Any Buzz paid mostly returns to the placer with a fee staying with you; a free placement moves no Buzz.';
+}
+
+/**
+ * Why a live sticker cannot be taken off yet.
+ *
+ * Mirrors the server's refusal in `removeApprovedSticker`, which is the thing
+ * that actually decides. The week is the same either way — Justin's call — so
+ * only the reason differs, and the paid reason is untrue on a free row.
+ */
+export const removalLockReason = (free: boolean) =>
+  free
+    ? 'Accepting a sticker is a commitment to keep it up for a week.'
+    : 'Someone paid to place this, so it stays up for a week.';
+
+/**
+ * What a removal does to the money, once it is allowed.
+ *
+ * The paid line reassures the owner that the Buzz they were paid stays with
+ * them. There is none on a free row, and inventing a reassurance about a payment
+ * that never happened is how a support thread starts with somebody insisting
+ * they were paid.
+ */
+export const removalConsequence = (free: boolean) =>
+  free
+    ? 'It comes off your image for everyone. No Buzz was paid for it, so none moves, and nobody is notified.'
+    : 'It comes off your image for everyone. The Buzz you were paid for it stays with you, and nobody is notified.';
+
+/**
  * The same chip, for the step before: buying the sticker itself.
  *
  * Named rather than "the creator" for the reason above, and more sharply here —

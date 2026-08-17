@@ -14,6 +14,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { useForgetStickerPlacement } from '~/components/Sticker/placement.util';
+import { removalConsequence, removalLockReason } from '~/components/Sticker/payout-copy';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
@@ -212,7 +213,11 @@ export function StickerPlacementHoverCard({
                   before an irreversible click. */}
               <ModeratorRemove placementId={placementId} pending={data.status === 'pending'} />
               {data.viewerIsOwner && data.status === 'approved' && (
-                <OwnerRemove placementId={placementId} removableAt={data.removableAt} />
+                <OwnerRemove
+                  placementId={placementId}
+                  removableAt={data.removableAt}
+                  free={data.free}
+                />
               )}
             </>
           )}
@@ -426,9 +431,15 @@ function HideNote({ placementId, commentHidden }: { placementId: number; comment
 function OwnerRemove({
   placementId,
   removableAt,
+  free,
 }: {
   placementId: number;
   removableAt: Date | string | null;
+  /**
+   * Whether this was placed against the creator's free capacity. Both sentences
+   * below are about money, and both are false when none moved.
+   */
+  free: boolean;
 }) {
   const forget = useForgetStickerPlacement();
 
@@ -450,9 +461,7 @@ function OwnerRemove({
       w={240}
       label={
         locked
-          ? `Someone paid to place this, so it stays up for a week. You can remove it from ${formatDate(
-              removableAt as Date
-            )}.`
+          ? `${removalLockReason(free)} You can remove it from ${formatDate(removableAt as Date)}.`
           : 'Takes the sticker off your image. No Buzz moves.'
       }
     >
@@ -470,12 +479,7 @@ function OwnerRemove({
           onClick={() =>
             openConfirmModal({
               title: 'Remove this sticker',
-              children: (
-                <Text size="sm">
-                  It comes off your image for everyone. The Buzz you were paid for it stays with
-                  you, and nobody is notified.
-                </Text>
-              ),
+              children: <Text size="sm">{removalConsequence(free)}</Text>,
               labels: { confirm: 'Remove', cancel: 'Cancel' },
               confirmProps: { color: 'red' },
               onConfirm: () => remove.mutate({ placementIds: [placementId], action: 'remove' }),

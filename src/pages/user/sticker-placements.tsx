@@ -56,6 +56,21 @@ export default function StickerPlacements() {
 
   const allSelected = rows.length > 0 && selected.length === rows.length;
 
+  /**
+   * Whether the selection is all free, all paid, or mixed.
+   *
+   * `undefined` for mixed is the honest answer rather than a missing one: the
+   * decline confirmation states what a decline costs, and a selection holding
+   * both kinds has no single true sentence about money. Rows not yet paged in
+   * cannot be selected, so an id with no row is treated as unknown too.
+   */
+  const selectedFree = ((): boolean | undefined => {
+    const kinds = new Set(
+      selected.map((id) => rows.find((row) => row.id === id)?.free ?? undefined)
+    );
+    return kinds.size === 1 ? [...kinds][0] : undefined;
+  })();
+
   const toggle = (id: number) =>
     setSelected((current) =>
       current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
@@ -91,7 +106,11 @@ export default function StickerPlacements() {
             <Card withBorder p="xs">
               <Group justify="space-between">
                 <Text size="sm">{selected.length} selected</Text>
-                <StickerPlacementActions placementIds={selected} onDone={() => setSelected([])} />
+                <StickerPlacementActions
+                  placementIds={selected}
+                  free={selectedFree}
+                  onDone={() => setSelected([])}
+                />
               </Group>
             </Card>
           )}
@@ -225,6 +244,7 @@ export default function StickerPlacements() {
                   <StickerPlacementActions
                     placementIds={[row.id]}
                     hasComment={!!row.data.comment}
+                    free={row.free}
                     stacked
                     compact
                   />

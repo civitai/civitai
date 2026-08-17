@@ -451,6 +451,8 @@ export type StickerPlacementView = {
   ownerId: number;
   status: PlacementStatus;
   amount: number;
+  /** Placed against the creator's free capacity, so no Buzz moved for it. */
+  free: boolean;
   data: StickerPlacementData;
   /**
    * When it was placed, which is what decides what covers what — and, on the
@@ -523,6 +525,11 @@ export async function getStickerPlacementDetail({
       createdAt: true,
       resolvedAt: true,
       status: true,
+      // Every surface built on this card says something about money — what a
+      // decline returns, why a removal is locked, what the owner keeps. All of
+      // it is false on a free row, and without this column the client has to
+      // infer it from `amount`, which is a number rather than a fact.
+      free: true,
       data: true,
       ownerId: true,
       placerId: true,
@@ -555,6 +562,7 @@ export async function getStickerPlacementDetail({
     // queue for two days did not change that.
     placedAt: placement.createdAt,
     status: placement.status as PlacementStatus,
+    free: placement.free,
     placer: placement.placer,
     comment: data ? visibleStickerComment(data, isParty) ?? null : null,
     /**
@@ -646,6 +654,11 @@ export async function getStickerPlacements({
       ownerId: true,
       status: true,
       amount: true,
+      // Beside `amount` rather than derived from it. Zero is what a free row
+      // carries, but it is not what makes it free — and the owner controls the
+      // copy that depends on the answer, so an inference is a wrong sentence
+      // about money rather than a missing one.
+      free: true,
       data: true,
       createdAt: true,
     },
@@ -666,6 +679,7 @@ export async function getStickerPlacements({
         ownerId: row.ownerId,
         status: row.status as PlacementStatus,
         amount: row.amount,
+        free: row.free,
         placedAt: row.createdAt,
         // The note's text is deliberately NOT in the listing, which runs for
         // every image on a feed page — only whether there is one, so an overlay
@@ -1009,6 +1023,10 @@ export async function getPendingStickerPlacements({
       targetId: true,
       placerId: true,
       amount: true,
+      // The queue's decline confirmation states what a decline costs, which is a
+      // different sentence on a free row — and a bulk selection can hold both
+      // kinds, so the caller needs it per row rather than per page.
+      free: true,
       data: true,
       createdAt: true,
       expiresAt: true,

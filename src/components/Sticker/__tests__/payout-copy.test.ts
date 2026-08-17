@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-copy';
+import {
+  declineConsequence,
+  payoutCopy,
+  removalConsequence,
+  removalLockReason,
+  stickerPurchaseCopy,
+} from '~/components/Sticker/payout-copy';
 
 describe('payoutCopy', () => {
   // The whole reason the name is there. "The creator" is read while looking at
@@ -64,5 +70,64 @@ describe('stickerPurchaseCopy', () => {
   // name the wrong recipient of real money.
   it('says nothing when the maker is unknown rather than absent', () => {
     expect(stickerPurchaseCopy(undefined)).toBeNull();
+  });
+});
+
+/**
+ * The money copy the OWNER decides on.
+ *
+ * Every sentence here is read at the moment somebody presses approve, decline or
+ * remove, and each one asserts something about Buzz. The paid versions describe
+ * the escrow's two holds, which a free row does not have — so on a free row they
+ * are not loosely worded, they are false statements about money made where a
+ * decision is taken and later repeated to support.
+ */
+describe('declineConsequence', () => {
+  it('describes the two holds on a paid placement', () => {
+    expect(declineConsequence(false)).toMatch(/keeps most of what they paid/);
+  });
+
+  it('claims no payment on a free one, and says what the placer does lose', () => {
+    const free = declineConsequence(true);
+
+    expect(free).not.toMatch(/paid for it|what they paid/);
+    // The asymmetry the placer was warned about before pressing: the image's
+    // slot comes back, their day does not. The owner deciding should see it too.
+    expect(free).toMatch(/free placement for today is still spent/);
+  });
+
+  /**
+   * `undefined` is a mixed bulk selection, not a missing value. Either concrete
+   * sentence would be false about half of what is selected, so this branch says
+   * only what covers both — and it must not read as one of them.
+   */
+  it('covers both kinds without asserting either, for a mixed selection', () => {
+    const mixed = declineConsequence(undefined);
+
+    expect(mixed).toMatch(/free placement moves no Buzz/);
+    expect(mixed).toMatch(/fee staying with you/);
+    expect(mixed).not.toBe(declineConsequence(true));
+    expect(mixed).not.toBe(declineConsequence(false));
+  });
+});
+
+describe('the removal copy', () => {
+  it('gives the true reason for the week on each kind', () => {
+    expect(removalLockReason(false)).toMatch(/Someone paid to place this/);
+    expect(removalLockReason(true)).toMatch(/commitment to keep it up for a week/);
+    // The client must not restate the paid reason on a free row — this mirrors
+    // the server's refusal, which was corrected for the same reason.
+    expect(removalLockReason(true)).not.toMatch(/paid/);
+  });
+
+  it('promises the owner no payment they never received', () => {
+    expect(removalConsequence(false)).toMatch(/Buzz you were paid for it stays with you/);
+    expect(removalConsequence(true)).not.toMatch(/you were paid/);
+    expect(removalConsequence(true)).toMatch(/No Buzz was paid for it/);
+  });
+
+  it('says nobody is notified either way, which is true of both', () => {
+    for (const free of [true, false])
+      expect(removalConsequence(free)).toMatch(/nobody is notified/);
   });
 });

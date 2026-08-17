@@ -264,24 +264,39 @@ describe('StickerPlacementBar — free slots', () => {
   });
 
   /**
-   * One idea per label. Somebody about to place free should not read a price,
-   * and the mode — instant or reviewed — is deliberately not here either: it
-   * belongs on the free option itself, where the choice is made.
+   * 🔴 The bar must never promise free, and the count is why it is tempting to.
+   *
+   * `freeSlotsRemaining` is the CREATOR's capacity. It says nothing about this
+   * viewer — somebody who spent today's allowance, or already free-placed on this
+   * image, has no free option at all — and only the standing query answers that,
+   * which this bar deliberately does not make because it renders per feed card.
+   * So a "free" label here is read by the people it is false for, who then open
+   * the tray and pay a number they were never shown.
+   *
+   * Asserted across both capacity states, because the defect only appeared in one
+   * of them: a test pinned to the empty case passes while the promise is made.
    */
-  test('offers free rather than a price while a slot remains', async () => {
-    Object.assign(queryState, settled, { freeSlots: 4, freeSlotsRemaining: 2 });
-    await renderBar();
-
-    await placeButton().hover();
-    await expect.element(page.getByText('Place a sticker · free')).toBeInTheDocument();
-    expect(page.getByText(/100 Buzz/).elements()).toHaveLength(0);
-  });
-
-  test('quotes the price once the free slots are gone', async () => {
-    Object.assign(queryState, settled, { freeSlots: 4, freeSlotsRemaining: 0 });
+  test.each([
+    ['slots remaining', 2],
+    ['slots all taken', 0],
+  ])('quotes the price and never promises free — %s', async (_name, remaining) => {
+    Object.assign(queryState, settled, { freeSlots: 4, freeSlotsRemaining: remaining });
     await renderBar();
 
     await placeButton().hover();
     await expect.element(page.getByText('Place a sticker · 100 Buzz')).toBeInTheDocument();
+    expect(page.getByText(/·\s*free/).elements()).toHaveLength(0);
+  });
+
+  /**
+   * The count itself stays, and this is the line between the two: a number about
+   * the creator's capacity is a fact the bar has, and a claim about what THIS
+   * viewer will be charged is not.
+   */
+  test('still states the creator capacity it does know', async () => {
+    Object.assign(queryState, settled, { freeSlots: 4, freeSlotsRemaining: 2 });
+    await renderBar();
+
+    await expect.element(page.getByText('2 of 4 free')).toBeInTheDocument();
   });
 });

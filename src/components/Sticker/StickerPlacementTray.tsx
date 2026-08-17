@@ -178,7 +178,15 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   ? `Free, or ${price} Buzz · one use either way`
                   : `${price} Buzz + one use`}
                 {space?.mode === 'review' &&
-                  ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
+                  ' · this creator reviews placements, so only you will see it until they approve.'}
+                {/* What a decline costs differs between the two offers, so where
+                    both are on the table it is said once in a form that is true
+                    of each. The old paid-only sentence sat beside "Free, or X
+                    Buzz" and contradicted FREE_REVIEW_CAVEAT one file over. */}
+                {space?.mode === 'review' &&
+                  (freeAvailable
+                    ? ' If they decline, a free placement still costs your allowance for the day, and part of a paid one stays with them.'
+                    : ' If they decline, part of what you paid stays with them.')}
               </Text>
             </div>
             <CloseButton

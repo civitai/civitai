@@ -2,6 +2,7 @@ import { Button, Group, Popover, Skeleton, Stack, Text } from '@mantine/core';
 import { IconMessage } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
+import { declineConsequence } from '~/components/Sticker/payout-copy';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -21,11 +22,21 @@ export function StickerPlacementActions({
   placementIds,
   compact = false,
   hasComment = false,
+  free,
   stacked = false,
   onDone,
 }: {
   placementIds: number[];
   compact?: boolean;
+  /**
+   * Whether every placement in this set was placed free, which decides what the
+   * decline confirmation says a decline costs.
+   *
+   * `undefined` means a mixed selection rather than an unknown one — a bulk
+   * decline legitimately holds both kinds, and no single sentence about money is
+   * true of all of them. See `declineConsequence`.
+   */
+  free?: boolean;
   /**
    * Whether this carries a note. Only meaningful for a single placement — a bulk
    * action deliberately does not offer the choice, so a mixed selection cannot
@@ -131,8 +142,7 @@ export function StickerPlacementActions({
               {placementIds.length > 1
                 ? `Decline ${placementIds.length} placements?`
                 : 'Decline this placement?'}{' '}
-              The placer keeps most of what they paid, and a fee stays with you. This can&apos;t be
-              undone.
+              {declineConsequence(free)} This can&apos;t be undone.
             </Text>
             <Group gap="xs" justify="end">
               <Button size="compact-xs" variant="default" onClick={() => setConfirming(false)}>
