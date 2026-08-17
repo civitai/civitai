@@ -31,8 +31,6 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 # inherited too, so they don't need re-running here.
 FROM deps AS builder
 ARG NEXT_PUBLIC_IMAGE_LOCATION
-ARG NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION
-ARG NEXT_PUBLIC_MAINTENANCE_MODE
 WORKDIR /app
 
 # Overlay the full source. node_modules is dockerignored, so this never clobbers the node_modules inherited
