@@ -105,20 +105,35 @@ describe('what a refused free submission is told', () => {
 
 describe('submissionMethod', () => {
   it('defaults to free when free is available, and to paid when it is not', () => {
-    expect(submissionMethod(null, true)).toBe('free');
-    expect(submissionMethod(null, false)).toBe('paid');
+    expect(submissionMethod(null, true, true)).toBe('free');
+    expect(submissionMethod(null, false, true)).toBe('paid');
   });
 
   it('honours an explicit choice', () => {
-    expect(submissionMethod('paid', true)).toBe('paid');
-    expect(submissionMethod('free', true)).toBe('free');
+    expect(submissionMethod('paid', true, true)).toBe('paid');
+    expect(submissionMethod('free', true, true)).toBe('free');
   });
 
   it('never resolves to free once free stops being available', () => {
     // The half that survives losing the race for the last slot: `chosen` still
     // says free, the fresh numbers no longer do, and the control must not submit
     // free anyway.
-    expect(submissionMethod('free', false)).toBe('paid');
+    expect(submissionMethod('free', false, true)).toBe('paid');
+  });
+
+  it.each([
+    ['a stale free choice', 'free' as const, false],
+    ['an explicit paid choice', 'paid' as const, true],
+    ['no choice at all', null, false],
+  ])('stays on free when paid is closed — %s', (_label, chosen, freeAvailable) => {
+    // 🔴 Falling to paid is only honest when paid exists. On a gallery that
+    // takes free submissions and refuses every paid one, dropping to paid lands
+    // on a disabled button with no explanation, or on an enabled one that opens
+    // the buy-Buzz flow for a submission the server will refuse.
+    //
+    // Every route into paid is covered, because each is a different line: the
+    // stale-choice rule, an explicit press, and the default.
+    expect(submissionMethod(chosen, freeAvailable, false)).toBe('free');
   });
 });
 

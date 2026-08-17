@@ -482,10 +482,13 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                         decision with two answers rather than a row of buttons.
                         Keyed to the row and the action — bare `act.isPending`
                         spun every button in the queue on any one click. */}
-                      {/* Each answer carries what it pays, so the owner never has
-                          to know that declining still earns a fee — the numbers
-                          come from the server, computed with the settlement's own
-                          helpers against this row's amount. */}
+                      {/* A PAID row's answers each carry what they pay, so the
+                          owner never has to know that declining still earns a
+                          fee — the numbers come from the server, computed with
+                          the settlement's own helpers against this row's amount.
+                          A free row carries neither, because nothing was paid in
+                          and there is no fee to earn: `earnings` is null there
+                          and the badge above says what the row is instead. */}
                       <Stack gap={6} className="w-36 shrink-0">
                         {/* Approving is the one answer that needs the picture.
                             Declining does not — it is a refusal, and a rating is

@@ -36,6 +36,11 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   showError: vi.fn(),
   visibility: {} as Record<string, unknown>,
+  /** What the post-refusal re-read returns. Separate from the query's answer on
+   *  purpose: reassigning one object between render and click had the same fake
+   *  backing both, which holds today and is one added effect away from
+   *  unmounting the button mid-click and hanging to the 15s ceiling. */
+  nextVisibility: null as Record<string, unknown> | null,
   eligibility: {} as Record<string, unknown>,
   /** When set, the mutation refuses with this message. */
   refuseWith: '' as string,
@@ -51,7 +56,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       placement: {
         invalidate: vi.fn(),
         getRemixGalleryVisibility: {
-          fetch: async () => mocks.visibility,
+          fetch: async () => mocks.nextVisibility ?? mocks.visibility,
           invalidate: vi.fn(),
         },
         getRemixGalleryFreeEligibility: { fetch: async () => mocks.eligibility },
@@ -150,6 +155,7 @@ const freeIsOffered = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   freeIsOffered();
+  mocks.nextVisibility = null;
   mocks.refuseWith = '';
 });
 
@@ -207,9 +213,10 @@ describe('a refused free submission', () => {
 
   test('explains a capacity refusal inline instead, with no error toast', async () => {
     mocks.refuseWith = 'remix gallery: the free slots on this one are taken';
+    // The re-read the handler makes after the refusal says the slots went; the
+    // query's own answer is untouched, so nothing re-renders mid-click.
+    mocks.nextVisibility = { ...mocks.visibility, freeSlotsRemaining: 0 };
     await openAndPick();
-    // The re-read the handler makes after the refusal now says the slots went.
-    mocks.visibility = { ...mocks.visibility, freeSlotsRemaining: 0 };
 
     await page.getByRole('button', { name: /submit for free/i }).click();
 
@@ -221,6 +228,71 @@ describe('a refused free submission', () => {
       .element(page.getByText(/free slots on this one are taken/i))
       .not.toBeInTheDocument();
   });
+});
+
+describe('a gallery that takes free submissions and refuses paid ones', () => {
+  /**
+   * 🔴 The fixture the rest of this file could not provide, and the reason both
+   * of the previous round's fixes were invisible: every other case here prices
+   * the gallery at 700 against a floor of 50, so `paidOpen` is always true and
+   * the two conditions it separates are identical.
+   *
+   * The service holds free submissions to none of the price rules — there are
+   * tests asserting an unpriced and a below-floor gallery accept free and refuse
+   * paid — so this is a supported configuration, not an edge case.
+   */
+  const paidClosed = (price: number | null) => {
+    mocks.visibility = { ...mocks.visibility, price };
+    mocks.nextVisibility = { ...mocks.visibility, price, freeSlotsRemaining: 0 };
+    mocks.refuseWith = 'remix gallery: the free slots on this one are taken';
+  };
+
+  test.each([
+    ['unpriced', null],
+    ['priced below the floor', 10],
+  ])('does not offer Buzz as the alternative — %s', async (_label, price) => {
+    paidClosed(price);
+    await openAndPick();
+    await page.getByRole('button', { name: /submit for free/i }).click();
+
+    // Says the true thing rather than pointing at a button that is disabled
+    // (unpriced) or that leads into a second refusal and a buy-Buzz prompt
+    // (below the floor).
+    await expect.element(page.getByText(/not taking paid submissions/i)).toBeInTheDocument();
+    await expect.element(page.getByText(/still submit with Buzz/i)).not.toBeInTheDocument();
+
+    // An explained refusal, so it stays inline — this is the assertion that dies
+    // if the banner goes back to being keyed on `fallBackToPaid`, which is false
+    // here while the refusal is still perfectly explainable.
+    expect(mocks.showError).not.toHaveBeenCalled();
+  });
+
+  test('offers no paid submit button at all', async () => {
+    paidClosed(null);
+    await openAndPick();
+    await page.getByRole('button', { name: /submit for free/i }).click();
+
+    await expect.element(page.getByTestId('buzz-submit')).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole('button', { name: /submit for free/i }))
+      .toBeInTheDocument();
+  });
+
+  /**
+   * ⚠️ What this file does NOT pin, stated so the pair above is not over-read.
+   *
+   * `submissionMethod`'s `paidOpen` rule — the one that stops the control
+   * FALLING into paid when free stops being available — is not reachable from
+   * here. In production the handler's `.fetch()` writes the query cache, so
+   * `freeAvailable` drops and the rule fires; this file's `useQuery` mock is
+   * static and does not model that write-through, so `freeAvailable` never
+   * drops and both branches return the same answer.
+   *
+   * Measured, not assumed: deleting `if (!paidOpen) return 'free'` leaves all
+   * nine tests here green and fails three in `remix-gallery.utils.test.ts`.
+   * That rule is the unit file's to hold, and a faithful cache-writing mock is
+   * the only thing that would move it here.
+   */
 });
 
 describe('the decline-fee note', () => {

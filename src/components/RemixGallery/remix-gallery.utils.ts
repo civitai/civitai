@@ -254,17 +254,34 @@ export function freeRefusalOutcome(
  * A third rule there needs one here, or the card starts recommending a refusal
  * again.
  */
+export const paidSubmissionOpen = (price: number | null | undefined) =>
+  price != null && price >= PLACEMENT_SURFACES.remixGallery.serverMinPrice;
+
 /**
  * Which option the control is on: an explicit choice, else free when it is
  * available.
  *
- * The second half is what survives losing the race for the last slot — `chosen`
- * can say free while the fresh numbers no longer do, and this resolves to paid
- * without the submitter having to notice a control changing under them. Pure and
- * out here because it is one line whose inversion charges someone Buzz.
+ * Two rules, and the second took a round to get right.
+ *
+ * `chosen === 'free'` cannot survive free becoming unavailable — that is what
+ * carries a lost race for the last slot without the submitter watching a control
+ * change under them. But falling to paid is only honest when paid exists: on a
+ * gallery that takes free submissions and refuses every paid one, dropping to
+ * paid lands either on a disabled button with no explanation, or on an enabled
+ * one that opens the buy-Buzz flow for a submission the server will refuse.
+ * Being asked to top up for a guaranteed refusal is worse than the refusal. So
+ * `paidOpen` is checked first and the control stays on free — disabled, beside
+ * the reason it is disabled.
+ *
+ * Pure and out here because its inversion charges someone Buzz, and because
+ * `paidOpen` reaching only the copy — true in the sentence, false in the control
+ * — is how this shipped wrong the first time.
  */
-export const submissionMethod = (chosen: 'free' | 'paid' | null, freeAvailable: boolean) =>
-  chosen === 'free' && !freeAvailable ? 'paid' : chosen ?? (freeAvailable ? 'free' : 'paid');
-
-export const paidSubmissionOpen = (price: number | null | undefined) =>
-  price != null && price >= PLACEMENT_SURFACES.remixGallery.serverMinPrice;
+export const submissionMethod = (
+  chosen: 'free' | 'paid' | null,
+  freeAvailable: boolean,
+  paidOpen: boolean
+): 'free' | 'paid' => {
+  if (!paidOpen) return 'free';
+  return chosen === 'free' && !freeAvailable ? 'paid' : chosen ?? (freeAvailable ? 'free' : 'paid');
+};

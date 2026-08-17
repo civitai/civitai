@@ -104,7 +104,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   const freeUnavailableReason =
     selected != null && freeInfo && slotsHeldKnown ? offer.reason : null;
 
-  const method = submissionMethod(chosen, freeAvailable);
+  const method = submissionMethod(chosen, freeAvailable, paidOpen);
 
   const submit = trpc.placement.submitToRemixGallery.useMutation({
     onSuccess: () => {
@@ -438,7 +438,17 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                     label: 'Free · needs review',
                     disabled: !freeAvailable,
                   },
-                  { value: 'paid', label: price == null ? 'With Buzz' : `${price} Buzz` },
+                  {
+                    value: 'paid',
+                    label: paidOpen ? `${price} Buzz` : 'With Buzz',
+                    // Not `price == null`: a gallery priced below the surface
+                    // floor refuses paid submissions too, and offering that
+                    // option leads into a second refusal rather than a disabled
+                    // button. Same predicate as the copy, one layer down —
+                    // `paidOpen` reaching only the sentence is how this shipped
+                    // wrong once already.
+                    disabled: !paidOpen,
+                  },
                 ]}
               />
 
@@ -516,7 +526,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 // hole. That was server-side, where the escrow drew from both.
                 accountTypes={spendTypes}
                 label="Submit"
-                disabled={!selected || !visibility?.open || price == null}
+                disabled={!selected || !visibility?.open || !paidOpen}
                 loading={submit.isPending}
                 // The price this render displayed travels with the submission, so
                 // the server refuses rather than charging a number the submitter
