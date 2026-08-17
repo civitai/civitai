@@ -126,8 +126,6 @@ export type CreateStickerPlacement = {
   placerId: number;
   imageId: number;
   data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
-  /** Moderators may exceed a creator's size limit. Justin's call. */
-  isModerator?: boolean;
   /**
    * Which of the two offers the placer took. A choice, not a claim: it selects
    * the path, and the path re-decides every rule for itself under a lock. The
@@ -185,7 +183,6 @@ export async function createStickerPlacement({
   placerId,
   imageId,
   data,
-  isModerator = false,
   free = false,
   spendType,
 }: CreateStickerPlacement) {
@@ -215,7 +212,7 @@ export async function createStickerPlacement({
   // they were accepted at, and a creator lowering their limit is not a licence
   // to take back something already paid for.
   const maxScale = stickerMaxScale(space.settings);
-  if (!isModerator && data.scale > maxScale)
+  if (data.scale > maxScale)
     throw throwBadRequestError(
       `placement: this creator allows stickers up to ${Math.round(
         maxScale * 100

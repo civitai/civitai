@@ -241,7 +241,6 @@ export const placementRouter = router({
         // it. Read off the payload it would spend someone else's daily
         // allowance and place under their name with nothing raising.
         placerId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
         // From the request's own domain, never the input: `...input` spreads
         // first, so a client-sent `spendType` cannot survive this line.
         spendType: domainSpendType(ctx.features),
