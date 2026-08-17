@@ -47,7 +47,7 @@ card 50% visible for 1s
   -> Tracker.impressions -> ONE batched insert
   -> default.impressions            (raw, 30-day TTL)
      -> daily_impressions           (incremental MV, per entity per day)
-     -> image_impressions_daily_by_owner (daily refreshable MV, per creator)
+     -> impressions_daily_by_owner  (daily refreshable MV, per creator per type)
 ```
 
 Nothing here touches `views`, `daily_views`, `uniqueViewsDaily` or
@@ -132,10 +132,32 @@ WHERE entityType = 'Image' AND entityId = ? AND createdDate = ?;
 The gap between the two IS the duplicate rate. Run it after the first week and
 state the error bar rather than presenting the rollup as exact.
 
-Per-creator totals must use `image_impressions_daily_by_owner`, never a
+Per-creator totals must use `impressions_daily_by_owner`, never a
 `entityId IN (...)` over the per-entity rollup: a creator's ids are scattered
 across the whole id space, so the primary key prunes nothing and the query reads
 the table.
+
+## The repair window is 30 days, and that is not true of the views pipeline
+
+`image_views_daily_by_owner` can be rebuilt from `daily_views` at any point back
+to 2023, because nothing upstream of it expires. **This pipeline cannot.** The raw
+table's 30-day TTL is what makes 150M rows/day affordable, and it is also a
+deadline: a nightly refresh that fails and is not noticed within 30 days leaves a
+permanent hole in `impressions_daily_by_owner`, with nothing left to rebuild it
+from.
+
+So two things that would be merely tidy on the views pipeline are load-bearing
+here:
+
+- **Alert on the refresh, don't rely on someone noticing.** `system.view_refreshes`
+  carries `last_refresh_result` and `exception` per view. A failed or missed
+  refresh needs to page inside the window, not be discovered after it.
+- **Re-run the duplicate audit on a schedule, not once.** It is only answerable
+  inside the TTL, so a week-one measurement stops being evidence the moment the
+  client's flush or dedupe behaviour changes.
+
+(Raised by @fredrick, who owns the equivalent on the views side and had the
+comparison to hand.)
 
 ## ClickHouse DDL
 
@@ -186,15 +208,16 @@ AS SELECT entityType, entityId, createdDate, count(*) AS impressions
 FROM default.impressions
 GROUP BY 1, 2, 3;
 
-CREATE TABLE default.image_impressions_daily_by_owner
+CREATE TABLE default.impressions_daily_by_owner
 (
     `ownerId`     Int32,
+    `entityType`  Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
     `createdDate` Date,
     `impressions` UInt64
 )
 ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
 PARTITION BY toYYYYMM(createdDate)
-ORDER BY (ownerId, createdDate)
+ORDER BY (ownerId, entityType, createdDate)
 SETTINGS index_granularity = 8192;
 
 -- Refresh offset is 04:00, deliberately not the 02:00 used by
@@ -202,11 +225,12 @@ SETTINGS index_granularity = 8192;
 -- The join is restricted to the ids present in the window and dedupes
 -- images_created (a ReplacingMergeTree with unmerged duplicate ids): the
 -- unrestricted form builds a 130M-row hash table for identical output.
-CREATE MATERIALIZED VIEW default.image_impressions_daily_by_owner_mv
+CREATE MATERIALIZED VIEW default.impressions_daily_by_owner_mv
 REFRESH EVERY 1 DAY OFFSET 4 HOUR APPEND
-TO default.image_impressions_daily_by_owner
+TO default.impressions_daily_by_owner
 (
     `ownerId`     Int32,
+    `entityType`  Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
     `createdDate` Date,
     `impressions` UInt64
 )
@@ -218,7 +242,7 @@ AS WITH di AS (
       AND createdDate < today()
     GROUP BY entityId, createdDate
 )
-SELECT ic.userId AS ownerId, di.createdDate AS createdDate, sum(di.impressions) AS impressions
+SELECT ic.userId AS ownerId, 'Image' AS entityType, di.createdDate AS createdDate, sum(di.impressions) AS impressions
 FROM di
 INNER JOIN (
     SELECT id, any(userId) AS userId
@@ -228,3 +252,19 @@ INNER JOIN (
 ) AS ic ON di.entityId = ic.id
 GROUP BY ownerId, createdDate;
 ```
+
+### Why the owner rollup is keyed by entity type but only populated for images
+
+`entityType` is in the key from the start because a creator's images, videos,
+models and articles are different numbers that will be read as separate lines —
+merging them produces a figure nobody can act on, and splitting it later means a
+second migration once the table has data. `ownerId` alone remains a valid key
+prefix if a merged total is ever wanted.
+
+Only the `Image` arm is populated today, because **`images_created` is the only
+per-entity ownership table in ClickHouse**. There is no `models_created`,
+`articles_created` or equivalent, so there is nothing to join the other entity
+types against without inventing a new ownership feed — a bigger piece of work
+than this, and one that should be designed rather than bolted onto a refresh.
+Adding an arm later is a `UNION ALL` in this MV plus whatever source resolves
+that type's owner; nothing about the table shape has to change.

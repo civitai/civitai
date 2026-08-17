@@ -937,15 +937,16 @@ clickhouse client -n <<-EOSQL
             ORDER BY (entityType, entityId, createdDate)
             SETTINGS index_granularity = 8192;
 
-    create table if not exists default.image_impressions_daily_by_owner
+    create table if not exists default.impressions_daily_by_owner
     (
         ownerId     Int32,
+        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
         createdDate Date,
         impressions UInt64
     )
         engine = SummingMergeTree()
             PARTITION BY toYYYYMM(createdDate)
-            ORDER BY (ownerId, createdDate)
+            ORDER BY (ownerId, entityType, createdDate)
             SETTINGS index_granularity = 8192;
 
     create table if not exists default.views_images_counts
@@ -1458,11 +1459,12 @@ clickhouse client -n <<-EOSQL
             2,
             3;
 
-    CREATE MATERIALIZED VIEW default.image_impressions_daily_by_owner_mv
+    CREATE MATERIALIZED VIEW default.impressions_daily_by_owner_mv
         REFRESH EVERY 1 DAY OFFSET 4 HOUR APPEND
-                TO default.image_impressions_daily_by_owner
+                TO default.impressions_daily_by_owner
                 (
                 ownerId Int32,
+                entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
                 createdDate Date,
                 impressions UInt64
                     )
@@ -1474,6 +1476,7 @@ clickhouse client -n <<-EOSQL
                   AND (createdDate < today())
                 GROUP BY entityId, createdDate)
     SELECT ic.userId       AS ownerId,
+        'Image'         AS entityType,
         di.createdDate  AS createdDate,
         sum(di.impressions) AS impressions
     FROM di
