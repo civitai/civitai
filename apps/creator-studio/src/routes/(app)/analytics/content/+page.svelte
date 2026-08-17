@@ -7,6 +7,8 @@
   import { goto } from '$app/navigation';
   import { formatRange } from '$lib/date-range';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
+  import { IconEye, IconExternalLink } from '@tabler/icons-svelte';
+  import type { TopImage } from '$lib/server/analytics';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -17,6 +19,8 @@
   const TABS = [
     { key: 'images', label: 'Images', singular: 'image' },
     { key: 'videos', label: 'Videos', singular: 'video' },
+    { key: 'articles', label: 'Articles', singular: 'article' },
+    { key: 'comics', label: 'Comics', singular: 'comic' },
   ] as const;
   type TabKey = (typeof TABS)[number]['key'];
 
@@ -36,19 +40,73 @@
     });
   }
 
+  // Comics have neither metric yet, so the rank-by control is hidden there — not shown inert. Images, videos
+  // and articles all carry both.
+  const isArticles = $derived(tab === 'articles');
+  const isComics = $derived(tab === 'comics');
+  const isMedia = $derived(!isArticles && !isComics);
+
+  // Ranking is client-side: the server already caps each tab at 100 rows, and re-sorting them costs nothing
+  // next to a second round trip. It does mean "top by views" ranks within the top-100 *by reactions* — a
+  // much-viewed image nobody reacted to isn't in the list to be ranked. Noted on the page.
+  const SORTS = [
+    { key: 'reactions', label: 'Reactions' },
+    { key: 'views', label: 'Views' },
+  ] as const;
+  type SortKey = (typeof SORTS)[number]['key'];
+  const sort = $derived(
+    (SORTS.find((s) => s.key === pageState.url.searchParams.get('sort'))?.key ??
+      'reactions') as SortKey
+  );
+  function setSort(key: string) {
+    const p = new URLSearchParams(pageState.url.searchParams);
+    if (key === 'reactions') p.delete('sort');
+    else p.set('sort', key);
+    p.delete('page');
+    const qs = p.toString();
+    goto(qs ? `${pageState.url.pathname}?${qs}` : pageState.url.pathname, {
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
+
   const active = $derived(TABS.find((t) => t.key === tab)!);
   const pageSize = $derived(analyticsPageSize.value);
-  const items = $derived(data[tab]);
-  const total = $derived(items?.length ?? 0);
+
+  const media = $derived(
+    !isMedia || data[tab] === null
+      ? null
+      : sort === 'views'
+        ? [...(data[tab] as TopImage[])].sort((a, b) => b.views - a.views)
+        : (data[tab] as TopImage[])
+  );
+  const articles = $derived(
+    data.articles === null
+      ? null
+      : sort === 'views'
+        ? [...data.articles].sort((a, b) => b.views - a.views)
+        : [...data.articles].sort((a, b) => b.reactions - a.reactions)
+  );
+  const comics = $derived(data.comics);
+  // One paging model over whichever list this tab is showing; only the card markup differs.
+  const activeList = $derived(isComics ? comics : isArticles ? articles : media);
+  const unavailable = $derived(
+    isComics ? comics === null : isArticles ? articles === null : data[tab] === null
+  );
+  const total = $derived(activeList?.length ?? 0);
   const totalPages = $derived(Math.max(1, Math.ceil(total / pageSize)));
   const pageNum = $derived(Math.max(1, Number(pageState.url.searchParams.get('page')) || 1));
   const curPage = $derived(Math.min(pageNum, totalPages));
-  const shown = $derived(items ? items.slice((curPage - 1) * pageSize, curPage * pageSize) : []);
+  const slice = <T,>(xs: T[] | null) =>
+    xs ? xs.slice((curPage - 1) * pageSize, curPage * pageSize) : [];
+  const shown = $derived(slice(media));
+  const shownArticles = $derived(slice(articles));
+  const shownComics = $derived(slice(comics));
 </script>
 
 <AnalyticsHeader range={data.range} compare={data.compare} showCompare={false} />
 
-<div class="mb-4">
+<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
   <ToggleGroup
     type="single"
     value={tab}
@@ -62,50 +120,181 @@
       <ToggleGroupItem value={t.key} class="text-xs">{t.label}</ToggleGroupItem>
     {/each}
   </ToggleGroup>
+
+  {#if !isComics}
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-dark-3">Rank by</span>
+      <ToggleGroup
+        type="single"
+        value={sort}
+        onValueChange={(v: string) => {
+          if (v) setSort(v);
+        }}
+        variant="outline"
+        size="sm"
+      >
+        {#each SORTS as s (s.key)}
+          <ToggleGroupItem value={s.key} class="text-xs">{s.label}</ToggleGroupItem>
+        {/each}
+      </ToggleGroup>
+    </div>
+  {/if}
 </div>
 
-{#if items === null}
+{#if unavailable}
   <div class="placeholder">
     {active.label} are temporarily unavailable — please try again shortly.
   </div>
-{:else if items.length === 0}
-  <div class="placeholder">No {active.singular} reactions {periodLabel} yet.</div>
+{:else if total === 0}
+  <div class="placeholder">
+    {#if isComics}
+      You haven't published a comic yet.
+    {:else if isArticles}
+      No article views {periodLabel} yet.
+    {:else}
+      No {active.singular} reactions {periodLabel} yet.
+    {/if}
+  </div>
 {:else}
   <p class="mb-3 text-sm font-medium text-white">
-    Top {tab} by reactions <span class="text-xs text-dark-3">{periodLabel}</span>
+    {#if isComics}
+      Your comics <span class="text-xs text-dark-3">· by readers</span>
+    {:else}
+      Top {tab} by {sort === 'views' ? 'views' : 'reactions'}
+      <span class="text-xs text-dark-3">
+        {periodLabel}{isMedia && sort === 'views' ? ' · within your 100 most-reacted' : ''}
+      </span>
+    {/if}
   </p>
   <div class="mb-3">
     <Pagination {total} noun={active.singular} {curPage} {totalPages} />
   </div>
-  <div class="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-5">
-    {#each shown as m, i (m.imageId)}
-      <!-- mature (nsfwLevel > 3) links to civitai.red -->
-      <a
-        href="https://civitai.{m.nsfwLevel > 3 ? 'red' : 'com'}/images/{m.imageId}"
-        target="_blank"
-        rel="noreferrer"
-        class="group relative block aspect-square overflow-hidden rounded-lg border border-dark-4 bg-dark-7"
-      >
-        <EdgeMedia
-          src={m.url}
-          type={m.type}
-          width={450}
-          alt="Top {active.singular} #{m.imageId}"
-          class="h-full w-full object-cover transition-transform group-hover:scale-105"
-        />
-        <div
-          class="absolute inset-x-0 top-0 flex justify-start bg-linear-to-b from-black/60 to-transparent px-2 py-1"
+
+  {#if isComics}
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {#each shownComics as c (c.projectId)}
+        <a
+          href="https://civitai.{c.nsfwLevel > 3 ? 'red' : 'com'}/comics/{c.projectId}"
+          target="_blank"
+          rel="noreferrer"
+          class="group flex gap-3 overflow-hidden rounded-lg border border-dark-4 bg-dark-7 p-2"
         >
-          <span class="text-xs font-semibold text-white">#{(curPage - 1) * pageSize + i + 1}</span>
-        </div>
-        <div
-          class="absolute inset-x-0 bottom-0 flex justify-end bg-linear-to-t from-black/70 to-transparent px-2 py-1.5"
+          <div class="size-16 shrink-0 overflow-hidden rounded bg-dark-6">
+            {#if c.coverUrl}
+              <EdgeMedia
+                src={c.coverUrl}
+                type="image"
+                width={160}
+                alt=""
+                class="h-full w-full object-cover"
+              />
+            {/if}
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-medium text-white" title={c.name}>{c.name}</p>
+            <p class="mt-1 text-xs text-dark-2">
+              {num(c.readers)} readers · {num(c.newReaders)} new {periodLabel}
+            </p>
+            <p class="text-xs text-dark-3">
+              {c.chapters}
+              {c.chapters === 1 ? 'chapter' : 'chapters'}
+              {#if !c.published}· <span class="text-dark-4">unpublished</span>{/if}
+            </p>
+          </div>
+          <IconExternalLink
+            size={14}
+            class="mt-1 shrink-0 text-dark-4 transition-colors group-hover:text-white"
+          />
+        </a>
+      {/each}
+    </div>
+  {:else if isArticles}
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {#each shownArticles as a, i (a.articleId)}
+        <!-- Same rule as the media tiles: the card opens the Studio's own history for this article, and the
+             public page is a deliberate second click from the detail view. -->
+        <a
+          href="/analytics/content/article/{a.articleId}"
+          class="group flex gap-3 overflow-hidden rounded-lg border border-dark-4 bg-dark-7 p-2"
         >
-          <span class="text-xs font-semibold text-white">♥ {num(m.reactions)}</span>
+          <div class="size-16 shrink-0 overflow-hidden rounded bg-dark-6">
+            {#if a.coverUrl}
+              <EdgeMedia
+                src={a.coverUrl}
+                type="image"
+                width={160}
+                alt=""
+                class="h-full w-full object-cover"
+              />
+            {/if}
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-medium text-white" title={a.title}>
+              <span class="text-dark-3">#{(curPage - 1) * pageSize + i + 1}</span>
+              {a.title}
+            </p>
+            <p class="mt-1 flex items-center gap-2 text-xs text-dark-2">
+              <span class="flex items-center gap-1" title="Views {periodLabel}">
+                <IconEye size={13} />
+                {num(a.views)}
+              </span>
+              <span title="Reactions {periodLabel}">♥ {num(a.reactions)}</span>
+            </p>
+            {#if a.publishedAt}
+              <p class="text-xs text-dark-3">Published {a.publishedAt.slice(0, 10)}</p>
+            {/if}
+          </div>
+        </a>
+      {/each}
+    </div>
+  {:else}
+    <div class="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-5">
+      {#each shown as m, i (m.imageId)}
+        <!-- The tile now opens this image's view history rather than leaving the Studio; the corner icon keeps
+           the old escape hatch to the public page (mature — nsfwLevel > 3 — lives on civitai.red). -->
+        <div
+          class="group relative aspect-square overflow-hidden rounded-lg border border-dark-4 bg-dark-7"
+        >
+          <a href="/analytics/content/image/{m.imageId}" class="block h-full w-full">
+            <EdgeMedia
+              src={m.url}
+              type={m.type}
+              width={450}
+              alt="Top {active.singular} #{m.imageId}"
+              class="h-full w-full object-cover transition-transform group-hover:scale-105"
+            />
+            <div
+              class="absolute inset-x-0 top-0 flex justify-start bg-linear-to-b from-black/60 to-transparent px-2 py-1"
+            >
+              <span class="text-xs font-semibold text-white"
+                >#{(curPage - 1) * pageSize + i + 1}</span
+              >
+            </div>
+            <div
+              class="absolute inset-x-0 bottom-0 flex justify-end gap-2 bg-linear-to-t from-black/70 to-transparent px-2 py-1.5"
+            >
+              <span class="text-xs font-semibold text-white" title="Views {periodLabel}">
+                <IconEye size={12} class="inline align-[-2px]" />
+                {num(m.views)}
+              </span>
+              <span class="text-xs font-semibold text-white" title="Reactions {periodLabel}">
+                ♥ {num(m.reactions)}
+              </span>
+            </div>
+          </a>
+          <a
+            href="https://civitai.{m.nsfwLevel > 3 ? 'red' : 'com'}/images/{m.imageId}"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="View {active.singular} #{m.imageId} on Civitai"
+            class="absolute right-1 top-1 rounded bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
+          >
+            <IconExternalLink size={13} />
+          </a>
         </div>
-      </a>
-    {/each}
-  </div>
+      {/each}
+    </div>
+  {/if}
   {#if totalPages > 1}
     <div class="mt-4">
       <Pagination {total} noun={active.singular} {curPage} {totalPages} />
