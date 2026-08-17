@@ -237,7 +237,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     </div>
                   ) : (
                     <div className="absolute bottom-1 right-1">
-                      {data.hasMeta && (
+                      {features.imageCardInfoButton && data.hasMeta && (
                         <ImageMetaPopover2 imageId={data.id} type={data.type}>
                           <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
                             <IconInfoCircle

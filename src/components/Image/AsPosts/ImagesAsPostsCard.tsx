@@ -342,7 +342,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
           />
-          {image.hasMeta && (
+          {features.imageCardInfoButton && image.hasMeta && (
             <div className="absolute bottom-1 right-0.5 z-10">
               <ImageMetaPopover2 imageId={image.id} type={image.type}>
                 <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
@@ -462,7 +462,7 @@ function PostCarouselSlide({
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
           />
-          {image.hasMeta && (
+          {features.imageCardInfoButton && image.hasMeta && (
             <div className="absolute bottom-1 right-0.5 z-10">
               <ImageMetaPopover2 imageId={image.id} type={image.type}>
                 <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
