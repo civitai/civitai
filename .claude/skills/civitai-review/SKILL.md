@@ -15,12 +15,44 @@ agents do not cover SvelteKit and will produce noise there.
 This complements the built-in `/code-review`, which already handles generic correctness. What these five
 add is Civitai-specific: *which* service, *which* component, *which* trap.
 
-## 1. Scope the segment
+## 0. Set up the review worktree
 
-Work out what is under review and say so before spawning anything:
+Review runs in its own throwaway worktree, detached at the head under review, and **nothing is written
+to it** — the implementer owns the tree the code was authored in.
+
+🔴 **If that head is based on an integration branch rather than `main`, this skill and its five agents
+do not exist in the tree.** They are tracked in the repo, so a worktree at a commit predating their
+merge contains neither `.claude/skills/civitai-review/` nor `.claude/agents/civitai-*.md`: the skill is
+not found and the `subagent_type` names do not resolve. Work stacked on a `feat/…` integration branch is
+the normal case here, not the exception, so expect this rather than treating it as a broken install. The
+failure is upstream of anything this file can say — by the time you could read a workaround here, you
+would already have found the file.
+
+Bring them in from `main` before spawning anything:
 
 ```bash
-git diff --stat main...HEAD -- src/
+git checkout origin/main -- .claude
+```
+
+The tree is detached and throwaway, so a dirty `.claude` in it costs nothing and can never reach a PR.
+Do not install the agents into `~/.claude/` instead: that is a second copy free to drift from the
+repo's, and the repo's is the authoritative one.
+
+## 1. Scope the segment
+
+**Determine the base first — it is usually not `main`.** Work stacks on a feature integration branch far
+more often than it sits directly on `main`, and diffing against `main` drags in every unrelated commit
+that landed on the integration branch. Take the base from the invoking request, or read it off the PR:
+
+```bash
+gh pr view <n> --json baseRefName -q .baseRefName
+```
+
+Then scope against that base, and say what it is before spawning anything:
+
+```bash
+BASE=origin/feat/<integration-branch>   # whatever the PR is actually based on
+git diff --stat $BASE...HEAD -- src/
 git status --short
 ```
 
@@ -73,6 +105,20 @@ decision, not an omission; do not helpfully collapse them.
 Skip a lane only when the diff genuinely cannot contain its findings — no server code at all is a
 reason to skip perf. "No tests changed" is *a finding for the test lane*, not a reason to skip it. Say
 which you skipped and why.
+
+### Tell every lane how to deliver, and never read silence as a clean lane
+
+🔴 **Each lane's prompt must say how its findings get back to you** — that its final message text *is*
+the return value, or, for an agent whose own transcript reaches nobody, that it must send the report
+explicitly. A lane that finishes with its report only in its transcript has delivered nothing, and it
+has no way to know that.
+
+🔴 **A lane that goes idle without reporting has failed. Re-ping it.** Do not record it as a clean lane.
+This is the one failure this skill's own format actively hides: step 3 asks you to say plainly when a
+lane found nothing, which makes a lost lane and a clean lane read identically — and the consolidated
+report then looks complete while missing a fifth of the review. It has happened on a real run, and the
+lane that vanished held the sharpest finding of the round. **Account for all five by name before you
+consolidate**, and treat "idle" as a question, not an answer.
 
 ## 3. Consolidate
 
@@ -129,9 +175,32 @@ weaker.
 Present the consolidated list and hand it to the implementer. Ask before applying fixes yourself,
 unless the invoking request already said to.
 
-## 5. Close out
+### When the head moves mid-review
 
-Per `CLAUDE.md`'s "Before Committing":
+The implementer may push while the lanes are still reading. They are asked to mail the reviewer the new
+SHA on every push — but do not depend on it, because a review is detached at a SHA and does not follow
+the PR.
+
+🔴 **Never move the worktree while lanes are running.** Checking out a new head swaps files beneath
+agents mid-read, and the reports then describe two different commits with nothing marking which is
+which. Read the delta out of git instead, which touches no file in the tree:
+
+```bash
+git fetch origin <branch>
+git diff <old-sha> <new-sha>
+git show <new-sha>:<path>
+```
+
+Then re-target only the lanes whose subject those files touch — the same rule as the loop above. Move
+the tree once every lane is idle, if at all.
+
+## 5. Close out — the implementer's step, not the reviewer's
+
+🔴 **If you ran this skill as a findings-only reviewer, stop at step 4.** Everything below writes:
+`prettier:write` rewrites files in place, and a review tree is read-only by construction. Hand the
+consolidated list to the implementer and let them close out in the tree they own.
+
+The rest of this step belongs to whoever is committing, per `CLAUDE.md`'s "Before Committing":
 
 ```bash
 pnpm run typecheck          # never `npx tsc`; never filter its output
