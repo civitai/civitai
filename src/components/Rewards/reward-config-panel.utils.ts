@@ -1,13 +1,22 @@
-import { OVERRIDE_FIELDS } from '~/server/rewards/reward-config';
+import {
+  OVERRIDE_FIELDS,
+  REWARD_CONFIG_CONFLICT,
+} from '~/shared/constants/reward-config.constants';
 
 export type Draft = { enabled: boolean; awardAmount: string; cap: string };
 export type StoredOverride = { enabled?: boolean; awardAmount?: number; cap?: number };
 
-/** The shape of one `rewardConfig.get` row that this module depends on. */
+/**
+ * One `rewardConfig.get` row. `effective` carries the amounts as well as the
+ * switch — narrowing this type to `{ enabled }` is what made the panel drop a
+ * valid, in-force award on an overwrite: the value was in the payload the whole
+ * time and the type hid it.
+ */
 export type RewardRow = {
   type: string;
   capOverridable: boolean;
-  effective: { enabled: boolean };
+  defaults: { awardAmount: number; cap?: number };
+  effective: { enabled: boolean; awardAmount: number; cap?: number };
 };
 
 /**
@@ -45,21 +54,43 @@ export const numberOrEmpty = (value: number | undefined) =>
  * button available in that state writes it. `effective.enabled` is already in
  * the payload the panel receives, and it is the truth.
  *
- * The amounts still come from the written row: they have no resolved equivalent
- * that distinguishes "set to 25" from "defaulted to 25", and writing the latter
- * back would freeze today's default as an override.
+ * The amounts normally come from the written row, because `effective` cannot
+ * distinguish "set to 25" from "defaulted to 25" and writing the latter back
+ * would freeze today's default as an override.
+ *
+ * 🔴 On the malformed path there is no written row to read, and seeding the
+ * amounts empty silently reverts them. A row like
+ * `{"dailyBoost":{"awardAmount":250,"note":"launch"}}` has a perfectly valid 250
+ * IN FORCE — the resolver keeps it and refuses only `note` — but the whole row
+ * fails the strict schema, so `storedOverrides` returns `{}` and an overwrite
+ * would drop the 250 back to the compiled default.
+ *
+ * There, an amount is recoverable exactly when it DIFFERS from the compiled
+ * default: only an override can have moved it. Equal to the default, it stays
+ * empty, so an overwrite does not freeze a default that merely happens to be the
+ * current value.
  */
 export function initialDrafts(
   rewards: RewardRow[],
-  overrides: Record<string, StoredOverride>
+  overrides: Record<string, StoredOverride>,
+  { malformed = false }: { malformed?: boolean } = {}
 ): Record<string, Draft> {
   const drafts: Record<string, Draft> = {};
   for (const reward of rewards) {
     const override = overrides[reward.type] ?? {};
+    const inForce = (effective: number | undefined, compiled: number | undefined) =>
+      effective !== undefined && effective !== compiled ? effective : undefined;
+
     drafts[reward.type] = {
       enabled: reward.effective.enabled,
-      awardAmount: numberOrEmpty(override.awardAmount),
-      cap: numberOrEmpty(override.cap),
+      awardAmount: numberOrEmpty(
+        malformed
+          ? inForce(reward.effective.awardAmount, reward.defaults.awardAmount)
+          : override.awardAmount
+      ),
+      cap: numberOrEmpty(
+        malformed ? inForce(reward.effective.cap, reward.defaults.cap) : override.cap
+      ),
     };
   }
   return drafts;
@@ -154,3 +185,18 @@ export function buildSetInput({
  * test rather than being silently deleted from the row on the next save.
  */
 export const PANEL_OVERRIDE_FIELDS = OVERRIDE_FIELDS;
+
+/**
+ * Both refusals arrive as CONFLICT, and only one of them is fixed by reloading —
+ * so the panel has to tell them apart to decide whether to offer that button or
+ * to point at the destructive overwrite instead.
+ *
+ * Compared against the shared constant rather than matched on its prose. The
+ * first version tested `message.includes('changed since you loaded it')`, which
+ * a copy edit on the server would have silently routed to the wrong branch,
+ * offering the overwrite to a moderator whose only problem was that a colleague
+ * saved first. The one thing pinning the sentence was a regex in the SERVER's
+ * test, so the edit would have failed there and been made green there while the
+ * panel stayed broken.
+ */
+export const isStaleConflict = (message: string) => message === REWARD_CONFIG_CONFLICT.stale;

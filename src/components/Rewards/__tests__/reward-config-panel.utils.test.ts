@@ -3,11 +3,13 @@ import {
   buildRewardsPayload,
   buildSetInput,
   initialDrafts,
+  isStaleConflict,
   numberOrEmpty,
   PANEL_OVERRIDE_FIELDS,
   storedOverrides,
 } from '~/components/Rewards/reward-config-panel.utils';
 import { rewardOverrideSchema } from '~/server/rewards/reward-config';
+import { REWARD_CONFIG_CONFLICT } from '~/shared/constants/reward-config.constants';
 
 /**
  * `rewardConfig.set` REPLACES the stored row, so every property here is about
@@ -20,10 +22,31 @@ import { rewardOverrideSchema } from '~/server/rewards/reward-config';
  */
 
 const REWARDS = [
-  { type: 'dailyBoost', capOverridable: true, effective: { enabled: true } },
-  { type: 'goodContent', capOverridable: true, effective: { enabled: true } },
-  { type: 'imagePostedToModel', capOverridable: false, effective: { enabled: true } },
+  reward('dailyBoost'),
+  reward('goodContent'),
+  reward('imagePostedToModel', { capOverridable: false }),
 ];
+
+// Defaults and effective agree unless a test says otherwise: that is the ordinary
+// state, and the interesting cases are the ones where they diverge.
+function reward(
+  type: string,
+  over: Partial<{
+    capOverridable: boolean;
+    awardAmount: number;
+    cap?: number;
+    effective: Partial<{ enabled: boolean; awardAmount: number; cap?: number }>;
+  }> = {}
+) {
+  const awardAmount = over.awardAmount ?? 25;
+  const cap = 'cap' in over ? over.cap : 100;
+  return {
+    type,
+    capOverridable: over.capOverridable ?? true,
+    defaults: { awardAmount, cap },
+    effective: { enabled: true, awardAmount, cap, ...over.effective },
+  };
+}
 
 const row = (over: Partial<{ enabled: boolean; awardAmount: string; cap: string }> = {}) => ({
   enabled: true,
@@ -46,14 +69,43 @@ describe('initialDrafts', () => {
   // writes exactly what is on screen.
   it('seeds the switch from what the grant path resolved, not from the unreadable row', () => {
     const rewards = [
-      { type: 'firstDailyFollow', capOverridable: true, effective: { enabled: false } },
-      { type: 'goodContent', capOverridable: true, effective: { enabled: true } },
+      reward('firstDailyFollow', { effective: { enabled: false } }),
+      reward('goodContent'),
     ];
 
-    const drafts = initialDrafts(rewards, {});
+    const drafts = initialDrafts(rewards, {}, { malformed: true });
 
     expect(drafts.firstDailyFollow.enabled).toBe(false);
     expect(drafts.goodContent.enabled).toBe(true);
+  });
+
+  // 🔴 The same hole as the switch, one field over. `{"awardAmount":250,"note":"x"}`
+  // keeps a valid, in-force 250 — the resolver refuses only `note` — but the row
+  // fails the strict schema, so there is no written value to seed from and an
+  // overwrite would silently revert 250 to the compiled default.
+  it('keeps an in-force amount on the malformed path, where there is no row to read', () => {
+    const rewards = [reward('dailyBoost', { awardAmount: 25, effective: { awardAmount: 250 } })];
+
+    const drafts = initialDrafts(rewards, {}, { malformed: true });
+
+    expect(drafts.dailyBoost.awardAmount).toBe('250');
+  });
+
+  it('keeps an in-force cap on the malformed path too', () => {
+    const rewards = [reward('goodContent', { cap: 100, effective: { cap: 40 } })];
+
+    expect(initialDrafts(rewards, {}, { malformed: true }).goodContent.cap).toBe('40');
+  });
+
+  // Only an override can have moved a value off its compiled default, so equality
+  // means "not overridden" — seeding it would write today's default as a literal
+  // and freeze it against any later change.
+  it('does not freeze a default that merely happens to be the value in force', () => {
+    const rewards = [reward('dailyBoost', { awardAmount: 25 })];
+
+    const drafts = initialDrafts(rewards, {}, { malformed: true });
+
+    expect(drafts.dailyBoost.awardAmount).toBe('');
   });
 
   it('seeds the amounts from the written row, so an unset field stays empty', () => {
@@ -244,6 +296,26 @@ describe('buildSetInput', () => {
 // A field added to the schema and not to the panel is not a missing input — the
 // panel rebuilds each entry from the fields it knows and `set` replaces the row,
 // so every override using the new field is deleted by the next unrelated save.
+// A copy edit on the server used to route every stale-hash conflict to the
+// "unreadable" branch, which tells a moderator whose colleague merely saved first
+// that reloading is useless and to press the destructive overwrite. The only
+// thing pinning the sentence was a regex in the SERVER's test — so the edit
+// failed there, and would have been made green there, with the panel still wrong.
+describe('isStaleConflict', () => {
+  it('recognises the message the server actually throws for a stale hash', () => {
+    expect(isStaleConflict(REWARD_CONFIG_CONFLICT.stale)).toBe(true);
+  });
+
+  it('does not claim the unreadable-row refusal is a stale hash', () => {
+    expect(isStaleConflict(REWARD_CONFIG_CONFLICT.unreadable)).toBe(false);
+  });
+
+  it('does not match on a fragment, so the two cannot drift into each other', () => {
+    expect(isStaleConflict('The reward config changed since you loaded it')).toBe(false);
+    expect(isStaleConflict('something else entirely')).toBe(false);
+  });
+});
+
 describe('the panel covers every override field', () => {
   it('knows exactly the fields the schema accepts', () => {
     expect([...PANEL_OVERRIDE_FIELDS].sort()).toEqual(

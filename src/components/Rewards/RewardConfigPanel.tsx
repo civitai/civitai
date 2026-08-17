@@ -21,6 +21,7 @@ import type { Draft } from '~/components/Rewards/reward-config-panel.utils';
 import {
   buildSetInput,
   initialDrafts,
+  isStaleConflict,
   storedOverrides,
 } from '~/components/Rewards/reward-config-panel.utils';
 import { formatRewardsBoost } from '~/utils/buzz';
@@ -38,7 +39,7 @@ export function RewardConfigPanel() {
   const [drafts, setDrafts] = useState<Record<string, Draft> | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   // The two CONFLICT causes are distinguished by which one reloading can fix.
-  const conflictIsStale = !!conflict && conflict.includes('changed since you loaded it');
+  const conflictIsStale = !!conflict && isStaleConflict(conflict);
 
   const overrides = useMemo(
     () => storedOverrides(data?.stored.value, data?.stored.malformed ?? false),
@@ -46,8 +47,8 @@ export function RewardConfigPanel() {
   );
 
   const initial = useMemo(
-    () => initialDrafts(data?.rewards ?? [], overrides),
-    [data?.rewards, overrides]
+    () => initialDrafts(data?.rewards ?? [], overrides, { malformed: data?.stored.malformed }),
+    [data?.rewards, overrides, data?.stored.malformed]
   );
 
   const rows = drafts ?? initial;
@@ -120,13 +121,13 @@ export function RewardConfigPanel() {
         <Alert icon={<IconAlertTriangle size={18} />} color="red" title="Stored config unreadable">
           <Stack gap="xs">
             <Text size="sm">
-              The saved row does not match the expected shape, so the amounts below are the compiled
-              defaults rather than what is stored. The switches show what each reward is{' '}
-              <b>actually doing right now</b>, which is what an overwrite would keep.
+              The saved row does not match the expected shape. The table below shows what each
+              reward is <b>doing right now</b> — switches, awards and caps all reflect what the
+              grant path resolved from this row, not what the row says.
             </Text>
             <Text size="sm">
-              Overwriting replaces the whole row: any award or cap in it that cannot be shown here
-              is discarded, and every reward is left exactly as the switches below show it.
+              Overwriting replaces the whole row with exactly what the table shows. Anything else in
+              it — a stray key, a value the resolver refused — is discarded.
             </Text>
             <Code block>{JSON.stringify(data.stored.value, null, 2)}</Code>
             <Group>
@@ -215,8 +216,10 @@ export function RewardConfigPanel() {
                     ) : null}
                     {otherRefused.length ? (
                       <Text size="xs" c="red">
+                        {/* Names the overwrite, not Save: an unrecognised key implies the
+                            row is malformed, which is the one state where Save is disabled. */}
                         Unrecognised {otherRefused.length === 1 ? 'key' : 'keys'} in the stored row:{' '}
-                        {otherRefused.join(', ')}. Saving here removes {}
+                        {otherRefused.join(', ')}. Overwriting the stored row removes {}
                         {otherRefused.length === 1 ? 'it' : 'them'}.
                       </Text>
                     ) : null}

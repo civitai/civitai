@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  MAX_AWARD_AMOUNT,
+  MAX_CAP,
+  OVERRIDE_FIELDS,
+  REWARD_CONFIG_CONFLICT,
+} from '~/shared/constants/reward-config.constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { rewardConfigReadFailedCounter } from '~/server/prom/client';
@@ -8,11 +14,14 @@ import { hashifyObject } from '~/utils/string-helpers';
 
 export const REWARD_CONFIG_KEY = 'rewards:config';
 
-// Live award amounts run 1..500 and caps 25..1500, so these leave room for a
-// deliberate order-of-magnitude change while refusing the operator typo that
-// adds a zero to the largest of them.
-export const MAX_AWARD_AMOUNT = 5_000;
-export const MAX_CAP = 100_000;
+// Re-exported so existing importers of this module keep working; the definitions
+// live in a neutral module the panel can read without pulling in db clients.
+export {
+  MAX_AWARD_AMOUNT,
+  MAX_CAP,
+  OVERRIDE_FIELDS,
+  REWARD_CONFIG_CONFLICT,
+} from '~/shared/constants/reward-config.constants';
 
 /**
  * The single definition of an operator override. `setRewardConfig` validates
@@ -62,11 +71,6 @@ export type RewardOverride = z.infer<typeof rewardOverrideSchema>;
 /** The honoured override plus the names of the fields that were refused. */
 export type RewardConfigEntry = { override: RewardOverride; rejected: string[] };
 export type RewardConfig = Record<string, RewardConfigEntry>;
-
-/** The fields an override may set. The panel drives its inputs off this, so a
- * field added here and not there fails a test instead of being silently deleted
- * from the row by the next save. */
-export const OVERRIDE_FIELDS = ['enabled', 'awardAmount', 'cap'] as const;
 
 export type RewardDefaults = {
   awardAmount: number;
@@ -337,14 +341,10 @@ export async function setRewardConfig(
   // broke the row, and only one of the two messages names an action that works:
   // reloading an unreadable row gets you the same unreadable row.
   if (!force && !storedRewardConfigSchema.safeParse(previous).success)
-    throw throwConflictError(
-      'The stored reward config cannot be read, so saving over it would discard values you were never shown. Fix the row, or save again with force.'
-    );
+    throw throwConflictError(REWARD_CONFIG_CONFLICT.unreadable);
 
   if (expectedHash !== undefined && expectedHash !== rewardConfigHash(previous))
-    throw throwConflictError(
-      'The reward config changed since you loaded it. Reload to see the current values before saving.'
-    );
+    throw throwConflictError(REWARD_CONFIG_CONFLICT.stale);
 
   await dbWrite.keyValue.upsert({
     where: { key: REWARD_CONFIG_KEY },

@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { REWARD_CONFIG_CONFLICT } from '~/shared/constants/reward-config.constants';
 import {
   getStoredRewardConfig,
   invalidateRewardConfigCache,
@@ -495,7 +496,7 @@ describe('setRewardConfig concurrency and malformed guards', () => {
       setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID, {
         expectedHash: stale,
       })
-    ).rejects.toThrow(/changed since you loaded it/);
+    ).rejects.toThrow(REWARD_CONFIG_CONFLICT.stale);
     expect(upsert).not.toHaveBeenCalled();
   });
 
@@ -522,7 +523,7 @@ describe('setRewardConfig concurrency and malformed guards', () => {
 
     await expect(
       setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID)
-    ).rejects.toThrow(/cannot be read/);
+    ).rejects.toThrow(REWARD_CONFIG_CONFLICT.unreadable);
     expect(upsert).not.toHaveBeenCalled();
   });
 
