@@ -4,6 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { BULK_SOURCES } from './sources';
+import { DEFAULT_LIMIT, MAX_LIMIT } from './limits';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4, usersByIds } from '$lib/server/users.service';
 import { resolveUserId, resolveUsername } from '$lib/server/user-lookup.service';
@@ -28,47 +29,89 @@ import {
 } from '$lib/server/bulk-image.service';
 
 // `source` + `q` in the URL so a moderator can hand a colleague the exact batch they are looking at.
+// `limit` rides along for the same reason. Retool's cap was 200 and that stayed the default, but an
+// account with more than that could only be worked 200 at a time with no way to reach the rest short of
+// the account-wide nuke — which is not a review, it is a purge.
 const querySchema = z.object({
   source: z.enum(BULK_SOURCES).catch('post'),
   q: z.string().trim().catch(''),
+  limit: z.coerce.number().int().min(1).max(MAX_LIMIT).catch(DEFAULT_LIMIT),
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
-  const { source, q } = parseQuery(url, querySchema);
+  const { source, q, limit } = parseQuery(url, querySchema);
   // Reaching the page is an investigation permission; removing content is not.
   const canAct = canAccess(locals.user, '/users');
 
-  if (!q) return { source, q, canAct, batch: null, notFound: false, owners: [], subjectUserId: null };
+  if (!q)
+    return {
+      source,
+      q,
+      limit,
+      canAct,
+      batch: null,
+      notFound: false,
+      owners: [],
+      subjectUserId: null,
+    };
 
   // The id-list source is the one that isn't a single id — Retool took it as newlines, and a pasted
   // column from a spreadsheet arrives that way, so both separators are accepted.
   if (source === 'imageIds') {
     const ids = parseIdList(q.replace(/[\s\n]+/g, ','));
-    const batch = await getImagesByIds(ids);
+    const batch = await getImagesByIds(ids, limit);
     const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
     const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
-    return { source, q, canAct, batch, notFound: batch.items.length === 0, owners, subjectUserId: null };
+    return {
+      source,
+      q,
+      limit,
+      canAct,
+      batch,
+      notFound: batch.items.length === 0,
+      owners,
+      subjectUserId: null,
+    };
   }
 
   const byUser = source === 'user' || source === 'userRemoved';
   // Bound BEFORE resolving: `resolveUserId` compares an all-digit term against an int4 column, so one
   // fat-fingered extra digit errored out of `load` and rendered a 500 instead of "no images found".
   if (/^\d+$/.test(q) && Number(q) > MAX_INT4)
-    return { source, q, canAct, batch: null, notFound: true, owners: [], subjectUserId: null };
+    return {
+      source,
+      q,
+      limit,
+      canAct,
+      batch: null,
+      notFound: true,
+      owners: [],
+      subjectUserId: null,
+    };
 
   const id = byUser ? await resolveUserId(q) : /^\d+$/.test(q) ? Number(q) : null;
-  if (!id || id > MAX_INT4) return { source, q, canAct, batch: null, notFound: true, owners: [], subjectUserId: null };
+  if (!id || id > MAX_INT4)
+    return {
+      source,
+      q,
+      limit,
+      canAct,
+      batch: null,
+      notFound: true,
+      owners: [],
+      subjectUserId: null,
+    };
 
   const batch: BulkBatch =
     source === 'post'
-      ? await getImagesForPost(id)
+      ? await getImagesForPost(id, limit)
       : source === 'model'
-      ? await getImagesForModel(id)
+      ? await getImagesForModel(id, limit)
       : source === 'modelVersion'
-      ? await getImagesForModelVersion(id)
+      ? await getImagesForModelVersion(id, limit)
       : source === 'collection'
-      ? await getImagesForCollection(id)
-      : await getImagesForUser(id, 200, source === 'userRemoved');
+      ? await getImagesForCollection(id, limit)
+      : await getImagesForUser(id, limit, source === 'userRemoved');
 
   // Whose content this batch actually is. A model's images belong to whoever posted them, which is
   // often not the model's owner — so a removal here can touch accounts the moderator did not look up.
@@ -80,6 +123,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   return {
     source,
     q,
+    limit,
     canAct,
     batch,
     notFound: batch.items.length === 0,

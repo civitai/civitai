@@ -15,6 +15,7 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import { BULK_SOURCE_LABELS, BULK_SOURCES } from './sources';
+  import { DEFAULT_LIMIT, LIMIT_OPTIONS, MAX_LIMIT } from './limits';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import { NsfwLevel } from '@civitai/shared';
@@ -125,12 +126,18 @@
     busy: (value) => (submitting = value),
   });
 
+  // `limit` is carried through a new search rather than reset: a moderator who raised it did so because
+  // this account needs it, and every subsequent lookup on that account would otherwise snap back to 200.
+  const navigate = (value: string, limit: number) => {
+    const params = new URLSearchParams({ source });
+    if (value) params.set('q', value);
+    if (limit !== DEFAULT_LIMIT) params.set('limit', String(limit));
+    goto(`?${params}`, { keepFocus: true });
+  };
+
   const search = (e: SubmitEvent) => {
     e.preventDefault();
-    const value = term.trim();
-    goto(value ? `?source=${source}&q=${encodeURIComponent(value)}` : `?source=${source}`, {
-      keepFocus: true,
-    });
+    navigate(term.trim(), data.limit);
   };
 </script>
 
@@ -232,6 +239,26 @@
       {/if}
       Click an image to select it once a selection has started.
     </p>
+    <div class="mb-3 flex items-center gap-2">
+      <span class="text-xs text-dark-2">Load up to</span>
+      <Select.Root
+        type="single"
+        value={String(data.limit)}
+        onValueChange={(v) => navigate(data.q, Number(v))}
+      >
+        <Select.Trigger class="w-32">{num(data.limit)} images</Select.Trigger>
+        <Select.Content>
+          {#each LIMIT_OPTIONS as n (n)}
+            <Select.Item value={String(n)}>{num(n)} images</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+      {#if batch.truncated}
+        <span class="text-xs text-dark-2">
+          Past {num(MAX_LIMIT)}, use Remove all images on this account.
+        </span>
+      {/if}
+    </div>
 
     {#if data.owners.length}
       <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
