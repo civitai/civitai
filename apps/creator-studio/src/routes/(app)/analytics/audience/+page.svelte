@@ -113,13 +113,22 @@
       </div>
     </StatCard>
     {#if data.allTime}
-      <!-- Both come from the image_metrics_user rollup — images only, so the labels say so. Comments on models,
-           posts and articles aren't counted (see the round-5 checklist). -->
-      <StatCard label="All-time image reactions" icon={IconHeart} color="#ff6b6b">
+      <!-- These two get read as a pair, so both parentheticals answer the same question — scope. A composition
+           detail in one of them (replies, say) reads as scope and teaches nothing; it belongs in the hover.
+           Comments on models, posts and articles still aren't counted, and the creator's own comments are
+           excluded on purpose — they were 71% of the raw total for some creators, which is not audience. -->
+      <StatCard label="All-time reactions (all your content)" icon={IconHeart} color="#ff6b6b">
         <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.reactions)}</p>
       </StatCard>
-      <StatCard label="All-time image comments" icon={IconMessage} color="#20c997">
-        <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.comments)}</p>
+      <StatCard label="All-time comments (your images only)" icon={IconMessage} color="#20c997">
+        <!-- Deleting an image orphans its thread, so this can fall month over month. Correct, but it reads as a
+             bug to whoever notices first — hence the title. -->
+        <p
+          class="mt-1 text-xl font-semibold text-white"
+          title="Comments and replies from other people, on images you still have posted."
+        >
+          {num(data.allTime.comments)}
+        </p>
       </StatCard>
     {/if}
   </section>
