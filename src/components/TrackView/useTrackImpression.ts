@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useContext, useEffect, useRef } from 'react';
+import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { recordImpression } from '~/components/TrackView/impressionBuffer';
 import type { ImpressionEntityType } from '~/server/schema/track.schema';
@@ -127,22 +127,24 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
   const features = useFeatureFlags();
   const enabled = features.feedImpressions && !!targets?.length;
 
-  // Keeps the observed element stable across renders: the array is rebuilt every
-  // render by every caller, so depending on its identity would re-observe
-  // constantly. The ids inside it do not change for the life of a mounted card.
-  const targetsRef = useRef(targets);
-  targetsRef.current = targets;
-
-  // Identity of the entities, not of the array. A recycled card (virtualised
-  // feeds reuse DOM nodes for new data) must re-observe; a re-render must not.
+  // Identity of the entities, not of the array — callers rebuild the array every
+  // render, and re-observing on that would be constant churn. This is the effect's
+  // real dependency; `targets` is read inside it and deliberately not a dep.
   const key = targets?.map((t) => `${t.entityType}:${t.entityId}`).join(',') ?? '';
 
-  const node = useScrollAreaRef();
-  // Resolved once per effect run and reused by the cleanup: reading
-  // `node?.current` again at teardown can yield a different element (or null)
-  // than the one the registry was keyed by, which would leak the entry it was
-  // meant to remove.
-  const root = node?.current ?? null;
+  // 🔴 `useContext(ScrollAreaContext)`, NOT `useScrollAreaRef()`. That hook looks
+  // like a plain context read but unconditionally registers a `scroll` listener on
+  // the container — a no-op one when no `onScroll` is passed, yet still a real
+  // listener invoked on every scroll event. It had ~20 call sites, all singletons;
+  // routing every card through it would add one per card. Worse, a hook cannot be
+  // conditional, so that cost would be paid with the feature flag OFF, breaking
+  // the promise that the kill switch restores the pre-feature client cost.
+  // Only the ref is needed here.
+  //
+  // Resolved once per effect run and reused by the cleanup: reading `.current`
+  // again at teardown can yield a different element than the registry was keyed
+  // by, which would leak the entry it was meant to remove.
+  const root = useContext(ScrollAreaContext)?.ref.current ?? null;
 
   useEffect(() => {
     if (!enabled) return;
@@ -151,7 +153,10 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
 
     bindVisibility();
     const registry = getRegistry(root);
-    const state: ElementState = { targets: targetsRef.current ?? [], timer: null };
+    // Read here rather than through a ref written during render: a render that
+    // React abandons would leave such a ref pointing at a value that was never
+    // committed. `key` changes whenever these ids do, so the effect re-runs.
+    const state: ElementState = { targets: targets ?? [], timer: null };
     registry.elements.set(element, state);
     registry.observer.observe(element);
 
@@ -171,7 +176,12 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
         registries.delete(root);
       }
     };
-  }, [enabled, key, node, root]);
+    // `targets` is deliberately absent: `key` is derived from the entity ids
+    // inside it and changes exactly when they do, while the array's identity
+    // changes on every render of every card. Depending on the array would
+    // re-observe hundreds of cards per render for no change in meaning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, key, root]);
 
   return ref;
 }

@@ -123,8 +123,19 @@ Supporting constants, both measured rather than assumed:
 | Quantity | Value | Source |
 | --- | --- | --- |
 | Image detail views (for scale) | 2.7–2.9M/day (~31/s) | `views`, 7-day window |
-| Raw bytes/row | **15.99 B** | `views`: 226.81 GiB / 15.23B rows, identical sorting key |
+| Raw bytes/row, `views` shape | 15.99 B | `views`: 226.81 GiB / 15.23B rows, identical sorting key |
+| — of which `ip` | 4.74 B | per-column measurement on `views` |
+| — of which `userAgent` | 3.92 B | per-column measurement on `views` |
+| **Raw bytes/row, this table** | **~7.3 B** | the above minus the two columns it does not store |
 | Rollup bytes/row | **2.29 B** | `daily_views`: 7.19 GiB / 3.37B rows |
+
+**This table stores no `ip` and no `userAgent`**, via `skipActorMeta`. Those two
+columns are **54% of the stored bytes** on `views`, and an impression has no use
+for either — so the row is roughly half the size it would otherwise be, which
+matters more here than anywhere else on the platform precisely because this table
+takes ~10x the `views` insert rate. It also means impressions carry no IP at all:
+per-viewer forensics on this data would need a deliberate decision to start
+collecting it, not a discovery that it was already there.
 
 ### The numbers
 
@@ -151,9 +162,26 @@ settles it.
 assumed before (~1.48M sessions); detail pages show far fewer cards, ~20–30
 (~6.8M sessions). That is **~10x the `views` insert rate**, not 5x.
 
-**Storage: ~5.1 GiB/day raw**, so the 30-day TTL settles at **~154 GiB** — not the
-33–100 GiB stated before. `ttl_only_drop_parts = 1` makes expiry a metadata drop
-of whole parts rather than a continuous rewrite of surviving rows.
+**Storage: ~2.3 GiB/day raw**, so the 30-day TTL settles at **~70 GiB**. (It would
+be ~5.1 GiB/day and ~154 GiB if the table stored `ip` and `userAgent` like `views`
+does.) `ttl_only_drop_parts = 1` makes expiry a metadata drop of whole parts rather
+than a continuous rewrite of surviving rows.
+
+### Is 320M rows/day a problem for ClickHouse?
+
+No — and it is worth being explicit, because the number looks alarming next to the
+row counts elsewhere in this repo. It is ~3,700 rows/s sustained, which is an
+ordinary ingest rate for ClickHouse rather than a demanding one; the engine is
+built for exactly this shape (append-only, immutable, aggregated by MV). The
+constraints that actually bite are part count and storage growth, and both are
+addressed: `async_insert` at the client for the first, TTLs on both tables for the
+second.
+
+What made the original number worth challenging was not that ClickHouse would
+struggle, but that **~154 GiB was being spent on two columns nobody was going to
+query**. That is the general lesson for a table at this rate: the row *count* is
+cheap, the row *width* is what costs, and the review that matters is which columns
+earn their place.
 
 **The rollup is not negligible, and it is the only permanent storage.**
 `daily_impressions` is one row per (entity, type, day) — on the order of 30–80M
@@ -270,8 +298,6 @@ CREATE TABLE default.impressions
     `entityId`    Int32,
     `sessionKey`  String DEFAULT '',
     `surface`     LowCardinality(String) DEFAULT 'other',
-    `ip`          String DEFAULT '',
-    `userAgent`   String DEFAULT '',
     `createdDate` Date MATERIALIZED toDate(time)
 )
 ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')

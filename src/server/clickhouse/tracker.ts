@@ -525,7 +525,18 @@ export class Tracker {
     const { sessionKey, surface, entities } = values;
     return this.trackMany(
       'impressions',
-      entities.map(({ entityType, entityId }) => ({ entityType, entityId, sessionKey, surface }))
+      entities.map(({ entityType, entityId }) => ({ entityType, entityId, sessionKey, surface })),
+      // 🔴 `skipActorMeta` stamps userId only, dropping ip and userAgent. On this
+      // table that is not a detail: measured on `views`, ip is 4.74 B/row and
+      // userAgent 3.92 B/row out of 15.99 — together 54% of the stored bytes, for
+      // two columns an impression has no use for. Halving the row is worth more
+      // here than anywhere else on the platform because this table takes ~10x the
+      // `views` insert rate.
+      //
+      // It also means impressions carry no IP. Anything wanting per-viewer
+      // forensics on this data needs a deliberate decision to start collecting it,
+      // rather than finding it already there.
+      { skipActorMeta: true }
     );
   }
 

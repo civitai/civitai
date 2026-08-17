@@ -72,7 +72,7 @@ describe('Tracker.impressions', () => {
     expect(args.values[2]).toMatchObject({ entityType: 'Model', entityId: 3 });
   });
 
-  it('stamps userId from the session, not from the payload', async () => {
+  it('stamps userId from the session, and stores no ip or userAgent', async () => {
     const tracker = new Tracker(undefined, undefined, null);
     await tracker.impressions({
       sessionKey: 'sess_3',
@@ -82,6 +82,11 @@ describe('Tracker.impressions', () => {
 
     const [args] = insertMock.mock.calls[0] as [{ values: Record<string, unknown>[] }];
     expect(args.values[0]).toMatchObject({ userId: 0 });
+    // ip and userAgent are 54% of the stored bytes on the equivalent `views`
+    // table and an impression uses neither, so this table does not carry them.
+    // Re-adding them would silently double the fastest-growing table we have.
+    expect(args.values[0]).not.toHaveProperty('ip');
+    expect(args.values[0]).not.toHaveProperty('userAgent');
   });
 
   it('scales rows with entities rather than issuing an insert per entity', async () => {

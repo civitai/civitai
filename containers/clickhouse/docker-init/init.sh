@@ -915,8 +915,6 @@ clickhouse client -n <<-EOSQL
         entityId    Int32,
         sessionKey  String                                                                                                                                   default '',
         surface LowCardinality(String)                                                                                                                       default 'other',
-        ip          String                                                                                                                                   default '',
-        userAgent   String                                                                                                                                   default '',
         createdDate Date materialized toDate(time)
     )
         engine = MergeTree()
