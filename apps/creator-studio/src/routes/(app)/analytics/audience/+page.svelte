@@ -114,7 +114,8 @@
     </StatCard>
     {#if data.allTime}
       <!-- These two have different scopes and the labels have to carry it: reactions are all-content, comments are
-           images only. Comments on models, posts and articles still aren't counted. -->
+           images only. Comments on models, posts and articles still aren't counted, and the creator's own comments
+           are excluded on purpose — they were 71% of the raw total for some creators, which is not audience. -->
       <StatCard label="All-time reactions (all content)" icon={IconHeart} color="#ff6b6b">
         <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.reactions)}</p>
       </StatCard>

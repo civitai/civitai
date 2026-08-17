@@ -185,7 +185,8 @@
   {#if data.allTime}
     <!-- The two halves have different scopes, so the sentence names each one. Reactions are all-content (that is
          what `reactions_owner_scores` aggregates, and it keeps this in agreement with the profile); comments are
-         images only, replies included. -->
+         images only, replies included, and the creator's own comments deliberately excluded — for some creators
+         those were 71% of the raw total, on a page about their audience. -->
     <p class="mb-6 text-xs text-dark-3">
       All-time: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong>
       reactions across your content ·

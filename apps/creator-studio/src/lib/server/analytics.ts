@@ -91,8 +91,15 @@ export const getReactionAudienceSplit = createCache({
 //     across four creators `commentCount` ran -6% to +79% against Postgres and `Comment` was short by up to 97%.
 //
 // Do not generalise that middle point to `reactions`, which sits beside `comments` and looks like it. Its
-// `entityId` **is** the image id — max 139,929,797 over a recent 2-day window, ~2.1 rows per distinct id against
-// `comments`' 1.0003 — which is why every other query in this file keys off it safely. `comments` is the odd one.
+// `entityId` **is** the entity reacted to, and each `type` keeps to its own id space rather than sharing one:
+// over 30 days `Image_Create` runs to 139,931,065 across 19,428,878 rows / 6,203,813 distinct ids (3.13 per
+// image) while `CommentV2_Create` tops out at 2,309,122 against `max("CommentV2".id) = 2,309,121`. Sampled 6
+// `Image_Create` rows against Postgres: every `entityId` is a live `Image` whose `userId` is the CH `ownerId`.
+// Only `fetchTopMedia` keys off `reactions.entityId`; the rest of this file uses `reactions.ownerId`, which is
+// what `reactions_owner_scores` aggregates. `comments` is the odd one out, and the reason is worth knowing —
+// `reactions` rows are emitted by the reaction handler, which knows the entity, while `comments` rows are
+// emitted by the comment handler, which knows the comment. There `type` says what was commented **on** and
+// `entityId` says which comment. Nothing in the schema shows that.
 //
 // Three things about the query that are load-bearing, all of them measured rather than reasoned:
 //
