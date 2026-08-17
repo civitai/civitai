@@ -4,6 +4,7 @@
   import ActivityPanel from './ActivityPanel.svelte';
   import ImageDetailPanel from './ImageDetailPanel.svelte';
   import ImageSignalsPanel from './ImageSignalsPanel.svelte';
+  import PostPanel from './PostPanel.svelte';
   import TagsPanel from './TagsPanel.svelte';
 
   let { data }: { data: PageData } = $props();
@@ -14,9 +15,17 @@
   <p>Find an image by ID or URL — what it is, how it was tagged, and who reacted to it.</p>
 </header>
 
-<LookupSearch q={data.q} placeholder="138967815, or a full image URL" />
+<LookupSearch q={data.q} placeholder="138967815, an image URL, or a post URL" />
 
-{#if data.notFound}
+{#if data.postId && !data.post}
+  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+    <p class="text-sm text-dark-2">No post matches <code>{data.postId}</code>.</p>
+  </section>
+{:else if data.post}
+  {#key data.post.post.id}
+    <PostPanel result={data.post} civitaiUrl={data.civitaiUrl} />
+  {/key}
+{:else if data.notFound}
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <p class="text-sm text-dark-2">No image matches <code>{data.q}</code>.</p>
   </section>

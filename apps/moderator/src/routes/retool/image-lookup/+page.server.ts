@@ -4,7 +4,12 @@ import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { setImageFlag } from '$lib/server/user-actions.service';
 import { lookupQuerySchema, parseForm, parseQuery } from '$lib/server/query';
-import { getImageLookup, resolveImageId } from '$lib/server/image-lookup.service';
+import {
+  getImageLookup,
+  getPostLookup,
+  resolveImageId,
+  resolvePostId,
+} from '$lib/server/image-lookup.service';
 import { hasImageEvents } from '$lib/server/image-signals.service';
 
 // Retool's Image Lookup could write: a screenshot of the live app shows `Toggle Minor ON` and
@@ -12,7 +17,34 @@ import { hasImageEvents } from '$lib/server/image-signals.service';
 // screen, so the actions come from the endpoint Bulk Image Manager already uses.
 export const load: PageServerLoad = async ({ url, locals }) => {
   const { q } = parseQuery(url, lookupQuerySchema);
-  if (!q) return { q, result: null, deletedImageId: null, notFound: false, canAct: false };
+  // `?post=` is what the main app's "Lookup Post" control appends its id to. Kept distinct from `q` so a
+  // bare number in the search box stays an image id — the overwhelmingly common case.
+  const postParam = url.searchParams.get('post')?.trim() ?? '';
+  const postId = /^\d+$/.test(postParam) ? Number(postParam) : resolvePostId(q);
+
+  if (postId) {
+    const post = await getPostLookup(postId);
+    return {
+      q: q || String(postId),
+      result: null,
+      post,
+      postId,
+      deletedImageId: null,
+      notFound: false,
+      canAct: canAccess(locals.user, '/retool/image-lookup'),
+    };
+  }
+
+  if (!q)
+    return {
+      q,
+      result: null,
+      post: null,
+      postId: null,
+      deletedImageId: null,
+      notFound: false,
+      canAct: false,
+    };
 
   const imageId = await resolveImageId(q);
   const result = imageId ? await getImageLookup(imageId) : null;
@@ -38,6 +70,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   return {
     q,
     result,
+    post: null,
+    postId: null,
     deletedImageId,
     notFound: !result && !deletedImageId,
     canAct: canAccess(locals.user, '/retool/image-lookup'),

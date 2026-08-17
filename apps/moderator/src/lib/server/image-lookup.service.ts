@@ -123,11 +123,23 @@ const asId = (value: string) => {
   return Number.isInteger(n) && n > 0 && n <= MAX_INT ? n : null;
 };
 
+// `/posts/12345` also ends in digits, so the last-segment rule below would resolve it as image 12345 —
+// a real row, unrelated to the post, presented as if it were the thing the moderator pasted. Post URLs
+// are recognised first and answered with the post's images instead.
+const POST_URL = /\/posts\/(\d+)/i;
+
+export function resolvePostId(term: string): number | null {
+  const value = term.trim();
+  const match = value.match(POST_URL);
+  return match ? asId(match[1]) : null;
+}
+
 export async function resolveImageId(term: string): Promise<number | null> {
   const value = term.trim();
   if (!value) return null;
 
   if (/^\d+$/.test(value)) return asId(value);
+  if (POST_URL.test(value)) return null;
 
   const uuid = value.match(UUID)?.[0];
   if (!uuid) {
@@ -159,6 +171,91 @@ export async function getImageLookup(imageId: number): Promise<ImageLookupResult
     getModActivity(imageId),
   ]);
   return { image, tags, shadowTags, reactions, reports, modActivity };
+}
+
+// Retool had no Post Lookup app — the main app's "Lookup Post" control pointed at a Retool app that was
+// never exported, so this is the replacement target rather than a port. It lives on Image Lookup instead
+// of its own route so it inherits that page's grant: a new route has no `AppPageAccess` row and would be
+// invisible to everyone but `moderator:admin` until someone ticked it on `/admin`.
+export type PostDetail = {
+  id: number;
+  title: string | null;
+  detail: string | null;
+  userId: number;
+  username: string | null;
+  userBannedAt: Date | null;
+  createdAt: Date;
+  publishedAt: Date | null;
+  nsfwLevel: number;
+  tosViolation: boolean;
+  unlisted: boolean;
+  availability: string;
+  modelVersionId: number | null;
+};
+
+export type PostImage = {
+  id: number;
+  url: string;
+  type: MediaType;
+  nsfwLevel: number;
+  tosViolation: boolean;
+  needsReview: string | null;
+  blockedFor: string | null;
+  minor: boolean;
+  poi: boolean;
+  createdAt: Date;
+};
+
+export type PostLookupResult = { post: PostDetail; images: PostImage[] };
+
+export async function getPostLookup(postId: number): Promise<PostLookupResult | null> {
+  const post = await dbRead
+    .selectFrom('Post as p')
+    .leftJoin('User as u', 'u.id', 'p.userId')
+    .select([
+      'p.id',
+      'p.title',
+      'p.detail',
+      'p.userId',
+      'p.createdAt',
+      'p.publishedAt',
+      'p.nsfwLevel',
+      'p.tosViolation',
+      'p.unlisted',
+      'p.availability',
+      'p.modelVersionId',
+      'u.username',
+      'u.bannedAt as userBannedAt',
+    ])
+    .where('p.id', '=', postId)
+    .executeTakeFirst();
+  if (!post) return null;
+
+  // `index` is the author's ordering within the post; a moderator reading a report about "the third image"
+  // needs the same order the site shows. Nulls last so a row that never got one still appears.
+  const images = await dbRead
+    .selectFrom('Image')
+    .select([
+      'id',
+      'url',
+      'type',
+      'nsfwLevel',
+      'tosViolation',
+      'needsReview',
+      'blockedFor',
+      'minor',
+      'poi',
+      'createdAt',
+    ])
+    .where('postId', '=', postId)
+    .orderBy(sql`"index" asc nulls last`)
+    .orderBy('id', 'asc')
+    .execute();
+
+  return {
+    post: { ...post, availability: String(post.availability) },
+    images: images.map((i) => ({ ...i, type: i.type as MediaType })),
+  };
 }
 
 async function getImage(imageId: number): Promise<ImageDetail | null> {
