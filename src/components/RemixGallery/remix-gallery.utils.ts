@@ -1,4 +1,5 @@
 import type { ImageGetInfinite } from '~/types/router';
+import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
 
 /**
@@ -209,14 +210,61 @@ export const freeRefusalExplanation = (fresh: FreeSubmissionInputs) =>
  * Pure, so both halves are testable without a query client, and so the modal
  * holds no policy about which refusals money solves.
  */
-export function freeRefusalOutcome(explained: string | null, serverMessage: string) {
+export function freeRefusalOutcome(
+  explained: string | null,
+  serverMessage: string,
+  /** Whether the paid path would actually accept this submission. */
+  paidOpen: boolean
+) {
   // `!== null`, not truthiness. They agree today only because every rung returns
   // a sentence; a rung that ever returned an empty string would silently take
   // the server branch, which is the branch that says "we could not explain this".
   if (explained !== null)
-    return { title: 'That free slot got away', message: explained, fallBackToPaid: true };
+    return {
+      title: 'That free slot got away',
+      // 🔴 The offer of the paid path is conditional on the paid path existing.
+      // A gallery can accept free submissions and refuse paid ones — the service
+      // deliberately holds free to none of the price rules, and there are tests
+      // asserting both an unpriced and a below-floor gallery take free and
+      // refuse paid. Told to pay on one of those, a submitter meets either a
+      // disabled button or a second refusal.
+      message: paidOpen
+        ? `${explained} Nothing was spent — you can still submit with Buzz.`
+        : `${explained} Nothing was spent, and this gallery is not taking paid submissions either.`,
+      // Same condition, because moving the control is the same claim as making
+      // it in words.
+      fallBackToPaid: paidOpen,
+    };
 
   // The server's own words, unedited. It is the only party that knows, and
   // guessing here is what produced a modal that told everyone they lost a race.
   return { title: "Couldn't submit that", message: serverMessage, fallBackToPaid: false };
 }
+
+/**
+ * Whether this gallery would accept a PAID submission.
+ *
+ * Not the same question as `open`, which `getRemixGalleryVisibility` answers
+ * from `mode !== 'off'` alone. Price and free capacity are independent in the
+ * schema, so a gallery can be open, take free submissions, and refuse every paid
+ * one — unpriced, where the submit button is disabled, or priced below the
+ * surface floor, where the button works and the mutation refuses.
+ *
+ * Mirrors the two refusals on the paid path in `createRemixGallerySubmission`.
+ * A third rule there needs one here, or the card starts recommending a refusal
+ * again.
+ */
+/**
+ * Which option the control is on: an explicit choice, else free when it is
+ * available.
+ *
+ * The second half is what survives losing the race for the last slot — `chosen`
+ * can say free while the fresh numbers no longer do, and this resolves to paid
+ * without the submitter having to notice a control changing under them. Pure and
+ * out here because it is one line whose inversion charges someone Buzz.
+ */
+export const submissionMethod = (chosen: 'free' | 'paid' | null, freeAvailable: boolean) =>
+  chosen === 'free' && !freeAvailable ? 'paid' : chosen ?? (freeAvailable ? 'free' : 'paid');
+
+export const paidSubmissionOpen = (price: number | null | undefined) =>
+  price != null && price >= PLACEMENT_SURFACES.remixGallery.serverMinPrice;

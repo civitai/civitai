@@ -23,6 +23,8 @@ import {
   freeRefusalExplanation,
   freeRefusalOutcome,
   freeSubmissionOffer,
+  paidSubmissionOpen,
+  submissionMethod,
 } from '~/components/RemixGallery/remix-gallery.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -94,18 +96,15 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
     resetsAt: freeInfo?.allowance.resetsAt ?? new Date(),
   });
   const freeAvailable = offer.available && slotsHeldKnown;
+  // Not `visibility.open`, which is `mode !== 'off'` and says nothing about
+  // price. A gallery can take free submissions and refuse every paid one.
+  const paidOpen = paidSubmissionOpen(visibility?.price);
   // Withheld while the answer is in flight, so the card says nothing rather than
   // briefly asserting a reason drawn from defaulted zeroes.
   const freeUnavailableReason =
     selected != null && freeInfo && slotsHeldKnown ? offer.reason : null;
 
-  // Free whenever it is available, unless the submitter said otherwise — and
-  // never free once it stops being available, whatever they said. That second
-  // half is what survives losing the race for the last slot: the refusal comes
-  // back, the refetch drops `freeAvailable`, and this resolves to paid without
-  // the submitter having to notice a control change under them.
-  const method =
-    chosen === 'free' && !freeAvailable ? 'paid' : chosen ?? (freeAvailable ? 'free' : 'paid');
+  const method = submissionMethod(chosen, freeAvailable);
 
   const submit = trpc.placement.submitToRemixGallery.useMutation({
     onSuccess: () => {
@@ -159,11 +158,16 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               .catch(() => null)
           : null;
 
-      const outcome = freeRefusalOutcome(explained, error.message);
+      const outcome = freeRefusalOutcome(explained, error.message, paidOpen);
       if (outcome.fallBackToPaid) setChosen('paid');
-      setFreeRefusal(outcome.fallBackToPaid ? outcome.message : null);
 
-      if (!outcome.fallBackToPaid)
+      // Keyed on whether we could explain it, NOT on whether we moved the
+      // control. Those came apart once paid stopped being a guaranteed
+      // alternative: an explained refusal on a gallery that takes no paid
+      // submissions still has something worth saying, and routing it to the
+      // toast instead would file an ordinary outcome as an error.
+      setFreeRefusal(explained !== null ? outcome.message : null);
+      if (explained === null)
         showErrorNotification({
           title: outcome.title,
           error: new Error(outcome.message),
@@ -386,17 +390,12 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
 
         <Divider />
 
-        {/* Same shape as the crypto deposit card's warnings. The amount is the
-            server's own figure, computed with the helper the refund uses from
-            the operator-set rate — quoting "30%" here would be a number this
-            file cannot keep true, and it is the one fact a submitter needs
-            before spending. */}
         {/* The free/paid choice, and the last moment it can be made. It carries
             the mode as well as the price because those are two different offers
             and the placer is about to spend something either way — a free
-            submission still costs them their one placement for the day, decline
-            or not. Hidden entirely when the gallery takes no free submissions at
-            all: a control with one reachable answer is not a choice. */}
+            submission still costs them their daily allowance, decline or not.
+            Hidden entirely when the gallery takes no free submissions at all: a
+            control with one reachable answer is not a choice. */}
         {/* 🔴 Outside the block below, and that is the point rather than layout.
             The choice is hidden when the creator takes no free submissions —
             and `freeSlots <= 0` is ALSO one of the rungs that can explain a
@@ -416,7 +415,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 style={{ flexShrink: 0, marginTop: 2 }}
               />
               <Text size="xs" c="yellow">
-                {freeRefusal} Nothing was spent — you can still submit with Buzz.
+                {freeRefusal}
               </Text>
             </Group>
           </>
@@ -464,6 +463,12 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
         )}
 
         <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
+          {/* The paid path's own warning, and paid-only: a free submission puts
+              nothing in escrow, so there is no decline fee and quoting one would
+              describe money that never moved. The amount is the server's own
+              figure, computed with the helper the refund uses from the
+              operator-set rate — "30%" written here would be a number this file
+              cannot keep true. */}
           {method === 'paid' && visibility?.declineFee ? (
             // `min-w-0` is what makes the note wrap instead of pushing: a flex
             // item's floor is its content width otherwise, so a long sentence

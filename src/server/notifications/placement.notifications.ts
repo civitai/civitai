@@ -178,12 +178,10 @@ export const placementNotifications = createNotificationProcessor({
           -- processor that honours its own toggle writes this clause itself. It
           -- was missing here, so the setting rendered, saved, and did nothing.
           --
-          -- Scoped inside the CTE against p."ownerId" rather than outside it
-          -- against the projected "userId", which is where the sticker types put
-          -- theirs. Both are correct where they sit and they are NOT
-          -- interchangeable by inspection — do not harmonise one into the other
-          -- without checking what each is in scope of. On one line either way:
-          -- the polarity guard matches the clause as a literal.
+          -- Inside the CTE and against p."ownerId", which is the recipient; the
+          -- projected "userId" outside the CTE is the same value and would work
+          -- there too. Kept on one line either way, because the polarity guard
+          -- matches the clause as a literal.
           AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = p."ownerId" AND type = 'remix-gallery-pending')
       )
       SELECT
@@ -234,8 +232,9 @@ export const placementNotifications = createNotificationProcessor({
           AND p.status = 'pending'
           AND p.free
           AND p."createdAt" > '${lastSent}'
-          -- A row here means opted OUT. The paid types above carry no such
-          -- clause, so their toggles render and do nothing; this one is wired.
+          -- A row here means opted OUT, and its own type rather than the paid
+          -- one's: silencing free submissions must not silence the queue a
+          -- creator is being paid for.
           AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = p."ownerId" AND type = 'remix-gallery-free-pending')
       )
       SELECT

@@ -6,8 +6,11 @@ import {
   freeRefusalOutcome,
   freeSubmissionOffer,
   galleryDialogImages,
+  paidSubmissionOpen,
+  submissionMethod,
   trimToWholeRows,
 } from '~/components/RemixGallery/remix-gallery.utils';
+import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 
 describe('what a refused free submission is told', () => {
   const stillOffered = {
@@ -39,7 +42,11 @@ describe('what a refused free submission is told', () => {
     // The message the careful copy lives in. Without this branch,
     // `FREE_NEEDS_VERIFIED_REFUSAL` — the sentence explaining why paying is the
     // alternative — reaches nobody, because this handler is its only path.
-    const outcome = freeRefusalOutcome(null, 'remix gallery: free submissions are for remixes…');
+    const outcome = freeRefusalOutcome(
+      null,
+      'remix gallery: free submissions are for remixes…',
+      true
+    );
 
     expect(outcome.message).toBe('remix gallery: free submissions are for remixes…');
     expect(outcome.title).toMatch(/couldn't submit/i);
@@ -50,8 +57,19 @@ describe('what a refused free submission is told', () => {
     // suspended placer it is not: they press the paid button and meet the same
     // refusal, having been told the opposite of what is wrong.
     expect(
-      freeRefusalOutcome(null, 'remix gallery: you cannot place right now').fallBackToPaid
+      freeRefusalOutcome(null, 'remix gallery: you cannot place right now', true).fallBackToPaid
     ).toBe(false);
+  });
+
+  it('treats an EMPTY explanation as explained, not as unexplained', () => {
+    // The guard is `explained !== null` and the comment says why; nothing
+    // asserted it, because no rung returns ''. Under truthiness an empty rung
+    // would take the branch that means "we could not explain this" and hand the
+    // submitter raw server prose instead.
+    expect(freeRefusalOutcome('', 'server prose', true)).toMatchObject({
+      fallBackToPaid: true,
+    });
+    expect(freeRefusalOutcome('', 'server prose', true).message).not.toContain('server prose');
   });
 
   it('moves the control to paid when the refusal WAS about free capacity', () => {
@@ -59,12 +77,67 @@ describe('what a refused free submission is told', () => {
     // here the fall-back is a true statement about the next step.
     const outcome = freeRefusalOutcome(
       'The free slots on this image are all taken right now.',
-      'x'
+      'x',
+      true
     );
 
     expect(outcome.fallBackToPaid).toBe(true);
     expect(outcome.message).toMatch(/all taken right now/i);
-    expect(outcome.message).not.toBe('x');
+    expect(outcome.message).toMatch(/still submit with Buzz/i);
+  });
+
+  it('does not recommend Buzz on a gallery that refuses paid submissions', () => {
+    // 🔴 The two paths are deliberately asymmetric: the service holds free to
+    // none of the price rules, so an unpriced or below-floor gallery accepts
+    // free and refuses paid. Recommending Buzz there sends someone to a disabled
+    // button or into a second refusal.
+    const outcome = freeRefusalOutcome(
+      'The free slots on this image are all taken right now.',
+      'x',
+      false
+    );
+
+    expect(outcome.fallBackToPaid).toBe(false);
+    expect(outcome.message).not.toMatch(/still submit with Buzz/i);
+    expect(outcome.message).toMatch(/not taking paid submissions/i);
+  });
+});
+
+describe('submissionMethod', () => {
+  it('defaults to free when free is available, and to paid when it is not', () => {
+    expect(submissionMethod(null, true)).toBe('free');
+    expect(submissionMethod(null, false)).toBe('paid');
+  });
+
+  it('honours an explicit choice', () => {
+    expect(submissionMethod('paid', true)).toBe('paid');
+    expect(submissionMethod('free', true)).toBe('free');
+  });
+
+  it('never resolves to free once free stops being available', () => {
+    // The half that survives losing the race for the last slot: `chosen` still
+    // says free, the fresh numbers no longer do, and the control must not submit
+    // free anyway.
+    expect(submissionMethod('free', false)).toBe('paid');
+  });
+});
+
+describe('paidSubmissionOpen', () => {
+  // Mirrors the two refusals the paid path makes, which `open` does not cover —
+  // that is `mode !== 'off'` and says nothing about price.
+  it.each([
+    ['unpriced', null],
+    ['undefined while loading', undefined],
+    ['below the surface floor', PLACEMENT_SURFACES.remixGallery.serverMinPrice - 1],
+  ])('is closed when %s', (_label, price) => {
+    expect(paidSubmissionOpen(price)).toBe(false);
+  });
+
+  it.each([
+    ['exactly at the floor', PLACEMENT_SURFACES.remixGallery.serverMinPrice],
+    ['above it', PLACEMENT_SURFACES.remixGallery.serverMinPrice + 10],
+  ])('is open when priced %s', (_label, price) => {
+    expect(paidSubmissionOpen(price)).toBe(true);
   });
 });
 

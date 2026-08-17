@@ -1890,6 +1890,85 @@ describe('what the public visibility query says about free capacity', () => {
   });
 });
 
+describe('what the owner’s review queue says a free submission is worth', () => {
+  const queueRow = (free: boolean) => ({
+    id: PLACEMENT,
+    targetId: HOST_IMAGE,
+    placerId: PLACER,
+    amount: free ? 0 : PRICE,
+    free,
+    data: { imageId: REMIX_IMAGE },
+    createdAt: new Date('2026-01-01'),
+    expiresAt: new Date('2026-01-03'),
+    placer: { id: PLACER, username: 'someone', image: null },
+  });
+
+  const queue = async (free: boolean) => {
+    // The listable-ids query first, then the images fetch; the rows come from
+    // `findMany`, which is a separate mock.
+    let call = 0;
+    queryRaw.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return [{ id: PLACEMENT, createdAt: new Date('2026-01-01') }];
+      return [
+        {
+          id: REMIX_IMAGE,
+          url: 'a',
+          width: 1,
+          height: 1,
+          type: 'image',
+          metadata: {},
+          nsfwLevel: 1,
+        },
+        {
+          id: HOST_IMAGE,
+          url: 'b',
+          width: 1,
+          height: 1,
+          type: 'image',
+          metadata: {},
+          nsfwLevel: 1,
+        },
+      ];
+    });
+    placementFindMany.mockResolvedValue([queueRow(free)]);
+
+    const { items } = await getPendingRemixGallerySubmissions({
+      ownerId: OWNER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+    return items[0];
+  };
+
+  it('selects `free`, so the queue can tell the two kinds apart at all', async () => {
+    await queue(true);
+
+    // Omitted from the select, the client cannot branch however it renders — and
+    // the row would show as a paid one with its earnings missing.
+    expect(placementFindMany.mock.calls[0][0].select).toMatchObject({ free: true });
+  });
+
+  it('quotes no earnings on a free row, rather than quoting zero', async () => {
+    // 🔴 Both numbers derive from `amount`, and a free row's is 0 by DB
+    // constraint. Rendered, that is "+0 Buzz" on Approve AND Decline: the
+    // decision surface for the whole free tier telling a creator they earn
+    // nothing, on a row the free notification just called a gift.
+    const row = await queue(true);
+
+    expect(row.free).toBe(true);
+    expect(row.earnings).toBeNull();
+  });
+
+  it('still quotes both numbers on a paid row', async () => {
+    const row = await queue(false);
+
+    expect(row.earnings).toMatchObject({ approve: expect.any(Number) });
+    expect(row.earnings!.approve).toBeGreaterThan(0);
+    expect(row.earnings!.decline).toBeGreaterThan(0);
+  });
+});
+
 describe('the free eligibility listing', () => {
   const eligibility = () =>
     getRemixGalleryFreeEligibility({
@@ -1943,6 +2022,26 @@ describe('the free eligibility listing', () => {
     expect(boundValues(queryRaw.mock.calls)).toEqual(
       expect.arrayContaining([REMIX_IMAGE, REMIX_IMAGE + 1])
     );
+  });
+
+  it('scopes to the SESSION placer, never a caller-supplied one', async () => {
+    // Same two-mechanism defence as the submit path — the schema has no
+    // `placerId` and the router passes `ctx.user.id` — and the same reason it is
+    // asserted at the outcome: this endpoint answers a question about somebody's
+    // generation inputs, so a caller-chosen id would read another user's
+    // library. The submit path had this test; this one did not.
+    await getRemixGalleryFreeEligibility({
+      hostImageId: HOST_IMAGE,
+      placerId: PLACER,
+      imageIds: [REMIX_IMAGE],
+    });
+
+    expect(boundValues(queryRaw.mock.calls)).toContain(PLACER);
+    expect(boundValues(queryRaw.mock.calls)).not.toContain(STRANGER);
+    expect(hasUsedFreePlacementOn).toHaveBeenCalledWith(
+      expect.objectContaining({ placerId: PLACER })
+    );
+    expect(getFreePlacementAllowance).toHaveBeenCalledWith({ placerId: PLACER });
   });
 
   it('runs no query at all for an empty candidate list', async () => {

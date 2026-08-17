@@ -465,6 +465,17 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                               and marking those would turn a missing signal into a
                               verdict. */}
                           {row.data.derivedFromHost && <VerifiedRemixBadge />}
+                          {/* What this row IS, since the buttons no longer carry
+                              a number for it. Without this the queue shows a
+                              free submission as a paid one with its earnings
+                              missing, which reads as a bug rather than as a
+                              different kind of offer — and the notification that
+                              brought the owner here already called it free. */}
+                          {row.free && (
+                            <Badge size="sm" variant="light" color="green" className="w-fit">
+                              Free submission
+                            </Badge>
+                          )}
                         </Stack>
                       </Group>
                       {/* Stacked, and the same width, so the pair reads as one
@@ -509,7 +520,15 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                             fullWidth
                             classNames={{ label: 'w-full justify-between gap-2' }}
                             leftSection={<IconCheck size={14} />}
-                            rightSection={<EarningsChip amount={row.earnings.approve} />}
+                            // Nothing on a free row rather than a chip reading
+                            // "+0". `EarningsChip`'s `+` is what stops a bare
+                            // amount reading as a price; on a free submission it
+                            // makes the opposite false claim instead — that the
+                            // creator earns nothing for accepting. The badge
+                            // beside the submitter says what this row is.
+                            rightSection={
+                              row.earnings ? <EarningsChip amount={row.earnings.approve} /> : null
+                            }
                             loading={actingOn(row.id, 'approve')}
                             onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
                           >
@@ -522,7 +541,12 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                           variant="default"
                           classNames={{ label: 'w-full justify-between gap-2' }}
                           leftSection={<IconX size={14} />}
-                          rightSection={<EarningsChip amount={row.earnings.decline} />}
+                          // Same reason, and sharper here: a decline fee is the
+                          // submitter's money moving to the owner, and a free
+                          // submission has none to move.
+                          rightSection={
+                            row.earnings ? <EarningsChip amount={row.earnings.decline} /> : null
+                          }
                           loading={actingOn(row.id, 'decline')}
                           onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
                         >

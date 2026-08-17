@@ -1611,6 +1611,12 @@ export async function getPendingRemixGallerySubmissions({
       targetId: true,
       placerId: true,
       amount: true,
+      // Without it the queue cannot tell a free submission from a paid one, and
+      // the earnings below — both computed from `amount`, which a free row
+      // pins at 0 — render as "+0 Buzz" on approve AND decline. That is the
+      // decision surface for the whole free tier telling a creator they earn
+      // nothing, on the same row the free notification told them was a gift.
+      free: true,
       data: true,
       createdAt: true,
       expiresAt: true,
@@ -1674,16 +1680,24 @@ export async function getPendingRemixGallerySubmissions({
           viewerLevels
         ),
         targetImage: toQueueImage(byId.get(row.targetId), domainLevels, viewerLevels),
-        earnings: {
-          approve: splitPlacementPayment({
-            amount: row.amount,
-            outcome: 'approved',
-            declineFeeRate,
-            sellerShare: shares.seller,
-            platformShare: shares.platform,
-          }).toOwner,
-          decline: declineFeeAmount(row.amount, declineFeeRate),
-        },
+        // `null` on a free row rather than the zeroes the arithmetic produces.
+        // Nothing was paid in, so there is no split and no decline fee — and a
+        // "+0 Buzz" chip does not say that, it says this creator earns nothing
+        // for accepting, which is both false in spirit and about to be false in
+        // fact once the accept reward lands. The absence is what lets the queue
+        // render something else instead of a number.
+        earnings: row.free
+          ? null
+          : {
+              approve: splitPlacementPayment({
+                amount: row.amount,
+                outcome: 'approved',
+                declineFeeRate,
+                sellerShare: shares.seller,
+                platformShare: shares.platform,
+              }).toOwner,
+              decline: declineFeeAmount(row.amount, declineFeeRate),
+            },
       }))
       // Both halves, for the same reason: the owner cannot judge a remix they
       // cannot see, and cannot judge it against a host that no longer renders.

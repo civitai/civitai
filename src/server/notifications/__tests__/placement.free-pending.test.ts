@@ -27,6 +27,11 @@ describe('remix gallery pending notifications', () => {
     const query = await queryFor('remix-gallery-free-pending');
     expect(query).toMatch(/AND p\.free\b/);
     expect(query).not.toContain('AND NOT p.free');
+    // `AND p.free\b` alone survives widening to `AND p.free IS NOT NULL`, which
+    // is true of every row — the column is NOT NULL — so the free notification
+    // would fire for every pending submission, paid ones included, under a
+    // toggle their owner never opted into.
+    expect(query).not.toContain('IS NOT NULL');
   });
 
   it.each(['remix-gallery-pending', 'remix-gallery-free-pending'])(
@@ -39,6 +44,7 @@ describe('remix gallery pending notifications', () => {
       // Asserted per type rather than once, because the two toggles are separate
       // switches: silencing free submissions must not silence the paid queue a
       // creator is being paid for.
+      //
       // Pinned as ONE whole clause rather than by prefix. A prefix match stays
       // green if the recipient column drifts to `p."placerId"` — silencing the
       // submitter's setting instead of the owner's — or if the type string is
