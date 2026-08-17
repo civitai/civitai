@@ -161,13 +161,16 @@ describe('capabilitiesForKind — capabilities are DERIVED, never configured', (
     //
     // 🔴 `listingMedia` is a SURFACE fact and is the newest, narrowest cell: an off-site
     // listing CAN hold and edit assets (the submit/edit wizard does exactly that, through
-    // listing-keyed asset procs), but the standalone media EDITOR is hosted by the
-    // BLOCK-keyed `getMyListingForApp`, so there is no id to open it with. It is split
+    // listing-keyed asset procs), and since civitai/civitai#3984 the standalone editor's
+    // HOST RESOLVER reaches it too — `getMyListingForApp` takes `appBlockId` OR `slug`.
+    // What still withholds the surface is the WEB tab gate `editorTabsFor`, whose `media`
+    // arm requires `ctx.appBlockId != null` on top of this cell, and an off-site listing
+    // has no block id to give it. The cell stays `false`, but for a NARROWER reason than
+    // it was written with: it is about the TAB now, not about the resolver. It is split
     // out from `listingContent` — which stays TRUE for both kinds, because listing
-    // scalars really are editable on both — so the table stops asserting a surface that
-    // does not exist. Tracked by
-    // https://github.com/civitai/civitai/issues/3893; flipping this cell is what that
-    // issue's fix does.
+    // scalars really are editable on both — so the table stops asserting a surface the UI
+    // does not offer. Tracked by https://github.com/civitai/civitai/issues/3893; flipping
+    // this cell (and dropping that block-id clause) is what that issue's fix does.
     expect(capabilitiesForKind('offsite')).toEqual({
       listingContent: true,
       listingMedia: false,

@@ -34,6 +34,39 @@ const downloadLimiter = createLimiter({
   fetchCount: fetchDownloadCount,
 });
 
+/**
+ * A caller can drive this 400 at will, so it is sampled where the repair below
+ * is not. Neither payload carries a query VALUE — `token` on this route is the
+ * caller's API key, and Axiom applies no redaction of its own.
+ */
+const SCHEMA_REJECTION_SAMPLE_RATE = 0.01;
+
+function logSplitQueryRepair(req: NextApiRequest) {
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'info',
+    message: 'split-query-repaired',
+    keys: Object.keys(req.query),
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
+
+function logSchemaRejection(error: z.ZodError, repaired: boolean) {
+  if (Math.random() >= SCHEMA_REJECTION_SAMPLE_RATE) return;
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'warning',
+    message: 'schema-rejected',
+    fields: error.issues.map((issue) => issue.path.join('.')),
+    // A rejection AFTER a repair is a different bug from one the repair never saw.
+    repaired,
+    sampleRate: SCHEMA_REJECTION_SAMPLE_RATE,
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
+
 export default PublicEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
     // This response is per-user, auth/early-access-gated, rate-limited, and
@@ -48,7 +81,10 @@ export default PublicEndpoint(
     // Must run before `getServerAuthSession` below, which reads `?token=` off
     // `req.url` — a stray `?` swallows that param into the one before it, so an
     // API-key caller would otherwise be treated as anonymous.
-    repairSplitQueryString(req);
+    const repaired = repairSplitQueryString(req);
+    // Unsampled: this is what says whether any client still needs the shim, and
+    // a rate that can report zero is the point.
+    if (repaired) logSplitQueryRepair(req);
 
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
@@ -124,10 +160,12 @@ export default PublicEndpoint(
 
       // Validate query params
       const queryResults = schema.safeParse(req.query);
-      if (!queryResults.success)
+      if (!queryResults.success) {
+        logSchemaRejection(queryResults.error, repaired);
         return res
           .status(400)
           .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid modelVersionId' });
+      }
       const input = queryResults.data;
       const modelVersionId = input.modelVersionId;
       if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');

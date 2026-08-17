@@ -214,16 +214,23 @@ export type BeginListingRevisionInput = z.infer<typeof beginListingRevisionSchem
 
 /**
  * OWNER: resolve the caller's OWN listing by its backing `appBlockId`
- * (`AppListing.appBlockId` is `@unique`) — the entry read for the owner-facing
- * on-site listing-media page. Returns the `AppListing.id` (the target for
- * `beginListingRevision` + the asset procs). Owner-bound in the service
- * (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing row exists for the app).
+ * (`AppListing.appBlockId` is `@unique`) or by its public `slug`
+ * (`AppListing.slug` is `@unique` across BOTH kinds) — the entry read for the
+ * owner-facing listing-media page and for non-web clients. Returns the
+ * `AppListing.id` (the target for `beginListingRevision` + the asset procs).
+ * Owner-bound in the service (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing
+ * row exists for the app).
  */
 export const getMyListingForAppSchema = z
   .object({
     appBlockId: z.string().min(1).max(64).optional(),
-    // W13 draft-at-submit: a FIRST-version app has no AppBlock yet, so the
-    // owner-media page resolves its pre-approval draft BY SLUG while pending.
+    // The slug arm resolves ANY top-level listing (civitai/civitai#3984): the W13
+    // pre-approval draft of a FIRST-version on-site app (no AppBlock yet), and an
+    // OFF-SITE listing, which in practice carries no AppBlock to be keyed by (0 rows
+    // of the `kind:'offsite'` + non-null `appBlockId` shape in production, measured
+    // 2026-08-11 — empirical, not structural; `appBlockId` is NOT a kind
+    // discriminator, see schema.full.prisma). `appBlockId` takes precedence when
+    // both are supplied.
     slug: z.string().min(1).max(64).optional(),
   })
   .refine((v) => v.appBlockId != null || v.slug != null, {

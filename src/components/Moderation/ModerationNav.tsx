@@ -75,7 +75,7 @@ export function ModerationNav() {
           href: '/moderator/home-blocks/featured-collections',
         },
         {
-          label: 'Rewards Bonus Events',
+          label: 'Rewards & Bonus Events',
           href: '/moderator/rewards-bonus-events',
         },
         {
@@ -117,8 +117,16 @@ export function ModerationNav() {
         },
       ]
         .filter((i) => !i.hidden)
+        .sort((a, b) => a.label.localeCompare(b.label))
         .map((link) => (
-          <Menu.Item key={link.href} component={Link} href={link.href}>
+          // Without break-inside-avoid an item can split across a column boundary,
+          // putting its label in one column and its padding in the next.
+          <Menu.Item
+            key={link.href}
+            component={Link}
+            href={link.href}
+            className="break-inside-avoid"
+          >
             {link.label}
           </Menu.Item>
         )),
@@ -133,7 +141,7 @@ export function ModerationNav() {
         </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown
-        className="overflow-y-auto"
+        className="max-w-[calc(100vw-2rem)] columns-1 overflow-y-auto sm:columns-2 md:columns-3"
         style={{ maxHeight: 'calc(100dvh - 80px)' }}
       >
         {menuItems}

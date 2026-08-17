@@ -197,6 +197,7 @@ vi.mock('~/server/prom/client', () => ({
   // neighbours use, so the first test to drive either fail-soft path dies here
   // rather than on whatever it was written to check.
   clickhouseFailSoftCounter: promMetricStub(),
+  rewardConfigReadFailedCounter: promMetricStub(),
   clavataCounter: promMetricStub(),
   cacheHitCounter: promMetricStub(),
   cacheMissCounter: promMetricStub(),
