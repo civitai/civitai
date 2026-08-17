@@ -50,7 +50,7 @@ const TRANSACTIONS = 'buzz.transactions_final_mv';
 const healthyRow = (view: string, stalenessSeconds: number) => ({
   view,
   status: 'Scheduled',
-  errored: 0,
+  exception: '',
   retries: '0',
   stalenessSeconds: String(stalenessSeconds),
 });
@@ -150,7 +150,8 @@ describe('clickhouse-refresh-monitor', () => {
   });
 
   it('surfaces an exception and its retry count without waiting for staleness', async () => {
-    chQuery.mockResolvedValue(withRow(TRANSACTIONS, { errored: 1, retries: '4' }));
+    const exception = 'DB::Exception: Memory limit (total) exceeded';
+    chQuery.mockResolvedValue(withRow(TRANSACTIONS, { exception, retries: '4' }));
 
     const result = await run();
 
@@ -158,6 +159,11 @@ describe('clickhouse-refresh-monitor', () => {
     expect(result.breached).toEqual([]);
     expect(await gaugeFor('errored', TRANSACTIONS)).toBe(1);
     expect(await gaugeFor('retries', TRANSACTIONS)).toBe(4);
+    // The whole reason this job logs at all: no gauge can carry the exception text, and
+    // an on-call told only "view X is errored" has to go re-query ClickHouse by hand.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining(exception) })
+    );
   });
 
   it('escalates to error level only for a breached page-severity view', async () => {
@@ -173,11 +179,20 @@ describe('clickhouse-refresh-monitor', () => {
     );
   });
 
-  it('marks which views double-count if a missed refresh is re-run', async () => {
+  /**
+   * The flag is the target ENGINE, not whether the refresh appends. Six of the seven
+   * append; only the two SummingMergeTree targets double on a re-run. Marking it by APPEND
+   * would set this on `transactions_final_mv`, whose ReplacingMergeTree target dedupes.
+   */
+  it('marks only the views whose target double-counts on a re-run', async () => {
     await run();
 
-    expect(await gaugeFor('append_only', IMPRESSIONS)).toBe(1);
-    expect(await gaugeFor('append_only', 'default.entityMetricDaily_today_v2_mv')).toBe(0);
+    expect(await gaugeFor('unrepairable_by_rerun', IMPRESSIONS)).toBe(1);
+    expect(await gaugeFor('unrepairable_by_rerun', 'default.image_views_daily_by_owner_mv')).toBe(
+      1
+    );
+    expect(await gaugeFor('unrepairable_by_rerun', TRANSACTIONS)).toBe(0);
+    expect(await gaugeFor('unrepairable_by_rerun', 'default.entityMetricDailySeal_v2_mv')).toBe(0);
   });
 
   /**
@@ -190,9 +205,39 @@ describe('clickhouse-refresh-monitor', () => {
     const anchor = await globalGauge('monitor_last_run_timestamp_seconds');
 
     chQuery.mockResolvedValue(undefined);
+    // Fake timers, because both runs otherwise land inside the same millisecond and
+    // `toBe(anchor)` is satisfied by a mutant that stamps the anchor unconditionally.
+    // Verified: without this, moving the `set` to the top of the job passes all 9 tests.
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(60_000);
+    try {
+      const result = await run();
+      expect(result.skipped).toBe('clickhouse-unavailable');
+      expect(await globalGauge('monitor_last_run_timestamp_seconds')).toBe(anchor);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The client sets `output_format_json_quote_64bit_integers: 0`, so production returns
+   * plain numbers; every other fixture here uses the quoted shape the `string | number`
+   * union defends against. Without this the tests exercise only the branch that does not
+   * occur in production.
+   */
+  it('reads the unquoted numeric shape ClickHouse actually returns', async () => {
+    chQuery.mockResolvedValue(
+      ALL_HEALTHY.map((row) => ({
+        ...row,
+        retries: Number(row.retries),
+        stalenessSeconds: row.view === TRANSACTIONS ? 600 : Number(row.stalenessSeconds),
+      }))
+    );
+
     const result = await run();
 
-    expect(result.skipped).toBe('clickhouse-unavailable');
-    expect(await globalGauge('monitor_last_run_timestamp_seconds')).toBe(anchor);
+    expect(result.breached).toEqual([TRANSACTIONS]);
+    expect(await gaugeFor('staleness_seconds', TRANSACTIONS)).toBe(600);
+    expect(await gaugeFor('retries', TRANSACTIONS)).toBe(0);
   });
 });

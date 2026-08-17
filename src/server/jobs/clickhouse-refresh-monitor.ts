@@ -16,17 +16,36 @@ import { createJob } from './job';
  * `exception` and `retry` come along as leading indicators; neither is the alert.
  *
  * ── Why a missed refresh is worse than a failed job ───────────────────────
- * Five of the seven `APPEND` into `SummingMergeTree` targets, so a missed refresh
- * CANNOT be repaired by re-running it — a second run adds to the first and the number
- * silently doubles (seen 2026-08-16: 5,524,768 reported against a true 2,762,384).
- * Repair is a manual `DROP PARTITION` plus a single re-insert. Detection therefore has
- * to beat the recovery window, not merely be prompt.
+ * Six of the seven `APPEND` rather than replace, but APPEND is not the property that
+ * decides whether a miss is repairable — the TARGET ENGINE is. Read from
+ * `system.tables` 2026-08-17:
  *
- * That window differs per view, which is why `severity` below is not decoration:
- *   - `impressions_daily_by_owner_mv` — PAGE. Its source `default.impressions` has a
- *     30-day TTL, so a miss nobody notices for a month is permanently unrecoverable.
- *   - everything else — TICKET. Re-derivable from a source that still holds the rows
- *     (`image_views_daily_by_owner_mv` rebuilds from `daily_views` back to 2023).
+ *   target                            engine                     re-running the refresh
+ *   image_views_daily_by_owner        SharedSummingMergeTree     ADDS. doubles, forever.
+ *   impressions_daily_by_owner        SharedSummingMergeTree     ADDS. doubles, forever.
+ *   buzzTransactions                  SharedReplacingMergeTree   dedupes on the key
+ *   entityMetricDailyAgg_history_v2   SharedReplacingMergeTree   dedupes on the key
+ *   entityMetricTotal_v3              SharedReplacingMergeTree   dedupes on the key
+ *   entityMetricDailyAgg_today_v2     SharedMergeTree (`TO`)     replaced atomically
+ *
+ * So only the two Summing targets cannot be repaired by re-running: a second run adds
+ * to the first and the number silently doubles (seen 2026-08-16: 5,524,768 reported
+ * against a true 2,762,384, which read as entirely plausible). Repair there is a manual
+ * `DROP PARTITION` plus a single re-insert. On the four Replacing targets a re-run is
+ * recoverable — duplicate rows collapse on the sorting key, and a pre-merge read without
+ * FINAL sees both transiently rather than permanently.
+ *
+ * `unrepairable_by_rerun` below is that distinction and nothing else. It deliberately
+ * does NOT mean "appends": keying severity off APPEND would mark six views unrepairable
+ * when two are.
+ *
+ * The recovery WINDOW differs again, which is why `severity` is not decoration either:
+ *   - `impressions_daily_by_owner_mv` — PAGE. Unrepairable by re-run AND its source
+ *     `default.impressions` has a 30-day TTL, so a miss nobody notices for a month
+ *     cannot be rebuilt by anyone.
+ *   - everything else — TICKET. Either repairable by re-running, or re-derivable from a
+ *     source that still holds the rows (`image_views_daily_by_owner_mv` is the other
+ *     Summing target, but rebuilds from `daily_views` back to 2023).
  *
  * ── Thresholds ────────────────────────────────────────────────────────────
  * Peak staleness in a healthy view is period + refresh duration, reached just before
@@ -40,17 +59,42 @@ import { createJob } from './job';
  *   entityMetricDaily_today_v2_mv                2m      2.21s         ~122s    15m
  *   entityMetricDailySeal_v2_mv                  1d      3.80s          ~24h    27h
  *   image_views_daily_by_owner_mv                1d      4.33s          ~24h    27h
- *   impressions_daily_by_owner_mv                1d      0.06s          ~24h    26h
+ *   impressions_daily_by_owner_mv                1d      0.06s          ~24h    27h
  *
  * Sub-minute and minute views get roughly 10x their period, which absorbs a CH restart
  * or a deploy blip without paging while still catching a stop inside one poll of the
- * budget. The daily views get period + 2-3h: one missed daily slot fires within hours,
- * far inside even the 30-day impressions window, and no legitimate jitter reaches it
- * because ClickHouse schedules these on a fixed offset.
+ * budget. All three daily views get period + 3h. The page-severity one deliberately does
+ * NOT get a tighter budget than the ticket ones: 26h vs 27h is indistinguishable against
+ * a 30-day recovery window, so the only thing a tighter number buys is a page during a
+ * ClickHouse maintenance window.
  *
  * A single global threshold cannot work across a 15s-to-1d range, so the limit is
  * published as its own gauge and the alert compares the two series. That keeps the
  * numbers here, next to the evidence for them, instead of in an infra rule.
+ *
+ * ── The alert rule, written down because a bare max() is WRONG ─────────────
+ * Every gauge here is per-pod, and prom-client never resets. A pod that served one run
+ * and then stopped serving them keeps exporting that run's numbers for as long as it
+ * lives, so `max by (view)(staleness_seconds)` reads the abandoned pod and keeps a
+ * resolved incident firing until that pod is rolled. Select the freshest pod first:
+ *
+ *   max by (view) (
+ *     (staleness_seconds / staleness_limit_seconds)
+ *     and on(pod) topk(1, monitor_last_run_timestamp_seconds != 0)
+ *   ) > 1
+ *
+ * The division happens per-pod, before the selection, so a deploy that tightens a limit
+ * takes effect immediately instead of being masked by an old pod's looser value. The
+ * `!= 0` sits inside topk because the anchor is unlabelled and therefore registers as 0
+ * on every pod that never ran, which would otherwise tie.
+ *
+ * Liveness is a separate rule, and it is the ONLY thing covering a monitor that stops:
+ * a throwing ClickHouse query, an unconfigured client, or a cron that was never created
+ * all leave every gauge frozen at its last healthy value.
+ *
+ *   (time() - max_over_time((max(monitor_last_run_timestamp_seconds != 0))[24h:1m])) > 900
+ *
+ * Both rules ship in talos-infra#1072 with promtool tests.
  */
 
 const HOUR = 3600;
@@ -61,8 +105,12 @@ type MonitoredView = {
   /** Seconds since the last SUCCESSFUL refresh above which the view is considered stuck. */
   stalenessLimit: number;
   severity: Severity;
-  /** True when the target is APPEND-only, i.e. a re-run double-counts instead of repairing. */
-  appendOnly: boolean;
+  /**
+   * True when the target is a SummingMergeTree, so re-running a missed refresh ADDS to
+   * what already landed instead of repairing it. NOT the same as "appends" — six of these
+   * append and only two are unrepairable.
+   */
+  unrepairableByRerun: boolean;
 };
 
 /**
@@ -79,38 +127,37 @@ const MONITORED_VIEWS: Record<string, MonitoredView> = {
   'buzz.transactions_final_mv': {
     stalenessLimit: 5 * 60,
     severity: 'ticket',
-    appendOnly: true,
+    unrepairableByRerun: false,
   },
   'default.entityMetricTotal_v3_refresher': {
     stalenessLimit: 10 * 60,
     severity: 'ticket',
-    appendOnly: true,
+    unrepairableByRerun: false,
   },
   'default.entityMetricTotal_v3_refresher_additive': {
     stalenessLimit: 10 * 60,
     severity: 'ticket',
-    appendOnly: true,
+    unrepairableByRerun: false,
   },
   'default.entityMetricDaily_today_v2_mv': {
     stalenessLimit: 15 * 60,
     severity: 'ticket',
-    // `TO`, not `APPEND` — a re-run replaces today's rollup rather than adding to it.
-    appendOnly: false,
+    unrepairableByRerun: false,
   },
   'default.entityMetricDailySeal_v2_mv': {
     stalenessLimit: 27 * HOUR,
     severity: 'ticket',
-    appendOnly: true,
+    unrepairableByRerun: false,
   },
   'default.image_views_daily_by_owner_mv': {
     stalenessLimit: 27 * HOUR,
     severity: 'ticket',
-    appendOnly: true,
+    unrepairableByRerun: true,
   },
   'default.impressions_daily_by_owner_mv': {
-    stalenessLimit: 26 * HOUR,
+    stalenessLimit: 27 * HOUR,
     severity: 'page',
-    appendOnly: true,
+    unrepairableByRerun: true,
   },
 };
 
@@ -142,8 +189,8 @@ const LABELED_GAUGE_HELP = {
     'Consecutive retries the view is currently on. Resets to 0 on success, so it is informational and NOT worth alerting on by itself',
   present:
     '1 when the view exists in system.view_refreshes. 0 means dropped or renamed, and its staleness gauge is a placeholder, not a measurement',
-  append_only:
-    '1 when the refresh APPENDs, i.e. a missed refresh cannot be repaired by re-running it. Static; published to label severity in the alert',
+  unrepairable_by_rerun:
+    '1 when the target is a SummingMergeTree, so re-running a missed refresh doubles the number instead of repairing it. Static; read this BEFORE re-running anything',
 } as const;
 
 const GLOBAL_GAUGE_HELP = {
@@ -171,7 +218,7 @@ const gauges = (global.clickhouseRefreshGauges ??= {
 type RefreshRow = {
   view: string;
   status: string;
-  errored: number;
+  exception: string;
   retries: string | number;
   stalenessSeconds: string | number | null;
 };
@@ -181,6 +228,8 @@ type ViewObservation = {
   present: boolean;
   status: string | null;
   errored: boolean;
+  /** The text itself, not just the flag: it is the one field triage starts from. */
+  exception: string | null;
   retries: number;
   stalenessSeconds: number;
   /** False when `stalenessSeconds` is the placeholder rather than an elapsed time. */
@@ -200,7 +249,7 @@ async function fetchRefreshRows() {
     SELECT
       concat(database, '.', view) AS view,
       status,
-      exception != '' AS errored,
+      exception,
       retry AS retries,
       dateDiff('second', last_success_time, now()) AS stalenessSeconds
     FROM system.view_refreshes
@@ -214,17 +263,20 @@ function observe(rows: RefreshRow[]): ViewObservation[] {
     const row = byName.get(view);
     const rawStaleness = row?.stalenessSeconds;
     const measured = row !== undefined && rawStaleness !== null && rawStaleness !== undefined;
-    // Negative values would mean the two clocks disagree, which cannot happen for two
-    // expressions in one query — clamp anyway so a nonsense value cannot read as fresh.
-    const stalenessSeconds = measured
-      ? Math.max(0, Number(rawStaleness))
+    // A non-finite value must fall back to the placeholder, not be clamped: `Math.max(0,
+    // NaN)` is NaN, `NaN > limit` is false, and prom-client exports it happily — so a
+    // garbage reading would publish as permanently NOT breached.
+    const raw = measured ? Number(rawStaleness) : Number.NaN;
+    const stalenessSeconds = Number.isFinite(raw)
+      ? Math.max(0, raw)
       : NO_SUCCESSFUL_REFRESH_SECONDS;
 
     return {
       view,
       present: row !== undefined,
       status: row?.status ?? null,
-      errored: Boolean(row?.errored),
+      errored: Boolean(row?.exception),
+      exception: row?.exception || null,
       retries: Number(row?.retries ?? 0),
       stalenessSeconds,
       measured,
@@ -243,7 +295,7 @@ function publish(observations: ViewObservation[]) {
     gauges.errored.set(labels, observation.errored ? 1 : 0);
     gauges.retries.set(labels, observation.retries);
     gauges.present.set(labels, observation.present ? 1 : 0);
-    gauges.append_only.set(labels, config.appendOnly ? 1 : 0);
+    gauges.unrepairable_by_rerun.set(labels, config.unrepairableByRerun ? 1 : 0);
   }
   gauges.views_monitored.set(observations.length);
   gauges.views_missing.set(observations.filter((o) => !o.present).length);
@@ -260,8 +312,8 @@ export const clickhouseRefreshMonitorJob = createJob(
 
     const observations = observe(rows);
     publish(observations);
-    // Last, and only on a complete run. A scrape between a fresh anchor and unpublished
-    // view gauges would read as a healthy monitor over stale numbers.
+    // Only on a complete run. A throwing query leaves every view gauge frozen at its last
+    // healthy value, and this anchor going stale is the only signal that says so.
     gauges.monitor_last_run_timestamp_seconds.set(Date.now() / 1000);
 
     const unhealthy = observations.filter((o) => o.breached || o.errored || !o.present);
