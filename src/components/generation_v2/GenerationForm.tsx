@@ -681,13 +681,19 @@ export function GenerationForm() {
             />
 
             {/* Experimental Ecosystem Alert */}
-            <Controller
+            <MultiController
               graph={graph}
-              name="ecosystem"
-              render={({ value }) => (
+              names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
+              render={({ values }) => (
                 <>
-                  <ExperimentalModelAlert ecosystem={value} />
-                  <GrokEcosystemAlert ecosystem={value} />
+                  <ExperimentalModelAlert
+                    ecosystem={values.ecosystem}
+                    workflow={values.workflow}
+                    model={values.model}
+                    resources={values.resources}
+                    vae={values.vae}
+                  />
+                  <GrokEcosystemAlert ecosystem={values.ecosystem} />
                 </>
               )}
             />

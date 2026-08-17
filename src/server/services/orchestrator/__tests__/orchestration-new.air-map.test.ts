@@ -31,7 +31,7 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   getDbWithoutLagBatch: vi.fn(),
@@ -40,12 +40,12 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
 vi.mock('~/server/db/datapacketDb', () => ({ datapacketDbRead: {}, datapacketDbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/search-index', () => ({}));
-vi.mock('@civitai/db', () => ({ createLagTracker: vi.fn(() => ({})), loadDbEnv: vi.fn(() => ({})) }));
+vi.mock('@civitai/db', () => ({
+  createLagTracker: vi.fn(() => ({})),
+  loadDbEnv: vi.fn(() => ({})),
+}));
 vi.mock('~/server/services/generation/generation.service', () => ({
-  getGenerationEcosystemConfig: vi.fn(async () => ({
-    experimentalEcosystems: [],
-    hasTestingAccess: false,
-  })),
+  resolveTestingAccess: vi.fn(async () => false),
   getGateRules: vi.fn(async () => []),
   getSelfHostedDisabledEcosystems: vi.fn(() => [] as string[]),
   getResourceData: vi.fn(async () => []),

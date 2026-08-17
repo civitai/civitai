@@ -185,10 +185,7 @@ vi.mock('@civitai/db', () => ({
   loadDbEnv: vi.fn(() => ({})),
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
-  getGenerationEcosystemConfig: vi.fn(async () => ({
-    experimentalEcosystems: [],
-    hasTestingAccess: false,
-  })),
+  resolveTestingAccess: vi.fn(async () => false),
   getGateRules: vi.fn(async () => []),
   getSelfHostedDisabledEcosystems: vi.fn(() => [] as string[]),
   getResourceData: vi.fn(async () => []),
