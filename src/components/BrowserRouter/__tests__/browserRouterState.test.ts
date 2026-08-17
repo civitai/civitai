@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { resolveLocationChangeState } from '~/components/BrowserRouter/browserRouterState';
+import {
+  resolveLocationChangeState,
+  resolveRouteChangeState,
+} from '~/components/BrowserRouter/browserRouterState';
 
 // Regression coverage for the Safari/iOS back-navigation crash:
 //   TypeError: null is not an object (evaluating 't.as')
@@ -37,7 +40,11 @@ describe('resolveLocationChangeState', () => {
 
     it('uses history.state.url for query when popstate e.state is null but history.state exists', () => {
       // Safari can null the popstate `e.state` while `history.state` is present.
-      const historyState = { url: '/search?query=cats', as: '/search', state: { prev: { asPath: '/' } } };
+      const historyState = {
+        url: '/search?query=cats',
+        as: '/search',
+        state: { prev: { asPath: '/' } },
+      };
       const result = resolveLocationChangeState(null, historyState, location);
       // asPath still degrades to location (e.state.as is what normally supplies it).
       expect(result.asPath).toBe('/models?sort=Newest');
@@ -135,5 +142,47 @@ describe('resolveLocationChangeState', () => {
       const result = resolveLocationChangeState(eventState, eventState, location, '/images');
       expect(result.query).toEqual({});
     });
+  });
+});
+
+// The popstate handler resolves against the route being LEFT, so a pop Next owns
+// — `/models/[id]` back onto `/images/123` — matched no pattern and produced a
+// query with no `imageId`. `BrowserRouterProvider` commits that on
+// `routeChangeComplete`, so the params have to be re-derived there against the
+// route now rendered.
+describe('resolveRouteChangeState', () => {
+  it('recovers the path param of the route that is now rendered', () => {
+    const popped = { asPath: '/images/135356251', query: {}, state: {} };
+    const result = resolveRouteChangeState(popped, '/images/[imageId]');
+    expect(result.query.imageId).toBe(135356251);
+  });
+
+  it('keeps asPath and state untouched', () => {
+    const popped = {
+      asPath: '/images/135356251',
+      query: {},
+      state: { prev: { asPath: '/models/827184' } },
+    };
+    const result = resolveRouteChangeState(popped, '/images/[imageId]');
+    expect(result.asPath).toBe('/images/135356251');
+    expect(result.state).toEqual({ prev: { asPath: '/models/827184' } });
+  });
+
+  it('lets the query string win over the path param', () => {
+    const popped = { asPath: '/images/135356251', query: { imageId: 999 }, state: {} };
+    const result = resolveRouteChangeState(popped, '/images/[imageId]');
+    expect(result.query.imageId).toBe(999);
+  });
+
+  it('contributes nothing when the rendered route is static', () => {
+    const popped = { asPath: '/images', query: { sort: 'Newest' }, state: {} };
+    const result = resolveRouteChangeState(popped, '/images');
+    expect(result.query).toEqual({ sort: 'Newest' });
+  });
+
+  it('contributes nothing when the pattern does not match the path', () => {
+    const popped = { asPath: '/models/827184', query: {}, state: {} };
+    const result = resolveRouteChangeState(popped, '/images/[imageId]');
+    expect(result.query).toEqual({});
   });
 });

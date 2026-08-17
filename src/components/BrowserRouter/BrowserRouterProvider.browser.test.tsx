@@ -1,6 +1,11 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
-import { BrowserRouterProvider, useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import Router from 'next/router';
+import {
+  BrowserRouterProvider,
+  setUsingNextRouter,
+  useBrowserRouter,
+} from '~/components/BrowserRouter/BrowserRouterProvider';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -25,10 +30,16 @@ import { renderWithProviders } from '../../../test/component-setup';
 // window `error` event, so an onError spy is NOT a reliable guard here.)
 
 function AsPathProbe() {
-  const { asPath } = useBrowserRouter();
-  return <div data-testid="aspath">{asPath}</div>;
+  const { asPath, query } = useBrowserRouter();
+  return (
+    <>
+      <div data-testid="aspath">{asPath}</div>
+      <div data-testid="imageid">{String(query.imageId)}</div>
+    </>
+  );
 }
 const probeText = () => page.getByTestId('aspath').element().textContent;
+const imageIdText = () => page.getByTestId('imageid').element().textContent;
 
 describe('BrowserRouterProvider + ClientHistoryStore popstate handling (Safari null state)', () => {
   test('a back navigation with null history.state degrades to the current location instead of crashing', async () => {
@@ -78,6 +89,69 @@ describe('BrowserRouterProvider + ClientHistoryStore popstate handling (Safari n
       // handler ran and did not throw before updating).
       expect(probeText()).not.toBe('/search?query=cats');
     } finally {
+      window.history.replaceState(originalState, '');
+    }
+  });
+});
+
+// A back navigation onto `/images/[imageId]` from another dynamic route
+// (ClickUp 868kt41x7). Next owns this pop, but the browser-router state was
+// resolved in the popstate handler — where `Router.pathname` is still the route
+// being LEFT — and then committed verbatim on `routeChangeComplete`, landing a
+// query with no `imageId` on a page that reads its id from there. The page
+// rendered its not-found branch; a refresh loaded the same URL fine.
+describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
+  test('keeps the path param of the route being returned TO, not the one being left', async () => {
+    const originalState = window.history.state;
+    const originalPathname = Router.pathname;
+    const handlers: Array<(url: string) => void> = [];
+    vi.mocked(Router.events.on).mockImplementation(((event: string, fn: (url: string) => void) => {
+      if (event === 'routeChangeComplete') handlers.push(fn);
+    }) as any);
+
+    try {
+      renderWithProviders(
+        <BrowserRouterProvider>
+          <AsPathProbe />
+        </BrowserRouterProvider>
+      );
+
+      // Prove the popstate listener is live before the assertion that matters —
+      // it attaches in a mount effect, so a single early dispatch is lost and
+      // the test would pass against the broken code.
+      setUsingNextRouter(false);
+      const liveness = { as: '/models?sort=Newest', url: '/models?sort=Newest', state: {} };
+      window.history.replaceState(liveness, '');
+      await vi.waitFor(() => {
+        window.dispatchEvent(new PopStateEvent('popstate', { state: liveness }));
+        expect(probeText()).toBe('/models?sort=Newest');
+      });
+      expect(imageIdText()).toBe('undefined');
+
+      // The pop itself: leaving `/models/[id]`, landing on `/images/135356251`.
+      // `beforePopState` hands this one to Next, which is what defers the state
+      // commit to `routeChangeComplete`.
+      Router.pathname = '/models/[id]';
+      setUsingNextRouter(true);
+      const popped = { as: '/images/135356251', url: '/images/135356251', state: {} };
+      window.history.replaceState(popped, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: popped }));
+
+      // Next finishes the transition: the rendered route is now the image page.
+      Router.pathname = '/images/[imageId]';
+      expect(handlers.length).toBeGreaterThan(0);
+      for (const handler of handlers) handler('/images/135356251');
+
+      await vi.waitFor(() => {
+        expect(probeText()).toBe('/images/135356251');
+      });
+      // The regression: this read `undefined` and `/images/[imageId]` rendered
+      // `<NotFound />`.
+      expect(imageIdText()).toBe('135356251');
+    } finally {
+      setUsingNextRouter(false);
+      Router.pathname = originalPathname;
+      vi.mocked(Router.events.on).mockReset();
       window.history.replaceState(originalState, '');
     }
   });

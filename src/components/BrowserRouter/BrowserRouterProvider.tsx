@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { useDidUpdate } from '@mantine/hooks';
 import {
   resolveLocationChangeState,
+  resolveRouteChangeState,
   type BrowserRouterState,
   type HistoryState,
 } from '~/components/BrowserRouter/browserRouterState';
@@ -74,7 +75,7 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
   useEffect(() => {
     const handleRouteChangeComplete = () => {
       if (stateRef.current && stateRef.current?.asPath === history.state?.as)
-        useBrowserRouterState.setState(stateRef.current);
+        useBrowserRouterState.setState(resolveRouteChangeState(stateRef.current, Router.pathname));
 
       setUsingNextRouter(false);
     };

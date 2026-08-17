@@ -62,11 +62,31 @@ export function resolveLocationChangeState(
 }
 
 /**
+ * Re-derive the path params once Next has finished a pop it owned.
+ *
+ * `resolveLocationChangeState` runs in the popstate handler, where
+ * `Router.pathname` is still the route being LEFT, so a pop from `/models/[id]`
+ * back to `/images/123` matches no pattern and yields a query with no `imageId`.
+ * `BrowserRouterProvider` then commits that query on `routeChangeComplete` —
+ * after Next has already repopulated its own `router.query` — and the page reads
+ * the empty one and renders its not-found branch. Resolving again against the
+ * route now rendered is what puts `imageId` back.
+ */
+export function resolveRouteChangeState(
+  state: BrowserRouterState,
+  routePattern?: string
+): BrowserRouterState {
+  return {
+    ...state,
+    query: { ...getDynamicRouteParams(routePattern, state.asPath), ...state.query },
+  };
+}
+
+/**
  * `/images/[imageId]` + `/images/123` → `{ imageId: '123' }`.
  *
  * Self-guarding: a pattern that doesn't match the path yields nothing, so a pop
- * to a *different* route contributes no stale params (Next handles those pops
- * itself and repopulates the query on `routeChangeComplete`).
+ * to a *different* route contributes no stale params.
  *
  * Round-tripped through `QS` so params land as the same types the rest of the
  * query does — the matcher yields strings, and consumers pass these straight to
