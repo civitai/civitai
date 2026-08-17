@@ -32,6 +32,7 @@ export type BulkImage = {
   postId: number | null;
   poi: boolean;
   minor: boolean;
+  tosViolation: boolean;
   prompt: string | null;
   negativePrompt: string | null;
   isProfilePicture: boolean;
@@ -52,6 +53,9 @@ const IMAGE_COLUMNS = [
   'i.postId',
   'i.poi',
   'i.minor',
+  // Every consumer of this set renders the flag row, and leaving one flag out of the set meant the same
+  // image read as clean on one page and ToS'd on another.
+  'i.tosViolation',
 ] as const;
 
 // EXISTS, not Retool's LEFT JOINs: an image attached to two ImageConnection rows came back twice
@@ -82,11 +86,20 @@ type ImageBase = ReturnType<typeof imageBase>;
  * Rows and count derived from ONE already-filtered builder. A predicate added to the rows but not the
  * count renders "150 of 300" next to "The whole set."
  */
-async function batchFrom(base: ImageBase, limit: number): Promise<BulkBatch> {
+/** `order: 'index'` is the author's own ordering within a post — what the site shows, and what a report
+ *  about "the third image" refers to. Everywhere else newest-first is the useful order. */
+async function batchFrom(
+  base: ImageBase,
+  limit: number,
+  order: 'newest' | 'index' = 'newest'
+): Promise<BulkBatch> {
+  const ordered =
+    order === 'index'
+      ? base.orderBy(sql`"index" asc nulls last`).orderBy('i.id', 'asc')
+      : base.orderBy('i.id', 'desc');
   const [rows, total] = await Promise.all([
-    base
+    ordered
       .select([...IMAGE_COLUMNS, ...extraColumns])
-      .orderBy('i.id', 'desc')
       .limit(limit + 1)
       .execute(),
     base.select((eb) => eb.fn.countAll<string>().as('c')).executeTakeFirst(),
@@ -99,8 +112,12 @@ async function batchFrom(base: ImageBase, limit: number): Promise<BulkBatch> {
   };
 }
 
-export async function getImagesForPost(postId: number, limit = 200): Promise<BulkBatch> {
-  return batchFrom(imageBase().where('i.postId', '=', postId), limit);
+export async function getImagesForPost(
+  postId: number,
+  limit = 200,
+  order: 'newest' | 'index' = 'newest'
+): Promise<BulkBatch> {
+  return batchFrom(imageBase().where('i.postId', '=', postId), limit, order);
 }
 
 /** Every image across every VERSION of a model — Retool's three chained queries as one join. */

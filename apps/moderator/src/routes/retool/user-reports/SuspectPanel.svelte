@@ -324,11 +324,12 @@
 })}
   <div class="flex flex-col gap-1.5 p-2 text-xs text-dark-2">
     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-      {#if img.ingestion === 'Blocked'}
-        <Badge variant="destructive">blocked{img.blockedFor ? `: ${img.blockedFor}` : ''}</Badge>
-      {/if}
-      {#if img.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
-      {#if img.needsReview}<Badge variant="secondary">{img.needsReview}</Badge>{/if}
+      <ImageFlagBadges
+        ingestion={img.ingestion}
+        blockedFor={img.blockedFor}
+        tosViolation={img.tosViolation}
+        needsReview={img.needsReview}
+      />
       <!-- Removing either has consequences beyond the image: one blanks the account's avatar, the
            other pulls an entry out of a bounty. -->
       {#if img.isProfilePicture}<Badge variant="secondary">profile picture</Badge>{/if}

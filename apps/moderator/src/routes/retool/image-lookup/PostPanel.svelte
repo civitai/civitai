@@ -43,6 +43,11 @@
         · {result.images.length} image{result.images.length === 1 ? '' : 's'}
       </p>
     </div>
+    <!-- This panel reads a post; Bulk Image Manager acts on one. Sending the moderator there with the
+         post already loaded is the hand-off, rather than making them retype the id into another page. -->
+    <Button variant="outline" size="sm" href="/retool/bulk-image-manager?source=post&q={post.id}">
+      Action these images
+    </Button>
     <!-- The way out. Every other link on this panel stays in the app, so the one that leaves says so. -->
     <Button
       variant="outline"

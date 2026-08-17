@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { usersByIds } from './users.service';
+import { getImagesForPost, type BulkBatch } from './bulk-image.service';
 import type { MediaType } from '../media/edge-url';
 
 // The PAGE LOAD half of Image Lookup (Retool's "Image Lookup" app). Everything here is Postgres and
@@ -173,10 +174,12 @@ export async function getImageLookup(imageId: number): Promise<ImageLookupResult
   return { image, tags, shadowTags, reactions, reports, modActivity };
 }
 
-// Retool had no Post Lookup app — the main app's "Lookup Post" control pointed at a Retool app that was
-// never exported, so this is the replacement target rather than a port. It lives on Image Lookup instead
-// of its own route so it inherits that page's grant: a new route has no `AppPageAccess` row and would be
-// invisible to everyone but `moderator:admin` until someone ticked it on `/admin`.
+// Post detail for Image Lookup's `?post=` view. There was no Retool "Post Lookup" app: its "Lookup Post"
+// control opened Bulk Image Manager with `?postId=`, which is still where a post's images get ACTIONED.
+// What this adds is the post itself — publish state, availability, ToS — which that page does not show.
+//
+// On Image Lookup rather than its own route so it inherits that page's grant: a new route has no
+// `AppPageAccess` row and would be invisible to everyone but `moderator:admin` until granted on `/admin`.
 export type PostDetail = {
   id: number;
   title: string | null;
@@ -193,22 +196,14 @@ export type PostDetail = {
   modelVersionId: number | null;
 };
 
-export type PostImage = {
-  id: number;
-  url: string;
-  type: MediaType;
-  nsfwLevel: number;
-  tosViolation: boolean;
-  needsReview: string | null;
-  blockedFor: string | null;
-  minor: boolean;
-  poi: boolean;
-  createdAt: Date;
+export type PostLookupResult = {
+  post: PostDetail;
+  images: BulkBatch['items'];
+  truncated: boolean;
+  total: number;
 };
 
-export type PostLookupResult = { post: PostDetail; images: PostImage[] };
-
-export async function getPostLookup(postId: number): Promise<PostLookupResult | null> {
+export async function getPostLookup(postId: number, limit = 200): Promise<PostLookupResult | null> {
   const post = await dbRead
     .selectFrom('Post as p')
     .leftJoin('User as u', 'u.id', 'p.userId')
@@ -233,28 +228,16 @@ export async function getPostLookup(postId: number): Promise<PostLookupResult | 
 
   // `index` is the author's ordering within the post; a moderator reading a report about "the third image"
   // needs the same order the site shows. Nulls last so a row that never got one still appears.
-  const images = await dbRead
-    .selectFrom('Image')
-    .select([
-      'id',
-      'url',
-      'type',
-      'nsfwLevel',
-      'tosViolation',
-      'needsReview',
-      'blockedFor',
-      'minor',
-      'poi',
-      'createdAt',
-    ])
-    .where('postId', '=', postId)
-    .orderBy(sql`"index" asc nulls last`)
-    .orderBy('id', 'asc')
-    .execute();
+  // The SAME query Bulk Image Manager runs for a post — that page is where this one's images get
+  // actioned, and two builders answering "the images in post N" is how they came to show different
+  // flags and different orders for the same image.
+  const batch = await getImagesForPost(postId, limit, 'index');
 
   return {
     post: { ...post, availability: String(post.availability) },
-    images: images.map((i) => ({ ...i, type: i.type as MediaType })),
+    images: batch.items,
+    truncated: batch.truncated,
+    total: batch.total,
   };
 }
 

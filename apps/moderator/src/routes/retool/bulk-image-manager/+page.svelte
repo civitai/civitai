@@ -365,6 +365,7 @@
   createdAt?: Date;
   poi?: boolean;
   minor?: boolean;
+  tosViolation?: boolean;
   prompt?: string | null;
   negativePrompt?: string | null;
   isProfilePicture?: boolean;
@@ -372,12 +373,14 @@
 })}
   <div class="flex flex-col gap-1.5 p-2 text-xs text-dark-2">
     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-      {#if img.ingestion === 'Blocked'}
-        <Badge variant="destructive">blocked{img.blockedFor ? `: ${img.blockedFor}` : ''}</Badge>
-      {/if}
-      {#if img.needsReview}<Badge variant="secondary">{img.needsReview}</Badge>{/if}
-      {#if img.poi}<Badge variant="secondary">POI</Badge>{/if}
-      {#if img.minor}<Badge variant="secondary">minor</Badge>{/if}
+      <ImageFlagBadges
+        ingestion={img.ingestion}
+        blockedFor={img.blockedFor}
+        tosViolation={img.tosViolation}
+        needsReview={img.needsReview}
+        poi={img.poi}
+        minor={img.minor}
+      />
       <span>{dateTime(img.createdAt ?? null)}</span>
     </div>
 
