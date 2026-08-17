@@ -22,7 +22,7 @@ import { PlacementFreeFilter } from '~/components/Placement/PlacementFreeFilter'
 import { selectionAfterHidingFree, visibleQueueRows } from '~/components/Placement/free-filter';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
-import { placementPaymentSummary, selectionFree } from '~/components/Sticker/payout-copy';
+import { placementAmountLine, selectionFree } from '~/components/Sticker/payout-copy';
 import { WithheldThumb } from '~/components/RemixGallery/SubmissionPair';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -233,12 +233,11 @@ export default function StickerPlacements() {
                       <Text span fw={600}>
                         {row.placer?.username ?? 'Someone'}
                       </Text>{' '}
-                      {/* The only money statement on the card the Approve and
-                          Decline buttons sit under, and a free row carries
-                          `amount: 0` — so a free row says nothing here and
-                          wears the badge beside the buttons instead, rather
-                          than asserting a payment of zero. */}
-                      {row.free ? 'placed this' : placementPaymentSummary(row.amount)}
+                      {/* Both arms in `payout-copy`, not a ternary here: this
+                          is the only money statement on the card the Approve
+                          and Decline buttons sit under, and nothing under
+                          `src/pages` can be tested. */}
+                      {placementAmountLine(row.free, row.amount)}
                     </Text>
                     {row.free && <PlacementFreeBadge noun="placement" />}
                     <Text size="xs" c="dimmed">

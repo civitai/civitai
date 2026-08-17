@@ -64,6 +64,21 @@ export function declineConsequence(free: boolean | undefined) {
 export const placementPaymentSummary = (amount: number) => `paid ${amount} Buzz`;
 
 /**
+ * Which of those a queue row says, which is the branch that must not be lost.
+ *
+ * Here rather than as a ternary in the page: `src/pages` cannot carry a test —
+ * Next treats every file under it as a route — so a `row.free ?` inline is a
+ * money statement with nothing able to assert it. Dropping the free arm makes
+ * the card read "paid 0 Buzz" over a free placement, on the page a "your
+ * placement was free" notification links to, immediately above an irreversible
+ * choice. Typecheck and every test still pass.
+ *
+ * The free arm names no amount at all — the badge beside it carries the fact.
+ */
+export const placementAmountLine = (free: boolean, amount: number) =>
+  free ? 'placed this' : placementPaymentSummary(amount);
+
+/**
  * What a moderator take-down does to the money.
  *
  * Two axes, and free breaks the pending one specifically: a pending PAID row
