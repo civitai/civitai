@@ -45,7 +45,11 @@ const buzzPurchaseMetadataSchema = z
     unitAmount: z.coerce.number().positive(),
     userId: z.coerce.number().positive(),
     transactionId: z.string().optional(),
-    buzzType: z.enum(['green', 'yellow', 'blue', 'red']).default('yellow').optional(),
+    // UNTRUSTED. `getPaymentIntent` overwrites this with the currency derived from the
+    // request's domain before it reaches Stripe, so whatever the client sends is inert.
+    // Do not reintroduce a `.default()` here: `.optional()` after it re-admits `undefined`,
+    // which made the old default never apply and hid that nothing re-derived the value.
+    buzzType: z.enum(['green', 'yellow', 'blue', 'red']).optional(),
     blueBuzzGranted: z.coerce.boolean().optional(),
     cosmeticsGranted: z.coerce.boolean().optional(),
     // App Blocks attribution — populated only when the buzz purchase

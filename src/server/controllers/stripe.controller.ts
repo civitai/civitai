@@ -159,6 +159,7 @@ export const getPaymentIntentHandler = async ({
         email,
       },
       customerId,
+      domain: ctx.domain,
     });
 
     return result;
