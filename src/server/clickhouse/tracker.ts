@@ -56,7 +56,8 @@ export type ViewType =
   | 'ArticleView'
   | 'CollectionView'
   | 'BountyView'
-  | 'BountyEntryView';
+  | 'BountyEntryView'
+  | 'Model3DView';
 
 export type UserActivityType =
   | 'Registration'
