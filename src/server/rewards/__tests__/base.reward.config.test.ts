@@ -512,41 +512,61 @@ describe('the on-demand Lua keeps the properties the model assumes', () => {
   // found two holes by executing mutants; assume there are more nobody tried.
   // This fails on any edit to the script including a reformat, which is the safe
   // direction: updating it forces re-deriving the model in `runLua` beside it.
-  // 🔴 Lua block comments open with `--[[` and close with `--]]`, and BOTH
-  // delimiters start with `--`. A normaliser that drops every `--` line deletes
-  // exactly the two lines that neutralise everything between them, leaving the
-  // commented-out body in the array where it matches the expectation perfectly.
-  // Wrapping the dedup block that way killed the double-award guard in Redis and
-  // passed every assertion in this file, including the named one, whose regex
-  // still matched source Lua would never execute. Strip block comments before
-  // dropping line comments, and refuse the delimiter outright as the floor.
-  it('has no block comment neutralising part of the script', () => {
-    expect(ON_DEMAND_REWARD_SCRIPT).not.toContain('--[[');
+  // Names the class for a legible failure. The pin below would catch it anyway.
+  it('has no long-bracket comment neutralising part of the script', () => {
+    expect(ON_DEMAND_REWARD_SCRIPT).not.toMatch(/--\[=*\[/);
   });
 
-  it('matches the script this suite was written against, line for line', () => {
-    const body = ON_DEMAND_REWARD_SCRIPT.replace(/--\[\[[\s\S]*?--\]\]/g, '')
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('--'));
-
-    expect(body).toEqual([
-      "local cacheJson = redis.call('HGET', KEYS[1], ARGV[1])",
-      "local cache = cjson.decode(cacheJson or '{}')",
-      'if cache[ARGV[2]] then',
-      'return -1',
-      'end',
-      'local awarded = 0',
-      'for _, entry in pairs(cache) do',
-      "local paid = string.match(tostring(entry), '^a:(%d+)$')",
-      'awarded = awarded + (paid and tonumber(paid) or tonumber(ARGV[3]))',
-      'end',
-      'local remaining = math.max(tonumber(ARGV[4]) - awarded, 0)',
-      'local toAward = math.min(tonumber(ARGV[3]), remaining)',
-      "cache[ARGV[2]] = 'a:' .. tostring(toAward)",
-      "redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(cache))",
-      "redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[5]))",
-      'return toAward',
+  // 🔴 This pin does NOT normalise, and that is the whole design.
+  //
+  // Three earlier versions each ignored something so the comparison would be
+  // stable, and each time the thing ignored was the attack. Trimming and dropping
+  // `--` lines let a `--[[ … --]]` wrapper delete its own delimiters and leave the
+  // commented-out body matching perfectly — the double-award guard dead in Redis,
+  // every assertion green. Stripping `--[[ … --]]` then let `--[==[ … --]==]`
+  // through, because Lua's long-bracket form takes any number of `=` and the `--`
+  // on the closer is just comment content. Each fix closed the spelling it was
+  // shown, not the class.
+  //
+  // A normaliser cannot be trusted here because "what can neutralise a line" is
+  // not a closed set. So nothing is ignored: every line of the script, including
+  // blank ones, comments and indentation, is compared verbatim. Split per line
+  // only so the failure is a one-line diff rather than a wall.
+  //
+  // ⚠️ What this is worth: it RAISES THE COST of a silent script revert. It does
+  // not prevent one, and it exists only because nothing in this repo can execute
+  // Lua. If another way to neutralise the script turns up, the answer is a Lua
+  // interpreter in devDependencies or an integration test against a real Redis —
+  // not another regex.
+  it('matches the script this suite was written against, verbatim', () => {
+    expect(ON_DEMAND_REWARD_SCRIPT.split('\n')).toEqual([
+      '',
+      "  local cacheJson = redis.call('HGET', KEYS[1], ARGV[1])",
+      "  local cache = cjson.decode(cacheJson or '{}')",
+      '',
+      '  -- Check if already awarded (dedup by cache key)',
+      '  if cache[ARGV[2]] then',
+      '    return -1',
+      '  end',
+      '',
+      "  -- Sum what the day's entries actually paid, and enforce the cap against that",
+      '  local awarded = 0',
+      '  for _, entry in pairs(cache) do',
+      "    local paid = string.match(tostring(entry), '^a:(%d+)$')",
+      '    awarded = awarded + (paid and tonumber(paid) or tonumber(ARGV[3]))',
+      '  end',
+      '  local remaining = math.max(tonumber(ARGV[4]) - awarded, 0)',
+      '  local toAward = math.min(tonumber(ARGV[3]), remaining)',
+      '',
+      '  -- Update cache with new entry',
+      "  cache[ARGV[2]] = 'a:' .. tostring(toAward)",
+      "  redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(cache))",
+      '',
+      '  -- Set hash expiry to end of UTC day',
+      "  redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[5]))",
+      '',
+      '  return toAward',
+      '',
     ]);
   });
 });
