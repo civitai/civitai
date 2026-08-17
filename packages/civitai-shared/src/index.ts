@@ -4,3 +4,4 @@
 export * from './flags';
 export * from './browsing-levels';
 export * from './model-version-flags.constants';
+export * from './comic-views.constants';

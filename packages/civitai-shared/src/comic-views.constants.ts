@@ -1,0 +1,26 @@
+/**
+ * The day comic view tracking went live.
+ *
+ * Comic views before this date do not exist as `views` rows — they are reconstructed from
+ * `pageViews` paths by `scripts/oneoffs/backfill-comic-views.ts`, which writes straight into
+ * `daily_views`. The reconstruction is close but not identical, and one difference is visible to
+ * anyone reading a chart:
+ *
+ *   Chapter reads are gated on `canRead`, so a paywalled early-access chapter a viewer could not
+ *   open is not a read. `pageViews` cannot see that gate, so backfilled chapter counts include
+ *   those locked hits. For a comic that sells early access, the chapter series STEPS DOWN on this
+ *   date — permanently — and reads as the comic losing readers the day the feature shipped.
+ *
+ * Anything charting comic views should draw the span before this date differently and say why,
+ * rather than presenting one continuous series. The backfill asserts its `--until` equals this
+ * value, so the two cannot drift apart.
+ *
+ * Exclusive: this date is the first day of live tracking, and the last backfilled day is the one
+ * before it. Set it to the deploy date before running the backfill.
+ */
+export const COMIC_VIEW_TRACKING_CUTOVER = '2026-08-18';
+
+/** Human-readable reason, for a tooltip or footnote on a chart that spans the cutover. */
+export const COMIC_VIEW_BACKFILL_NOTE =
+  'Views before this date are reconstructed from page visits and count paywalled chapter opens, ' +
+  'which live tracking excludes.';
