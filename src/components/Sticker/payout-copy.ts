@@ -53,6 +53,64 @@ export function declineConsequence(free: boolean | undefined) {
 }
 
 /**
+ * The queue row's headline, which is the only money statement on the card the
+ * Approve and Decline buttons sit under.
+ *
+ * A free row carries `amount: 0`, enforced by the DB — so "paid 0 Buzz" is not a
+ * cosmetic slip. It is the page the free-placement notification sends the creator
+ * to: the notification says the placement was free and the card then asserts a
+ * payment of zero, immediately above an irreversible choice.
+ */
+export const placementPaymentSummary = (free: boolean, amount: number) =>
+  free ? 'placed this free' : `paid ${amount} Buzz`;
+
+/**
+ * What a moderator take-down does to the money.
+ *
+ * Two axes, and free breaks the pending one specifically: a pending PAID row
+ * settles as a forfeit of the whole escrow, and a pending free row has no escrow
+ * to forfeit. Both statements are false on a free row in
+ * `RemoveReportedPlacement`, where the live branch also promises the creator was
+ * already paid.
+ */
+export function moderatorTakedownConsequence({
+  pending,
+  free,
+}: {
+  pending: boolean;
+  free: boolean;
+}) {
+  if (free)
+    return pending
+      ? 'This one is still awaiting the owner. Nothing was paid for it, so no Buzz moves, and nobody is notified.'
+      : 'The sticker comes off this content for everyone, recorded as a moderator takedown. Nothing was paid for it, so no Buzz moves, and nobody is notified.';
+
+  return pending
+    ? 'This one is still awaiting the owner. Taking it down forfeits everything the placer paid — they get nothing back, and nobody is notified.'
+    : 'The sticker comes off this content for everyone, recorded as a moderator takedown. No Buzz moves and nobody is notified.';
+}
+
+/**
+ * Whether a set of selected rows is all free, all paid, or mixed.
+ *
+ * Here rather than in the page because `declineConsequence` is what consumes it
+ * and its `undefined` branch is already covered — inline in a page component the
+ * collapse from "mixed" to "whichever kind we saw first" is a mutation nothing
+ * can observe, and it makes a bulk decline assert a sentence false of half the
+ * rows it is about.
+ *
+ * An id whose row is not paged in yet counts as unknown, which makes the whole
+ * selection mixed. That is the safe direction: it says only what covers both.
+ */
+export function selectionFree(
+  selected: number[],
+  rows: { id: number; free: boolean }[]
+): boolean | undefined {
+  const kinds = new Set(selected.map((id) => rows.find((row) => row.id === id)?.free));
+  return kinds.size === 1 ? [...kinds][0] : undefined;
+}
+
+/**
  * Why a live sticker cannot be taken off yet.
  *
  * Mirrors the server's refusal in `removeApprovedSticker`, which is the thing

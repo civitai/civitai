@@ -230,7 +230,12 @@ describe('StickerPlacementBar — free slots', () => {
     await renderBar();
 
     expect(page.getByText(/free$/).elements()).toHaveLength(0);
-    expect(page.getByRole('button', { name: 'Place a sticker' }).elements()).toHaveLength(1);
+    // `exact`, because the default is a substring match — so the bare name also
+    // matched "Place a sticker · 0 of 0 free" and the assertion survived the
+    // mutation `showsFree = canPlace`, which is the one it exists to catch.
+    expect(
+      page.getByRole('button', { name: 'Place a sticker', exact: true }).elements()
+    ).toHaveLength(1);
   });
 
   test('still reports the capacity when every slot is currently held', async () => {

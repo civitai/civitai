@@ -108,9 +108,12 @@ export function freeRefusalMessage(standing?: FreeStanding, space?: FreeCapacity
     return 'This creator is not taking free stickers on this image.';
   // Permanent for this placer on this image: once ever, not once per day.
   if (standing?.usedHere) return 'You have already used a free sticker on this image.';
-  // Transient, and it says when it lifts.
+  // Transient, and it says when it lifts — derived from the reset the server
+  // computed rather than restating the boundary here.
   if (standing && standing.remaining <= 0)
-    return "You have used today's free placement. It comes back at midnight UTC.";
+    return `You have used today's free placement. It comes back ${allowanceResetLabel(
+      standing.resetsAt
+    )}.`;
   // The most transient of all — a declined placement releases its slot at once.
   if (space && space.freeSlotsRemaining <= 0)
     return 'Someone took the last free slot on this image first.';
@@ -134,5 +137,58 @@ export const freeRefusalOutcome = (explained: string | null, serverMessage: stri
     ? { title: 'That one has to be paid for', message: explained, fallBackToPaid: true }
     : { title: "Couldn't place that sticker", message: serverMessage, fallBackToPaid: false };
 
-type FreeStanding = { remaining: number; usedHere: boolean };
+type FreeStanding = {
+  remaining: number;
+  usedHere: boolean;
+  /**
+   * When the allowance comes back. Computed by `getFreePlacementAllowance` and
+   * shipped on every read — so a sentence that hardcodes the boundary is a second
+   * copy of a rule the server already owns, and the two are free to disagree the
+   * day the day-boundary or the per-day count moves.
+   */
+  resetsAt?: Date | string;
+};
 type FreeCapacity = { freeSlots: number; freeSlotsRemaining: number };
+
+/**
+ * When the daily allowance comes back, in words.
+ *
+ * Falls back to the boundary the server currently uses rather than saying nothing,
+ * because a refusal that cannot say when it lifts is worse than one that names a
+ * default — but the value is preferred, so changing the day boundary changes this
+ * sentence instead of making it wrong.
+ */
+function allowanceResetLabel(resetsAt?: Date | string) {
+  if (!resetsAt) return 'at midnight UTC';
+  const at = new Date(resetsAt);
+  if (Number.isNaN(at.getTime())) return 'at midnight UTC';
+
+  return `at ${at.toISOString().slice(11, 16)} UTC`;
+}
+
+/**
+ * The tray's price line, which has to name both offers when both are open.
+ *
+ * The use is the constant: a free placement is free of the creator's price and of
+ * nothing else. Saying so here is what stops the tray and the Place button
+ * disagreeing about what a sticker costs.
+ */
+export const trayPriceLine = (freeAvailable: boolean, price: number) =>
+  freeAvailable ? `Free, or ${price} Buzz · one use either way` : `${price} Buzz + one use`;
+
+/**
+ * What the tray says a decline costs on a review-mode space.
+ *
+ * 🔴 The free half is `FREE_REVIEW_CAVEAT` itself rather than a paraphrase of it.
+ * There are three statements of this rule in the product — this one, the caveat
+ * under the draft's own free option, and `declineConsequence`'s free branch on the
+ * owner's side — and two of the three now come from one constant, so a change to
+ * what a decline costs cannot leave a stale copy behind in the tray.
+ *
+ * The paid half is kept in both branches: where both offers are open, somebody
+ * choosing to pay still needs the fee disclosure.
+ */
+export const trayReviewLine = (freeAvailable: boolean) =>
+  freeAvailable
+    ? ` ${FREE_REVIEW_CAVEAT} A paid placement leaves part of what you paid with them.`
+    : ' If they decline, part of what you paid stays with them.';

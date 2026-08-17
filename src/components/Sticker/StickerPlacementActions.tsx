@@ -12,11 +12,17 @@ import { trpc } from '~/utils/trpc';
  * One component for the image and the queue, so the two cannot end up asking
  * different questions before taking someone's money.
  *
- * **Decline confirms; approve confirms only when there is a note.** Declining
- * keeps 30% of what the placer paid and cannot be undone. A plain approve takes
- * nothing from the placer they did not choose to spend, so it goes straight
- * through — but an approve that would publish someone's words is a second
- * decision, and it is the one the owner cannot see the subject of otherwise.
+ * **Decline confirms; approve confirms only when there is a note.** A decline
+ * cannot be undone, and what it costs depends on the placement — see
+ * `declineConsequence`, which is where that sentence lives now that a free row
+ * has no payment to keep a share of. No rate is named here: the shares are
+ * operator-tunable at runtime, so a number written down in a comment is a claim
+ * about money that stops being true with nothing failing.
+ *
+ * A plain approve takes nothing from the placer they did not choose to spend, so
+ * it goes straight through — but an approve that would publish someone's words is
+ * a second decision, and it is the one the owner cannot see the subject of
+ * otherwise.
  */
 export function StickerPlacementActions({
   placementIds,

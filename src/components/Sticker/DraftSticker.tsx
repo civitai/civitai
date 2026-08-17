@@ -738,9 +738,11 @@ export function DraftSticker({
             box is most of the frame, because almost every draft there is narrow.
             This cluster is the one piece of chrome that already knows where it
             is on screen: it measures itself against the tray and the clipping
-            ancestor and moves to whichever side is visible. Handing it the
-            controls means they inherit that, instead of a third set of
-            hand-derived offsets to get wrong. */}
+            ancestor and moves ABOVE or BELOW the sticker accordingly.
+            `shouldFlipPlaceButton` is vertical only — the horizontal position
+            follows the draft's own x with nothing clamping it — so handing it the
+            controls buys them the vertical avoidance and no more. Still better
+            than a third set of hand-derived offsets. */}
         {!panelsInside && (
           <div
             className="flex items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"

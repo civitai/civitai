@@ -3,7 +3,7 @@ import { IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import { freeOfferFor } from '~/components/Sticker/free-offer';
+import { freeOfferFor, trayPriceLine, trayReviewLine } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
@@ -168,25 +168,16 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 {instruction}
               </Text>
               <Text size="xs" c="dimmed">
-                {/* The use is the constant. A free placement is free of the
-                    creator's price and of nothing else, and saying so here
-                    stops the tray and the Place button disagreeing about what
-                    a sticker costs. What the free option means — instant or
-                    reviewed — is said on the option itself, where it is
-                    chosen. */}
-                {freeAvailable
-                  ? `Free, or ${price} Buzz · one use either way`
-                  : `${price} Buzz + one use`}
+                {/* Both sentences come from `free-offer.ts`, where their
+                    branches are covered — inline here, dropping either ternary
+                    is a mutation nothing in the suite can observe, and what it
+                    produces is the exact contradiction these lines exist to
+                    prevent. The free half of the decline warning is
+                    FREE_REVIEW_CAVEAT itself rather than a paraphrase. */}
+                {trayPriceLine(freeAvailable, price)}
                 {space?.mode === 'review' &&
                   ' · this creator reviews placements, so only you will see it until they approve.'}
-                {/* What a decline costs differs between the two offers, so where
-                    both are on the table it is said once in a form that is true
-                    of each. The old paid-only sentence sat beside "Free, or X
-                    Buzz" and contradicted FREE_REVIEW_CAVEAT one file over. */}
-                {space?.mode === 'review' &&
-                  (freeAvailable
-                    ? ' If they decline, a free placement still costs your allowance for the day, and part of a paid one stays with them.'
-                    : ' If they decline, part of what you paid stays with them.')}
+                {space?.mode === 'review' && trayReviewLine(freeAvailable)}
               </Text>
             </div>
             <CloseButton

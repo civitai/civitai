@@ -47,7 +47,12 @@ vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
     label: string;
     onPerformTransaction: () => void;
   }) => (
-    <button type="button" onClick={onPerformTransaction}>
+    // `data-buzz-button` is load-bearing. Without it the stub is
+    // indistinguishable from a plain Mantine `Button` by name alone, so swapping
+    // the free option TO a BuzzTransactionButton left all ten tests green — the
+    // component's own docstring argues at length that it must not be one, and
+    // nothing held that argument.
+    <button type="button" data-buzz-button onClick={onPerformTransaction}>
       {label}
     </button>
   ),
@@ -151,19 +156,27 @@ const renderDraft = async (
 /**
  * The paid button, pressed through the DOM rather than through the locator.
  *
- * ⚠️ Deliberate, and narrow. The buy cluster is absolutely positioned inside the
- * rotated draft, and in this harness the paid variant settles at a NEGATIVE x —
- * measured at -56 in a 414-wide viewport, above the top edge as well — so
- * Playwright reports it visible, fails to scroll to it, and burns the full click
- * budget. Container size and draft position make no difference; the free variant
- * in the same tree is reachable, so it is a property of where THIS cluster lands,
- * which this PR does not change.
+ * ⚠️ **Why this is acceptable here and nowhere else:** `BuzzTransactionButton` is
+ * mocked down to a bare `<button onClick={…}>`, so the actionability a locator
+ * click would check belongs to the stub rather than to anything shipped. There is
+ * no real control here whose reachability could be asserted, whatever method is
+ * used — and what these two tests are for is the payload the handler sends. The
+ * free press, which is the button this PR added and a real Mantine one, goes
+ * through the ordinary locator with its full actionability check.
  *
- * What these two tests are for is the payload the handler sends. Actionability is
- * a separate property, it is the paid path's, and it predates this branch — so
- * skipping the check here is scoping rather than papering over: a real click still
- * runs the real handler. The free press, which is what this PR added, goes through
- * the ordinary locator and its full actionability check.
+ * (A locator click on the stub does not succeed in this harness: the cluster is
+ * absolutely positioned inside the rotated draft and the paid variant ends up
+ * unreachable. The mechanism is NOT established — `shouldFlipPlaceButton` cannot
+ * fire here, since `tray` and `clip` are both null — and it is not the reason for
+ * the exemption either way.)
+ *
+ * 🔴 **Four things end this exemption**, and any one of them means going back to a
+ * locator click and solving the reachability properly:
+ * 1. `BuzzTransactionButton` stops being mocked.
+ * 2. Either helper is used to assert reachability, or enabled/disabled state,
+ *    rather than the payload.
+ * 3. The cluster gains an overlay, so a press could be intercepted.
+ * 4. The pattern is copied into another file as habit.
  */
 const pressPaid = async () => {
   const button = (await page.getByRole('button', { name: 'Place' }).element()) as HTMLElement;
@@ -229,6 +242,27 @@ describe('what a draft sends when it is placed', () => {
     await pressPaid();
 
     expect(placed[0].free).toBe(false);
+  });
+
+  /**
+   * The free option must not be a `BuzzTransactionButton`, which the component's
+   * docstring argues at length — that control exists to show a price and check a
+   * balance, and a free placement has neither. Asserted through the mock's marker
+   * rather than by name, because by name the stub and a plain Mantine button are
+   * the same thing: the swap this pins used to leave every test green.
+   */
+  test('places free through a plain button, not a Buzz one', async () => {
+    await renderDraft({ instant: true });
+
+    const free = (await page.getByRole('button', { name: 'Place free' }).element()) as HTMLElement;
+    expect(free.hasAttribute('data-buzz-button')).toBe(false);
+  });
+
+  test('places paid through a Buzz button, which is where a price belongs', async () => {
+    await renderDraft(null);
+
+    const paid = (await page.getByRole('button', { name: 'Place' }).element()) as HTMLElement;
+    expect(paid.hasAttribute('data-buzz-button')).toBe(true);
   });
 
   test('carries the draft geometry either way', async () => {

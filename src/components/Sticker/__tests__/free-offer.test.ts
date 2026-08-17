@@ -6,6 +6,8 @@ import {
   freeRefusalMessage,
   freeRefusalOutcome,
   isPlacingFree,
+  trayPriceLine,
+  trayReviewLine,
 } from '~/components/Sticker/free-offer';
 
 describe('the free option carries the mode', () => {
@@ -296,6 +298,82 @@ describe('what a refused free claim does next', () => {
   it('titles the two cases differently, since one is about price and one is not', () => {
     expect(freeRefusalOutcome('anything', SERVER).title).not.toBe(
       freeRefusalOutcome(null, SERVER).title
+    );
+  });
+});
+
+/**
+ * The tray's two sentences, here rather than in the component because inline
+ * neither ternary was observable: dropping either one turns nothing red and
+ * produces the exact contradiction the lines exist to prevent.
+ */
+describe('the tray states both offers when both are open', () => {
+  it('names free and the price together, with the use as the constant', () => {
+    const both = trayPriceLine(true, 700);
+
+    expect(both).toMatch(/Free/);
+    expect(both).toMatch(/700 Buzz/);
+    // Free of the creator's price and of nothing else. Without this the tray and
+    // the Place button disagree about what a sticker costs.
+    expect(both).toMatch(/one use either way/);
+  });
+
+  it('names only the price when free is not on offer', () => {
+    const paid = trayPriceLine(false, 700);
+
+    expect(paid).toBe('700 Buzz + one use');
+    expect(paid).not.toMatch(/[Ff]ree/);
+  });
+
+  /**
+   * 🔴 The free half is `FREE_REVIEW_CAVEAT` itself, not a paraphrase. Three
+   * places in the product state what a decline costs a free placer — this, the
+   * caveat under the draft's own free option, and `declineConsequence` on the
+   * owner's side — and two of the three now come from one constant.
+   */
+  it('reuses the owned caveat rather than restating it', () => {
+    expect(trayReviewLine(true)).toContain(FREE_REVIEW_CAVEAT);
+  });
+
+  it('keeps the paid fee disclosure in both branches', () => {
+    // Where both offers are open, somebody choosing to pay still needs it.
+    for (const freeAvailable of [true, false])
+      expect(trayReviewLine(freeAvailable)).toMatch(/part of what you paid/);
+  });
+
+  it('says nothing about an allowance when free is not on offer', () => {
+    expect(trayReviewLine(false)).not.toMatch(/allowance/);
+  });
+});
+
+/**
+ * When the allowance comes back, taken from the value the server computed rather
+ * than from a boundary written down twice.
+ */
+describe('the reset the refusal names', () => {
+  const spent = { remaining: 0, usedHere: false };
+  const open = { freeSlots: 4, freeSlotsRemaining: 2 };
+
+  it('uses the reset the server shipped', () => {
+    expect(
+      freeRefusalMessage({ ...spent, resetsAt: new Date('2026-08-18T00:00:00Z') }, open)
+    ).toMatch(/comes back at 00:00 UTC/);
+  });
+
+  /**
+   * The point of deriving it: the day boundary is the server's rule, so a
+   * different one has to change this sentence rather than leave it wrong.
+   */
+  it('follows a reset that is not midnight', () => {
+    expect(
+      freeRefusalMessage({ ...spent, resetsAt: new Date('2026-08-18T06:30:00Z') }, open)
+    ).toMatch(/comes back at 06:30 UTC/);
+  });
+
+  it('still says when it lifts if the reset never arrived', () => {
+    expect(freeRefusalMessage(spent, open)).toMatch(/comes back at midnight UTC/);
+    expect(freeRefusalMessage({ ...spent, resetsAt: 'not a date' }, open)).toMatch(
+      /comes back at midnight UTC/
     );
   });
 });

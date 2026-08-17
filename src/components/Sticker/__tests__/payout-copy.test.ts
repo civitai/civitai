@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   declineConsequence,
+  moderatorTakedownConsequence,
   payoutCopy,
+  placementPaymentSummary,
   removalConsequence,
   removalLockReason,
+  selectionFree,
   stickerPurchaseCopy,
 } from '~/components/Sticker/payout-copy';
 
@@ -129,5 +132,99 @@ describe('the removal copy', () => {
   it('says nobody is notified either way, which is true of both', () => {
     for (const free of [true, false])
       expect(removalConsequence(free)).toMatch(/nobody is notified/);
+  });
+});
+
+/**
+ * The queue row's headline, which is the only money statement on the card the
+ * Approve and Decline buttons sit under — and the page the free-placement
+ * notification sends the creator to.
+ */
+describe('placementPaymentSummary', () => {
+  it('states the amount on a paid placement', () => {
+    expect(placementPaymentSummary(false, 700)).toBe('paid 700 Buzz');
+  });
+
+  /**
+   * A free row is `amount: 0`, DB-enforced. Unbranched, this card asserted a
+   * payment of zero directly above an irreversible choice, on the page a
+   * notification saying "free" had just linked to.
+   */
+  it('claims no payment on a free one, and names no amount', () => {
+    const free = placementPaymentSummary(true, 0);
+
+    expect(free).toBe('placed this free');
+    expect(free).not.toMatch(/paid|Buzz|0/);
+  });
+});
+
+describe('moderatorTakedownConsequence', () => {
+  it('warns that a pending paid placement forfeits the whole escrow', () => {
+    expect(moderatorTakedownConsequence({ pending: true, free: false })).toMatch(
+      /forfeits everything the placer paid/
+    );
+  });
+
+  it('says no Buzz moves on a live paid placement', () => {
+    expect(moderatorTakedownConsequence({ pending: false, free: false })).toMatch(/No Buzz moves/);
+  });
+
+  /**
+   * There is no escrow on a free row in either state, so the pending branch's
+   * forfeit is a claim about money that does not exist — asserted at an
+   * irreversible action a moderator is about to take.
+   */
+  it.each([true, false])('never claims a forfeit on a free row — pending %s', (pending) => {
+    const free = moderatorTakedownConsequence({ pending, free: true });
+
+    expect(free).not.toMatch(/forfeit|already paid|gets? nothing back/);
+    expect(free).toMatch(/[Nn]othing was paid for it/);
+    expect(free).toMatch(/nobody is notified/);
+  });
+
+  it('separates the two states on a free row too', () => {
+    expect(moderatorTakedownConsequence({ pending: true, free: true })).not.toBe(
+      moderatorTakedownConsequence({ pending: false, free: true })
+    );
+  });
+});
+
+/**
+ * All free, all paid, or mixed — extracted from the queue page because the mixed
+ * case is the one that matters and it was untestable inline.
+ */
+describe('selectionFree', () => {
+  const rows = [
+    { id: 1, free: true },
+    { id: 2, free: true },
+    { id: 3, free: false },
+  ];
+
+  it('reports a uniform selection', () => {
+    expect(selectionFree([1, 2], rows)).toBe(true);
+    expect(selectionFree([3], rows)).toBe(false);
+  });
+
+  /**
+   * The mutation this exists for: collapsing to whichever kind came first makes a
+   * bulk decline assert a sentence false of half the rows it is about.
+   */
+  it('reports mixed as undefined rather than picking a side', () => {
+    expect(selectionFree([1, 3], rows)).toBeUndefined();
+    expect(selectionFree([3, 1], rows)).toBeUndefined();
+  });
+
+  /**
+   * An id whose row has not paged in yet is unknown, which makes the whole
+   * selection mixed — the safe direction, because `declineConsequence` then says
+   * only what covers both.
+   */
+  it('treats a row it cannot see as unknown', () => {
+    expect(selectionFree([1, 99], rows)).toBeUndefined();
+    expect(selectionFree([99], rows)).toBeUndefined();
+  });
+
+  it('says nothing about an empty selection', () => {
+    expect(selectionFree([], rows)).toBeUndefined();
   });
 });

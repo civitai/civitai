@@ -14,7 +14,11 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { useForgetStickerPlacement } from '~/components/Sticker/placement.util';
-import { removalConsequence, removalLockReason } from '~/components/Sticker/payout-copy';
+import {
+  moderatorTakedownConsequence,
+  removalConsequence,
+  removalLockReason,
+} from '~/components/Sticker/payout-copy';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
@@ -211,7 +215,11 @@ export function StickerPlacementHoverCard({
                   for as long as the page stays open — and that value would pick
                   the confirmation's sentence about the placer's money, right
                   before an irreversible click. */}
-              <ModeratorRemove placementId={placementId} pending={data.status === 'pending'} />
+              <ModeratorRemove
+                placementId={placementId}
+                pending={data.status === 'pending'}
+                free={data.free}
+              />
               {data.viewerIsOwner && data.status === 'approved' && (
                 <OwnerRemove
                   placementId={placementId}
@@ -505,9 +513,12 @@ function OwnerRemove({
  * On a live placement nothing else happens: no refund, and nobody is notified
  * (Justin, 2026-08-08). The escrow was paid to a content owner who did not
  * choose the sticker, and clawing it back would charge them for someone else's
- * problem. **A pending one is not that**: it settles as `removeByModerator`,
+ * problem. **A pending PAID one is not that**: it settles as `removeByModerator`,
  * whose payout is a forfeit of the whole escrow, fee and principal — so the
  * confirmation has to say a different thing about the money.
+ *
+ * A free row has no escrow at all, in either state, so both of those sentences are
+ * false of one and the confirmation branches on `free` as well as on `pending`.
  *
  * Rendered for moderators only, which is convenience — `removePlacement` is a
  * `moderatorProcedure`, so the refusal is on the mutation and stays there.
@@ -515,9 +526,12 @@ function OwnerRemove({
 function ModeratorRemove({
   placementId,
   pending = false,
+  free,
 }: {
   placementId: number;
   pending?: boolean;
+  /** No escrow exists on a free row, so neither branch below is true of one. */
+  free: boolean;
 }) {
   const currentUser = useCurrentUser();
   const forget = useForgetStickerPlacement();
@@ -553,13 +567,7 @@ function ModeratorRemove({
         onClick={() =>
           openConfirmModal({
             title: 'Take this placement down',
-            children: (
-              <Text size="sm">
-                {pending
-                  ? 'This one is still awaiting the owner. Taking it down forfeits everything the placer paid — they get nothing back, and nobody is notified.'
-                  : 'The sticker comes off this content for everyone, recorded as a moderator takedown. No Buzz moves and nobody is notified.'}
-              </Text>
-            ),
+            children: <Text size="sm">{moderatorTakedownConsequence({ pending, free })}</Text>,
             labels: { confirm: 'Take down', cancel: 'Cancel' },
             confirmProps: { color: 'red' },
             onConfirm: () => remove.mutate({ placementId }),

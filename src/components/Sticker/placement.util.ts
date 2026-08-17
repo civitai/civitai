@@ -272,24 +272,30 @@ export function useCreateStickerPlacement(
         });
 
       // Re-read before saying anything. The refusal does not name which of the
-      // three free-tier rules stopped it, and the numbers this control rendered
-      // are stale by construction — so the honest sentence comes from fresh
-      // state, not from the server's prose. The invalidation is also what makes
-      // the free option disappear on its own where it genuinely has.
+      // free-tier rungs stopped it, and the numbers this control rendered are
+      // stale by construction — so the honest sentence comes from fresh state,
+      // not from the server's prose.
       const target = {
         surface: 'sticker' as const,
         targetType: 'image' as const,
         targetId: variables.imageId,
       };
-      await Promise.all([
-        utils.placement.getSpace.invalidate(target),
-        // Unkeyed, deliberately. The daily allowance is one placement a day
-        // across the whole site, so a target-scoped invalidation leaves every
-        // OTHER image's cached standing showing an allowance that is gone — and
-        // that stale number is what a control reads to decide whether to offer
-        // free at all. The space is per image and stays keyed.
-        utils.placement.getFreeStanding.invalidate(),
+
+      // `staleTime: 0` rather than invalidate-then-read, so freshness is a
+      // property of the call instead of the order two statements happen to be in.
+      // With the two-step version, hoisting the reads above the invalidation is a
+      // mutation nothing can observe, and what it produces is exactly the stale
+      // numbers this re-read exists to avoid.
+      const [space, standing] = await Promise.all([
+        utils.placement.getSpace.fetch(target, { staleTime: 0 }),
+        utils.placement.getFreeStanding.fetch(target, { staleTime: 0 }),
       ]);
+
+      // Every OTHER image's cached standing is stale too, because the allowance
+      // is one placement a day across the whole site — and that stale number is
+      // what a control elsewhere reads to decide whether to offer free at all.
+      // Unkeyed for that reason; the space is per image and needs no sweep.
+      void utils.placement.getFreeStanding.invalidate();
 
       // 🔴 Only a refusal the re-read can account for falls back to paid. The
       // free path refuses plenty of things that have nothing to do with the free
@@ -299,13 +305,7 @@ export function useCreateStickerPlacement(
       // slot" throws those away and offers a paid button that fails the same
       // way, which is the worse half: the remedy is wrong, not just the reason.
       // The branch itself is `freeRefusalOutcome`, where it is testable.
-      const outcome = freeRefusalOutcome(
-        freeRefusalMessage(
-          utils.placement.getFreeStanding.getData(target),
-          utils.placement.getSpace.getData(target)
-        ),
-        error.message
-      );
+      const outcome = freeRefusalOutcome(freeRefusalMessage(standing, space), error.message);
 
       // Paid rather than an error where free ran out, which is the cross-surface
       // rule: the placement they arranged is still available, it just costs Buzz

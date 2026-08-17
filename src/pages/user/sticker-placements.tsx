@@ -19,6 +19,7 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { Meta } from '~/components/Meta/Meta';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
+import { placementPaymentSummary, selectionFree } from '~/components/Sticker/payout-copy';
 import { WithheldThumb } from '~/components/RemixGallery/SubmissionPair';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -56,20 +57,9 @@ export default function StickerPlacements() {
 
   const allSelected = rows.length > 0 && selected.length === rows.length;
 
-  /**
-   * Whether the selection is all free, all paid, or mixed.
-   *
-   * `undefined` for mixed is the honest answer rather than a missing one: the
-   * decline confirmation states what a decline costs, and a selection holding
-   * both kinds has no single true sentence about money. Rows not yet paged in
-   * cannot be selected, so an id with no row is treated as unknown too.
-   */
-  const selectedFree = ((): boolean | undefined => {
-    const kinds = new Set(
-      selected.map((id) => rows.find((row) => row.id === id)?.free ?? undefined)
-    );
-    return kinds.size === 1 ? [...kinds][0] : undefined;
-  })();
+  // All free, all paid, or mixed. Derived beside `declineConsequence`, which is
+  // the only consumer and where the mixed branch is already covered.
+  const selectedFree = selectionFree(selected, rows);
 
   const toggle = (id: number) =>
     setSelected((current) =>
@@ -210,11 +200,12 @@ export default function StickerPlacements() {
                       <Text span fw={600}>
                         {row.placer?.username ?? 'Someone'}
                       </Text>{' '}
-                      paid{' '}
-                      <Text span fw={600}>
-                        {row.amount}
-                      </Text>{' '}
-                      Buzz
+                      {/* The only money statement on the card the Approve and
+                          Decline buttons sit under, and a free row carries
+                          `amount: 0` — so unbranched it asserts a payment of zero
+                          on the very page the free-placement notification sends
+                          the creator to. */}
+                      {placementPaymentSummary(row.free, row.amount)}
                     </Text>
                     <Text size="xs" c="dimmed">
                       Placed {formatDate(row.createdAt)}
