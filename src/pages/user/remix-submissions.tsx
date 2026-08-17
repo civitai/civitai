@@ -229,8 +229,9 @@ function ReceivedTab({
       <Alert color="gray">
         <Text size="sm">Nothing is waiting for your review.</Text>
         <Text size="sm" c="dimmed" mt={4}>
-          When someone pays to feature their remix on one of your images, it appears here for you to
-          approve or decline. You choose whether to accept them at all, and what they cost, in{' '}
+          When someone submits a remix on one of your images — paid, or against the free slots you
+          offer — it appears here for you to approve or decline. You choose whether to accept them
+          at all, how many free ones you take, and what the paid ones cost, in{' '}
           <Anchor component={Link} href="/user/account">
             your account settings
           </Anchor>
@@ -456,9 +457,8 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
                       <Text size="sm">
                         It comes out of {row.owner?.username ?? 'the creator'}&apos;s review queue
                         {row.free
-                          ? '. Your free placement for today stays spent — it is not returned.'
-                          : ` and your ${row.amount} Buzz starts on its way back.`}{' '}
-                        You can submit it again later.
+                          ? '. Your free placement for today stays spent, and free is once per gallery — withdrawing does not give it back, so you will not be able to submit here for free again.'
+                          : ` and your ${row.amount} Buzz starts on its way back. You can submit it again later.`}
                       </Text>
                     ),
                     labels: { confirm: 'Withdraw', cancel: 'Keep it' },

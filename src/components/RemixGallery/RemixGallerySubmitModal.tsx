@@ -427,6 +427,23 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
           </>
         )}
 
+        {/* 🔴 OUTSIDE the free/paid block, and that is the point rather than
+            layout. This is the sentence saying WHY free is unavailable, and
+            every gate it has lived behind has hidden it in the state that needed
+            it most: `method === 'paid'` hid it once the card started holding on
+            free, and `takesFree` hides it on a gallery that takes no free
+            submissions and no paid ones either — a dead end with no explanation.
+            `offer.reason` is null whenever free is genuinely on offer, so this
+            cannot fire against a working button. */}
+        {selected != null && !freeRefusal && freeUnavailableReason && (
+          <>
+            <Divider />
+            <Text size="xs" c="dimmed" className="shrink-0 px-4 pt-3">
+              {freeUnavailableReason}
+            </Text>
+          </>
+        )}
+
         {selected != null && takesFree && (
           <>
             <Divider />
@@ -466,18 +483,6 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 <Text size="xs" c="dimmed">
                   This spends a free placement from today&apos;s allowance, and it is spent even if
                   the creator declines.
-                </Text>
-              )}
-
-              {/* Not gated on `method === 'paid'`. With paid closed the card
-                  holds on free, so that gate made the sentence explaining WHY
-                  free is unavailable unreachable in exactly the state where
-                  every control is disabled — three dead buttons and no reason.
-                  `offer.reason` is null whenever free is actually on offer, so
-                  this cannot fire against a working button. */}
-              {!freeRefusal && freeUnavailableReason && (
-                <Text size="xs" c="dimmed">
-                  {freeUnavailableReason}
                 </Text>
               )}
             </Stack>

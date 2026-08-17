@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allBrowsingLevelsFlag,
@@ -1970,18 +1970,33 @@ describe('what the owner’s review queue says a free submission is worth', () =
   });
 });
 
-describe('every read that carries a Buzz figure also carries `free`', () => {
-  /**
-   * The sweep, as a test rather than as a grep someone ran once.
-   *
-   * `amount` is 0 on a free row by DB constraint, so any consumer that renders
-   * it without knowing the row is free shows "0 Buzz" — and the copy around it
-   * ("your Buzz is on its way back") is false outright. The owner queue was
-   * found by review; these two were found by sweeping, and nothing would have
-   * caught them otherwise.
-   *
-   * A new read that returns `amount` and not `free` belongs in this list.
-   */
+/**
+ * 🔴 Every `placement.findMany` ANY test in this file makes, checked after it
+ * runs: if the select asks for `amount`, it must also ask for `free`.
+ *
+ * `amount` is 0 on a free row by DB constraint, so a consumer that renders it
+ * without knowing the row is free shows "0 Buzz" — and the copy around it ("your
+ * Buzz is on its way back") is false outright. The owner queue was found by
+ * review; two more were found only by sweeping.
+ *
+ * An `afterEach` rather than one `it` per named function, and the difference is
+ * the point: a per-function test retires the worry for the functions somebody
+ * remembered to list, and a third select added tomorrow is looked at by neither.
+ * It also has to loop rather than `.find(...)` — first-match-wins would skip a
+ * second amount-carrying select inside the SAME function and stay green, which
+ * is this repo's catalogued hazard reproduced inside the guard written to close
+ * a sweep.
+ *
+ * ⚠️ What it still cannot see: a read no test in this file exercises. It is a
+ * guard over exercised reads, not over the service.
+ */
+afterEach(() => {
+  for (const [args] of placementFindMany.mock.calls as { select?: Record<string, unknown> }[][])
+    if (args?.select?.amount)
+      expect(args.select.free, 'a read carrying `amount` must also carry `free`').toBe(true);
+});
+
+describe('the reads a Buzz figure is rendered from', () => {
   it('the submitter’s own submissions list', async () => {
     placementFindMany.mockResolvedValue([]);
     await getMyRemixGallerySubmissions({
@@ -1990,8 +2005,7 @@ describe('every read that carries a Buzz figure also carries `free`', () => {
       viewerLevels: allBrowsingLevelsFlag,
     });
 
-    const select = placementFindMany.mock.calls[0][0].select;
-    expect(select).toMatchObject({ amount: true, free: true });
+    expect(placementFindMany).toHaveBeenCalled();
   });
 
   it('the submitter’s pending rows on the image detail card', async () => {
@@ -2007,8 +2021,7 @@ describe('every read that carries a Buzz figure also carries `free`', () => {
       domainLevels: allBrowsingLevelsFlag,
     });
 
-    const call = placementFindMany.mock.calls.find((args) => args[0]?.select?.amount);
-    expect(call?.[0].select).toMatchObject({ amount: true, free: true });
+    expect(placementFindMany).toHaveBeenCalled();
   });
 });
 

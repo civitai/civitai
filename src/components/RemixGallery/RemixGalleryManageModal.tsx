@@ -348,9 +348,9 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                                 children: (
                                   <Text size="sm">
                                     Every pending submission rated above{' '}
-                                    {getBrowsingLevelLabel(acceptedMaxLevel)} is declined. Each one
-                                    keeps you the decline fee and returns the rest to its submitter.
-                                    This can&apos;t be undone.
+                                    {getBrowsingLevelLabel(acceptedMaxLevel)} is declined. Paid ones
+                                    keep you the decline fee and return the rest to their submitter;
+                                    free ones move no Buzz either way. This can&apos;t be undone.
                                   </Text>
                                 ),
                                 labels: { confirm: 'Decline them', cancel: 'Cancel' },

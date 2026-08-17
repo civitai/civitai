@@ -324,10 +324,30 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
    * the "lost the race for the last slot" behaviour the feature is built around.
    * That is broader than the `paidOpen` half this block used to name.
    *
-   * The stale-choice rule therefore lives **nowhere**: reaching it needs a real
-   * query cache, and that fixture would grow its own bugs for one line. Said
-   * plainly rather than left to look covered.
+   * Scope, because the previous version of this block got it wrong in both
+   * directions: the stale-choice rule IS pinned as a pure function in
+   * `remix-gallery.utils.test.ts` ("never resolves to free once free stops being
+   * available"). What lives nowhere is the **wired** rule — that rule firing
+   * through a real query cache — and reaching it needs a fixture that would grow
+   * its own bugs for one line. Said plainly rather than left to look covered,
+   * and scoped so a reader who greps does not stop believing the rest of it.
    */
+});
+
+describe('a gallery with neither path open', () => {
+  test('says why, rather than showing a dead control with no explanation', async () => {
+    // The state r5's `takesFree` change exists to serve: no free capacity and no
+    // usable price. The card falls through to paid-disabled — and the sentence
+    // explaining it has to render from OUTSIDE the free/paid block, which is
+    // hidden exactly here.
+    mocks.visibility = { ...mocks.visibility, price: null, freeSlots: 0, freeSlotsRemaining: 0 };
+    await openAndPick();
+
+    await expect.element(page.getByText(/doesn't take free submissions/i)).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('button', { name: /submit for free/i }))
+      .not.toBeInTheDocument();
+  });
 });
 
 describe('the decline-fee note', () => {

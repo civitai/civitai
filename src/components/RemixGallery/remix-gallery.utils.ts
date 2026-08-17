@@ -291,8 +291,9 @@ export const submissionMethod = (
 ): 'free' | 'paid' => {
   // `takesFree`, not just `!paidOpen`: with NEITHER path open there is nothing
   // to hold on, and forcing free there renders a disabled "Submit for free" on
-  // a gallery that takes none. Falling through puts the card on paid, disabled,
-  // beside the reason — which is the honest rendering of "no route in".
+  // a gallery that takes none. Falling through puts the card on paid, disabled.
+  // The reason renders from outside the free/paid block precisely so this state
+  // is not a dead end with no explanation — check that gate if you change this.
   if (!paidOpen && takesFree) return 'free';
   return chosen === 'free' && !freeAvailable ? 'paid' : chosen ?? (freeAvailable ? 'free' : 'paid');
 };
