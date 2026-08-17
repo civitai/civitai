@@ -15,72 +15,21 @@ import {
 import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
+import type { Draft } from '~/components/Rewards/reward-config-panel.utils';
+import {
+  buildSetInput,
+  initialDrafts,
+  storedOverrides,
+} from '~/components/Rewards/reward-config-panel.utils';
+import { formatRewardsBoost } from '~/utils/buzz';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-type Draft = { enabled: boolean; awardAmount: string; cap: string };
-type StoredOverride = { enabled?: boolean; awardAmount?: number; cap?: number };
-
-/**
- * Reads the overrides as WRITTEN rather than the effective values, so an input
- * left empty means "use the compiled default" and clearing one removes the
- * override instead of freezing today's default as a literal.
- */
-function storedOverrides(value: unknown, malformed: boolean): Record<string, StoredOverride> {
-  if (malformed || typeof value !== 'object' || value === null) return {};
-  const rewards = (value as { rewards?: unknown }).rewards;
-  if (typeof rewards !== 'object' || rewards === null) return {};
-  return rewards as Record<string, StoredOverride>;
-}
-
-const numberOrEmpty = (value: number | undefined) => (value === undefined ? '' : String(value));
-
-/**
- * 🔴 Builds the WHOLE map, every time. `set` replaces the row, so a payload
- * containing only the rewards someone edited erases every other reward's
- * override — a one-line mistake with a blast radius across every reward, which
- * is why this is a separate function with its own tests rather than a loop
- * inside the submit handler.
- */
-export function buildRewardsPayload({
-  rewards,
-  overrides,
-  rows,
-}: {
-  rewards: { type: string; capOverridable: boolean }[];
-  overrides: Record<string, StoredOverride>;
-  rows: Record<string, Draft>;
-}): Record<string, StoredOverride> {
-  const payload: Record<string, StoredOverride> = {};
-
-  // Keys the config names that no reward matches — an override staged ahead of a
-  // deploy, which the read path ignores. Dropping them here would delete
-  // someone's staged edit on the next unrelated save.
-  for (const [type, override] of Object.entries(overrides))
-    if (!rewards.some((reward) => reward.type === type)) payload[type] = override;
-
-  for (const reward of rewards) {
-    const row = rows[reward.type];
-    if (!row) continue;
-
-    const entry: StoredOverride = {};
-    // Only what DIFFERS from the compiled default is stored, so a later change to
-    // that default flows through instead of being frozen behind an override
-    // written months earlier. An empty input therefore removes the override.
-    if (!row.enabled) entry.enabled = false;
-    if (row.awardAmount !== '') entry.awardAmount = Number(row.awardAmount);
-    if (reward.capOverridable && row.cap !== '') entry.cap = Number(row.cap);
-
-    if (Object.keys(entry).length) payload[reward.type] = entry;
-  }
-
-  return payload;
-}
-
 export function RewardConfigPanel() {
   const queryUtils = trpc.useUtils();
-  const { data, isLoading } = trpc.rewardConfig.get.useQuery();
+  const { data, isLoading, error } = trpc.rewardConfig.get.useQuery();
   // The live value the grant path uses, not one derived from the events table on
   // this page — that is paginated and not ordered by multiplier, so the active
   // event can be on another page.
@@ -88,24 +37,18 @@ export function RewardConfigPanel() {
   const bonusMultiplier = multipliers.globalRewardsBonus;
   const [drafts, setDrafts] = useState<Record<string, Draft> | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
+  // The two CONFLICT causes are distinguished by which one reloading can fix.
+  const conflictIsStale = !!conflict && conflict.includes('changed since you loaded it');
 
   const overrides = useMemo(
     () => storedOverrides(data?.stored.value, data?.stored.malformed ?? false),
     [data?.stored.value, data?.stored.malformed]
   );
 
-  const initial = useMemo(() => {
-    const next: Record<string, Draft> = {};
-    for (const reward of data?.rewards ?? []) {
-      const override = overrides[reward.type] ?? {};
-      next[reward.type] = {
-        enabled: override.enabled ?? true,
-        awardAmount: numberOrEmpty(override.awardAmount),
-        cap: numberOrEmpty(override.cap),
-      };
-    }
-    return next;
-  }, [data?.rewards, overrides]);
+  const initial = useMemo(
+    () => initialDrafts(data?.rewards ?? [], overrides),
+    [data?.rewards, overrides]
+  );
 
   const rows = drafts ?? initial;
   const setRow = (type: string, patch: Partial<Draft>) => {
@@ -120,22 +63,37 @@ export function RewardConfigPanel() {
       await queryUtils.rewardConfig.get.invalidate();
       showSuccessNotification({ message: 'Reward config saved.' });
     },
-    onError: (error) => {
-      if (error.data?.code === 'CONFLICT') setConflict(error.message);
-      else showErrorNotification({ title: 'Could not save', error: new Error(error.message) });
+    onError: (saveError) => {
+      if (saveError.data?.code === 'CONFLICT') setConflict(saveError.message);
+      else showErrorNotification({ title: 'Could not save', error: new Error(saveError.message) });
     },
   });
 
   function handleSave(force = false) {
     if (!data) return;
 
-    const rewards = buildRewardsPayload({ rewards: data.rewards, overrides, rows });
-
-    setMutation.mutate({ rewards, expectedHash: data.stored.hash, force });
+    setMutation.mutate(
+      buildSetInput({ rewards: data.rewards, overrides, rows, hash: data.stored.hash, force })
+    );
   }
 
   if (isLoading) return <PageLoader />;
-  if (!data) return null;
+
+  // Not `return null`: this section vanishing while the bonus-events table below
+  // renders normally reads as "not built yet" rather than "erroring", and the
+  // query fans out over every reward so a single one throwing takes it down.
+  if (error || !data)
+    return (
+      <Alert icon={<IconAlertTriangle size={18} />} color="red" title="Reward config unavailable">
+        <Stack gap="xs">
+          <Text size="sm">
+            The reward configuration could not be loaded, so nothing here can be changed right now.
+            Rewards are still paying whatever the stored config says.
+          </Text>
+          {error ? <Code block>{error.message}</Code> : null}
+        </Stack>
+      </Alert>
+    );
 
   const dirty = drafts !== null;
 
@@ -151,10 +109,10 @@ export function RewardConfigPanel() {
 
       {bonusMultiplier && bonusMultiplier > 1 ? (
         <Alert icon={<IconInfoCircle size={18} />} color="blue">
-          A <b>{bonusMultiplier}x</b> bonus event is live. The numbers below are base values — at
-          grant time the award <b>and the cap</b> are both multiplied by the member&apos;s
-          membership multiplier and this event, so a member&apos;s real daily ceiling today is{' '}
-          <Code>cap × membership × {bonusMultiplier}</Code>.
+          A <b>{formatRewardsBoost(bonusMultiplier)}</b> bonus event is live. The numbers below are
+          base values — at grant time the award <b>and the cap</b> are both multiplied by the
+          member&apos;s membership multiplier and this event, so a member&apos;s real daily ceiling
+          today is <Code>cap × membership × {bonusMultiplier}</Code>.
         </Alert>
       ) : null}
 
@@ -162,36 +120,60 @@ export function RewardConfigPanel() {
         <Alert icon={<IconAlertTriangle size={18} />} color="red" title="Stored config unreadable">
           <Stack gap="xs">
             <Text size="sm">
-              The saved row does not match the expected shape, so the values below are the compiled
-              defaults rather than what is stored. Saving would discard whatever is in the row that
-              cannot be shown here.
+              The saved row does not match the expected shape, so the amounts below are the compiled
+              defaults rather than what is stored. The switches show what each reward is{' '}
+              <b>actually doing right now</b>, which is what an overwrite would keep.
+            </Text>
+            <Text size="sm">
+              Overwriting replaces the whole row: any award or cap in it that cannot be shown here
+              is discarded, and every reward is left exactly as the switches below show it.
             </Text>
             <Code block>{JSON.stringify(data.stored.value, null, 2)}</Code>
             <Group>
-              <Button color="red" variant="light" onClick={() => handleSave(true)}>
-                Overwrite the stored row
-              </Button>
+              <PopConfirm
+                message="Replace the stored row with what is shown above? Values in it that cannot be displayed will be lost."
+                onConfirm={() => handleSave(true)}
+                withinPortal
+              >
+                <Button color="red" variant="light" loading={setMutation.isPending}>
+                  Overwrite the stored row
+                </Button>
+              </PopConfirm>
             </Group>
           </Stack>
         </Alert>
       ) : null}
 
+      {/* CONFLICT covers two unrelated refusals. Reloading fixes one of them and
+          is useless for the other, so the heading and the button follow the
+          message rather than assuming the common case. */}
       {conflict ? (
-        <Alert icon={<IconAlertTriangle size={18} />} color="orange" title="Someone else saved">
+        <Alert
+          icon={<IconAlertTriangle size={18} />}
+          color="orange"
+          title={conflictIsStale ? 'Someone else saved' : 'Stored config cannot be read'}
+        >
           <Stack gap="xs">
             <Text size="sm">{conflict}</Text>
-            <Group>
-              <Button
-                variant="light"
-                onClick={() => {
-                  setDrafts(null);
-                  setConflict(null);
-                  queryUtils.rewardConfig.get.invalidate();
-                }}
-              >
-                Reload their version
-              </Button>
-            </Group>
+            {conflictIsStale ? (
+              <Group>
+                <Button
+                  variant="light"
+                  onClick={() => {
+                    setDrafts(null);
+                    setConflict(null);
+                    queryUtils.rewardConfig.get.invalidate();
+                  }}
+                >
+                  Reload their version
+                </Button>
+              </Group>
+            ) : (
+              <Text size="sm">
+                Reloading will not help — the row on the server is unreadable. Fix it directly, or
+                use the overwrite above, which replaces it with what is shown here.
+              </Text>
+            )}
           </Stack>
         </Alert>
       ) : null}

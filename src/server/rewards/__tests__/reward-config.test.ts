@@ -19,7 +19,14 @@ import {
 const DEFAULTS = { awardAmount: 10, cap: 30, capOverridable: true } as const;
 
 const findUnique = dbMock.dbRead.keyValue.findUnique;
-const storedConfig = (value: unknown) => findUnique.mockResolvedValue({ value });
+const findUniqueWrite = dbMock.dbWrite.keyValue.findUnique;
+// The hot read path (`resolveRewardConfig`) uses the replica; the version guard
+// and the editor read use the primary. Seeding both keeps every test about the
+// behaviour under test rather than about which client it happened to reach for.
+const storedConfig = (value: unknown) => {
+  findUnique.mockResolvedValue({ value });
+  findUniqueWrite.mockResolvedValue({ value });
+};
 const resolve = (overrides?: Partial<typeof DEFAULTS>) =>
   resolveRewardConfig('testReward', { ...DEFAULTS, ...overrides });
 
@@ -27,6 +34,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   invalidateRewardConfigCache();
   findUnique.mockResolvedValue(null);
+  findUniqueWrite.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -368,7 +376,7 @@ describe('setRewardConfig', () => {
 
   // A money-affecting moderator change with no attribution is not auditable.
   it('records who made the change and what it replaced', async () => {
-    findUnique.mockResolvedValue({ value: { rewards: { testReward: { awardAmount: 4 } } } });
+    storedConfig({ rewards: { testReward: { awardAmount: 4 } } });
 
     await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID);
 
@@ -492,7 +500,7 @@ describe('setRewardConfig concurrency and malformed guards', () => {
   });
 
   it('distinguishes an absent row from an unreadable one', async () => {
-    findUnique.mockResolvedValue(null);
+    findUniqueWrite.mockResolvedValue(null);
     const absent = (await getStoredRewardConfig()).hash;
     const unreadable = await withStored({ rewards: 'all of them' });
 
@@ -527,11 +535,54 @@ describe('setRewardConfig concurrency and malformed guards', () => {
   });
 
   it('does not treat an absent row as unreadable', async () => {
-    findUnique.mockResolvedValue(null);
+    findUniqueWrite.mockResolvedValue(null);
 
     await setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID);
 
-    expect(upsert).toHaveBeenCalled();
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  // A row PRESENT holding JSON `null`. The reader normalises `?? {}` before both
+  // its checks, so it reports the row readable — clean form, Save enabled, and no
+  // force button rendered. Gating this check on the raw value instead then
+  // refuses every save that form can make, with the only control that could pass
+  // `force` not on screen.
+  it('agrees with the reader about a row that is present and null', async () => {
+    storedConfig(null);
+
+    const stored = await getStoredRewardConfig();
+    expect(stored.malformed).toBe(false);
+
+    await setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID, {
+      expectedHash: stored.hash,
+    });
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  // Both conditions hold for anyone who loaded before someone else broke the row.
+  // Only one of the two messages names an action that works — reloading an
+  // unreadable row returns the same unreadable row.
+  it('reports an unreadable row as unreadable even when the hash is also stale', async () => {
+    const stale = await withStored({ rewards: { testReward: { awardAmount: 4 } } });
+    storedConfig({ rewards: { testReward: { enabled: 'false' } } });
+
+    await expect(setRewardConfig({ rewards: {} }, MOD_ID, { expectedHash: stale })).rejects.toThrow(
+      /cannot be read/
+    );
+  });
+
+  // The concurrency guard decides whether another moderator's write survives, so
+  // reading it off a replica passes on a row from before their save.
+  it('reads the row it guards against from the primary', async () => {
+    storedConfig({ rewards: {} });
+    dbMock.dbWrite.keyValue.findUnique.mockResolvedValue({ value: { rewards: {} } });
+
+    await getStoredRewardConfig();
+    await setRewardConfig({ rewards: {} }, MOD_ID);
+
+    expect(dbMock.dbWrite.keyValue.findUnique).toHaveBeenCalledTimes(2);
+    expect(findUnique).not.toHaveBeenCalled();
   });
 });
 
@@ -569,6 +620,6 @@ describe('getStoredRewardConfig', () => {
     await getStoredRewardConfig();
     await getStoredRewardConfig();
 
-    expect(findUnique).toHaveBeenCalledTimes(2);
+    expect(findUniqueWrite).toHaveBeenCalledTimes(2);
   });
 });
