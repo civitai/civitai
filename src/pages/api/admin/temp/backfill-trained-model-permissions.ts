@@ -7,7 +7,7 @@ import { booleanString } from '~/utils/zod-helpers';
 
 /**
  * One-off, two actions, for the coverage change in
- * `20260817120000_generation_coverage_require_rentcivit`.
+ * `20260817200000_generation_coverage_require_rentcivit`.
  *
  * repair (default) — fix the licensing permissions on models created by on-site training.
  *
