@@ -6,12 +6,12 @@ import {
   Divider,
   Group,
   SegmentedControl,
-  Slider,
   Stack,
   Text,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -31,8 +31,6 @@ import { trpc } from '~/utils/trpc';
  * There is no "accept all" here. A sticker comes from a moderated catalog; a
  * remix gallery accepts arbitrary user media, so every submission is reviewed.
  */
-const DEFAULT_FREE_SLOTS = PLACEMENT_SURFACES.remixGallery.defaultFreeSlots;
-
 export function RemixGallerySettings() {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -62,16 +60,16 @@ export function RemixGallerySettings() {
   const [mode, setMode] = useState<string>(PLACEMENT_SURFACES.remixGallery.defaultMode);
   const [price, setPrice] = useState<number | ''>('');
   const [contentRule, setContentRule] = useState<RemixGalleryContentRule>('atOrBelow');
-  // Seeded from the surface default, like the mode above: a creator with no row
-  // takes one free submission, and a control reading 0 would tell them their free
-  // slots are closed on the one screen where they say so.
-  const [freeSlots, setFreeSlots] = useState<number>(DEFAULT_FREE_SLOTS);
+  // `null`, not the default value: a stored number stops tracking the surface
+  // default when it moves, and "unset" and "deliberately set to 1" are the same
+  // number, so this cannot be recovered by diffing against the default later.
+  const [freeSlots, setFreeSlots] = useState<number | null>(null);
 
   useEffect(() => {
     if (!stored) return;
     setMode(stored.mode);
     setPrice(stored.price ?? '');
-    setFreeSlots(stored.freeSlots ?? DEFAULT_FREE_SLOTS);
+    setFreeSlots(stored.freeSlots);
     setContentRule(remixGalleryContentRule(stored.settings as Record<string, unknown>));
   }, [stored]);
 
@@ -85,9 +83,6 @@ export function RemixGallerySettings() {
 
   const cap = range?.max ?? 0;
   const freeSlotCap = range?.freeSlotCap ?? 0;
-  // A stored count above the cap is carried rather than rewritten, the same as a
-  // price above its cap, so the page states what the server will honour.
-  const effectiveFreeSlots = Math.min(freeSlots, freeSlotCap);
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
   // Waiting on the owner, and waiting on someone else. Only the first is a
   // to-do, which is why it is the one badged in yellow.
@@ -106,12 +101,15 @@ export function RemixGallerySettings() {
     nextMode: string,
     nextPrice: number | '',
     nextRule: RemixGalleryContentRule = contentRule,
-    nextFreeSlots = freeSlots
+    /**
+     * Sent ONLY when the free-slot control was the thing that moved. `undefined`
+     * leaves the stored value alone, and for a creator who has never touched it
+     * that means leaving it NULL — which is what tracks the surface default.
+     */
+    nextFreeSlots?: number
   ) =>
     save.mutate({
       settings: { contentRule: nextRule },
-      // Always sent: there is no "unset" position on the control, because 0 is
-      // the creator saying no rather than the absence of an answer.
       freeSlots: nextFreeSlots,
       surface: 'remixGallery',
       entityType: 'user',
@@ -228,40 +226,17 @@ export function RemixGallerySettings() {
           mean the same thing — and hidden with the gallery closed, where there is
           nothing to hold a slot on. */}
       {freeSlotCap > 0 && mode !== 'off' && (
-        <Stack gap={4}>
-          <Group gap={4} wrap="nowrap">
-            <Text size="sm" fw={500}>
-              Free submissions you&apos;ll accept
-            </Text>
-            <InfoPopover size="xs" iconProps={{ size: 14 }} width={320}>
-              <Text size="sm" maw={300} style={{ whiteSpace: 'normal' }}>
-                People get one free placement a day across the whole site, and these are the slots
-                they can spend it on. A slot is held while a submission waits for you, and comes
-                back if you decline it or let it expire. Your maximum is {freeSlotCap}, set by your
-                creator score and membership tier. Paid submissions never use these up.
-              </Text>
-            </InfoPopover>
-          </Group>
-          <Slider
-            value={effectiveFreeSlots}
-            onChange={setFreeSlots}
-            onChangeEnd={(value) => commit(mode, price, contentRule, value)}
-            min={0}
-            max={freeSlotCap}
-            step={1}
-            label={null}
-            marks={[
-              { value: 0, label: 'None' },
-              { value: freeSlotCap, label: `${freeSlotCap}` },
-            ]}
-          />
-          <Text size="sm" c="dimmed" mt={16}>
-            <Text span fw={600} c="var(--mantine-color-text)">
-              {effectiveFreeSlots}
-            </Text>{' '}
-            free {effectiveFreeSlots === 1 ? 'submission' : 'submissions'} per image
-          </Text>
-        </Stack>
+        <PlacementFreeSlotSlider
+          surface="remixGallery"
+          cap={freeSlotCap}
+          value={freeSlots}
+          noun={['free submission', 'free submissions']}
+          onChange={setFreeSlots}
+          onCommit={(value) => {
+            setFreeSlots(value);
+            commit(mode, price, contentRule, value);
+          }}
+        />
       )}
 
       {/* Two directions, two buttons. A gallery owner both receives submissions

@@ -22,16 +22,13 @@ import {
   STICKER_PLACEMENT_MIN_SCALE,
   stickerMaxScale,
 } from '~/shared/utils/sticker-placement';
+import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import { placementPriceCaption, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const {
-  defaultMode: DEFAULT_MODE,
-  defaultPrice: DEFAULT_PRICE,
-  defaultFreeSlots: DEFAULT_FREE_SLOTS,
-} = PLACEMENT_SURFACES.sticker;
+const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SURFACES.sticker;
 
 /**
  * Account-level control over who may place stickers on this creator's images.
@@ -73,22 +70,26 @@ export function PlacementSpaceSection() {
   const [mode, setMode] = useState<string>(DEFAULT_MODE);
   const [price, setPrice] = useState<number | ''>(DEFAULT_PRICE ?? '');
   const [maxScale, setMaxScale] = useState(STICKER_PLACEMENT_DEFAULT_MAX_SCALE);
-  // Seeded from the surface default for the same reason as the mode: with no row
-  // the cascade resolves this space as taking one free sticker, and a control
-  // reading 0 would tell a creator their free slots are closed while they are
-  // open. The first commit then writes the number they are looking at.
-  const [freeSlots, setFreeSlots] = useState<number>(DEFAULT_FREE_SLOTS);
+  // `null`, not the default value, and that distinction is the mechanism rather
+  // than a nicety: a stored number stops tracking the surface default when it
+  // moves. Seeding this to `1` and sending it on every commit wrote an explicit
+  // `1` the first time a creator touched anything else on this page, so within a
+  // few weeks of normal use raising the default would have reached nobody.
+  //
+  // It also cannot be recovered by diffing against the default, because "unset"
+  // and "deliberately set to 1" are the same number.
+  const [freeSlots, setFreeSlots] = useState<number | null>(null);
 
   useEffect(() => {
     if (!stored) {
       setMode(DEFAULT_MODE);
       setPrice(DEFAULT_PRICE ?? '');
-      setFreeSlots(DEFAULT_FREE_SLOTS);
+      setFreeSlots(null);
       return;
     }
     setMode(stored.mode);
     setPrice(stored.price ?? '');
-    setFreeSlots(stored.freeSlots ?? DEFAULT_FREE_SLOTS);
+    setFreeSlots(stored.freeSlots);
     setMaxScale(stickerMaxScale(stored.settings as Record<string, unknown>));
   }, [stored]);
 
@@ -105,7 +106,7 @@ export function PlacementSpaceSection() {
       // page asserting a price the creator never chose — which the next commit
       // would then write into their row.
       setPrice(stored ? stored.price ?? '' : DEFAULT_PRICE ?? '');
-      setFreeSlots(stored?.freeSlots ?? DEFAULT_FREE_SLOTS);
+      setFreeSlots(stored?.freeSlots ?? null);
       showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
     },
   });
@@ -120,10 +121,6 @@ export function PlacementSpaceSection() {
 
   const cap = range?.max ?? 0;
   const freeSlotCap = range?.freeSlotCap ?? 0;
-  // What the server will actually honour. A stored count above the cap is left
-  // alone rather than rewritten — the same treatment as a price above its cap —
-  // so the page has to say the smaller number instead of the one on the row.
-  const effectiveFreeSlots = Math.min(freeSlots, freeSlotCap);
   const waiting = pending?.items.length ?? 0;
   // One page's worth is a floor, not a total. Badging it as an exact number
   // tells an owner with 200 waiting that they have 50, which is the same lie
@@ -139,14 +136,16 @@ export function PlacementSpaceSection() {
     nextMode: string,
     nextPrice: number | '',
     nextMaxScale = maxScale,
-    nextFreeSlots = freeSlots
+    /**
+     * Sent ONLY when the free-slot control was the thing that moved. `undefined`
+     * leaves the stored value alone, which for a creator who has never touched
+     * it means leaving it NULL — and NULL is what tracks the surface default.
+     * Sending the on-screen number on every commit is what froze it.
+     */
+    nextFreeSlots?: number
   ) =>
     save.mutate({
       settings: { maxScale: nextMaxScale },
-      // Always sent, unlike the price. There is no "unset" position on this
-      // control — 0 is the creator saying no rather than the absence of an
-      // answer — so leaving it out would mean the number on screen and the number
-      // stored disagree the moment they touch anything else.
       freeSlots: nextFreeSlots,
       surface: 'sticker',
       entityType: 'user',
@@ -270,40 +269,17 @@ export function PlacementSpaceSection() {
           every position means the same thing is asking a question with one
           answer, and the cap moves on its own as a score or a membership does. */}
       {freeSlotCap > 0 && mode !== 'off' && (
-        <Stack gap={4}>
-          <Group gap={4} wrap="nowrap">
-            <Text size="sm" fw={500}>
-              Free stickers you&apos;ll accept
-            </Text>
-            <InfoPopover size="xs" iconProps={{ size: 14 }} width={320}>
-              <Text size="sm" maw={300} style={{ whiteSpace: 'normal' }}>
-                People get one free placement a day, and these are the slots they can spend it on. A
-                slot is held while a placement waits for you, and comes back if you decline it or
-                let it expire. Your maximum is {freeSlotCap}, set by your creator score and
-                membership tier. Paid placements never use these up.
-              </Text>
-            </InfoPopover>
-          </Group>
-          <Slider
-            value={Math.min(freeSlots, freeSlotCap)}
-            onChange={setFreeSlots}
-            onChangeEnd={(value) => commit(mode, price, maxScale, value)}
-            min={0}
-            max={freeSlotCap}
-            step={1}
-            label={null}
-            marks={[
-              { value: 0, label: 'None' },
-              { value: freeSlotCap, label: `${freeSlotCap}` },
-            ]}
-          />
-          <Text size="sm" c="dimmed" mt={16}>
-            <Text span fw={600} c="var(--mantine-color-text)">
-              {effectiveFreeSlots}
-            </Text>{' '}
-            {effectiveFreeSlots === 1 ? 'free sticker' : 'free stickers'} per image
-          </Text>
-        </Stack>
+        <PlacementFreeSlotSlider
+          surface="sticker"
+          cap={freeSlotCap}
+          value={freeSlots}
+          noun={['free sticker', 'free stickers']}
+          onChange={setFreeSlots}
+          onCommit={(value) => {
+            setFreeSlots(value);
+            commit(mode, price, maxScale, value);
+          }}
+        />
       )}
 
       {/* The queue is otherwise unreachable: the notification links to the image,

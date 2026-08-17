@@ -9,6 +9,7 @@ import {
   PLACEMENT_FREE_SLOT_CAP_TIERS,
   PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
+  placementFreeSlotCap,
   placementPriceCap,
 } from '~/shared/utils/placement';
 
@@ -150,7 +151,7 @@ export async function placementPriceRange(
   return {
     min: PLACEMENT_SURFACES[surface].serverMinPrice,
     max: placementPriceCap(score, tier, config.priceCapTiers(surface)),
-    freeSlotCap: placementPriceCap(score, tier, config.freeSlotTiers(surface)),
+    freeSlotCap: placementFreeSlotCap(score, tier, config.freeSlotTiers(surface)),
     score,
     tier,
   };

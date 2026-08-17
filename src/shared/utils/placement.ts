@@ -109,6 +109,8 @@ export const PLACEMENT_SURFACES = {
     defaultPlatformShare: 0,
     expiryHours: 48,
     defaultFreeSlots: 1,
+    maxPendingPerOwner: 10,
+    allowedModes: ['off', 'review', 'auto'],
   },
   remixGallery: {
     label: 'remix galleries',
@@ -143,6 +145,10 @@ export const PLACEMENT_SURFACES = {
     defaultPlatformShare: 0,
     expiryHours: 48,
     defaultFreeSlots: 1,
+    maxPendingPerOwner: 10,
+    // Never `auto`: a gallery places arbitrary user-uploaded media on someone
+    // else's page, so every entry passes its owner.
+    allowedModes: ['off', 'review'],
   },
 } as const satisfies Record<
   PlacementSurface,
@@ -178,6 +184,24 @@ export const PLACEMENT_SURFACES = {
      * 0-1 makes this both the default and the maximum for a new creator.
      */
     defaultFreeSlots: number;
+    /**
+     * How many pending placements one placer may have waiting on one owner.
+     *
+     * A cap on a review queue an owner can work through, not a spam gate — the
+     * owner's remedy for the rest is block, which declines all of them.
+     *
+     * In the table because three call sites enforce it: both paid creation paths
+     * and the free one. It was two constants of the same value in two services
+     * before the free path needed a third.
+     */
+    maxPendingPerOwner: number;
+    /**
+     * Modes this surface may actually be in. A mode outside this list is refused
+     * where it is stored AND where it is acted on — a row written before a rule
+     * existed still reads back, and a listing that filters is not a mutation that
+     * refuses.
+     */
+    allowedModes: readonly PlacementSpaceMode[];
   }
 >;
 
@@ -302,7 +326,11 @@ export function resolvePlacementSpace(
     post?: PlacementSpaceSetting;
     user?: PlacementSpaceSetting;
   }
-): PlacementSpaceSetting {
+  // `freeSlots` narrowed to a number: this is the ONE place the surface default
+  // is applied, so callers read it rather than defaulting again. `price` is
+  // nullable here for a real reason — an unpriced space must not be charged for
+  // — where an unset slot count has an unambiguous answer.
+): PlacementSpaceSetting & { freeSlots: number } {
   const ordered = [levels.image, levels.post, levels.user];
   return {
     mode:
@@ -524,15 +552,15 @@ export const placementFreeSlotCap = (
 /**
  * What a space actually accepts, computed at read like the effective price.
  *
- * An unset count resolves to the surface default rather than to zero, because
- * free capacity is opt-out. `0` set explicitly is preserved — it is the creator
- * saying no, and defaulting it away would reopen a space they closed.
+ * Clamping only. Defaulting an unset count belongs to `resolvePlacementSpace`
+ * and happens there once — this used to re-apply it, which had one read path
+ * defaulting three times with two of them unreachable.
+ *
+ * The floor is not decoration: a misconfigured cap must not let `cap - reserved`
+ * hand out capacity nobody set.
  */
-export const effectiveFreeSlots = (
-  surface: PlacementSurface,
-  setSlots: number | null,
-  cap: number
-) => Math.max(Math.min(setSlots ?? PLACEMENT_SURFACES[surface].defaultFreeSlots, cap), 0);
+export const effectiveFreeSlots = (setSlots: number, cap: number) =>
+  Math.max(Math.min(setSlots, cap), 0);
 
 /**
  * How many free placements one placer may make in a UTC day, across every

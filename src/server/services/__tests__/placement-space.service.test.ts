@@ -212,7 +212,10 @@ describe('setPlacementSpace — the price guard', () => {
 });
 
 describe('resolvePlacementSpaceFor — free capacity', () => {
-  const placementCount = dbMock.dbWrite.placement.count;
+  // `dbRead`: the reservation feeds a display-only number on a public query, and
+  // the claim re-counts under its own lock. Everything else in this resolver
+  // reads the primary because it decides a mutation.
+  const placementCount = dbMock.dbRead.placement.count;
 
   const resolve = () =>
     resolvePlacementSpaceFor({ surface: 'sticker', targetType: 'image', targetId: 42 });

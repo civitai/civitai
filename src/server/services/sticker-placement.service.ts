@@ -19,6 +19,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { PlacementStatus } from '~/shared/utils/placement';
 import {
   PLACEMENT_QUEUE_PAGE_SIZE,
+  PLACEMENT_SURFACES,
   encodePlacementQueueCursor,
   parsePlacementQueueCursor,
   placementQueueKeyset,
@@ -46,8 +47,11 @@ const TARGET_TYPE = 'image' as const;
  * A cap rather than a rate limit: the cost is already real Buzz, so this is not
  * about spam economics but about a review queue an owner can actually work
  * through. Their remedy for the rest is block, which declines all of them.
+ *
+ * In the surface table because the free path enforces it too, and three copies
+ * of one number is how they start disagreeing.
  */
-const MAX_PENDING_PER_OWNER = 10;
+const MAX_PENDING_PER_OWNER = PLACEMENT_SURFACES.sticker.maxPendingPerOwner;
 
 /**
  * The note on a placement, if this viewer may read it.

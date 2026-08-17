@@ -110,7 +110,12 @@ export type ResolvedPlacementSpace = {
  * fully-booked paid image still shows its free slots as available.
  */
 export const reservedFreeSlots = (
-  client: typeof dbWrite,
+  /**
+   * Narrowed to the one model it touches so a transaction client satisfies it.
+   * The claim MUST pass its `tx` — counting on any other connection would read
+   * outside the lock it just took, and the count would be a listing again.
+   */
+  client: Pick<typeof dbWrite, 'placement'>,
   {
     surface,
     targetType,
@@ -181,13 +186,22 @@ export async function resolvePlacementSpaceFor({
   const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface);
   const shares = (await getPlacementConfig()).approvalShares(surface);
 
-  const setFreeSlots = resolved.freeSlots ?? PLACEMENT_SURFACES[surface].defaultFreeSlots;
-  const freeSlots = effectiveFreeSlots(surface, setFreeSlots, freeSlotCap);
-  // Skipped when there is no capacity to reserve against, which a cap of 0 or a
-  // slider at 0 both produce: the answer is 0 either way, so the query is a round
-  // trip that cannot change it.
+  // `resolvePlacementSpace` is the one place the surface default is applied, so
+  // this reads it rather than defaulting again — the same shape as `setPrice`
+  // directly above.
+  const setFreeSlots = resolved.freeSlots;
+  const freeSlots = effectiveFreeSlots(setFreeSlots, freeSlotCap);
+  // `dbRead`, unlike everything above it. The rest of this function decides
+  // whether a mutation is allowed and what it charges, which a lagging replica
+  // must not answer; `freeSlotsRemaining` is display-only by construction — the
+  // claim re-counts under its own lock — and this read is on a public query
+  // reached from every image detail view.
+  //
+  // Skipped when there is no capacity to reserve against. That is rarer than it
+  // looks: the default and the bottom band are both 1, so it fires only for a
+  // creator who has explicitly closed their slots.
   const reserved =
-    freeSlots > 0 ? await reservedFreeSlots(dbWrite, { surface, targetType, targetId }) : 0;
+    freeSlots > 0 ? await reservedFreeSlots(dbRead, { surface, targetType, targetId }) : 0;
 
   return {
     ownerId,

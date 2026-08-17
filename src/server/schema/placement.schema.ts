@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { placementSurfaces } from '~/shared/utils/placement';
+import { PLACEMENT_SURFACES, placementSurfaces } from '~/shared/utils/placement';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
   STICKER_COMMENT_MAX_LENGTH,
@@ -97,11 +97,19 @@ export const placementSpaceSchema = z
     // moderated catalogue; nothing bounds what an image can be. Refused where
     // the value is stored rather than merely omitted from the settings picker —
     // a listing that filters is not a mutation that refuses.
-    if (input.surface === 'remixGallery' && input.mode === 'auto')
+    //
+    // Read from the surface table rather than naming `remixGallery` here, so
+    // this and the refusal on the acting side (`createFreePlacement`) cannot
+    // disagree about which modes a surface allows.
+    const allowed = PLACEMENT_SURFACES[input.surface].allowedModes as readonly string[];
+    if (!allowed.includes(input.mode))
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['mode'],
-        message: 'Remix gallery submissions always need review',
+        message:
+          input.surface === 'remixGallery'
+            ? 'Remix gallery submissions always need review'
+            : 'That is not a mode this surface accepts',
       });
   });
 

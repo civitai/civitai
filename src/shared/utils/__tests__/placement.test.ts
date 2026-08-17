@@ -493,25 +493,32 @@ describe('free capacity', () => {
       );
   });
 
-  it('gives an unset space the surface default rather than nothing', () => {
+  // The surface default is applied by the cascade and nowhere else, so an unset
+  // count never reaches this. Applying it here too had one read path defaulting
+  // three times, with two of them unreachable.
+  it('gives an unset space the surface default, in the cascade and only there', () => {
     for (const surface of placementSurfaces)
-      expect(effectiveFreeSlots(surface, null, 10)).toBe(
+      expect(resolvePlacementSpace(surface, {}).freeSlots).toBe(
         PLACEMENT_SURFACES[surface].defaultFreeSlots
       );
   });
 
   // The distinction that lets this replace an on/off toggle instead of sitting
   // beside one. Defaulting a stored 0 away would reopen a space its owner closed.
-  it('keeps an explicit zero, which is the creator saying no', () => {
-    expect(effectiveFreeSlots('sticker', 0, 10)).toBe(0);
+  it('keeps an explicit zero through the cascade, which is the creator saying no', () => {
+    expect(
+      resolvePlacementSpace('sticker', { user: { mode: 'review', price: 100, freeSlots: 0 } })
+        .freeSlots
+    ).toBe(0);
+    expect(effectiveFreeSlots(0, 10)).toBe(0);
   });
 
   it('ceilings a stored count without rewriting it', () => {
-    expect(effectiveFreeSlots('sticker', 8, 3)).toBe(3);
+    expect(effectiveFreeSlots(8, 3)).toBe(3);
   });
 
   it('cannot go negative, however the cap is misconfigured', () => {
-    expect(effectiveFreeSlots('sticker', 4, -2)).toBe(0);
+    expect(effectiveFreeSlots(4, -2)).toBe(0);
   });
 
   it('resolves image over post over account, independently of price', () => {
