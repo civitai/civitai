@@ -2900,9 +2900,13 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
  */
 export async function setAlertDismissed(userId: number, alertId: string, dismissed: boolean) {
   // `settings->'dismissedAlerts'` is read inside the statement, so nothing about the
-  // array is carried through JS. Add is idempotent (`@>` containment guard) and remove
-  // preserves the surviving elements' order (`WITH ORDINALITY`); `jsonb_agg` over an
-  // empty set yields NULL, hence the COALESCE to an empty array.
+  // array is carried through JS. Add is idempotent (`@>` containment guard); `jsonb_agg`
+  // over an empty set yields NULL, hence the COALESCE to an empty array.
+  //
+  // `WITH ORDINALITY` + `ORDER BY ord` makes the surviving elements' order explicit rather
+  // than incidental. Nothing DEPENDS on that order — `dismissedAlerts` is read as a set
+  // (membership tests only) — and no test pins it, so treat this as intent, not a
+  // guarantee: dropping the `ORDER BY` is very likely an equivalent mutant.
   //
   // The `jsonb_typeof` test is not paranoia about our own writers — nothing enforces a
   // shape on a JSON column, and `jsonb_array_elements` raises on a non-array, which

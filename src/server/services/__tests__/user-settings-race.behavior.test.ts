@@ -57,10 +57,25 @@ function installBridge() {
 // the lost update from a millisecond race into a near-certain loss over the TTL, and two
 // writers previously never busted at all. Without an assertion, deleting any bust call
 // leaves the whole suite green.
+// Records, for every bust, whether a transaction callback was on the stack at the time.
+// `bustsInsideTransaction` is the WHEN half — see the harness's `inTransaction`.
+const bustsInsideTransaction: string[] = [];
 const { settingsCacheBust, metricPrivacyBust } = vi.hoisted(() => ({
   settingsCacheBust: vi.fn(async () => undefined),
   metricPrivacyBust: vi.fn(async () => undefined),
 }));
+
+/** Arm the WHEN assertion on the spies. Call after each bridge is built. */
+function recordBustTiming() {
+  settingsCacheBust.mockImplementation(async () => {
+    if (holder.bridge?.inTransaction) bustsInsideTransaction.push('settingsCache');
+    return undefined;
+  });
+  metricPrivacyBust.mockImplementation(async () => {
+    if (holder.bridge?.inTransaction) bustsInsideTransaction.push('metricPrivacy');
+    return undefined;
+  });
+}
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -160,6 +175,8 @@ describe('User.settings — concurrent writers must not discard each other', () 
     holder.gate = createGate();
     holder.bridge = createPrismaBridge(holder.db, holder.gate);
     installBridge();
+    bustsInsideTransaction.length = 0;
+    recordBustTiming();
   });
 
   it('keeps a dismissal that lands while a content-settings write is in flight', async () => {
@@ -326,6 +343,8 @@ describe('User.settings — single-request behaviour the writers must keep', () 
     holder.gate = createGate();
     holder.bridge = createPrismaBridge(holder.db, holder.gate);
     installBridge();
+    bustsInsideTransaction.length = 0;
+    recordBustTiming();
   });
 
   it('restores the LAST remaining dismissal', async () => {
@@ -438,6 +457,8 @@ describe('User.settings — a patch overrides the stored value, not the other wa
     holder.gate = createGate();
     holder.bridge = createPrismaBridge(holder.db, holder.gate);
     installBridge();
+    bustsInsideTransaction.length = 0;
+    recordBustTiming();
     settingsCacheBust.mockClear();
     metricPrivacyBust.mockClear();
   });
@@ -521,6 +542,8 @@ describe('User.settings — every write busts the caches that mirror the column'
     holder.gate = createGate();
     holder.bridge = createPrismaBridge(holder.db, holder.gate);
     installBridge();
+    bustsInsideTransaction.length = 0;
+    recordBustTiming();
     settingsCacheBust.mockClear();
     metricPrivacyBust.mockClear();
     await seedUser(holder.db, USER_ID, { dismissedAlerts: [], allowAds: false });
@@ -546,6 +569,19 @@ describe('User.settings — every write busts the caches that mirror the column'
     await updateCreatorShopSettings({ userId: USER_ID, showModels: true });
 
     expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
+  });
+
+  it('busts the creator-shop write AFTER the transaction commits, not inside it', async () => {
+    // WHEN, not just whether. Redis inside an interactive transaction spends the
+    // transaction's wall-clock budget (Prisma's default is 5s), and a bust that lands
+    // before commit can be re-populated by a concurrent reader from the pre-commit row —
+    // leaving the cache stale for the full TTL, which is the very failure this bust
+    // exists to prevent. Moving the call into the `$transaction` callback leaves every
+    // other assertion in this file green.
+    await updateCreatorShopSettings({ userId: USER_ID, showModels: true });
+
+    expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
+    expect(bustsInsideTransaction).toEqual([]);
   });
 
   it('does NOT bust from inside a caller transaction — the caller busts after commit', async () => {
@@ -577,6 +613,8 @@ describe('User.settings — the transactional writers merge rather than replace'
     holder.gate = createGate();
     holder.bridge = createPrismaBridge(holder.db, holder.gate);
     installBridge();
+    bustsInsideTransaction.length = 0;
+    recordBustTiming();
     settingsCacheBust.mockClear();
   });
 

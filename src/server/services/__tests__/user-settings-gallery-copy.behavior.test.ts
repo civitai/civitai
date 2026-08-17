@@ -30,11 +30,25 @@ const holder = {
   bridge: null as unknown as ReturnType<typeof createPrismaBridge>,
 };
 
+// Records, for every bust, whether a transaction callback was on the stack at the time.
+const bustsInsideTransaction: string[] = [];
 const { settingsCacheBust, metricPrivacyBust, countCacheRefresh } = vi.hoisted(() => ({
   settingsCacheBust: vi.fn(async () => undefined),
   metricPrivacyBust: vi.fn(async () => undefined),
   countCacheRefresh: vi.fn(async () => undefined),
 }));
+
+/** Arm the WHEN assertion on the spies. Call after each bridge is built. */
+function recordBustTiming() {
+  settingsCacheBust.mockImplementation(async () => {
+    if (holder.bridge?.inTransaction) bustsInsideTransaction.push('settingsCache');
+    return undefined;
+  });
+  countCacheRefresh.mockImplementation(async () => {
+    if (holder.bridge?.inTransaction) bustsInsideTransaction.push('countCache');
+    return undefined;
+  });
+}
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -98,6 +112,8 @@ describe('copyGallerySettingsToAllModelsByUser — merges the settings column, d
     holder.gate = createGate();
     holder.bridge = createPrismaBridge(holder.db, holder.gate);
     installBridge();
+    bustsInsideTransaction.length = 0;
+    recordBustTiming();
     settingsCacheBust.mockClear();
     metricPrivacyBust.mockClear();
     await holder.db.exec(`TRUNCATE "Model";`);
@@ -142,6 +158,11 @@ describe('copyGallerySettingsToAllModelsByUser — merges the settings column, d
     // the bust leaves the whole suite green.
     expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
     expect(countCacheRefresh).toHaveBeenCalledWith(USER_ID);
+    // WHEN, not just whether: both are Redis and both must land AFTER commit. The
+    // existing assertions above pass just as happily with the calls moved inside the
+    // `$transaction` callback, where they burn the transaction's budget and can be
+    // re-populated from the pre-commit row.
+    expect(bustsInsideTransaction).toEqual([]);
   });
 
   it('still forces the SFW level on a flagged model', async () => {

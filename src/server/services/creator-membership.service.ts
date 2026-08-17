@@ -174,9 +174,13 @@ export type UserMetricPrivacyDefaults = {
  *
  * Derived from an audit of every writer of the `User.settings` JSONB column, since that
  * is the only thing this cache derives from. The three `hideModel*` booleans are
- * written by exactly ONE path — `setUserSetting`, reached from the account
- * Creator-Controls toggles — and that path busts this key in the same call. The writers
- * that touch `settings` WITHOUT going through `setUserSetting` do not move these flags:
+ * written by exactly ONE caller path — the account Creator-Controls toggles
+ * (`CreatorControlsCard`) → `user.setSettings` → `setUserSettingHandler` →
+ * `patchUserSettings` — and that path busts this key in the same call, via
+ * `bustUserSettings`. (It reaches `patchUserSettings` DIRECTLY, not through
+ * `setUserSetting`; an earlier revision of this paragraph named `setUserSetting` as the
+ * writer, which stopped being true when the settings writers were consolidated.) The
+ * writers that touch `settings` on other paths do not move these flags:
  * `setAlertDismissed` is a `jsonb_set` scoped to the `{dismissedAlerts}` path, and
  * `updateCreatorShopSettings` / `copyGallerySettingsToAllModelsByUser`
  * (`model.service.ts`) each merge only their own key (`creatorShop` /

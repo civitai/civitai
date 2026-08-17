@@ -119,6 +119,14 @@ export function createPrismaBridge(db: PGlite, gate: Gate) {
     return result.rows as unknown[];
   };
 
+  // Is a `$transaction` callback currently on the stack? Exposed so a test can assert
+  // WHEN something happened, not just whether. A cache bust is correct after commit and
+  // wrong inside the callback — it spends the interactive-transaction budget on a Redis
+  // round trip, and a bust that lands before commit can be re-populated from the
+  // pre-commit row. Asserting only "bust was called with this key" cannot tell those
+  // apart, so moving the call inside the callback leaves such a suite green.
+  const state = { transactionDepth: 0 };
+
   const client = {
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const { sql, params } = fromTemplate(strings, values);
@@ -135,8 +143,21 @@ export function createPrismaBridge(db: PGlite, gate: Gate) {
       return 1;
     },
     // Interactive transactions run against the same single connection; the callback
-    // gets the same client so a nested raw statement still reaches PGlite.
-    $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(client),
+    // gets the same client so a nested raw statement still reaches PGlite. The depth
+    // counter is raised for exactly the callback's lifetime — `finally`, so a callback
+    // that throws cannot leave it stuck open and silently disarm the assertion.
+    $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+      state.transactionDepth += 1;
+      try {
+        return await fn(client);
+      } finally {
+        state.transactionDepth -= 1;
+      }
+    },
+    /** True while a `$transaction` callback is executing. */
+    get inTransaction() {
+      return state.transactionDepth > 0;
+    },
     user: {
       findUnique: async ({ where }: { where: { id: number } }) => {
         const rows = await run(`SELECT id, settings FROM "User" WHERE id = $1`, [where.id]);
