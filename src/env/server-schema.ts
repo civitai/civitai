@@ -411,12 +411,20 @@ export const serverSchema = z
     // (`maxBatchSize` on the adapter). Defaults to the compiled-in constant that the browser
     // batch link also mirrors, so an unset env is byte-identical to hardcoding it; the env var
     // exists so the cap can be corrected with a config change instead of an image build plus a
-    // canary rollout. Positive-integer guard for the same reason as IMAGE_SCANNING_MAX_PER_RUN:
-    // 0 or a non-number would disable the cap (or reject every batch) silently, so a bad
-    // hand-tune must fail loudly at boot. 🔴 RAISING is a safe rollback; LOWERING below the
-    // compiled-in constant is a tightening that 400s batches already-loaded browsers can still
-    // build — see `getTrpcMaxBatchSize` in `src/server/trpc/batch-cap.ts`.
-    TRPC_MAX_BATCH_SIZE: z.coerce.number().int().positive().default(TRPC_MAX_BATCH_SIZE),
+    // canary rollout. 🔴 FAIL SOFT, NOT LOUD — `.catch(...)` rather than `.default(...)`.
+    // `serverSchema` is parsed once by `src/env/server.ts`, which THROWS on any invalid field,
+    // so a `.default()` here meant a bad value ('' / '0' / '-5' / 'abc' / '12.5' / ' ') crashed
+    // the ENTIRE app boot. That is the wrong failure mode for a knob whose whole purpose is
+    // mid-incident correction: a typo on the Deployment would take the fleet down during the
+    // very incident the lever exists to fix. `.catch()` degrades any parse/validation failure
+    // to the compiled-in constant — i.e. to "the cap we shipped" — instead. The `.min(1)` floor
+    // is what makes 0 / negatives fall back rather than pass: 0 would reject every batch.
+    // Mirrors SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS / EXTERNAL_MODERATION_TIMEOUT_MS.
+    // Pinned behaviourally by `src/env/__tests__/server-schema-trpc-max-batch-size.test.ts`.
+    // 🔴 RAISING is a safe rollback; LOWERING below the compiled-in constant is a tightening
+    // that 400s batches already-loaded browsers can still build — see `getTrpcMaxBatchSize` in
+    // `src/server/trpc/batch-cap.ts`.
+    TRPC_MAX_BATCH_SIZE: z.coerce.number().int().min(1).catch(TRPC_MAX_BATCH_SIZE),
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),

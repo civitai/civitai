@@ -27,12 +27,23 @@ import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
  * the cap tRPC enforces and the cap the metric labels against cannot drift apart.
  */
 export function getTrpcMaxBatchSize(): number {
-  const configured = (env as { TRPC_MAX_BATCH_SIZE?: unknown }).TRPC_MAX_BATCH_SIZE;
-  // `serverSchema` already coerces + validates this (positive integer, defaulted), so in a
-  // correctly-booted process the guard below never fires. It is here because the failure it
-  // prevents is silent and total: handing `undefined` to `maxBatchSize` REMOVES the cap
-  // altogether, and nothing about that looks wrong from the outside. Falling back to the
-  // compiled-in constant fails toward "still capped".
+  // Read the schema-typed property DIRECTLY. `serverSchema` types this key `number`, and that
+  // type is the ONLY compile-time link between the schema key and this reader. A cast here
+  // (`env as { TRPC_MAX_BATCH_SIZE?: unknown }`) severs it: renaming or typo-ing the key in the
+  // schema would then produce zero typecheck errors and zero test failures, and this function
+  // would silently return the compiled-in default forever — i.e. the emergency lever would be
+  // dead exactly when someone reached for it.
+  const configured = env.TRPC_MAX_BATCH_SIZE;
+  // 🔴 WHAT THE FALLBACK BELOW IS, NOW THAT THE SCHEMA FAILS SOFT.
+  // `serverSchema` resolves this key with `.int().min(1).catch(TRPC_MAX_BATCH_SIZE)`, so a bad
+  // env value no longer crashes boot — the schema itself yields the compiled-in constant. In a
+  // process booted through `serverSchema` every value reaching here is therefore already a
+  // positive integer and this branch does NOT fire; it is not a production code path and must
+  // not be described as one. It is kept as a second layer for readers that do not come from
+  // that parse — chiefly the test env double, which substitutes `~/env/server` wholesale and
+  // can hand back anything — because the failure it prevents is silent and total: handing
+  // `undefined` to `maxBatchSize` REMOVES the cap altogether, and nothing about that looks
+  // wrong from the outside. Both layers fail toward "still capped".
   if (typeof configured === 'number' && Number.isInteger(configured) && configured > 0) {
     return configured;
   }
