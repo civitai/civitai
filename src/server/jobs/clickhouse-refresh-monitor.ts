@@ -301,6 +301,14 @@ function publish(observations: ViewObservation[]) {
   gauges.views_missing.set(observations.filter((o) => !o.present).length);
 }
 
+/**
+ * The cron string is real, not decoration: the scheduler reads the whole `jobs` array —
+ * names and crons — from `src/pages/api/internal/get-jobs.ts` and registers a recurring
+ * job per entry, so adding this to that array IS the scheduling. Worth stating because
+ * the three hand-written CronJobs in talos-infra
+ * (`civitai-dp-prod/cronjob.yaml`) look like the general mechanism and are not; a
+ * reviewer read those comments and concluded this job would never run.
+ */
 export const clickhouseRefreshMonitorJob = createJob(
   'clickhouse-refresh-monitor',
   '*/1 * * * *',

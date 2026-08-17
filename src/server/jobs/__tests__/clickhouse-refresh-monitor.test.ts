@@ -220,6 +220,24 @@ describe('clickhouse-refresh-monitor', () => {
   });
 
   /**
+   * The alert divides one gauge by the other, and PromQL binary matching pairs samples by
+   * their FULL label set. If these two ever stop carrying identical labels the division
+   * matches nothing, the rule silently never fires, and `noDataState: OK` renders that as
+   * a green dashboard — a fail-open with no production detector. Cheapest place to catch
+   * it is here, where both are published.
+   */
+  it('publishes staleness and its limit with identical label sets', async () => {
+    await run();
+
+    const key = (v: { labels: { view?: string } }) => JSON.stringify(v.labels);
+    const staleness = (await gaugeValues('staleness_seconds')).map(key).sort();
+    const limits = (await gaugeValues('staleness_limit_seconds')).map(key).sort();
+
+    expect(staleness).toEqual(limits);
+    expect(staleness).toHaveLength(7);
+  });
+
+  /**
    * The client sets `output_format_json_quote_64bit_integers: 0`, so production returns
    * plain numbers; every other fixture here uses the quoted shape the `string | number`
    * union defends against. Without this the tests exercise only the branch that does not
