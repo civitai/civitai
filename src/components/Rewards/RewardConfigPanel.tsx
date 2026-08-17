@@ -126,13 +126,16 @@ export function RewardConfigPanel() {
               grant path resolved from this row, not what the row says.
             </Text>
             <Text size="sm">
-              Overwriting replaces the whole row with exactly what the table shows. Anything else in
-              it — a stray key, a value the resolver refused — is discarded.
+              Overwriting replaces the whole row with what the table shows. Anything else in it — a
+              stray key, a value the resolver refused — is discarded. An award or cap{' '}
+              <b>equal to its compiled default</b> is not carried over either: the row cannot say
+              whether it was set deliberately or simply defaulted, so it goes back to following the
+              default if that default ever changes.
             </Text>
             <Code block>{JSON.stringify(data.stored.value, null, 2)}</Code>
             <Group>
               <PopConfirm
-                message="Replace the stored row with what is shown above? Values in it that cannot be displayed will be lost."
+                message="Replace the stored row with what the table shows? Anything else in it is discarded, including any award or cap that matches its compiled default."
                 onConfirm={() => handleSave(true)}
                 withinPortal
               >
