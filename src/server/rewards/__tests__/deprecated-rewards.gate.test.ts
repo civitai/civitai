@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as UserService from '~/server/services/user.service';
-import type * as PromClient from '~/server/prom/client';
-import type * as EnvServer from '~/env/server';
 
 // ---------------------------------------------------------------------------
 // WHY THIS SUITE EXISTS
@@ -22,24 +20,15 @@ import type * as EnvServer from '~/env/server';
 // observes a real payment through the same seam. Without the control, a suite that
 // stopped reaching `sendAward` for any unrelated reason — a changed mock, a moved
 // import — would keep passing while proving nothing.
+//
+// 🔴 Do NOT mock `~/env/server` here, in any spelling. Importing `orchestrator.router`
+// below constructs an OrchestratorCaller at MODULE scope, whose two env vars are
+// worker-level defaults in the canonical `~/__tests__/mocks/env.mock`. An
+// `importOriginal` spread loads the REAL env and validates it: green locally, and
+// `Invalid environment variables` at COLLECTION wherever a `.env` is absent — surfaced
+// as an unrelated `vi.mock` hoisting error two frames out. Nothing catches it locally;
+// `~/env/server` is PENDING in `guarded-specifiers.ts`, counted rather than enforced.
 // ---------------------------------------------------------------------------
-
-// Importing `orchestrator.router` reaches `orchestrator.caller`, which constructs an
-// OrchestratorCaller at MODULE SCOPE and throws without these two. Overriding
-// `process.env` does not help — env is parsed once, before this file's hoisted
-// blocks run — so the values have to come from the env module itself. Neither is
-// ever used: no orchestrator HTTP call happens in this suite.
-vi.mock('~/env/server', async (importOriginal) => {
-  const actual = await importOriginal<typeof EnvServer>();
-  return {
-    ...actual,
-    env: {
-      ...actual.env,
-      ORCHESTRATOR_ENDPOINT: 'https://orchestrator.invalid',
-      ORCHESTRATOR_ACCESS_TOKEN: 'unused-in-test',
-    },
-  };
-});
 
 const h = vi.hoisted(() => ({
   insert: vi.fn(async () => undefined),
@@ -57,17 +46,6 @@ vi.mock('~/server/clickhouse/client', () => ({
     $query: (...args: any[]) => h.query(...args),
     query: vi.fn(async () => ({ json: async () => [] })),
   },
-}));
-
-// Spread rather than hand-list: this suite's import graph reaches user.controller
-// and the whole orchestrator router, so a listed subset breaks on the first counter
-// some unrelated module in that graph imports.
-vi.mock('~/server/prom/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof PromClient>()),
-  rewardFailedCounter: { inc: vi.fn() },
-  rewardGivenCounter: { inc: vi.fn() },
-  clickhouseFailSoftCounter: { inc: vi.fn() },
-  rewardConfigReadFailedCounter: { inc: vi.fn() },
 }));
 
 vi.mock('~/server/services/buzz.service', () => ({

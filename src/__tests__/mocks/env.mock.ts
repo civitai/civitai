@@ -130,6 +130,11 @@ export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
   S3_IMAGE_UPLOAD_ENDPOINT: 'http://localhost:9000',
   ORCHESTRATOR_ENDPOINT: 'http://localhost:8080',
+  // orchestrator.caller constructs an OrchestratorCaller at MODULE scope and throws
+  // `Missing ORCHESTRATOR_ACCESS_TOKEN env` without this, so any suite whose graph
+  // reaches it (e.g. importing orchestrator.router) fails to collect. Worker-level for
+  // the same reason as the endpoint above — a per-file override arrives too late.
+  ORCHESTRATOR_ACCESS_TOKEN: 'test-orchestrator-token',
   SIGNALS_ENDPOINT: 'http://localhost:8081',
   // Read by clickhouse/client.ts at MODULE scope, so it has to be a worker-level default: a
   // per-file override arrives after that module was already evaluated for the worker. This
