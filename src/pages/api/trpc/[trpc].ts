@@ -6,9 +6,14 @@ import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import { recordTrpcError } from '~/server/prom/http-errors';
+import {
+  instrumentTrpcBatchRequest,
+  shouldSkipBatchCapLog,
+} from '~/server/prom/trpc-batch.metrics';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
 import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/trpc-serialize-log';
+import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 
 export const config = {
   api: {
@@ -26,6 +31,24 @@ const trpcHandler = createNextApiHandler({
   // `methodOverride: 'POST'` (see `src/utils/trpc.ts`); small queries stay GET so
   // the `responseMeta` Cache-Control headers below can still edge-cache them.
   allowMethodOverride: true,
+  // Bound how many procedure calls ONE HTTP request may carry. Batching otherwise decouples
+  // request rate from actual work — every request-counting control sees 1 where the server does
+  // N — and N is chosen by whoever builds the URL, not by our client bundle. tRPC checks this in
+  // `getRequestInfo`, i.e. BEFORE `createContext`, so an over-cap request resolves zero
+  // procedures and creates no context.
+  //
+  // ⚠️ On a GET that means it costs URL parsing and nothing else. On a POST — legitimate here,
+  // `allowMethodOverride: true` lets a query carry its input in the body — Next has already
+  // parsed the body (up to the 17mb `sizeLimit` above) before this handler runs, and the adapter
+  // re-stringifies it before `resolveResponse`; the cap cannot avoid that. What it does avoid is
+  // the N-procedure amplification, on both methods.
+  //
+  // Env-overridable (`TRPC_MAX_BATCH_SIZE`, default = the shared constant), so a correction is a
+  // config change rather than a build + canary. The browser's batch link mirrors the compiled-in
+  // constant via `maxItems` (see `src/utils/trpc.ts`); tRPC requires the client limit be <= the
+  // server's — which is why RAISING this is safe and lowering it below the constant is not. See
+  // `getTrpcMaxBatchSize`.
+  maxBatchSize: getTrpcMaxBatchSize(),
   responseMeta: ({ ctx, type, errors }) => {
     const headers: Record<string, string> = {};
     const willEdgeCache = ctx?.cache && !!ctx?.cache.edgeTTL && ctx?.cache.edgeTTL > 0;
@@ -55,6 +78,22 @@ const trpcHandler = createNextApiHandler({
     recordTrpcError(error, path);
 
     if (isProd) {
+      // Batch-cap rejection (see `maxBatchSize` above). The whole point of the cap is that an
+      // over-wide batch resolves no procedures; paying a stack capture +
+      // JSON.stringify(input) + an Axiom ingest per reject would put that cost straight back —
+      // on the event loop, once per request, during exactly the sustained abuse the cap exists
+      // to make cheap. The signal is not lost: `civitai_app_trpc_batch_width` observes every
+      // rejected request in its `over_limit="true"` series, with the actual width, which is
+      // strictly more useful than a log line whose `input` is always undefined (tRPC rejects
+      // before it parses inputs, so there is nothing to log).
+      //
+      // Narrow by construction — see `shouldSkipBatchCapLog`, which requires BOTH our own
+      // per-request over-cap marker AND a BAD_REQUEST code, so it cannot degrade into a blanket
+      // BAD_REQUEST skip that would hide real client-fault bugs. An over-cap request produces
+      // exactly one onError call (tRPC throws in getRequestInfo, before createContext), so this
+      // can only ever suppress the cap rejection itself.
+      if (shouldSkipBatchCapLog(req, error)) return error;
+
       // Auth-class rejections (FORBIDDEN / UNAUTHORIZED) are client-fault 4xx
       // responses — the status code already tells the caller + edge what
       // happened, and at scraper/bot scale these are the dominant noise in
@@ -161,6 +200,14 @@ const trpcHandler = createNextApiHandler({
 // handled natively by `allowMethodOverride: true` above (main), so no manual
 // restore step is needed here.
 export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
+  // Observe batch width BEFORE delegating, so the histogram sees widths that tRPC is about to
+  // reject — those requests resolve zero procedures and would otherwise leave no trace at all.
+  // The same call marks an over-cap request, which is what arms the onError log-skip above.
+  // Cheap by construction (a charCodeAt scan of the already-parsed `trpc` segment, no split)
+  // and non-throwing: on any internal failure it reports width 1, which cannot mark a request
+  // over-cap, so a broken metric degrades to "log normally" rather than "silently suppress".
+  instrumentTrpcBatchRequest(req);
+
   // Seed the request-scoped procedure-path context so the transformer's serialize
   // step (an awaited descendant of trpcHandler) can name the offending procedure
   // on an oversized/slow serialize. No-op wrapper when the instrument is disabled.

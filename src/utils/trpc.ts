@@ -18,6 +18,7 @@ import { isDev } from '~/env/other';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
+import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 
 type RequestHeaders = {
   'x-client-date': string;
@@ -190,7 +191,6 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'article.getCivitaiNews',
   'bug.getLatest',
   'changelog.getLatest',
-  'event.getData',
   'event.getDonors',
   'event.getPartners',
   'event.getRewards',
@@ -200,7 +200,6 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'generation.getStatus',
   'homeBlock.getHomeBlock',
   'image.get404Images',
-  'image.getGenerationData',
   'image.getResources',
   'model.getAll',
   'modelFile.getOptions',
@@ -219,12 +218,48 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Procedures excluded from batching for reasons INDEPENDENT of edge-caching — i.e. ones the
+ * router-parsing guard above can never derive.
+ *
+ * Why this set exists at all: `CACHEABLE_PROCEDURES` is re-derived from the routers by
+ * `trpc-batching.test.ts`, so anything in it must be derivable. A procedure we want unbatched
+ * for a different reason has nowhere to live in that set without corrupting the derivation —
+ * and, worse, would sit there looking derived. Two sets, two mechanisms: neither can silently
+ * disable the other.
+ *
+ * Both current members are PENDING-CACHEABLE: their `edgeCacheIt` is commented out in the
+ * router with the intent of restoring it. They must stay unbatched anyway, because batching
+ * appends `?batch=1` and `edgeCacheIt` refuses to cache a batched request. If they started
+ * batching now, restoring the commented-out middleware would silently deliver zero edge-cache
+ * benefit — a one-line uncomment whose effect is cancelled somewhere else entirely, with
+ * nothing to point at.
+ *
+ * `image.getGenerationData` — `src/server/routers/image.router.ts` ("TODO: Add edgeCacheIt back
+ * after fixing the cache invalidation"). Also fired at feed/lightbox width, one call per image,
+ * which is precisely the fan-out shape the batch cap exists to bound.
+ *
+ * `event.getData` — `src/server/routers/event.router.ts`, `// .use(edgeCacheIt({ ttl:
+ * CacheTTL.lg }))`.
+ *
+ * 🔴 Neither was ever DELIBERATELY excluded: both were on the never-batch list only because the
+ * drift guard's substring test also matched their commented-out code. Making that guard
+ * comment-aware is what surfaced them, and it would otherwise have silently started batching
+ * both. Listing them here keeps today's behaviour unchanged and gives it an actual reason —
+ * changing it is a separate decision, on evidence, not a side effect of a bug fix.
+ */
+export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
+  'event.getData',
+  'image.getGenerationData',
+]);
+
+/**
  * Route an operation to the streaming batch link only when ALL hold:
  *  - it's a `query` (mutations stay standalone — matches the historical link, and keeps
  *    the large-mutation POST path intact),
  *  - the `trpcBatching` flag is on for this user,
  *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
  *  - the procedure is NOT edge-cacheable for authed sessions (see `CACHEABLE_PROCEDURES`),
+ *  - the procedure is NOT excluded for a non-caching reason (see `NEVER_BATCH_PROCEDURES`),
  *  - the caller didn't opt out via `context.skipBatch === true`,
  *  - its encoded input fits the batch link's URL cap (`isTooLargeToBatch` — otherwise it
  *    would trip "Input is too big for a single dispatch"; excluded ops fall to the
@@ -241,6 +276,7 @@ export function shouldBatch(op: {
     trpcBatchingEnabled &&
     isAuthedBrowser() &&
     !CACHEABLE_PROCEDURES.has(op.path) &&
+    !NEVER_BATCH_PROCEDURES.has(op.path) &&
     op.context.skipBatch !== true &&
     !isTooLargeToBatch(op)
   );
@@ -262,7 +298,31 @@ function terminatingLink({
 }): TRPCLink<AppRouter> {
   return splitLink({
     condition: shouldBatch,
-    true: httpBatchStreamLink({ transformer: clientTransformer, url, headers, maxURLLength: 2083 }),
+    true: httpBatchStreamLink({
+      transformer: clientTransformer,
+      url,
+      headers,
+      maxURLLength: 2083,
+      // Mirror the server's `maxBatchSize` default (`src/pages/api/trpc/[trpc].ts`) from the
+      // SAME constant. tRPC requires the client limit be <= the server's: without this the
+      // browser could coalesce more operations than the server accepts and 400 itself, failing
+      // every query in the batch. With it, the link's dataloader SPLITS an over-wide fan-out
+      // into several <=cap requests instead — `groupItems` starts a new group whenever
+      // `validate` rejects, and only ever rejects a lone operation, which can't happen here
+      // (one op is always <= the cap).
+      //
+      // ⚠️ DEFENCE IN DEPTH, not the primary bound. `maxURLLength: 2083` above already binds
+      // the fan-out shapes this app actually emits — the two `useQueries` sites reach the URL
+      // cap at 22–29 operations, i.e. BELOW `maxItems`, so today the URL budget is what splits
+      // them and this line never fires. It becomes load-bearing for short-path, no-input
+      // procedures (≈147 ops fit under the URL cap) and after the `trpcBatching` flag ramps
+      // past its current mod-only audience.
+      //
+      // 🔴 The server cap is env-overridable and this one is not (a browser bundle cannot read
+      // server env), so the two can diverge. Raising the server's is safe; lowering it below
+      // this constant means an already-loaded bundle can build a batch the server rejects.
+      maxItems: TRPC_MAX_BATCH_SIZE,
+    }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),
   });
 }
