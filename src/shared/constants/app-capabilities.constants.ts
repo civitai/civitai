@@ -34,16 +34,21 @@ export type ListingCapability =
    * the table used to paper over. An off-site listing CAN hold and edit assets — the
    * submit/edit wizard does exactly that, and the asset procs themselves
    * (`setIcon`/`setCover`/`addScreenshot`/…) are already listing-keyed and seat-aware.
-   * What it cannot do is open the STANDALONE editor, because that surface is hosted by
-   * `appListings.getMyListingForApp`, whose input is an `appBlockId` — and an off-site
-   * listing has no AppBlock to name.
+   * What it cannot do is open the STANDALONE editor — but 🔴 THE HOST RESOLVER IS NO
+   * LONGER WHY. `appListings.getMyListingForApp` was re-keyed by civitai/civitai#3984
+   * and now takes `appBlockId` OR `slug`, resolving any top-level listing of either
+   * kind, so it addresses an off-site listing fine. What still withholds the surface is
+   * the WEB tab gate `editorTabsFor` (`src/components/Apps/appListingEditorTabs.ts`),
+   * whose `media` arm requires `ctx.appBlockId != null` on top of this cell — and an
+   * off-site listing has no block id to give it.
    *
    * So this cell is a statement about the SURFACE, not about the data model, and unlike
-   * `earnings` / `submitVersion` it is NOT structural — it is plumbing that has not been
-   * re-keyed yet. Tracked by https://github.com/civitai/civitai/issues/3893, whose fix is
-   * precisely "flip this cell to true". Until then, a table that claimed off-site media
-   * worked would be a permission table asserting more than holds, which is the exact
-   * defect class this feature keeps finding.
+   * `earnings` / `submitVersion` it is NOT structural — it is plumbing, half of which
+   * (the resolver) has now been re-keyed while the tab gate has not. Tracked by
+   * https://github.com/civitai/civitai/issues/3893, whose fix is precisely "flip this
+   * cell to true" (and drop the block-id clause from that `media` arm). Until then, a
+   * table that claimed off-site media worked would be a permission table asserting more
+   * than the UI offers, which is the exact defect class this feature keeps finding.
    */
   | 'listingMedia'
   /** Submit the listing for moderator review (`AppListingPublishRequest` + changelog). */
@@ -65,11 +70,13 @@ export type ListingCapability =
  *     indistinguishable from "earned nothing"; the read refuses instead.
  *   - `submitVersion` — STRUCTURAL. An off-site listing has no bundle and no Forgejo
  *     repo. There is nothing to push to and no credential to mint.
- *   - `listingMedia` — 🔴 NOT structural: PLUMBING. The data supports it; the surface's
- *     host resolver (`getMyListingForApp`) is block-keyed and has not been re-keyed yet.
- *     See its doc above and https://github.com/civitai/civitai/issues/3893. Flipping this
- *     cell is a real change with a real fix behind it, unlike the two above, which cannot
- *     be flipped without changing the schema.
+ *   - `listingMedia` — 🔴 NOT structural: PLUMBING. The data supports it, and since
+ *     civitai/civitai#3984 so does the host resolver (`getMyListingForApp` takes
+ *     `appBlockId` OR `slug`). What is left is the WEB tab gate: `editorTabsFor`'s
+ *     `media` arm also demands `ctx.appBlockId != null`, which an off-site listing
+ *     cannot supply. See its doc above and https://github.com/civitai/civitai/issues/3893.
+ *     Flipping this cell is a real change with a real fix behind it, unlike the two
+ *     above, which cannot be flipped without changing the schema.
  *
  * Everything else is identical across kinds, because an off-site listing carries the
  * same scalars, the same review flow (`AppListingPublishRequest`) and the same metric
@@ -88,8 +95,10 @@ export const CAPABILITIES_BY_KIND: Readonly<
   }),
   offsite: Object.freeze({
     listingContent: true,
-    // The standalone media editor is hosted by the BLOCK-keyed `getMyListingForApp`.
-    // Plumbing, not schema — civitai/civitai#3893 is the work that flips this.
+    // Held false by the WEB tab gate (`editorTabsFor`'s `media` arm also needs a
+    // non-null `appBlockId`), NOT by the host resolver — `getMyListingForApp` takes a
+    // slug since civitai/civitai#3984. Plumbing, not schema — civitai/civitai#3893 is
+    // the work that flips this.
     listingMedia: false,
     submitForReview: true,
     analytics: true,

@@ -186,7 +186,12 @@ function summariseValue(value: unknown): unknown {
  */
 function readZipEntryCapped(
   entry: JSZip.JSZipObject,
-  opts: { maxFileSizeBytes: number; remainingTotalBytes: number; maxTotalBytes: number; path: string }
+  opts: {
+    maxFileSizeBytes: number;
+    remainingTotalBytes: number;
+    maxTotalBytes: number;
+    path: string;
+  }
 ): Promise<Buffer> {
   const { maxFileSizeBytes, remainingTotalBytes, maxTotalBytes, path } = opts;
   return new Promise<Buffer>((resolve, reject) => {
@@ -218,11 +223,7 @@ function readZipEntryCapped(
       if (size > remainingTotalBytes) {
         aborted = true;
         stream.pause();
-        reject(
-          new Error(
-            `bundle decompresses to more than ${maxTotalBytes} bytes (zip bomb?)`
-          )
-        );
+        reject(new Error(`bundle decompresses to more than ${maxTotalBytes} bytes (zip bomb?)`));
         return;
       }
       chunks.push(chunk);
@@ -365,7 +366,10 @@ const SCREENSHOT_NAME_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  * JPEG uploaded as `.png` is rejected too, so the content-type we serve is
  * always correct + consistent with the stored key).
  */
-export function detectImageType(buf: Buffer, claimedExt: ScreenshotExtension): ScreenshotExtension | null {
+export function detectImageType(
+  buf: Buffer,
+  claimedExt: ScreenshotExtension
+): ScreenshotExtension | null {
   const isPng =
     buf.length >= 8 &&
     buf[0] === 0x89 &&
@@ -457,7 +461,11 @@ export async function extractScreenshots(
     // NAME: must be a flat safe filename — no nested path, no traversal, no
     // leading dot. (jszip already normalises `..`, but reject any residual
     // slash / odd name explicitly rather than rely on that.)
-    if (filename.includes('/') || filename.includes('\\') || !SCREENSHOT_NAME_REGEX.test(filename)) {
+    if (
+      filename.includes('/') ||
+      filename.includes('\\') ||
+      !SCREENSHOT_NAME_REGEX.test(filename)
+    ) {
       throw new Error(
         `invalid screenshot filename "${rawPath}" — only flat names like ${SCREENSHOT_DIR}shot-1.png are allowed (no sub-directories, no "..", no leading dot)`
       );
@@ -1451,10 +1459,20 @@ async function closeOnsiteResetListingOnWithdraw(opts: {
  * `onDelete: SetNull` (DETACHED, not hard-deleted — same as off-site). Resolved BY SLUG
  * (no request→listing FK). No-op for a subsequent-version request (no such draft), an
  * already-cleaned draft, or a legacy pre-ship pending request.
+ *
+ * 🔴 DO NOT "CONSOLIDATE" THIS CLAUSE WITH `getMyListingForApp`'s. They look identical —
+ * this one still spells the exact pre-approval-draft shape that one used to — and
+ * civitai/civitai#3984 WIDENED that one to `{ slug, revisionOfId: null }` (any top-level
+ * listing, either kind, any status) because it is a READ whose access is enforced by the
+ * owner gate downstream. THIS is a `deleteMany` with no gate after it and no owner
+ * predicate: the same widening here would hard-delete whatever top-level row holds that
+ * slug — an off-site listing, an APPROVED listing, another user's listing — and there is
+ * nothing downstream to refuse it. The narrowness IS the authorization.
  */
 async function deleteOnsiteDraftListingForSlug(opts: { slug: string }): Promise<void> {
   const { dbWrite } = await import('~/server/db/client');
   await dbWrite.appListing.deleteMany({
+    // 🔴 NARROW ON PURPOSE — see the 🔴 note above (civitai/civitai#3984). Destructive.
     where: { slug: opts.slug, kind: 'onsite', appBlockId: null, status: 'draft' },
   });
 }
@@ -1755,8 +1773,10 @@ export async function enrichPushRequestRow(
   ref: string
 ): Promise<void> {
   try {
-    const { fileSummary, manifestDiffSummary, bundleSizeBytes } =
-      await computePushDiffSummaries(slug, ref);
+    const { fileSummary, manifestDiffSummary, bundleSizeBytes } = await computePushDiffSummaries(
+      slug,
+      ref
+    );
     const { dbWrite } = await import('~/server/db/client');
     await dbWrite.appBlockPublishRequest.updateMany({
       where: { id: publishRequestId, status: 'pending' },
@@ -1965,9 +1985,7 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       // it's the discriminator here (the fetch paths key off the equivalent
       // bundleKey since they need the S3 path).
       pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha
-          ? repoCommitUrl(r.slug, r.forgejoCommitSha)
-          : null,
+        !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
@@ -2025,9 +2043,7 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
       // is the list-display discriminator (see listPendingRequests).
       pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha
-          ? repoCommitUrl(r.slug, r.forgejoCommitSha)
-          : null,
+        !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
@@ -2078,9 +2094,7 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
       // is the list-display discriminator (see listPendingRequests).
       pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha
-          ? repoCommitUrl(r.slug, r.forgejoCommitSha)
-          : null,
+        !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
@@ -3151,7 +3165,10 @@ export async function markRequestDeployState(
       // advance). Log so a regression is greppable; not fatal.
       // eslint-disable-next-line no-console
       console.warn(
-        `[markRequestDeployState] no approved request matched (slug=${slug}, sha=${sha.slice(0, 12)}, state=${state})`
+        `[markRequestDeployState] no approved request matched (slug=${slug}, sha=${sha.slice(
+          0,
+          12
+        )}, state=${state})`
       );
     }
   } catch (err) {
@@ -3319,9 +3336,7 @@ function assertRetriggerableDeployState(
  * supersede guard below refuses even the stored sha once a NEWER version has been
  * approved for the app.
  */
-export async function retriggerBuild(
-  params: RetriggerBuildParams
-): Promise<RetriggerBuildResult> {
+export async function retriggerBuild(params: RetriggerBuildParams): Promise<RetriggerBuildResult> {
   const [{ dbWrite }, { env }] = await Promise.all([
     import('~/server/db/client'),
     import('~/env/server'),
@@ -3740,9 +3755,7 @@ export async function markReviewPreviewState(
         ...(opts?.requireActivePreview ? { deployState: { startsWith: 'preview-' } } : {}),
         // Stale-watcher guard: only advance if the row's current detail still
         // belongs to this build's sha (the serialized `"sha":"<sha>"` fragment).
-        ...(opts?.expectedSha
-          ? { deployDetail: { contains: `"sha":"${opts.expectedSha}"` } }
-          : {}),
+        ...(opts?.expectedSha ? { deployDetail: { contains: `"sha":"${opts.expectedSha}"` } } : {}),
       },
       data: {
         deployState: state,
@@ -3793,10 +3806,7 @@ export type PreviewRequestResult = {
  * property makes that non-accidental.
  */
 function gitBlobSha(content: Buffer): string {
-  return createHash('sha1')
-    .update(`blob ${content.byteLength}\0`)
-    .update(content)
-    .digest('hex');
+  return createHash('sha1').update(`blob ${content.byteLength}\0`).update(content).digest('hex');
 }
 
 /**
@@ -3924,9 +3934,7 @@ async function resolveReviewSourceSha(request: {
  * review-sandbox flag (gated in the router), so this never runs in prod until
  * enabled.
  */
-export async function previewRequest(
-  params: PreviewRequestParams
-): Promise<PreviewRequestResult> {
+export async function previewRequest(params: PreviewRequestParams): Promise<PreviewRequestResult> {
   const [{ dbRead }, { env }] = await Promise.all([
     import('~/server/db/client'),
     import('~/env/server'),
@@ -3959,7 +3967,9 @@ export async function previewRequest(
     const more =
       activeOthers.length > slugs.length ? `, +${activeOthers.length - slugs.length} more` : '';
     throw new Error(
-      `Review preview cap reached (${activeOthers.length}/${MAX_CONCURRENT_REVIEW_PREVIEWS} active): ${slugs.join(
+      `Review preview cap reached (${
+        activeOthers.length
+      }/${MAX_CONCURRENT_REVIEW_PREVIEWS} active): ${slugs.join(
         ', '
       )}${more}. Tear down a preview to free a slot.`
     );
@@ -4057,7 +4067,13 @@ export async function getReviewStatus(opts: {
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: opts.publishRequestId },
-    select: { id: true, status: true, deployState: true, deployDetail: true, deployUpdatedAt: true },
+    select: {
+      id: true,
+      status: true,
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
+    },
   });
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
   const isPreviewState =
@@ -4213,9 +4229,7 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
     bundleSizeBytes: r.bundleSizeBytes.toString(),
     reviewRepoUrl: reviewRepoUrl(r.slug),
     pushCommitUrl:
-      !r.bundleSha256 && r.forgejoCommitSha
-        ? repoCommitUrl(r.slug, r.forgejoCommitSha)
-        : null,
+      !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
   };
   return { mode, request };
 }
@@ -4346,9 +4360,7 @@ export async function mintReviewBlockToken(opts: {
     parseManifestBuzzBudget,
     FORCED_SFW_CEILING,
   } = await import('./dev-scoped-mint.service');
-  const { REVIEW_RUN_FOR_REAL_BUZZ_CAP } = await import(
-    '~/shared/constants/block-scope.constants'
-  );
+  const { REVIEW_RUN_FOR_REAL_BUZZ_CAP } = await import('~/shared/constants/block-scope.constants');
 
   // The AUDITED clamp belt (SAME function both modes — never fork the clamp).
   //   - render-only (default): render-only allowlist + no spend → the spend scope
@@ -4379,9 +4391,7 @@ export async function mintReviewBlockToken(opts: {
     oauthAllowed: null,
     spendEntitled: runForReal,
     spendRequested: runForReal,
-    allowlist: runForReal
-      ? REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST
-      : REVIEW_MINT_SCOPE_ALLOWLIST,
+    allowlist: runForReal ? REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST : REVIEW_MINT_SCOPE_ALLOWLIST,
   });
 
   // Per-call Buzz budget — ONLY for run-for-real AND only if the spend scope
@@ -4918,14 +4928,10 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   const { dbRead, dbWrite } = await import('~/server/db/client');
   const reason = params.rejectionReason.trim();
   if (reason.length < PUBLISH_REJECTION_REASON_MIN) {
-    throw new Error(
-      `rejection reason must be at least ${PUBLISH_REJECTION_REASON_MIN} characters`
-    );
+    throw new Error(`rejection reason must be at least ${PUBLISH_REJECTION_REASON_MIN} characters`);
   }
   if (reason.length > PUBLISH_REJECTION_REASON_MAX) {
-    throw new Error(
-      `rejection reason must be at most ${PUBLISH_REJECTION_REASON_MAX} characters`
-    );
+    throw new Error(`rejection reason must be at most ${PUBLISH_REJECTION_REASON_MAX} characters`);
   }
 
   const row = await dbRead.appBlockPublishRequest.findUnique({

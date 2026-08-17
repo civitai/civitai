@@ -620,8 +620,11 @@ export const appListingsRouter = router({
     }),
 
   /**
-   * OWNER: resolve the caller's OWN listing by its backing `appBlockId` — the entry
-   * read for the owner-facing on-site listing-media page (`/apps/<appBlockId>/listing`).
+   * OWNER: resolve the caller's OWN listing by its backing `appBlockId` OR by its public
+   * `slug` — the entry read for the owner-facing on-site listing-media page
+   * (`/apps/<appBlockId>/listing`) and for non-web clients that only hold a slug.
+   * `appBlockId` takes PRECEDENCE: the slug arm runs only when it missed or was absent,
+   * and it resolves any TOP-LEVEL listing (either kind, any status) — civitai/civitai#3984.
    * Returns the `AppListing.id` the page passes to `beginListingRevision` + the asset
    * procs, plus the listing status / content rating / whether a revision is already
    * under review, AND the EDITABLE target's current assets (`assets` + `shadowId`) so
