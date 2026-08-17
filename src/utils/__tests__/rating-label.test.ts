@@ -189,7 +189,7 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
         }
         if (!/\.tsx?$/.test(entry.name)) continue;
         const text = fs.readFileSync(full, 'utf8');
-        if (text.includes("~/utils/rating-label")) out.push(path.relative(SRC, full));
+        if (text.includes('~/utils/rating-label')) out.push(path.relative(SRC, full));
       }
     };
     walk(SRC);

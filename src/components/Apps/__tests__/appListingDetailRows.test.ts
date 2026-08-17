@@ -57,7 +57,11 @@ describe('buildListingDetailRows — order', () => {
     expect(by.rating).toMatchObject({ label: 'Rating', value: 'pg' });
     // The SHARED ladder's word label plus the count, matching the model page's
     // "<label> (N)". Literal, not re-derived from `getRatingLabel`.
-    expect(by.reviews).toMatchObject({ label: 'Reviews', value: 'Very Positive (499)', color: 'green' });
+    expect(by.reviews).toMatchObject({
+      label: 'Reviews',
+      value: 'Very Positive (499)',
+      color: 'green',
+    });
     // Thousands-separated, like every other public count on the site.
     expect(by.installs).toMatchObject({ label: 'Installs', value: '4,213' });
     // The injected formatter is what produced this — so the ROW is under test, not dayjs.
@@ -120,6 +124,61 @@ describe('buildListingDetailRows — a null field OMITS its row (never renders a
     const rows = buildListingDetailRows(detail({ installCount: 0 }), { formatDate: fmt });
     expect(keys(rows)).toContain('installs');
     expect(rows.find((r) => r.key === 'installs')?.value).toBe('0');
+    // 🔴 And the discriminator: `0` must NOT take the same path as `undefined` below.
+    // A `if (detail.installCount)` truthiness guard would drop this row, which is the
+    // most likely way the runtime guard gets written wrong.
+    expect(rows.find((r) => r.key === 'installs')?.value).not.toBe(undefined);
+  });
+
+  /**
+   * 🔴 REGRESSION, not an invariant guard — this one was RED before the fix, on a real
+   * crash. `updatedAt` and `installCount` are declared REQUIRED on `ListingDetail`, but
+   * the moderator combined-review surface builds a `ListingDetail`-shaped object
+   * DIRECTLY, through a cast, rather than via `projectListingDetail`. The first version
+   * of this builder called `detail.installCount.toLocaleString()` unconditionally; on
+   * that producer it threw, and because a crashing child unmounts its ancestors the
+   * whole review modal rendered as an empty `<body>`.
+   *
+   * The rule: a details row is DECORATION and must never be able to blank the page it
+   * decorates. An absent field is treated exactly like a null one — omit the row.
+   */
+  describe('🔴 a field that is ABSENT at runtime (a cast producer) omits its row, never throws', () => {
+    it('POSITIVE CONTROL: both rows are present when the fields are supplied', () => {
+      const rows = keys(buildListingDetailRows(detail(), { formatDate: fmt }));
+      expect(rows).toContain('installs');
+      expect(rows).toContain('updated');
+    });
+
+    it('a missing installCount omits the installs row instead of throwing', () => {
+      const cast = { ...detail() } as Record<string, unknown>;
+      delete cast.installCount;
+      const rows = keys(buildListingDetailRows(cast as Input, { formatDate: fmt }));
+      expect(rows).not.toContain('installs');
+      expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'updated']);
+    });
+
+    it('a missing updatedAt omits the updated row instead of formatting `undefined` as today', () => {
+      // Formatting `undefined` through dayjs yields TODAY — a confident, wrong date on
+      // a moderator's screen. Omission is the honest answer.
+      const cast = { ...detail() } as Record<string, unknown>;
+      delete cast.updatedAt;
+      const rows = keys(buildListingDetailRows(cast as Input, { formatDate: fmt }));
+      expect(rows).not.toContain('updated');
+      expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs']);
+    });
+
+    it('BOTH missing — the panel still builds, with the rows it can', () => {
+      const cast = { ...detail() } as Record<string, unknown>;
+      delete cast.installCount;
+      delete cast.updatedAt;
+      expect(() => buildListingDetailRows(cast as Input, { formatDate: fmt })).not.toThrow();
+      expect(keys(buildListingDetailRows(cast as Input, { formatDate: fmt }))).toEqual([
+        'kind',
+        'category',
+        'rating',
+        'reviews',
+      ]);
+    });
   });
 });
 
@@ -155,7 +214,7 @@ describe('buildListingDetailRows — the reviews row', () => {
     expect(rows.find((r) => r.key === 'reviews')?.value).toBe('No reviews yet');
   });
 
-  it('a low rating carries the ladder\'s own colour, not a hardcoded green', () => {
+  it("a low rating carries the ladder's own colour, not a hardcoded green", () => {
     const rows = buildListingDetailRows(
       detail({
         recommend: { recommendedCount: 4, notRecommendedCount: 133, recommendPct: 4 / 137 },

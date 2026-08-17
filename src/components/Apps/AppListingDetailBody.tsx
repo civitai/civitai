@@ -929,7 +929,17 @@ export function AppListingDetailBody({
 
       {/* The two action modals, mounted OUTSIDE the menu — see the note where their
           state is declared. Each is gated by the same predicate as its menu item, so
-          an ineligible viewer mounts neither the trigger nor the form. */}
+          an ineligible viewer mounts neither the trigger nor the form.
+          🔴 THE `!preview` CLAUSE ON THESE TWO IS DEFENCE-IN-DEPTH, AND IS THE ONLY
+          `preview` GUARD IN THIS FILE THAT NO TEST CAN KILL — measured, not assumed:
+          deleting it leaves the mutation battery fully green, because a Mantine `Modal`
+          with `opened={false}` renders NO DOM at all and its `getMyReview` query is
+          `enabled: false`, so a mounted-but-closed modal is unobservable from the
+          rendered output and issues no request. Removing the clause would therefore be
+          inert TODAY. It stays because "mount no live-action component against an
+          unapproved shadow listing" is the posture, and the day either modal grows a
+          mount effect the clause is what stops it firing. Do not delete it on the
+          grounds that nothing goes red. */}
       {!preview && canReview && (
         <ReviewListingModal
           appListingId={detail.id}

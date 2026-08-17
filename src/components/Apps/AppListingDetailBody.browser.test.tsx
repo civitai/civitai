@@ -4,6 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as RecentsMod from '~/components/Apps/recentlyOpenedAppsStore';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -74,7 +75,15 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
 // 🔴 `cosmeticShop` is deliberately ABSENT/falsy, which routes `SmartCreatorCard` to
 // the `CreatorCard` branch. That is the branch this suite exercises; the `CreatorCardV2`
 // branch is not covered here — named rather than left implicit.
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+//
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock). Measured on this very change: once the body began
+// importing `SmartCreatorCard` (→ ChatUserButton → useChatEnabled), a factory that
+// listed only `useFeatureFlags` made four SIBLING suites fail to IMPORT with
+// `does not provide an export named 'useFeatureFlagsReady'` — reported as
+// `Tests no tests`, i.e. as nothing to see rather than as a failure.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true, appListings: true, appBlocksPages: false }),
 }));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-

@@ -55,7 +55,13 @@ function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
 export function buildListingDetailRows(
   detail: Pick<
     ListingDetail,
-    'kindData' | 'category' | 'contentRating' | 'recommend' | 'reviewCount' | 'installCount' | 'updatedAt'
+    | 'kindData'
+    | 'category'
+    | 'contentRating'
+    | 'recommend'
+    | 'reviewCount'
+    | 'installCount'
+    | 'updatedAt'
   >,
   opts: { preview?: boolean; formatDate: (iso: string) => string }
 ): ListingDetailRow[] {
@@ -91,13 +97,30 @@ export function buildListingDetailRows(
     }
   }
 
-  rows.push({
-    key: 'installs',
-    label: 'Installs',
-    value: detail.installCount.toLocaleString(),
-  });
+  // 🔴 GUARDED AT RUNTIME EVEN THOUGH BOTH FIELDS ARE DECLARED REQUIRED, and this is a
+  // MEASURED defect rather than defensive habit — the same one
+  // `ListingCollaboratorByline` already carries a note about. Not every producer of a
+  // `ListingDetail`-shaped object goes through `projectListingDetail`: the moderator
+  // combined-review surface builds one directly (through a cast), and the moment these
+  // two fields were added, `undefined.toLocaleString()` threw inside this panel and
+  // took the WHOLE review modal down with it — a crashing child unmounts its ancestors,
+  // so the mod saw a blank `<body>`. Caught by the pre-existing
+  // `CombinedReviewModal.browser.test.tsx`.
+  //
+  // A details row is DECORATION. It must never be able to blank the page it decorates,
+  // and a required TYPE is not a runtime guarantee about a value that crossed a cast.
+  // An absent field therefore takes the same path as a null `category`: omit the row.
+  if (typeof detail.installCount === 'number') {
+    rows.push({
+      key: 'installs',
+      label: 'Installs',
+      value: detail.installCount.toLocaleString(),
+    });
+  }
 
-  rows.push({ key: 'updated', label: 'Updated', value: opts.formatDate(detail.updatedAt) });
+  if (detail.updatedAt) {
+    rows.push({ key: 'updated', label: 'Updated', value: opts.formatDate(detail.updatedAt) });
+  }
 
   return rows;
 }
