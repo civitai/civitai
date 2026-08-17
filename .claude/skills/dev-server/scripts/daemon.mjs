@@ -1507,9 +1507,15 @@ class AuthHub {
 
     let proc;
     try {
+      // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
+      // nothing on [::1]; Windows resolves `localhost` to ::1 first, so a browser typing the same `localhost`
+      // URL the auth redirects use got connection-refused while curl — which falls back to v4 — reported the
+      // server perfectly healthy. `localhost` is not the fix either: it resolves to ::1 *only*, which just
+      // moves the outage onto every caller that hardcodes 127.0.0.1. `::` accepts v4-mapped addresses, so both
+      // spellings work, and it matches what `next dev` already binds for the main app on 3000.
       proc = spawn(
         pnpmCmd,
-        ['exec', 'vite', 'dev', '--host', '127.0.0.1', '--port', String(this.port), '--strictPort'],
+        ['exec', 'vite', 'dev', '--host', '::', '--port', String(this.port), '--strictPort'],
         spawnOptions
       );
     } catch (err) {
