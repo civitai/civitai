@@ -1,4 +1,28 @@
 import type { ChatNotifyLevel } from '~/shared/utils/prisma/enums';
+import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
+
+export type ChatBucket = 'Inbox' | 'Requests' | 'Archived';
+
+const archivedStatuses: ChatMemberStatus[] = [
+  ChatMemberStatus.Ignored,
+  ChatMemberStatus.Left,
+  ChatMemberStatus.Kicked,
+];
+
+/**
+ * `filteredAt` marks a membership as a pending request, whatever its status — a
+ * conversation you once accepted becomes a request again if you delete it and
+ * the other side writes back. Accepting clears the mark, so an accepted chat
+ * cannot be stranded in Requests.
+ */
+export function chatBucketFor(member: {
+  status: ChatMemberStatus;
+  filteredAt: Date | null;
+}): ChatBucket {
+  if (archivedStatuses.includes(member.status)) return 'Archived';
+  if (member.filteredAt) return 'Requests';
+  return 'Inbox';
+}
 
 /**
  * Shared by the `createMessageInput` cap and the composer's counter. Lives here

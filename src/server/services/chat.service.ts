@@ -145,6 +145,24 @@ export const upsertChat = async ({
   });
 
   if (!!existing) {
+    // Re-opening a chat still has to respect the recipient's policy. Returning
+    // here without stamping `filteredAt` let anyone who had ever messaged you
+    // walk back into your inbox, which made the policy a one-time check rather
+    // than a standing one.
+    const toFilter = existing.chatMembers.filter(
+      (cm) => filteredIds.has(cm.userId) && !cm.filteredAt
+    );
+    if (toFilter.length) {
+      const filteredAt = new Date();
+      await dbWrite.chatMember.updateMany({
+        where: { id: { in: toFilter.map((cm) => cm.id) } },
+        data: { filteredAt, status: ChatMemberStatus.Invited },
+      });
+      for (const cm of toFilter) {
+        cm.filteredAt = filteredAt;
+        cm.status = ChatMemberStatus.Invited;
+      }
+    }
     return existing;
   }
 
@@ -284,9 +302,12 @@ export const createMessage = async ({
     select: {
       chatMembers: {
         select: {
+          id: true,
           userId: true,
           status: true,
           isOwner: true,
+          clearedAt: true,
+          filteredAt: true,
           user: {
             select: {
               isModerator: true,
@@ -377,6 +398,28 @@ export const createMessage = async ({
     const count = await messageLimiter.increment(userId.toString());
     if (count > limit) {
       throw throwBadRequestError('You are sending messages too quickly. Please try again later.');
+    }
+  }
+
+  // Someone who deleted this conversation asked not to have it. The first
+  // message that reaches them afterwards is a new approach, not a continuation,
+  // so it re-enters the request flow regardless of their policy — the delete is
+  // the stronger signal. Only the first: once they accept, later messages land
+  // normally.
+  if (userId !== -1) {
+    const clearedMembers = chat.chatMembers.filter(
+      (cm) => cm.userId !== userId && !!cm.clearedAt && !cm.filteredAt
+    );
+    for (const member of clearedMembers) {
+      const since = await dbWrite.chatMessage.count({
+        where: { chatId, createdAt: { gt: member.clearedAt as Date }, deletedAt: null },
+      });
+      if (since > 0) continue;
+
+      await dbWrite.chatMember.update({
+        where: { id: member.id },
+        data: { filteredAt: new Date(), status: ChatMemberStatus.Invited },
+      });
     }
   }
 

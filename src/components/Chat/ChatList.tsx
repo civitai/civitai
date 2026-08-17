@@ -49,6 +49,8 @@ import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { BlurText } from '~/components/BlurText/BlurText';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { stripStickerTokens } from '~/shared/utils/sticker-token';
+import type { ChatBucket } from '~/shared/utils/chat';
+import { chatBucketFor } from '~/shared/utils/chat';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
@@ -67,25 +69,6 @@ const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 //     backgroundColor: `${theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5)} !important`,
 //   },
 // }));
-
-type ChatBucket = 'Inbox' | 'Requests' | 'Archived';
-
-const archivedStatuses: ChatMemberStatus[] = [
-  ChatMemberStatus.Ignored,
-  ChatMemberStatus.Left,
-  ChatMemberStatus.Kicked,
-];
-
-/**
- * Inbox holds accepted chats and invitations that cleared the recipient's DM
- * policy; Requests holds only the invitations that policy or the new-account
- * filter set aside.
- */
-function bucketFor(member: { status: ChatMemberStatus; filteredAt: Date | null }): ChatBucket {
-  if (archivedStatuses.includes(member.status)) return 'Archived';
-  if (member.status === ChatMemberStatus.Invited && !!member.filteredAt) return 'Requests';
-  return 'Inbox';
-}
 
 export function ChatList() {
   const existingChatId = useChatStore((state) => state.existingChatId);
@@ -108,7 +91,7 @@ export function ChatList() {
   const requestCount = !!data
     ? data.filter((d) => {
         const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
-        return !!myMember && bucketFor(myMember) === 'Requests';
+        return !!myMember && chatBucketFor(myMember) === 'Requests';
       }).length
     : 0;
 
@@ -174,7 +157,7 @@ export function ChatList() {
       .find((d) => d.id === existingChatId)
       ?.chatMembers?.find((cm) => cm.userId === currentUser?.id);
     if (!activeMember) return;
-    setActiveTab(bucketFor(activeMember));
+    setActiveTab(chatBucketFor(activeMember));
   }, [currentUser?.id, data, existingChatId]);
 
   useEffect(() => {
@@ -182,7 +165,7 @@ export function ChatList() {
 
     const tabData = data.filter((d) => {
       const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
-      return !!myMember && bucketFor(myMember) === activeTab;
+      return !!myMember && chatBucketFor(myMember) === activeTab;
     });
 
     // TODO we could probably search all messages, but that involves another round trip to grab ALL messages for all chats

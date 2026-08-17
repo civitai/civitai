@@ -151,6 +151,7 @@ export const getUnreadMessagesForUserHandler = async ({
       where memb."userId" = ${userId}
         and memb.status = 'Joined'
         and memb."notifyLevel" <> 'None'
+        and memb."filteredAt" is null
         and msg."userId" != ${userId}
       group by memb."chatId"
     `;
@@ -415,6 +416,9 @@ export const modifyUserHandler = async ({
       leftAt: status === ChatMemberStatus.Left ? new Date() : undefined,
       kickedAt: status === ChatMemberStatus.Kicked ? new Date() : undefined,
       pinnedAt: isPinned === undefined ? undefined : isPinned ? new Date() : null,
+      // Accepting is what ends a request; leaving the mark set would strand the
+      // conversation in Requests forever.
+      filteredAt: status === ChatMemberStatus.Joined ? null : undefined,
     };
 
     const resp = await dbWrite.chatMember.update({
