@@ -13,6 +13,13 @@
 -- mutation is scheduled. Do NOT renumber or rename any existing value; that WOULD rewrite
 -- 7.6B rows.
 --
+-- ⚠️ MODIFY COLUMN on an Enum8 REPLACES the type; it does not append to it. Every statement below
+-- restates the whole enum, which makes the ordering between separate migrations load-bearing: a
+-- later migration that restates the enum WITHOUT these arms silently deletes them and invalidates
+-- every row already written with them. Comics hold 10 and 11. Anything adding 12 or beyond must
+-- carry 'ComicProject' = 10, 'ComicChapter' = 11 on entityType and 'ComicProjectView' = 10,
+-- 'ComicChapterView' = 11 on type, and must be applied after this file.
+--
 -- No new rollup table. `default.daily_views` is already keyed
 -- ORDER BY (entityType, entityId, createdDate), so once it knows the Comic arms a query like
 --   SELECT entityId, sum(views) FROM daily_views
@@ -44,6 +51,26 @@
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Step 0b — read the starting state before touching anything
+-- ─────────────────────────────────────────────────────────────────────────────
+--
+-- Read-only. Because MODIFY COLUMN replaces the enum rather than appending to it, running this
+-- file against a state that already differs — someone else's arms already applied, or applied with
+-- different names — would delete their values. Print what is actually there first.
+
+SELECT table, name, type
+FROM system.columns
+WHERE database = 'default'
+  AND ((table = 'views' AND name IN ('type', 'entityType'))
+    OR (table = 'daily_views' AND name = 'entityType'))
+ORDER BY table, name;
+
+-- Expected before this file runs: all three stop at 9 ('BountyEntry' / 'BountyEntryView').
+-- If any already carries values past 9, STOP and reconcile — do not run the statements below as
+-- written, they would drop whatever is there.
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Step 1 — widen the MV target
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -71,24 +98,29 @@ ALTER TABLE default.views
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Step 3 — CHECK, then conditionally re-derive daily_views_mv
+-- Step 3 — re-derive daily_views_mv's stored structure. NOT optional.
 -- ─────────────────────────────────────────────────────────────────────────────
 --
--- `daily_views_mv` is a TO-table MV declared with an explicit column list that embeds the old
--- 9-value Enum8. Whether steps 1-2 alone refresh that stored structure is version-dependent, so
--- verify rather than assume. Run:
+-- `daily_views_mv` is a TO-table MV whose CREATE restates the entityType Enum8, and neither ALTER
+-- above rewrites that stored copy. If the MV converts its SELECT result to its own DECLARED
+-- structure rather than re-reading the target's, the first row carrying a new entityType fails the
+-- MV push — and a failed MV push fails the INSERT INTO views itself. That is not "comic views
+-- don't record", it is every view type on the site failing to record.
 --
---   SHOW CREATE TABLE default.daily_views_mv;
+-- The SELECT below is the existing one restated byte-for-byte. It changes no behaviour and is
+-- metadata-only. Run it unconditionally: there is exactly one ClickHouse and no way to test which
+-- conversion path is taken without a prod write, so pay the free statement instead of finding out.
 --
--- If the printed `entityType` still stops at 'BountyEntry' = 9, run the MODIFY QUERY below,
--- which re-derives the MV's structure from the (now widened) source. If it already shows
--- 'ComicChapter' = 11, skip it — MODIFY QUERY is a no-op here but there is no reason to run it.
+-- ⚠️ It must run AFTER step 2, not between steps 1 and 2. MODIFY QUERY re-derives the MV's
+-- structure from the result types of its SELECT, and that SELECT reads default.views. Run before
+-- views is widened and it re-derives the OLD 9-value enum from the un-widened source — pinning in
+-- place exactly the stale metadata this step exists to clear.
 
--- ALTER TABLE default.daily_views_mv
---   MODIFY QUERY
---     SELECT entityType, entityId, createdDate, count(*) AS views
---     FROM default.views
---     GROUP BY 1, 2, 3;
+ALTER TABLE default.daily_views_mv
+  MODIFY QUERY
+    SELECT entityType, entityId, createdDate, count(*) AS views
+    FROM default.views
+    GROUP BY 1, 2, 3;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────

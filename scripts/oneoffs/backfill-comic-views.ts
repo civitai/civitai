@@ -147,7 +147,12 @@ async function main() {
     select: { id: true, projectId: true, position: true },
   });
   const chapterIdByKey = new Map(chapters.map((c) => [chapterKey(c.projectId, c.position), c.id]));
-  console.log(`[backfill] loaded ${chapters.length} chapter positions`);
+  const projectIds = new Set(
+    (await prisma.comicProject.findMany({ select: { id: true } })).map((p) => p.id)
+  );
+  console.log(
+    `[backfill] loaded ${projectIds.size} projects, ${chapters.length} chapter positions`
+  );
 
   const projectViews = await readProjectViews();
   const chapterViews = await readChapterViews();
@@ -157,13 +162,30 @@ async function main() {
   );
 
   const rows: { entityType: string; entityId: number; createdDate: string; views: number }[] = [];
+
+  // A well-formed path is not a real project. `/comics/0` and ids belonging to some other entity
+  // typed into a comic URL both parse cleanly, and writing them would put entityIds into
+  // daily_views that resolve to nothing — invisible, because nobody queries an id they don't own.
+  let unknownProjects = 0;
+  let unknownProjectViews = 0;
   for (const r of projectViews) {
+    if (!projectIds.has(r.projectId)) {
+      unknownProjects++;
+      unknownProjectViews += Number(r.views);
+      continue;
+    }
     rows.push({
       entityType: 'ComicProject',
       entityId: r.projectId,
       createdDate: r.date,
       views: Number(r.views),
     });
+  }
+  if (unknownProjects > 0) {
+    console.log(
+      `[backfill] ${unknownProjects} project day-rows (${unknownProjectViews} views) reference no ` +
+        `current ComicProject — deleted, or another entity's id typed into a comic URL. Skipped.`
+    );
   }
 
   let unmapped = 0;

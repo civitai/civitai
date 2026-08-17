@@ -8,7 +8,17 @@
  * them as JS RegExp.
  */
 
-/** `/comics/42` and `/comics/42/my-comic` — the project overview. */
+/**
+ * `/comics/42` and `/comics/42/my-comic` — the project overview.
+ *
+ * ⚠️ This matches on SHAPE, and it is only unambiguous because nothing static lives under
+ * `/comics/<id>/`. The comic owner surface is `/comics/project/<id>/*`, excluded by name below.
+ * If a static sibling route is ever added here — `/comics/<id>/edit`, `/comics/<id>/settings` —
+ * it has the same shape as a slug, Next resolves the static route ahead of the `[[...slug]]`
+ * catch-all, and this pattern starts silently counting owner traffic as reads, retroactively.
+ * Adding such a route means excluding it here by name. (The equivalent trap is live in
+ * /3d-models, where `<id>/edit` and `<id>/<slug>` are genuinely indistinguishable by shape.)
+ */
 export const PROJECT_PATH_RE = '^/comics/([0-9]+)(/[^/]*)?$';
 
 /** `/comics/42/my-comic/3/chapter-3` — the chapter reader. The position is 1-INDEXED. */
