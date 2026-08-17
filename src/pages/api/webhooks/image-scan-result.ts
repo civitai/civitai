@@ -233,14 +233,7 @@ export default WebhookEndpoint(async (req, res) => {
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
-// @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
-// 1-10:  The images are visually almost identical
-// 11-20: The images are visually similar
-// 21-30: The images are visually somewhat similar
-// `BigInt('  ')` is 0n, which would silently become a real Hamming lookup against every
-// blocked image within 4 bits of zero. Undefined rather than a throw, so a blank hash
-// still records the scan the way it did before the hash was parsed at all — a 400 here
-// makes the scanner redeliver the same unusable result forever.
+// `BigInt('  ')` is 0n, which a blank hash must not become: it is a legitimate hash value.
 function parsePerceptualHash(hash: string) {
   const invalid = new Error('invalid hash from ImageHash scan');
   if (!hash.trim()) return undefined;
@@ -256,14 +249,16 @@ function parsePerceptualHash(hash: string) {
   return parsed;
 }
 
+// @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
+// 1-10:  The images are visually almost identical
+// 11-20: The images are visually similar
+// 21-30: The images are visually somewhat similar
+//
 // `$query` interpolates into the SQL text rather than binding parameters, so this must
 // only ever be handed a bigint — never the raw string off the webhook body.
 async function isBlocked(hash: bigint) {
   if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
 
-  // One attempt on purpose. Nothing consumes this result — the blocking update it feeds is
-  // commented out — so retrying buys a log line, and against a hung ClickHouse rather than a
-  // refused one it would hold the request for a multiple of the client timeout.
   const rows = await clickhouse.$query<{ count: number }>`
     SELECT cast(count() as int) as count
     FROM blocked_images
@@ -885,10 +880,7 @@ async function updateImageScanJobs({
   );
 
   const setClauses: Prisma.Sql[] = [];
-  // A zero hash is skipped, so a flat image keeps a null pHash. That is what this did before
-  // the rewrite, and whether to store the zero instead is open — writing it would let one
-  // blocked flat image match every other flat image at distance 0.
-  if (pHash) setClauses.push(Prisma.sql`"pHash" = ${pHash}`);
+  if (pHash !== undefined) setClauses.push(Prisma.sql`"pHash" = ${pHash}`);
   if (ingestion) setClauses.push(Prisma.sql`"ingestion" = ${ingestion}::"ImageIngestionStatus"`);
   if (nsfwLevel) setClauses.push(Prisma.sql`"nsfwLevel" = ${nsfwLevel}`);
   if (blockedFor) setClauses.push(Prisma.sql`"blockedFor" = ${blockedFor}`);
@@ -947,8 +939,6 @@ async function processScanResult({
       if (!hash) throw new Error('missing hash from ImageHash scan');
       const pHash = parsePerceptualHash(hash);
       if (pHash === undefined) {
-        // Acked rather than rejected, so a hasher regression emitting blanks is otherwise
-        // invisible: the rows go out scanned with a null pHash and the scanner never retries.
         logToAxiom(
           {
             name: 'image-phash-match',
@@ -960,8 +950,6 @@ async function processScanResult({
           'webhooks'
         ).catch(() => null);
       }
-      // Nothing branches on this result — the blocking update below is commented out — so a
-      // ClickHouse blip must not discard a scan result.
       const blocked =
         pHash === undefined
           ? false
@@ -992,6 +980,8 @@ async function processScanResult({
           'webhooks'
         ).catch(() => null);
 
+        // Before uncommenting: `isBlocked` swallows a ClickHouse failure as "not blocked", and
+        // does not retry. Both are only safe while nothing acts on the result.
         // return await updateImageScanJobs({
         //   id,
         //   source,

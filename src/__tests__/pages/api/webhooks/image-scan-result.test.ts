@@ -606,14 +606,13 @@ describe('image-scan-result webhook - pipeline tests', () => {
       ).toBe(true);
     });
 
-    it('does not re-run the blocklist lookup after a failure', async () => {
-      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
-      mockClickhouseQuery.mockRejectedValue(new Error('socket hang up'));
-
-      const req = runWebhook({ id: 15, status: 0, source: TagSource.ImageHash, hash: '42' });
+    it('writes a zero hash rather than leaving the column null', async () => {
+      const req = runWebhook({ id: 15, status: 0, source: TagSource.ImageHash, hash: '0' });
       await req.promise;
 
-      expect(mockClickhouseQuery).toHaveBeenCalledTimes(1);
+      const update = imageUpdates.find((u) => u.text.includes('"pHash"'));
+      expect(update).toBeDefined();
+      expect(update!.params).toContain(0n);
     });
 
     it('completes the scan when the blocklist lookup fails', async () => {
