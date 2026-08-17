@@ -39,13 +39,27 @@ import { createJob } from './job';
  * does NOT mean "appends": keying severity off APPEND would mark six views unrepairable
  * when two are.
  *
- * The recovery WINDOW differs again, which is why `severity` is not decoration either:
- *   - `impressions_daily_by_owner_mv` — PAGE. Unrepairable by re-run AND its source
- *     `default.impressions` has a 30-day TTL, so a miss nobody notices for a month
- *     cannot be rebuilt by anyone.
- *   - everything else — TICKET. Either repairable by re-running, or re-derivable from a
- *     source that still holds the rows (`image_views_daily_by_owner_mv` is the other
- *     Summing target, but rebuilds from `daily_views` back to 2023).
+ * A SECOND property decides severity, and it is not the engine. All three DAILY views
+ * compute strictly yesterday relative to the run date — `createdDate >= today() - 1 AND
+ * < today()` (verified in each view body). So re-running one of them never repairs a
+ * missed day: it writes a DIFFERENT day. Repair is a hand-written INSERT with an explicit
+ * date filter, and on the two Summing targets a careless catch-up double-counts on top.
+ *   - `impressions_daily_by_owner_mv` — PAGE. Both properties at once: a re-run writes the
+ *     wrong day AND adds rather than replaces. It is also the newest pipeline, with the
+ *     least operational history behind it.
+ *   - the other two daily views — TICKET. Same "a re-run writes the wrong day" problem, but
+ *     `entityMetricDailySeal_v2_mv` is versioned-Replacing so a catch-up cannot double, and
+ *     `image_views_daily_by_owner_mv` rebuilds from `daily_views`.
+ *   - the sub-minute and minute views — TICKET, and genuinely self-repairing.
+ *
+ * What this deliberately does NOT claim: a deadline. An earlier version of this comment
+ * said the impressions rollup had 30 days before becoming unrecoverable, citing the TTL on
+ * `default.impressions`. That is the wrong table — the monitored view reads
+ * `default.daily_impressions`, which has NO TTL (both checked in `system.tables`
+ * 2026-08-17). `impressions` feeds `daily_impressions` through an INCREMENTAL MV, which
+ * fires at insert time, has no refresh to miss, and is not one of the seven. Anyone
+ * reading the old text would have checked an empty table and concluded the alert was
+ * broken.
  *
  * ── Thresholds ────────────────────────────────────────────────────────────
  * Peak staleness in a healthy view is period + refresh duration, reached just before
