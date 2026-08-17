@@ -267,6 +267,19 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
     expect(mocks.showError).not.toHaveBeenCalled();
   });
 
+  test('moves the control to paid when paid IS open', async () => {
+    // `setChosen('paid')` was asserted by nothing in either file — the other
+    // cases here all read the banner, which `setFreeRefusal` sets independently.
+    // The docstring argues that moving the control asserts money was the
+    // problem; this is that argument reaching the DOM.
+    mocks.nextVisibility = { ...mocks.visibility, freeSlotsRemaining: 0 };
+    mocks.refuseWith = 'remix gallery: the free slots on this one are taken';
+    await openAndPick();
+    await page.getByRole('button', { name: /submit for free/i }).click();
+
+    await expect.element(page.getByTestId('buzz-submit')).toBeInTheDocument();
+  });
+
   test('offers no paid submit button at all', async () => {
     paidClosed(null);
     await openAndPick();
@@ -278,20 +291,42 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
       .toBeInTheDocument();
   });
 
+  test('holds on free rather than offering a paid button that cannot work', async () => {
+    // 🔴 A STATIC fixture, no click and no refusal: free is unavailable from
+    // first paint (`usedHere`) and paid is closed (`price: null`), which is
+    // `submissionMethod(null, false, false, true)`.
+    //
+    // With the rule, that resolves to free — a plain Button. Without it, to
+    // paid, and the `BuzzTransactionButton` stub mounts its testid. So this
+    // reaches the rule with no cache write-through at all, which is what the
+    // previous version of this comment wrongly said was impossible.
+    mocks.visibility = { ...mocks.visibility, price: null };
+    mocks.eligibility = { ...mocks.eligibility, usedHere: true };
+    await openAndPick();
+
+    await expect.element(page.getByTestId('buzz-submit')).not.toBeInTheDocument();
+    // And the reason renders beside the disabled control, which is the whole
+    // justification for holding there: three dead buttons and no explanation is
+    // worse than the paid button this replaced.
+    await expect.element(page.getByText(/once per gallery/i)).toBeInTheDocument();
+    // Not a claim about spending, on a path that cannot be pressed.
+    await expect.element(page.getByText(/spends a free placement/i)).not.toBeInTheDocument();
+  });
+
   /**
-   * ⚠️ What this file does NOT pin, stated so the pair above is not over-read.
+   * ⚠️ What this file does NOT pin, stated so nothing above is over-read.
    *
-   * `submissionMethod`'s `paidOpen` rule — the one that stops the control
-   * FALLING into paid when free stops being available — is not reachable from
-   * here. In production the handler's `.fetch()` writes the query cache, so
-   * `freeAvailable` drops and the rule fires; this file's `useQuery` mock is
-   * static and does not model that write-through, so `freeAvailable` never
-   * drops and both branches return the same answer.
+   * The mock's `useQuery` returns `mocks.visibility` and only `fetch` reads
+   * `mocks.nextVisibility`, so **nothing here can observe any state keyed on
+   * `freeAvailable` becoming false after a render** — not the free segment's
+   * disabled state, not `freeUnavailableReason` arriving late, not
+   * `slotsHeldKnown`, and not `submissionMethod`'s stale-choice rule, which is
+   * the "lost the race for the last slot" behaviour the feature is built around.
+   * That is broader than the `paidOpen` half this block used to name.
    *
-   * Measured, not assumed: deleting `if (!paidOpen) return 'free'` leaves all
-   * nine tests here green and fails three in `remix-gallery.utils.test.ts`.
-   * That rule is the unit file's to hold, and a faithful cache-writing mock is
-   * the only thing that would move it here.
+   * The stale-choice rule therefore lives **nowhere**: reaching it needs a real
+   * query cache, and that fixture would grow its own bugs for one line. Said
+   * plainly rather than left to look covered.
    */
 });
 

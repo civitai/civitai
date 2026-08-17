@@ -105,20 +105,27 @@ describe('what a refused free submission is told', () => {
 
 describe('submissionMethod', () => {
   it('defaults to free when free is available, and to paid when it is not', () => {
-    expect(submissionMethod(null, true, true)).toBe('free');
-    expect(submissionMethod(null, false, true)).toBe('paid');
+    expect(submissionMethod(null, true, true, true)).toBe('free');
+    expect(submissionMethod(null, false, true, true)).toBe('paid');
   });
 
   it('honours an explicit choice', () => {
-    expect(submissionMethod('paid', true, true)).toBe('paid');
-    expect(submissionMethod('free', true, true)).toBe('free');
+    expect(submissionMethod('paid', true, true, true)).toBe('paid');
+    expect(submissionMethod('free', true, true, true)).toBe('free');
   });
 
   it('never resolves to free once free stops being available', () => {
     // The half that survives losing the race for the last slot: `chosen` still
     // says free, the fresh numbers no longer do, and the control must not submit
     // free anyway.
-    expect(submissionMethod('free', false, true)).toBe('paid');
+    expect(submissionMethod('free', false, true, true)).toBe('paid');
+  });
+
+  it('falls through to paid when NEITHER path is open', () => {
+    // Nothing to hold on. Forcing free here renders a disabled "Submit for
+    // free" on a gallery that takes none; paid-disabled-beside-the-reason is
+    // the honest rendering of "no route in".
+    expect(submissionMethod(null, false, false, false)).toBe('paid');
   });
 
   it.each([
@@ -133,7 +140,7 @@ describe('submissionMethod', () => {
     //
     // Every route into paid is covered, because each is a different line: the
     // stale-choice rule, an explicit press, and the default.
-    expect(submissionMethod(chosen, freeAvailable, false)).toBe('free');
+    expect(submissionMethod(chosen, freeAvailable, false, true)).toBe('free');
   });
 });
 

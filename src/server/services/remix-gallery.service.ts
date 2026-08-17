@@ -1252,7 +1252,7 @@ async function getViewerPendingSubmissions({
       placerId: viewerId,
       status: 'pending',
     },
-    select: { id: true, amount: true, data: true, createdAt: true, expiresAt: true },
+    select: { id: true, amount: true, free: true, data: true, createdAt: true, expiresAt: true },
     orderBy: { createdAt: 'asc' },
     take: REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   });
@@ -1271,6 +1271,7 @@ async function getViewerPendingSubmissions({
   return entries.map((row) => ({
     placementId: row.id,
     amount: row.amount,
+    free: row.free,
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
     image: toQueueImage(
@@ -1737,6 +1738,10 @@ export async function getMyRemixGallerySubmissions({
       ownerId: true,
       status: true,
       amount: true,
+      // The submitter's side of the same problem the owner queue had: `amount`
+      // is 0 on a free row, so without this every Buzz figure and every "your
+      // Buzz is on its way back" renders about money that never moved.
+      free: true,
       data: true,
       createdAt: true,
       expiresAt: true,

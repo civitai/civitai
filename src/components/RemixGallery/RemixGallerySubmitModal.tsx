@@ -98,13 +98,19 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   const freeAvailable = offer.available && slotsHeldKnown;
   // Not `visibility.open`, which is `mode !== 'off'` and says nothing about
   // price. A gallery can take free submissions and refuse every paid one.
-  const paidOpen = paidSubmissionOpen(visibility?.price);
+  //
+  // ⚠️ An UNLOADED gallery is not a closed one. `visibility?.price` is undefined
+  // while the query is in flight, and treating that as closed put the card on
+  // "Submit for free" for a beat on every ordinary paid gallery before it
+  // flipped. Unknown reads as open, which is the pre-existing behaviour and the
+  // one that does not flash.
+  const paidOpen = visibility ? paidSubmissionOpen(visibility.price) : true;
   // Withheld while the answer is in flight, so the card says nothing rather than
   // briefly asserting a reason drawn from defaulted zeroes.
   const freeUnavailableReason =
     selected != null && freeInfo && slotsHeldKnown ? offer.reason : null;
 
-  const method = submissionMethod(chosen, freeAvailable, paidOpen);
+  const method = submissionMethod(chosen, freeAvailable, paidOpen, takesFree);
 
   const submit = trpc.placement.submitToRemixGallery.useMutation({
     onSuccess: () => {
@@ -456,14 +462,20 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                   server-side rule and both of its facts already come back from
                   `getFreePlacementAllowance`; a sentence that spells either one
                   out is a claim this file cannot keep true. */}
-              {method === 'free' && (
+              {method === 'free' && freeAvailable && (
                 <Text size="xs" c="dimmed">
                   This spends a free placement from today&apos;s allowance, and it is spent even if
                   the creator declines.
                 </Text>
               )}
 
-              {method === 'paid' && !freeRefusal && freeUnavailableReason && (
+              {/* Not gated on `method === 'paid'`. With paid closed the card
+                  holds on free, so that gate made the sentence explaining WHY
+                  free is unavailable unreachable in exactly the state where
+                  every control is disabled — three dead buttons and no reason.
+                  `offer.reason` is null whenever free is actually on offer, so
+                  this cannot fire against a working button. */}
+              {!freeRefusal && freeUnavailableReason && (
                 <Text size="xs" c="dimmed">
                   {freeUnavailableReason}
                 </Text>

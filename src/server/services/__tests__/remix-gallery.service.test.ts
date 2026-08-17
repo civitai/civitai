@@ -144,6 +144,7 @@ const {
   getRemixGallery,
   getRemixGalleryVisibility,
   getRemixGalleryFreeEligibility,
+  getMyRemixGallerySubmissions,
   getPendingRemixGallerySubmissions,
   declineOutOfBandRemixGallerySubmissions,
 } = await import('~/server/services/remix-gallery.service');
@@ -1966,6 +1967,48 @@ describe('what the owner’s review queue says a free submission is worth', () =
     expect(row.earnings).toMatchObject({ approve: expect.any(Number) });
     expect(row.earnings!.approve).toBeGreaterThan(0);
     expect(row.earnings!.decline).toBeGreaterThan(0);
+  });
+});
+
+describe('every read that carries a Buzz figure also carries `free`', () => {
+  /**
+   * The sweep, as a test rather than as a grep someone ran once.
+   *
+   * `amount` is 0 on a free row by DB constraint, so any consumer that renders
+   * it without knowing the row is free shows "0 Buzz" — and the copy around it
+   * ("your Buzz is on its way back") is false outright. The owner queue was
+   * found by review; these two were found by sweeping, and nothing would have
+   * caught them otherwise.
+   *
+   * A new read that returns `amount` and not `free` belongs in this list.
+   */
+  it('the submitter’s own submissions list', async () => {
+    placementFindMany.mockResolvedValue([]);
+    await getMyRemixGallerySubmissions({
+      placerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+
+    const select = placementFindMany.mock.calls[0][0].select;
+    expect(select).toMatchObject({ amount: true, free: true });
+  });
+
+  it('the submitter’s pending rows on the image detail card', async () => {
+    queryRaw.mockImplementation(async () => [
+      { exists: false, count: 0, nsfwLevel: NsfwLevel.PG, minor: false, showable: true },
+    ]);
+    placementFindMany.mockResolvedValue([]);
+
+    await getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: allBrowsingLevelsFlag,
+      viewerId: PLACER,
+      domainLevels: allBrowsingLevelsFlag,
+    });
+
+    const call = placementFindMany.mock.calls.find((args) => args[0]?.select?.amount);
+    expect(call?.[0].select).toMatchObject({ amount: true, free: true });
   });
 });
 

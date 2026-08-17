@@ -270,8 +270,13 @@ export const paidSubmissionOpen = (price: number | null | undefined) =>
  * paid lands either on a disabled button with no explanation, or on an enabled
  * one that opens the buy-Buzz flow for a submission the server will refuse.
  * Being asked to top up for a guaranteed refusal is worse than the refusal. So
- * `paidOpen` is checked first and the control stays on free — disabled, beside
- * the reason it is disabled.
+ * `paidOpen` is checked first and the control stays on free.
+ *
+ * ⚠️ That leaves the free button disabled whenever free is also unavailable, and
+ * the card MUST still render `freeSubmissionOffer`'s reason there — the sentence
+ * saying why. Gating that sentence on the paid option being selected made it
+ * unreachable in exactly this state, which is three disabled controls and no
+ * explanation. If you change this function, check what renders beside it.
  *
  * Pure and out here because its inversion charges someone Buzz, and because
  * `paidOpen` reaching only the copy — true in the sentence, false in the control
@@ -280,8 +285,14 @@ export const paidSubmissionOpen = (price: number | null | undefined) =>
 export const submissionMethod = (
   chosen: 'free' | 'paid' | null,
   freeAvailable: boolean,
-  paidOpen: boolean
+  paidOpen: boolean,
+  /** Whether this gallery accepts free submissions at all. */
+  takesFree: boolean
 ): 'free' | 'paid' => {
-  if (!paidOpen) return 'free';
+  // `takesFree`, not just `!paidOpen`: with NEITHER path open there is nothing
+  // to hold on, and forcing free there renders a disabled "Submit for free" on
+  // a gallery that takes none. Falling through puts the card on paid, disabled,
+  // beside the reason — which is the honest rendering of "no route in".
+  if (!paidOpen && takesFree) return 'free';
   return chosen === 'free' && !freeAvailable ? 'paid' : chosen ?? (freeAvailable ? 'free' : 'paid');
 };
