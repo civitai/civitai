@@ -54,26 +54,24 @@ reported on 08-16 and 08-17 starts from untouched.
             the resolver took the last URL segment and `/posts/12345` ends in digits. It returned image
             12345 — a real, unrelated row — presented as the thing that was pasted. Silent wrong-content,
             no error.
-- [ ] **Enumerate Retool's actual app list before access ends — the export inventory is incomplete.**
-      Not a refresh of known exports; a search for apps nobody has recorded. The inventory was built from
-      *the ClickUp subtasks of `868kkxqpn`, one per app* ([exports
-      README](retool-exports/README.md)), so it only ever contained what was ticketed — and the handover
-      already notes the tracker listed **9 of the parent ticket's 13 subtasks**. Two moderator-facing
-      Retool apps are now confirmed absent from it, both found by accident:
-      - **Post Lookup** — replacement built 08-17, see below.
-      - **Model Lookup** — live and moderator-gated in the main app
-        ([`ModelCardContextMenu.tsx`](../../src/components/Cards/ModelCardContextMenu.tsx),
-        [`TopRightIcons.tsx`](../../src/components/ImageGeneration/GenerationForm/ResourceSelectModal/TopRightIcons.tsx)),
-        referred to by a moderator on 08-05 as a tool they use, and mentioned in **no** migration
-        document. **No replacement exists and none is planned.** It breaks at the cutoff.
+- [x] **Repoint the two main-app lookup buttons at Bulk Image Manager.** Both `NEXT_PUBLIC_POST_LOOKUP_URL`
+      and `NEXT_PUBLIC_MODEL_LOOKUP_URL` target Retool's Bulk Image Manager, which accepts
+      `urlparams.postId` / `modelId` / `modelVersionId` / `collectionId` / `userId` — "lookup post opens
+      all the images in Retool" is that app, not a separate one. It is exported, ported, and already
+      supports both entry points, so this is the config change it was first reported as:
+      - `NEXT_PUBLIC_POST_LOOKUP_URL` → `<moderator app>/retool/bulk-image-manager?source=post&q=`
+      - `NEXT_PUBLIC_MODEL_LOOKUP_URL` → `<moderator app>/retool/bulk-image-manager?source=model&q=`
 
-      Of the four moderator lookup entry points in the main app
-      ([`client-schema.ts`](../../src/env/client-schema.ts)), user and chat map to exported apps
-      (`user-lookup-v2`, `chat-audit`); post and model do not. Both gaps were found by following links
-      outward from the main app rather than inward from the tracker — **that direction has not been swept
-      systematically, and it is the only direction that finds an app nobody ticketed.**
+      **An earlier revision of this file claimed Post Lookup and Model Lookup were un-exported Retool apps
+      and that the inventory was therefore incomplete. That was wrong** — no such apps exist; the names
+      were inferred from the main app's button labels and never checked against Retool's app list, which
+      does not contain them. The four moderator entry points in
+      [`client-schema.ts`](../../src/env/client-schema.ts) all resolve to exported, ported apps:
+      user → User Lookup, chat → Chat Audit, post and model → Bulk Image Manager.
 
-      After the cutoff an un-enumerated app is not stale, it is unrecoverable.
+      The tracker genuinely did list 9 of 13 subtasks, and sections 1.4 and 1.10 are still absent from
+      [`retool-migration-tasks.md`](retool-migration-tasks.md) — but subtasks are not apps, and nothing
+      now suggests an unported one.
 - [ ] **Re-extract every Retool export while access remains** — handover
       [#11](retool-migration-handover.md). The extractor only learned option sets on 08-07 and layout on
       08-08, so older exports lack tab labels, canned workflows, role gates and pane structure. It is also

@@ -27,6 +27,8 @@ detail before doing anything destructive.
 | 4 | Apply **3 SQL migrations** by hand (each `CREATE INDEX CONCURRENTLY`, so outside a transaction) | Page-access table + mod-activity history + a report index → [detail](retool-migration-handover-detail.md#2-database-migrations--none-are-auto-applied) |
 | 5 | **Grant 5 new pages on `/admin`** — `article-lookup`, `user-reports`, `bulk-image-manager`, `front-page-audit`, `image-help` | A new page is reachable only by `moderator:admin` until granted. Grant Bulk Image Manager **narrowly**. Front Page Audit's rating buttons are gated on its own grant, so a moderator without it sees the sweep read-only → [detail](retool-migration-handover-detail.md#2b-grant-the-new-pages-on-admin) |
 
+| 5b | **Repoint the main app's moderator lookup buttons** off Retool, in `civitai`'s env: `NEXT_PUBLIC_POST_LOOKUP_URL` → `<mod app>/retool/bulk-image-manager?source=post&q=`, `NEXT_PUBLIC_MODEL_LOOKUP_URL` → `?source=model&q=`, `NEXT_PUBLIC_USER_LOOKUP_URL` → `<mod app>/retool/user-lookup?q=`, `NEXT_PUBLIC_CHAT_LOOKUP_URL` → `<mod app>/retool/chat-audit`. Each control appends a bare id to the value. | All four still point at Retool app URLs and die with it. Post and model both target Retool's **Bulk Image Manager** (`urlparams.postId` / `modelId`), not separate apps — there is nothing left to port for them. |
+
 ## Decisions only a dev can make
 
 | # | Decide | Detail |
