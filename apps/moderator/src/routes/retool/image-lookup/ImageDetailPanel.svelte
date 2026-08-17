@@ -4,7 +4,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
-  import { entityUrl, userUrl, userLookupUrl } from '$lib/entity-url';
+  import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { PageData } from './$types';
 
@@ -19,7 +19,6 @@
   let flagging = $state(false);
 
   const imageUrl = $derived(entityUrl(civitaiUrl, 'image', image.id));
-  const postUrl = $derived(entityUrl(civitaiUrl, 'post', image.postId));
 
   const fields = $derived<[string, string][]>([
     ['Uploaded', dateTime(image.createdAt)],
@@ -102,25 +101,21 @@
   {/if}
 
   <div class="mt-2 flex flex-wrap items-baseline gap-x-3 text-sm">
+    <!-- The uploader's name IS the lookup link, rather than a link to their public profile beside a
+         separate "look up uploader". Two links to one account is a choice a moderator has to make on
+         every image, and the profile is the answer to almost none of the questions this page is open
+         for — User Lookup carries a link to it for the times it is. -->
     <span class="text-dark-2">by</span>
-    {#if image.username}
-      <a
-        href={userUrl(civitaiUrl, image.username)}
-        target="_blank"
-        rel="noreferrer"
-        class={LINK_CLASS}
-      >
-        {image.username}
-      </a>
-    {:else}
-      <span class="text-dark-0">#{image.userId}</span>
-    {/if}
+    <a href={userLookupUrl(image.userId)} class={LINK_CLASS}>
+      {image.username ?? `#${image.userId}`}
+    </a>
     {#if image.userBannedAt}
       <Badge variant="destructive">uploader banned</Badge>
     {/if}
-    <a href={userLookupUrl(image.userId)} class={LINK_CLASS}>look up uploader</a>
-    {#if postUrl}
-      <a href={postUrl} target="_blank" rel="noreferrer" class={LINK_CLASS}>post {image.postId}</a>
+    <!-- Also into the app: the post's other images are the usual reason an image lookup is not the end
+         of the investigation, and the panel it lands on carries its own way out to the site. -->
+    {#if image.postId}
+      <a href="?post={image.postId}" class={LINK_CLASS}>post {image.postId}</a>
     {/if}
   </div>
 

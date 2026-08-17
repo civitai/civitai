@@ -43,8 +43,15 @@
         · {result.images.length} image{result.images.length === 1 ? '' : 's'}
       </p>
     </div>
-    <Button variant="outline" size="sm" href="{civitaiUrl}/posts/{post.id}" target="_blank">
-      Open post
+    <!-- The way out. Every other link on this panel stays in the app, so the one that leaves says so. -->
+    <Button
+      variant="outline"
+      size="sm"
+      href="{civitaiUrl}/posts/{post.id}"
+      target="_blank"
+      rel="noreferrer"
+    >
+      Open post on site
     </Button>
   </div>
 
