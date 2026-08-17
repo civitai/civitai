@@ -8,6 +8,7 @@
     ToggleGroupItem,
   } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { reportStatuses } from '$lib/reports';
+  import { urlWith, urlWithMulti } from '$lib/url';
 
   let {
     statuses,
@@ -38,36 +39,32 @@
 
   // Every filter change resets to page 1 and drops the cursor: both index a queue that no longer
   // exists once the filter moved. `user` survives — the open account is not part of the filter.
-  function apply(mutate: (params: URLSearchParams) => void) {
-    const params = new URLSearchParams(pageState.url.search);
-    mutate(params);
-    params.set('page', '1');
-    params.delete('cursor');
-    goto(`${pageState.url.pathname}?${params}`, { keepFocus: true });
-  }
+  const navigate = (href: string) =>
+    goto(urlWith(new URL(href, pageState.url), { page: 1, cursor: null }), { keepFocus: true });
 
-  // An empty `?status=` is how "every status" is said out loud — dropping the param instead would fall
-  // back to the Pending+Processing default and read as the filter having been ignored.
   function setStatuses(next: string[]) {
     draftStatuses = next;
-    apply((params) => {
-      params.delete('status');
-      if (next.length === 0) params.set('status', '');
-      else next.forEach((s) => params.append('status', s));
-    });
+    // emptyMeansAll: this page's load reads an ABSENT `?status=` as the Pending+Processing default, so
+    // a cleared selection has to survive as an empty param or it silently reapplies that default.
+    navigate(urlWithMulti(pageState.url, 'status', next, { emptyMeansAll: true }));
   }
 
   const setParam = (key: string, value: string) =>
-    apply((params) => (value ? params.set(key, value) : params.delete(key)));
+    navigate(urlWith(pageState.url, { [key]: value || null }));
 
   const active = $derived(
     Boolean(reportedBy || reportedFrom || reportedTo) || pageState.url.searchParams.has('status')
   );
 
   const clearAll = () =>
-    apply((params) => {
-      for (const key of ['status', 'reportedBy', 'reportedFrom', 'reportedTo']) params.delete(key);
-    });
+    navigate(
+      urlWith(pageState.url, {
+        status: null,
+        reportedBy: null,
+        reportedFrom: null,
+        reportedTo: null,
+      })
+    );
 </script>
 
 <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">

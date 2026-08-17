@@ -10,10 +10,12 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import type { ActionData, PageData } from './$types';
   import { writeEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
+  import { urlWith } from '$lib/url';
   import { BULK_SOURCE_LABELS, BULK_SOURCES } from './sources';
   import { DEFAULT_LIMIT, LIMIT_OPTIONS, MAX_LIMIT } from './limits';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
@@ -128,12 +130,17 @@
 
   // `limit` is carried through a new search rather than reset: a moderator who raised it did so because
   // this account needs it, and every subsequent lookup on that account would otherwise snap back to 200.
-  const navigate = (value: string, limit: number) => {
-    const params = new URLSearchParams({ source });
-    if (value) params.set('q', value);
-    if (limit !== DEFAULT_LIMIT) params.set('limit', String(limit));
-    goto(`?${params}`, { keepFocus: true });
-  };
+  // Built from scratch rather than mutated: changing the source or the term makes every other param on
+  // the URL — a cursor, a previous term — describe a batch that no longer exists.
+  const navigate = (value: string, limit: number) =>
+    goto(
+      urlWith(new URL(page.url.pathname, page.url), {
+        source,
+        q: value || null,
+        limit: limit === DEFAULT_LIMIT ? null : limit,
+      }),
+      { keepFocus: true }
+    );
 
   const search = (e: SubmitEvent) => {
     e.preventDefault();
