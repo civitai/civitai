@@ -1,4 +1,5 @@
 import { NsfwLevel } from '~/server/common/enums';
+import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 
 /**
  * What a remix-gallery placement carries. Opaque to the placement foundation,
@@ -58,7 +59,8 @@ export const REMIX_GALLERY_ROW_WIDTH = 4;
  * about a review queue the owner can work through rather than about spam
  * economics. Their remedy for the rest is block.
  */
-export const REMIX_GALLERY_MAX_PENDING_PER_OWNER = 10;
+export const REMIX_GALLERY_MAX_PENDING_PER_OWNER =
+  PLACEMENT_SURFACES.remixGallery.maxPendingPerOwner;
 
 /**
  * How long an approved entry is protected from the owner removing it.

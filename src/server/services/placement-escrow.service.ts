@@ -425,6 +425,20 @@ export async function holdPlacementEscrow({
   if (!Number.isSafeInteger(amount) || amount < 0)
     throw new Error(`placement escrow: amount must be a non-negative integer, got ${amount}`);
 
+  // A free placement must never reach the escrow, even for zero. `amount === 0`
+  // returns harmlessly below, so this is not about the money — it is about
+  // `expiresAt` and `spendType` being stamped by whichever path made the row, and
+  // about a caller that reached here having taken the wrong branch somewhere
+  // upstream. Refused on the mutation rather than absorbed, because absorbing it
+  // is how the free path silently acquires a second, half-built creation route.
+  const row = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { free: true },
+  });
+  if (!row) throw new Error(`placement escrow: placement ${placementId} not found`);
+  if (row.free)
+    throw new Error(`placement escrow: placement ${placementId} is free and takes no escrow`);
+
   // Stamped from the surface's compiled default BEFORE the config is read.
   // `getPlacementConfig` touches KeyValue, so it can throw — and a throw here
   // used to leave a pending row with a null `expiresAt`, which is never
@@ -678,6 +692,16 @@ async function payoutLegsFor(
   placement: PlacementRow,
   held: Map<string, number>
 ): Promise<PlannedLeg[]> {
+  // A free placement never entered escrow, so there is nothing to release on any
+  // path: no principal, no decline fee, no seller split, no forfeit.
+  //
+  // Stated rather than left to arithmetic. Every branch below already computes to
+  // zero from the empty `held` map and would be filtered out before persisting —
+  // but that is a property of four separate expressions all happening to reduce
+  // to nothing, which the next person to add a leg has to rediscover. The row
+  // says it is free; this says what free means, once.
+  if (placement.free) return [];
+
   const fee = held.get('holdFee') ?? 0;
   const principal = held.get('holdPrincipal') ?? 0;
   const outcome = placementOutcomeFromStatus(

@@ -290,6 +290,10 @@ const givenPlacement = (overrides: Record<string, unknown> = {}) => {
     // double answer `undefined` where Postgres answers NULL, which is a
     // different thing to a `where: { spendType: null }` predicate.
     spendType: null,
+    // Present and false, as the column is on a real row. Left off, `free` reads
+    // `undefined` here where Postgres answers false — falsy either way today, and
+    // a difference the moment anything compares it rather than tests it.
+    free: false,
     expiresAt: null,
     resolvedAt: null,
     resolvedById: null,
@@ -1746,5 +1750,102 @@ describe('the Buzz call bound', () => {
     expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
     expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThan(LEG_RETRY_BACKOFF_MINUTES * 60_000);
     expect(BUZZ_CALL_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+  });
+});
+
+describe('a free placement never touches the money path', () => {
+  /**
+   * Escrow that a free row must not be able to release.
+   *
+   * Receipted, so `heldAmountsFor` counts it as real Buzz sitting in the escrow
+   * account. That state should be unreachable — the free path takes no holds and
+   * `holdPlacementEscrow` refuses a free row — and it is exactly the state the
+   * guard has to survive, because "unreachable" is a claim about today's callers
+   * and PRs 2 and 4 are the callers that do not exist yet.
+   *
+   * Without this fixture the free-row tests below are vacuous: with no holds,
+   * every branch of the payout already computes to zero and is filtered out, so
+   * deleting the guard would change nothing they observe.
+   */
+  const givenReceiptedHolds = () => {
+    db.legs.set('1:holdFee', {
+      placementId: 1,
+      kind: 'holdFee',
+      amount: 300,
+      transactionId: 'placement-1-holdFee',
+      attempts: 1,
+      createdAt: new Date(0),
+    });
+    db.legs.set('1:holdPrincipal', {
+      placementId: 1,
+      kind: 'holdPrincipal',
+      amount: 700,
+      transactionId: 'placement-1-holdPrincipal',
+      attempts: 1,
+      createdAt: new Date(0),
+    });
+  };
+
+  it('plans nothing on approval, even with escrow sitting behind the row', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    givenReceiptedHolds();
+    clearMoneyMocks();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(legsFor(1)).toEqual({ holdFee: 300, holdPrincipal: 700 });
+    expect(moneyMoved()).toBe(0);
+  });
+
+  it('takes no decline fee, so a decline costs the placer nothing', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    givenReceiptedHolds();
+    clearMoneyMocks();
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    expect(legsFor(1)).not.toHaveProperty('feeToOwner');
+    expect(moneyMoved()).toBe(0);
+  });
+
+  it('refunds nothing on expiry, because nothing was ever taken', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    givenReceiptedHolds();
+    clearMoneyMocks();
+
+    await settlePlacement({ placementId: 1, action: 'expire' });
+
+    expect(legsFor(1)).not.toHaveProperty('principalToPlacer');
+    expect(moneyMoved()).toBe(0);
+  });
+
+  it('still settles the row, so the slot it holds is released', async () => {
+    givenPlacement({ free: true, amount: 0 });
+
+    const { settled, placement } = await settlePlacement({ placementId: 1, action: 'decline' });
+
+    // The money is the part that does nothing. The status transition is the part
+    // that matters — it is what takes the placement out of
+    // `FREE_SLOT_HOLDING_STATUSES` and hands the slot to the next placer.
+    expect(settled).toBe(true);
+    expect(placement.status).toBe('declined');
+  });
+
+  it('refuses to take escrow at all, rather than holding zero', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    clearMoneyMocks();
+
+    await expect(
+      holdPlacementEscrow({
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 100,
+        spendType: 'yellow',
+      })
+    ).rejects.toThrow(/free/);
+
+    expect(moneyMoved()).toBe(0);
+    expect(legsFor(1)).toEqual({});
   });
 });
