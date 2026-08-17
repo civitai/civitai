@@ -44,9 +44,13 @@ function mockPriorItem(status: CollectionItemStatus = CollectionItemStatus.REVIE
 }
 
 // The bulk UPDATE binds, in order: reviewedById, reviewedAt, updatedAt, status,
-// rejectionReason, rejectionDetail, collectionId, ...itemIds.
+// rejectionReason, rejectionDetail, collectionId, ...itemIds. Guard the shape here so a
+// dropped or reordered binding (e.g. the hand-set `updatedAt`) fails as "wrong bind shape"
+// rather than as a misleading "expected null to equal 'Duplicate'" on the reason itself.
 function rejectionBindings() {
   const [, ...values] = mockDbWrite.$executeRaw.mock.calls[0];
+  expect(values).toHaveLength(8);
+  expect(values[2]).toBeInstanceOf(Date);
   return { reason: values[4], detail: values[5] };
 }
 
@@ -187,5 +191,29 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
     });
     const [{ details }] = createNotificationMock.mock.calls[0];
     expect(details.reason).toBe('This collection needs to stay PG-13.');
+  });
+
+  // The AI job derives `rejectionReason` from `write.status`, not from `write.reason`'s
+  // truthiness — an AI rejection with no message (`outcome.message ?? ''`, which is falsy)
+  // must still land as Automated, not silently fall back to no reason at all.
+  it("records the AI reviewer's rejection under Automated even with an empty message", async () => {
+    await updateCollectionItemsStatus({
+      input: {
+        collectionId: COLLECTION_ID,
+        collectionItemIds: [ITEM_ID],
+        status: CollectionItemStatus.REJECTED,
+        rejectionReason: CollectionItemRejectionReason.Automated,
+        rejectionDetail: '',
+      },
+      userId: REVIEWER_ID,
+      isSystem: true,
+    });
+
+    expect(rejectionBindings()).toEqual({
+      reason: CollectionItemRejectionReason.Automated,
+      detail: null,
+    });
+    const [{ details }] = createNotificationMock.mock.calls[0];
+    expect(details.reason).toBeUndefined();
   });
 });

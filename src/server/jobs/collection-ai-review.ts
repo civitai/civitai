@@ -253,7 +253,10 @@ async function applyOutcomes({
           collectionId,
           collectionItemIds: write.ids,
           status: write.status,
-          rejectionReason: write.reason ? CollectionItemRejectionReason.Automated : undefined,
+          rejectionReason:
+            write.status === CollectionItemStatus.REJECTED
+              ? CollectionItemRejectionReason.Automated
+              : undefined,
           rejectionDetail: write.reason,
         },
         userId: SYSTEM_USER_ID,
