@@ -46,18 +46,27 @@ import { booleanString } from '~/utils/zod-helpers';
  * "withholds RentCivit". Re-indexing a model whose coverage did not move is a no-op, so the query
  * errs wide.
  *
- * GET /api/admin/temp/backfill-trained-model-permissions?token=<WEBHOOK_TOKEN>
+ * GET (dry run) / POST (live) /api/admin/temp/backfill-trained-model-permissions?token=<WEBHOOK_TOKEN>
  *   &action=repair|reindex   (default repair)
- *   &dryRun=true|false       (default true)
+ *   &dryRun=true|false       (default true; a live run must be POSTed)
  *   &batchSize=1000          (default 1000; max 2000)
  *   &limit=<n>               (optional; bound a first run to prove the shape)
+ *   &afterId=<modelId>       (optional; resume after this id)
  *
  * Side effects when dryRun=false:
  *   - repair:  UPDATE Model.allowCommercialUse to [Image, RentCivit, Rent, Sell] for matched rows,
  *              and queue modelsSearchIndex updates for them.
  *   - reindex: queue modelsSearchIndex updates only.
  *
- * Both responses return every id touched — a mass licence change needs a record of which rows moved.
+ * Both responses return every id touched, and each batch logs its ids and its last id — a mass
+ * licence change needs a record of which rows moved, and a run this long can outlive the request.
+ * `limit` alone only chunks `repair`, which is self-consuming (a repaired row stops matching);
+ * `reindex` is not, so chunking it needs `afterId` from the previous batch's `lastId`.
+ *
+ * ⚠️ The UPDATE is raw SQL and so writes no `diffEntityChanges` entry, though `allowCommercialUse`
+ * is a watched field. That is deliberate — routing 121k rows through the diffing path to record a
+ * change every row shares is not worth it — but it means the response and these logs are the only
+ * record if a creator later disputes that their licence changed. Keep them.
  */
 
 /** b5455112c2 — before this, a bare {Sell} was reachable through the form and meant it. */
@@ -68,10 +77,17 @@ const schema = z.object({
   dryRun: booleanString().default(true),
   batchSize: z.coerce.number().min(1).max(2000).default(1000),
   limit: z.coerce.number().min(1).optional(),
+  afterId: z.coerce.number().min(0).default(0),
 });
 
 export default WebhookEndpoint(async (req, res) => {
   const params = schema.parse(req.query);
+
+  // A live run rewrites six figures of licence rows, and a GET is retried by proxies and prefetched
+  // by browsers off a pasted URL. Dry runs stay readable from anywhere.
+  if (!params.dryRun && req.method !== 'POST') {
+    return res.status(405).json({ error: 'A live run must be POSTed' });
+  }
 
   const candidates =
     params.action === 'repair'
@@ -82,6 +98,7 @@ export default WebhookEndpoint(async (req, res) => {
             AND m."allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
             AND m.status != 'Deleted'
             AND m."createdAt" >= ${CASCADE_LANDED_AT}
+            AND m.id > ${params.afterId}
           ORDER BY m.id
         `
       : await dbRead.$queryRaw<{ id: number }[]>`
@@ -90,6 +107,7 @@ export default WebhookEndpoint(async (req, res) => {
           WHERE NOT (m."allowCommercialUse" && ARRAY['RentCivit']::"CommercialUse"[])
             AND m."allowCommercialUse" && ARRAY['Rent', 'Sell']::"CommercialUse"[]
             AND m.status != 'Deleted'
+            AND m.id > ${params.afterId}
           ORDER BY m.id
         `;
 
@@ -125,9 +143,12 @@ export default WebhookEndpoint(async (req, res) => {
       batch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
 
+    // Ids per batch, not just a count: a run long enough to outlive the ingress timeout returns
+    // nothing, and then the log is the only record of which licences moved.
     console.log(
       `backfill-trained-model-permissions (${params.action}): ` +
-        `batch ${Math.floor(i / params.batchSize) + 1} — ${batch.length} models`
+        `batch ${Math.floor(i / params.batchSize) + 1} — ${batch.length} models — ` +
+        `lastId ${batch[batch.length - 1]} — ids ${batch.join(',')}`
     );
   }
 

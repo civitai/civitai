@@ -26,13 +26,17 @@
 -- The two branches above the catch-all are deliberately untouched: EcosystemCheckpoints and
 -- ExternalGeneration are mod-curated routes onto first-party engines, not creator-licensed weights.
 
--- Wrapped: these are applied by hand, statement by statement, and a DROP that lands without its
--- CREATE takes down every consumer of the view.
-BEGIN;
+-- One statement, not DROP + CREATE. Only the WHERE clause moves - the output columns keep their
+-- names, types and order - so REPLACE is legal, and it leaves no window in which the view does not
+-- exist. A transaction would not be equivalent here: this is applied by hand, and a client that
+-- opens a connection per statement commits the bare BEGIN and then autocommits the DROP alone.
+--
+-- GenerationCoverage is on the hot read path (resource-data.redis.ts, caches.ts, model.service.ts,
+-- v1/model-versions/mini/[id].ts), and REPLACE still takes ACCESS EXCLUSIVE. Bound the wait so one
+-- long-running reader makes this abort instead of queueing every generation read behind it.
+SET lock_timeout = '3s';
 
-DROP VIEW "GenerationCoverage";
-
-CREATE VIEW "GenerationCoverage"("modelId", "modelVersionId", covered) AS
+CREATE OR REPLACE VIEW "GenerationCoverage"("modelId", "modelVersionId", covered) AS
 SELECT
   m.id AS "modelId",
   mv.id AS "modelVersionId",
@@ -95,5 +99,3 @@ WHERE
       OR m.type = 'Upscaler'::"ModelType"
     )
   );
-
-COMMIT;
