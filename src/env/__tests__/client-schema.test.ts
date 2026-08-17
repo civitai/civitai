@@ -103,13 +103,14 @@ describe('env/client-schema', () => {
       expect(clientSchema.parse({ NEXT_PUBLIC_LOG_TRPC: 'true' }).NEXT_PUBLIC_LOG_TRPC).toBe(true);
     });
 
-    it('falls back to false rather than throwing on a value it cannot parse', async () => {
+    it('treats an empty value as unset rather than as a parse error', async () => {
       const { clientSchema } = await importWith({});
-      for (const value of ['', 'verbose']) {
-        expect(clientSchema.parse({ NEXT_PUBLIC_LOG_TRPC: value }).NEXT_PUBLIC_LOG_TRPC).toBe(
-          false
-        );
-      }
+      expect(clientSchema.parse({ NEXT_PUBLIC_LOG_TRPC: '' }).NEXT_PUBLIC_LOG_TRPC).toBe(false);
+    });
+
+    it('still rejects a value it cannot parse', async () => {
+      const { clientSchema } = await importWith({});
+      expect(() => clientSchema.parse({ NEXT_PUBLIC_LOG_TRPC: 'verbose' })).toThrow();
     });
   });
 });

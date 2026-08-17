@@ -25,10 +25,14 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_GPTT_UUID_GREEN: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: z.stringbool().default(true),
-  // `.catch` because the read below was reading the wrong variable name until #4035:
-  // any environment already carrying an unparseable value had been inert, and would
-  // otherwise start throwing out of `~/env/client` the moment the read went live.
-  NEXT_PUBLIC_LOG_TRPC: z.stringbool().default(false).catch(false),
+  // An empty value reads as unset rather than as a parse error: the read below named
+  // the wrong variable until #4035, so a config carrying a valueless key had been
+  // inert and would otherwise start throwing out of `~/env/client`. Anything else
+  // unparseable still throws, as it does for every other stringbool here.
+  NEXT_PUBLIC_LOG_TRPC: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.stringbool().default(false)
+  ),
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string().optional(),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.url().optional(),
