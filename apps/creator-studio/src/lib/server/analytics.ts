@@ -4,6 +4,7 @@ import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
+import { VIEW_ENTITY, IMPRESSION_ENTITY } from '$lib/server/view-entities';
 
 export type { AudienceBucket, ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
 
@@ -31,6 +32,7 @@ export type ContentTotals = {
   profileViews: number;
   imageViews: number;
   articleViews: number;
+  impressions: number;
 };
 export type ContentAnalytics = {
   reactions: TimePoint[];
@@ -40,6 +42,10 @@ export type ContentAnalytics = {
   profileViews: TimePoint[];
   imageViews: TimePoint[];
   articleViews: TimePoint[];
+  /** Feed impressions on the creator's images. Null while the pipeline is dark — see impressionsTracking. */
+  impressions: TimePoint[];
+  /** False until any impression row exists at all, so the UI can say "not collecting yet" instead of "0". */
+  impressionsTracking: boolean;
   totals: ContentTotals;
 };
 
@@ -82,7 +88,25 @@ export type ComicSummary = {
   chapters: number;
   readers: number;
   newReaders: number;
+  projectViews: number;
+  chapterReads: number;
 };
+
+// `tracking` distinguishes "nothing to show yet" from "zero", which these surfaces need because their tables
+// are live and empty until the emitting code deploys and the backfill runs. Rendering 0 in that window reads
+// as a broken feature — and since a mistyped entityType also returns zero silently, an empty chart already
+// carries two meanings without adding a third.
+export type ComicsPanel = { comics: ComicSummary[]; tracking: boolean };
+
+export type Model3dSummary = {
+  model3dId: number;
+  name: string;
+  coverUrl: string | null;
+  nsfwLevel: number;
+  published: boolean;
+  views: number;
+};
+export type Model3dPanel = { models: Model3dSummary[]; tracking: boolean };
 
 // The article equivalent of ImageViewDetail. No comment series: the `comments` table's type enum covers
 // Model/Image/Post/Comment/Review/Bounty/BountyEntry and has no Article arm, so there is nothing to read.
@@ -133,9 +157,16 @@ export const getTopMedia = createCache({
 }).get;
 
 export const getComics = createCache({
-  name: 'analytics:comics:v1',
+  name: 'analytics:comics:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchComics(userId, from, to),
+  ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
+}).get;
+
+export const getModel3ds = createCache({
+  name: 'analytics:model3d:v1',
+  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
+    fetchModel3ds(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
@@ -271,7 +302,7 @@ async function articleIdsFor(uid: number): Promise<number[]> {
 function articleViewsDailySql(ids: number[], from: string, to: string): string {
   const fill = `ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
   if (!ids.length) return `SELECT toDate('${from}') AS date, 0 AS value WHERE 0 ${fill}`;
-  return `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = 'Article' AND entityId IN (${ids.join(
+  return `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId IN (${ids.join(
     ','
   )}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ${fill}`;
 }
@@ -288,7 +319,7 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
   // entityId, and the owner predicate is what keeps this off a broad scan.
   const [viewRows, reactionRows] = await Promise.all([
     ch.$query<{ articleId: number | string; views: number | string }>(
-      `SELECT entityId AS articleId, sum(views) AS views FROM daily_views WHERE entityType = 'Article' AND entityId IN (${ids.join(
+      `SELECT entityId AS articleId, sum(views) AS views FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId IN (${ids.join(
         ','
       )}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY articleId ORDER BY views DESC LIMIT 100`
     ),
@@ -333,6 +364,28 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
     .sort((x, y) => y.views - x.views);
 }
 
+// Feed impressions on this creator's images. Reads `impressions_daily_by_owner`, whose primary key is
+// `(ownerId, entityType, createdDate)` — an owner-keyed rollup exists here for the same reason it does for
+// image views: a creator's ids are scattered across a 130M space, so per-entity lookup prunes nothing.
+//
+// Only the Image and Model arms are populated. Everything else is tracked per-entity but has no ownership
+// source in ClickHouse, so it is *absent* rather than zero — do not add arms here speculatively.
+function impressionsDailySql(uid: number, from: string, to: string): string {
+  return `SELECT createdDate AS date, sum(impressions) AS value FROM impressions_daily_by_owner WHERE ownerId = ${uid} AND entityType = '${IMPRESSION_ENTITY.image}' AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
+}
+
+// Impressions land in their own table rather than `daily_views`, so this cannot reuse `viewTrackingLive`.
+const impressionTrackingLive = createCache({
+  name: 'analytics:impressions-live:v1',
+  fetch: async (): Promise<boolean> => {
+    const rows = await getClickhouse().$query<{ one: number }>(
+      `SELECT 1 AS one FROM impressions_daily_by_owner WHERE entityType = '${IMPRESSION_ENTITY.image}' LIMIT 1`
+    );
+    return rows.length > 0;
+  },
+  ttlSeconds: 3600,
+}).get;
+
 function netReactionsDailySql(uid: number, from: string, to: string): string {
   return `SELECT toDate(time) AS date, ${netReactions} AS value FROM reactions WHERE ownerId = ${uid} AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY date`;
 }
@@ -373,6 +426,11 @@ async function fetchContentAnalytics(
       series(articleViewsDailySql(articleIds, from, to)),
     ]);
 
+  const [impressions, impressionsTracking] = await Promise.all([
+    series(impressionsDailySql(uid, from, to)),
+    impressionTrackingLive({}),
+  ]);
+
   const sum = (s: TimePoint[]) => s.reduce((acc, p) => acc + p.value, 0);
   return {
     reactions,
@@ -382,6 +440,8 @@ async function fetchContentAnalytics(
     profileViews,
     imageViews,
     articleViews,
+    impressions,
+    impressionsTracking,
     totals: {
       reactions: sum(reactions),
       followers: sum(followers),
@@ -390,6 +450,7 @@ async function fetchContentAnalytics(
       profileViews: sum(profileViews),
       imageViews: sum(imageViews),
       articleViews: sum(articleViews),
+      impressions: sum(impressions),
     },
   };
 }
@@ -458,7 +519,7 @@ async function fetchViewsByImage(
 ): Promise<Map<number, number>> {
   if (!ids.length) return new Map();
   const rows = await getClickhouse().$query<{ imageId: number | string; views: number | string }>(
-    `SELECT entityId AS imageId, sum(views) AS views FROM daily_views WHERE entityType = 'Image' AND entityId IN (${ids.join(
+    `SELECT entityId AS imageId, sum(views) AS views FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId IN (${ids.join(
       ','
     )}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY imageId`
   );
@@ -543,13 +604,13 @@ async function fetchImageViewDetail(
   // which count as comments on the image.
   const [seriesRows, prevRows, lifetimeRows, reactionRows, commentRows] = await Promise.all([
     ch.$query<{ date: string; value: number | string }>(
-      `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = 'Image' AND entityId = ${id} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ${fill}`
+      `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId = ${id} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ${fill}`
     ),
     ch.$query<{ value: number | string }>(
-      `SELECT sum(views) AS value FROM daily_views WHERE entityType = 'Image' AND entityId = ${id} AND createdDate >= toDate('${compareFrom}') AND createdDate <= toDate('${compareTo}')`
+      `SELECT sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId = ${id} AND createdDate >= toDate('${compareFrom}') AND createdDate <= toDate('${compareTo}')`
     ),
     ch.$query<{ value: number | string }>(
-      `SELECT sum(views) AS value FROM daily_views WHERE entityType = 'Image' AND entityId = ${id}`
+      `SELECT sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId = ${id}`
     ),
     // Same net-of-deletes accounting as every other reaction figure in the Studio — un-reacting writes an
     // `Image_Delete` row rather than removing the create, so a plain count would drift upward forever.
@@ -600,6 +661,71 @@ async function fetchImageViewDetail(
   };
 }
 
+// Has ANY row of this entity type ever been written, platform-wide? Answers "not collecting yet" as distinct
+// from "you have none". `LIMIT 1` short-circuits, and `entityType` leads the primary key on `daily_views`, so
+// this is a prefix seek rather than a scan. Cheap enough to run per panel load; the answer flips once and
+// never flips back, which is why it caches for an hour rather than with the range.
+const viewTrackingLive = createCache({
+  name: 'analytics:tracking-live:v1',
+  fetch: async ({ entityType }: { entityType: string }): Promise<boolean> => {
+    const rows = await getClickhouse().$query<{ one: number }>(
+      `SELECT 1 AS one FROM daily_views WHERE entityType = '${entityType}' LIMIT 1`
+    );
+    return rows.length > 0;
+  },
+  ttlSeconds: 3600,
+}).get;
+
+// A creator's 3D models, ranked by views over the range. 539 rows platform-wide, so ownership resolves from
+// Postgres and the id list goes straight into a literal `IN` — no rollup, and today is included.
+//
+// A "view" here is one load of the public detail page: `/3d-models/<id>/edit` and `/reviews` are excluded at
+// the emitter, on both sides of the cutover, so this number never counts a creator visiting their own draft.
+async function fetchModel3ds(userId: number, from: string, to: string): Promise<Model3dPanel> {
+  const uid = Number(userId);
+  const rows = await dbRead
+    .selectFrom('Model3D')
+    .leftJoin('Image', 'Image.id', 'Model3D.thumbnailImageId')
+    .where('Model3D.userId', '=', uid)
+    .where('Model3D.deletedAt', 'is', null)
+    .select([
+      'Model3D.id as id',
+      'Model3D.name as name',
+      'Model3D.nsfwLevel as nsfwLevel',
+      'Model3D.publishedAt as publishedAt',
+      'Image.url as coverUrl',
+    ])
+    .execute();
+
+  const tracking = await viewTrackingLive({ entityType: VIEW_ENTITY.model3d });
+  if (!rows.length) return { models: [], tracking };
+
+  const viewRows = await getClickhouse().$query<{ id: number | string; views: number | string }>(
+    `SELECT entityId AS id, sum(views) AS views FROM daily_views WHERE entityType = '${
+      VIEW_ENTITY.model3d
+    }' AND entityId IN (${rows
+      .map((r) => r.id)
+      .join(
+        ','
+      )}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY id`
+  );
+  const viewsById = new Map(viewRows.map((r) => [Number(r.id), Number(r.views)]));
+
+  return {
+    tracking,
+    models: rows
+      .map((m) => ({
+        model3dId: m.id,
+        name: m.name ?? `3D model ${m.id}`,
+        coverUrl: m.coverUrl ?? null,
+        nsfwLevel: Number(m.nsfwLevel ?? 0),
+        published: !!m.publishedAt,
+        views: viewsById.get(m.id) ?? 0,
+      }))
+      .sort((a, b) => b.views - a.views || b.model3dId - a.model3dId),
+  };
+}
+
 // Comics report READERS, not views, and the distinction is the whole point of this function.
 //
 // Comics have no entity view tracking at all: `views`' entityType enum has no Comic arm and no comic page fires
@@ -612,7 +738,13 @@ async function fetchImageViewDetail(
 // it is keyed `(userId, chapterId)`, so it is a unique-reader marker rather than a read log (a re-read updates a
 // row instead of adding one), and `userId` is a required FK, so **logged-out readers are not counted at all**.
 // `newReaders` therefore means "people who read a chapter of this comic for the first time in this period".
-async function fetchComics(userId: number, from: string, to: string): Promise<ComicSummary[]> {
+//
+// Project views and chapter reads are separate entity types and no row is counted in both: the overview page
+// emits `ComicProject`, the reader emits `ComicChapter`, and the reader re-emits when you navigate between
+// chapters without remounting — correctly, that is a second read. Chapter reads are gated on `canRead`, so a
+// paywalled early-access chapter a viewer could not open does not count, which keeps the number comparable
+// with `ComicChapterRead`.
+async function fetchComics(userId: number, from: string, to: string): Promise<ComicsPanel> {
   const uid = Number(userId);
   const result = await sql<{
     projectId: number;
@@ -643,16 +775,62 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     ORDER BY count(DISTINCT r."userId") DESC, p.id DESC
   `.execute(dbRead);
 
-  return result.rows.map((r) => ({
-    projectId: Number(r.projectId),
-    name: r.name ?? `Comic ${r.projectId}`,
-    coverUrl: r.coverUrl ?? null,
-    nsfwLevel: Number(r.nsfwLevel ?? 0),
-    published: !!r.published,
-    chapters: Number(r.chapters),
-    readers: Number(r.readers),
-    newReaders: Number(r.newReaders),
-  }));
+  const tracking = await viewTrackingLive({ entityType: VIEW_ENTITY.comicProject });
+  const projectIds = result.rows.map((r) => Number(r.projectId));
+  if (!projectIds.length) return { comics: [], tracking };
+
+  // Chapter reads key on `ComicChapter.id`, so the chapter ids have to be resolved here and mapped back to
+  // their project. Both lists are tiny — 2,922 projects and 4,318 chapters platform-wide.
+  const chapterRows = await sql<{ id: number; projectId: number }>`
+    SELECT id, "projectId" FROM "ComicChapter" WHERE "projectId" = ANY(${projectIds})
+  `.execute(dbRead);
+  const projectByChapter = new Map(
+    chapterRows.rows.map((c) => [Number(c.id), Number(c.projectId)] as const)
+  );
+
+  const ch = getClickhouse();
+  const range = `createdDate >= toDate('${from}') AND createdDate <= toDate('${to}')`;
+  const [projectViewRows, chapterViewRows] = await Promise.all([
+    ch.$query<{ id: number | string; views: number | string }>(
+      `SELECT entityId AS id, sum(views) AS views FROM daily_views WHERE entityType = '${
+        VIEW_ENTITY.comicProject
+      }' AND entityId IN (${projectIds.join(',')}) AND ${range} GROUP BY id`
+    ),
+    projectByChapter.size
+      ? ch.$query<{ id: number | string; views: number | string }>(
+          `SELECT entityId AS id, sum(views) AS views FROM daily_views WHERE entityType = '${
+            VIEW_ENTITY.comicChapter
+          }' AND entityId IN (${[...projectByChapter.keys()].join(',')}) AND ${range} GROUP BY id`
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const projectViews = new Map(projectViewRows.map((r) => [Number(r.id), Number(r.views)]));
+  const chapterReads = new Map<number, number>();
+  for (const r of chapterViewRows) {
+    const projectId = projectByChapter.get(Number(r.id));
+    if (projectId === undefined) continue;
+    chapterReads.set(projectId, (chapterReads.get(projectId) ?? 0) + Number(r.views));
+  }
+
+  return {
+    tracking,
+    comics: result.rows.map((r) => {
+      const projectId = Number(r.projectId);
+      return {
+        projectId,
+        name: r.name ?? `Comic ${projectId}`,
+        coverUrl: r.coverUrl ?? null,
+        nsfwLevel: Number(r.nsfwLevel ?? 0),
+        published: !!r.published,
+        chapters: Number(r.chapters),
+        readers: Number(r.readers),
+        newReaders: Number(r.newReaders),
+        projectViews: projectViews.get(projectId) ?? 0,
+        chapterReads: chapterReads.get(projectId) ?? 0,
+      };
+    }),
+  };
 }
 
 // One article's series for the /analytics/content/article/[articleId] drilldown — the article-shaped twin of
@@ -690,13 +868,13 @@ async function fetchArticleViewDetail(
   const fill = `ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
   const [seriesRows, prevRows, lifetimeRows, reactionRows] = await Promise.all([
     ch.$query<{ date: string; value: number | string }>(
-      `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = 'Article' AND entityId = ${id} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ${fill}`
+      `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId = ${id} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ${fill}`
     ),
     ch.$query<{ value: number | string }>(
-      `SELECT sum(views) AS value FROM daily_views WHERE entityType = 'Article' AND entityId = ${id} AND createdDate >= toDate('${compareFrom}') AND createdDate <= toDate('${compareTo}')`
+      `SELECT sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId = ${id} AND createdDate >= toDate('${compareFrom}') AND createdDate <= toDate('${compareTo}')`
     ),
     ch.$query<{ value: number | string }>(
-      `SELECT sum(views) AS value FROM daily_views WHERE entityType = 'Article' AND entityId = ${id}`
+      `SELECT sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId = ${id}`
     ),
     // Month-scoped for the same reason as the image page: `reactions` isn't sorted by entityId, so the date
     // predicate is what keeps this off a full-table scan.
@@ -760,7 +938,7 @@ async function fetchContentTotals(
   const articleViewsTotal = async (): Promise<number> => {
     if (!articleIds.length) return 0;
     const rows = await ch.$query<{ value: number | string }>(
-      `SELECT sum(views) AS value FROM daily_views WHERE entityType = 'Article' AND entityId IN (${articleIds.join(
+      `SELECT sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId IN (${articleIds.join(
         ','
       )}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}')`
     );
@@ -778,5 +956,16 @@ async function fetchContentTotals(
       articleViewsTotal(),
     ]);
 
-  return { reactions, followers, images, posts, profileViews, imageViews, articleViews };
+  // The dashboard's activity row doesn't surface impressions, so this pays for no extra query — but the field
+  // is part of ContentTotals, so it has to be present rather than absent.
+  return {
+    reactions,
+    followers,
+    images,
+    posts,
+    profileViews,
+    imageViews,
+    articleViews,
+    impressions: 0,
+  };
 }

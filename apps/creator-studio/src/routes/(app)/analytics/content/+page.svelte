@@ -21,6 +21,7 @@
     { key: 'videos', label: 'Videos', singular: 'video' },
     { key: 'articles', label: 'Articles', singular: 'article' },
     { key: 'comics', label: 'Comics', singular: 'comic' },
+    { key: 'model3ds', label: '3D models', singular: '3D model' },
   ] as const;
   type TabKey = (typeof TABS)[number]['key'];
 
@@ -44,7 +45,8 @@
   // and articles all carry both.
   const isArticles = $derived(tab === 'articles');
   const isComics = $derived(tab === 'comics');
-  const isMedia = $derived(!isArticles && !isComics);
+  const is3d = $derived(tab === 'model3ds');
+  const isMedia = $derived(!isArticles && !isComics && !is3d);
 
   // Ranking is client-side: the server already caps each tab at 100 rows, and re-sorting them costs nothing
   // next to a second round trip. It does mean "top by views" ranks within the top-100 *by reactions* — a
@@ -87,11 +89,24 @@
         ? [...data.articles].sort((a, b) => b.views - a.views)
         : [...data.articles].sort((a, b) => b.reactions - a.reactions)
   );
-  const comics = $derived(data.comics);
+  // Comics and 3D models arrive wrapped in a panel carrying a `tracking` flag, so that "nothing collected
+  // yet" can be told apart from "you have none" — their ClickHouse tables are live but stay empty until the
+  // emitting code deploys and the backfill runs.
+  const comics = $derived(data.comics?.comics ?? null);
+  const model3ds = $derived(data.model3ds?.models ?? null);
+  const trackingLive = $derived(
+    isComics ? (data.comics?.tracking ?? false) : is3d ? (data.model3ds?.tracking ?? false) : true
+  );
   // One paging model over whichever list this tab is showing; only the card markup differs.
-  const activeList = $derived(isComics ? comics : isArticles ? articles : media);
+  const activeList = $derived(is3d ? model3ds : isComics ? comics : isArticles ? articles : media);
   const unavailable = $derived(
-    isComics ? comics === null : isArticles ? articles === null : data[tab] === null
+    is3d
+      ? data.model3ds === null
+      : isComics
+        ? data.comics === null
+        : isArticles
+          ? articles === null
+          : data[tab] === null
   );
   const total = $derived(activeList?.length ?? 0);
   const totalPages = $derived(Math.max(1, Math.ceil(total / pageSize)));
@@ -102,6 +117,7 @@
   const shown = $derived(slice(media));
   const shownArticles = $derived(slice(articles));
   const shownComics = $derived(slice(comics));
+  const shown3d = $derived(slice(model3ds));
 </script>
 
 <AnalyticsHeader range={data.range} compare={data.compare} showCompare={false} />
@@ -147,7 +163,9 @@
   </div>
 {:else if total === 0}
   <div class="placeholder">
-    {#if isComics}
+    {#if is3d}
+      You haven't published a 3D model yet.
+    {:else if isComics}
       You haven't published a comic yet.
     {:else if isArticles}
       No article views {periodLabel} yet.
@@ -157,8 +175,16 @@
   </div>
 {:else}
   <p class="mb-3 text-sm font-medium text-white">
-    {#if isComics}
-      Your comics <span class="text-xs text-dark-3">· by readers</span>
+    {#if is3d}
+      Your 3D models
+      <span class="text-xs text-dark-3">
+        {trackingLive ? `· by views ${periodLabel}` : '· view tracking not collecting yet'}
+      </span>
+    {:else if isComics}
+      Your comics
+      <span class="text-xs text-dark-3">
+        {trackingLive ? `· views and chapter reads ${periodLabel}` : '· by readers, not views'}
+      </span>
     {:else}
       Top {tab} by {sort === 'views' ? 'views' : 'reactions'}
       <span class="text-xs text-dark-3">
@@ -170,7 +196,48 @@
     <Pagination {total} noun={active.singular} {curPage} {totalPages} />
   </div>
 
-  {#if isComics}
+  {#if is3d}
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {#each shown3d as m (m.model3dId)}
+        <a
+          href="https://civitai.{m.nsfwLevel > 3 ? 'red' : 'com'}/3d-models/{m.model3dId}"
+          target="_blank"
+          rel="noreferrer"
+          class="group flex gap-3 overflow-hidden rounded-lg border border-dark-4 bg-dark-7 p-2"
+        >
+          <div class="size-16 shrink-0 overflow-hidden rounded bg-dark-6">
+            {#if m.coverUrl}
+              <EdgeMedia
+                src={m.coverUrl}
+                type="image"
+                width={160}
+                alt=""
+                class="h-full w-full object-cover"
+              />
+            {/if}
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-medium text-white" title={m.name}>{m.name}</p>
+            <p class="mt-1 flex items-center gap-1 text-xs text-dark-2">
+              {#if trackingLive}
+                <IconEye size={13} />
+                {num(m.views)} views {periodLabel}
+              {:else}
+                <span class="text-dark-3">View tracking starts soon</span>
+              {/if}
+            </p>
+            {#if !m.published}
+              <p class="text-xs text-dark-4">unpublished</p>
+            {/if}
+          </div>
+          <IconExternalLink
+            size={14}
+            class="mt-1 shrink-0 text-dark-4 transition-colors group-hover:text-white"
+          />
+        </a>
+      {/each}
+    </div>
+  {:else if isComics}
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {#each shownComics as c (c.projectId)}
         <a
@@ -193,7 +260,15 @@
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm font-medium text-white" title={c.name}>{c.name}</p>
             <p class="mt-1 text-xs text-dark-2">
-              {num(c.readers)} readers · {num(c.newReaders)} new {periodLabel}
+              {#if trackingLive}
+                <span title="Views of this comic's overview page {periodLabel}">
+                  {num(c.projectViews)} views
+                </span>
+                ·
+                <span title="Chapter reads {periodLabel}">{num(c.chapterReads)} reads</span>
+              {:else}
+                {num(c.readers)} readers · {num(c.newReaders)} new {periodLabel}
+              {/if}
             </p>
             <p class="text-xs text-dark-3">
               {c.chapters}
