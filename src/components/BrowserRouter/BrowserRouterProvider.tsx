@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { useDidUpdate } from '@mantine/hooks';
 import {
   resolveLocationChangeState,
+  resolveRouteChangeState,
   type BrowserRouterState,
   type HistoryState,
 } from '~/components/BrowserRouter/browserRouterState';
@@ -73,8 +74,17 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     const handleRouteChangeComplete = () => {
-      if (stateRef.current && stateRef.current?.asPath === history.state?.as)
-        useBrowserRouterState.setState(stateRef.current);
+      // The payload has to come from the popstate snapshot: Next's `changeState`
+      // replaces `history.state` wholesale, with no `state` key, before it emits
+      // this event — so by now the entry's own payload exists nowhere else.
+      if (
+        stateRef.current &&
+        stateRef.current.asPath === history.state?.as &&
+        Router.asPath === history.state?.as
+      )
+        useBrowserRouterState.setState(
+          resolveRouteChangeState(Router, stateRef.current.state ?? {})
+        );
 
       setUsingNextRouter(false);
     };
