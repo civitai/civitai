@@ -10,11 +10,18 @@ const ACCEPT_AWARD = 10;
 const DAILY_ACCEPT_CEILING = ACCEPT_AWARD * 10;
 
 /**
- * Blue Buzz to the owner of the space for accepting a sticker onto it.
+ * Blue Buzz to the owner of the space for a sticker going live on it.
  *
- * Paid on every accepted sticker, free or paid. It is not compensation for a
- * placement having been free — it pays for running the surface at all, which is
- * why the paid path earns it too.
+ * Paid on every one, free or paid. It is not compensation for a placement having
+ * been free — it pays for running the surface at all, which is why the paid path
+ * earns it too.
+ *
+ * **The user-facing strings say "get", not "accept", and that is load-bearing.**
+ * On an auto-accept space nobody performs an accept: `createStickerPlacement`
+ * settles inline inside the *placer's* request and records the owner as the
+ * actor, which is what makes it read as an approval everywhere downstream. Copy
+ * about accepting would be false on what is expected to be the majority path,
+ * in the one sentence a creator reads to work out where their Buzz came from.
  *
  * **Once per placement, ever, and the caller owns that.** The Buzz ledger keys
  * this on `stickerPlacementAccepted:<placementId>-<ownerId>-<placerId>` and that
@@ -28,8 +35,8 @@ const DAILY_ACCEPT_CEILING = ACCEPT_AWARD * 10;
 export const stickerPlacementAcceptedReward = createBuzzEvent({
   type: 'stickerPlacementAccepted',
   toAccountType: 'blue',
-  description: 'You accepted a sticker on your content',
-  triggerDescription: 'For each sticker placement you accept, up to 10 a day',
+  description: 'You got a sticker on your content',
+  triggerDescription: 'For each sticker you get on your content, up to 10 a day',
   awardAmount: ACCEPT_AWARD,
   cap: DAILY_ACCEPT_CEILING,
   onDemand: true,

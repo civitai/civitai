@@ -639,15 +639,21 @@ export async function settlePlacement({
  * presentation of the same placement would silently burn a tenth of the owner's
  * day and pay nothing.
  *
- * Scoped by surface here rather than by where the call sits: the remix surface
- * has its own reward with its own amount and cap, and the two are being written
- * in parallel.
+ * 🔴 **Sticker only, and no other surface may be added here.** The remix gallery
+ * reward is granted from `actOnRemixGallerySubmission`, which is the only way a
+ * remix submission is approved. A `remixGallery` branch in this function would
+ * not replace that call, it would double it — and nothing downstream catches a
+ * double: the two reward types have different `externalTransactionId`s, and the
+ * daily cap hash is keyed `userId:type`, so both grants look legitimate to every
+ * guard either reward has. A surface whose approvals arrive only through its own
+ * action handler belongs there, not here.
  *
  * After the payout, so a reward failure can never be why an approved placement
- * went unpaid — and swallowed for the same reason the settle itself is not
- * retried here: the money has already moved, and a throw would 500 an approval
- * that succeeded. Routed to Axiom rather than dropped, since `base.reward`
- * rethrows genuine ClickHouse schema breaks precisely so they stay visible.
+ * went unpaid — and swallowed, because the money has already moved and a throw
+ * would 500 an approval that succeeded. Note what that costs: `base.reward`
+ * deliberately rethrows a genuine ClickHouse schema break so it surfaces as a
+ * 500, and this `.catch` takes that away. Such a break arrives here as an Axiom
+ * error rather than an alerting one, which is the trade this call site makes.
  */
 async function rewardAccepted(placement: PlacementRow) {
   if (placement.surface !== 'sticker') return;
@@ -664,7 +670,7 @@ async function rewardAccepted(placement: PlacementRow) {
         type: 'error',
         message: 'accept reward failed',
         placementId: placement.id,
-        error: (error as Error).message,
+        error: error instanceof Error ? error.message : String(error),
       }).catch(() => null)
     );
 }

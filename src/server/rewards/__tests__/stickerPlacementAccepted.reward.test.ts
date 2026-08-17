@@ -12,11 +12,11 @@ const h = vi.hoisted(() => ({
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: (...args: unknown[]) => h.insert(...(args as [])) },
 }));
-vi.mock('~/server/prom/client', () => ({
-  rewardFailedCounter: { inc: vi.fn() },
-  rewardGivenCounter: { inc: vi.fn() },
-  clickhouseFailSoftCounter: { inc: vi.fn() },
-}));
+// Prom is NOT mocked here: src/__tests__/setup.ts already stubs every collector,
+// and a local factory listing three of them narrows that — the suite would stop
+// loading the first time base.reward touches a fourth. Neither ClickHouse nor
+// buzz.service is stubbed globally, and spreading the real module would build a
+// client at import, so those two stay hand-written.
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => h.createBuzzTransactionMany(...(args as [])),
   getMultipliersForUser: (...args: unknown[]) => h.getMultipliersForUser(...(args as [])),
@@ -81,6 +81,19 @@ describe('the sticker accept reward', () => {
     });
   });
 
+  // An auto-accept space performs no accept: the placement settles inline in the
+  // placer's request. Copy about accepting is false there, and the intent doc
+  // expects auto to become the majority path. Justin's framing is "10 Buzz for
+  // each image sticker you get each day".
+  it('describes the reward as getting a sticker, never as accepting one', async () => {
+    const details = await stickerPlacementAcceptedReward.getUserRewardDetails(OWNER);
+
+    expect(details.description).toBe('You got a sticker on your content');
+    expect(details.triggerDescription).toBe(
+      'For each sticker you get on your content, up to 10 a day'
+    );
+  });
+
   it('caps the day at ten accepted stickers', async () => {
     await accept();
 
@@ -102,6 +115,28 @@ describe('the sticker accept reward', () => {
 
     await accept();
 
+    expect(h.createBuzzTransactionMany).not.toHaveBeenCalled();
+  });
+
+  // A capped accept is still a thing that happened, and the buzzEvents row is
+  // what the cap is later read back from. Dropping it would make the day look
+  // less spent than it was.
+  it('records a capped accept without paying for it', async () => {
+    h.eval.mockResolvedValue(0);
+
+    await accept();
+
+    expect(h.insert).toHaveBeenCalled();
+  });
+
+  // -1 is the Lua dedup hit: this placement already paid today. Nothing further
+  // is written — no audit row, no grant — so a retry is inert rather than noisy.
+  it('writes nothing at all when the placement already paid today', async () => {
+    h.eval.mockResolvedValue(-1);
+
+    await accept();
+
+    expect(h.insert).not.toHaveBeenCalled();
     expect(h.createBuzzTransactionMany).not.toHaveBeenCalled();
   });
 
