@@ -43,15 +43,24 @@ export const remixAcceptReward = createBuzzEvent({
   awardAmount: ACCEPT_AWARD,
   cap: DAILY_ACCEPT_CEILING,
   onDemand: true,
-  getKey: async (input: RemixAcceptEvent) => ({
-    // The owner earns it; the submitter is recorded as the cause, not paid.
-    toUserId: input.ownerId,
-    // The Redis dedup anchor as well as the ledger's: distinct placements hash to
-    // distinct cache keys and each pays, while the same placement re-presented
-    // within the day is deduped.
-    forId: input.placementId,
-    byUserId: input.placerId,
-  }),
+  getKey: async (input: RemixAcceptEvent) => {
+    // Blue Buzz is minted here, so an owner accepting their own submission must
+    // pay nothing. Unreachable today — `createRemixGallerySubmission` refuses
+    // `space.ownerId === placerId` — but that is two layers away and a product
+    // rule, and this is the layer that makes the money. Kept rather than left to
+    // distance, and symmetrical with the sticker accept reward.
+    if (input.ownerId === input.placerId) return false;
+
+    return {
+      // The owner earns it; the submitter is recorded as the cause, not paid.
+      toUserId: input.ownerId,
+      // The Redis dedup anchor as well as the ledger's: distinct placements hash
+      // to distinct cache keys and each pays, while the same placement
+      // re-presented within the day is deduped.
+      forId: input.placementId,
+      byUserId: input.placerId,
+    };
+  },
 });
 
 type RemixAcceptEvent = {

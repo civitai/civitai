@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// `base.reward` builds a buzz client, redis handles and prom collectors at import
-// time. Mocked to the surface it touches so this suite can collect; what is under
-// test is the reward's own definition — who is paid, in what currency, keyed on
-// what, and against which cap.
+// What is under test is the reward's own definition — who is paid, in what
+// currency, keyed on what, and against which cap. `base.reward` reaches
+// ClickHouse and the buzz service to do it, so both are spread from the real
+// module with only the two functions this suite observes replaced. Hand-listing
+// their exports instead would break the whole FILE — 0 collected, nothing red —
+// the day either module grows one, and `~/server/prom/client` is already stubbed
+// globally in `src/__tests__/setup.ts`, so it needs nothing here at all.
+import type * as ClickHouseClient from '~/server/clickhouse/client';
+import type * as BuzzService from '~/server/services/buzz.service';
+
 const h = vi.hoisted(() => ({
   insert: vi.fn(async () => undefined),
   createBuzzTransactionMany: vi.fn(async () => undefined),
@@ -11,15 +17,12 @@ const h = vi.hoisted(() => ({
 }));
 const { createBuzzTransactionMany, getMultipliersForUser } = h;
 
-vi.mock('~/server/clickhouse/client', () => ({
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickHouseClient>()),
   clickhouse: { insert: (...args: unknown[]) => h.insert(...args) },
 }));
-vi.mock('~/server/prom/client', () => ({
-  rewardFailedCounter: { inc: vi.fn() },
-  rewardGivenCounter: { inc: vi.fn() },
-  clickhouseFailSoftCounter: { inc: vi.fn() },
-}));
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
   createBuzzTransactionMany: h.createBuzzTransactionMany,
   getMultipliersForUser: h.getMultipliersForUser,
 }));
@@ -121,6 +124,17 @@ describe('remixAcceptReward', () => {
     await accept();
 
     expect(h.insert).toHaveBeenCalled();
+    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
+  });
+
+  // The Blue Buzz minting path. Refused here rather than left to the submission
+  // path's `space.ownerId === placerId` refusal two layers up: that one is a
+  // product rule about who may submit, and this one is about who may be paid.
+  it('pays nothing for an owner accepting their own submission', async () => {
+    await accept({ placerId: OWNER });
+
+    expect(redisMock.redis.eval).not.toHaveBeenCalled();
+    expect(h.insert).not.toHaveBeenCalled();
     expect(createBuzzTransactionMany).not.toHaveBeenCalled();
   });
 

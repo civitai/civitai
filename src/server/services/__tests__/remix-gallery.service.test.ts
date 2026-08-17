@@ -760,6 +760,12 @@ describe('owner actions', () => {
 
     it('pays the owner for the accept, crediting the submitter as the cause', async () => {
       await approve();
+      // The count, not just the arguments. `toHaveBeenCalledWith` alone is
+      // satisfied by a doubled call, and the double-pay this reward has to avoid
+      // is a second `apply` — most plausibly a later refactor that moves the
+      // reward into the shared settle and leaves this call behind. That pays 20
+      // Blue Buzz twice for one accept and the argument assertion sees nothing.
+      expect(rewardApply).toHaveBeenCalledTimes(1);
       expect(rewardApply).toHaveBeenCalledWith({
         placementId: PLACEMENT,
         ownerId: OWNER,
