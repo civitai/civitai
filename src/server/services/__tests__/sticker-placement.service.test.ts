@@ -286,6 +286,28 @@ describe("the creator's size limit", () => {
   });
 
   /**
+   * The refusal sits above `if (free) return placeFreeSticker(...)`, so the free
+   * offer inherits it. That is positional, and nothing else here would notice a
+   * merge that kept both lines and put the branch first — the free path would
+   * stop refusing while every other test stayed green, and free placements carry
+   * no price, so no settlement figure would look wrong either.
+   *
+   * The message assertion carries that property on its own. The second one reads
+   * `createFreePlacement` because that is what the free branch delegates to
+   * today: give `placeFreeSticker` a different callee and it goes quiet rather
+   * than failing.
+   */
+  it('refuses a free placement the same way, before the free branch', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(capped);
+    givenStickerAndBalance();
+
+    await expect(
+      createStickerPlacement({ ...placeInput, data: OVERSIZE, free: true })
+    ).rejects.toThrow(/up to 20%/);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  /**
    * The limit is the creator's, so nobody is above it — moderating someone's
    * content is not a licence to put a bigger sticker on it.
    *
