@@ -42,10 +42,7 @@ import type {
   UpsertCollectionInput,
   SetCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
-import {
-  collectionAiReviewSchema,
-  OPEN_COLLECTION_SEARCH_LIMIT,
-} from '~/server/schema/collection.schema';
+import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -470,7 +467,6 @@ export const getUserCollectionsWithPermissions = async <
     contributingOnly = true,
     includeActiveContests = false,
     contestModelId,
-    openQuery,
   } = input;
   let { permissions = [] } = input;
   // By default, owned collections will be always returned
@@ -577,28 +573,6 @@ export const getUserCollectionsWithPermissions = async <
           )
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
         LIMIT 100
-    )`);
-  }
-
-  // Collections that are open to anyone and that the user holds no row on — reachable only by
-  // name, and capped, because "every open collection" is an unbounded list nobody can read.
-  // Contest mode is excluded here as well: it has its own ownership- and window-gated branch
-  // above, and letting contests in through a name search would bypass both of those checks.
-  if (openQuery) {
-    queries.push(Prisma.sql`(
-        ${SELECT}
-        FROM "Collection" c
-        WHERE c."read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
-          AND c."write" IN (
-            ${CollectionWriteConfiguration.Public}::"CollectionWriteConfiguration",
-            ${CollectionWriteConfiguration.Review}::"CollectionWriteConfiguration"
-          )
-          AND c."mode" IS NULL
-          AND c."collaborationDisabledAt" IS NULL
-          AND c."name" ILIKE ${`%${openQuery}%`}
-          ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
-        ORDER BY c."name"
-        LIMIT ${OPEN_COLLECTION_SEARCH_LIMIT}
     )`);
   }
 

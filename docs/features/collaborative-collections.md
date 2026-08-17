@@ -63,14 +63,15 @@ Saving an entry used to write a follow row for the submitter. It doesn't any mor
 own action, and auto-following filled a user's collection list with collections they had posted to
 once. Two consequences worth knowing:
 
-- The picker can no longer rely on "the user holds a row" to list everything they might submit to.
-  `getAllUser` takes an `openQuery` — a name search, minimum two characters, capped at 20 — that
-  surfaces public collections open to submissions and that the user holds nothing on. Contest mode
-  is excluded there; it keeps its own ownership- and window-gated branch, which the name search
-  would otherwise bypass.
+- The save picker lists what the user owns, what has been shared with them, and — on model saves —
+  active contests. It does **not** search collections they hold no row on, and its search box only
+  filters the list it already has. Following is what puts an open collection back in the picker: a
+  follower's row on a `write: Public` collection carries `ADD`, so it comes through the contributor
+  branch. Submitting alone no longer does that.
 - Open collections carry a **Submit an entry** button on the collection page, the same entry point
   contests have always had. Before, a collection asking for submissions had no way to take one from
-  its own page.
+  its own page. It covers Image and Post collections; a Model collection is still submitted to
+  through the picker, which is why following matters there.
 
 ## Where a submission lands
 
@@ -291,10 +292,11 @@ no collaborators.
 
 Known gaps, roughly in the order they'd block a release.
 
-- **Should the picker offer collections the user has no relationship with at all?** Searching by
-  name surfaces any public collection open to submissions, which is what makes one findable now
-  that submitting no longer follows — but it also puts strangers' collections in a picker that used
-  to hold only your own. Live and unflagged; worth a product call before it grows.
+- **An open collection you submitted to but didn't follow is only reachable from its own page.**
+  Submitting no longer follows, and the picker deliberately doesn't offer collections you hold no
+  row on, so nothing in the picker leads back to one. Following is the fix a user has today.
+  Whether the picker should surface them some other way — recently submitted to, explicitly
+  bookmarked — is an open product call.
 - **`getMyInvites` truncates at 50 silently.** The cap bounds the per-invite roster reads, but
   nothing tells a user with more than 50 pending invites that they are seeing a subset.
 - **Collection items are read straight from the database, not the feed index.** Flagged as
@@ -316,7 +318,7 @@ Known gaps, roughly in the order they'd block a release.
 | Permission resolution, `isCollaborator` | `src/server/services/collection.service.ts` (`getUserCollectionPermissionsByIds`) |
 | Invites, roster, caps, role changes | `src/server/services/collection-collaborator.service.ts` |
 | Review-queue rule | `src/server/services/collection.service.ts` (`submissionStatus`) |
-| Save picker, open-collection search | `src/components/Collections/AddToCollectionModal.tsx` |
+| Save picker | `src/components/Collections/AddToCollectionModal.tsx` |
 | Shared seat definition | `src/server/services/collection-invite.utils.ts` |
 | Collaborator-row rule, free-grant baseline | `src/server/services/collection-permission.utils.ts` |
 | Lapse reconciler | `src/server/jobs/reconcile-collection-collaboration.ts` |

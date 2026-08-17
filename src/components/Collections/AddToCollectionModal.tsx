@@ -36,11 +36,7 @@ import {
   InputDatePicker,
 } from '~/libs/form';
 import type { AddCollectionItemInput } from '~/server/schema/collection.schema';
-import {
-  OPEN_COLLECTION_SEARCH_LIMIT,
-  OPEN_COLLECTION_SEARCH_MIN,
-  upsertCollectionInput,
-} from '~/server/schema/collection.schema';
+import { upsertCollectionInput } from '~/server/schema/collection.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { PrivacyData } from './collection.utils';
@@ -119,11 +115,6 @@ type SelectedCollection = {
 // Collections closed to new entries render disabled here rather than being filtered out — an
 // option that silently vanishes from the picker reads as deleted, not paused.
 const COLLABORATION_CLOSED_TOOLTIP = "This collection isn't accepting new entries right now.";
-
-// Below the server's `openQuery` minimum the search only filters what the user already holds; an
-// empty term must never ask for "every open collection".
-const MIN_SEARCH_LENGTH = OPEN_COLLECTION_SEARCH_MIN;
-const OPEN_RESULT_LIMIT = OPEN_COLLECTION_SEARCH_LIMIT;
 
 // Reusable collection checkbox item component
 function CollectionCheckboxItem({
@@ -235,17 +226,13 @@ function CollectionListForm({
   const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search.trim(), 300);
-  const openQuery = debouncedSearch.length >= MIN_SEARCH_LENGTH ? debouncedSearch : undefined;
 
   // Model saves also surface active contest collections the user hasn't joined, so they can
   // submit an entry for review without following the collection first.
   const includeActiveContests = props.type === CollectionType.Model;
 
-  const {
-    data: collections = [],
-    isLoading: loadingCollections,
-    isFetching: fetchingCollections,
-  } = trpc.collection.getAllUser.useQuery({
+  const { data: collections = [], isLoading: loadingCollections } =
+    trpc.collection.getAllUser.useQuery({
       // Only request collections where the user can actually add items.
       // MANAGE-only contributors on a Private-write collection can configure
       // the collection but can't write to it, so including MANAGE here would
@@ -259,7 +246,6 @@ function CollectionListForm({
       // Active contests only surface for models the user owns, so the server can gate the branch
       // on ownership. Only meaningful when includeActiveContests is true (Model saves).
       contestModelId: props.modelId,
-      openQuery,
     });
 
   const { data: collectionItems = [], isLoading: loadingStatus } =
@@ -274,9 +260,6 @@ function CollectionListForm({
   const { map: permissionsByCollectionId, isLoading: loadingPermissions } =
     useCollectionsPermissionsMap(collections.map((c) => c.id));
 
-  // The search box filters what the user already holds and, past MIN_SEARCH_LENGTH, asks the
-  // server for open collections they hold nothing on. Both halves read from the same term so a
-  // name that matches one of their own collections doesn't also come back as a stranger's.
   // A checked collection always survives the filter: hiding a row that is still queued for the
   // save is how someone removes an entry without meaning to.
   const matchesSearch = (collection: { id: number; name: string }) =>
@@ -293,21 +276,11 @@ function CollectionListForm({
         (collection) => !collection.isOwner && collection.mode === CollectionMode.Contest
       )
     : [];
-  const otherCollections = visible.filter(
+  const contributingCollections = visible.filter(
     (collection) =>
       !collection.isOwner &&
       !(includeActiveContests && collection.mode === CollectionMode.Contest)
   );
-  // A row on the collection is what separates "shared with you" from a stranger's open collection,
-  // and only the search branch returns the latter — without a query every non-owned collection
-  // came back because the user holds a row on it, so the permission map isn't consulted at all and
-  // a shared collection can't flicker through the open group while that map loads.
-  const contributingCollections = openQuery
-    ? otherCollections.filter((c) => permissionsByCollectionId.get(c.id)?.isContributor)
-    : otherCollections;
-  const openCollections = openQuery
-    ? otherCollections.filter((c) => !permissionsByCollectionId.get(c.id)?.isContributor)
-    : [];
   // While permission data for a collection is unknown, treat it as closed rather than open —
   // it must never be briefly selectable before flipping to disabled once data arrives. A lapse
   // keeps write for the owner and for elevated collaborators, so it only closes the picker for
@@ -467,24 +440,11 @@ function CollectionListForm({
       description: 'Submit this model as an entry. It will be sent to the contest for review.',
       items: activeContestCollections,
     },
-    {
-      key: 'open',
-      label: 'Open to submissions',
-      description:
-        "Anyone can submit to these. Entries may need the owner's approval before they appear.",
-      items: openCollections,
-      // The server caps the search at OPEN_RESULT_LIMIT. Saying so beats a list that looks
-      // complete and isn't — the collection they wanted may be the one that got cut.
-      note:
-        openCollections.length >= OPEN_RESULT_LIMIT
-          ? `Showing the first ${OPEN_RESULT_LIMIT} matches. Keep typing to narrow them down.`
-          : undefined,
-    },
   ].filter((group) => group.items.length > 0);
 
   // The debounce means the list lags the keystrokes; without this the picker looks like it
   // ignored the last thing typed.
-  const searching = search.trim() !== debouncedSearch || (!!openQuery && fetchingCollections);
+  const searching = search.trim() !== debouncedSearch;
 
   return (
     <Stack>
@@ -537,8 +497,6 @@ function CollectionListForm({
                   ? `You don't have any ${props.type?.toLowerCase() ?? ''} collections yet.`
                   : searching
                   ? 'Searching…'
-                  : debouncedSearch.length < MIN_SEARCH_LENGTH
-                  ? `No matches. Type ${MIN_SEARCH_LENGTH} characters or more to also search collections open to submissions.`
                   : `No collections match “${debouncedSearch}”.`}
               </Text>
               {!!debouncedSearch && !searching && (
@@ -574,11 +532,6 @@ function CollectionListForm({
                       </Text>
                     )}
                     {group.items.map(renderItem)}
-                    {group.note && (
-                      <Text size="xs" c="dimmed" fs="italic">
-                        {group.note}
-                      </Text>
-                    )}
                   </Stack>
                 ))}
                 {searching && (
