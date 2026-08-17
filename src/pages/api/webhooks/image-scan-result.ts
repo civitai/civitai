@@ -885,9 +885,10 @@ async function updateImageScanJobs({
   );
 
   const setClauses: Prisma.Sql[] = [];
-  // 0n is a legitimate hash (a flat image), and skipping it leaves the row scanned with a
-  // null pHash, which excludes it from blocklist matching for good.
-  if (pHash !== undefined) setClauses.push(Prisma.sql`"pHash" = ${pHash}`);
+  // A zero hash is skipped, so a flat image keeps a null pHash. That is what this did before
+  // the rewrite, and whether to store the zero instead is open — writing it would let one
+  // blocked flat image match every other flat image at distance 0.
+  if (pHash) setClauses.push(Prisma.sql`"pHash" = ${pHash}`);
   if (ingestion) setClauses.push(Prisma.sql`"ingestion" = ${ingestion}::"ImageIngestionStatus"`);
   if (nsfwLevel) setClauses.push(Prisma.sql`"nsfwLevel" = ${nsfwLevel}`);
   if (blockedFor) setClauses.push(Prisma.sql`"blockedFor" = ${blockedFor}`);

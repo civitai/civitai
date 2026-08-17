@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import handler from '~/pages/api/webhooks/image-scan-result';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { TagSource, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -156,11 +157,12 @@ vi.mock('~/env/server', () => ({
   ),
 }));
 
-// Mocked rather than imported for real, which would build a live ClickHouse client. Deliberately
-// NOT a namespace proxy: this makes `clickhouse` truthy for the whole suite, so every
-// `if (!clickhouse) return` guard in the handler's graph now falls through to this object. A
-// call it does not stub should fail loudly here rather than auto-vivify into a silent no-op.
-vi.mock('~/server/clickhouse/client', () => ({
+// Spread the real module so the Tracker and the re-exported base client stay intact — two modules
+// in the handler's graph import from this path. Only `clickhouse` is replaced, and doing so makes
+// it truthy for the whole file, where the real shim resolves it to undefined under this suite's
+// env proxy: every `if (!clickhouse) return` guard now falls through to the stub below.
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: { $query: mockClickhouseQuery },
 }));
 
@@ -642,13 +644,19 @@ describe('image-scan-result webhook - pipeline tests', () => {
       expect(req.res.status).toHaveBeenCalledWith(400);
     });
 
-    it('writes a zero hash rather than leaving the column null', async () => {
-      const req = runWebhook({ id: 13, status: 0, source: TagSource.ImageHash, hash: '0' });
+    it('binds a hash as a bigint parameter, not as SQL text', async () => {
+      const req = runWebhook({
+        id: 13,
+        status: 0,
+        source: TagSource.ImageHash,
+        hash: '4611686018427387904',
+      });
       await req.promise;
 
       const update = imageUpdates.find((u) => u.text.includes('"pHash"'));
       expect(update).toBeDefined();
-      expect(update!.params).toContain(0n);
+      expect(update!.params).toContain(4611686018427387904n);
+      expect(update!.text).not.toContain('4611686018427387904');
     });
   });
 });
