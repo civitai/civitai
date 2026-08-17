@@ -198,6 +198,53 @@ describe('resolveRewardConfig', () => {
   // `{"dailyBoost": {...}}` — the row someone hand-editing in Retool writes. A
   // non-strict envelope parses it as "no rewards key" and silently leaves
   // everything on.
+  // 🔴 The whole-row version of "a stray key beside a real field keeps the real
+  // field". A strict envelope discarded the entire map over one unrecognised
+  // top-level key, and every reward an operator had turned off resumed paying —
+  // the same situation as one level down, but with every reward as the blast
+  // radius and money as the direction.
+  // The assertion is about PAYMENT STATE, not about parsing. The failure this
+  // guards is money: a reward an operator turned off resuming payment. "The row
+  // parsed" would be green for a version of this that pays.
+  it('leaves a disabled reward disabled when the row carries a stray top-level key', async () => {
+    storedConfig({
+      rewards: { testReward: { enabled: false, awardAmount: 4 } },
+      note: 'for the launch',
+    });
+
+    const config = await resolve();
+
+    expect(config.enabled).toBe(false);
+    expect(config.awardAmount).toBe(4);
+  });
+
+  it('keeps every reward’s override, not just the first, past a stray key', async () => {
+    storedConfig({
+      rewards: { testReward: { enabled: false }, otherReward: { enabled: false } },
+      owner: 'ops',
+    });
+
+    expect((await resolve()).enabled).toBe(false);
+    expect((await resolveRewardConfig('otherReward', { ...DEFAULTS })).enabled).toBe(false);
+  });
+
+  it('warns about the stray rather than swallowing it', async () => {
+    storedConfig({ rewards: { testReward: { enabled: false } }, note: 'x', owner: 'ops' });
+
+    await resolve();
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('unrecognised top-level keys'),
+        strays: ['note', 'owner'],
+      })
+    );
+  });
+
+  it('still refuses to write a row with a stray top-level key', async () => {
+    await expect(setRewardConfig({ rewards: {}, note: 'x' } as never, 1)).rejects.toThrow();
+  });
+
   it('warns and runs unconfigured on a row written without the `rewards` wrapper', async () => {
     storedConfig({ testReward: { enabled: false } });
 
@@ -212,7 +259,7 @@ describe('resolveRewardConfig', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'reward-config',
-        message: expect.stringContaining('malformed reward config row'),
+        message: expect.stringContaining('no `rewards` wrapper'),
       })
     );
   });

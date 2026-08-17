@@ -197,7 +197,8 @@ function buildConfig(rewards: Record<string, unknown>): RewardConfig {
 // rather than an envelope with no rewards in it that silently leaves every reward
 // enabled. The entries themselves stay `unknown` here — `usableOverride` salvages
 // them field by field, which the strict override schema would not.
-const envelopeSchema = z.object({ rewards: z.record(z.string(), z.unknown()).optional() }).strict();
+// NOT strict, and that is the fix rather than an oversight — see `loadConfig`.
+const envelopeSchema = z.object({ rewards: z.record(z.string(), z.unknown()).optional() });
 
 async function loadConfig(): Promise<RewardConfig> {
   const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
@@ -205,12 +206,32 @@ async function loadConfig(): Promise<RewardConfig> {
   const envelope = envelopeSchema.safeParse(stored);
 
   if (!envelope.success) {
-    // Fail-open, and loudly so: we cannot tell which rewards this row meant.
+    // Not an object at all. Nothing here says which rewards were meant, so this
+    // is the one case with no better answer than running unconfigured.
     warn('Ignoring malformed reward config row — every reward is running unconfigured', {
       stored,
     });
     return {};
   }
+
+  // 🔴 A stray TOP-LEVEL key must not discard a perfectly good `rewards` map.
+  //
+  // A strict envelope here threw the whole row away over one unrecognised key —
+  // `{"rewards": {…}, "note": "for the launch"}` — and every reward an operator
+  // had turned off resumed paying. That is the same situation `usableOverride`
+  // already handles one level down, where the rule is "a stray key beside a real
+  // field keeps the real field", and it must fail the same way at both levels:
+  // the difference here is only that the blast radius is every reward at once,
+  // and the direction is paying rather than not paying.
+  const strays = Object.keys(stored as MixedObject).filter((key) => key !== 'rewards');
+
+  if (strays.length)
+    warn(
+      envelope.data.rewards === undefined
+        ? 'Reward config row has no `rewards` wrapper — every reward is running unconfigured'
+        : 'Ignoring unrecognised top-level keys in the reward config row',
+      { strays, stored }
+    );
 
   return buildConfig(envelope.data.rewards ?? {});
 }
