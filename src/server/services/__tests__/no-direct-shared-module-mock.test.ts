@@ -116,10 +116,22 @@ describe('no-direct-shared-module-mock', () => {
     ).toEqual([]);
   });
 
-  it('keeps the PENDING count current, so the remaining scope is never understated', () => {
-    const { pending } = scan();
-    // Counted, not enforced — but the recorded count has to match reality, or the dashboard
-    // reports a finish line that does not exist.
-    expect(Object.keys(pending).length).toBe((readAllowlist().pendingFiles ?? []).length);
-  });
+  /**
+   * The PENDING count is deliberately NOT asserted. There used to be a fourth test here pinning
+   * `pendingFiles.length` to reality, justified by keeping the migration dashboard's finish line
+   * honest.
+   *
+   * 🔴 That finish line no longer exists — the unisolation migration was stopped on 2026-08-16 and
+   * `unit-fast` (#3975) was closed rather than merged. What the assertion did in practice was fail
+   * the build of anyone who added a `vi.mock` of any of the 12 pending specifiers, until they ran
+   * `gen-mock-allowlist.mjs`, as bookkeeping for a burn-down nobody is burning down. It cost a
+   * teammate a red CI run on an unrelated PR the same week.
+   *
+   * `gen-mock-allowlist.mjs` still records the count. It is data, and reading it costs nothing;
+   * enforcing it costs everyone who touches a pending specifier.
+   *
+   * ⚠️ The three tests above are a different matter and stay. They guard the CANONICAL specifiers
+   * (`db/client`, `redis/client`, `logging/client`), whose canonical mocks ARE on `main` and are
+   * used by 264 migrated files. A regression there is a real defect, not a stale metric.
+   */
 });
