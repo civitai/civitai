@@ -63,47 +63,117 @@ Two reductions are stacked, and the feature is not viable without both:
 1. **Set semantics on the client.** An entity seen twice in a session is recorded
    once.
 2. **One event carrying many entities.** A flush of 250 entities is one
-   `/api/track/batch` event, not 250. Request rate is therefore set by the flush
-   interval and the number of open feed tabs, and is *independent of scroll
-   speed*.
+   `/api/track/batch` event, not 250. Request rate is therefore *independent of
+   scroll speed* — a flush describes a set, not a stream.
 
 `Tracker.impressions` uses `trackMany`, not `track`. `track` posts one HTTP
 request per row to the tracker service — correct for a view, ruinous here, since
 a 250-entity flush would become 250 outbound requests and the client-side
 batching would buy nothing.
 
-The insert is issued with `async_insert`. Every web pod flushes independently, so
-the binding constraint is part count, not row count: without server-side
-buffering the table hits the too-many-parts ceiling long before it hits a volume
-problem.
+Part count rather than row volume is the binding constraint for a table many pods
+insert into on a short interval, and it is already handled: the shared client sets
+`async_insert` on **every** insert it makes
+(`packages/civitai-clickhouse/src/client.ts`). Nothing here needs to opt in, and an
+earlier version of this change that plumbed per-insert settings through
+`sendMany`/`trackMany` to set it was removed — it was a no-op dressed as a
+safeguard.
+
+### One flush is not always one insert
+
+The claim above is the common case, not an invariant. It is one insert per
+**surface** per flush, because an event carries a single surface and a tab can move
+between feeds within an interval; a surface holding more than 250 entities splits
+further. The early-flush size cap counts entities across *all* surfaces while
+chunking is per-surface, so a flush spread thinly over several surfaces produces
+several small inserts. All of these are bounded and none change the row count, but
+"one flush, one insert" should not be read as a guarantee when reasoning about part
+counts.
 
 ## Sizing
 
-Measured against production, 2026-08-16:
+⚠️ **An earlier version of this section was wrong by roughly 5x, and the way it was
+wrong is worth keeping.** It sized the feature on *index feeds* — `/images`,
+`/videos`, `/`, `/search` — at 1.48M page-views/day. But `getImpressionSurface`
+maps on the **first path segment**, so `/models/123` is the `models` surface, and a
+model detail page renders a gallery and a related-models row: cards, through the
+same shells, emitting impressions. The instrumented set is every page that renders
+a card, which is 5.6x larger than the set that was measured. Sizing a feature by
+the pages you were *thinking about* rather than the pages the code *touches* is the
+mistake to avoid repeating.
+
+Measured against production, 2026-08-17, by first path segment:
+
+| Surface | page-views/day | mean dwell (capped 30m) |
+| --- | --- | --- |
+| `models` | 3,203,666 | 203.6s |
+| `images` | 2,772,763 | 117.9s |
+| `user` | 987,828 | 61.8s |
+| `search` | 488,452 | 88.4s |
+| `home` (`/`) | 305,995 | 52.1s |
+| `posts` | 219,838 | 117.3s |
+| `videos` | 173,922 | 72.1s |
+| `collections` | 78,827 | 56.5s |
+| `articles` | 32,043 | 166.7s |
+| `bounties` | 10,101 | 68.6s |
+| **tracked total** | **~8.27M/day** | |
+
+Supporting constants, both measured rather than assumed:
 
 | Quantity | Value | Source |
 | --- | --- | --- |
-| Image detail views | 2.7–2.9M/day (~31/s) | `views`, 7-day window |
-| Feed page-views | ~1.48M/day (~17/s) | `pageViews`, feed-rendering paths, 2-day window |
-| Mean dwell on a feed page | ~400s | `pageViews.duration` |
-| Compressed bytes/row | ~15 B | `views`: 113 GiB / 7.6B rows |
+| Image detail views (for scale) | 2.7–2.9M/day (~31/s) | `views`, 7-day window |
+| Raw bytes/row | **15.99 B** | `views`: 226.81 GiB / 15.23B rows, identical sorting key |
+| Rollup bytes/row | **2.29 B** | `daily_views`: 7.19 GiB / 3.37B rows |
 
-Assumption, and the number to check first if the estimate is wrong: **50–150
-distinct entities per session** (model cards contribute two). That gives:
+### The numbers
 
-- **74M–220M rows/day**, central estimate ~150M/day.
-- **~1.1–3.3 GiB/day** in the raw table; the 30-day TTL bounds it at roughly
-  33–100 GiB total. The daily rollups are one row per entity per day and are
-  negligible by comparison.
-- **~76 added requests/s** to `/api/track/batch`: concurrent feed sessions
-  (~17/s x 400s ≈ 6,800) divided by the 90s flush interval. This is the same order
-  as `addView` before it moved off tRPC, but it lands on the beacon route, which
-  pays none of the middleware cost that made `addView` expensive.
+**Requests: ~148/s added**, from concurrency ÷ the 90s interval. Concurrency is
+Σ(page-views × dwell) / 86,400 ≈ **13,290** simultaneous sessions.
 
-The flush interval is the dial. If the measured insert rate or part count runs
-well above this estimate, lengthen it or drop the Flipt cohort — do not reach for
-sampling first, because sampling degrades exactly the creators with the smallest
-numbers, who are the ones the Creator Studio surface is for.
+Two things make that an over-estimate rather than an under-estimate, and they are
+why the capped means above are the right input:
+
+- **An idle tab costs nothing.** The flush timer is armed only by *recording* an
+  impression, and `flushImpressions` returns early with no request when nothing is
+  pending. A session parked on a page with no scrolling emits no requests at all,
+  so the long tail of `duration` — abandoned tabs — contributes concurrency but
+  not traffic.
+- Impressions ride along with any flush a search or click already triggered.
+
+Using **uncapped** dwell means instead gives ~970/s. That figure is the honest
+pessimistic bound and is what the same arithmetic produces without the 30-minute
+cap; it treats abandoned tabs as if they scrolled, which the point above says they
+do not. Real load should land nearer 148 than 970, and the first week's measurement
+settles it.
+
+**Rows: ~320M/day.** Index feeds are the 50–150 distinct entities per session
+assumed before (~1.48M sessions); detail pages show far fewer cards, ~20–30
+(~6.8M sessions). That is **~10x the `views` insert rate**, not 5x.
+
+**Storage: ~5.1 GiB/day raw**, so the 30-day TTL settles at **~154 GiB** — not the
+33–100 GiB stated before. `ttl_only_drop_parts = 1` makes expiry a metadata drop
+of whole parts rather than a continuous rewrite of surviving rows.
+
+**The rollup is not negligible, and it is the only permanent storage.**
+`daily_impressions` is one row per (entity, type, day) — on the order of 30–80M
+rows/day at 2.29 B/row, so ~0.07–0.18 GiB/day, growing forever. For comparison
+`daily_views` has accumulated 3.37B rows / 7.19 GiB across the site's entire
+history; this passes that within months. It therefore carries its own **2-year
+TTL**, which is a retention decision someone should revisit rather than a technical
+necessity.
+
+### The dial, and when to reach for it
+
+The 90s flush interval sets the steady-state rate and nothing else does — but see
+the tab-switch caveat in `impressionBuffer.ts`: a tab switch flushes too, so the
+interval does not bound requests for a user who alt-tabs repeatedly. That path is
+bounded instead by the empty-buffer early return.
+
+If measured insert rate or part count runs well above the estimate: lengthen the
+interval, or drop the Flipt cohort. **Do not reach for sampling first** — it
+degrades exactly the creators with the smallest numbers, who are the ones Creator
+Studio exists to serve.
 
 ## Rollout
 
@@ -119,9 +189,15 @@ specifically so this is measurable rather than assumed:
 
 ```sql
 -- Exact, dedupe-safe: what the fast rollup would say if nothing was redelivered.
+-- 🔴 This is a FULL PARTITION SCAN. The raw table is ordered (time, entityType,
+-- entityId, userId), so none of these predicates prune — at ~320M rows/day a
+-- month's partition is ~10B rows. Always add a tight `time` range, which is the
+-- only predicate that touches the primary key, and run it over a SAMPLE of ids
+-- rather than per-image on demand.
 SELECT uniqExact(sessionKey)
 FROM default.impressions
-WHERE entityType = 'Image' AND entityId = ? AND createdDate = ?;
+WHERE time >= ? AND time < ?           -- the pruning predicate; do not omit
+  AND entityType = 'Image' AND entityId = ? AND createdDate = ?;
 
 -- Fast (6ms class, primary-key pruned): what Creator Studio reads.
 SELECT sum(impressions)
@@ -130,7 +206,23 @@ WHERE entityType = 'Image' AND entityId = ? AND createdDate = ?;
 ```
 
 The gap between the two IS the duplicate rate. Run it after the first week and
-state the error bar rather than presenting the rollup as exact.
+state the error bar rather than presenting the rollup as exact — as a scheduled
+job over a fixed sample, not as an on-demand query, for the scan reason above.
+
+### The number is not adversary-resistant
+
+`/api/track/batch` authenticates nothing. Its guard is `Origin`/`Referer` matching
+`Host`, which is a same-origin check for browsers and trivially forged by anything
+that is not one. That was proportionate when the route carried searches and clicks;
+impressions are a **per-creator metric**, so the calculus changes: a script can post
+250 fabricated entity ids per request against any creator's content, and
+`sessionKey` is client-chosen, so the `uniqExact` audit above is spoofable in the
+same breath.
+
+This is acceptable for a reach statistic shown to its own creator. It is **not**
+acceptable as an input to payouts, ranking, or anything competitive, and it should
+not become one without rate limiting and an authenticated path first. Written down
+here because the gap is invisible at the call site.
 
 Per-creator totals must use `impressions_daily_by_owner`, never a
 `entityId IN (...)` over the per-entity rollup: a creator's ids are scattered
@@ -174,7 +266,7 @@ CREATE TABLE default.impressions
 (
     `time`        DateTime DEFAULT now(),
     `userId`      Int32 DEFAULT 0,
-    `entityType`  Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+    `entityType`  LowCardinality(String),
     `entityId`    Int32,
     `sessionKey`  String DEFAULT '',
     `surface`     LowCardinality(String) DEFAULT 'other',
@@ -186,24 +278,25 @@ ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
 PARTITION BY toYYYYMM(createdDate)
 ORDER BY (time, entityType, entityId, userId)
 TTL createdDate + INTERVAL 30 DAY
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
 CREATE TABLE default.daily_impressions
 (
-    `entityType`  Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
-    `entityId`    UInt32,
+    `entityType`  LowCardinality(String),
+    `entityId`    Int32,
     `createdDate` Date,
     `impressions` UInt64
 )
 ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
 PARTITION BY toYYYYMM(createdDate)
 ORDER BY (entityType, entityId, createdDate)
-SETTINGS index_granularity = 8192;
+TTL createdDate + INTERVAL 2 YEAR
+SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
 CREATE MATERIALIZED VIEW default.daily_impressions_mv
 TO default.daily_impressions
 (
-    `entityType`  Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+    `entityType`  LowCardinality(String),
     `entityId`    Int32,
     `createdDate` Date,
     `impressions` UInt64
@@ -215,7 +308,7 @@ GROUP BY 1, 2, 3;
 CREATE TABLE default.impressions_daily_by_owner
 (
     `ownerId`     Int32,
-    `entityType`  Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+    `entityType`  LowCardinality(String),
     `createdDate` Date,
     `impressions` UInt64
 )
@@ -234,7 +327,7 @@ REFRESH EVERY 1 DAY OFFSET 4 HOUR APPEND
 TO default.impressions_daily_by_owner
 (
     `ownerId`     Int32,
-    `entityType`  Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+    `entityType`  LowCardinality(String),
     `createdDate` Date,
     `impressions` UInt64
 )

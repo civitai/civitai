@@ -419,14 +419,7 @@ export class Tracker {
 
   private async sendMany(
     table: string,
-    data: object[] | ((args: { session: Session | null; actor: TrackRequest }) => object[]),
-    /**
-     * Per-insert ClickHouse settings. Exists for tables written by MANY pods on a
-     * short interval: without `async_insert`, each pod's flush is its own part,
-     * and the table hits the too-many-parts ceiling on part count rather than on
-     * row volume. Server-side buffering merges those into shared batches.
-     */
-    settings?: Record<string, string | number>
+    data: object[] | ((args: { session: Session | null; actor: TrackRequest }) => object[])
   ) {
     if (!clickhouse) return;
     await this.resolveSession();
@@ -438,7 +431,6 @@ export class Tracker {
         table,
         values,
         format: 'JSONEachRow',
-        ...(settings ? { clickhouse_settings: settings } : {}),
       });
     } catch (e) {
       const error = e as Error;
@@ -481,22 +473,18 @@ export class Tracker {
   private async trackMany(
     table: string,
     custom: object[] | ((session: Session | null) => object[]),
-    options?: { skipActorMeta?: boolean; settings?: Record<string, string | number> }
+    options?: { skipActorMeta: boolean }
   ) {
-    const { skipActorMeta = false, settings } = options ?? {};
+    const { skipActorMeta = false } = options ?? {};
 
-    await this.sendMany(
-      table,
-      ({ session, actor }) => {
-        const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
-        const customData = typeof custom === 'function' ? custom(session) : custom;
-        return customData.map((custom) => ({
-          ...actorMeta,
-          ...custom,
-        }));
-      },
-      settings
-    );
+    await this.sendMany(table, ({ session, actor }) => {
+      const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
+      const customData = typeof custom === 'function' ? custom(session) : custom;
+      return customData.map((custom) => ({
+        ...actorMeta,
+        ...custom,
+      }));
+    });
   }
 
   public view(values: {
@@ -525,6 +513,10 @@ export class Tracker {
   // their volume and would make this one ruinous: a 250-entity flush would become
   // 250 outbound requests, so client-side batching would buy nothing. trackMany
   // sends the whole array as one insert, so one browser flush is one insert.
+  //
+  // The part-count concern that volume raises — many pods each inserting on a
+  // short interval — is already handled: the shared client sets `async_insert`
+  // for every insert it makes (packages/civitai-clickhouse/src/client.ts).
   public impressions(values: {
     sessionKey: string;
     surface: ImpressionSurface;
@@ -533,14 +525,7 @@ export class Tracker {
     const { sessionKey, surface, entities } = values;
     return this.trackMany(
       'impressions',
-      entities.map(({ entityType, entityId }) => ({ entityType, entityId, sessionKey, surface })),
-      // Every web pod flushes impressions independently on a short interval, so
-      // the part count — not the row count — is the binding constraint. Buffering
-      // server-side merges the fleet's flushes into shared batches.
-      // `wait_for_async_insert: 0` keeps this fire-and-forget like every other
-      // tracker call; the cost is that a buffer lost on a ClickHouse restart takes
-      // its impressions with it, which is the right trade for telemetry.
-      { settings: { async_insert: 1, wait_for_async_insert: 0 } }
+      entities.map(({ entityType, entityId }) => ({ entityType, entityId, sessionKey, surface }))
     );
   }
 

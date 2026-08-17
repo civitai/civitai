@@ -21,12 +21,14 @@ import { enqueueTrackEvent, flushTrackEvents } from '~/components/TrackView/trac
 import { IMPRESSION_ENTITIES_MAX, IMPRESSION_SURFACES } from '~/server/schema/track.schema';
 import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 
-// 90s of coalescing, and THIS is the dial that sets the feature's request cost.
-// With N feed tabs open the added request rate is N/90 per second no matter how
-// fast anyone scrolls — see the sizing section of the PR for the estimate. At the
-// shared buffer's own 3s it would be thirty times that while describing exactly
-// the same set of entities. Impressions also ride along with any flush a search
-// or click already triggered, so the marginal cost is below the standalone rate.
+// 90s of coalescing. This sets the STEADY-STATE request cost: N actively
+// scrolling tabs cost N/90 requests per second, regardless of scroll speed,
+// because a flush describes a set rather than a stream. At the shared buffer's
+// own 3s it would be thirty times that for the same information.
+//
+// It is not the whole story — see the note above `bindLifecycleListeners` for the
+// tab-switch path the interval does not govern, and the sizing section of
+// docs/features/feed-impressions.md for what that adds up to.
 const FLUSH_INTERVAL_MS = 90_000;
 
 // Flush early once a flush would fill an event. Purely a bound on how large one
@@ -106,7 +108,14 @@ export function recordImpression(entityType: ImpressionEntityType, entityId: num
   const key = entityKey(entityType, entityId);
   if (seen.has(key)) return;
 
-  if (seen.size >= SEEN_CAP) seen.clear();
+  // Clearing `seen` while `pending` still holds those keys would let the same key
+  // be counted into `pendingCount` twice while the Map absorbs the second write,
+  // so the size cap would fire early on a count that no longer matches the buffer.
+  // Flushing first keeps the two in step.
+  if (seen.size >= SEEN_CAP) {
+    flushImpressions();
+    seen.clear();
+  }
   seen.add(key);
 
   bindLifecycleListeners();
@@ -130,10 +139,11 @@ export function recordImpression(entityType: ImpressionEntityType, entityId: num
 // it is set on the tab-hide path, where a plain fetch would be cancelled.
 export function flushImpressions(viaBeacon = false): void {
   clearTimer();
-  if (pendingCount === 0) {
-    if (viaBeacon) flushTrackEvents(true);
-    return;
-  }
+  // Nothing pending means nothing to deliver, and no request. This is what keeps
+  // an idle or abandoned tab free: the timer is only ever armed by recording an
+  // impression, so a session that stops scrolling stops costing anything, and a
+  // tab switched away from with an empty buffer sends no beacon at all.
+  if (pendingCount === 0) return;
 
   const surfaces = Array.from(pending.entries());
   pending.clear();
@@ -158,6 +168,16 @@ export function flushImpressions(viaBeacon = false): void {
   // their own — except on the way out, where "next flush" may not exist.
   if (viaBeacon) flushTrackEvents(true);
 }
+
+// 🔴 The 90s interval bounds the rate for a session that is SCROLLING. It is not
+// a ceiling on requests per session, because tab-hide flushes too (below) and a
+// tab switch is a hide. A user alt-tabbing repeatedly while reading a feed emits
+// one request per switch that had impressions pending, not one per 90s.
+//
+// That is deliberate — the alternative is losing the buffer when the tab is
+// discarded — but it means the interval is the dial for the steady-state rate
+// only. The `pendingCount === 0` early return above is what keeps the tail of
+// this bounded: switching away twice in a row costs one request, not two.
 
 function bindLifecycleListeners() {
   if (listenersBound || typeof document === 'undefined' || typeof window === 'undefined') return;

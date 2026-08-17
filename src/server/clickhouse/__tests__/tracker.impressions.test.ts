@@ -72,18 +72,6 @@ describe('Tracker.impressions', () => {
     expect(args.values[2]).toMatchObject({ entityType: 'Model', entityId: 3 });
   });
 
-  it('issues the insert with async_insert so the fleet does not create a part per flush', async () => {
-    const tracker = new Tracker(undefined, undefined, null);
-    await tracker.impressions({
-      sessionKey: 'sess_2',
-      surface: 'home',
-      entities: [{ entityType: 'Image', entityId: 9 }],
-    });
-
-    const [args] = insertMock.mock.calls[0] as [{ clickhouse_settings?: Record<string, unknown> }];
-    expect(args.clickhouse_settings).toMatchObject({ async_insert: 1, wait_for_async_insert: 0 });
-  });
-
   it('stamps userId from the session, not from the payload', async () => {
     const tracker = new Tracker(undefined, undefined, null);
     await tracker.impressions({
@@ -96,11 +84,19 @@ describe('Tracker.impressions', () => {
     expect(args.values[0]).toMatchObject({ userId: 0 });
   });
 
-  it('does not write anything for an empty entity list', async () => {
+  it('scales rows with entities rather than issuing an insert per entity', async () => {
     const tracker = new Tracker(undefined, undefined, null);
-    await tracker.impressions({ sessionKey: 'sess_4', surface: 'images', entities: [] });
+    const entities = Array.from({ length: 250 }, (_, i) => ({
+      entityType: 'Image' as const,
+      entityId: i + 1,
+    }));
+    await tracker.impressions({ sessionKey: 'sess_4', surface: 'images', entities });
 
+    // A per-entity implementation would write the same 250 rows and pass any
+    // row-shape assertion, while restoring the insert rate the batching removes.
+    // The call COUNT is the property; the row count only confirms nothing was lost.
+    expect(insertMock).toHaveBeenCalledTimes(1);
     const [args] = insertMock.mock.calls[0] as [{ values: Record<string, unknown>[] }];
-    expect(args.values).toHaveLength(0);
+    expect(args.values).toHaveLength(250);
   });
 });

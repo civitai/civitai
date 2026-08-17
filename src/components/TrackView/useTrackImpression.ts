@@ -138,6 +138,11 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
   const key = targets?.map((t) => `${t.entityType}:${t.entityId}`).join(',') ?? '';
 
   const node = useScrollAreaRef();
+  // Resolved once per effect run and reused by the cleanup: reading
+  // `node?.current` again at teardown can yield a different element (or null)
+  // than the one the registry was keyed by, which would leak the entry it was
+  // meant to remove.
+  const root = node?.current ?? null;
 
   useEffect(() => {
     if (!enabled) return;
@@ -145,7 +150,7 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
     if (!element || typeof IntersectionObserver === 'undefined') return;
 
     bindVisibility();
-    const registry = getRegistry(node?.current ?? null);
+    const registry = getRegistry(root);
     const state: ElementState = { targets: targetsRef.current ?? [], timer: null };
     registry.elements.set(element, state);
     registry.observer.observe(element);
@@ -155,8 +160,18 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
       registry.observer.unobserve(element);
       registry.elements.delete(element);
       registry.intersecting.delete(element);
+
+      // Drop the whole registry once its last card goes. Without this, every
+      // scroll root a single-page session ever mounted stays in `registries`
+      // for the tab's lifetime — each holding a live observer and a strong
+      // reference to a detached root element, and each walked again on every
+      // tab switch by bindVisibility.
+      if (registry.elements.size === 0) {
+        registry.observer.disconnect();
+        registries.delete(root);
+      }
     };
-  }, [enabled, key, node]);
+  }, [enabled, key, node, root]);
 
   return ref;
 }

@@ -911,7 +911,7 @@ clickhouse client -n <<-EOSQL
     (
         time        DateTime                                                                                                                                 default now(),
         userId      Int32                                                                                                                                    default 0,
-        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+        entityType LowCardinality(String),
         entityId    Int32,
         sessionKey  String                                                                                                                                   default '',
         surface LowCardinality(String)                                                                                                                       default 'other',
@@ -923,24 +923,25 @@ clickhouse client -n <<-EOSQL
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (time, entityType, entityId, userId)
             TTL createdDate + INTERVAL 30 DAY
-            SETTINGS index_granularity = 8192;
+            SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
     create table if not exists default.daily_impressions
     (
-        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
-        entityId    UInt32,
+        entityType LowCardinality(String),
+        entityId    Int32,
         createdDate Date,
         impressions UInt64
     )
         engine = SummingMergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (entityType, entityId, createdDate)
-            SETTINGS index_granularity = 8192;
+            TTL createdDate + INTERVAL 2 YEAR
+            SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
     create table if not exists default.impressions_daily_by_owner
     (
         ownerId     Int32,
-        entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+        entityType LowCardinality(String),
         createdDate Date,
         impressions UInt64
     )
@@ -1444,7 +1445,7 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_impressions_mv
                 TO default.daily_impressions
                 (
-                entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+                entityType LowCardinality(String),
                 entityId Int32,
                 createdDate Date,
                 impressions UInt64
@@ -1464,7 +1465,7 @@ clickhouse client -n <<-EOSQL
                 TO default.impressions_daily_by_owner
                 (
                 ownerId Int32,
-                entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+                entityType LowCardinality(String),
                 createdDate Date,
                 impressions UInt64
                     )

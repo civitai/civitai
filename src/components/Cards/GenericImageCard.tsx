@@ -10,6 +10,8 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { getModelUrl } from '~/utils/string-helpers';
+import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
+import { isImpressionEntityType } from '~/server/schema/track.schema';
 
 export function GenericImageCard({
   image,
@@ -60,9 +62,17 @@ export function GenericImageCard({
 
   const isImageEntity = entityType === 'Image';
 
+  // This card is polymorphic — it renders a Model, Collection or Bounty behind a
+  // cover image as often as it renders an image. Reporting only the image would
+  // credit the cover and drop the thing the card is actually for. `entityType` is
+  // a loose string here, so it is narrowed against the tracked set rather than
+  // cast; an unrecognised value contributes nothing instead of a bad row.
+  const impressions: ImpressionTarget[] = [{ entityType: 'Image', entityId: image.id }];
+  if (entityId && isImpressionEntityType(entityType)) impressions.push({ entityType, entityId });
+
   const cardContent = (
     <FeedCard
-      impressions={[{ entityType: 'Image', entityId: image.id }]}
+      impressions={impressions}
       style={{
         cursor: disabled ? 'initial' : undefined,
       }}

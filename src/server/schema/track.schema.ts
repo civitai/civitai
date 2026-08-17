@@ -604,6 +604,12 @@ export const trackActionSchema = z.discriminatedUnion('type', [
 // a per-entity event would put that rate on the wire. The browser instead holds
 // a deduplicated set and ships it as a single array (see impressionBuffer.ts),
 // so the request rate is set by the flush interval, not by scroll speed.
+// Stored as LowCardinality(String), NOT Enum8. An Enum8 would make adding an
+// entity type a schema change applied by hand to a raw table plus two rollups, in
+// every environment, before the code that emits the new value can ship. A
+// LowCardinality column costs the same at rest and accepts a new value the day
+// someone adds a card. This list stays the authority on what the SERVER accepts —
+// widening the storage does not widen what a browser can write.
 export const IMPRESSION_ENTITY_TYPES = [
   'Image',
   'Model',
@@ -615,6 +621,13 @@ export const IMPRESSION_ENTITY_TYPES = [
   'User',
 ] as const;
 export type ImpressionEntityType = (typeof IMPRESSION_ENTITY_TYPES)[number];
+
+const IMPRESSION_ENTITY_TYPE_SET: ReadonlySet<string> = new Set(IMPRESSION_ENTITY_TYPES);
+
+/** Narrows a loosely-typed entity type from a polymorphic card to a tracked one. */
+export function isImpressionEntityType(value: string | undefined): value is ImpressionEntityType {
+  return value !== undefined && IMPRESSION_ENTITY_TYPE_SET.has(value);
+}
 
 // Where the impression happened. Becomes a LowCardinality(String) column, so it
 // is a closed enum rather than free text — a tampered client cannot introduce a

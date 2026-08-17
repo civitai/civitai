@@ -23,7 +23,30 @@ import { IMPRESSION_ENTITIES_MAX } from '~/server/schema/track.schema';
  * trackEventBuffer suite, so the flush triggers are deterministic.
  */
 
+// 🔴 Read the module's constants, then pin them against LITERALS below.
+//
+// A test that only reads `hooks.constants` and asserts relative to it moves its
+// own goalposts: change FLUSH_INTERVAL_MS to 3000 and "does not flush before the
+// interval" still passes, having tested nothing. These three numbers ARE the
+// feature's load profile, so the literal is the assertion.
 const { FLUSH_INTERVAL_MS, FLUSH_AT_SIZE, SEEN_CAP } = hooks.constants;
+
+describe('load-critical constants', () => {
+  it('pins the flush interval — this number is the steady-state request rate', () => {
+    // N actively scrolling tabs cost N/90 requests per second. Dropping this to
+    // the shared buffer's 3s multiplies the site's telemetry request rate by 30
+    // for identical information. Change it only with a sizing number to match.
+    expect(FLUSH_INTERVAL_MS).toBe(90_000);
+  });
+
+  it('pins the per-event entity cap', () => {
+    expect(FLUSH_AT_SIZE).toBe(250);
+  });
+
+  it('pins the session dedupe ceiling', () => {
+    expect(SEEN_CAP).toBe(20_000);
+  });
+});
 
 function makeFakeDom(pathname = '/images') {
   const listeners: Record<string, Array<(e?: unknown) => void>> = {};
