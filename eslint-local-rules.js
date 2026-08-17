@@ -82,6 +82,8 @@ const IO_CALL_NAMES = new Set([
   'updateDocs',
   'refresh', // *Cache.refresh(...) — Redis + cross-pool read
   'bust', // bustMvCache etc.
+  'bustUserSettings',
+  'getUserSettings',
   'bustMvCache',
   'invalidateManyImageExistence',
   // email

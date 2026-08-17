@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Correctness tests for the two SQL statements `setUserSetting` emits.
+// Statement-shape tests for the ONE place `User.settings` is written.
+//
+// History this file exists to hold shut:
 //
 // 1. The merge statement built its jsonb payload by splicing `JSON.stringify(toSet)`
 //    into a single-quoted SQL string literal. `JSON.stringify` escapes `"` and `\`
@@ -15,45 +17,59 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //    the tRPC transformer carries an explicit `undefined` property over the wire and
 //    zod keeps the key, so `user.setSettings` can put a key on the removal list.
 //
-// Both statements are now parameterised tagged templates, so values are bound rather
-// than pasted into the statement text. These tests assert exactly that: user data must
-// appear in the bound values and never in the statement text.
+// 3. Set and remove were TWO separate statements, and the merge was written from a
+//    JS-side snapshot of the blob. Both are now one statement over the stored column,
+//    which is what makes a settings write survive a concurrent one. The behavioural
+//    proof of that is user-settings-race.behavior.test.ts, which runs these statements
+//    against a real Postgres and interleaves two requests; this file pins the emitted
+//    SHAPE, which a behavioural test on one engine cannot.
 //
-// Where a value lives is only half of it, though. A statement can bind every value
-// correctly and still be rejected by Postgres if the operator, the cast, or the
-// placeholder's position is wrong — and an assertion that only reads `values`, or only
-// asserts a negative on the text, cannot see that. So each statement additionally pins
-// the shape it emits.
+// Where a value lives is only half of it: a statement can bind every value correctly
+// and still be rejected by Postgres if the operator, the cast, or the placeholder's
+// position is wrong — and an assertion that only reads `values`, or only asserts a
+// negative on the text, cannot see that. So each statement pins its shape too.
 
 const { statements, mockDb } = vi.hoisted(() => {
   const statements: { text: string; values: unknown[] }[] = [];
+
+  // Three call shapes reach the capture. The tagged template (`$executeRaw`…``) arrives
+  // as `(TemplateStringsArray, ...values)`; a pre-built `Prisma.sql` arrives as an object
+  // exposing `.sql`/`.values`; the interpolating `$queryRawUnsafe` / `$executeRawUnsafe`
+  // arrive as one finished string plus values. All reduce to the same {text, values}
+  // pair, so a statement can never go unrecorded and read as a pass.
+  const record = (first: unknown, rest: unknown[]) => {
+    if (Array.isArray(first) && Array.isArray((first as unknown as TemplateStringsArray).raw)) {
+      const text = (first as string[]).reduce(
+        (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
+        ''
+      );
+      statements.push({ text, values: rest });
+    } else if (
+      first &&
+      typeof first === 'object' &&
+      typeof (first as { sql?: unknown }).sql === 'string'
+    ) {
+      const frag = first as { sql: string; values?: unknown[] };
+      statements.push({ text: frag.sql, values: Array.isArray(frag.values) ? frag.values : [] });
+    } else {
+      statements.push({ text: String(first), values: rest });
+    }
+  };
+
   return {
     statements,
     mockDb: {
-      // Parameterised form. Two call shapes reach it: the tagged template
-      // (`$executeRaw`…``) arrives as `(TemplateStringsArray, ...values)`, and a
-      // pre-built `Prisma.sql` passed as an argument arrives as a `Prisma.Sql`
-      // exposing `.sql` (text with $N placeholders) and `.values`. Reduce both to
-      // the same {text, values} pair.
-      $executeRaw: vi.fn(async (first: any, ...rest: unknown[]) => {
-        if (Array.isArray(first) && Array.isArray(first.raw)) {
-          const text = first.reduce(
-            (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
-            ''
-          );
-          statements.push({ text, values: rest });
-        } else {
-          statements.push({
-            text: typeof first?.sql === 'string' ? first.sql : String(first),
-            values: Array.isArray(first?.values) ? first.values : [],
-          });
-        }
+      $executeRaw: vi.fn(async (first: unknown, ...rest: unknown[]) => {
+        record(first, rest);
         return 1;
       }),
-      // Interpolating form: the whole statement arrives as one already-built string.
-      $executeRawUnsafe: vi.fn(async (text: string, ...values: unknown[]) => {
-        statements.push({ text: String(text), values });
+      $executeRawUnsafe: vi.fn(async (first: unknown, ...rest: unknown[]) => {
+        record(first, rest);
         return 1;
+      }),
+      $queryRawUnsafe: vi.fn(async (first: unknown, ...rest: unknown[]) => {
+        record(first, rest);
+        return [{ settings: {} }];
       }),
       $queryRaw: vi.fn(async () => []),
     },
@@ -61,7 +77,7 @@ const { statements, mockDb } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-// `setUserSetting` busts the user-settings cache after writing; keep Redis out of it.
+// The settings writers bust the user-settings cache after writing; keep Redis out of it.
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createCachedObject: vi.fn(() => ({
@@ -94,9 +110,18 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   toggleHidden: vi.fn(async () => ({ added: [], removed: [] })),
 }));
 
-import { setUserSetting } from '~/server/services/user.service';
+import {
+  patchUserSettings,
+  setAlertDismissed,
+  setUserSetting,
+} from '~/server/services/user.service';
 
 const USER_ID = 4242;
+
+// The original removal statement ended in a stray `}` that made it unparseable. The
+// combined statement legitimately contains the empty-object literal `'{}'`, so drop
+// those before looking for a loose brace — assert the DEFECT, not the character.
+const withoutEmptyObjectLiterals = (text: string) => text.replace(/'\{\}'/g, '');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -163,7 +188,7 @@ describe('setUserSetting — the merge statement', () => {
   });
 });
 
-describe('setUserSetting — the key-removal statement', () => {
+describe('setUserSetting — key removal', () => {
   it('removes settings keys without error', async () => {
     await setUserSetting(USER_ID, {
       allowAds: true,
@@ -173,30 +198,26 @@ describe('setUserSetting — the key-removal statement', () => {
       swipeGalleryCards: undefined,
     });
 
-    // One merge for `allowAds`, then one removal for the two undefined keys.
-    expect(statements).toHaveLength(2);
-    const removal = statements[1];
-
-    // The stray brace made this statement unparseable; there must be no brace at all.
-    expect(removal.text).not.toContain('}');
+    const [write] = statements;
+    expect(withoutEmptyObjectLiterals(write.text)).not.toContain('}');
     // The key names are bound as one array, not pasted in and hand-quoted.
-    expect(removal.values).toContainEqual(['hideDonationGoals', 'swipeGalleryCards']);
-    expect(removal.text).not.toContain('hideDonationGoals');
+    expect(write.values).toContainEqual(['hideDonationGoals', 'swipeGalleryCards']);
+    expect(write.text).not.toContain('hideDonationGoals');
   });
 
   it('binds a single removed key as an array too', async () => {
     await setUserSetting(USER_ID, { allowAds: true, hideDonationGoals: undefined });
 
-    expect(statements).toHaveLength(2);
-    const removal = statements[1];
-    expect(removal.text).not.toContain('}');
-    expect(removal.values).toContainEqual(['hideDonationGoals']);
+    const [write] = statements;
+    expect(withoutEmptyObjectLiterals(write.text)).not.toContain('}');
+    expect(write.values).toContainEqual(['hideDonationGoals']);
   });
 
-  it('emits no removal statement when nothing is marked for removal', async () => {
+  it('emits no subtraction when nothing is marked for removal', async () => {
     await setUserSetting(USER_ID, { allowAds: true });
 
     expect(statements).toHaveLength(1);
+    expect(statements[0].text).not.toContain('::text[]');
   });
 
   // `jsonb - text[]` is the only form that accepts a bound array of key names; any other
@@ -205,19 +226,109 @@ describe('setUserSetting — the key-removal statement', () => {
   it('casts the bound key array to text[]', async () => {
     await setUserSetting(USER_ID, { allowAds: true, hideDonationGoals: undefined });
 
-    const removal = statements[1];
-    expect(removal.text).toContain('::text[]');
-    expect(removal.text).toMatch(/\$\d+::text\[\]/);
+    const [write] = statements;
+    expect(write.text).toContain('::text[]');
+    expect(write.text).toMatch(/\$\d+::text\[\]/);
   });
 
   // Delete, not merge. Swapping `-` for `||` is both an operator Postgres has no
   // definition for at these operand types and the opposite meaning from the one this
   // branch exists to express — and nothing above would notice the swap.
-  it('subtracts the key array from settings rather than concatenating it', async () => {
+  it('subtracts the key array rather than concatenating it', async () => {
     await setUserSetting(USER_ID, { allowAds: true, hideDonationGoals: undefined });
 
-    const removal = statements[1];
-    expect(removal.text).toMatch(/settings\s*-\s*\$\d+::text\[\]/);
-    expect(removal.text).not.toContain('||');
+    const [write] = statements;
+    expect(write.text).toMatch(/-\s*\$\d+::text\[\]/);
+  });
+
+  // The set and the removal used to be two statements with no transaction around them,
+  // so a reader could observe the blob with the new keys written and the dead keys still
+  // present. One statement removes that window by construction.
+  it('sets and removes in a SINGLE statement', async () => {
+    await setUserSetting(USER_ID, { allowAds: true, hideDonationGoals: undefined });
+
+    expect(statements).toHaveLength(1);
+    expect(statements[0].text).toContain('||');
+    expect(statements[0].text).toContain('::text[]');
+  });
+
+  it('still writes the removal when every supplied key is a removal', async () => {
+    // `removeEmpty` strips the undefined values, so the payload half is empty. The old
+    // code returned early on that and the removal never ran.
+    await setUserSetting(USER_ID, { hideDonationGoals: undefined });
+
+    expect(statements).toHaveLength(1);
+    expect(statements[0].values).toContainEqual(['hideDonationGoals']);
+  });
+});
+
+describe('patchUserSettings — the nested merge', () => {
+  it('merges INTO the named key rather than replacing it', async () => {
+    await patchUserSettings(USER_ID, { mergeInto: { features: { someFlag: true } } });
+
+    expect(statements).toHaveLength(1);
+    const [write] = statements;
+    // The sub-object is read from the column inside the same statement — that is what
+    // keeps a sibling sub-key another writer just added.
+    expect(write.text).toMatch(
+      /COALESCE\(settings->\$\d+::text, *'\{\}'::jsonb\) *\|\| *\$\d+::jsonb/
+    );
+    expect(write.values).toContainEqual('features');
+    expect(write.values).toContainEqual(JSON.stringify({ someFlag: true }));
+    // The key name binds; it is never pasted into the text (a settings key is fixed
+    // vocabulary today, but the statement must not depend on that).
+    expect(write.text).not.toContain('features');
+  });
+
+  it('returns the stored blob rather than a JS-side reconstruction', async () => {
+    await patchUserSettings(USER_ID, { set: { allowAds: true } });
+
+    expect(statements[0].text).toContain('RETURNING settings');
+  });
+
+  it('writes nothing when there is nothing to change', async () => {
+    await patchUserSettings(USER_ID, { set: {}, mergeInto: {}, remove: [] });
+
+    expect(statements.filter((s) => s.text.includes('UPDATE'))).toHaveLength(0);
+  });
+});
+
+describe('setAlertDismissed — the set operation', () => {
+  it('appends to the STORED array, guarded against a duplicate', async () => {
+    await setAlertDismissed(USER_ID, 'notice-a', true);
+
+    expect(statements).toHaveLength(1);
+    const [write] = statements;
+    // Read and write in one statement: the array is never carried through JS, which is
+    // what lets two dismissals of different notices overlap.
+    expect(write.text).toContain(`settings->'dismissedAlerts'`);
+    expect(write.text).toContain('jsonb_build_array($1::text)');
+    // Idempotence is a containment check on the stored array, not a JS `Set`.
+    expect(write.text).toContain('@> to_jsonb($1::text)');
+    expect(write.values).toEqual(['notice-a', USER_ID]);
+    // The alert id must never reach the statement text.
+    expect(write.text).not.toContain('notice-a');
+  });
+
+  it('filters the STORED array on removal, and never yields SQL NULL', async () => {
+    await setAlertDismissed(USER_ID, 'notice-a', false);
+
+    const [write] = statements;
+    expect(write.text).toContain('jsonb_array_elements');
+    expect(write.text).toMatch(/WHERE e <> to_jsonb\(\$1::text\)/);
+    // `jsonb_agg` over an empty set returns NULL; without this the last removal would
+    // write a NULL into the key instead of an empty array.
+    expect(write.text).toMatch(/COALESCE\(\(\s*SELECT jsonb_agg/);
+    expect(write.text).toContain(`'[]'::jsonb`);
+    expect(write.values).toEqual(['notice-a', USER_ID]);
+  });
+
+  it('writes through jsonb_set on the dismissedAlerts path only', async () => {
+    await setAlertDismissed(USER_ID, 'notice-a', true);
+
+    const [write] = statements;
+    expect(write.text).toMatch(
+      /jsonb_set\(COALESCE\(settings, '\{\}'::jsonb\), '\{dismissedAlerts\}'/
+    );
   });
 });

@@ -20,10 +20,10 @@
   ],
   "totals": {
     "canonicalFiles": 218,
-    "pendingFiles": 398,
-    "allFiles": 485,
+    "pendingFiles": 399,
+    "allFiles": 486,
     "canonicalSites": 288,
-    "pendingSites": 869
+    "pendingSites": 870
   },
   "bySpecifier": {
     "~/server/db/client": 135,
@@ -39,7 +39,7 @@
     "~/server/flipt/client": 66,
     "~/server/redis/fail-open-log": 55,
     "~/server/utils/endpoint-helpers": 53,
-    "~/server/redis/caches": 54,
+    "~/server/redis/caches": 55,
     "~/server/prom/client": 50
   },
   "files": [
@@ -531,6 +531,7 @@
     "src/server/services/__tests__/update-user-profile.sql.service.test.ts",
     "src/server/services/__tests__/user-challenge-flag-gate.test.ts",
     "src/server/services/__tests__/user-profile-domain-variants.service.test.ts",
+    "src/server/services/__tests__/user-settings-gallery-copy.behavior.test.ts",
     "src/server/services/__tests__/vae-files-cross-version.test.ts",
     "src/server/services/blocks/__tests__/agent-review-chat.service.test.ts",
     "src/server/services/blocks/__tests__/agent-review.service.test.ts",
