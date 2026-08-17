@@ -119,7 +119,14 @@
         <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.reactions)}</p>
       </StatCard>
       <StatCard label="All-time image comments (incl. replies)" icon={IconMessage} color="#20c997">
-        <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.comments)}</p>
+        <!-- Deleting an image orphans its thread, so this can fall month over month. Correct, but it reads as a
+             bug to whoever notices first — hence the title. -->
+        <p
+          class="mt-1 text-xl font-semibold text-white"
+          title="Comments and replies from other people, on images you still have posted."
+        >
+          {num(data.allTime.comments)}
+        </p>
       </StatCard>
     {/if}
   </section>
