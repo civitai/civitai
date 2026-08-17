@@ -185,11 +185,18 @@ earn their place.
 
 **The rollup is not negligible, and it is the only permanent storage.**
 `daily_impressions` is one row per (entity, type, day) — on the order of 30–80M
-rows/day at 2.29 B/row, so ~0.07–0.18 GiB/day, growing forever. For comparison
+rows/day at 2.29 B/row, so ~0.07–0.18 GiB/day, **kept forever**. For comparison
 `daily_views` has accumulated 3.37B rows / 7.19 GiB across the site's entire
-history; this passes that within months. It therefore carries its own **2-year
-TTL**, which is a retention decision someone should revisit rather than a technical
-necessity.
+history; this passes that within months.
+
+That retention is a deliberate decision (Justin, 2026-08-17), not an oversight. A
+bounded TTL here was drafted and rejected: this table is what an "all-time
+impressions" figure reads, so any horizon means a creator's lifetime count starts
+silently truncating on a date nobody remembers setting. ~0.1 GiB/day buys the
+absence of that failure, and it matches how `daily_views` already behaves.
+
+The raw table is the one with a horizon, and only because it is a means to the
+rollups rather than a record in its own right.
 
 ### The dial, and when to reach for it
 
@@ -316,8 +323,7 @@ CREATE TABLE default.daily_impressions
 ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
 PARTITION BY toYYYYMM(createdDate)
 ORDER BY (entityType, entityId, createdDate)
-TTL createdDate + INTERVAL 2 YEAR
-SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
+SETTINGS index_granularity = 8192;
 
 CREATE MATERIALIZED VIEW default.daily_impressions_mv
 TO default.daily_impressions

@@ -933,8 +933,7 @@ clickhouse client -n <<-EOSQL
         engine = SummingMergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (entityType, entityId, createdDate)
-            TTL createdDate + INTERVAL 2 YEAR
-            SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
+            SETTINGS index_granularity = 8192;
 
     create table if not exists default.impressions_daily_by_owner
     (
