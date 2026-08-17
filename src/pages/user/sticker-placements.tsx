@@ -19,6 +19,7 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { Meta } from '~/components/Meta/Meta';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
+import { placementPaymentSummary, selectionFree } from '~/components/Sticker/payout-copy';
 import { WithheldThumb } from '~/components/RemixGallery/SubmissionPair';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -56,6 +57,10 @@ export default function StickerPlacements() {
 
   const allSelected = rows.length > 0 && selected.length === rows.length;
 
+  // All free, all paid, or mixed. Derived beside `declineConsequence`, which is
+  // the only consumer and where the mixed branch is already covered.
+  const selectedFree = selectionFree(selected, rows);
+
   const toggle = (id: number) =>
     setSelected((current) =>
       current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
@@ -91,7 +96,11 @@ export default function StickerPlacements() {
             <Card withBorder p="xs">
               <Group justify="space-between">
                 <Text size="sm">{selected.length} selected</Text>
-                <StickerPlacementActions placementIds={selected} onDone={() => setSelected([])} />
+                <StickerPlacementActions
+                  placementIds={selected}
+                  free={selectedFree}
+                  onDone={() => setSelected([])}
+                />
               </Group>
             </Card>
           )}
@@ -191,11 +200,12 @@ export default function StickerPlacements() {
                       <Text span fw={600}>
                         {row.placer?.username ?? 'Someone'}
                       </Text>{' '}
-                      paid{' '}
-                      <Text span fw={600}>
-                        {row.amount}
-                      </Text>{' '}
-                      Buzz
+                      {/* The only money statement on the card the Approve and
+                          Decline buttons sit under, and a free row carries
+                          `amount: 0` — so unbranched it asserts a payment of zero
+                          on the very page the free-placement notification sends
+                          the creator to. */}
+                      {placementPaymentSummary(row.free, row.amount)}
                     </Text>
                     <Text size="xs" c="dimmed">
                       Placed {formatDate(row.createdAt)}
@@ -225,6 +235,7 @@ export default function StickerPlacements() {
                   <StickerPlacementActions
                     placementIds={[row.id]}
                     hasComment={!!row.data.comment}
+                    free={row.free}
                     stacked
                     compact
                   />

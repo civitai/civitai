@@ -498,6 +498,7 @@ export function StickerPlacementOverlay({
                       <StickerPlacementActions
                         placementIds={[placement.id]}
                         hasComment={placement.hasComment}
+                        free={placement.free}
                         compact
                       />
                     ) : (

@@ -6,6 +6,7 @@ import {
   settlePlacement,
   MAX_LEG_ATTEMPTS,
 } from '~/server/services/placement-escrow.service';
+import { createFreePlacement } from '~/server/services/free-placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
@@ -115,11 +116,25 @@ async function loadPlaceableSticker({
 }
 
 export type CreateStickerPlacement = {
+  /**
+   * 🔴 From the session, never from the request body. Every free-tier rule —
+   * the daily allowance, never-twice-here, the block and suspension checks — is
+   * a statement *about* this id, so none of them notice when it is the wrong
+   * one: a placer read off the payload would spend someone else's allowance and
+   * place under their name with nothing raising.
+   */
   placerId: number;
   imageId: number;
   data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
   /** Moderators may exceed a creator's size limit. Justin's call. */
   isModerator?: boolean;
+  /**
+   * Which of the two offers the placer took. A choice, not a claim: it selects
+   * the path, and the path re-decides every rule for itself under a lock. The
+   * number the client rendered is stale by the time it is read, so a `true` here
+   * is a request for a free slot rather than an assertion that one is free.
+   */
+  free?: boolean;
   /**
    * The domain's currency, decided at the router from the request's own feature
    * flags rather than anything the client sends — a client-supplied currency
@@ -171,6 +186,7 @@ export async function createStickerPlacement({
   imageId,
   data,
   isModerator = false,
+  free = false,
   spendType,
 }: CreateStickerPlacement) {
   const space = await resolvePlacementSpaceFor({
@@ -189,9 +205,6 @@ export async function createStickerPlacement({
   if (space.ownerId === placerId)
     throw throwBadRequestError('placement: you cannot place a sticker on your own content');
 
-  if (space.price == null)
-    throw throwBadRequestError('placement: this creator has not set a price yet');
-
   // The creator's size limit, refused rather than clamped. Quietly shrinking a
   // sticker someone just paid for is the same shape as v1's recurring defect: a
   // rule applied as a filter where a refusal was needed. The editor also caps
@@ -208,6 +221,21 @@ export async function createStickerPlacement({
         maxScale * 100
       )}% of the image width`
     );
+
+  // Everything below is the paid path: the escrow, the price, and the two
+  // refusals `createFreePlacement` makes for itself under its lock. Branching
+  // here rather than threading `free` through them keeps one creation route per
+  // offer — the alternative is a paid path with free-shaped holes in it, which
+  // is the guard-versus-filter shape this feature has already shipped five
+  // times.
+  if (free) return placeFreeSticker({ placerId, imageId, data, space });
+
+  // Below the branch rather than above it, and not a `!free` condition: a
+  // creator can open free capacity on a space they have never priced, so an
+  // unset price is only a refusal for the offer that needs one. Placed here it
+  // also narrows the type for the escrow, which a conditional guard cannot.
+  if (space.price == null)
+    throw throwBadRequestError('placement: this creator has not set a price yet');
 
   await assertCanPlace({ ownerId: space.ownerId, placerId });
 
@@ -287,6 +315,114 @@ export async function createStickerPlacement({
 }
 
 /**
+ * The same placement, taken out of the creator's free capacity instead of paid
+ * for.
+ *
+ * Free of Buzz, not of everything: the use still comes out of the placer's
+ * sticker inventory, so a free placement costs the same thing the paid one does
+ * minus the creator's price.
+ *
+ * **No refusal is re-implemented here.** The mode, the self-placement rule, the
+ * block and suspension checks, the per-owner pending cap, the daily allowance,
+ * never-twice-here and the slot count all live inside `createFreePlacement`,
+ * where the last three are decided under a lock in the transaction that
+ * inserts. Anything this function checked instead would be a second opinion
+ * that is free to disagree with the one that actually holds.
+ *
+ * 🔴 **The approval at the end is not optional.** `createFreePlacement` always
+ * writes `pending` and deliberately never settles — settlement is the money
+ * path and does I/O, and the claim runs inside a transaction. Sticker's
+ * `allowedModes` includes `auto`, so an auto space is reachable here, and
+ * without this the placement sits pending for 48 hours holding a slot while the
+ * placer has been told it is live and the creator watches a review queue they
+ * turned off. It fails silently in both directions, which is why it is the last
+ * thing this function does rather than a caller's job.
+ */
+async function placeFreeSticker({
+  placerId,
+  imageId,
+  data,
+  space,
+}: {
+  placerId: number;
+  imageId: number;
+  data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
+  space: Awaited<ReturnType<typeof resolvePlacementSpaceFor>>;
+}) {
+  const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId });
+  await assertHasUse({ userId: placerId, cosmeticId: sticker.id });
+
+  const comment = commentFrom(data);
+
+  const placement = await createFreePlacement({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: imageId,
+    placerId,
+    // Carried for the same reason the paid path carries it — settlement is
+    // resumable and a sweeper never sees an argument. A free approval plans no
+    // legs, so nothing is ever paid out against it.
+    sellerId: sticker.createdById,
+    data: {
+      cosmeticId: sticker.id,
+      ...normalizeStickerPlacement(data),
+      ...(comment ? { comment } : {}),
+    },
+  });
+
+  try {
+    await spendStickerUsesFor({ userId: placerId, counts: new Map([[sticker.id, 1]]) });
+  } catch (error) {
+    await discardFreePlacement(placement.id);
+    throw error;
+  }
+
+  if (space.mode === 'auto')
+    await settlePlacement({
+      placementId: placement.id,
+      action: 'approve',
+      actorId: space.ownerId,
+    });
+
+  return { placementId: placement.id, status: space.mode === 'auto' ? 'approved' : 'pending' };
+}
+
+/**
+ * The unwind for a free placement, which DELETES the row rather than expiring
+ * it.
+ *
+ * The paid path expires, because the escrow's claim rows are the evidence
+ * recovery depends on and rolling them back destroys it. A free row has none —
+ * no holds, no ledger, nothing carrying a foreign key to it — so there is
+ * nothing to preserve, and expiring it would cost the placer their whole day:
+ * the daily allowance counts on `createdAt` across every status, so an expired
+ * row is indistinguishable from one a creator declined. Being unforgiving about
+ * a decline is deliberate; being unforgiving about our own failed spend is not.
+ *
+ * Scoped to a pending free row so a claim someone has since acted on cannot be
+ * deleted out from under them.
+ */
+async function discardFreePlacement(placementId: number) {
+  try {
+    await dbWrite.placement.deleteMany({
+      where: { id: placementId, free: true, status: 'pending' },
+    });
+  } catch (error) {
+    // The row still carries its deadline, so the expiry sweep releases the
+    // creator's slot within the window either way. What is lost is the placer's
+    // free placement for the day, which is why this is worth a line rather than
+    // a swallow.
+    logToAxiom({
+      name: 'sticker-placement',
+      type: 'error',
+      message: 'could not discard a free placement whose use spend failed',
+      placementId,
+      error: (error as Error).message,
+    }).catch(() => null);
+  }
+}
+
+/**
  * A courtesy refusal before any money moves. The spend after the escrow is the
  * authority — this only exists so "you're out of uses" arrives before a charge
  * and a refund rather than as a surprising round trip.
@@ -315,6 +451,8 @@ export type StickerPlacementView = {
   ownerId: number;
   status: PlacementStatus;
   amount: number;
+  /** Placed against the creator's free capacity, so no Buzz moved for it. */
+  free: boolean;
   data: StickerPlacementData;
   /**
    * When it was placed, which is what decides what covers what — and, on the
@@ -387,6 +525,11 @@ export async function getStickerPlacementDetail({
       createdAt: true,
       resolvedAt: true,
       status: true,
+      // Every surface built on this card says something about money — what a
+      // decline returns, why a removal is locked, what the owner keeps. All of
+      // it is false on a free row, and without this column the client has to
+      // infer it from `amount`, which is a number rather than a fact.
+      free: true,
       data: true,
       ownerId: true,
       placerId: true,
@@ -419,6 +562,7 @@ export async function getStickerPlacementDetail({
     // queue for two days did not change that.
     placedAt: placement.createdAt,
     status: placement.status as PlacementStatus,
+    free: placement.free,
     placer: placement.placer,
     comment: data ? visibleStickerComment(data, isParty) ?? null : null,
     /**
@@ -510,6 +654,11 @@ export async function getStickerPlacements({
       ownerId: true,
       status: true,
       amount: true,
+      // Beside `amount` rather than derived from it. Zero is what a free row
+      // carries, but it is not what makes it free — and the owner controls the
+      // copy that depends on the answer, so an inference is a wrong sentence
+      // about money rather than a missing one.
+      free: true,
       data: true,
       createdAt: true,
     },
@@ -530,6 +679,7 @@ export async function getStickerPlacements({
         ownerId: row.ownerId,
         status: row.status as PlacementStatus,
         amount: row.amount,
+        free: row.free,
         placedAt: row.createdAt,
         // The note's text is deliberately NOT in the listing, which runs for
         // every image on a feed page — only whether there is one, so an overlay
@@ -669,6 +819,7 @@ export async function actOnStickerPlacement({
       amount: true,
       status: true,
       surface: true,
+      free: true,
       data: true,
       createdAt: true,
       resolvedAt: true,
@@ -705,6 +856,7 @@ type ActionablePlacement = {
   id: number;
   ownerId: number;
   status: string;
+  free: boolean;
   data: unknown;
   createdAt: Date;
   resolvedAt: Date | null;
@@ -750,7 +902,16 @@ async function removeApprovedSticker({
     const removableAt = stickerRemovableAt(placement.resolvedAt ?? placement.createdAt);
     if (removableAt > new Date())
       throw throwBadRequestError(
-        `placement: this sticker can be removed from ${removableAt.toISOString()}. Someone paid to place it, so it stays up for a week after you accept it.`
+        `placement: this sticker can be removed from ${removableAt.toISOString()}. ${
+          placement.free
+            ? // Nobody paid for a free row, so the paid path's reason is simply
+              // untrue here — and a stated reason that is false is worse than a
+              // shorter one, because it is what a support answer repeats. The
+              // week itself is unchanged: Justin's call, 2026-08-17, on the
+              // grounds that accepting is the commitment whatever it cost.
+              'Accepting a sticker is a commitment to keep it up for a week.'
+            : 'Someone paid to place it, so it stays up for a week after you accept it.'
+        }`
       );
   }
 
@@ -862,6 +1023,10 @@ export async function getPendingStickerPlacements({
       targetId: true,
       placerId: true,
       amount: true,
+      // The queue's decline confirmation states what a decline costs, which is a
+      // different sentence on a free row — and a bulk selection can hold both
+      // kinds, so the caller needs it per row rather than per page.
+      free: true,
       data: true,
       createdAt: true,
       expiresAt: true,
