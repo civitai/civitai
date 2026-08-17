@@ -55,10 +55,13 @@ vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
 import { ImageCard } from './ImageCard';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../test/component-setup';
+import { cleanup } from 'vitest-browser-react';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
-// The widest column the featured/home grid lays out (HomeBlock.module.scss).
+// The two column widths the featured/home grid lays out (HomeBlock.module.scss:
+// 336px, and 296px in the three narrower rules).
 const CARD_WIDTH = 336;
+const NARROW_CARD_WIDTH = 296;
 const SINGLE_ROW_MAX_HEIGHT = 40;
 
 function imageData(counts: number) {
@@ -85,10 +88,10 @@ function imageData(counts: number) {
   } as any;
 }
 
-async function renderCard(counts: number) {
+async function renderCard(counts: number, width: number = CARD_WIDTH) {
   renderWithProviders(
     <IntersectionObserverProvider>
-      <div style={{ width: CARD_WIDTH }}>
+      <div style={{ width }}>
         <ImageCard data={imageData(counts)} />
       </div>
     </IntersectionObserverProvider>
@@ -101,6 +104,12 @@ async function renderCard(counts: number) {
 function actionRowHeight() {
   const bar = document.body.querySelector('[aria-label$="reaction"]')!.parentElement!;
   return bar.parentElement!.getBoundingClientRect().height;
+}
+
+function reactionBarOverflow() {
+  const bar = document.body.querySelector('[aria-label$="reaction"]')!.parentElement!;
+  const card = bar.parentElement!.parentElement!.parentElement!;
+  return bar.getBoundingClientRect().right - card.getBoundingClientRect().right;
 }
 
 function infoButtons() {
@@ -143,6 +152,25 @@ describe('ImageCard action row at four-digit reaction counts', () => {
     await renderCard(1455);
 
     expect(actionRowHeight()).toBeGreaterThan(SINGLE_ROW_MAX_HEIGHT);
+  });
+
+  // Hiding the button buys back a line, not width: at the narrow column the bar
+  // itself is wider than the card and the last reaction is still clipped. That
+  // half of 868krjmvv is NOT fixed, so this pins the overflow at its current
+  // size rather than pretending it is gone — it fails if a change makes it
+  // worse, and passes if someone finally closes it.
+  test('still overruns the narrow column, by no more than it does today', async () => {
+    await renderCard(1455, NARROW_CARD_WIDTH);
+    const fourDigits = reactionBarOverflow();
+    await cleanup();
+
+    // Three-digit counts fit with room to spare, so a negative number here is
+    // what proves the measurement above tracks the bar and not some constant.
+    await renderCard(145, NARROW_CARD_WIDTH);
+    const threeDigits = reactionBarOverflow();
+
+    expect(threeDigits).toBeLessThan(0);
+    expect(fourDigits).toBeLessThanOrEqual(50);
   });
 
   test('fits on one line at three-digit counts either way', async () => {

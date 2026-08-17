@@ -68,6 +68,14 @@ export function PostImages({
           imageCollectionItem?.tag &&
           (isOwner || isModerator || imageCollectionItem.status === CollectionItemStatus.ACCEPTED);
         const vimeoVideoId = (image.metadata as VideoMetadata)?.vimeoVideoId;
+        // One predicate for both the prop that asks for a control strip and the
+        // class that moves the reaction bar clear of one. Spelling it twice is
+        // how the reaction bar came to sit top-left over still images:
+        // `nativeVideoControls` is a site-wide user preference, and EdgeMedia
+        // only forwards `html5Controls` to EdgeVideo.
+        const showsControlStrip =
+          image.type === MediaType.video &&
+          (features.nativeVideoControls || shouldDisplayHtmlControls(image));
 
         return (
           <Fragment key={image.id}>
@@ -157,9 +165,7 @@ export function PostImages({
                           width={width < maxWidth ? width : maxWidth}
                           original={image.type === 'video'}
                           anim={safe}
-                          html5Controls={
-                            features.nativeVideoControls || shouldDisplayHtmlControls(image)
-                          }
+                          html5Controls={showsControlStrip}
                           videoRef={videoRef}
                           vimeoVideoId={vimeoVideoId}
                         />
@@ -167,14 +173,7 @@ export function PostImages({
                     </RoutedDialogLink>
                     <Reactions
                       className={clsx(classes.reactions, {
-                        // Moves the bar clear of the player's control strip, so it
-                        // must track whether a control strip actually renders:
-                        // `nativeVideoControls` is a site-wide user preference and
-                        // EdgeMedia ignores it for a still image.
-                        [classes.reactionsWithControls]:
-                          !vimeoVideoId &&
-                          image.type === MediaType.video &&
-                          (features.nativeVideoControls || shouldDisplayHtmlControls(image)),
+                        [classes.reactionsWithControls]: !vimeoVideoId && showsControlStrip,
                         [classes.vimeoReactions]: !!vimeoVideoId,
                       })}
                       entityId={image.id}
