@@ -248,9 +248,11 @@ export const getUserCollectionItemsByItemSchema = collectionItemSchema
 
 export type FollowCollectionInputSchema = z.infer<typeof followCollectionInputSchema>;
 
+// No target user: follow and unfollow act on the caller. Managing someone else's row belongs to
+// inviteCollaborator / updateCollaboratorRole / removeCollaborator, which carry the guards these
+// two services don't — the block check, the caps, and the owner-only rule over a Manager's seat.
 export const followCollectionInputSchema = z.object({
   collectionId: z.number(),
-  userId: z.number().optional(),
 });
 
 export type GetAllCollectionItemsSchema = z.infer<typeof getAllCollectionItemsSchema>;
