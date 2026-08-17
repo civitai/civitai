@@ -63,6 +63,7 @@ import {
   type StoreScopeEntrypoint,
 } from '~/server/prom/store-scope.metrics';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import {
   isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
@@ -219,9 +220,14 @@ function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): bo
  * investigation. `recordStoreScopeApplied` keeps them apart (`none` vs `absent`).
  */
 function applyStoreScope(ctx: unknown, entrypoint: StoreScopeEntrypoint): StoreVisibilityScope {
-  const raw = (ctx as { _storeScope?: StoreVisibilityScope })._storeScope;
-  recordStoreScopeApplied(raw, entrypoint);
-  return raw ?? 'none';
+  const raw = (ctx as { _storeScope?: unknown })._storeScope;
+  recordStoreScopeApplied(raw as string | undefined, entrypoint);
+  // 🔴 `raw ?? 'none'` already failed closed for a MISSING scope; `narrowStoreScope`
+  // extends that to any value outside the closed set (a typo, a scope from a newer
+  // branch this build cannot interpret), and — the point of consolidating it — makes
+  // this branch and the two REST handlers apply the SAME rule instead of three
+  // independently-written defaults that disagreed (civitai#3983).
+  return narrowStoreScope(raw);
 }
 
 /**

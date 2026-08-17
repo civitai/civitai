@@ -107,8 +107,7 @@ function offsiteRow(over: Record<string, unknown> = {}) {
   };
 }
 
-const ONSITE_DEPLOY_GATE =
-  /al\.kind <> 'onsite' OR ab\.current_version_deployed_at IS NOT NULL/i;
+const ONSITE_DEPLOY_GATE = /al\.kind <> 'onsite' OR ab\.current_version_deployed_at IS NOT NULL/i;
 
 describe('listAvailableListings — DEPLOY-GATE WHERE clause', () => {
   beforeEach(() => {
@@ -136,12 +135,12 @@ describe('getListingDetail — DEPLOY-GATE (app-layer)', () => {
       ...onsiteRow({ appBlock: { currentVersionDeployedAt: null, manifest: {} } }),
       status: 'approved',
     });
-    expect(await getListingDetail({ slug: 'cool-app' })).toBeNull();
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).toBeNull();
   });
 
   it('SHOWS a deployed ONSITE listing', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
-    const detail = await getListingDetail({ slug: 'cool-app' });
+    const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail).not.toBeNull();
     expect(detail!.id).toBe('apl_1');
   });
@@ -156,12 +155,12 @@ describe('getListingDetail — DEPLOY-GATE (app-layer)', () => {
       }),
       status: 'approved',
     });
-    expect(await getListingDetail({ slug: 'cool-app' })).not.toBeNull();
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).not.toBeNull();
   });
 
   it('SHOWS an OFFSITE listing (no backing AppBlock/deploy — exempt)', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...offsiteRow(), status: 'approved' });
-    const detail = await getListingDetail({ slug: 'ext-app' });
+    const detail = await getListingDetail({ slug: 'ext-app' }, { scope: 'full' });
     expect(detail).not.toBeNull();
     expect(detail!.id).toBe('apl_2');
   });
