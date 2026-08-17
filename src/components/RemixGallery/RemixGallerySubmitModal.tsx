@@ -141,11 +141,26 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
        * silence is the one outcome that leaves nobody informed.
        */
       /**
-       * 🔴 The FRESH `paidOpen` travels out beside the explanation, because the
-       * rendered one is not merely stale — `getRemixGalleryVisibility.useQuery`
-       * passes no options, so it inherits `staleTime: Infinity` with no refetch
-       * on focus. A modal left open across a price change keeps the render value
-       * for the whole session, which is why this handler re-fetches at all.
+       * 🔴 `staleTime: 0` on both fetches, and it is load-bearing rather than
+       * decorative — the sticker sibling says the same thing at
+       * `Sticker/placement.util.ts`. The client's global default is
+       * `staleTime: Infinity`, and `fetchQuery` applies it: both keys below are
+       * the mounted queries' own keys and both have data at click time, so
+       * without this the "re-read" resolves the CACHE and never calls the
+       * procedure.
+       *
+       * What that cost when it was missing is the whole point of this handler.
+       * Pressing Submit for free requires `freeAvailable`, which means
+       * `freeSubmissionOffer` over those cached inputs returned available — and
+       * `freeRefusalExplanation` is that same function over those same inputs,
+       * so it returned `null` every time. Every refused free submission fell to
+       * the server branch and showed raw server prose, which is precisely the
+       * behaviour the refusal split exists to remove.
+       *
+       * The FRESH `paidOpen` then travels out beside the explanation, because
+       * the rendered one is not merely stale: with `staleTime: Infinity` and no
+       * refetch on focus, a modal left open across a price change holds the
+       * render value for the whole session.
        *
        * Using the stale flag here while the explanation beside it used the fresh
        * one produced the exact failure `paidOpen` was added to prevent: an owner
@@ -157,12 +172,12 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
       const refusal =
         method === 'free' && selected != null
           ? await utils.placement.getRemixGalleryVisibility
-              .fetch({ imageId: hostImageId })
+              .fetch({ imageId: hostImageId }, { staleTime: 0 })
               .then(async (space) => {
-                const standing = await utils.placement.getRemixGalleryFreeEligibility.fetch({
-                  hostImageId,
-                  imageIds: [selected],
-                });
+                const standing = await utils.placement.getRemixGalleryFreeEligibility.fetch(
+                  { hostImageId, imageIds: [selected] },
+                  { staleTime: 0 }
+                );
 
                 const freshPaidOpen = paidSubmissionOpen(space.price);
                 return {
@@ -181,9 +196,12 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                         }),
                 };
               })
-              // A failed re-read explains nothing, which lands on the server's
-              // own message — the outcome that leaves somebody informed. The
-              // render value is all that is left to decide the rest on.
+              // A real network read can reject, which is what `staleTime: 0`
+              // reintroduces. A failed re-read explains nothing, so this lands on
+              // the server's own message — the outcome that leaves somebody
+              // informed. The `paidOpen` here is never read: `freeRefusalOutcome`
+              // consults it only on the explained branch. Supplied so the shape
+              // matches rather than because it decides anything.
               .catch(() => ({ paidOpen, explained: null }))
           : { paidOpen, explained: null };
 

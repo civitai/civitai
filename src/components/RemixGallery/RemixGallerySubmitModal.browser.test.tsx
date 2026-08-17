@@ -42,6 +42,12 @@ const mocks = vi.hoisted(() => ({
    *  unmounting the button mid-click and hanging to the 15s ceiling. */
   nextVisibility: null as Record<string, unknown> | null,
   eligibility: {} as Record<string, unknown>,
+  /**
+   * What a FRESH eligibility read returns, mirroring `nextVisibility`. Set it to
+   * make the cached and fresh answers disagree, which is the only way a test can
+   * tell a real re-read from a cache hit on this half.
+   */
+  nextEligibility: null as Record<string, unknown> | null,
   /** When set, the mutation refuses with this message. */
   refuseWith: '' as string,
 }));
@@ -55,11 +61,31 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     useUtils: () => ({
       placement: {
         invalidate: vi.fn(),
+        /**
+         * 🔴 The fake honours `staleTime`, and that is the point rather than
+         * fidelity for its own sake.
+         *
+         * A fake that is fresh by construction cannot express the failure this
+         * handler exists to avoid. The client's global default is
+         * `staleTime: Infinity` and `fetchQuery` applies it, so a `.fetch()`
+         * without options resolves the CACHE — here, whatever the render is
+         * already showing — and never calls the procedure. Modelled by returning
+         * `mocks.visibility` in that case and the fresh value only when the call
+         * asks for it.
+         *
+         * Six review rounds passed over the missing option because the previous
+         * fake returned fresh data either way. This is the one line that makes
+         * every test below able to fail for the real reason.
+         */
         getRemixGalleryVisibility: {
-          fetch: async () => mocks.nextVisibility ?? mocks.visibility,
+          fetch: async (_input: unknown, opts?: { staleTime?: number }) =>
+            opts?.staleTime === 0 ? mocks.nextVisibility ?? mocks.visibility : mocks.visibility,
           invalidate: vi.fn(),
         },
-        getRemixGalleryFreeEligibility: { fetch: async () => mocks.eligibility },
+        getRemixGalleryFreeEligibility: {
+          fetch: async (_input: unknown, opts?: { staleTime?: number }) =>
+            opts?.staleTime === 0 ? mocks.nextEligibility ?? mocks.eligibility : mocks.eligibility,
+        },
       },
     }),
     placement: {
@@ -156,6 +182,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   freeIsOffered();
   mocks.nextVisibility = null;
+  mocks.nextEligibility = null;
   mocks.refuseWith = '';
 });
 
@@ -233,11 +260,6 @@ describe('a refused free submission', () => {
 
 describe('a gallery that takes free submissions and refuses paid ones', () => {
   /**
-   * 🔴 The fixture the rest of this file could not provide, and the reason both
-   * of the previous round's fixes were invisible: every other case here prices
-   * the gallery at 700 against a floor of 50, so `paidOpen` is always true and
-   * the two conditions it separates are identical.
-   *
    * The service holds free submissions to none of the price rules — there are
    * tests asserting an unpriced and a below-floor gallery accept free and refuse
    * paid — so this is a supported configuration, not an edge case.
@@ -286,6 +308,47 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
     await expect.element(page.getByText(/not taking paid submissions/i)).toBeInTheDocument();
     await expect.element(page.getByText(/still submit with Buzz/i)).not.toBeInTheDocument();
     await expect.element(page.getByTestId('buzz-submit')).not.toBeInTheDocument();
+  });
+
+  test('builds the EXPLANATION from the fresh price, not just the outcome', async () => {
+    // 🔴 The last unpinned argument on this axis. Only rung 1 (`!verified`)
+    // branches on `paidOpen`, and reaching it in the explanation needs the fresh
+    // read to disagree with the render on BOTH halves at once: verified when the
+    // button was pressed, unverified a moment later, on a gallery whose price
+    // was cleared in the same window. The eligibility fake could not express its
+    // half until this round, which is why reverting this argument stayed green.
+    mocks.nextVisibility = { ...mocks.visibility, price: null };
+    mocks.nextEligibility = { ...mocks.eligibility, verifiedImageIds: [] };
+    mocks.refuseWith = 'remix gallery: free submissions are for remixes made from this image';
+    await openAndPick();
+    await page.getByRole('button', { name: /submit for free/i }).click();
+
+    await expect.element(page.getByText(/where we can check/i)).toBeInTheDocument();
+    // The half the argument decides: paid is closed on the FRESH read, so the
+    // sentence must not offer it.
+    await expect
+      .element(page.getByText(/can still be submitted with Buzz/i))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText(/not taking paid submissions/i)).toBeInTheDocument();
+  });
+
+  test('reads the ALLOWANCE half fresh too, not just the price', async () => {
+    // 🔴 The eligibility fetch has its own `staleTime: 0`, and until this test
+    // the fake could not tell whether it was there: `useQuery` and `fetch`
+    // returned the same object, so cached and fresh never disagreed on this
+    // half. That is the layer the six review rounds could not see.
+    //
+    // Render says the gallery is unused, so the free button is pressable. The
+    // fresh read says it has been used — which is what the server just refused
+    // on, and what the banner has to say.
+    mocks.nextEligibility = { ...mocks.eligibility, usedHere: true };
+    mocks.refuseWith = 'remix gallery: you have already used a free placement here';
+    await openAndPick();
+    await page.getByRole('button', { name: /submit for free/i }).click();
+
+    await expect.element(page.getByText(/once per gallery/i)).toBeInTheDocument();
+    // Never the server's own wording — that is the branch a cache hit falls to.
+    expect(mocks.showError).not.toHaveBeenCalled();
   });
 
   test('moves the control to paid when paid IS open', async () => {
@@ -342,6 +405,13 @@ describe('a gallery that takes free submissions and refuses paid ones', () => {
    * its own bugs for one line. Said plainly rather than left to look covered,
    * and scoped so a reader who greps does not stop believing the rest of it.
    *
+   * ✅ What it CAN now express, since it could not before and six review rounds
+   * passed over a dead subsystem because of it: **cache-hit staleness on both
+   * halves.** `fetch` returns the cached value unless the call passes
+   * `staleTime: 0`, which is what the client's `staleTime: Infinity` default
+   * actually does — so dropping that option from either `.fetch` now fails here
+   * instead of quietly resolving whatever the render already had.
+   *
    * The same limitation makes the `!freeRefusal` term of the reason's gate
    * unpinnable here, and I checked rather than assumed: dropping it leaves all
    * of these green. The two messages can only collide when a refusal lands
@@ -383,6 +453,11 @@ describe('a gallery with neither path open', () => {
     await expect
       .element(page.getByRole('button', { name: /submit for free/i }))
       .not.toBeInTheDocument();
+    // Mounted, and unusable. `remix-gallery.utils.ts` leans on exactly this —
+    // "either not mounted at all, or mounted disabled when the card falls
+    // through to paid" — and nothing was reading the attribute, so dropping
+    // `|| !paidOpen` from the button left every test green.
+    await expect.element(page.getByTestId('buzz-submit')).toBeDisabled();
   });
 });
 
