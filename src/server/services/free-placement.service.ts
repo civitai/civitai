@@ -28,9 +28,25 @@ import {
  */
 
 /**
- * Advisory-lock class keys. Two-argument advisory locks occupy a lock space
- * distinct from the one-argument form, so these cannot collide with
- * `article.service.ts`'s bare-id locks however its ids grow.
+ * Advisory-lock class keys.
+ *
+ * 🔴 **A free placement takes BOTH of these, and every caller must take them in
+ * the order below — placer, then target.** Two callers acquiring them in
+ * opposite orders deadlock: A holds the placer lock and waits for the target,
+ * B holds the target lock and waits for the placer, and Postgres kills one of
+ * them. That only happens when two placers are claiming at once, which is when
+ * the feature is finally popular — so it will not show up in testing, and it
+ * will show up on the day it costs the most.
+ *
+ * Kept unexported, alongside the only two acquisitions in the codebase, so
+ * "obey the order" is not a rule a future caller has to know: there is nowhere
+ * else to take them from. A guard test asserts that stays true. If you find
+ * yourself needing one of these somewhere else, the answer is to call
+ * `createFreePlacement` rather than to export a lock.
+ *
+ * Two-argument advisory locks occupy a lock space distinct from the
+ * one-argument form, so these cannot collide with `article.service.ts`'s
+ * bare-id locks however its ids grow.
  */
 const PLACER_LOCK_CLASS = 0x74ee0001;
 const TARGET_LOCK_CLASS = 0x74ee0002;

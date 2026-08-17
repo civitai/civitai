@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ResolvedPlacementSpace } from '~/server/services/placement-space.service';
@@ -199,5 +201,45 @@ describe('getFreePlacementAllowance', () => {
     placementCount.mockResolvedValue(FREE_PLACEMENTS_PER_DAY + 5);
 
     expect((await getFreePlacementAllowance({ placerId: PLACER })).remaining).toBe(0);
+  });
+});
+
+/**
+ * The lock ordering is load-bearing and cannot be enforced by a type.
+ *
+ * PRs 2 and 4 are written by people who have not read the file that explains it,
+ * so "take them placer-first" must not be a rule anyone has to know. The keys are
+ * module-private and there is exactly one acquisition site; this is what makes
+ * that a fact rather than an intention, and it fails on the commit that adds a
+ * second site rather than under load six months later.
+ */
+describe('the advisory locks have exactly one call site', () => {
+  // The TWO-argument form specifically: a comma before the first closing paren.
+  // `article.service.ts` takes one-argument locks, which Postgres keeps in a
+  // separate lock space — they can neither collide with these nor deadlock
+  // against them, so sweeping them up here would make the guard fail for a
+  // reason that is not a hazard, and it would then be relaxed rather than read.
+  const TWO_ARG_LOCK = /pg_advisory_xact_lock\([^)]*,/;
+
+  const serverFiles = (): string[] => {
+    const root = path.resolve(__dirname, '../..');
+    return fs
+      .readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.d.ts'))
+      .map((name) => path.join(root, name));
+  };
+
+  it('is taken only inside createFreePlacement', () => {
+    const callers = serverFiles().filter((file) =>
+      TWO_ARG_LOCK.test(fs.readFileSync(file, 'utf8'))
+    );
+
+    expect(callers.map((file) => path.basename(file))).toEqual(['free-placement.service.ts']);
+  });
+
+  it('does not export its lock keys, so there is nothing to take them with', async () => {
+    const exported = await import('~/server/services/free-placement.service');
+
+    expect(Object.keys(exported).filter((name) => /LOCK|lockKey/i.test(name))).toEqual([]);
   });
 });
