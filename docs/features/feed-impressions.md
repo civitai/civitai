@@ -92,6 +92,49 @@ counts.
 
 ## Sizing
 
+### ✅ MEASURED at 1% on live traffic, 2026-08-17 — use these numbers
+
+The estimate below it was **5x too high**. Real figures, from ~30 minutes at a 1%
+cohort (6,140 rows, 97 sessions, six consecutive projections between 64M and 69M):
+
+| | estimated | **measured** |
+| --- | --- | --- |
+| rows/day at 100% | ~320M | **~64M** |
+| vs the `views` insert rate | ~10x | **~2x** |
+| raw storage/day | ~2.3 GiB | **~0.3 GiB** |
+| 30-day steady state | ~70 GB | **~9 GB** |
+| entities per session | 50–150 assumed | **~60 — the one part that was right** |
+
+**Why the estimate was high, and it is the same mistake twice.** It credited
+`/images` with 2.77M page-views/day of card-rendering traffic. Split by path that
+is **2.63M `/images/<id>` detail** — which renders a single image, no feed, and
+contributes ~0 impressions — and only **168k `/images` index feed**. So the surface
+the whole estimate was built around is 2% of what was assumed.
+
+Both errors were about *which pages render cards*, never about user behaviour: the
+first inflated the page denominator, the second inflated entities-per-view, and
+they compounded. **Before sizing a feed feature, `GROUP BY path` — do not reason
+from the route prefix.**
+
+Observed surface spread at 1% (`models` dominates; `home` confirms the homepage is
+covered with no homepage-specific code):
+
+```
+models 2076    home 1505    search 1161    user 715    other 249
+```
+
+`images` is absent from that list and that is expected, not a bug — at 168k/day it
+is ~2% of tracked traffic. Health at 1%: active parts fell 6 → 2 as merges kept
+ahead of ingest, and `daily_impressions` populated immediately, so the incremental
+MV works on live data.
+
+Also confirmed live, and it was the biggest pre-launch unknown: **`content-visibility: auto`
+does NOT hide cards from the observer.** `/models` is the top surface and
+`ModelsInfinite` renders through `MasonryColumnsVirtual`, the exact path that was
+feared would produce silent zeros.
+
+### The original estimate, kept for the reasoning
+
 ⚠️ **An earlier version of this section was wrong by roughly 5x, and the way it was
 wrong is worth keeping.** It sized the feature on *index feeds* — `/images`,
 `/videos`, `/`, `/search` — at 1.48M page-views/day. But `getImpressionSurface`
