@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { rewardConfigReadFailedCounter } from '~/server/prom/client';
+import { throwConflictError } from '~/server/utils/errorHandling';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
+import { hashifyObject } from '~/utils/string-helpers';
 
 export const REWARD_CONFIG_KEY = 'rewards:config';
 
@@ -47,6 +49,14 @@ export const rewardConfigSchema = z.object({
  * leave every reward on, and warn about nothing.
  */
 export const storedRewardConfigSchema = rewardConfigSchema.strict();
+
+/** The write input: the row, plus the two guards. */
+export const setRewardConfigSchema = rewardConfigSchema.extend({
+  /** The `hash` from `getStoredRewardConfig`. Omit for an unconditional write. */
+  expectedHash: z.string().optional(),
+  /** Save over a row that cannot be parsed, and therefore could not be shown. */
+  force: z.boolean().optional(),
+});
 
 export type RewardOverride = z.infer<typeof rewardOverrideSchema>;
 /** The honoured override plus the names of the fields that were refused. */
@@ -235,6 +245,8 @@ export type StoredRewardConfig = {
   value: unknown;
   /** True when the row would not survive `setRewardConfig`. */
   malformed: boolean;
+  /** Identifies this version of the row for the concurrency check on write. */
+  hash: string;
 };
 
 /**
@@ -247,9 +259,8 @@ export type StoredRewardConfig = {
  * fails the parse. Rendering `{}` for it would show an editor a lossless-looking
  * empty form whose first save wipes every other reward's override.
  *
- * ⚠️ Two moderators editing at once are last-write-wins; there is no version
- * guard on the row. `malformed` is an ingredient for an editor to refuse a save,
- * not a control — nothing enforces it yet.
+ * `hash` identifies the row the caller saw. Hand it back to `setRewardConfig`
+ * and a write that would clobber someone else's edit is refused instead.
  *
  * ⚠️ The value is UNPARSED, so a hand-written row can carry a `__proto__` own
  * key through to the caller. Harmless to render; not harmless to spread or
@@ -258,7 +269,21 @@ export type StoredRewardConfig = {
 export async function getStoredRewardConfig(): Promise<StoredRewardConfig> {
   const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
   const value = row?.value ?? {};
-  return { value, malformed: !storedRewardConfigSchema.safeParse(value).success };
+  return {
+    value,
+    malformed: !storedRewardConfigSchema.safeParse(value).success,
+    hash: rewardConfigHash(value),
+  };
+}
+
+/**
+ * Identifies a stored row for the concurrency check. Both callers normalise an
+ * absent row to `{}` before hashing, so there is no nullish case to handle here
+ * — `hashifyObject` would return '' for one, and a guard for it would be
+ * unreachable code that reads as though it were load-bearing.
+ */
+function rewardConfigHash(value: unknown) {
+  return String(hashifyObject(value));
 }
 
 /**
@@ -269,13 +294,37 @@ export async function getStoredRewardConfig(): Promise<StoredRewardConfig> {
  *
  * Only invalidates the caller's own cache — other pods pick the change up within
  * `CONFIG_TTL_MS`.
+ *
+ * 🔴 This REPLACES the row. A caller sending only the rewards it changed erases
+ * every other reward's override, so the panel always submits the whole map.
+ *
+ * Two guards, because they fail differently and neither covers the other:
+ *
+ * - `expectedHash` is the ordinary case. A panel makes two moderators on the same
+ *   screen normal rather than theoretical, and last-write-wins between them is
+ *   silent. Omit it and the write is unconditional, which is what a script wants.
+ * - `force` is the pathological one. A row that does not parse cannot be shown
+ *   faithfully in an editor, so overwriting it blind would discard whatever the
+ *   operator could not see. Refused unless someone says explicitly to do it.
  */
-export async function setRewardConfig(config: z.infer<typeof rewardConfigSchema>, userId: number) {
+export async function setRewardConfig(
+  config: z.infer<typeof rewardConfigSchema>,
+  userId: number,
+  { expectedHash, force = false }: { expectedHash?: string; force?: boolean } = {}
+) {
   const value = storedRewardConfigSchema.parse(config);
 
-  // Read the prior row for the audit line. Not a version guard — this is still an
-  // unconditional replace, and two moderators editing at once are last-write-wins.
   const previous = (await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } }))?.value;
+
+  if (expectedHash !== undefined && expectedHash !== rewardConfigHash(previous ?? {}))
+    throw throwConflictError(
+      'The reward config changed since you loaded it. Reload to see the current values before saving.'
+    );
+
+  if (!force && previous !== undefined && !storedRewardConfigSchema.safeParse(previous).success)
+    throw throwConflictError(
+      'The stored reward config cannot be read, so saving over it would discard values you were never shown. Fix the row, or save again with force.'
+    );
 
   await dbWrite.keyValue.upsert({
     where: { key: REWARD_CONFIG_KEY },

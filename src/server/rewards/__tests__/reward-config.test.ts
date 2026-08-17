@@ -457,12 +457,90 @@ describe('setRewardConfig', () => {
   });
 });
 
+// A panel makes two moderators on the same screen ordinary rather than
+// theoretical, and `set` replaces the whole row, so losing that race silently
+// discards the other person's edit.
+describe('setRewardConfig concurrency and malformed guards', () => {
+  const upsert = dbMock.dbWrite.keyValue.upsert;
+  const MOD_ID = 99;
+
+  const withStored = async (value: unknown) => {
+    storedConfig(value);
+    return (await getStoredRewardConfig()).hash;
+  };
+
+  it('writes when the row is the one the caller read', async () => {
+    const hash = await withStored({ rewards: { testReward: { awardAmount: 4 } } });
+
+    await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID, {
+      expectedHash: hash,
+    });
+
+    expect(upsert).toHaveBeenCalled();
+  });
+
+  it('refuses when the row moved under the caller', async () => {
+    const stale = await withStored({ rewards: { testReward: { awardAmount: 4 } } });
+    storedConfig({ rewards: { testReward: { awardAmount: 5 } } });
+
+    await expect(
+      setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID, {
+        expectedHash: stale,
+      })
+    ).rejects.toThrow(/changed since you loaded it/);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes an absent row from an unreadable one', async () => {
+    findUnique.mockResolvedValue(null);
+    const absent = (await getStoredRewardConfig()).hash;
+    const unreadable = await withStored({ rewards: 'all of them' });
+
+    expect(absent).not.toBe(unreadable);
+  });
+
+  it('writes unconditionally when no hash is supplied', async () => {
+    await withStored({ rewards: { testReward: { awardAmount: 4 } } });
+
+    await setRewardConfig({ rewards: { testReward: { awardAmount: 7 } } }, MOD_ID);
+
+    expect(upsert).toHaveBeenCalled();
+  });
+
+  // Overwriting a row nobody could render discards values the operator was never
+  // shown, so it takes an explicit instruction rather than a normal save.
+  it('refuses to save over a row that cannot be read', async () => {
+    storedConfig({ rewards: { testReward: { enabled: 'false' } } });
+
+    await expect(
+      setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID)
+    ).rejects.toThrow(/cannot be read/);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('saves over an unreadable row when forced', async () => {
+    storedConfig({ rewards: { testReward: { enabled: 'false' } } });
+
+    await setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID, { force: true });
+
+    expect(upsert).toHaveBeenCalled();
+  });
+
+  it('does not treat an absent row as unreadable', async () => {
+    findUnique.mockResolvedValue(null);
+
+    await setRewardConfig({ rewards: { testReward: { enabled: false } } }, MOD_ID);
+
+    expect(upsert).toHaveBeenCalled();
+  });
+});
+
 describe('getStoredRewardConfig', () => {
   it('returns the row as written, for an editor to render', async () => {
     const stored = { rewards: { testReward: { enabled: false, cap: 8 } } };
     storedConfig(stored);
 
-    expect(await getStoredRewardConfig()).toEqual({ value: stored, malformed: false });
+    expect(await getStoredRewardConfig()).toMatchObject({ value: stored, malformed: false });
   });
 
   // `setRewardConfig` replaces the whole row, so an editor shown `{}` for a row it
@@ -474,13 +552,13 @@ describe('getStoredRewardConfig', () => {
     };
     storedConfig(stored);
 
-    expect(await getStoredRewardConfig()).toEqual({ value: stored, malformed: true });
+    expect(await getStoredRewardConfig()).toMatchObject({ value: stored, malformed: true });
   });
 
   it('does not throw on a row that is not even an object', async () => {
     storedConfig('disabled');
 
-    expect(await getStoredRewardConfig()).toEqual({ value: 'disabled', malformed: true });
+    expect(await getStoredRewardConfig()).toMatchObject({ value: 'disabled', malformed: true });
   });
 
   // Uncached on purpose: an operator fixing a refused field needs what is in the

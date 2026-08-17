@@ -124,7 +124,21 @@ describe('rewardConfig.set', () => {
 
     expect(mockSetConfig).toHaveBeenCalledWith(
       { rewards: { testReward: { enabled: false, awardAmount: 4 } } },
-      1
+      1,
+      { expectedHash: undefined, force: undefined }
     );
+  });
+
+  // Dropping either on the way through disables a guard while every other test
+  // here still passes — the write succeeds, it just stops being checked.
+  it('forwards both guards to the service', async () => {
+    const caller = rewardConfigRouter.createCaller(fakeCtx(mod) as never);
+
+    await caller.set({ rewards: {}, expectedHash: 'abc123', force: true });
+
+    expect(mockSetConfig).toHaveBeenCalledWith({ rewards: {} }, 1, {
+      expectedHash: 'abc123',
+      force: true,
+    });
   });
 });

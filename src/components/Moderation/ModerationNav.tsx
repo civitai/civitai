@@ -75,7 +75,7 @@ export function ModerationNav() {
           href: '/moderator/home-blocks/featured-collections',
         },
         {
-          label: 'Rewards Bonus Events',
+          label: 'Rewards',
           href: '/moderator/rewards-bonus-events',
         },
         {
