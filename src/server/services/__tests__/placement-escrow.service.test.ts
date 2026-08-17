@@ -1989,11 +1989,9 @@ describe('the accept reward', () => {
    * The consolidation is a recorded follow-up and is fine to do — but it must
    * MOVE the remix call, not add one. This test is what tells you which you did.
    *
-   * ⚠️ The remix half is **inert until #4013 lands**: nothing on this branch can
-   * call `remixAcceptReward`, because the module it mocks does not exist here
-   * yet. Verified that this suite still collects all its tests with the mock in
-   * place (Vitest resolves a mocked path lazily), so it is a tripwire armed on
-   * merge rather than coverage you have today.
+   * The remix half was inert while `remixAcceptReward` did not exist on this
+   * branch — a tripwire armed on merge rather than coverage. #4013 landed it, so
+   * both halves are live and the mocked path now resolves to a real module.
    */
   it('grants exactly one reward per surface, and never the other surface reward', async () => {
     givenPlacement({ id: 1, surface: 'sticker' });
@@ -2033,6 +2031,10 @@ describe('the accept reward', () => {
     // nothing" rather than a call that quietly did nothing at all.
     expect(settled).toBe(true);
     expect(applyAcceptReward).not.toHaveBeenCalled();
+    // The reward the comment above is about. Without this the test asserted only
+    // that the STICKER reward stayed out of a remix approval, so the exact edit
+    // it warns against — a `remixGallery` branch here — left it green.
+    expect(applyRemixReward).not.toHaveBeenCalled();
   });
 
   // The approval has already paid the owner out of escrow by this point. A
