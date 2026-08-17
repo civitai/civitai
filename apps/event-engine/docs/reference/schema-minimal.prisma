@@ -266,7 +266,7 @@ model Model {
   scannedAt           DateTime?
   sfwOnly             Boolean         @default(false)
   allowNoCredit       Boolean         @default(true)
-  allowCommercialUse  CommercialUse[] @default([Sell])
+  allowCommercialUse  CommercialUse[] @default([Image, RentCivit, Rent, Sell])
   allowDerivatives    Boolean         @default(true)
   allowDifferentLicense Boolean       @default(true)
 

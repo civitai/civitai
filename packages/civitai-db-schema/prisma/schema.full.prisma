@@ -954,7 +954,9 @@ model Model {
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
-  allowCommercialUse    CommercialUse[] @default([Sell])
+  // Must stay equal to the column default in Postgres: Prisma supplies this itself on create, so a
+  // narrower value here never reaches the database default and silently licenses the row instead.
+  allowCommercialUse    CommercialUse[] @default([Image, RentCivit, Rent, Sell])
   allowDerivatives      Boolean         @default(true)
   allowDifferentLicense Boolean         @default(true)
 
