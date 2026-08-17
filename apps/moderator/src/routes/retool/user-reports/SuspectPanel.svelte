@@ -7,6 +7,7 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { SvelteSet } from 'svelte/reactivity';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
   import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
   import { STRIKE_REASONS } from '$lib/moderation-reasons';

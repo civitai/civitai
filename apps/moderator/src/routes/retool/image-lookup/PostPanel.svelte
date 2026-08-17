@@ -3,6 +3,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
@@ -85,13 +86,13 @@
 
 {#snippet imageCard(item: Item)}
   <div class="flex flex-wrap items-center gap-1">
-    <!-- Same flag → same variant as SuspectPanel and Bulk Image Manager. A per-page palette makes
-         "purple means minor" a fact a moderator has to relearn on every screen. -->
-    {#if item.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
-    {#if item.blockedFor}<Badge variant="destructive">blocked: {item.blockedFor}</Badge>{/if}
-    {#if item.needsReview}<Badge variant="secondary">{item.needsReview}</Badge>{/if}
-    {#if item.minor}<Badge variant="secondary">minor</Badge>{/if}
-    {#if item.poi}<Badge variant="secondary">POI</Badge>{/if}
+    <ImageFlagBadges
+      tosViolation={item.tosViolation}
+      blockedFor={item.blockedFor}
+      needsReview={item.needsReview}
+      minor={item.minor}
+      poi={item.poi}
+    />
   </div>
   <a class="mt-2 block text-xs {LINK_CLASS}" href="?q={item.id}">
     Image #{item.id} — full detail

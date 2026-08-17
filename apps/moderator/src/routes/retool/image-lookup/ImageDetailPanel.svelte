@@ -3,6 +3,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import { entityUrl, userUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { PageData } from './$types';
@@ -51,18 +52,14 @@
         Image #{image.id}
       {/if}
     </h2>
-    {#if image.tosViolation}
-      <Badge variant="destructive">ToS violation</Badge>
-    {/if}
-    {#if image.needsReview}
-      <Badge variant="destructive">needs review: {image.needsReview}</Badge>
-    {/if}
-    {#if image.blockedFor}
-      <Badge variant="destructive">blocked: {image.blockedFor}</Badge>
-    {/if}
-    {#if image.minor}<Badge variant="destructive">minor</Badge>{/if}
-    {#if image.acceptableMinor}<Badge variant="secondary">acceptable minor</Badge>{/if}
-    {#if image.poi}<Badge variant="secondary">POI</Badge>{/if}
+    <ImageFlagBadges
+      tosViolation={image.tosViolation}
+      blockedFor={image.blockedFor}
+      needsReview={image.needsReview}
+      minor={image.minor}
+      acceptableMinor={image.acceptableMinor}
+      poi={image.poi}
+    />
   </div>
 
   {#if canAct}
