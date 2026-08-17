@@ -184,57 +184,99 @@ to [`post-migration-backlog.md`](post-migration-backlog.md) once confirmed.
 
 ### User Reports
 
-- [ ] Open-reports column occupies roughly half the viewport; shrink it substantially
-- [ ] Put action/dismiss inline with the "reported by" line to cut dead space
-- [ ] No way to set a report to "processing" — only action and unaction
-- [ ] No filtering by status, user or date
-- [ ] Account images: expand the section and shrink the thumbnails; currently 3–4 per row against more in
-      Retool, which compounds on large accounts
+- [x] Queue column narrowed from `w-120` to `w-96`
+- [x] Action / Dismiss / Claim moved inline with the "reported by" line — each report was spending a
+      whole row on the controls plus dead space either side of them
+- [x] **Setting a report to Processing already existed** — the "Claim" button, since `47df60c16f`
+      (08-07), a week before it was reported missing. Nothing to build; it was a naming gap, since the
+      other two buttons are named for their verb and this one for its gesture. It now says what status
+      it sets on hover.
+- [x] Queue filtering by status, reporter and filed-on date. Status uses the repo's URL-filter
+      convention — absent `?status=` is the Pending+Processing default that matches the sidebar badge,
+      a present-but-empty one is a deliberate "every status". Date support was added to `getReports`,
+      which had none.
+      - The date params are `reportedFrom` / `reportedTo`, **not** `from` / `to`: those were already
+        taken by the suspect image filters on the same page, and reusing them would have silently
+        re-filtered the account's images every time the queue was narrowed.
+      - The panel heading claims parity with the sidebar count, which is only true unfiltered — it now
+        says so only while it is true.
+- [x] Account images made denser — `ImageQueueGrid` takes a `minColumn`, defaulting to the 300px every
+      full-width queue standardised on, and this grid passes 200. It is the one image grid rendered
+      beside another column, where 300 yields three cards a row. The standard is unchanged everywhere
+      else.
 
 ### Dashboard
 
-- [ ] Move "Most Reported" to the top of the page
-- [ ] Show the number of distinct reporters per item
-- [ ] Show "recently worked" and "time sweeps" beside the queues they describe
+- [x] "Most Reported" leads the page — it is above the queue board, on the reasoning that a pile-up on
+      one item is a live incident while the counts are a backlog
+- [x] Reporter count per item — the table's first column
+- [ ] **Show "recently worked" and "time sweeps" beside the queues they describe.** Both render, but as
+      their own panels rather than per queue row, and that is deliberate: **the report-source labels and
+      the sidebar's count keys are named independently, and three of them do not correspond**, so there
+      is no key to attach a row to. Blocked on the same P2 decision the requester raised in the same
+      breath — a table to track queues, or a revision of `ModActivity`. Not attemptable before it.
 
 ### Queues
 
 - [x] Articles and bounties timestamp sweeps — 08-13
 - [x] The three minor-hash-match queues — 08-13
-- [ ] Unpublished models where the author requested review
-- [ ] Models transferred to Civitai on account deletion, published, since last check
-- [ ] Drop unpublished articles as a queue — raised twice, 08-05 and 08-13. There is no review path for
-      republishing them, and most are spam that should never be republished
-- [ ] Surface high-report-count content on the dashboard — partially served by the 08-13 urgent-content
-      banner; the request was a table with links and inline actions. See
-      [§12c](retool-parity-checklist.md#12c-dashboard)
+- [x] Unpublished models where the author requested review — `getModelsNeedingReview`, the requested
+      predicate exactly (`UnpublishedViolation` + `meta->>'needsReview'`). Client-fetched on the
+      dashboard because the count has no index and runs ~2.7s.
+- [x] Models transferred to Civitai on account deletion — the `civitaiModels` sweep, which is Retool's
+      `CivitModelsData`: what `userId = -1` has published since the last claim
+- [x] Drop unpublished articles as a queue — already `informational: true`, which keeps its count out of
+      the dashboard's "needs attention" total. The flag's own comment names this case. The page stays
+      reachable for lookup; it just stops presenting as work.
+- [x] Surface high-report-count content on the dashboard — the Most Reported table, with links and
+      inline resolve. The 08-13 urgent banner points at it rather than replacing it.
 
 ### User Lookup
 
-- [ ] Trim the open-reports banner to the count alone; drop the trailing "someone is already on this"
-      phrasing added 08-12
-- [ ] Render the "spoke with a mod" chip in the same red as bans
-- [ ] Show `name` from the user table
-- [ ] Move subscription status into basic information rather than the Buzz section
-- [ ] Show creator-program membership
-- [ ] Timed Mutes tab: remove everything that is not a timed mute
-- [ ] Fold the socials tab into the space near location, now that profile fields render on basic info
-- [ ] Add a copy-all-unique-IDs control in addresses and linked accounts, for the bulk ban tool
+- [x] Open-reports banner trimmed to the count — `66d14f8d96`, 08-13. The moderator who filed stays as a
+      chip rather than prose, since that is the anti-overlap signal the banner exists for.
+- [x] "Spoke with a mod" chip is red like a ban — same commit
+- [x] `name` from the user table — shown as "Full name"
+- [x] Subscription moved onto Basic. Moved rather than duplicated: a second copy of a panel that can
+      re-link a Paddle customer is two places to fix a bug in.
+- [x] Creator-program membership, including the banned-from-it state
+- [x] Timed Mutes holds only timed mutes
+- [x] **Socials folded into Basic and the tab retired.** Once avatar, bio and location moved onto Basic,
+      the tab held nothing but a link list. The slug still resolves and redirects, so lookup URLs already
+      pasted into tickets do not 404.
+- [x] Copy-all-unique-IDs in addresses and linked accounts, plus a direct "check these in Bulk Ban" —
+      the panel identifies a ring and Bulk Ban deals with it; the ids in between were reachable one row
+      at a time
 
 ### Cross-cutting
 
-- [ ] Mirror the site's own removal options in every multi-select removal UI
-- [ ] Link a report to the site it originated from, rather than always the same domain
+- [x] **Removal options mirror the site** on the multi-select removal UIs — Bulk Image Manager and User
+      Reports both offer `VIOLATION_TYPES`, which matches the main app's `ViolationType` enum entry for
+      entry, alongside the canned reasons.
+      - [ ] The `/images/*` triage queues are **not** included, and this is a decision rather than an
+            oversight. Their bulk block goes through `blockImage` — the report-driven path, shared with
+            Comics Review — not `removeImages`, which is what carries a violation type. Giving them the
+            reason list means moving them onto a different endpoint with different side effects and a
+            different audit trail. Worth doing deliberately, not as a UI tweak.
+- [ ] **Link a report to the site it originated from — not implementable here.** `Report` has no origin
+      column, and `createReport` writes only `reportType` into `details`, so the fact is never recorded
+      anywhere. It needs a main-app change to capture the host at report time before this app can show
+      it. The reporter filed it as a "for future" ask, which is the right classification.
 
-### Product questions
+### Product questions — none of these are moderator-app work
 
-- [ ] The "Admin Attention" report reason is too vague to action — remove it or merge it into the others
+Recorded here because they were raised in this channel, but each is a main-app change, a policy call, or
+both. None can be closed by this app.
+
+- [ ] The "Admin Attention" report reason is too vague to action — remove it or merge it. Changes the
+      main app's `ReportReason` and what reporters are offered; the requester also flagged an unknown,
+      whether it still matters to the guardian score.
 - [ ] The mod changelog modal disappears once a model is unpublished, so the changes and the unpublish
-      reason become unreadable at exactly the point they matter most
-- [ ] Unpublished articles have no republish path; authors are told to contact support, and that is not
-      stated on the article page
+      reason become unreadable exactly when they matter most. Main-app model page.
+- [ ] Unpublished articles have no republish path; authors are told to contact support and the article
+      page does not even say that. Main app plus a support-process decision.
 - [ ] A model marked as depicting a minor can still receive a new version containing X-rated images.
-      Filtering behaviour rather than a mod-studio defect, but reported here
+      Main-app filtering behaviour, reported here only because it surfaced during moderation.
 
 ---
 
