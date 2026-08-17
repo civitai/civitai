@@ -1,5 +1,11 @@
 -- Model3D view tracking — ClickHouse enum widening.
 --
+-- ✅ APPLIED TO PRODUCTION 2026-08-17, after the comics DDL. Kept as the record of
+-- what ran. Verified afterwards: all three columns and the MV's own declared
+-- header carry twelve arms, and a write probe confirmed a row survives the MV push
+-- (one row into `views`, out of `daily_views` as exactly 1, then removed).
+-- Re-running it is a no-op, but there is no reason to.
+--
 -- APPLY EVERY STEP BELOW BEFORE DEPLOYING THE CODE THAT EMITS Model3DView, and run
 -- steps 1-3 back to back without a pause. Between step 2 and step 3, `views`
 -- accepts a Model3D row while `daily_views_mv`'s declared header still holds
