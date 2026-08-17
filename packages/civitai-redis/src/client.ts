@@ -2268,9 +2268,13 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CACHE_LOCKS: 'cache-lock',
   BUZZ: {
-    POTENTIAL_POOL: 'buzz:potential-pool',
-    POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
-    EARNED: 'buzz:earned',
+    // v2: these three feed one forecast (earned / poolSize x poolValue) and each expires on its own
+    // day-long TTL, `earned` per user. Widening them to count green without moving the keys would
+    // serve a green `earned` over a yellow-only pool for up to a day — every mixture wrong, none of
+    // them an error. Bump all three together whenever any of their predicates changes.
+    POTENTIAL_POOL: 'buzz:potential-pool:v2',
+    POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value:v2',
+    EARNED: 'buzz:earned:v2',
   },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',

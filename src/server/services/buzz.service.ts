@@ -48,6 +48,7 @@ import {
   getTransactionsReportResultSchema,
 } from '~/server/schema/buzz.schema';
 import {
+  buzzBankTypes,
   BuzzTypes,
   buzzSpendTypes,
   CASH_SETTLED_ALIASES,
@@ -1438,6 +1439,8 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
   return potential;
 }
 
+const BANKABLE_ACCOUNT_TYPES_SQL = buzzBankTypes.map((type) => `'${type}'`).join(', ');
+
 const earnedCache = createCachedObject<{ id: number; earned: number }>({
   key: REDIS_KEYS.BUZZ.EARNED,
   idKey: 'id',
@@ -1453,7 +1456,7 @@ const earnedCache = createCachedObject<{ id: number; earned: number }>({
         (type IN ('compensation')) -- Generation
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
-      AND toAccountType = 'yellow'
+      AND toAccountType IN (${BANKABLE_ACCOUNT_TYPES_SQL})
       AND toAccountId IN (${ids})
       AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1))
       GROUP BY toAccountId;
@@ -1481,7 +1484,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         SELECT
           SUM(amount) AS balance
         FROM buzzTransactions
-        WHERE toAccountType = 'yellow'
+        WHERE toAccountType IN (${BANKABLE_ACCOUNT_TYPES_SQL})
         AND (
           (type IN ('compensation')) -- Generation
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -1502,7 +1505,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         SELECT
             SUM(amount) / 1000 AS balance
         FROM buzzTransactions
-        WHERE toAccountType = 'yellow'
+        WHERE toAccountType IN (${BANKABLE_ACCOUNT_TYPES_SQL})
         AND type = 'purchase'
         AND fromAccountId = 0
         AND externalTransactionId NOT LIKE 'renewalBonus:%'
