@@ -126,6 +126,12 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
           ...(data.metadata ?? {}),
           // Ensures we NEVER send out 0.
           forcedBrowsingLevel: data.metadata?.forcedBrowsingLevel || undefined,
+          // The editor for this is hidden on non-model collections, where the value is inert.
+          // Without dropping it here a stored list would survive every save with no way to clear it.
+          baseModels:
+            (data.type ?? CollectionType.Model) === CollectionType.Model
+              ? data.metadata?.baseModels
+              : undefined,
         },
       },
       {
