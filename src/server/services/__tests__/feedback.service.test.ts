@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFeedbackSchema } from '~/server/schema/feedback.schema';
+import type { SessionUser } from '~/types/session';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const { mocks } = vi.hoisted(() => ({
@@ -114,14 +115,124 @@ describe('createFeedback — extended context', () => {
   });
 });
 
-describe('isFeedbackAreaEnabled (invariant guard — unchanged by this work)', () => {
-  it('asks Flipt for the area flag keyed on the user id', async () => {
-    await isFeedbackAreaEnabled({ area: 'bitdex-image-feed', userId: 7 });
-    expect(mocks.isFlipt).toHaveBeenCalledWith('feedback-area-bitdex-image-feed', '7');
+/**
+ * `isFeedbackAreaEnabled` — the EVALUATION CONTEXT, i.e. the third argument.
+ *
+ * `isFlipt` is `isEnabled(flag, entityId = 'global', context = {})`. Omitting the
+ * third argument is not a smaller call, it is a DIFFERENT evaluation: Flipt matches
+ * a segment against the context, so with `{}` no segment can match and the answer
+ * collapses to the flag's own default. An area switched on for a cohort then reads
+ * as off for every one of its members, with nothing logged and no error raised.
+ *
+ * `buildFliptContext` is the REAL function here (only the Flipt edge is stubbed), so
+ * these assertions pin the context the LIVE evaluation would receive rather than a
+ * shape invented by the test — the same arrangement as the App Blocks flag tests.
+ */
+describe('isFeedbackAreaEnabled — the Flipt evaluation context', () => {
+  const sessionUser = (over: Partial<SessionUser> = {}): SessionUser =>
+    ({
+      id: 7,
+      showNsfw: false,
+      blurNsfw: true,
+      browsingLevel: 1,
+      onboarding: 0,
+      ...over,
+    } as SessionUser);
+
+  /** The (flag, entityId, context) triple the service actually handed Flipt. */
+  const evalCall = () =>
+    mocks.isFlipt.mock.calls[0] as [string, string, Record<string, string> | undefined];
+
+  it('passes a context as the third argument, keyed on the user id', async () => {
+    await isFeedbackAreaEnabled({ area: 'bitdex-image-feed', user: sessionUser() });
+
+    const [flag, entityId, context] = evalCall();
+    expect(flag).toBe('feedback-area-bitdex-image-feed');
+    expect(entityId).toBe('7');
+    // The load-bearing assertion. `undefined` here is the defect: a segment-based
+    // rollout on this flag could never match, for anybody, ever.
+    expect(context).toBeDefined();
+    expect(context?.userId).toBe('7');
+    expect(context?.isLoggedIn).toBe('true');
   });
 
-  it('falls back to the anonymous entity id', async () => {
+  /**
+   * A CONTRACT WITH A LIVE SEGMENT, hand-typed on both sides.
+   *
+   * The `early-adopters` segment constrains `property: isEarlyAdopter`,
+   * `operator: eq`, `value: "true"` — the STRING. A typo in the property name, or a
+   * boolean `true`, or 'True', fails that constraint as "nobody matches" rather than
+   * as an error, so both halves are pinned by literal value. Neither is read from the
+   * implementation.
+   */
+  it('emits isEarlyAdopter as the STRING "true" for an opted-in user', async () => {
+    await isFeedbackAreaEnabled({
+      area: 'bitdex-image-feed',
+      user: sessionUser({ isEarlyAdopter: true }),
+    });
+
+    const [, , context] = evalCall();
+    expect(context).toHaveProperty('isEarlyAdopter');
+    expect(context?.isEarlyAdopter).toBe('true');
+    expect(typeof context?.isEarlyAdopter).toBe('string');
+    expect(context?.isEarlyAdopter).not.toBe(true as unknown as string);
+  });
+
+  it('emits "false" for a user who has not opted in, so an eq-"true" segment excludes them', async () => {
+    await isFeedbackAreaEnabled({
+      area: 'bitdex-image-feed',
+      user: sessionUser({ isEarlyAdopter: false }),
+    });
+
+    expect(evalCall()[2]?.isEarlyAdopter).toBe('false');
+  });
+
+  it('evaluates an anonymous request with an anonymous context that carries no cohort property', async () => {
     await isFeedbackAreaEnabled({ area: 'bitdex-image-feed' });
-    expect(mocks.isFlipt).toHaveBeenCalledWith('feedback-area-bitdex-image-feed', 'anonymous');
+
+    const [flag, entityId, context] = evalCall();
+    expect(flag).toBe('feedback-area-bitdex-image-feed');
+    // Unchanged: every anonymous request shares one entityId.
+    expect(entityId).toBe('anonymous');
+    expect(context?.isLoggedIn).toBe('false');
+    // ABSENT, not 'false': there is no user to attribute an opt-in to. Either value
+    // excludes them from an eq-'true' segment; absence also stops 'anonymous' from
+    // being spelled as a member of any cohort segment at all.
+    expect('isEarlyAdopter' in (context ?? {})).toBe(false);
+    expect(context?.userId).toBeUndefined();
+  });
+
+  /**
+   * BEHAVIOURAL, not structural. The stub implements what the live `early-adopters`
+   * segment does — match iff the context says `isEarlyAdopter === 'true'` — so this
+   * asserts the outcome the operator actually wants, not merely that some object was
+   * passed. Structurally-correct-but-wrong-property mutations die here too.
+   */
+  describe('against a stub that behaves like the early-adopters segment', () => {
+    beforeEach(() => {
+      mocks.isFlipt.mockImplementation(
+        async (_flag: string, _entityId: string, context?: Record<string, string>) =>
+          context?.isEarlyAdopter === 'true'
+      );
+    });
+
+    it('a segment-gated area is ON for a member of the cohort', async () => {
+      await expect(
+        isFeedbackAreaEnabled({
+          area: 'bitdex-image-feed',
+          user: sessionUser({ isEarlyAdopter: true }),
+        })
+      ).resolves.toBe(true);
+    });
+
+    it('and OFF for a logged-in user outside it', async () => {
+      await expect(
+        isFeedbackAreaEnabled({ area: 'bitdex-image-feed', user: sessionUser() })
+      ).resolves.toBe(false);
+    });
+
+    it('and OFF for an anonymous request', async () => {
+      await expect(isFeedbackAreaEnabled({ area: 'bitdex-image-feed' })).resolves.toBe(false);
+    });
   });
 });

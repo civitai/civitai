@@ -8,8 +8,12 @@ import { guardedProcedure, router } from '~/server/trpc';
 export const feedbackRouter = router({
   // Same procedure level as `create`: anyone who can see the prompt must be able
   // to submit, or a muted user types into a box that will reject them.
+  // `ctx.user` (the full server-resolved SessionUser), never a client-supplied id:
+  // the flag's context carries cohort properties, so it must be built from what the
+  // server knows about the caller. Both procedures pass the SAME thing, which is what
+  // keeps the notice and the submit endpoint from disagreeing.
   getArea: guardedProcedure.input(getFeedbackAreaSchema).query(async ({ input, ctx }) => {
-    const enabled = await isFeedbackAreaEnabled({ area: input.area, userId: ctx.user.id });
+    const enabled = await isFeedbackAreaEnabled({ area: input.area, user: ctx.user });
     return { enabled };
   }),
   create: guardedProcedure
@@ -22,7 +26,7 @@ export const feedbackRouter = router({
     )
     .input(createFeedbackSchema)
     .mutation(async ({ input, ctx }) => {
-      const enabled = await isFeedbackAreaEnabled({ area: input.area, userId: ctx.user.id });
+      const enabled = await isFeedbackAreaEnabled({ area: input.area, user: ctx.user });
       // Loud rather than dropped: if the area went off mid-typing, say so.
       if (!enabled)
         throw new TRPCError({
