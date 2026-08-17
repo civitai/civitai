@@ -109,6 +109,10 @@ const createUserCapCache = () => {
           END DESC;
       `);
 
+      // Generation tips reach creators inside the daily `compensation` payout (deliver-creator-compensation
+      // mints a separate transaction only for licenseFee), so a system-minted `tip` row is not an earning —
+      // it is a manual support credit (remediation, goodwill refund, delivery fix) and must not raise a cap.
+      // Matches the earnedCache predicate in buzz.service.ts, which these two queries had drifted apart on.
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
         SELECT
           toAccountId as id,
@@ -117,7 +121,6 @@ const createUserCapCache = () => {
         FROM buzzTransactions
         WHERE (
           (type IN ('compensation')) -- Generation Comp
-          OR (type = 'tip' AND fromAccountId = 0) -- Generation Tip
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
         )
         AND toAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})

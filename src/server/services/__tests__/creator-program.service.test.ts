@@ -21,6 +21,7 @@ const {
   mockCachedObject,
   mockCreateCachedObject,
   mockGetHighestTierSubscription,
+  capturedCacheConfigs,
 } = vi.hoisted(() => {
   const mockCachedObject = {
     fetch: vi.fn().mockResolvedValue({}),
@@ -28,7 +29,13 @@ const {
     flush: vi.fn().mockResolvedValue(undefined),
   };
 
+  // Plain array rather than reading mockCreateCachedObject.mock.calls: the caches are created
+  // lazily once per module, so whichever test triggers creation may run before a beforeEach
+  // clearAllMocks wipes the record of it.
+  const capturedCacheConfigs: any[] = [];
+
   return {
+    capturedCacheConfigs,
     mockClickhouse: {
       $query: vi.fn().mockResolvedValue([]),
     },
@@ -50,7 +57,10 @@ const {
     mockBustFetchThroughCache: vi.fn().mockResolvedValue(undefined),
     mockClearCacheByPattern: vi.fn().mockResolvedValue(undefined),
     mockCachedObject,
-    mockCreateCachedObject: vi.fn(() => mockCachedObject),
+    mockCreateCachedObject: vi.fn((config: any) => {
+      capturedCacheConfigs.push(config);
+      return mockCachedObject;
+    }),
     mockGetHighestTierSubscription: vi.fn().mockResolvedValue(null),
   };
 });
@@ -94,6 +104,7 @@ import {
   getCompensationPool,
   getCreatorRequirements,
   getPoolParticipantsV2,
+  getUserCapCache,
   joinCreatorsProgram,
   withdrawCash,
 } from '~/server/services/creator-program.service';
@@ -145,6 +156,52 @@ beforeEach(() => {
   mockSysRedis.get.mockResolvedValue(null);
   // Default fetchThroughCache: just call the function
   mockFetchThroughCache.mockImplementation(async (_key: string, fn: () => Promise<any>) => fn());
+});
+
+// ─── user cap cache (peak earning) ─────────────────────────────────────────────
+describe('userCapCache peak-earning query', () => {
+  /** Run the cap cache's lookupFn and return the ClickHouse SQL it issued. */
+  async function runLookup(ids: number[], peakRows: any[] = []) {
+    getUserCapCache();
+    const config = capturedCacheConfigs.find((c) => c.key === REDIS_KEYS.CREATOR_PROGRAM.CAPS);
+    if (!config) throw new Error('cap cache was never created');
+
+    mockClickhouse.$query.mockResolvedValueOnce(peakRows);
+    const result = await config.lookupFn(ids);
+
+    const call = mockClickhouse.$query.mock.calls.at(-1);
+    if (!call) throw new Error('peak-earning query was never issued');
+    const [parts, ...values] = call as [string[], ...any[]];
+    const sql = parts.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '');
+
+    return { sql, result };
+  }
+
+  beforeEach(() => {
+    mockDbWrite.$queryRawUnsafe.mockResolvedValue([{ userId, tier: 'gold' }]);
+  });
+
+  it('excludes system-minted tips, which are manual support credits and not earnings', async () => {
+    const { sql } = await runLookup([userId]);
+
+    expect(sql).not.toMatch(/'tip'/);
+  });
+
+  it('still counts generation compensation and early-access purchases', async () => {
+    const { sql } = await runLookup([userId]);
+
+    expect(sql).toMatch(/type IN \('compensation'\)/);
+    expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
+  });
+
+  it('derives the cap from the peak month returned by ClickHouse', async () => {
+    const month = new Date('2026-01-01T00:00:00Z');
+    const { result } = await runLookup([userId], [{ id: userId, month, earned: 800000 }]);
+
+    // gold: peak x 1.5, uncapped
+    expect(result[userId].cap).toBe(1200000);
+    expect(result[userId].peakEarning).toEqual({ id: userId, month, earned: 800000 });
+  });
 });
 
 // ─── getCreatorRequirements ────────────────────────────────────────────────────
