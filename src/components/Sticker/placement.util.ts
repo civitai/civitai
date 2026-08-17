@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useCallback, useMemo } from 'react';
-import { freeRefusalMessage } from '~/components/Sticker/free-offer';
+import { freeRefusalMessage, freeRefusalOutcome } from '~/components/Sticker/free-offer';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -277,20 +277,28 @@ export function useCreateStickerPlacement(
         utils.placement.getFreeStanding.invalidate(target),
       ]);
 
-      // Falls back to paid rather than erroring out, which is the cross-surface
-      // rule: the placement the person arranged is still available, it just
-      // costs Buzz now, and making them start over would throw away the
-      // arrangement over a race they did not lose anything to.
-      onFreeRefused?.();
-      showErrorNotification({
-        title: 'That one has to be paid for',
-        error: new Error(
-          freeRefusalMessage(
-            utils.placement.getFreeStanding.getData(target),
-            utils.placement.getSpace.getData(target)
-          )
+      // 🔴 Only a refusal the re-read can account for falls back to paid. The
+      // free path refuses plenty of things that have nothing to do with the free
+      // tier — a block, a suspension, self-placement, a sticker over the
+      // creator's size limit — each arriving with a message written for the
+      // person who hit it. Answering all of them with "someone took the last
+      // slot" throws those away and offers a paid button that fails the same
+      // way, which is the worse half: the remedy is wrong, not just the reason.
+      // The branch itself is `freeRefusalOutcome`, where it is testable.
+      const outcome = freeRefusalOutcome(
+        freeRefusalMessage(
+          utils.placement.getFreeStanding.getData(target),
+          utils.placement.getSpace.getData(target)
         ),
-      });
+        error.message
+      );
+
+      // Paid rather than an error where free ran out, which is the cross-surface
+      // rule: the placement they arranged is still available, it just costs Buzz
+      // now, and starting over would throw away the arrangement over a race that
+      // took nothing from them.
+      if (outcome.fallBackToPaid) onFreeRefused?.();
+      showErrorNotification({ title: outcome.title, error: new Error(outcome.message) });
     },
   });
 }

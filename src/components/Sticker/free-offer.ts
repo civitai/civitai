@@ -74,30 +74,65 @@ export const FREE_REVIEW_CAVEAT =
 
 /**
  * What went wrong when a free claim was refused, from state re-read after the
- * refusal rather than from the server's message.
+ * refusal rather than from the server's message — or `null` when the re-read
+ * does not explain it.
  *
  * The numbers the control renders are stale by construction — the claim
  * re-counts under a lock — so losing the last slot to someone else is an
  * ordinary outcome rather than an error, and it deserves a sentence written for
- * the person reading it. Re-reading first is what makes the sentence true: the
- * refusal itself does not say which of the three rules stopped it, and guessing
- * from its text would be a client parsing prose the server is free to reword.
+ * the person reading it. Re-reading is what makes the sentence true: the refusal
+ * does not say which rule stopped it, and reading its text would be a client
+ * parsing prose the server is free to reword.
  *
- * Ordered by how specific each fact is, so the most useful true thing wins. The
- * last branch covers a refusal the re-read cannot explain — a block, a
- * suspension, the creator closing the space — where saying only what is certain
- * beats naming a cause we do not have.
+ * 🔴 **`null` is the important return.** A free placement can be refused for
+ * plenty of reasons that have nothing to do with the free tier — a block, a
+ * moderator suspension, self-placement, a sticker over the creator's size limit
+ * — each with a message written for the person who hit it. Answering "someone
+ * took the last slot" to any of those throws that message away and sends them to
+ * a remedy that will not work. So this speaks only where it knows, and the
+ * caller shows the server's own refusal otherwise.
+ *
+ * 🔴 **Ordered so a refusal that is PERMANENT for this image outranks one that
+ * lifts by itself**, because more than one can be true at once and the first
+ * match is what gets said. Telling somebody their allowance comes back at
+ * midnight, when the real answer is that this creator takes no free stickers at
+ * all, is a false promise about a specific image — they come back tomorrow to
+ * the same refusal. The pairwise tests exist to hold this order: each sets both
+ * conditions of an adjacent pair, so a swap fails rather than passing on
+ * fixtures that only ever trip one rung.
  */
 export function freeRefusalMessage(standing?: FreeStanding, space?: FreeCapacity) {
-  if (standing?.usedHere) return 'You have already used a free sticker on this image.';
-  if (standing && standing.remaining <= 0)
-    return "You have used today's free placement. It comes back at midnight UTC.";
-  if (space && space.freeSlots > 0 && space.freeSlotsRemaining <= 0)
-    return 'Someone took the last free slot on this image first.';
+  // Permanent for this image, and true of everybody — so it outranks the two
+  // below it, which are about this placer and about right now.
   if (space && space.freeSlots <= 0)
     return 'This creator is not taking free stickers on this image.';
-  return 'That free slot could not be claimed.';
+  // Permanent for this placer on this image: once ever, not once per day.
+  if (standing?.usedHere) return 'You have already used a free sticker on this image.';
+  // Transient, and it says when it lifts.
+  if (standing && standing.remaining <= 0)
+    return "You have used today's free placement. It comes back at midnight UTC.";
+  // The most transient of all — a declined placement releases its slot at once.
+  if (space && space.freeSlotsRemaining <= 0)
+    return 'Someone took the last free slot on this image first.';
+  return null;
 }
+
+/**
+ * What to say and what to do when a free claim was refused.
+ *
+ * Pure, and separate from `freeRefusalMessage`, because the consequential half is
+ * not the wording — it is `fallBackToPaid`. Offering the paid button is right
+ * when free specifically ran out and wrong when the whole placement was refused:
+ * somebody who is blocked, suspended, or placing on their own image would press
+ * it and meet the same refusal, having been told the problem was money.
+ *
+ * A hook cannot be asked this question without a query client and a tRPC
+ * provider, so the decision lives here where a test can put both cases to it.
+ */
+export const freeRefusalOutcome = (explained: string | null, serverMessage: string) =>
+  explained
+    ? { title: 'That one has to be paid for', message: explained, fallBackToPaid: true }
+    : { title: "Couldn't place that sticker", message: serverMessage, fallBackToPaid: false };
 
 type FreeStanding = { remaining: number; usedHere: boolean };
 type FreeCapacity = { freeSlots: number; freeSlotsRemaining: number };

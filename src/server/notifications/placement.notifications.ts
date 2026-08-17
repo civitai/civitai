@@ -45,11 +45,17 @@ export const placementNotifications = createNotificationProcessor({
           -- expired between the last run and this one has already been answered,
           -- and telling someone to review it sends them to a dead link.
           AND p.status = 'pending'
-          -- Stamped by holdPlacementEscrow, so its presence means the escrow has
-          -- at least been attempted. The row is created before that runs, and a
-          -- notification landing in the gap would send someone to review a
-          -- placement that is about to be unwound, or one in an auto space that
-          -- approves itself seconds later.
+          -- Stamped by holdPlacementEscrow, so on the rows THIS query can see its
+          -- presence means the escrow has at least been attempted. The row is
+          -- created before that runs, and a notification landing in the gap would
+          -- send someone to review a placement about to be unwound, or one in an
+          -- auto space that approves itself seconds later.
+          --
+          -- ⚠️ The escrow half of that reasoning holds only because of the
+          -- p.free = false above. A free row gets its deadline from the same
+          -- INSERT that creates it and never touches escrow, so this gate alone
+          -- would pass one straight through — announced as a paid placement,
+          -- quoting 0 Buzz. The two clauses are load-bearing together.
           AND p."expiresAt" IS NOT NULL
           AND p."createdAt" > '${lastSent}'
       )

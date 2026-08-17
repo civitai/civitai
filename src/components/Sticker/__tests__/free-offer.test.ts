@@ -4,6 +4,7 @@ import {
   freeOfferFor,
   freeOptionLabel,
   freeRefusalMessage,
+  freeRefusalOutcome,
   isPlacingFree,
 } from '~/components/Sticker/free-offer';
 
@@ -75,28 +76,20 @@ describe('what a refused free claim says', () => {
     expect(closed).not.toBe(freeRefusalMessage(HAS_DAY, FULL));
   });
 
-  /**
-   * A block, a suspension, or the creator closing the space between the render
-   * and the press. The re-read cannot explain those, and naming a cause we do
-   * not have is worse than saying only what is certain.
-   */
-  it('says only what is certain when the re-read explains nothing', () => {
-    expect(freeRefusalMessage(HAS_DAY, HAS_SLOT)).toBe('That free slot could not be claimed.');
-    expect(freeRefusalMessage()).toBe('That free slot could not be claimed.');
-  });
-
-  it('never quotes the server, which is free to reword its refusals', () => {
-    const every = [
+  it('never quotes the server where it does speak, since prose may be reworded', () => {
+    const spoken = [
       freeRefusalMessage({ remaining: 1, usedHere: true }, HAS_SLOT),
       freeRefusalMessage({ remaining: 0, usedHere: false }, HAS_SLOT),
       freeRefusalMessage(HAS_DAY, FULL),
       freeRefusalMessage(HAS_DAY, CLOSED),
-      freeRefusalMessage(HAS_DAY, HAS_SLOT),
     ];
 
+    // Every rung answers, so a null here would mean a branch stopped firing and
+    // the loop below went vacuous.
+    expect(spoken.filter(Boolean)).toHaveLength(spoken.length);
     // The service prefixes every placement refusal this way. A message carrying
     // it would mean the client had started parsing prose instead.
-    for (const message of every) expect(message).not.toContain('placement:');
+    for (const message of spoken) expect(message).not.toContain('placement:');
   });
 });
 
@@ -174,5 +167,135 @@ describe('which offer is selected', () => {
    */
   it('never places free once the offer has gone, whatever was chosen', () => {
     expect(isPlacingFree('free', null)).toBe(false);
+  });
+});
+
+/**
+ * The ladder's ORDER, which no single-condition fixture can hold.
+ *
+ * More than one rung is true at once in ordinary use — a placer who spent their
+ * day on a creator who has since closed their slots trips two — and the first
+ * match is what gets said. A test that only ever sets one condition passes for
+ * every permutation of the ladder, so the swap that turns a true sentence into a
+ * false one is invisible to it.
+ *
+ * Each case below sets BOTH conditions of one adjacent pair and names the rung
+ * that has to win. The rule is that a refusal which is permanent for this image
+ * outranks one that lifts by itself: "your allowance comes back at midnight" is a
+ * promise about tomorrow, and on an image whose creator takes no free stickers it
+ * is simply false.
+ */
+describe('the refusal ladder is ordered, not merely complete', () => {
+  const CLOSED = { freeSlots: 0, freeSlotsRemaining: 0 };
+  const FULL = { freeSlots: 4, freeSlotsRemaining: 0 };
+  const OPEN = { freeSlots: 4, freeSlotsRemaining: 2 };
+  const SPENT = { remaining: 0, usedHere: false };
+  const PLACED_HERE = { remaining: 1, usedHere: true };
+  const BOTH_SPENT = { remaining: 0, usedHere: true };
+
+  it.each([
+    [
+      'a closed space outranks having already placed here',
+      CLOSED,
+      PLACED_HERE,
+      /not taking free stickers/,
+    ],
+    [
+      'having already placed here outranks a spent day',
+      OPEN,
+      BOTH_SPENT,
+      /already used a free sticker on this image/,
+    ],
+    ['a spent day outranks a full space', FULL, SPENT, /midnight UTC/],
+  ])('%s', (_name, space, standing, expected) => {
+    expect(freeRefusalMessage(standing, space)).toMatch(expected);
+  });
+
+  /**
+   * The transitive case, stated separately because pairwise adjacency does not
+   * imply it: every rung true at once still has to produce the permanent one.
+   * This is the state a creator closing their slots leaves behind for somebody
+   * who had already placed and already spent their day.
+   */
+  it('says the permanent thing when every rung is true', () => {
+    expect(freeRefusalMessage(BOTH_SPENT, CLOSED)).toMatch(/not taking free stickers/);
+  });
+
+  /**
+   * The specific false promise the order exists to prevent, asserted as an
+   * absence as well as a presence — a reordering that produced some other true
+   * sentence would still be caught by the pairs above, but this is the one that
+   * sends somebody back tomorrow for nothing.
+   */
+  it('never promises a reset on an image that will never take a free sticker', () => {
+    expect(freeRefusalMessage(SPENT, CLOSED)).not.toMatch(/midnight/);
+  });
+});
+
+/**
+ * What the ladder deliberately will NOT answer.
+ *
+ * A free placement is refused by everything the paid one is — a block, a
+ * moderator suspension, self-placement, a sticker over the creator's size limit
+ * — and each of those arrives with a message written for the person who hit it.
+ * `null` is what tells the caller to show that message instead of inventing one,
+ * and it is the difference between a wrong reason and a wrong remedy: offering
+ * the paid button to somebody who is blocked fails the same way again.
+ */
+describe('the ladder stays silent where it does not know', () => {
+  it('returns null when nothing about the free tier explains the refusal', () => {
+    expect(
+      freeRefusalMessage({ remaining: 1, usedHere: false }, { freeSlots: 4, freeSlotsRemaining: 2 })
+    ).toBeNull();
+  });
+
+  it('returns null when the re-read itself did not arrive', () => {
+    expect(freeRefusalMessage()).toBeNull();
+    expect(freeRefusalMessage({ remaining: 1, usedHere: false })).toBeNull();
+    expect(freeRefusalMessage(undefined, { freeSlots: 4, freeSlotsRemaining: 2 })).toBeNull();
+  });
+});
+
+/**
+ * What the refusal does, as distinct from what it says.
+ *
+ * `fallBackToPaid` is the consequential half. A control that settles on paid is
+ * telling somebody the problem was money — right when the free slots ran out,
+ * and wrong when the placement itself was refused, because the paid button then
+ * fails the same way and they have been sent to a remedy that cannot work.
+ */
+describe('what a refused free claim does next', () => {
+  const SERVER = 'placement: you cannot place a sticker on your own content';
+
+  it('falls back to paid, with its own wording, where free specifically ran out', () => {
+    const outcome = freeRefusalOutcome(
+      'Someone took the last free slot on this image first.',
+      SERVER
+    );
+
+    expect(outcome.fallBackToPaid).toBe(true);
+    expect(outcome.message).toMatch(/last free slot/);
+    // Not the server's prose, which does not say which rule stopped it.
+    expect(outcome.message).not.toContain('placement:');
+  });
+
+  /**
+   * The defect this shape exists to avoid: a refusal that has nothing to do with
+   * the free tier arrives with a message somebody wrote for exactly this moment,
+   * and reporting it as a lost race discards that message AND offers a button
+   * that will fail identically.
+   */
+  it('keeps the server message and does not offer paid where the placement was refused', () => {
+    const outcome = freeRefusalOutcome(null, SERVER);
+
+    expect(outcome.fallBackToPaid).toBe(false);
+    expect(outcome.message).toBe(SERVER);
+    expect(outcome.message).not.toMatch(/free slot/);
+  });
+
+  it('titles the two cases differently, since one is about price and one is not', () => {
+    expect(freeRefusalOutcome('anything', SERVER).title).not.toBe(
+      freeRefusalOutcome(null, SERVER).title
+    );
   });
 });
