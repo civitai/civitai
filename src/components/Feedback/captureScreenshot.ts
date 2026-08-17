@@ -12,15 +12,32 @@
  * Do not "optimise" step 1 away by inferring consent from the presence of a
  * callback or from the prompt being open. Consent is a value the user set.
  *
- * 🔴 `html2canvas` (~200 kB) is reached ONLY through a dynamic `import()`, so it is
- * code-split out of the main bundle and costs nothing on the ~100% of page loads
- * that never open the prompt. That property is pinned by the source gate in
+ * 🔴 THE RENDERER IS `html2canvas-pro`, NOT `html2canvas`, AND THAT IS A BUG FIX.
+ * `html2canvas@1.4.1` is that library's last release (Feb 2022) and predates CSS
+ * Color Level 4: its colour parser THROWS — `Attempting to parse an unsupported
+ * color function "<fn>"` — rather than degrading, so a SINGLE element anywhere in
+ * the captured subtree whose computed colour is `color()`, `oklch()`, `oklab()`,
+ * `lab()` or `lch()` takes the whole capture down. In production that was literally
+ * one element in 3,998 on `/images`. Note this is a COMPUTED-style problem, not a
+ * source-text one: `color-mix()` computes to `oklab(...)` and a P3 or relative
+ * colour computes to `color(srgb ...)`, so the app can break without ever writing
+ * one of those functions in a stylesheet — grepping the CSS proves nothing.
+ * `html2canvas-pro` is the maintained fork that added exactly those parsers; it is
+ * signature-identical and takes the same option names. Pinned by
+ * `captureScreenshot.color4.browser.test.tsx`, which renders each function and
+ * fails on the old library.
+ *
+ * 🔴 It (~250 kB) is reached ONLY through a dynamic `import()`, so it is code-split
+ * out of the main bundle and costs nothing on the ~100% of page loads that never
+ * open the prompt. That property is pinned by the source gate in
  * `src/server/services/__tests__/no-static-html2canvas-import.test.ts` — a static
- * `import html2canvas from 'html2canvas'` anywhere under `src/` fails that test.
+ * `import html2canvas from 'html2canvas-pro'` anywhere under `src/` fails that test.
+ * The fork is ~15 kB gzip LARGER than the library it replaces, so the split matters
+ * slightly more now than it did, not less.
  */
 
 /**
- * The subset of html2canvas's real signature this module uses.
+ * The subset of the renderer's real signature this module uses.
  *
  * Written against the published types (`html2canvas(element, options?) =>
  * Promise<HTMLCanvasElement>`), not against a convenient shape — a loader fake in a
@@ -48,7 +65,7 @@ export const SCREENSHOT_FILENAME = 'page-capture.jpg';
 export const SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
 
 const defaultLoader: Html2CanvasLoader = async () =>
-  (await import('html2canvas')).default as unknown as Html2CanvasFn;
+  (await import('html2canvas-pro')).default as unknown as Html2CanvasFn;
 
 export type CaptureScreenshotArgs = {
   /**

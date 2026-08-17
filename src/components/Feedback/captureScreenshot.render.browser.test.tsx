@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { captureConsentedScreenshot } from '~/components/Feedback/captureScreenshot';
 
 /**
- * 🔴 RENDER SEAM — what html2canvas actually DRAWS, not what options we passed it.
+ * 🔴 RENDER SEAM — what the renderer actually DRAWS, not what options we passed it.
  *
  * `captureScreenshot.test.ts` pins the arguments. That is a real guard, and it is not
  * this one: passing `x: window.scrollY` and passing the RIGHT coordinate space are
@@ -11,8 +11,10 @@ import { captureConsentedScreenshot } from '~/components/Feedback/captureScreens
  * assertion was green while the app's sticky header was silently missing from every
  * capture and the feed content behind it was drawn in its place.
  *
- * So this file runs the REAL html2canvas against a REAL scrolled document in real
- * Chromium and reads pixels out of the produced JPEG.
+ * So this file runs the REAL html2canvas-pro against a REAL scrolled document in real
+ * Chromium and reads pixels out of the produced JPEG. Keeping the negative control on
+ * the SAME library the product uses is the point — it is what proved the fork kept
+ * `scrollX`/`scrollY` defaulting to the page offsets when the renderer was swapped.
  *
  * 🔴 It carries its own NEGATIVE CONTROL. The first test re-applies the defect
  * through the same fixture and the same encode path, and requires the OPPOSITE
@@ -113,7 +115,7 @@ describe('viewport capture places fixed/sticky elements correctly', () => {
   });
 
   test('🔴 NEGATIVE CONTROL — with scrollX/scrollY forced to 0 the fixed bar is LOST', async () => {
-    const html2canvas = (await import('html2canvas')).default;
+    const html2canvas = (await import('html2canvas-pro')).default;
     const canvas = await html2canvas(document.body, {
       logging: false,
       useCORS: true,
