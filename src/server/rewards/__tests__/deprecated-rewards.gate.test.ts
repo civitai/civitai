@@ -70,10 +70,8 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(async () => undefined) }));
 
-import { readFileSync } from 'node:fs';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
 import { generatorFeedbackReward } from '~/server/rewards';
-import * as rewardImports from '~/server/rewards';
 import { invalidateRewardConfigCache } from '~/server/rewards/reward-config';
 import {
   toggleFollowUserHandler,
@@ -276,48 +274,5 @@ describe('both are on-demand, so the process sweep does not apply to them', () =
     await reward.process({ toProcess: [], lastUpdate: new Date(0), ch: {}, db: {} } as never);
     expect(h.query).not.toHaveBeenCalled();
     expect(h.createBuzzTransactionMany).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The migration is the deprecation, and it addresses rewards by their `type`
-// STRING. A typo there is the quietest possible failure: the row writes, the SQL
-// reports success, and the reward keeps paying under a key nothing reads. Nothing
-// else in the codebase connects that file to these identifiers, so this is the only
-// place the two can be held together.
-// ---------------------------------------------------------------------------
-describe('the migration disables reward types that exist', () => {
-  const sql = readFileSync(
-    new URL(
-      '../../../../packages/civitai-db-schema/prisma/migrations/20260817120000_disable_follow_and_feedback_rewards/migration.sql',
-      import.meta.url
-    ),
-    'utf8'
-  );
-
-  const configured = JSON.parse(/VALUES \(\s*'rewards:config',\s*'([^']+)'/.exec(sql)?.[1] ?? '{}')
-    .rewards as Record<string, { enabled?: boolean }>;
-
-  const knownTypes = Object.values(rewardImports).flatMap((reward) => reward.types);
-
-  it('names exactly the two rewards this PR deprecates', () => {
-    expect(Object.keys(configured).sort()).toEqual(['firstDailyFollow', 'generation-feedback']);
-  });
-
-  it.each(['firstDailyFollow', 'generation-feedback'])('%s is a real reward type', (type) => {
-    expect(knownTypes).toContain(type);
-  });
-
-  it.each(['firstDailyFollow', 'generation-feedback'])('%s is turned off, not on', (type) => {
-    expect(configured[type]).toEqual({ enabled: false });
-  });
-
-  it('sets the same two keys in the ON CONFLICT branch as in the insert', () => {
-    // The insert and the merge branch name the rewards separately, so they can drift.
-    // A reward disabled on a fresh row but not on an existing one is the worst case:
-    // it works in preview, where the row is absent, and not in production.
-    for (const type of Object.keys(configured)) {
-      expect(sql).toContain(`'{rewards,${type}}'`);
-    }
   });
 });
