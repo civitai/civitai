@@ -1,5 +1,9 @@
+// Deliberately outside `src/common`: that directory is a vendored copy that
+// `scripts/sync-submodule.ts` re-syncs from event-engine-common, which has no tests. A test
+// living there would be deleted by a sync, and the CI ledger derives its expectations from
+// disk — so event-engine would drop out of the apps job silently rather than turning red.
 import { expect, test } from 'vitest';
-import { SignalsService } from './signals';
+import { SignalsService } from '@/common/services/signals';
 
 const originalFetch = globalThis.fetch;
 

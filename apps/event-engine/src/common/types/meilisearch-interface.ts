@@ -189,7 +189,10 @@ export interface IMeilisearchIndex {
    * Returns search results with hits matching the document type
    * Using any for compatibility with library's complex SearchResponse type
    */
-  // `T` is part of the public signature — callers pass it explicitly, see images.feed.ts `search<ImageDocument>`.
+  // `T` is decorative — it checks nothing. It exists only so `search<ImageDocument>()` in
+  // images.feed.ts compiles; dropping it is `TS2558: Expected 0 type arguments` there.
+  // Typing the return as `{ hits: T[] }` to make it real does not work: meilisearch's own
+  // `Index` then stops satisfying this interface (`Hit<RecordAny>` is not assignable to `T`).
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   search<T = any>(
     query: string | null,

@@ -20,8 +20,10 @@ type ImageScannedMessage = WorkflowMessage<[
 
 export const imageScannedHandler = createEventHandler<ImageScannedMessage>({
   topics: ['orchestrator.imageScanned'],
-  // The three disables here are all the same reason: the TODOs below are unwritten, and these
-  // are the bindings the handling will use.
+  // The three disables here are all the same reason: this handler is not in the registry in
+  // `handlers/index.ts` and nothing publishes `orchestrator.imageScanned` (its only producer is
+  // the commented-out body of `outbox/image-scan.ts`), so none of this runs yet. The bindings
+  // are what the TODOs below will use.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   processor: async ({ record, pg, actions }) => {
     // TODO briant: Implement image scanned processing logic

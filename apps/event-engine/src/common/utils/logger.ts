@@ -59,7 +59,7 @@ class EventEngineLogger {
     return this.enabledComponents.has('*') || this.enabledComponents.has(component);
   }
 
-  private formatMessage(component: string, message: string, ..._args: any[]): string {
+  private formatMessage(component: string, message: string): string {
     const timestamp = new Date().toISOString();
     return `[${timestamp}] [${component}] ${message}`;
   }
