@@ -41,7 +41,7 @@ export type ContentAnalytics = {
 // The two halves of this type have different scopes and every label that renders them has to say so. `reactions` is
 // **all content** — `reactions_owner_scores` aggregates `reactions.ownerId` across images, models, articles and the
 // rest, which is what `UserMetric.reactionCount` uses, so this agrees with the creator's profile. `comments` is
-// **images only**, counted in Postgres.
+// **images only, from other people**, counted in Postgres.
 export type AllTimeTotals = { reactions: number; comments: number };
 
 // Cached read-through wrappers. The named args double as the cache key; the TTL scales with the range span
@@ -90,9 +90,25 @@ export const getReactionAudienceSplit = createCache({
 //   - `entityMetricTotal_v3` carries two per-image comment metrics and neither survives a ground-truth check:
 //     across four creators `commentCount` ran -6% to +79% against Postgres and `Comment` was short by up to 97%.
 //
-// `Thread.commentCount` is a maintained counter that matches a raw `CommentV2` count exactly. Summing it over the
-// image's own thread **and its descendants** counts threaded replies, which the label has to say (see the callers).
-// Measured on prod: 2.1–2.3s at the platform's two heaviest creators, behind this 1h cache.
+// Do not generalise that middle point to `reactions`, which sits beside `comments` and looks like it. Its
+// `entityId` **is** the image id — max 139,929,797 over a recent 2-day window, ~2.1 rows per distinct id against
+// `comments`' 1.0003 — which is why every other query in this file keys off it safely. `comments` is the odd one.
+//
+// Three things about the query that are load-bearing, all of them measured rather than reasoned:
+//
+//   - **It counts `CommentV2` rows, not `Thread.commentCount`.** The counter is exact (its trigger fires on every
+//     insert and delete) but it is a per-thread total with no author in it, and `AND cv."userId" <> uid` is the
+//     whole point: `update_thread_comment_count` increments unconditionally, so a creator who answers their own
+//     commenters inflates their own "comments received". Measured: 71.4% / 60.9% / 57.6% of the raw total was
+//     self-authored for userIds 1421581 / 2895 / 1279061. This tile renders on an **audience** page.
+//   - **The two arms must stay separate.** Collapsing them into
+//     `WHERE t.id IN (roots) OR t."rootThreadId" IN (roots)` makes both indexes unusable and seq-scans all 5.4M
+//     `Thread` rows on **every** cache miss — 683ms / ~350MB of buffers even for a creator with two images and
+//     zero comments. Split + `MATERIALIZED`, it is an index path: 46ms at that floor, 1.6s at the platform's
+//     largest creator (994880, 802,838 images). This runs on the SSR blocking path.
+//   - **`roots` joins `Image`, so a deleted image takes its comments with it.** `Thread.imageId` is
+//     `onDelete: SetNull`, orphaning ~234k root threads holding ~179k comments platform-wide. The number is
+//     therefore "all-time on images that still exist" and can fall month over month.
 export const getAllTimeTotals = createCache({
   name: 'analytics:alltime:v3',
   fetch: async ({ userId }: { userId: number }): Promise<AllTimeTotals> => {
@@ -102,12 +118,16 @@ export const getAllTimeTotals = createCache({
         `SELECT sum(score) AS reactions FROM reactions_owner_scores WHERE ownerId = ${uid}`
       ),
       sql<{ comments: number | string }>`
-        WITH roots AS (
+        WITH roots AS MATERIALIZED (
           SELECT t.id FROM "Thread" t JOIN "Image" i ON i.id = t."imageId" WHERE i."userId" = ${uid}
+        ), threads AS MATERIALIZED (
+          SELECT id FROM roots
+          UNION ALL
+          SELECT c.id FROM "Thread" c JOIN roots r ON c."rootThreadId" = r.id
         )
-        SELECT coalesce(sum(t."commentCount"), 0) AS comments
-        FROM "Thread" t
-        WHERE t.id IN (SELECT id FROM roots) OR t."rootThreadId" IN (SELECT id FROM roots)
+        SELECT count(*) AS comments
+        FROM "CommentV2" cv JOIN threads th ON th.id = cv."threadId"
+        WHERE cv."userId" <> ${uid}
       `.execute(dbRead),
     ]);
     return {
