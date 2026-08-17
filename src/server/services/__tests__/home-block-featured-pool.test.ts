@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Eligibility from '~/server/jobs/refresh-featured-collections-eligibility';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/redis.mock';
@@ -15,7 +16,8 @@ dbMock.dbRead.collection.findUnique.mockImplementation(async () => ({
 }));
 dbMock.dbWrite.homeBlock.findFirst.mockImplementation(async () => systemBlock);
 
-vi.mock('~/server/jobs/refresh-featured-collections-eligibility', () => ({
+vi.mock('~/server/jobs/refresh-featured-collections-eligibility', async (importOriginal) => ({
+  ...(await importOriginal<typeof Eligibility>()),
   computeFeaturedCollectionsState: vi.fn(),
 }));
 
