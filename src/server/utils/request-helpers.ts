@@ -17,8 +17,18 @@ export function getProtocol(req: ProtocolRequest): Protocol {
   return proto as Protocol;
 }
 
-/** A raw `?` is only a separator when what follows it opens a new param. */
+/** A `?` is only a separator when what follows it opens a new param. */
 const RESUMES_QUERY = /^&*[^&=?]+=/;
+
+/**
+ * Next re-serialises `req.url` through `URLSearchParams` before an API route runs
+ * (`normalizeCdnUrl`, next/dist/server/route-modules/route-module.js), which
+ * percent-encodes the client's stray `?` and the `=` behind it. `req.query` still
+ * holds both raw, so the encoding here is Next's own and never the caller's.
+ */
+const ENCODED_SEPARATORS = /%3F|%3D/gi;
+const decodeSeparators = (query: string) =>
+  query.replace(ENCODED_SEPARATORS, (match) => (match.toLowerCase() === '%3f' ? '?' : '='));
 
 /**
  * Rejoin a query a client split by appending a second `?…` to a URL that already
@@ -26,8 +36,8 @@ const RESUMES_QUERY = /^&*[^&=?]+=/;
  * that one param — `fileId=2?type=Model` — so the id fails to parse and every
  * later param is swallowed, `token` (API-key auth) included.
  *
- * A raw `?` is legal INSIDE a value, so only a `?` followed by `key=` is treated
- * as a separator; `?token=ab?cd` is left alone.
+ * A `?` is legal INSIDE a value, so only a `?` followed by `key=` is treated as a
+ * separator; `?token=ab?cd` is left alone.
  *
  * Rewrites `req.url` as well as `req.query`, because auth re-parses the url.
  * Only a param that is missing or itself split is written, so a repair can never
@@ -41,7 +51,7 @@ export function repairSplitQueryString(req: NextApiRequest): boolean {
   const start = url.indexOf('?');
   if (start === -1) return false;
 
-  const raw = url.slice(start + 1);
+  const raw = decodeSeparators(url.slice(start + 1));
   const [head, ...rest] = raw.split('?');
   if (!rest.length) return false;
 

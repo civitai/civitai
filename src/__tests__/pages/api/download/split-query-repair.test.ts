@@ -81,6 +81,11 @@ const REDIRECT_URL = 'https://example.invalid/signed/model.safetensors';
  * `URLSearchParams`, then the path params spread OVER it — params win on a
  * collision (`next-server.ts`), which is the precedence the repair must not
  * invert.
+ *
+ * `req.url` is re-serialised the same way, because `normalizeCdnUrl` does that
+ * before the handler runs — the stray `?` arrives percent-encoded while
+ * `req.query` keeps it raw. Handing the route the raw url instead is what let
+ * civitai#3931 pass here while prod kept answering 400.
  */
 function run(url: string, modelVersionId: string) {
   const parsed = new URL(url, 'https://civitai.com');
@@ -88,9 +93,11 @@ function run(url: string, modelVersionId: string) {
   for (const [key, value] of parsed.searchParams) query[key] = value;
   query.modelVersionId = modelVersionId;
 
+  const search = parsed.searchParams.toString();
+
   const req = {
     method: 'GET',
-    url,
+    url: search ? `${parsed.pathname}?${search}` : parsed.pathname,
     query,
     headers: { 'user-agent': 'civitai-downloader/1.0' },
     socket: { remoteAddress: '203.0.113.7' },
