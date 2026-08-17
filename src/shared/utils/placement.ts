@@ -569,16 +569,27 @@ export const effectiveFreeSlots = (setSlots: number, cap: number) =>
  */
 export const FREE_PLACEMENTS_PER_DAY = 1;
 
+/** Milliseconds in a UTC day. Unix time has no leap seconds, so this is exact. */
+const DAY_MS = 24 * 3_600_000;
+
 /**
  * Midnight UTC for the day containing `at`.
  *
  * UTC rather than the placer's local day, so the allowance cannot be refreshed
  * twice by moving timezone, and so two servers never disagree about which day a
  * placement fell in.
+ *
+ * **Epoch arithmetic rather than calendar getters, because the calendar version
+ * is not testable where it matters.** Written as
+ * `Date.UTC(at.getUTCFullYear(), …)`, the one-character slip to
+ * `at.getFullYear()` produces a local-day boundary — and on a UTC runner, which
+ * is what CI is with no `TZ` pinned, the two are the *same function*. No test can
+ * separate them there, so a test claiming to would be asserting a property it
+ * cannot fail on. Flooring the epoch has no ambient timezone to read, so there is
+ * no such slip to make and the property is structural instead of hoped for.
  */
-export function freePlacementDayStart(at: Date = new Date()) {
-  return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
-}
+export const freePlacementDayStart = (at: Date = new Date()) =>
+  new Date(Math.floor(at.getTime() / DAY_MS) * DAY_MS);
 
 /**
  * Statuses that hold a free slot.

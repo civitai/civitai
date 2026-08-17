@@ -106,6 +106,10 @@ describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
     await userEvent.keyboard('{ArrowRight}');
 
     expect(mutate).toHaveBeenCalled();
-    expect(typeof lastPayload().freeSlots).toBe('number');
+    // The number CHOSEN, not merely a number. `typeof … === 'number'` passes for
+    // a control that sends its pre-move value, which moves the thumb, saves, and
+    // stores the old count. Fully determined: the space is unset, so the thumb
+    // rests on the surface default of 1 and one ArrowRight makes it 2.
+    expect(lastPayload().freeSlots).toBe(2);
   });
 });

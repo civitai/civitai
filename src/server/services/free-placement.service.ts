@@ -61,6 +61,13 @@ const TARGET_LOCK_CLASS = 0x74ee0002;
  * timeout does not cancel a backend already blocked inside the lock statement.
  * Without a bound, a wedged holder accumulates blocked backends on the write
  * pool rather than failing the claims that are queued behind it.
+ *
+ * ⚠️ Compiled into the statement below rather than bound as a parameter, because
+ * **Postgres has no parameter form for `SET`** — a tagged-template `$executeRaw`
+ * sends `$1` and the statement raises `syntax error at or near "$1"`. Every other
+ * `SET LOCAL` in this repo uses `$executeRawUnsafe` or a raw `client.query` for
+ * the same reason. A module constant, so "unsafe" is about the API's name and not
+ * about anything reaching it from a request.
  */
 const LOCK_TIMEOUT = '3s';
 
@@ -212,7 +219,7 @@ export async function createFreePlacement({
   const expiresAt = new Date(Date.now() + expiryHours * 3_600_000);
 
   return dbWrite.$transaction(async (tx) => {
-    await tx.$executeRaw`SET LOCAL lock_timeout = ${LOCK_TIMEOUT}`;
+    await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PLACER_LOCK_CLASS}::int, ${placerId}::int)`;
 
     const usedToday = await countFreePlacementsToday(tx, placerId);

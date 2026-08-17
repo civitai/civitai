@@ -551,14 +551,40 @@ describe('free capacity', () => {
   });
 
   it('starts the day at midnight UTC, wherever the placer is', () => {
-    const start = freePlacementDayStart(new Date('2026-08-17T23:59:59.999Z'));
+    // Both probes sit INSIDE one UTC day and straddle every real offset: 04:00Z
+    // is the previous local day west of UTC, 20:00Z the next local day east of
+    // it. Midnight-aligned probes alone would prove nothing about the day
+    // boundary at all.
+    for (const at of ['2026-08-17T04:00:00.000Z', '2026-08-17T20:00:00.000Z'])
+      expect(freePlacementDayStart(new Date(at)).toISOString()).toBe('2026-08-17T00:00:00.000Z');
 
-    expect(start.toISOString()).toBe('2026-08-17T00:00:00.000Z');
-    // A local-day boundary would let anyone willing to change timezone refresh
-    // the allowance twice, and would have two servers disagree about the day.
+    // The boundary itself, so the window is a day rather than merely aligned.
     expect(freePlacementDayStart(new Date('2026-08-18T00:00:00.000Z')).toISOString()).toBe(
       '2026-08-18T00:00:00.000Z'
     );
+  });
+
+  /**
+   * The timezone independence itself, which the probes above cannot reach.
+   *
+   * On a UTC runner a local-day boundary and a UTC one are the SAME function, so
+   * no input can separate them — and CI is UTC with no `TZ` pinned. Rather than
+   * write a test named for a property it can only fail on a machine that never
+   * gates the PR, the implementation floors the epoch, which has no ambient
+   * timezone to read. This asserts that shape: every result lands on a whole
+   * multiple of a day, which a calendar-getter version cannot promise off UTC.
+   */
+  it('lands on a whole day boundary, with no timezone to read', () => {
+    const day = 24 * 3_600_000;
+    for (const at of [0, 1, 1_000, day - 1, day, 1_786_000_000_000, Date.now()])
+      expect(freePlacementDayStart(new Date(at)).getTime() % day).toBe(0);
+  });
+
+  it('floors rather than rounds, so the day never starts in the future', () => {
+    for (const at of ['2026-08-17T00:00:00.000Z', '2026-08-17T23:59:59.999Z'].map(
+      (iso) => new Date(iso)
+    ))
+      expect(freePlacementDayStart(at).getTime()).toBeLessThanOrEqual(at.getTime());
   });
 
   it('is one placement a day, which is what makes free scarce', () => {

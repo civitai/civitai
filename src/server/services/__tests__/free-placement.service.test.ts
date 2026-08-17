@@ -185,6 +185,7 @@ describe('createFreePlacement — the refusals the paid path makes', () => {
     // Outside the transaction, because it is I/O and `no-io-in-transaction`
     // guards that — and because a refusal should not first queue on a lock.
     expect(executeRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
   });
 
   it('checks the placer against the owner it resolved, not against the target', async () => {
@@ -297,7 +298,14 @@ describe('createFreePlacement — the free-tier refusals', () => {
 });
 
 describe('createFreePlacement — the lock', () => {
-  const rawStatements = () =>
+  /**
+   * The lock statements, reassembled from the tagged template.
+   *
+   * `join('?')` marks where a bound parameter goes, so this reads as SQL rather
+   * than as a mock's argument shape — which matters for exactly one statement
+   * below, where a parameter is the bug.
+   */
+  const lockStatements = () =>
     executeRaw.mock.calls.map(([strings]: [string[]]) => strings.join('?'));
 
   it('bounds how long a claim waits, so a wedged holder cannot pile up backends', async () => {
@@ -305,16 +313,30 @@ describe('createFreePlacement — the lock', () => {
 
     // `pg_advisory_xact_lock` waits forever by default, and Prisma's client-side
     // timeout does not cancel a backend already blocked inside the statement.
-    expect(rawStatements()[0]).toContain('SET LOCAL lock_timeout');
+    //
+    // 🔴 Asserted on `$executeRawUnsafe`, and on the LITERAL. Postgres has no
+    // parameter form for `SET`, so the tagged-template version sends
+    // `SET LOCAL lock_timeout = $1` and raises `syntax error at or near "$1"` —
+    // and because this is the first statement in the transaction, that does not
+    // merely make the timeout inert, it kills every claim. The previous version
+    // of this test rebuilt the template with a placeholder and asserted the
+    // prefix, which passes on precisely the broken form.
+    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledTimes(1);
+    const [statement] = dbMock.dbWrite.$executeRawUnsafe.mock.calls[0];
+    expect(statement).toContain(`'3s'`);
+    expect(statement).not.toContain('$1');
   });
 
   it('takes the placer lock first and the target lock second', async () => {
     await claim();
 
-    const [, placerLock, targetLock] = rawStatements();
+    const [placerLock, targetLock] = lockStatements();
     expect(placerLock).toContain('pg_advisory_xact_lock');
     expect(targetLock).toContain('hashtext');
-    expect(executeRaw).toHaveBeenCalledTimes(3);
+    // The locks bind their arguments, unlike the `SET` above — advisory-lock
+    // functions are ordinary functions and take parameters.
+    expect(placerLock).toContain('?');
+    expect(executeRaw).toHaveBeenCalledTimes(2);
   });
 
   // Asserted on the calls because a unit test cannot observe Postgres
@@ -325,7 +347,7 @@ describe('createFreePlacement — the lock', () => {
     givenCounts({ reserved: 4 });
     await expect(claim()).rejects.toThrow(/free slots/);
 
-    const targetLockAt = executeRaw.mock.invocationCallOrder[2];
+    const targetLockAt = executeRaw.mock.invocationCallOrder[1];
     const reservedCountAt =
       placementCount.mock.invocationCallOrder[placementCount.mock.calls.length - 1];
     expect(targetLockAt).toBeLessThan(reservedCountAt);
@@ -337,8 +359,8 @@ describe('createFreePlacement — the lock', () => {
     givenCounts({ usedToday: FREE_PLACEMENTS_PER_DAY });
     await expect(claim()).rejects.toThrow(/today/);
 
-    // Two statements, not three: it refused before the target lock existed.
-    expect(executeRaw).toHaveBeenCalledTimes(2);
+    // One lock, not two: it refused before the target lock existed.
+    expect(executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it('claims inside one transaction, so the count and the insert cannot be split', async () => {

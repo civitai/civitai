@@ -315,6 +315,28 @@ describe('setPlacementSpace — free slots', () => {
     expect(priceWritten()).not.toHaveProperty('freeSlots');
   });
 
+  /**
+   * The `create` half, which every other test here reads past — `priceWritten()`
+   * is the `update` clause.
+   *
+   * This is the first-ever save for a space, and it is the likeliest place for
+   * the freeze-the-default failure to land: `freeSlots: freeSlots ?? 0` in the
+   * create clause writes an explicit `0` for a creator who has expressed no
+   * preference, permanently opting the space out of tracking the surface default
+   * AND closing it. Every assertion on the `update` side stays green.
+   */
+  it('creates a first-ever row with no count of its own, not with a zero', async () => {
+    await setPlacementSpace({ ...base, mode: 'review' });
+
+    expect(spaceUpsert.mock.calls[0][0].create).toMatchObject({ freeSlots: null });
+  });
+
+  it('creates with the count when the creator did choose one', async () => {
+    await setPlacementSpace({ ...base, mode: 'review', freeSlots: 0 });
+
+    expect(spaceUpsert.mock.calls[0][0].create).toMatchObject({ freeSlots: 0 });
+  });
+
   it('clears a count to null so the level inherits again', async () => {
     await setPlacementSpace({ ...base, mode: 'review', freeSlots: null });
 
