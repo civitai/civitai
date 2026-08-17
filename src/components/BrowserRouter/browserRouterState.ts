@@ -62,23 +62,28 @@ export function resolveLocationChangeState(
 }
 
 /**
- * Re-derive the path params once Next has finished a pop it owned.
+ * The state to publish once Next has finished a navigation it owned.
  *
- * `resolveLocationChangeState` runs in the popstate handler, where
- * `Router.pathname` is still the route being LEFT, so a pop from `/models/[id]`
- * back to `/images/123` matches no pattern and yields a query with no `imageId`.
- * `BrowserRouterProvider` then commits that query on `routeChangeComplete` —
- * after Next has already repopulated its own `router.query` — and the page reads
- * the empty one and renders its not-found branch. Resolving again against the
- * route now rendered is what puts `imageId` back.
+ * `resolveLocationChangeState` reconstructs `asPath`/`query` from the history
+ * entry because on a pop Next declines (a routed dialog) nothing else will. When
+ * Next DOES own the pop, that reconstruction is both unnecessary and wrong: it
+ * runs in the popstate handler, where `Router.pathname` is still the route being
+ * LEFT, so the path params come out of the outgoing pattern — empty for
+ * `/models/[id]` → `/images/123`, which is what left `/images/[imageId]` with no
+ * `imageId` and rendered its not-found branch. Take Next's own query instead; it
+ * has already re-interpolated the params for the route it just rendered.
+ *
+ * Only `state` (the history entry's own payload) still comes from the pop —
+ * Next does not carry it.
  */
 export function resolveRouteChangeState(
-  state: BrowserRouterState,
-  routePattern?: string
+  router: { asPath: string; query: Record<string, any> },
+  state: HistoryState
 ): BrowserRouterState {
   return {
-    ...state,
-    query: { ...getDynamicRouteParams(routePattern, state.asPath), ...state.query },
+    asPath: router.asPath,
+    query: QS.parse(QS.stringify(router.query)) as Record<string, any>,
+    state,
   };
 }
 
@@ -91,11 +96,14 @@ export function resolveRouteChangeState(
  * Round-tripped through `QS` so params land as the same types the rest of the
  * query does — the matcher yields strings, and consumers pass these straight to
  * tRPC inputs typed as numbers.
+ *
+ * The hash is stripped along with the query string: `eventState.as` keeps it, and
+ * `/images/123#comments` otherwise matches with `imageId: '123#comments'`.
  */
 function getDynamicRouteParams(routePattern: string | undefined, asPath: string) {
   if (!routePattern?.includes('[')) return {};
   try {
-    const params = getRouteMatcher(getRouteRegex(routePattern))(asPath.split('?')[0]);
+    const params = getRouteMatcher(getRouteRegex(routePattern))(asPath.split(/[?#]/)[0]);
     return params ? QS.parse(QS.stringify(params)) : {};
   } catch {
     return {};

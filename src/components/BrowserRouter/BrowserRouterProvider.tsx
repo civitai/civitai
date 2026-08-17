@@ -75,7 +75,9 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
   useEffect(() => {
     const handleRouteChangeComplete = () => {
       if (stateRef.current && stateRef.current?.asPath === history.state?.as)
-        useBrowserRouterState.setState(resolveRouteChangeState(stateRef.current, Router.pathname));
+        useBrowserRouterState.setState(
+          resolveRouteChangeState(Router, stateRef.current.state ?? {})
+        );
 
       setUsingNextRouter(false);
     };

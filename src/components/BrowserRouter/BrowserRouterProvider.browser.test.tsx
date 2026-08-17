@@ -95,19 +95,24 @@ describe('BrowserRouterProvider + ClientHistoryStore popstate handling (Safari n
 });
 
 // A back navigation onto `/images/[imageId]` from another dynamic route
-// (ClickUp 868kt41x7). Next owns this pop, but the browser-router state was
-// resolved in the popstate handler — where `Router.pathname` is still the route
-// being LEFT — and then committed verbatim on `routeChangeComplete`, landing a
-// query with no `imageId` on a page that reads its id from there. The page
-// rendered its not-found branch; a refresh loaded the same URL fine.
+// (ClickUp 868kt41x7). Next owns this pop and repopulates its own `router.query`
+// with the path params of the route it just rendered — but the provider then
+// overwrote that on `routeChangeComplete` with state rebuilt in the popstate
+// handler, where `Router.pathname` was still the route being LEFT. The page,
+// which reads its id from the browser router, saw no `imageId` and rendered its
+// not-found branch; a refresh of the same URL loaded fine.
 describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
-  test('keeps the path param of the route being returned TO, not the one being left', async () => {
+  test("publishes Next's query for the route it just rendered", async () => {
     const originalState = window.history.state;
-    const originalPathname = Router.pathname;
+    const originalAsPath = Router.asPath;
+    const originalQuery = Router.query;
+    const on = vi.mocked(Router.events.on);
+    const passThrough = on.getMockImplementation();
     const handlers: Array<(url: string) => void> = [];
-    vi.mocked(Router.events.on).mockImplementation(((event: string, fn: (url: string) => void) => {
+    on.mockImplementation(((event: string, fn: (url: string) => void) => {
       if (event === 'routeChangeComplete') handlers.push(fn);
-    }) as any);
+      return passThrough?.(event as never, fn as never);
+    }) as typeof Router.events.on);
 
     try {
       renderWithProviders(
@@ -117,8 +122,8 @@ describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
       );
 
       // Prove the popstate listener is live before the assertion that matters —
-      // it attaches in a mount effect, so a single early dispatch is lost and
-      // the test would pass against the broken code.
+      // it attaches in a mount effect, so a single early dispatch is lost and the
+      // test would pass against the broken code.
       setUsingNextRouter(false);
       const liveness = { as: '/models?sort=Newest', url: '/models?sort=Newest', state: {} };
       window.history.replaceState(liveness, '');
@@ -128,17 +133,17 @@ describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
       });
       expect(imageIdText()).toBe('undefined');
 
-      // The pop itself: leaving `/models/[id]`, landing on `/images/135356251`.
-      // `beforePopState` hands this one to Next, which is what defers the state
-      // commit to `routeChangeComplete`.
-      Router.pathname = '/models/[id]';
+      // The pop: leaving `/models/[id]`, landing on `/images/135356251`. Next
+      // takes this one, which is what defers the commit to `routeChangeComplete`.
       setUsingNextRouter(true);
       const popped = { as: '/images/135356251', url: '/images/135356251', state: {} };
       window.history.replaceState(popped, '');
       window.dispatchEvent(new PopStateEvent('popstate', { state: popped }));
 
-      // Next finishes the transition: the rendered route is now the image page.
-      Router.pathname = '/images/[imageId]';
+      // Next finishes: it has interpolated `imageId` into its own query, and only
+      // then emits `routeChangeComplete`.
+      Router.asPath = '/images/135356251';
+      Router.query = { imageId: '135356251' };
       expect(handlers.length).toBeGreaterThan(0);
       for (const handler of handlers) handler('/images/135356251');
 
@@ -150,8 +155,10 @@ describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
       expect(imageIdText()).toBe('135356251');
     } finally {
       setUsingNextRouter(false);
-      Router.pathname = originalPathname;
-      vi.mocked(Router.events.on).mockReset();
+      Router.asPath = originalAsPath;
+      Router.query = originalQuery;
+      if (passThrough) on.mockImplementation(passThrough);
+      else on.mockReset();
       window.history.replaceState(originalState, '');
     }
   });

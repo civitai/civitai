@@ -151,38 +151,58 @@ describe('resolveLocationChangeState', () => {
 // `routeChangeComplete`, so the params have to be re-derived there against the
 // route now rendered.
 describe('resolveRouteChangeState', () => {
-  it('recovers the path param of the route that is now rendered', () => {
-    const popped = { asPath: '/images/135356251', query: {}, state: {} };
-    const result = resolveRouteChangeState(popped, '/images/[imageId]');
+  it("publishes Next's query, which has the params of the route just rendered", () => {
+    const result = resolveRouteChangeState(
+      { asPath: '/images/135356251', query: { imageId: '135356251' } },
+      {}
+    );
+    expect(result.asPath).toBe('/images/135356251');
     expect(result.query.imageId).toBe(135356251);
   });
 
-  it('keeps asPath and state untouched', () => {
-    const popped = {
-      asPath: '/images/135356251',
-      query: {},
-      state: { prev: { asPath: '/models/827184' } },
-    };
-    const result = resolveRouteChangeState(popped, '/images/[imageId]');
-    expect(result.asPath).toBe('/images/135356251');
+  it('types params like the rest of the query rather than as strings', () => {
+    // Consumers hand `imageId` straight to tRPC inputs typed as numbers.
+    const result = resolveRouteChangeState(
+      { asPath: '/images/135356251', query: { imageId: '135356251' } },
+      {}
+    );
+    expect(typeof result.query.imageId).toBe('number');
+  });
+
+  it('carries the history state, which Next does not', () => {
+    const result = resolveRouteChangeState(
+      { asPath: '/images/135356251', query: { imageId: '135356251' } },
+      { prev: { asPath: '/models/827184' } }
+    );
     expect(result.state).toEqual({ prev: { asPath: '/models/827184' } });
   });
 
-  it('lets the query string win over the path param', () => {
-    const popped = { asPath: '/images/135356251', query: { imageId: 999 }, state: {} };
-    const result = resolveRouteChangeState(popped, '/images/[imageId]');
-    expect(result.query.imageId).toBe(999);
+  it('keeps no param of the route being left', () => {
+    // The pop resolved in the popstate handler carried `id: 'project'` from the
+    // OUTGOING pattern; nothing of it may survive into what we publish.
+    const result = resolveRouteChangeState(
+      { asPath: '/comics/project/55/chapter/2', query: { id: '55', chapterPosition: '2' } },
+      {}
+    );
+    expect(result.query).toEqual({ id: 55, chapterPosition: 2 });
   });
+});
 
-  it('contributes nothing when the rendered route is static', () => {
-    const popped = { asPath: '/images', query: { sort: 'Newest' }, state: {} };
-    const result = resolveRouteChangeState(popped, '/images');
-    expect(result.query).toEqual({ sort: 'Newest' });
-  });
-
-  it('contributes nothing when the pattern does not match the path', () => {
-    const popped = { asPath: '/models/827184', query: {}, state: {} };
-    const result = resolveRouteChangeState(popped, '/images/[imageId]');
-    expect(result.query).toEqual({});
+describe('a URL fragment', () => {
+  it('does not end up inside the path param', () => {
+    // `eventState.as` keeps the hash, and `imageId: '135356251#comments'` reaches
+    // tRPC as the image id.
+    const eventState = {
+      as: '/images/135356251#comments',
+      url: '/images/135356251#comments',
+      state: {},
+    };
+    const result = resolveLocationChangeState(
+      eventState,
+      eventState,
+      { pathname: '/images/135356251', search: '' },
+      '/images/[imageId]'
+    );
+    expect(result.query.imageId).toBe(135356251);
   });
 });
