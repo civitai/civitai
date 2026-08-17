@@ -36,20 +36,14 @@ reported on 08-16 and 08-17 starts from untouched.
 
 ## P0 — blocking, needed before the Retool shutdown
 
-- [x] **Post Lookup now works in the mod app.** Raised 08-17 as a question about repointing a link; it was
-      missing functionality. The main app's "Lookup Post" control
-      ([`PostControls.tsx`](../../src/components/Post/Detail/PostControls.tsx)) opens
-      `NEXT_PUBLIC_POST_LOOKUP_URL` + the post id, and that pointed at a **Retool app that was never
-      exported and appears in no migration inventory** — Retool's own Image Lookup takes only an Image Id
-      or Image URL, so nothing here could have received the link. It would have broken outright at the
-      cutoff. Post support now lives on Image Lookup: `?post=<id>`, or a pasted post URL, renders the post
-      with its author, rating, publish/ToS/availability state and every image in author order, each
-      linking to its own full detail.
+- [x] **A post detail view on Image Lookup.** Raised 08-17 as a question about repointing a link, and the
+      link half of it turned out to be exactly that — see the repoint item below; "Lookup Post" targets
+      Retool's Bulk Image Manager, which is ported and needs no code. What was genuinely absent is the
+      post *itself*: publish state, availability, ToS, author. `?post=<id>` on Image Lookup, or a pasted
+      post URL, now shows it above the post's images, and hands off to Bulk Image Manager to act on them.
       **Deliberately not a new route** — a new page has no `AppPageAccess` row and would be invisible to
-      everyone but `moderator:admin` until granted on `/admin`, which is the exact bottleneck already
-      holding up the items below. On Image Lookup it inherits an existing grant and needs no admin action.
-      - [ ] **Remaining step, ops:** repoint `NEXT_PUBLIC_POST_LOOKUP_URL` at
-            `<moderator app>/retool/image-lookup?post=` — the control appends the raw post id.
+      everyone but `moderator:admin` until granted on `/admin`, the bottleneck already holding up the
+      items below. On Image Lookup it inherits an existing grant and needs no admin action.
       - [x] Fixed while here: pasting a post URL into Image Lookup resolved it as an *image* id, because
             the resolver took the last URL segment and `/posts/12345` ends in digits. It returned image
             12345 — a real, unrelated row — presented as the thing that was pasted. Silent wrong-content,
