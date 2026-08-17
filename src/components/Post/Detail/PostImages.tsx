@@ -17,7 +17,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import type { PostContestCollectionItem } from '~/types/router';
 import classes from './PostImages.module.css';
@@ -167,8 +167,13 @@ export function PostImages({
                     </RoutedDialogLink>
                     <Reactions
                       className={clsx(classes.reactions, {
+                        // Moves the bar clear of the player's control strip, so it
+                        // must track whether a control strip actually renders:
+                        // `nativeVideoControls` is a site-wide user preference and
+                        // EdgeMedia ignores it for a still image.
                         [classes.reactionsWithControls]:
                           !vimeoVideoId &&
+                          image.type === MediaType.video &&
                           (features.nativeVideoControls || shouldDisplayHtmlControls(image)),
                         [classes.vimeoReactions]: !!vimeoVideoId,
                       })}

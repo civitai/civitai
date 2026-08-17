@@ -546,6 +546,12 @@ const featureFlags = createFeatureFlags({
   // the route SSR resolver reads the same resolved flag) but staged `['mod']`
   // rather than `[]` because it's a re-host, not a brand-new dark capability.
   appReviewPage: { availability: ['mod'], fliptKey: 'app-review-page' },
+  // Metadata info button on image feed cards. `availability: []` hides it for
+  // EVERYONE, mods included — this is a probe measuring whether anyone misses
+  // it, and a cohort that still sees the button cannot report missing it.
+  // Restoring it is enabling `image-card-info-button` in Flipt, which is the
+  // expected outcome if people complain, not a failure.
+  imageCardInfoButton: { availability: [], fliptKey: 'image-card-info-button' },
   // Early-adopter opt-in cohort. `availability: []` means static evaluation is false, so
   // when Flipt is UNREACHABLE (isFliptSync → null) nobody is in the cohort. NOT
   // `['user']`/`['public']`: those would fail OPEN during a Flipt outage, which defeats the
