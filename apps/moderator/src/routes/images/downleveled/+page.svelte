@@ -3,7 +3,8 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { SvelteMap } from 'svelte/reactivity';
-  import type { SubmitFunction } from '@sveltejs/kit';
+  import { optimisticEnhancer } from '$lib/form-action';
+  import { urlWith } from '$lib/url';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import { browsingLevels, NsfwLevel, getBrowsingLevelLabel } from '@civitai/shared';
   import type { PageData } from './$types';
@@ -32,25 +33,14 @@
     acted.clear();
   });
 
-  const submit: SubmitFunction = ({ formData }) => {
+  const submit = optimisticEnhancer(({ formData }) => {
     const id = Number(formData.get('id'));
     acted.set(id, Number(formData.get('nsfwLevel')));
-    // A refusal must un-dim the card. Left marked, the image reads as rated in the moderator's own
-    // record while it is still sitting in the queue unrated.
-    return async ({ result, update }) => {
-      if (result.type !== 'success') acted.delete(id);
-      await update({ invalidateAll: false });
-    };
-  };
+    return () => acted.delete(id);
+  });
 
-  function navigate(params: Record<string, string | number | null>) {
-    const url = new URL(page.url);
-    for (const [k, v] of Object.entries(params)) {
-      if (v === null || v === '') url.searchParams.delete(k);
-      else url.searchParams.set(k, String(v));
-    }
-    goto(url.pathname + url.search);
-  }
+  const navigate = (params: Record<string, string | number | null>) =>
+    goto(urlWith(page.url, params));
 
   const cardClass = (item: Item) => (acted.has(item.id) ? 'opacity-60' : '');
 </script>

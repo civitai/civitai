@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { applyAction, enhance } from '$app/forms';
+  import { enhance } from '$app/forms';
   import { page } from '$app/state';
-  import type { SubmitFunction } from '@sveltejs/kit';
+  import { optimisticEnhancer } from '$lib/form-action';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -37,24 +37,16 @@
     expanded.clear();
   });
 
-  // A failed action must UNDO its optimistic mark. Leaving it makes the moderator's own record wrong,
-  // and the row they then skip is the one that failed.
-  const submit =
-    (modelId: number, verdict: string): SubmitFunction =>
-    () => {
-      acted.set(modelId, verdict);
-      return async ({ result, update }) => {
-        // applyAction is what puts a `fail()` payload into `form`. Without it the error banner never
-        // renders and a REFUSED verdict looks exactly like an applied one — which on this page means a
-        // moderator believing they signed off on a minor flag that never happened.
-        if (result.type !== 'success') {
-          acted.delete(modelId);
-          await applyAction(result);
-          return;
-        }
-        await update({ invalidateAll: true });
-      };
-    };
+  // A refused verdict must undo its mark, or a moderator believes they signed off on a minor flag that
+  // never happened. The undo is the enhancer's required return type — see optimisticEnhancer.
+  const submit = (modelId: number, verdict: string) =>
+    optimisticEnhancer(
+      () => {
+        acted.set(modelId, verdict);
+        return () => acted.delete(modelId);
+      },
+      { reload: true }
+    );
 
   type Detail = {
     match: {

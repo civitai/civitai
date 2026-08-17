@@ -2,7 +2,7 @@
   import { enhance } from '$app/forms';
   import { goto } from '$app/navigation';
   import { SvelteMap } from 'svelte/reactivity';
-  import type { SubmitFunction } from '@sveltejs/kit';
+  import { optimisticEnhancer } from '$lib/form-action';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import { browsingLevels, NsfwLevel, getBrowsingLevelLabel } from '@civitai/shared';
   import type { PageData } from './$types';
@@ -34,15 +34,11 @@
     return hi;
   }
 
-  const submit: SubmitFunction = ({ formData }) => {
+  const submit = optimisticEnhancer(({ formData }) => {
     const id = Number(formData.get('id'));
     acted.set(id, Number(formData.get('nsfwLevel')));
-    // See downleveled: an optimistic mark that survives a refusal makes the record wrong.
-    return async ({ result, update }) => {
-      if (result.type !== 'success') acted.delete(id);
-      await update({ invalidateAll: false });
-    };
-  };
+    return () => acted.delete(id);
+  });
 
   const cardClass = (item: Item) => (acted.has(item.id) ? 'opacity-60' : '');
 </script>

@@ -3,7 +3,8 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { SvelteMap } from 'svelte/reactivity';
-  import type { SubmitFunction } from '@sveltejs/kit';
+  import { optimisticEnhancer } from '$lib/form-action';
+  import { urlWith } from '$lib/url';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
@@ -21,26 +22,12 @@
     acted.clear();
   });
 
-  function urlWith(params: Record<string, string | number | null>) {
-    const url = new URL(page.url);
-    for (const [k, v] of Object.entries(params)) {
-      if (v === null) url.searchParams.delete(k);
-      else url.searchParams.set(k, String(v));
-    }
-    return url.pathname + url.search;
-  }
 
-  const submit =
-    (panelId: number, verdict: 'Approved' | 'Blocked'): SubmitFunction =>
-    () => {
+  const submit = (panelId: number, verdict: 'Approved' | 'Blocked') =>
+    optimisticEnhancer(() => {
       acted.set(panelId, verdict);
-      return async ({ result, update }) => {
-        // Reverted before the result is applied. A mark left standing over a refusal is the operator's
-        // own record claiming they handled a panel that is still live, and the queue moves on past it.
-        if (result.type !== 'success') acted.delete(panelId);
-        await update({ invalidateAll: false });
-      };
-    };
+      return () => acted.delete(panelId);
+    });
 
   const INGESTION_LABEL: Record<string, string> = {
     Pending: 'Awaiting scan',
@@ -81,14 +68,14 @@
     <select
       class="h-8 rounded-md border bg-background px-2 text-sm"
       value={data.needsReview}
-      onchange={(e) => goto(urlWith({ needsReview: e.currentTarget.value, cursor: null }))}
+      onchange={(e) => goto(urlWith(page.url, { needsReview: e.currentTarget.value, cursor: null }))}
     >
       {#each data.reasons as r (r.value)}<option value={r.value}>{r.label}</option>{/each}
     </select>
     <select
       class="h-8 rounded-md border bg-background px-2 text-sm"
       value={data.limit}
-      onchange={(e) => goto(urlWith({ limit: e.currentTarget.value, cursor: null }))}
+      onchange={(e) => goto(urlWith(page.url, { limit: e.currentTarget.value, cursor: null }))}
     >
       {#each [10, 25, 50] as n (n)}<option value={n}>{n} per page</option>{/each}
     </select>
@@ -179,7 +166,7 @@
 
   <div class="mt-6 flex justify-center">
     {#if data.nextCursor}
-      <Button size="lg" onclick={() => goto(urlWith({ cursor: data.nextCursor ?? null }))}>Next</Button>
+      <Button size="lg" onclick={() => goto(urlWith(page.url, { cursor: data.nextCursor ?? null }))}>Next</Button>
     {:else}
       <span class="text-sm text-muted-foreground">End of queue.</span>
     {/if}

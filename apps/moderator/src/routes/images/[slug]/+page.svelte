@@ -4,6 +4,7 @@
   import { page } from '$app/state';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { optimisticEnhancer } from '$lib/form-action';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
@@ -64,7 +65,7 @@
       .join(',')
   );
 
-  const bulkSubmit: SubmitFunction = ({ action, formData }) => {
+  const bulkSubmit = optimisticEnhancer(({ action, formData }) => {
     const ids = String(formData.get('imageIds') ?? '')
       .split(',')
       .map(Number)
@@ -80,13 +81,12 @@
     selected.clear();
     // The whole batch reverts together: a rejected bulk action changed nothing, and marking any of it
     // handled hides every one of those images from the moderator working the queue.
-    return async ({ result, update }) => {
-      if (result.type !== 'success') for (const id of ids) acted.delete(id);
-      await update({ invalidateAll: false });
+    return () => {
+      for (const id of ids) acted.delete(id);
     };
-  };
+  });
 
-  const submit: SubmitFunction = ({ action, formData }) => {
+  const submit = optimisticEnhancer(({ action, formData }) => {
     const imageId = Number(formData.get('imageId'));
     const a = action.search;
     const verdict = a.includes('accept')
@@ -97,11 +97,8 @@
           ? 'Approved'
           : 'Rejected';
     acted.set(imageId, verdict);
-    return async ({ result, update }) => {
-      if (result.type !== 'success') acted.delete(imageId);
-      await update({ invalidateAll: false });
-    };
-  };
+    return () => acted.delete(imageId);
+  });
 
   // Optimistically-unpublished parent Model3D ids (the thumbnail affordance).
   const unpublishedModel3ds = new SvelteSet<number>();
