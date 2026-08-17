@@ -197,17 +197,53 @@ export const getRemixGalleryVisibilitySchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });
 
-export const submitToRemixGallerySchema = z.object({
+export const submitToRemixGallerySchema = z
+  .object({
+    hostImageId: z.number().int().positive(),
+    imageId: z.number().int().positive(),
+    /**
+     * The price the submitter was shown. Refused if the owner has moved it since,
+     * rather than silently charging the new one — the client can only check
+     * affordability against the number it rendered, so without this an owner
+     * raising their price between the modal opening and the button being pressed
+     * is charged without consent.
+     *
+     * Optional only because a free submission has no price to agree to. The
+     * refinement below still requires it on the paid path, so this cannot become
+     * a route to submitting without one.
+     */
+    expectedPrice: z.number().int().min(0).optional(),
+    /**
+     * Spend the daily free placement instead of Buzz. The server decides whether
+     * that is allowed — the remix must be one it resolved as derived from the
+     * host, and the creator must have a slot free — so this asks rather than
+     * asserts. `placerId` is never taken from here; it comes from the session.
+     */
+    free: z.boolean().default(false),
+  })
+  .superRefine((input, ctx) => {
+    // Without this, omitting `expectedPrice` on a paid submission reaches the
+    // service as `undefined`, which it reads as "the submitter agreed to
+    // whatever it is now" — the exact consent hole the field exists to close.
+    if (!input.free && input.expectedPrice == null)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['expectedPrice'],
+        message: 'A paid submission has to carry the price it was shown',
+      });
+  });
+
+/**
+ * What the submit card needs to offer the free option, for the candidates it has
+ * already loaded.
+ *
+ * Bounded to one page of the picker rather than taking the viewer's whole
+ * library: the verification is a jsonb containment test per row, and answering
+ * it for every image someone has ever posted is a scan nobody asked for.
+ */
+export const getRemixGalleryFreeEligibilitySchema = z.object({
   hostImageId: z.number().int().positive(),
-  imageId: z.number().int().positive(),
-  /**
-   * The price the submitter was shown. Refused if the owner has moved it since,
-   * rather than silently charging the new one — the client can only check
-   * affordability against the number it rendered, so without this an owner
-   * raising their price between the modal opening and the button being pressed
-   * is charged without consent.
-   */
-  expectedPrice: z.number().int().min(0),
+  imageIds: z.array(z.number().int().positive()).max(200),
 });
 
 export const actOnRemixGallerySubmissionSchema = z.object({

@@ -165,6 +165,10 @@ export const placementNotifications = createNotificationProcessor({
         WHERE p.surface = 'remixGallery'
           AND p."targetType" = 'image'
           AND p.status = 'pending'
+          -- Free submissions are their own type, with their own toggle. Excluded
+          -- here rather than left to fall through both: this message quotes an
+          -- amount, and a free row's amount is 0.
+          AND NOT p.free
           -- Stamped by holdPlacementEscrow. Its absence means the row exists but
           -- the escrow has not been attempted, and a notification landing in that
           -- gap sends someone to review a submission about to be unwound.
@@ -175,6 +179,58 @@ export const placementNotifications = createNotificationProcessor({
         CONCAT('remix-gallery-pending:',"placementId") "key",
         "userId",
         'remix-gallery-pending' "type",
+        details
+      FROM data
+    `,
+  },
+
+  /**
+   * The free tier's own type, so a creator can take one stream and not the other.
+   *
+   * Separate rather than a branch inside the paid message, because the two are
+   * different offers: the paid one quotes Buzz and the free one spends one of the
+   * creator's own slots and pays them nothing until they accept. A creator who
+   * wants only paid submissions announced has no way to say so if both arrive
+   * under one type.
+   *
+   * `expiresAt` is not checked here. It gates the paid types because
+   * `holdPlacementEscrow` stamps it in a second statement, so its absence means
+   * the escrow has not been attempted yet; a free row is written with its
+   * deadline by the same INSERT, so there is no such gap to wait out.
+   */
+  'remix-gallery-free-pending': {
+    displayName: 'Free remix awaiting your review',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.placerUsername} submitted a free remix to your gallery`,
+      url: `/images/${details.imageId}`,
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."ownerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'placerId', p."placerId",
+            'placerUsername', u.username
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."placerId"
+        WHERE p.surface = 'remixGallery'
+          AND p."targetType" = 'image'
+          AND p.status = 'pending'
+          AND p.free
+          AND p."createdAt" > '${lastSent}'
+          -- A row here means opted OUT. The paid types above carry no such
+          -- clause, so their toggles render and do nothing; this one is wired.
+          AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = p."ownerId" AND type = 'remix-gallery-free-pending')
+      )
+      SELECT
+        CONCAT('remix-gallery-free-pending:',"placementId") "key",
+        "userId",
+        'remix-gallery-free-pending' "type",
         details
       FROM data
     `,

@@ -23,6 +23,7 @@ const STRANGER = 63;
 const HOST_IMAGE = 74;
 const REMIX_IMAGE = 85;
 const PLACEMENT = 96;
+const FREE_PLACEMENT = 107;
 const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn(async () => ({ fee: 210, principal: 490 }));
@@ -50,6 +51,26 @@ vi.mock('~/server/services/placement-moderation.service', () => ({ assertCanPlac
 const rewardApply = vi.fn(async () => undefined);
 vi.mock('~/server/rewards/active/remixAccept.reward', () => ({
   remixAcceptReward: { apply: rewardApply },
+}));
+
+/**
+ * The free claim is the boundary this file tests against, not through. It owns
+ * an advisory-locked transaction and every refusal the paid path makes, all of
+ * which are `free-placement.service`'s own tests to keep — what matters here is
+ * that the free branch delegates to it with the right target instead of building
+ * a row of its own.
+ */
+const createFreePlacement = vi.fn(async () => ({ id: FREE_PLACEMENT }));
+const getFreePlacementAllowance = vi.fn(async () => ({
+  used: 0,
+  remaining: 1,
+  resetsAt: new Date('2026-01-02'),
+}));
+const hasUsedFreePlacementOn = vi.fn(async () => false);
+vi.mock('~/server/services/free-placement.service', () => ({
+  createFreePlacement,
+  getFreePlacementAllowance,
+  hasUsedFreePlacementOn,
 }));
 
 const resolvePlacementSpaceFor = vi.fn();
@@ -175,7 +196,15 @@ const openSpace = {
   setPrice: PRICE,
   price: PRICE,
   cap: 1000,
+  freeSlots: 2,
+  freeSlotsRemaining: 1,
   settings: {},
+};
+
+/** A submission the server itself resolved as derived from the host image. */
+const verifiedSubmission: SubmissionFixture = {
+  ...goodSubmission,
+  sourceImageIds: [HOST_IMAGE],
 };
 
 /**
@@ -213,6 +242,8 @@ beforeEach(() => {
   placementCount.mockResolvedValue(0);
   placementFindFirst.mockResolvedValue(null);
   settlePlacement.mockResolvedValue({ settled: true });
+  createFreePlacement.mockResolvedValue({ id: FREE_PLACEMENT });
+  hasUsedFreePlacementOn.mockResolvedValue(false);
   holdPlacementEscrow.mockImplementation(async () => {
     calls.push('hold');
     return { fee: 210, principal: 490 };
@@ -1650,5 +1681,210 @@ describe('declining everything out of band', () => {
     ).rejects.toThrow();
 
     expect(settlePlacement).not.toHaveBeenCalled();
+  });
+});
+
+describe('free submissions', () => {
+  const submitFree = (over: Partial<Parameters<typeof createRemixGallerySubmission>[0]> = {}) =>
+    submit({ free: true, ...over });
+
+  it('refuses a remix the server did not resolve as derived from the host', async () => {
+    // The gate the whole surface rests on. `sourceImageIds` is empty on the
+    // default fixture, which is what an off-site remix looks like — a real remix
+    // carrying no signal, which is why the refusal names paying as the
+    // alternative rather than calling it not a remix.
+    await expect(submitFree()).rejects.toThrow(/made from this image on-site/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the host is not among the inputs, only some other image', async () => {
+    // Derivation is membership, not "this generation had inputs at all". A remix
+    // built entirely from someone else's image would otherwise buy a free slot
+    // in a queue it has nothing to do with.
+    primeQueries({ submission: { ...goodSubmission, sourceImageIds: [STRANGER] } });
+    await expect(submitFree()).rejects.toThrow(/made from this image on-site/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('claims through the free primitive rather than writing its own row', async () => {
+    primeQueries({ submission: verifiedSubmission });
+
+    const result = await submitFree();
+
+    expect(result).toEqual({ id: FREE_PLACEMENT });
+    // No row of its own and no escrow: the three refusals the free tier adds
+    // have to hold together under the claim's lock, in the same transaction as
+    // its insert, and a row built here would be a second creation route.
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+
+    expect(createFreePlacement).toHaveBeenCalledWith({
+      surface: 'remixGallery',
+      targetType: 'image',
+      targetId: HOST_IMAGE,
+      placerId: PLACER,
+      data: { imageId: REMIX_IMAGE, remixOfId: null, derivedFromHost: true },
+    });
+  });
+
+  it('hands the claim the host image, never the submitted one', async () => {
+    // Both ids are in scope at the call site and swapping them is a one-token
+    // edit that type-checks: the placement would land on the submitter's own
+    // image, attributed to themselves, holding a slot on the wrong creator.
+    primeQueries({ submission: verifiedSubmission });
+    await submitFree();
+
+    const claim = createFreePlacement.mock.calls[0][0] as { targetId: number; placerId: number };
+    expect(claim.targetId).toBe(HOST_IMAGE);
+    expect(claim.targetId).not.toBe(REMIX_IMAGE);
+    expect(claim.placerId).toBe(PLACER);
+  });
+
+  it('does not let a free submission skip the one-per-gallery duplicate check', async () => {
+    // `createFreePlacement` bounds free rows per placer and per target, which is
+    // a different question from "is this picture already in this gallery" — a
+    // paid entry followed by a free one would otherwise put the same image in
+    // twice and defeat the rotation.
+    primeQueries({ submission: verifiedSubmission });
+    placementFindFirst.mockResolvedValue({ id: 1 });
+
+    await expect(submitFree()).rejects.toThrow(/already in this gallery/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['off', /not accepting/i],
+    ['auto', /need review/i],
+  ] as const)('refuses a free submission to a %s gallery', async (mode, message) => {
+    primeQueries({ submission: verifiedSubmission });
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, mode });
+
+    await expect(submitFree()).rejects.toThrow(message);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('refuses a free submission to your own gallery', async () => {
+    primeQueries({ submission: verifiedSubmission });
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, ownerId: PLACER });
+
+    await expect(submitFree()).rejects.toThrow(/your own gallery/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('applies every content rule to a free submission', async () => {
+    // Free is placement that costs no Buzz, not a lighter kind of placement.
+    // These are the checks a free path is most tempting to skip, because nobody
+    // is being charged for the refusal.
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, settings: { contentRule: 'any' } });
+    primeQueries({ submission: { ...verifiedSubmission, tosViolation: true } });
+    await expect(submitFree()).rejects.toThrow(/cannot be submitted/i);
+
+    resolvePlacementSpaceFor.mockResolvedValue(openSpace);
+    primeQueries({ submission: { ...verifiedSubmission, nsfwLevel: NsfwLevel.XXX } });
+    await expect(submitFree()).rejects.toThrow(/rating/i);
+
+    primeQueries({ submission: verifiedSubmission, hostShowable: false });
+    await expect(submitFree()).rejects.toThrow(/cannot show a gallery/i);
+
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['unpriced', null],
+    ['priced below the floor', 10],
+  ] as const)('accepts a free submission to a %s gallery', async (_label, price) => {
+    // The price is the PAID path's spam gate — nothing verifies that a paid
+    // submission is really a remix. A free one is gated on the server having
+    // verified exactly that, so refusing it over a price it does not pay would
+    // refuse it for a reason that does not apply.
+    primeQueries({ submission: verifiedSubmission });
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, price, setPrice: price });
+
+    await expect(submitFree()).resolves.toEqual({ id: FREE_PLACEMENT });
+    expect(createFreePlacement).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses a PAID submission to those same galleries', async () => {
+    // The other half of the pair above, which would also pass if the price
+    // checks had been deleted rather than moved onto the paid path.
+    // Re-primed between the two, because the raw-query fake answers by call
+    // index: without it the second submission reads the host row as its
+    // submission and fails on the wrong thing entirely.
+    primeQueries();
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, price: null, setPrice: null });
+    await expect(submit()).rejects.toThrow(/has not set a price/i);
+
+    primeQueries();
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, price: 10, setPrice: 10 });
+    await expect(submit()).rejects.toThrow(/not priced for submissions/i);
+  });
+
+  it('ignores expectedPrice on the free path instead of refusing on it', async () => {
+    // A client that keeps sending the price it rendered must not have a stale
+    // one turn a free submission into a refusal about money it is not spending.
+    primeQueries({ submission: verifiedSubmission });
+
+    await expect(submitFree({ expectedPrice: PRICE + 1 })).resolves.toEqual({ id: FREE_PLACEMENT });
+  });
+});
+
+describe('the removal cooldown on a free entry', () => {
+  const approvedAt = new Date(Date.now() - 60 * 60 * 1000);
+
+  const arrangeApproved = (free: boolean) =>
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      placerId: PLACER,
+      targetId: HOST_IMAGE,
+      amount: free ? 0 : PRICE,
+      status: 'approved',
+      surface: 'remixGallery',
+      free,
+      data: { imageId: REMIX_IMAGE },
+      resolvedAt: approvedAt,
+      createdAt: approvedAt,
+    });
+
+  it('keeps the full week on a free entry, exactly as on a paid one', async () => {
+    // Justin's call, and asserted rather than assumed because both agents who
+    // looked at it recommended waiving it. Accepting a free remix therefore also
+    // holds one of the creator's free slots for the whole week — intended, not
+    // an oversight.
+    for (const free of [true, false]) {
+      arrangeApproved(free);
+      await expect(
+        actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+      ).rejects.toThrow(/can be removed from/i);
+    }
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('does not tell a creator that someone paid for a free entry', async () => {
+    // The copy is the whole change here, so it is the thing asserted. Left
+    // alone, the refusal justifies the week with a payment that never happened.
+    arrangeApproved(true);
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+    ).rejects.toThrow(/week-long commitment/i);
+
+    arrangeApproved(false);
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'remove', userId: OWNER })
+    ).rejects.toThrow(/someone paid/i);
+  });
+
+  it('lets a moderator take a free entry down inside the week', async () => {
+    arrangeApproved(true);
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+    await expect(
+      actOnRemixGallerySubmission({
+        placementId: PLACEMENT,
+        action: 'remove',
+        userId: STRANGER,
+        isModerator: true,
+      })
+    ).resolves.toMatchObject({ removed: true });
   });
 });

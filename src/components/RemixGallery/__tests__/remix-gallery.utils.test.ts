@@ -2,9 +2,81 @@ import { describe, expect, it } from 'vitest';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import {
   dedupeGalleryItems,
+  freeSubmissionOffer,
   galleryDialogImages,
   trimToWholeRows,
 } from '~/components/RemixGallery/remix-gallery.utils';
+
+describe('freeSubmissionOffer', () => {
+  /** Everything satisfied, so each case below breaks exactly one thing. */
+  const eligible = {
+    verified: true,
+    freeSlots: 3,
+    freeSlotsRemaining: 2,
+    allowanceRemaining: 1,
+    usedHere: false,
+  };
+
+  it('offers free when every condition holds', () => {
+    expect(freeSubmissionOffer(eligible)).toEqual({ available: true, reason: null });
+  });
+
+  it('never returns a reason alongside an offer', () => {
+    // The two are read by different bits of the card, so a state carrying both
+    // would render a refusal under a working free button.
+    const offer = freeSubmissionOffer(eligible);
+    expect(offer.available).toBe(offer.reason === null);
+  });
+
+  it('refuses an unverified remix and names paying as the alternative', () => {
+    const { available, reason } = freeSubmissionOffer({ ...eligible, verified: false });
+
+    expect(available).toBe(false);
+    expect(reason).toMatch(/with Buzz/i);
+    // It must not call an off-site remix "not a remix": that is both wrong and
+    // an accusation, and it is the case a submitter is most likely to hit on
+    // work they know they made.
+    expect(reason).not.toMatch(/not a remix|isn't a remix/i);
+  });
+
+  it('leads with verification even when a slot shortage is also true', () => {
+    // Order is the whole design here. Naming the shortage would send someone
+    // back tomorrow to be refused for the reason they were refused today.
+    const { reason } = freeSubmissionOffer({
+      ...eligible,
+      verified: false,
+      freeSlotsRemaining: 0,
+      allowanceRemaining: 0,
+      usedHere: true,
+    });
+
+    expect(reason).toMatch(/where we can check/i);
+  });
+
+  it('tells the two meanings of "no slots remaining" apart', () => {
+    // `freeSlotsRemaining: 0` covers both "this creator takes none" and "they
+    // are all held right now" — the resolver short-circuits the count at zero
+    // capacity — and the difference decides whether coming back later helps.
+    const takesNone = freeSubmissionOffer({ ...eligible, freeSlots: 0, freeSlotsRemaining: 0 });
+    const allHeld = freeSubmissionOffer({ ...eligible, freeSlots: 3, freeSlotsRemaining: 0 });
+
+    expect(takesNone.reason).toMatch(/doesn't take free/i);
+    expect(allHeld.reason).toMatch(/all taken right now/i);
+    expect(takesNone.reason).not.toBe(allHeld.reason);
+  });
+
+  it('separates a spent daily allowance from a gallery already used', () => {
+    // One comes back at midnight and the other never does, so a single message
+    // for both would tell half of them to wait for something that will not
+    // happen.
+    expect(freeSubmissionOffer({ ...eligible, allowanceRemaining: 0 }).reason).toMatch(
+      /midnight UTC/i
+    );
+    expect(freeSubmissionOffer({ ...eligible, usedHere: true }).reason).toMatch(
+      /once per gallery/i
+    );
+  });
+});
 
 const items = (count: number, startId = 1) =>
   Array.from({ length: count }, (_, index) => ({

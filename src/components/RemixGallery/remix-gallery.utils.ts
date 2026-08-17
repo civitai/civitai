@@ -66,3 +66,71 @@ export function galleryDialogImages(imageId: number, items: RemixGalleryItem[]) 
   if (index === -1) return [];
   return images.slice(Math.max(index - 50, 0), index + 50);
 }
+
+export type FreeSubmissionInputs = {
+  /** The server resolved this remix as derived from the host image. */
+  verified: boolean;
+  /** What the creator accepts. `0` is them taking none — a setting, not a queue. */
+  freeSlots: number;
+  /** What is left right now. Stale by construction; the mutation re-counts. */
+  freeSlotsRemaining: number;
+  /** Free placements the placer has left today, across every surface. */
+  allowanceRemaining: number;
+  /** Free is once per gallery per placer, ever — not once per day. */
+  usedHere: boolean;
+};
+
+/**
+ * Whether the free option may be offered, and if not, why.
+ *
+ * Pure, and apart from the modal, because this is the part worth being sure
+ * about: five inputs, an order that matters, and copy that is wrong in a
+ * different way for each of them. Rendering it is the easy half.
+ *
+ * The order is most-specific-first, and `verified` leads deliberately. An
+ * unverified remix is refused whatever the creator's slots say, so naming a slot
+ * shortage there would send someone back tomorrow to be refused for the same
+ * reason they were refused today.
+ *
+ * `reason` is `null` exactly when free is on offer, so a caller cannot render a
+ * refusal and an offer at once.
+ */
+export function freeSubmissionOffer({
+  verified,
+  freeSlots,
+  freeSlotsRemaining,
+  allowanceRemaining,
+  usedHere,
+}: FreeSubmissionInputs): { available: boolean; reason: string | null } {
+  if (!verified)
+    return {
+      available: false,
+      reason:
+        'Free submissions are for remixes made from this image here on the site, where we can check. Anything else can still be submitted with Buzz.',
+    };
+
+  if (usedHere)
+    return {
+      available: false,
+      reason:
+        "You've already used a free submission on this gallery. Free is once per gallery, not once a day.",
+    };
+
+  if (allowanceRemaining <= 0)
+    return {
+      available: false,
+      reason: "You've used today's free placement. It comes back at midnight UTC.",
+    };
+
+  // The two states behind `freeSlotsRemaining: 0`, told apart by reading
+  // `freeSlots` beside it — the resolver short-circuits the reservation count at
+  // zero capacity, so the number alone cannot say which one this is. One is a
+  // decision the creator made and the other is a queue that will move.
+  if (freeSlots <= 0)
+    return { available: false, reason: "This creator doesn't take free submissions." };
+
+  if (freeSlotsRemaining <= 0)
+    return { available: false, reason: 'The free slots on this image are all taken right now.' };
+
+  return { available: true, reason: null };
+}

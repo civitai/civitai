@@ -11,6 +11,7 @@ import {
   getPendingRemixGallerySubmissionsSchema,
   getPendingStickerPlacementsSchema,
   getRemixGallerySchema,
+  getRemixGalleryFreeEligibilitySchema,
   getRemixGalleryVisibilitySchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
@@ -61,6 +62,7 @@ import {
   getMyRemixGallerySubmissions,
   getPendingRemixGallerySubmissions,
   getRemixGallery,
+  getRemixGalleryFreeEligibility,
   getRemixGalleryVisibility,
   retractRemixGallerySubmission,
   setRemixGalleryPins,
@@ -402,10 +404,25 @@ export const placementRouter = router({
       assertRemixGalleryEnabled(ctx);
       return createRemixGallerySubmission({
         ...input,
+        // From the session, never the input. `createFreePlacement` takes this as
+        // a plain number and cannot tell where it came from, and every check
+        // downstream is *about* this id rather than a check *of* it — so a
+        // client-supplied one would spend someone else's daily allowance and
+        // submit under their account with nothing raising. `...input` spreads
+        // first, so no client value can survive this line.
         placerId: ctx.user.id,
         spendType: domainSpendType(ctx.features),
       });
     }),
+
+  /**
+   * The free option's inputs, for the submit card. A listing: everything it
+   * returns is stale by the time it renders, and the refusals live on the
+   * mutation.
+   */
+  getRemixGalleryFreeEligibility: protectedProcedure
+    .input(getRemixGalleryFreeEligibilitySchema)
+    .query(({ input, ctx }) => getRemixGalleryFreeEligibility({ ...input, placerId: ctx.user.id })),
 
   /**
    * Not flag-gated, for the same reason `actOnStickers` isn't: turning the flag

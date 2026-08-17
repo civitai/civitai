@@ -7,6 +7,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { remixAcceptReward } from '~/server/rewards/active/remixAccept.reward';
 import { getAllImages } from '~/server/services/image.service';
+import {
+  createFreePlacement,
+  getFreePlacementAllowance,
+  hasUsedFreePlacementOn,
+} from '~/server/services/free-placement.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
@@ -123,12 +128,32 @@ export type CreateRemixGallerySubmission = {
   /** What the submitter was shown. Refused if the owner has moved it since. */
   expectedPrice?: number;
   /**
+   * Spend the placer's daily free placement instead of Buzz. Allowed only for a
+   * remix this server itself resolved as derived from the host image.
+   */
+  free?: boolean;
+  /**
    * The domain's currency, decided at the router from the request's own feature
    * flags rather than anything the client sends — a client-supplied currency
    * would let a request on one domain spend the other's Buzz.
    */
   spendType: BuzzSpendType;
 };
+
+/**
+ * Why an unverified remix cannot be submitted free.
+ *
+ * Names the alternative rather than only the refusal: paying is what buys a slot
+ * in someone's review queue when the server cannot tell that the submission came
+ * from their image, and a bare "not eligible" reads as a bug on a remix the
+ * submitter knows they made.
+ *
+ * It does not say the submission "is not a remix" — an off-site remix is a real
+ * remix that carries no signal, and calling it otherwise is both wrong and an
+ * accusation.
+ */
+const FREE_NEEDS_VERIFIED_REFUSAL =
+  'remix gallery: free submissions are for remixes made from this image on-site, which is something we can check. Submit this one with Buzz instead.';
 
 /**
  * Submits an image into someone's remix gallery, charging the owner's price.
@@ -141,13 +166,15 @@ export type CreateRemixGallerySubmission = {
  * settle also fails.
  *
  * Nothing here consumes an inventory item; unlike a sticker, the thing being
- * placed is content the submitter already owns.
+ * placed is content the submitter already owns. That is also why the free path
+ * below has no unwind: there is no second write to fail after the row exists.
  */
 export async function createRemixGallerySubmission({
   placerId,
   hostImageId,
   imageId,
   expectedPrice,
+  free = false,
   spendType,
 }: CreateRemixGallerySubmission) {
   if (hostImageId === imageId)
@@ -169,26 +196,6 @@ export async function createRemixGallerySubmission({
 
   if (space.ownerId === placerId)
     throw throwBadRequestError('remix gallery: you cannot submit to your own gallery');
-
-  if (space.price == null)
-    throw throwBadRequestError('remix gallery: this creator has not set a price yet');
-
-  // `setPlacementSpace` refuses to write a price below the floor, but it lets an
-  // existing lower one be carried, so a row predating the rule still reads back
-  // here — and the floor is the only spam gate this surface has, since nothing
-  // verifies a submission is really a remix. Refused rather than rounded up:
-  // charging more than the number the submitter was shown is the thing
-  // `expectedPrice` below exists to prevent.
-  if (space.price < PLACEMENT_SURFACES[SURFACE].serverMinPrice)
-    throw throwBadRequestError('remix gallery: this gallery is not priced for submissions');
-
-  // Refused rather than charged. The client can only check affordability against
-  // the number it rendered, so charging a price the submitter never saw is a
-  // spend without consent — and an owner can move their price at any time.
-  if (expectedPrice != null && expectedPrice !== space.price)
-    throw throwBadRequestError(
-      `remix gallery: the price changed to ${space.price} Buzz while you were deciding`
-    );
 
   const submission = await loadSubmissionImage(imageId);
   if (submission.userId !== placerId)
@@ -226,6 +233,75 @@ export async function createRemixGallerySubmission({
         : "remix gallery: this creator only accepts submissions rated at or below their image's rating"
     );
 
+  // The server's own answer, from ids `sanitizeProvenance` wrote — a submitter
+  // cannot assert this by editing their image's meta. It is what the free path
+  // is gated on, so where it comes from decides whether that gate is real.
+  const derivedFromHost = submission.sourceImageIds?.includes(hostImageId) ?? false;
+
+  // Refused here, on the mutation, and deliberately not only by hiding the free
+  // option: a listing that filters is not a mutation that refuses, and this one
+  // decides whether someone gets into a creator's review queue without paying.
+  if (free && !derivedFromHost) throw throwBadRequestError(FREE_NEEDS_VERIFIED_REFUSAL);
+
+  const data = {
+    imageId,
+    remixOfId: submission.remixOfId,
+    // Present only when the server itself resolved this host image as an input
+    // to the generation. Left off rather than set false: "made elsewhere" and
+    // "no signal" are the same state, and the owner-review UI must keep saying
+    // nothing about either.
+    ...(derivedFromHost ? { derivedFromHost: true } : {}),
+  } satisfies RemixGalleryPlacementData;
+
+  // Before the branch, so a free submission cannot occupy a second slot of the
+  // same gallery with the same picture — `createFreePlacement` bounds free rows
+  // per placer and per target, which is a different question from this one.
+  await assertNotAlreadySubmitted({ hostImageId, imageId });
+
+  // Every remaining refusal — mode, self-placement, `assertCanPlace`, the
+  // per-owner pending cap — is made by `createFreePlacement` under its lock, in
+  // the same transaction as the insert. Repeating them here would be a second
+  // creation route with the checks bolted on the outside.
+  //
+  // No settle afterwards, and that is checked rather than assumed: `auto` is
+  // refused for this surface where a space is stored (`placementSpaceSchema`),
+  // where a submission is made (above), and by `createFreePlacement` itself
+  // against `allowedModes`. So a free submission here is always pending and
+  // always the owner's to answer.
+  if (free)
+    return createFreePlacement({
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetId: hostImageId,
+      placerId,
+      data,
+    });
+
+  // Every rule from here down is the paid path's, which is why none of them is
+  // reached above. The floor in particular exists because the price is this
+  // surface's only spam gate — nothing verifies that a *paid* submission is
+  // really a remix — and a free one is gated on the server having verified
+  // exactly that, plus the creator's slots and the placer's daily allowance.
+  // Refusing a free submission because a legacy row is priced at 40 would refuse
+  // it for a reason that does not apply to it.
+  if (space.price == null)
+    throw throwBadRequestError('remix gallery: this creator has not set a price yet');
+
+  // `setPlacementSpace` refuses to write a price below the floor, but it lets an
+  // existing lower one be carried, so a row predating the rule still reads back
+  // here. Refused rather than rounded up: charging more than the number the
+  // submitter was shown is the thing `expectedPrice` exists to prevent.
+  if (space.price < PLACEMENT_SURFACES[SURFACE].serverMinPrice)
+    throw throwBadRequestError('remix gallery: this gallery is not priced for submissions');
+
+  // Refused rather than charged. The client can only check affordability against
+  // the number it rendered, so charging a price the submitter never saw is a
+  // spend without consent — and an owner can move their price at any time.
+  if (expectedPrice != null && expectedPrice !== space.price)
+    throw throwBadRequestError(
+      `remix gallery: the price changed to ${space.price} Buzz while you were deciding`
+    );
+
   await assertCanPlace({ ownerId: space.ownerId, placerId });
 
   const pending = await dbWrite.placement.count({
@@ -235,8 +311,6 @@ export async function createRemixGallerySubmission({
     throw throwBadRequestError(
       'remix gallery: you already have the maximum submissions waiting with this creator'
     );
-
-  await assertNotAlreadySubmitted({ hostImageId, imageId });
 
   const placement = await dbWrite.placement.create({
     data: {
@@ -250,15 +324,7 @@ export async function createRemixGallerySubmission({
       sellerId: null,
       amount: space.price,
       status: 'pending',
-      data: {
-        imageId,
-        remixOfId: submission.remixOfId,
-        // Present only when the server itself resolved this host image as an
-        // input to the generation. Left off rather than set false: "made
-        // elsewhere" and "no signal" are the same state, and the owner-review
-        // UI must keep saying nothing about either.
-        ...(submission.sourceImageIds?.includes(hostImageId) ? { derivedFromHost: true } : {}),
-      } satisfies RemixGalleryPlacementData,
+      data,
     },
     select: { id: true },
   });
@@ -339,6 +405,7 @@ export async function actOnRemixGallerySubmission({
       amount: true,
       status: true,
       surface: true,
+      free: true,
       data: true,
       resolvedAt: true,
       createdAt: true,
@@ -400,7 +467,17 @@ export async function actOnRemixGallerySubmission({
       const removableAt = remixGalleryRemovableAt(placement.resolvedAt ?? placement.createdAt);
       if (removableAt > new Date())
         throw throwBadRequestError(
-          `remix gallery: this entry can be removed from ${removableAt.toISOString()}. Someone paid to be featured here, so it stays up for a week after you approve it.`
+          `remix gallery: this entry can be removed from ${removableAt.toISOString()}. ${
+            // The week itself is unchanged for a free entry — Justin's call, so
+            // the two paths cannot differ on how long an approval binds. Only the
+            // reason differs: nothing was paid, so the copy cannot say it was.
+            // Note what this costs, because it is intended rather than an
+            // oversight: an approved free entry holds one of the creator's free
+            // slots for the whole week too.
+            placement.free
+              ? 'Accepting a remix is a week-long commitment either way, so it stays up for a week after you approve it.'
+              : 'Someone paid to be featured here, so it stays up for a week after you approve it.'
+          }`
         );
     }
 
@@ -1356,11 +1433,81 @@ export async function getRemixGalleryVisibility({
     ownerId: space.ownerId,
     ownerUsername: owner?.username ?? null,
     ownerShare: space.ownerShare,
+    // Both, because `freeSlotsRemaining: 0` means two different things: the
+    // resolver short-circuits the reservation count at zero capacity, so it
+    // covers "this creator takes no free submissions" as well as "all of them
+    // are currently held". `freeSlots === 0` separates them, and the two states
+    // need different copy — one is a setting, the other is a queue.
+    //
+    // Already resolved by the call above, so exposing them costs nothing on a
+    // query every image-detail view runs. Display only: the refusal lives in
+    // `createFreePlacement`, under its lock.
+    freeSlots: space.freeSlots,
+    freeSlotsRemaining: space.freeSlotsRemaining,
     declineFee,
     pendingCount,
     viewerPending,
     maxSubmissionLevel,
     acceptedMaxLevel,
+  };
+}
+
+/**
+ * Where the viewer stands on submitting to this gallery for free.
+ *
+ * **Every number here is a listing.** The allowance, the slot count and the
+ * verification are all stale the moment they return, and the refusals live in
+ * `createRemixGallerySubmission` and `createFreePlacement`. This exists so the
+ * submit card can offer the free option and say what it costs, not so anything
+ * can be decided on it — a control that defaults to free has to survive losing
+ * the race for the last slot.
+ *
+ * Scoped to `imageIds` the picker has already loaded rather than sweeping the
+ * viewer's library: a submitter with tens of thousands of images would otherwise
+ * pay for a containment scan over all of them to render one badge.
+ *
+ * And scoped to the viewer's **own** images, which is not only about relevance:
+ * answering "was this image generated from that one" for arbitrary ids would
+ * turn the endpoint into an oracle for other people's generation inputs.
+ */
+export async function getRemixGalleryFreeEligibility({
+  hostImageId,
+  placerId,
+  imageIds,
+}: {
+  hostImageId: number;
+  placerId: number;
+  /** The candidates on screen. Bounded by the schema. */
+  imageIds: number[];
+}) {
+  const [allowance, usedHere, verified] = await Promise.all([
+    getFreePlacementAllowance({ placerId }),
+    hasUsedFreePlacementOn({
+      placerId,
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetId: hostImageId,
+    }),
+    imageIds.length
+      ? dbRead.$queryRaw<{ id: number }[]>`
+          SELECT i.id
+          FROM "Image" i
+          WHERE i.id IN (${Prisma.join(imageIds)})
+            AND i."userId" = ${placerId}
+            -- The same fact the mutation gates on, read the same way: ids that
+            -- sanitizeProvenance wrote after verifying a signed token or the
+            -- workflow itself. A submitter editing their own image's meta cannot
+            -- put one here, which is what makes the free gate mean anything.
+            AND (i.meta -> 'extra' -> 'sourceImageIds') @> ${String(hostImageId)}::jsonb
+        `
+      : [],
+  ]);
+
+  return {
+    allowance,
+    /** Free is once per gallery per placer, ever — not once per day. */
+    usedHere,
+    verifiedImageIds: verified.map((row) => row.id),
   };
 }
 
