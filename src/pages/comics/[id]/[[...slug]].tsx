@@ -67,6 +67,7 @@ import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-brow
 import { useChapterPermission } from '~/components/Comics/comic-chapter.utils';
 import type { ComicProjectMeta } from '~/server/schema/comics.schema';
 import { Page } from '~/components/AppLayout/Page';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -398,6 +399,7 @@ function ComicOverview({ project }: { project: Project }) {
   return (
     <>
       <Meta title={`${project.name} - Civitai Comics`} canonical={`/comics/${project.id}`} />
+      <TrackView entityId={project.id} entityType="ComicProject" type="ComicProjectView" />
 
       <div className={styles.overviewRoot}>
         {/* Hero image */}
@@ -1079,6 +1081,11 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
         title={`${activeChapter?.name ?? 'Chapter'} - ${project.name} - Civitai Comics`}
         deIndex={true}
       />
+      {/* Gated on canRead so this counts the same event ComicChapterRead does —
+          a paywalled chapter the viewer cannot open is not a read. */}
+      {activeChapter && canRead && (
+        <TrackView entityId={activeChapter.id} entityType="ComicChapter" type="ComicChapterView" />
+      )}
 
       <div className={styles.readerRoot}>
         {/* Sticky header — hides on scroll down */}

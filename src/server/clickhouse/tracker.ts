@@ -21,7 +21,6 @@ import type {
   BountyEngagementType,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
-  EntityType,
   NewOrderRankType,
   ReportReason,
   ReportStatus,
@@ -58,7 +57,30 @@ export type ViewType =
   | 'CollectionView'
   | 'BountyView'
   | 'BountyEntryView'
-  | 'Model3DView';
+  | 'Model3DView'
+  | 'ComicProjectView'
+  | 'ComicChapterView';
+
+/**
+ * The `entityType` arm of the ClickHouse `views` Enum8 — deliberately NOT the
+ * Prisma `EntityType`, which this used to be typed as. Prisma's enum carries
+ * values the ClickHouse column has never had (`Comment`, `CommentV2`,
+ * `ResourceReview`, `ChatMessage`, `UserProfile`), so it type-checked rows the
+ * insert would reject. Keep this list in lockstep with the column.
+ */
+export type ViewEntityType =
+  | 'User'
+  | 'Image'
+  | 'Post'
+  | 'Model'
+  | 'ModelVersion'
+  | 'Article'
+  | 'Collection'
+  | 'Bounty'
+  | 'BountyEntry'
+  | 'Model3D'
+  | 'ComicProject'
+  | 'ComicChapter';
 
 export type UserActivityType =
   | 'Registration'
@@ -490,7 +512,7 @@ export class Tracker {
 
   public view(values: {
     type: ViewType;
-    entityType: EntityType;
+    entityType: ViewEntityType;
     entityId: number;
     // Optional client-supplied context, forwarded verbatim into the `views`
     // ClickHouse row (same shape the track.addView tRPC resolver passed
