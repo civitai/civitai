@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
+  import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import {
     Table,
@@ -20,6 +21,10 @@
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // Only ever a pathname this app redirected from, but rendered as text rather than a link so a
+  // hand-edited `?denied=` cannot turn the dashboard into a jumping-off point to somewhere else.
+  const denied = $derived(page.url.searchParams.get('denied'));
 
   const name = $derived(data.user?.username ?? 'moderator');
   const counts = sidebarCounts();
@@ -188,6 +193,16 @@
     {/each}
   </p>
 </header>
+
+{#if denied}
+  <div
+    class="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
+    role="alert"
+  >
+    You don't have access to <code>{denied}</code>, so you were sent here. An admin can grant it on the
+    Permissions page.
+  </div>
+{/if}
 
 {#if urgent.length > 0}
   <a

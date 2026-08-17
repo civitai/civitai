@@ -62,7 +62,11 @@ export const handle: Handle = async ({ event, resolve }) => {
     !event.url.pathname.startsWith('/api/') &&
     !canAccess(result.user, event.url.pathname)
   ) {
-    return new Response(null, { status: 303, headers: { location: '/' } });
+    // Says WHY on arrival. A bare bounce is indistinguishable from the page being broken — it was
+    // reported as "bulk image manager tosses you back to dashboard" by a moderator who simply had no
+    // grant for it, and there was nothing on screen that could have told them otherwise.
+    const denied = `/?denied=${encodeURIComponent(event.url.pathname)}`;
+    return new Response(null, { status: 303, headers: { location: denied } });
   }
 
   return resolve(event);
