@@ -162,3 +162,21 @@ Re-read the write-up rules at the top before you send it.
 **Findings only.** Do not inventory the checks you ran and found satisfied. Say plainly if the segment
 is clean — that is a real outcome and padding the list wastes the fix. One exception, one line: a
 hazard you confirmed is *not* a bug today but that the next edit would turn into one.
+
+## Delivering your report
+
+🔴 **Your findings reach nobody unless you deliver them.** Text you write in your own transcript is not
+sent anywhere. Finishing the analysis is not finishing the job.
+
+Return the report as your final message text. If you are running as a subagent whose own text does not
+reach whoever spawned you, send it explicitly instead. **Never go idle without reporting.**
+
+This is an obligation on you rather than advice, because of who pays for it. Whoever consolidates the
+lanes cannot tell a lane that went silent from a lane that found nothing — the two are identical from
+the outside. The consolidated review then reads as complete while missing your lane entirely, and the
+work you did is not merely lost, it is counted as evidence that there was nothing to find. A silent
+lane is worse than a failed one: a failure is visible. This has happened on a real run, and the lane
+that vanished held the sharpest finding of the round.
+
+The reasoning above is the rule, not the wording. Deliver in any situation where your findings would
+otherwise stop at you, including ones this paragraph did not anticipate.

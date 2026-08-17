@@ -120,6 +120,12 @@ report then looks complete while missing a fifth of the review. It has happened 
 lane that vanished held the sharpest finding of the round. **Account for all five by name before you
 consolidate**, and treat "idle" as a question, not an answer.
 
+The same obligation is written into each of the five agent definitions, where it does not depend on the
+invoker remembering to pass it. Both are kept: they fail independently, and the redundancy costs a
+paragraph. ⚠️ **Do not read "I caught the silent lanes" as evidence the system works.** A run where
+someone already knew about this failure and watched for it proves nothing about the run where nobody
+does — which is every run after the one that discovered it.
+
 ## 3. Consolidate
 
 **Do not relay five reports.** Produce **three sections**, in this order:
@@ -164,6 +170,16 @@ permanent. They live in the conversation until they are fixed.
    whose findings were touched, and launch those together in one message as in step 2.
 4. Iterate.
 
+🔴 **Narrowing on re-review narrows *which lanes run*, never *what each running lane sees*.** Give every
+re-run lane the complete updated diff, not only the hunks matching its own findings.
+
+Deciding a whole lane is irrelevant is cheap to get right — reuse has nothing to say about a one-line
+SQL fix. Deciding which *part* of a diff is relevant to a lane is the same guess the lane exists to make
+for us, and it is wrong in the case that matters: a fix in one lane's territory changes the code another
+lane's findings were about. A test lane shown only its own changed assertions reviews them against a
+function that no longer exists in the form it is imagining — new refusals mean new branches, and "is
+this test still meaningful" cannot be answered from the assertion alone.
+
 **A declined finding is a legitimate outcome, but it must come back with a reason.** The reviewer then
 either accepts the reason or escalates to Justin. 🔴 **Silent non-fixes are the failure mode here** — a
 finding that quietly doesn't appear in the next round has not been resolved, it has been lost. Track
@@ -191,8 +207,19 @@ git diff <old-sha> <new-sha>
 git show <new-sha>:<path>
 ```
 
-Then re-target only the lanes whose subject those files touch — the same rule as the loop above. Move
-the tree once every lane is idle, if at all.
+Then re-target only the lanes whose subject those files touch — the same rule as the loop above.
+
+**Move the tree only when every lane is idle**, and account for all five by name first, per step 2 — an
+idle lane that never reported is still holding a read you are about to invalidate. That is the safe
+moment and the only one. After the checkout, re-apply step 0:
+
+```bash
+git checkout --detach origin/<branch>
+git checkout origin/main -- .claude    # the branch still predates the skill
+```
+
+Without that second line the agents disappear again mid-review, and the next fan-out fails to resolve
+them.
 
 ## 5. Close out — the implementer's step, not the reviewer's
 

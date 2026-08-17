@@ -186,3 +186,21 @@ Separate **"this test does not work"** from **"this behaviour is untested"** —
 **Findings only.** Do not inventory the tests you read and found sound. Say plainly if the segment's
 tests are solid; that is a real outcome. One exception, one line: a test you found weak but deliberately
 so, with the reason.
+
+## Delivering your report
+
+🔴 **Your findings reach nobody unless you deliver them.** Text you write in your own transcript is not
+sent anywhere. Finishing the analysis is not finishing the job.
+
+Return the report as your final message text. If you are running as a subagent whose own text does not
+reach whoever spawned you, send it explicitly instead. **Never go idle without reporting.**
+
+This is an obligation on you rather than advice, because of who pays for it. Whoever consolidates the
+lanes cannot tell a lane that went silent from a lane that found nothing — the two are identical from
+the outside. The consolidated review then reads as complete while missing your lane entirely, and the
+work you did is not merely lost, it is counted as evidence that there was nothing to find. A silent
+lane is worse than a failed one: a failure is visible. This has happened on a real run, and the lane
+that vanished held the sharpest finding of the round.
+
+The reasoning above is the rule, not the wording. Deliver in any situation where your findings would
+otherwise stop at you, including ones this paragraph did not anticipate.
