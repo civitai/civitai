@@ -28,7 +28,10 @@ the normal case here, not the exception, so expect this rather than treating it 
 failure is upstream of anything this file can say — by the time you could read a workaround here, you
 would already have found the file.
 
-Bring them in from `main` before spawning anything:
+**Skip this step when the head under review is based on `main`** — the agents are already in the tree and
+the checkout is a no-op. This step is for integration-branch work only.
+
+Otherwise, bring them in from `main` before spawning anything:
 
 ```bash
 git checkout origin/main -- .claude
@@ -37,6 +40,17 @@ git checkout origin/main -- .claude
 The tree is detached and throwaway, so a dirty `.claude` in it costs nothing and can never reach a PR.
 Do not install the agents into `~/.claude/` instead: that is a second copy free to drift from the
 repo's, and the repo's is the authoritative one.
+
+⚠️ **That checkout STAGES the files, so the next `git checkout --detach` aborts** with local changes that
+would be overwritten — which is how you find out, halfway through moving the tree to the next review.
+Unstage and remove them first:
+
+```bash
+git reset -q
+rm -rf .claude/agents/civitai-*.md .claude/skills/civitai-review
+git checkout --detach <next-sha>
+git checkout origin/main -- .claude    # re-apply, if the new head predates the skill
+```
 
 ## 1. Scope the segment
 
@@ -106,25 +120,37 @@ Skip a lane only when the diff genuinely cannot contain its findings — no serv
 reason to skip perf. "No tests changed" is *a finding for the test lane*, not a reason to skip it. Say
 which you skipped and why.
 
-### Tell every lane how to deliver, and never read silence as a clean lane
+### Lanes routinely go idle without delivering. Chasing them is YOUR job, and it is the only control.
 
-🔴 **Each lane's prompt must say how its findings get back to you** — that its final message text *is*
-the return value, or, for an agent whose own transcript reaches nobody, that it must send the report
-explicitly. A lane that finishes with its report only in its transcript has delivered nothing, and it
-has no way to know that.
+🔴 **This is normal, not exceptional. Expect it every round.** Measured across one project's four review
+rounds: **6 of 13 lanes finished, went idle, and sent nothing.** In the worst round it was 4 of 4. Every
+one reported in full when re-pinged — re-pinging worked **8 times out of 8**.
 
-🔴 **A lane that goes idle without reporting has failed. Re-ping it.** Do not record it as a clean lane.
-This is the one failure this skill's own format actively hides: step 3 asks you to say plainly when a
-lane found nothing, which makes a lost lane and a clean lane read identically — and the consolidated
-report then looks complete while missing a fifth of the review. It has happened on a real run, and the
-lane that vanished held the sharpest finding of the round. **Account for all five by name before you
-consolidate**, and treat "idle" as a question, not an answer.
+🔴 **Account for every lane by name before you consolidate, and chase every silent one.** Not "should".
+A lane that goes idle without reporting has *failed*, and it is indistinguishable from a lane that found
+nothing — which is the one failure this skill's own format actively hides, since step 3 asks you to say
+plainly when a lane found nothing. The consolidated report then reads as complete while missing a fifth
+of the review. On the run that discovered this, the vanished lane held the sharpest finding of the round.
 
-The same obligation is written into each of the five agent definitions, where it does not depend on the
-invoker remembering to pass it. Both are kept: they fail independently, and the redundancy costs a
-paragraph. ⚠️ **Do not read "I caught the silent lanes" as evidence the system works.** A run where
-someone already knew about this failure and watched for it proves nothing about the run where nobody
-does — which is every run after the one that discovered it.
+Tell each lane in its prompt how its findings get back to you — final message text, or an explicit send
+for an agent whose own transcript reaches nobody. **Treat that as a hint that reduces the rate, not as a
+control that removes your obligation.**
+
+⚠️ **The agent-definition version of this rule was tried and did not work.** #4011 wrote the same
+obligation into all five agent definitions, where it would not depend on the invoker remembering.
+Measured before and after: **2 of 4 lanes silent before, 4 of 4 after.** The text is still in the agent
+files and is kept, because it costs a paragraph and may help at the margin — but it does not solve this,
+and the numbers are recorded here so nobody re-derives that fix and believes it worked.
+
+Stated plainly because the mechanism is the problem, not the wording: **prose in a definition cannot make
+delivery happen.** Do not spend effort making it work harder. A structural enforcement — something in the
+harness that requires a report before an agent can finish — would be the real fix, and it is not
+something a markdown file can do. **That is the open problem; this manual chase is the control until it
+is solved.** A known-manual control beats a fixed-looking automatic one.
+
+⚠️ And do not read "I caught the silent lanes" as evidence the system works. A run where someone already
+knew about this failure and watched for it proves nothing about the run where nobody does — which is
+every run after the one that discovered it.
 
 ## 3. Consolidate
 

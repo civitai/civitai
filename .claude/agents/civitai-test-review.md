@@ -65,6 +65,46 @@ is still yours to catch.
 - A mutation-shaped test with no **negative control** — nothing proving the setup alone didn't already
   produce the asserted state.
 
+### Asserting the shape of the mock instead of the shape of the thing 🔴
+
+A test can observe something entirely real and still assert something that cannot separate the failure.
+This is a vacuous fixture in a different costume, and it is harder to see because the test *looks* like
+it is reaching into the implementation.
+
+The worked example: a test checking a raw SQL statement built its subject as
+`executeRaw.mock.calls.map(([strings]) => strings.join('?'))` — reassembling the tagged template
+**including a placeholder** — then asserted the result contained `SET LOCAL lock_timeout`. The statement
+was invalid *because* Postgres has no parameter form for `SET`, so the one thing that made it broken was
+the one thing the test reconstructed. It passed on precisely the broken form, and the feature's entire
+claim path threw on every call.
+
+Ask what the artifact under assertion actually is. A reassembled template, a mock's `.calls` shape, an
+argument count — these describe the harness. The emitted statement, the persisted row, the computed
+value describe the code. Assert the second.
+
+⚠️ Related: when a loose assertion is tightened, check it was **added to** rather than **replaced**. The
+fix for the example above asserted the literal and the absence of `$1`, and silently dropped the original
+`SET LOCAL lock_timeout` check — so `SET lock_timeout` without `LOCAL`, which leaks a timeout onto every
+later statement borrowing that pooled backend, passed the tightened test.
+
+### Mocking the layer where the thing under test actually happens 🔴
+
+A suite that `vi.mock`s the module where the behaviour lives cannot observe that behaviour, however good
+its assertions are. The test is then evidence about the caller only, and reads as evidence about the
+whole path.
+
+This bites hardest across a merge. Two PRs written in parallel each hooked the same event, one from
+inside a shared service and one from a caller *above* that service — a caller whose suite mocked the
+shared service wholesale. Each suite was sound in its own tree. But the obvious post-merge tidy-up
+(consolidate the two hooks, forget to delete one) would have fired the event twice on every occurrence
+and **turned not one test red**, because the suite that could have seen it had mocked the layer away.
+
+So: for each behaviour, name the layer it happens at, then check whether the suite asserting it has that
+layer mocked. Where a shared chokepoint exists, the test proving mutual exclusivity belongs in the suite
+that runs the real chokepoint — not in either caller's suite. And an assertion of the form
+`toHaveBeenCalledWith(...)` with no `toHaveBeenCalledTimes(1)` beside it does not catch a doubled call
+even from the layer it *can* see.
+
 ### Mocks that are too broad
 
 **Prefer `importOriginal` over hand-listed `vi.mock` exports.** A `vi.mock` listing exports by hand
