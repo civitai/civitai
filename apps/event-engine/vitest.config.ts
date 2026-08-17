@@ -22,6 +22,9 @@ export default defineConfig({
     // ledger counts but this glob misses would run nowhere while the job stayed green — the
     // ledger asserts the member is present, not that all of its tests ran.
     include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)'],
-    exclude: ['node_modules/**', 'dist/**'],
+    // Globbed with a leading `**/` because setting `exclude` REPLACES Vitest's defaults
+    // rather than adding to them. Root-anchored patterns would leave a nested `node_modules`
+    // — anywhere below the package root — collecting third-party tests into this project.
+    exclude: ['**/node_modules/**', '**/dist/**'],
   },
 });
