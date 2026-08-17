@@ -427,7 +427,8 @@ export const workflowConfigs: WorkflowConfigs = {
     category: 'model3d',
     // Image-to-3D is supported by all three 3D ecosystems; the user picks one
     // via the `BaseModelInput` "Eco" picker. Text-to-3D (txt2model3d) stays
-    // PolyGen-only — Tripo/Hunyuan3D have no text-to-3D operation.
+    // PolyGen-only — Tripo/Hunyuan3D have no text-to-3D operation, and neither
+    // does Meshy v7 (a version inside PolyGen, see polygen-graph.ts).
     ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D],
     featureFlag: 'model3dGenerator',
     isNew: true,

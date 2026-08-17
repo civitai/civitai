@@ -1269,6 +1269,46 @@ export function GenerationForm() {
                 toggle. The `process` node in `polygen-graph.ts` has a
                 `transform` on `workflow` that keeps the two in sync. */}
 
+            {/* PolyGen: Meshy version. Both buttons render on BOTH 3D workflows
+                whenever `meshyV7Generator` is on — v7 is image-only, but hiding
+                it on txt2model3d (the 3D default) hid the choice entirely. v7
+                is not runnable there, so picking it moves the user to Image to
+                3D in the same `graph.set` the version lands in. Without the
+                flag there is only one option and the control is pointless, so
+                it stays hidden. */}
+            <Controller
+              graph={graph}
+              name="polygenVersion"
+              render={({ value, meta, onChange }) => {
+                const options = (
+                  meta as { options: { label: string; value: string; description?: string }[] }
+                ).options;
+                if (options.length < 2) return null;
+                return (
+                  <div className="flex flex-col gap-1">
+                    <ControllerLabel
+                      label="Meshy version"
+                      info="v7 produces higher-fidelity geometry and accepts up to four views of the same object, but has no text-to-3D mode. v6 is the only version with a text prompt."
+                    />
+                    <ButtonGroupInput
+                      value={value as string}
+                      onChange={(v) => {
+                        if (v === 'v7' && snapshot.workflow === 'txt2model3d') {
+                          graph.set({
+                            workflow: 'img2model3d',
+                            polygenVersion: 'v7',
+                          } as Parameters<typeof graph.set>[0]);
+                          return;
+                        }
+                        onChange(v as typeof value);
+                      }}
+                      data={options}
+                    />
+                  </div>
+                );
+              }}
+            />
+
             {/* PolyGen: text mode (preview | full) — text-to-3D only.
                 Rendered ABOVE the prompt so Mode is the first decision the
                 user sees after the workflow header, matching Image. */}
@@ -1366,6 +1406,65 @@ export function GenerationForm() {
                     data={(meta as { options: { label: string; value: string }[] }).options}
                   />
                 </div>
+              )}
+            />
+
+            {/* ============================================================
+                Meshy v7-only controls. Everything v7 shares with v6 (images,
+                polycount, topology, symmetry, texture prompt, remesh, PBR,
+                animate) is rendered by the Controllers above/below; these
+                auto-hide while `polygenVersion` is v6.
+                ============================================================ */}
+
+            {/* Meshy v7: pose mode */}
+            <Controller
+              graph={graph}
+              name="poseMode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Pose"
+                    info="Force the character into an A-pose or T-pose, which rigs and animates more reliably. Auto lets Meshy keep the pose from your image."
+                  />
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </div>
+              )}
+            />
+
+            {/* Meshy v7: model type — single-image only */}
+            <Controller
+              graph={graph}
+              name="modelType"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Model type"
+                    info="Low poly produces a stylized, game-ready mesh and ignores the polycount, topology and remesh controls."
+                  />
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </div>
+              )}
+            />
+
+            {/* Meshy v7: ultra mode — single-image only */}
+            <Controller
+              graph={graph}
+              name="ultraMode"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Ultra fidelity"
+                  description="Higher-fidelity geometry with finer surface detail (slower and more expensive)"
+                  checked={!!value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
               )}
             />
 
@@ -2083,6 +2182,52 @@ export function GenerationForm() {
                     onChange={(e) => onChange(e.currentTarget.checked)}
                   />
                 )}
+              />
+
+              {/* Meshy v7 advanced — both only apply to a rigged mesh, so
+                  the graph hides them unless "Animate" is on. */}
+              <Controller
+                graph={graph}
+                name="riggingHeightMeters"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    label={
+                      <ControllerLabel
+                        label="Character height (m)"
+                        info="Approximate real-world height of the character, used to scale the skeleton."
+                      />
+                    }
+                    value={value as number}
+                    onChange={onChange}
+                    min={(meta as { min: number }).min}
+                    max={(meta as { max: number }).max}
+                    step={(meta as { step: number }).step}
+                    precision={1}
+                  />
+                )}
+              />
+              <Controller
+                graph={graph}
+                name="animationActionId"
+                render={({ value, meta, onChange }) => {
+                  const m = meta as { min?: number; max?: number; placeholder?: string };
+                  return (
+                    <NumberInput
+                      label={
+                        <ControllerLabel
+                          label="Animation preset"
+                          info="Id from Meshy's animation library. 0 is Idle; see https://docs.meshy.ai/en/api/animation-library for the full list."
+                        />
+                      }
+                      value={(value as number | undefined) ?? ''}
+                      onChange={(v) => onChange(typeof v === 'number' ? v : undefined)}
+                      min={m.min}
+                      max={m.max}
+                      placeholder={m.placeholder ?? '0 (Idle)'}
+                      allowDecimal={false}
+                    />
+                  );
+                }}
               />
 
               {/* Seed */}

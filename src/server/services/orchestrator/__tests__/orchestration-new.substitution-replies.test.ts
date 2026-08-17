@@ -87,7 +87,8 @@ vi.mock('@civitai/client', () => {
     KlingVideoGenInput KohyaImageResourceTrainingInput Krea2FalImageGenInput
     Krea2StyleReference MaiImageCreateFalImageGenInput MaiImageEditFalImageGenInput
     MediaCaptioningStepTemplate MediaHashStep MediaHashStepTemplate MediaRatingOutput
-    MeshyImageTo3dFalPolyGenInput MeshyTextTo3dFalPolyGenInput MiniMaxH3VideoGenInput
+    MeshyImageTo3dFalPolyGenInput MeshyTextTo3dFalPolyGenInput
+    MeshyV7ImageTo3dFalPolyGenInput MeshyV7MultiImageTo3dFalPolyGenInput MiniMaxH3VideoGenInput
     MochiVideoGenInput Model3dBlob MusubiImageResourceTrainingInput NanoBanana2ImageGenInput
     NanoBanana2LiteImageGenInput NanoBananaProImageGenInput NsfwLevel
     OpenAiGpt15CreateImageInput OpenAiGpt15EditImageInput OpenAiGpt1CreateImageInput
