@@ -163,7 +163,15 @@ vi.mock('~/env/server', () => ({
 // env proxy: every `if (!clickhouse) return` guard now falls through to the stub below.
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
-  clickhouse: { $query: mockClickhouseQuery },
+  clickhouse: {
+    $query: mockClickhouseQuery,
+    // Stubbed because the guards above now fall through: the real client also exposes these, and
+    // a path reaching one would otherwise fail as `clickhouse.insert is not a function`.
+    $exec: vi.fn().mockResolvedValue(undefined),
+    insert: vi.fn().mockResolvedValue(undefined),
+    command: vi.fn().mockResolvedValue(undefined),
+    query: vi.fn().mockResolvedValue({ json: async () => [] }),
+  },
 }));
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => {
@@ -606,13 +614,16 @@ describe('image-scan-result webhook - pipeline tests', () => {
       ).toBe(true);
     });
 
-    it('writes a zero hash rather than leaving the column null', async () => {
+    it('stores a zero hash but does not look it up', async () => {
+      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
+
       const req = runWebhook({ id: 15, status: 0, source: TagSource.ImageHash, hash: '0' });
       await req.promise;
 
       const update = imageUpdates.find((u) => u.text.includes('"pHash"'));
       expect(update).toBeDefined();
       expect(update!.params).toContain(0n);
+      expect(mockClickhouseQuery).not.toHaveBeenCalled();
     });
 
     it('completes the scan when the blocklist lookup fails', async () => {

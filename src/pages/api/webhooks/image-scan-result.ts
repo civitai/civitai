@@ -950,23 +950,24 @@ async function processScanResult({
           'webhooks'
         ).catch(() => null);
       }
-      const blocked =
-        pHash === undefined
-          ? false
-          : await isBlocked(pHash).catch((error) => {
-              logToAxiom(
-                {
-                  name: 'image-phash-match',
-                  type: 'warning',
-                  message: 'pHash blocklist check failed',
-                  imageId: id,
-                  error: error instanceof Error ? error.message : 'Unknown error',
-                  source: 'webhook-legacy',
-                },
-                'webhooks'
-              ).catch(() => null);
-              return false;
-            });
+      // Skipped at zero: `bitXor(hash, 0)` degenerates to `bitCount(hash) < 5`, which matches any
+      // low-popcount blocked hash rather than a near-duplicate of this image. Stored regardless.
+      const blocked = !pHash
+        ? false
+        : await isBlocked(pHash).catch((error) => {
+            logToAxiom(
+              {
+                name: 'image-phash-match',
+                type: 'warning',
+                message: 'pHash blocklist check failed',
+                imageId: id,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                source: 'webhook-legacy',
+              },
+              'webhooks'
+            ).catch(() => null);
+            return false;
+          });
       if (blocked) {
         logToAxiom(
           {
