@@ -55,9 +55,9 @@ export async function updateSubscription({
     try {
       await setUserSetting(userId, { newsletterSubscriber: input.subscribed });
     } catch (error) {
-      // 🔴 `type` IS THE SEVERITY FIELD, not a free-text event name — the
-      // Alloy→Loki pipeline extracts it as the log level (see the SEVERITY FIELD
-      // note on `buildCentralErrorLog` in ~/server/logging/client). An event name
+      // 🔴 `type` IS THE SEVERITY FIELD, not a free-text event name — the log
+      // pipeline extracts it as the level (see the SEVERITY FIELD note on
+      // `buildCentralErrorLog` in ~/server/logging/client). An event name
       // here would land the line at no recognised level, discoverable only by
       // someone who already knows the string — which would hollow out the entire
       // justification for swallowing this error. The event name goes in `name`.
