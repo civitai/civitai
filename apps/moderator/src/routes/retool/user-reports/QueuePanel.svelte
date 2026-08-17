@@ -11,6 +11,7 @@
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { reportDetail, reportReasonLabel, reportStatusVariant } from '$lib/reports';
   import { userLookupUrl } from '$lib/entity-url';
+  import QueueFilterBar from './QueueFilterBar.svelte';
 
   let {
     queue,
@@ -23,6 +24,7 @@
     onSubmit,
     /** The report id currently in flight — only its row's buttons disable, not all 50. */
     pendingId,
+    queueFilters,
   }: {
     queue: PageData['queue'];
     total: number;
@@ -33,9 +35,18 @@
     error: string | null;
     onSubmit: SubmitFunction;
     pendingId: number | null;
+    queueFilters: PageData['queueFilters'];
   } = $props();
 
   const lastPage = $derived(Math.max(1, Math.ceil(total / perPage)));
+
+  // The heading claims parity with the sidebar badge, which is only true unfiltered.
+  const defaultView = $derived(
+    !pageState.url.searchParams.has('status') &&
+      !queueFilters.reportedBy &&
+      !queueFilters.reportedFrom &&
+      !queueFilters.reportedTo
+  );
 
   // Deliberately not in `load`: the `remaining` half of this cannot use the covering index and takes
   // seconds across 50 accounts, which would blank the queue behind it on every write.
@@ -71,11 +82,26 @@
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
-  <h2 class="mb-1 text-sm font-semibold text-white">Open reports against users ({num(total)})</h2>
+  <h2 class="mb-1 text-sm font-semibold text-white">Reports against users ({num(total)})</h2>
   <p class="mb-3 text-xs text-dark-2">
-    Pending and Processing, automated reports excluded — the same filters the sidebar counts. Select a
-    row to review that account's content below.
+    {#if defaultView}
+      <!-- NOT "the same filters the sidebar counts", which this used to claim: the badge counts
+           `NEW_REPORT_STATUSES` (Pending alone), because a Processing report can sit under
+           investigation for weeks and would read as backlog. This list lands on both. -->
+      Pending and Processing, automated reports excluded. The sidebar badge counts Pending only, so it
+      reads lower than this.
+    {:else}
+      Filtered — this count matches neither the default view nor the sidebar badge.
+    {/if}
+    Select a row to review that account's content below.
   </p>
+
+  <QueueFilterBar
+    statuses={queueFilters.statuses}
+    reportedBy={queueFilters.reportedBy}
+    reportedFrom={queueFilters.reportedFrom}
+    reportedTo={queueFilters.reportedTo}
+  />
 
   {#if error}
     <div
@@ -145,38 +171,48 @@
             </p>
           {/if}
 
-          <div class="relative mt-1 flex flex-wrap items-baseline gap-x-2 text-xs text-dark-2">
-            {#if r.reportedByUsername}
-              <span>
+          <!-- Attribution and the buttons share a row. Stacked, each report cost a line of dead space
+               either side of the controls, and roughly half a row was cut off at the fold. -->
+          <div class="relative mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <span class="text-xs text-dark-2">
+              {#if r.reportedByUsername}
                 reported by
                 <a href={userLookupUrl(r.reportedByUsername)} class="relative z-20 {LINK_CLASS}">
                   {r.reportedByUsername}
                 </a>
-              </span>
+              {/if}
+            </span>
+
+            {#if canAct}
+              <form
+                method="POST"
+                action="?/actionReport"
+                use:enhance={onSubmit}
+                class="relative z-20 flex gap-2"
+              >
+                <input type="hidden" name="id" value={r.id} />
+                <Button type="submit" name="status" value="Actioned" size="xs" variant="destructive" disabled={busy}>
+                  Action
+                </Button>
+                <Button type="submit" name="status" value="Unactioned" size="xs" variant="outline" disabled={busy}>
+                  Dismiss
+                </Button>
+                {#if r.status !== 'Processing'}
+                  <Button
+                    type="submit"
+                    name="status"
+                    value="Processing"
+                    size="xs"
+                    variant="outline"
+                    disabled={busy}
+                    title="Marks this report Processing, so another moderator can see it is being worked"
+                  >
+                    Claim
+                  </Button>
+                {/if}
+              </form>
             {/if}
           </div>
-
-          {#if canAct}
-            <form
-              method="POST"
-              action="?/actionReport"
-              use:enhance={onSubmit}
-              class="relative z-20 mt-2 flex gap-2"
-            >
-              <input type="hidden" name="id" value={r.id} />
-              <Button type="submit" name="status" value="Actioned" size="xs" variant="destructive" disabled={busy}>
-                Action
-              </Button>
-              <Button type="submit" name="status" value="Unactioned" size="xs" variant="outline" disabled={busy}>
-                Dismiss
-              </Button>
-              {#if r.status !== 'Processing'}
-                <Button type="submit" name="status" value="Processing" size="xs" variant="outline" disabled={busy}>
-                  Claim
-                </Button>
-              {/if}
-            </form>
-          {/if}
         </li>
       {/each}
     </ul>

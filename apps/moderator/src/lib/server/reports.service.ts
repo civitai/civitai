@@ -104,6 +104,10 @@ export type GetReportsParams = {
   statuses: ReportStatus[] | 'all';
   reasons: ReportReason[] | 'all';
   reportedBy?: string;
+  /** Filed-on range. `to` is exclusive, so a caller filtering to a single day passes the next day —
+   *  a `<=` on a date would drop everything reported after midnight on it. */
+  from?: Date;
+  to?: Date;
 };
 
 export async function getReports({
@@ -113,6 +117,8 @@ export async function getReports({
   statuses,
   reasons,
   reportedBy,
+  from,
+  to,
 }: GetReportsParams): Promise<{
   items: ModeratorReportRow[];
   totalItems: number;
@@ -141,6 +147,8 @@ export async function getReports({
   if (statuses !== 'all') base = base.where('Report.status', 'in', statuses);
   if (reasons !== 'all') base = base.where('Report.reason', 'in', reasons);
   if (reportedBy) base = base.where('User.username', 'ilike', `${reportedBy}%`);
+  if (from) base = base.where('Report.createdAt', '>=', from);
+  if (to) base = base.where('Report.createdAt', '<', to);
 
   const totalItems = Number(
     (await base.select((eb) => eb.fn.countAll<number>().as('count')).executeTakeFirst())?.count ?? 0

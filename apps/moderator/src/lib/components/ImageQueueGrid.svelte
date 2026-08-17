@@ -30,6 +30,7 @@
     selected,
     empty = 'Nothing to review in this queue.',
     endLabel = 'End of queue.',
+    minColumn = 300,
   }: {
     items: T[];
     civitaiUrl: string;
@@ -46,6 +47,10 @@
     /** `null` suppresses the terminator — for a capped batch, where "End of queue." would contradict
      *  the page's own truncation warning. */
     endLabel?: string | null;
+    /** Minimum column width. 300 is the standard every full-width queue uses and is the default; the
+     *  only reason to lower it is a grid rendering beside another column, where 300 yields three cards
+     *  a row and combing a large account costs the moderator the scrolling instead. */
+    minColumn?: number;
   } = $props();
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
@@ -67,7 +72,7 @@
 {#if items.length === 0}
   <div class="placeholder">{empty}</div>
 {:else}
-  <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr))">
+  <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax({minColumn}px, 1fr))">
     {#each items as item (key(item))}
       {@const isSelected = selected?.has(key(item)) ?? false}
       <Card

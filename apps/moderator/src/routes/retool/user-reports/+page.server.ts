@@ -12,7 +12,13 @@ import {
 import { countBlockedImages, strikeBatchOwners } from '$lib/server/bulk-image.service';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4, usersByIds } from '$lib/server/users.service';
-import { DEFAULT_REPORT_REASONS, ReportEntity, ReportStatus } from '$lib/reports';
+import {
+  DEFAULT_REPORT_REASONS,
+  ReportEntity,
+  ReportStatus,
+  DEFAULT_REPORT_STATUSES,
+  isReportStatus,
+} from '$lib/reports';
 import { getReportHistory, getReports, setReportStatus } from '$lib/server/reports.service';
 import {
   getUserNotes,
@@ -39,6 +45,15 @@ const dateParam = z
     return d && !Number.isNaN(d.getTime()) ? d : null;
   });
 
+// Two upper bounds with DIFFERENT semantics, named so the difference is readable at the field rather
+// than hidden in a magic constant. The image grid's `to` is INCLUSIVE — a date-only value parses as
+// midnight, which would otherwise exclude the whole day picked. The queue's `reportedTo` is EXCLUSIVE,
+// matching the contract `getReports` documents.
+const endOfDayParam = dateParam.transform((d) =>
+  d ? new Date(d.getTime() + (d.getTime() % 86_400_000 === 0 ? 86_399_999 : 0)) : null
+);
+const nextDayParam = dateParam.transform((d) => (d ? new Date(d.getTime() + 86_400_000) : null));
+
 const querySchema = z.object({
   user: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
   page: z.coerce.number().int().positive().max(10_000).catch(1),
@@ -63,55 +78,80 @@ const querySchema = z.object({
         : []
     ),
   from: dateParam,
-  // Inclusive: a date-only `to` parses as that midnight, which would exclude the whole day picked.
-  to: dateParam.transform((d) =>
-    d ? new Date(d.getTime() + (d.getTime() % 86_400_000 === 0 ? 86_399_999 : 0)) : null
-  ),
+  to: endOfDayParam,
   prompt: z.string().trim().max(200).catch(''),
   negativePrompt: z.string().trim().max(200).catch(''),
+  // Queue filters. Named apart from the image `from`/`to` above, which describe the OPEN ACCOUNT'S
+  // content — one pair of date params driving both would silently re-filter the grid every time a
+  // moderator narrowed the queue.
+  reportedBy: z.string().trim().max(100).catch(''),
+  reportedFrom: dateParam,
+  reportedTo: nextDayParam,
 });
 
 const PER_PAGE = 50;
 
 export const load: PageServerLoad = async ({ url, locals }) => {
-  const { user, page, cursor, tos, noPrompt, levels, from, to, prompt, negativePrompt } =
-    parseQuery(url, querySchema);
+  const {
+    user,
+    page,
+    cursor,
+    tos,
+    noPrompt,
+    levels,
+    from,
+    to,
+    prompt,
+    negativePrompt,
+    reportedBy,
+    reportedFrom,
+    reportedTo,
+  } = parseQuery(url, querySchema);
+
+  const urlStatuses = url.searchParams.getAll('status').filter(isReportStatus);
+  const queueStatuses = url.searchParams.has('status') ? urlStatuses : DEFAULT_REPORT_STATUSES;
   const filters = { tosOnly: tos, noPrompt, levels, from, to, prompt, negativePrompt };
   // Reaching the queue is an investigation permission; acting on a report or an account is not.
   const canAct = canAccess(locals.user, '/users');
 
   const [reports, history, suspect, strikes, legacyStrikes, notes, modActivity, reportsOnUser] =
     await Promise.all([
-    // The SAME query `/reports/user` runs. A parallel one diverged from the sidebar's counts on which
-    // reasons it excluded, so the badge and this heading disagreed about one queue.
-    getReports({
-      type: ReportEntity.User,
-      page,
-      limit: PER_PAGE,
-      statuses: [ReportStatus.Pending, ReportStatus.Processing],
-      reasons: DEFAULT_REPORT_REASONS,
-    }),
-    getReportHistory(ReportEntity.User),
-    user ? getSuspectImages(user, filters, { cursor }) : null,
-    // The MAIN APP's strikes, not the moderator database's Retool-era table — that one is written by
-    // nothing, so this panel read 0 on an account carrying ten live strikes, which is the worst
-    // possible number to be wrong about on the screen where the next one is issued.
-    user ? getLiveStrikes(user) : null,
-    user ? getUserStrikes(user) : null,
-    // Retool put the suspect's notes on this page. "Shipped in User Lookup" is true of the dataset and
-    // false of this screen: deciding on a strike without the prior note is the thing notes exist to stop.
-    user ? getUserNotes(user, locals.user.username ?? null) : null,
-    // Retool's top-left was three tabs — ModActivity / Reports / UserReport History — and the whole
-    // point of this screen is not leaving it. Strikes and notes were already here; these two are what
-    // "has anyone dealt with this account before" actually reads.
-    user ? getModActivity(user, 20) : null,
-    // Every status, not the open ones: the queue row above is the open report. What is missing here is
-    // whether this account has been reported and RULED ON before.
-    //
-    // Human-filed only, matching the queue's own definition. `Automated` is 99.9% of this table — one
-    // dev account carries 556 of them — so an unfiltered list of 20 is 20 Clavata rows and answers
-    // nothing about whether a person has complained about this account before.
-    user ? getReportsOnUser(user, { limit: 20, statuses: [], reasons: DEFAULT_REPORT_REASONS }) : null,
+      // The SAME query `/reports/user` runs. A parallel one diverged from the sidebar's counts on which
+      // reasons it excluded, so the badge and this heading disagreed about one queue.
+      getReports({
+        type: ReportEntity.User,
+        page,
+        limit: PER_PAGE,
+        // An empty selection is every status, said explicitly rather than implied by omission.
+        statuses: queueStatuses.length ? queueStatuses : 'all',
+        reasons: DEFAULT_REPORT_REASONS,
+        reportedBy: reportedBy || undefined,
+        from: reportedFrom ?? undefined,
+        to: reportedTo ?? undefined,
+      }),
+      getReportHistory(ReportEntity.User),
+      user ? getSuspectImages(user, filters, { cursor }) : null,
+      // The MAIN APP's strikes, not the moderator database's Retool-era table — that one is written by
+      // nothing, so this panel read 0 on an account carrying ten live strikes, which is the worst
+      // possible number to be wrong about on the screen where the next one is issued.
+      user ? getLiveStrikes(user) : null,
+      user ? getUserStrikes(user) : null,
+      // Retool put the suspect's notes on this page. "Shipped in User Lookup" is true of the dataset and
+      // false of this screen: deciding on a strike without the prior note is the thing notes exist to stop.
+      user ? getUserNotes(user, locals.user.username ?? null) : null,
+      // Retool's top-left was three tabs — ModActivity / Reports / UserReport History — and the whole
+      // point of this screen is not leaving it. Strikes and notes were already here; these two are what
+      // "has anyone dealt with this account before" actually reads.
+      user ? getModActivity(user, 20) : null,
+      // Every status, not the open ones: the queue row above is the open report. What is missing here is
+      // whether this account has been reported and RULED ON before.
+      //
+      // Human-filed only, matching the queue's own definition. `Automated` is 99.9% of this table — one
+      // dev account carries 556 of them — so an unfiltered list of 20 is 20 Clavata rows and answers
+      // nothing about whether a person has complained about this account before.
+      user
+        ? getReportsOnUser(user, { limit: 20, statuses: [], reasons: DEFAULT_REPORT_REASONS })
+        : null,
     ]);
 
   // The report row carries the suspect's id but not their state; hydrate through the shared helper
@@ -127,6 +167,14 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     queueTotal: reports.totalItems,
     page: reports.page,
     perPage: reports.limit,
+    // Echoed back so the control shows what is actually applied. `reportedTo` is the exclusive bound
+    // the query used, so the raw param goes back rather than the parsed date.
+    queueFilters: {
+      statuses: queueStatuses,
+      reportedBy,
+      reportedFrom: url.searchParams.get('reportedFrom') ?? '',
+      reportedTo: url.searchParams.get('reportedTo') ?? '',
+    },
     history: history.items.map((h) => ({ ...h, suspect: suspects.get(h.entityId ?? 0) ?? null })),
     historyTruncated: history.truncated,
     suspectId: user ?? null,
@@ -293,7 +341,9 @@ export const actions: Actions = {
       // blocked batch cannot report a full removal.
       imageResult:
         `Removed ${result.count - alreadyBlocked} of ${input.imageIds.length}` +
-        `${alreadyBlocked > 0 ? ` (${alreadyBlocked} already blocked)` : ''}.${flagNote}${strikeNote}`,
+        `${
+          alreadyBlocked > 0 ? ` (${alreadyBlocked} already blocked)` : ''
+        }.${flagNote}${strikeNote}`,
     };
   },
 

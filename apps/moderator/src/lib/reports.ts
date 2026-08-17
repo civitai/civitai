@@ -46,6 +46,9 @@ export const DEFAULT_REPORT_STATUSES: ReportStatus[] = [
 /** What a queue badge counts: reports nobody has picked up. `Processing` is deliberately excluded —
  *  a moderator sets it while investigating an ownership claim, which can run for weeks, so counting it
  *  makes an idle queue read as a growing backlog. The queue page still LANDS on both. */
+export const isReportStatus = (v: string): v is ReportStatus =>
+  (reportStatuses as readonly string[]).includes(v);
+
 export const NEW_REPORT_STATUSES: ReportStatus[] = [ReportStatus.Pending];
 
 /**
@@ -178,5 +181,5 @@ export const getReportItemUrl = (
       ? `/retool/chat-audit/chats?chat=${entityId}`
       : null
     : contextUrl
-      ? `${base}${contextUrl}`
-      : entityUrl(base, type, entityId);
+    ? `${base}${contextUrl}`
+    : entityUrl(base, type, entityId);

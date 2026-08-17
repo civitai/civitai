@@ -49,7 +49,7 @@
      "nothing happened" when a report was clicked. -->
 <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
   <div
-    class="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:w-120 xl:shrink-0 xl:overflow-y-auto"
+    class="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:w-96 xl:shrink-0 xl:overflow-y-auto"
   >
     <QueuePanel
       queue={data.queue}
@@ -61,6 +61,7 @@
       error={scoped('report')}
       onSubmit={onReportSubmit}
       {pendingId}
+      queueFilters={data.queueFilters}
     />
   </div>
 

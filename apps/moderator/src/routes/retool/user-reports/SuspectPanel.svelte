@@ -307,6 +307,7 @@
   empty="No images match these filters."
   endLabel="End of this account's content."
   card={imageCard}
+  minColumn={200}
 />
 
 {#snippet imageCard(img: {
