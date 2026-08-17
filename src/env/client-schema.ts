@@ -25,7 +25,10 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_GPTT_UUID_GREEN: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: z.stringbool().default(true),
-  NEXT_PUBLIC_LOG_TRPC: z.stringbool().default(false),
+  // `.catch` because the read below was reading the wrong variable name until #4035:
+  // any environment already carrying an unparseable value had been inert, and would
+  // otherwise start throwing out of `~/env/client` the moment the read went live.
+  NEXT_PUBLIC_LOG_TRPC: z.stringbool().default(false).catch(false),
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string().optional(),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.url().optional(),
