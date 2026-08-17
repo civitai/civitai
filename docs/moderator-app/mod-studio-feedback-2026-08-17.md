@@ -66,25 +66,43 @@ reported on 08-16 and 08-17 starts from untouched.
       The tracker genuinely did list 9 of 13 subtasks, and sections 1.4 and 1.10 are still absent from
       [`retool-migration-tasks.md`](retool-migration-tasks.md) — but subtasks are not apps, and nothing
       now suggests an unported one.
-- [ ] **Re-extract every Retool export while access remains** — handover
-      [#11](retool-migration-handover.md). The extractor only learned option sets on 08-07 and layout on
-      08-08, so older exports lack tab labels, canned workflows, role gates and pane structure. It is also
-      the only way to confirm Front Page Audit's rating vocabulary. **Irreversible once access ends.**
-- [ ] **Complete the environment and database steps** — handover blockers
-      [#1–#4](retool-migration-handover.md). One reported defect is configuration rather than code:
-      striking refuses up front. It resolves with the environment set; verify it afterwards rather than
-      debugging the UI.
-- [ ] **Re-enable User Lookup.** It was switched off on 08-13 pending sub-permissions, which shipped on
-      08-14. Still off as of 08-17, and it is the most used page in the app.
-- [ ] **Grant the five newer pages on `/admin`** — handover [#5](retool-migration-handover.md). A page is
-      restricted until granted, which is why chat-audit reads as missing for some moderators, and why chat
-      report links look broken to them after those links were fixed on 08-12.
-- [ ] **Ship the dependent main-app deploy.** Flagged as blocking in three separate releases. Until it goes
-      out, issue/void strike, timed-mute expiry, overturn/uphold on pending restrictions, and the
+- [ ] **Repoint the four lookup env vars off Retool** — handover blocker
+      [5b](retool-migration-handover.md). Config only; both post and model target Bulk Image Manager,
+      which is already ported.
+- [ ] **Finish the environment and database steps** — handover blockers
+      [#1–#4](retool-migration-handover.md). What is actually outstanding is narrower than that list
+      reads; see [§ Environment status](#environment-status) below.
+- [ ] **Ship the dependent main-app deploy.** Flagged as blocking in three separate releases. Until it
+      goes out, issue/void strike, timed-mute expiry, overturn/uphold on pending restrictions, and the
       minor-hash-match buttons all error.
 
-- [ ] **Grant the dev working these tickets access to the auth hub's role admin.** They are currently
-      refused on that page, so they cannot verify their own permissions work.
+**Permission grants have moved** to [`permissions-handoff.md`](permissions-handoff.md) — re-enabling
+User Lookup, granting the five newer pages, Chat Audit access, and confirming the sub-permission
+defaults. They are `/admin` changes with a different owner, and mixing them into an engineering list
+made the list read as if it were all dev work.
+
+**Retool re-extraction is not being done**, and does not need to be: every app the moderator entry
+points reach is already exported and ported. The one thing it would have settled is Front Page Audit's
+rating vocabulary — the older exports predate the extractor learning option sets (08-07) and layout
+(08-08), so that stays unconfirmed and will have to be read off the built page or decided fresh.
+
+### Environment status
+
+Checked against `apps/moderator/.env` on 2026-08-17. Deployed environments are separate and still need
+verifying individually.
+
+| Item | Local state | Note |
+| --- | --- | --- |
+| `CIVITAI_MOD_API_KEY` | **absent** | Blocks striking and bulk comment/review actions; they refuse up front rather than failing mid-write |
+| `RETOOL_DATABASE_URL` | set | Needs confirming in every deployed env — without it notes/strikes/mutes read the wrong database |
+| 3 SQL migrations | see below | Each is `CREATE INDEX CONCURRENTLY`, so each runs outside a transaction |
+
+- `20260803120000_add_app_page_access` — **almost certainly already applied**: `/admin` grants
+  demonstrably work in production (a page was toggled off there on 08-13), which this table backs.
+- `20260805120000_mod_activity_append_only` — verify. Without it repeat mod actions collapse into one
+  row, so moderation history reads as thinner than it is.
+- `20260807120000_report_open_reason_index` — verify. Without it the Reports sub-nav count seq-scans
+  ~2.4M rows on every navigation.
 
 ## P1 — reported defects, not yet triaged by a dev
 
