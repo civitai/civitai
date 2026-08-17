@@ -30,14 +30,19 @@
 -- types and order, so REPLACE is legal and leaves no window in which the view does not exist.
 --
 -- GenerationCoverage is on the hot read path (resource-data.redis.ts, caches.ts, model.service.ts,
--- v1/model-versions/mini/[id].ts), and REPLACE still takes ACCESS EXCLUSIVE. lock_timeout bounds
--- the wait so one long-running reader makes this abort rather than queueing every generation read
--- behind it - and it must be SET LOCAL inside the transaction, because applied by hand through a
--- client that opens a connection per statement a bare `SET` lands in a session the REPLACE never
--- sees, leaving it to wait forever under the server default.
+-- v1/model-versions/mini/[id].ts), and REPLACE still takes ACCESS EXCLUSIVE. lock_timeout bounds the
+-- wait so one long-running reader makes this abort rather than queueing every generation read behind
+-- it.
 --
--- The transaction is safe here in a way it would not be around a DROP: if the BEGIN is autocommitted
--- on its own, nothing has been taken away, and the REPLACE either lands whole or not at all.
+-- 🔴 APPLY THIS FILE IN ONE SESSION - psql -f, or one editor connection. That is what makes the
+-- guard real. Through a client that opens a connection per statement, BEGIN and COMMIT group
+-- nothing, and `SET LOCAL` outside a transaction block is a no-op that only warns - so the REPLACE
+-- would run under the server default and wait as long as it takes, while the file reads as
+-- protected. There is no arrangement of statements that survives that client; a single session is
+-- the requirement, not a preference.
+--
+-- The transaction is still safe in a way it would not have been around a DROP: if the BEGIN is
+-- autocommitted alone nothing has been taken away, and the REPLACE either lands whole or not at all.
 BEGIN;
 SET LOCAL lock_timeout = '3s';
 

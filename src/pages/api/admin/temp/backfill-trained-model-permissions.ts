@@ -20,9 +20,17 @@ import { booleanString } from '~/utils/zod-helpers';
  * `{Sell}` identifies those rows because the upload form cannot produce it: selecting Sell
  * force-adds RentCivit and Rent, then disables both boxes. **That cascade landed in b5455112c2 on
  * 2024-06-11.** Before it, the field was a plain checkbox group where ticking only "Sell this model
- * or merges" produced exactly `{Sell}` deliberately — so rows created earlier are excluded. On the
- * prod replica that is 2,577 of 124,334 candidates, and widening them would overwrite a stated
- * permission, which is the opposite of what this change is for.
+ * or merges" produced exactly `{Sell}` deliberately — so rows created earlier are excluded, because
+ * widening them would overwrite a stated permission, which is the opposite of what this is for.
+ *
+ * 🔴 That cutoff is a judgement, not a clean line, and it is worth understanding before running this.
+ * The defaulting mechanism predates the cascade by 3.5 months (d48cdcbc7b, 2024-02-23), so a
+ * pre-cascade Trained `{Sell}` row has TWO possible origins and nothing distinguishes them: the
+ * wizard defaulting it, or a creator ticking only Sell in the old form. Excluding them leaves
+ * 1,233 published models that are probably artifacts carrying a licence they never chose, and they
+ * lose their Create button when the view lands. Including them would grant RentCivit to whoever
+ * chose to withhold it. The exclusion is the conservative direction for a permission change and is
+ * Justin's call to revisit — the band is small enough to fix by hand either way.
  *
  * Created-uploadType models with the same value are left alone: nothing rules out an API client
  * having set them deliberately, and no mechanism is known that would produce `{Sell}` on them by
@@ -34,14 +42,14 @@ import { booleanString } from '~/utils/zod-helpers';
  * directly is indistinguishable from a defaulted row and gets widened against their intent. The
  * difference is that on Trained uploads a mechanism is demonstrated - the wizard sends no field at
  * all - and it accounts for the whole population, while on Created uploads there is none. Repairing
- * a deliberate API write would be wrong; the judgement is that it is rare against 121k defaulted
+ * a deliberate API write would be wrong; the judgement is that it is rare against ~146k defaulted
  * rows, and the changed ids are recorded so it can be undone per model.
  *
- * ⚠️ The candidate set spans every status, not only Published — on the prod replica 121,754 rows
- * excluding Deleted, of which 65,974 are Published and the rest Draft / Unpublished /
- * UnpublishedViolation / Scheduled / Training, plus ~25k Deleted. Removed and deleted models are
- * included on purpose: `restoreModelById` un-deletes, and a restored model must not come back
- * carrying a licence its creator never set and no Create button to go with it.
+ * ⚠️ The candidate set spans EVERY status, Deleted included — on the prod replica **146,503 rows**,
+ * of which 65,932 are Published, 121,763 are anything-but-Deleted, and the remaining ~24,700 are
+ * Deleted. Removed and deleted models are in scope on purpose: `restoreModelById` un-deletes, and a
+ * restored model must not come back carrying a licence its creator never set and no Create button to
+ * go with it. (`reindex` does filter Deleted — a model nobody can see does not need re-indexing.)
  *
  * reindex — queue models that WITHHOLD RentCivit for a search-index update.
  *
@@ -85,8 +93,14 @@ import { booleanString } from '~/utils/zod-helpers';
  * record if a creator later disputes that their licence changed. Keep them.
  */
 
-/** b5455112c2 — before this, a bare {Sell} was reachable through the form and meant it. */
-const CASCADE_LANDED_AT = new Date('2024-06-11T00:00:00Z');
+/**
+ * b5455112c2 is authored 2024-06-11 15:38 UTC and shipped later still, so the cutoff is the
+ * following midnight rather than the commit day's — a model created on the morning of the 11th was
+ * created against the pre-cascade form, where a bare {Sell} was reachable and meant it. Compared
+ * against `Model."createdAt"`, which is `timestamp(3)` without a zone, so the effective boundary
+ * also moves with the connection's TimeZone; a day of slack absorbs that too.
+ */
+const CASCADE_SHIPPED_BY = new Date('2024-06-12T00:00:00Z');
 
 const schema = z.object({
   action: z.enum(['repair', 'reindex']).default('repair'),
@@ -105,31 +119,11 @@ export default WebhookEndpoint(async (req, res) => {
     return res.status(405).json({ error: 'A live run must be POSTed' });
   }
 
-  const candidates =
-    params.action === 'repair'
-      ? await dbRead.$queryRaw<{ id: number }[]>`
-          SELECT m.id
-          FROM "Model" m
-          WHERE m."uploadType" = 'Trained'
-            AND m."allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
-            AND m."createdAt" >= ${CASCADE_LANDED_AT}
-            AND m.id > ${params.afterId}
-          ORDER BY m.id
-        `
-      : await dbRead.$queryRaw<{ id: number }[]>`
-          SELECT m.id
-          FROM "Model" m
-          WHERE NOT (m."allowCommercialUse" && ARRAY['RentCivit']::"CommercialUse"[])
-            AND m."allowCommercialUse" && ARRAY['Rent', 'Sell']::"CommercialUse"[]
-            AND m.status != 'Deleted'
-            AND m.id > ${params.afterId}
-          ORDER BY m.id
-        `;
-
-  // Run before the view is replaced and this is worse than useless: the sync job recomputes
-  // canGenerate from the OLD view, writes back the `true` it is meant to clear, and drops the queue
-  // entry - so the models are never re-queued and stay listed under the on-site-generation filter.
-  // Ask the view itself whether it has been replaced yet rather than trusting the runbook.
+  // Before the candidate scan, not after: run early and this is worse than useless — the sync job
+  // recomputes canGenerate from the OLD view, writes back the `true` it is meant to clear, and drops
+  // the queue entry, so the models are never re-queued and stay listed under the on-site-generation
+  // filter. Ask the view whether it has been replaced yet rather than trusting the runbook, and
+  // refuse before paying for a ~63k-row scan.
   if (params.action === 'reindex') {
     const [stale] = await dbRead.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one
@@ -149,13 +143,37 @@ export default WebhookEndpoint(async (req, res) => {
     }
   }
 
-  const modelIds = (params.limit ? candidates.slice(0, params.limit) : candidates).map((r) => r.id);
+  // LIMIT in SQL, not a slice afterwards: the point of `limit` is to bound a first run, and slicing
+  // a fully materialised ~121k-id result in the heap bounds nothing.
+  const sqlLimit = params.limit ?? null;
+  const modelIds = (
+    params.action === 'repair'
+      ? await dbRead.$queryRaw<{ id: number }[]>`
+          SELECT m.id
+          FROM "Model" m
+          WHERE m."uploadType" = 'Trained'
+            AND m."allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
+            AND m."createdAt" >= ${CASCADE_SHIPPED_BY}
+            AND m.id > ${params.afterId}
+          ORDER BY m.id
+          LIMIT ${sqlLimit}::bigint
+        `
+      : await dbRead.$queryRaw<{ id: number }[]>`
+          SELECT m.id
+          FROM "Model" m
+          WHERE NOT (m."allowCommercialUse" && ARRAY['RentCivit']::"CommercialUse"[])
+            AND m."allowCommercialUse" && ARRAY['Rent', 'Sell']::"CommercialUse"[]
+            AND m.status != 'Deleted'
+            AND m.id > ${params.afterId}
+          ORDER BY m.id
+          LIMIT ${sqlLimit}::bigint
+        `
+  ).map((r) => r.id);
 
   if (params.dryRun) {
     return res.status(200).json({
       dryRun: true,
       action: params.action,
-      totalCandidates: candidates.length,
       totalSelected: modelIds.length,
       modelIds,
     });
@@ -170,11 +188,18 @@ export default WebhookEndpoint(async (req, res) => {
     // and a record that names a creator whose row never moved is worse than no record.
     // Re-checking is the point — a creator editing one of these between the read above and this
     // write has made a deliberate choice, and it must win over the repair.
+    //
+    // `updatedAt` is set by hand because a raw UPDATE bypasses Prisma's @updatedAt, and the models
+    // index's incremental scan selects on `updatedAt >= lastUpdatedAt`. Without the bump the
+    // explicit queueUpdate below is the ONLY route into the index — and `addToQueue` fails open on a
+    // degraded sysRedis, dropping the enqueue silently while this still reports success. The bump
+    // restores the delta scan as the backstop its own comment assumes exists.
     const changed =
       params.action === 'repair'
         ? await dbWrite.$queryRaw<{ id: number }[]>`
             UPDATE "Model"
-            SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell']::"CommercialUse"[]
+            SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell']::"CommercialUse"[],
+                "updatedAt" = NOW()
             WHERE id = ANY(${batch}::int[])
               AND "allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
             RETURNING id
@@ -203,7 +228,6 @@ export default WebhookEndpoint(async (req, res) => {
   res.status(200).json({
     dryRun: false,
     action: params.action,
-    totalCandidates: candidates.length,
     totalSelected: modelIds.length,
     totalChanged: changedIds.length,
     changedIds,
