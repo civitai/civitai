@@ -57,7 +57,28 @@ describe('the sticker placer hears about an acceptance', () => {
     expect(def.optIn).toBeUndefined();
   });
 
-  it('names the owner and links to the image', () => {
+  it('goes to the placer, not to the owner who just accepted it', async () => {
+    const sql = await query('sticker-placement-resolved');
+
+    // The whole point of the type. Selecting `ownerId` here sends the creator
+    // who clicked Accept a message naming themselves, and sends the placer —
+    // the only person this exists for — nothing at all. Both directions
+    // asserted: the recipient is the placer AND is not the owner.
+    expect(sql).toMatch(/p\."placerId"\s+"userId"/);
+    expect(sql).not.toMatch(/p\."ownerId"\s+"userId"/);
+  });
+
+  it('reads the sticker surface', async () => {
+    // The likeliest mistake in a processor written beside three others: every
+    // other assertion here passes with `remixGallery` in this clause, which
+    // would announce remix approvals as stickers and stickers not at all.
+    const sql = await query('sticker-placement-resolved');
+
+    expect(sql).toContain("p.surface = 'sticker'");
+    expect(sql).not.toContain("p.surface = 'remixGallery'");
+  });
+
+  it('names the owner and links to the image', async () => {
     const message = defs['sticker-placement-resolved'].prepareMessage({
       type: 'sticker-placement-resolved',
       details: { imageId: 74, ownerUsername: 'somebody', status: 'approved' },
@@ -65,6 +86,10 @@ describe('the sticker placer hears about an acceptance', () => {
 
     expect(message.message).toBe('somebody accepted your sticker');
     expect(message.url).toBe('/images/74');
+    // The message test hand-builds its details, so it cannot see where imageId
+    // comes from. Sourcing it from `p.id` instead links every notification to
+    // /images/<placementId> — a dead link, and one nothing above would catch.
+    expect(await query('sticker-placement-resolved')).toContain('\'imageId\', p."targetId"');
   });
 
   it('selects approvals and nothing else', async () => {
@@ -93,7 +118,13 @@ describe('the sticker placer hears about an acceptance', () => {
     // The pending pair splits on `free` because their messages quote an amount.
     // This one names none, so one type serves both — and a `free` clause here
     // would silence exactly the tier that ships at daily volume.
-    expect(await query('sticker-placement-resolved')).not.toMatch(/p\.free/);
+    //
+    // Matched as a word rather than as `p.free`, which the quoted spelling
+    // `p."free"` walks straight past. Comments are stripped first because the
+    // one above this clause says the word.
+    const sql = (await query('sticker-placement-resolved')).replace(/--[^\n]*/g, '');
+
+    expect(sql).not.toMatch(/\bfree\b/i);
   });
 });
 
@@ -110,6 +141,10 @@ describe('the remix type stops announcing declines', () => {
     // The removal half is scoped to the owner's own action: a moderator takedown
     // is not something to announce to the person it was taken from.
     expect(sql).toContain('p."removedBy" = \'owner\'');
+    // Same two mutations the sticker type is guarded against, and they survive
+    // every assertion above on this one too.
+    expect(sql).toMatch(/p\."placerId"\s+"userId"/);
+    expect(sql).toContain("p.surface = 'remixGallery'");
   });
 
   it('still renders a decline that was already delivered', () => {
