@@ -45,7 +45,7 @@ import path from 'path';
  * on the analytics wire),
  * `src/server/services/__tests__/image-search.client-ip.test.ts` (the address in
  * the search-actor hash),
- * `src/__tests__/pages/api/mod/retool/comment.client-ip.test.ts`
+ * `src/__tests__/pages/api/mod/comment/remove-as-tos.client-ip.test.ts`
  * (the address in the moderation audit trail),
  * `src/__tests__/pages/api/auth/callback.client-ip.test.ts` (the address the
  * spoke forwards), and the four suites beside

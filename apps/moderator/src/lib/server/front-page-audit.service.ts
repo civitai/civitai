@@ -123,7 +123,7 @@ export async function getSweep(input: {
 }
 
 /**
- * Goes through `/api/mod/retool/image` → `tagVote` rather than writing `TagsOnImageVote` directly.
+ * Goes through `/api/mod/image/tag-vote` rather than writing `TagsOnImageVote` directly.
  * That endpoint applies the moderator vote WEIGHT via the main app's `addTagVotes`/`removeTagVotes`
  * — a raw ±1 row never crosses `apply-voted-tags`' ±5 threshold, so the tag would stay on the image
  * and only pick up `needsReview`. Writing the weight by hand here would be a second copy of a number

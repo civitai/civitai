@@ -158,8 +158,10 @@ Open, with the evidence each audit produced:
       was *deliberately* unported because "the main app's equivalent also refreshes entity caches and
       search indexes"; `unassignCosmetic` does neither, so the stated reason was false and the comment
       is gone.
-- [ ] **Every `retool/*` call attributes to the API key's owner** — **direction decided 2026-08-12: mint
-      per-moderator keys** so actions are attributable, deferred as its own piece of work rather than
+- [x] **Every `retool/*` call attributes to the API key's owner** — **RESOLVED 2026-08-18** by session
+      forwarding instead of minted keys: the spoke relays the acting moderator's own cookie to
+      `/api/mod/*`, so the audit row, the `privileged` check and the rate-limit bucket are all per
+      moderator. The original plan was to **mint per-moderator keys** so actions are attributable, deferred as its own piece of work rather than
       folded into parity. Until then one shared `CIVITAI_MOD_API_KEY` confers each `privileged:`
       capability on everyone who can reach the page, shares the per-actor rate limits, and puts the key
       owner on every `retoolAudit` row. Note this now matters more, not less: strike issuing moved onto
@@ -297,7 +299,7 @@ Open, with the evidence each audit produced:
       where it was, and the user is never told which way it went.
       `resolveUserRestriction` in the main app is the single write path that does all of that, and it
       was reachable only from the tRPC moderator router — i.e. not from this app at all. So this needed
-      **a new main-app endpoint**: `POST /api/mod/retool/restriction` with one `resolve` action, in the
+      **a new main-app endpoint**: `POST /api/mod/restriction/resolve`, in the
       same `defineRetoolEndpoint` family as `strike`/`user`. The Admin section shows Overturn / Uphold
       with an optional message **above** the mute toggle whenever the latest restriction is Pending, and
       says why unmuting alone is not the same thing.
@@ -741,7 +743,7 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 
 ## 11. Operational
 
-- [ ] `CIVITAI_MOD_API_KEY`, `FRESHDESK_API_KEY` — see the handover.
+- [ ] `FRESHDESK_API_KEY` — see the handover. (`CIVITAI_MOD_API_KEY` is retired, 2026-08-18.)
       **`RETOOL_DATABASE_URL` is superseded**: the cutover retires it in favour of
       `MODERATOR_DATABASE_URL`, which already points at the same database the xguard lab uses. Set that
       one in every deployed environment instead — see [`retool-db-cutover.md`](retool-db-cutover.md).
@@ -959,7 +961,7 @@ that reporter to that build.
       the search-index sync, the cache busting and the per-image propagation, then restores five columns
       from the flag snapshot; `resolveAppeal` also closes the `Appeal` row and refuses to uphold against
       a model someone else has since reverted. So the verdicts go to a new
-      `/api/mod/retool/minor-flag` (same shape as `retool/restriction.ts`) and the spoke calls it.
+      `/api/mod/minor-flag/*` (one endpoint per action) and the spoke calls it.
       The three predicates are copied **verbatim** and must stay that way — each population is defined
       by exclusions that look like noise (`minorHashDismissed`, the cleared-stamp window, the
       human-confirmation check, the accepted key, the 30-day bound).
@@ -996,10 +998,10 @@ that reporter to that build.
       same change, since the `<a>` wrapped the whole card and freeing the click needed somewhere for
       the navigation to go.) Verified: the arrow opens `civitai.red/images/<id>` in a new tab and does
       **not** toggle the selection.
-- [ ] **Striking from this page fails with `Struck 0 of 1 owners: CIVITAI_MOD_API_KEY is not
-      configured.`** Not a code defect — §11 already lists that key as unset — but it is the first
-      report of a *user-visible* consequence, and the message reads as a bug to a moderator. Setting
-      the key closes it; the wording is worth a second look either way.
+- [x] **Striking from this page fails with `Struck 0 of 1 owners: CIVITAI_MOD_API_KEY is not
+      configured.`** **RESOLVED 2026-08-18** — the key is gone; striking authenticates as the acting
+      moderator. Note the failure this replaces it with: `strike/create` is rate-limited per moderator
+      at 30/60s, so a bulk strike over more owners than that now reports the hub's own "retry in Ns".
 
 ### 12f. User Reports (`1537531797124943882`, `1537532842337378375`)
 

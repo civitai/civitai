@@ -117,8 +117,8 @@ Every cluster is ported. What remains is not a query:
 - **`GetSuccesfulPromptsUpdated`** — MongoDB. This app has no connection to it, and adding one for a
   single read is not worth the dependency.
 - **Bulk Image Manager** — ticket 1.3, absent from the section nav until it has a panel.
-- **`CIVITAI_MOD_API_KEY` must be set**, or the bulk comment and review actions refuse: the
-  `/api/mod/retool/*` endpoints authenticate with a Bearer moderator key, not `WEBHOOK_TOKEN`.
+- **No API key is needed** (updated 2026-08-18): the bulk comment and review actions call
+  `/api/mod/*` with the acting moderator's forwarded session cookie. `CIVITAI_MOD_API_KEY` is retired.
 
 The `ReToolActions` vs `ModActivity` question below was **not** treated as a blocker: this is a 1:1
 port, and reconciling two audit tables is a separate decision. Everything written here logs to

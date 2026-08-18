@@ -10,12 +10,15 @@ Written 2026-08-07. Delete items as they are done.
 
 ## 1. Environment — `apps/moderator/.env`
 
-- [ ] **`CIVITAI_MOD_API_KEY=`** — currently unset. Without it, bulk comment delete, comment ToS,
-      review delete and review exclude/include **refuse up front** (they fail with a clear message
-      rather than silently). It is a **moderator user's API key sent as a Bearer token**, NOT
-      `WEBHOOK_TOKEN` — `/api/mod/retool/*` authenticates via `getSessionFromBearerToken` and rejects
-      the webhook token. The account it belongs to needs the mod role and becomes the recorded actor
-      for those writes. Documented in `.env.example`.
+- [x] **`CIVITAI_MOD_API_KEY=`** — **no longer exists (2026-08-18). Do not set it.** The spoke calls
+      `/api/mod/*` and forwards the acting moderator's session cookie, so there is no shared key and
+      no shared actor: the audit row names the moderator who clicked. The variable was removed from
+      the code and from `.env.example`.
+
+      🔴 One consequence to check before relying on it: those endpoints evaluate `privileged` against
+      the **individual moderator's** `user.permissions`, where the shared key's owner used to hold
+      them. `user.updateIdentity` needs `retoolUpdateIdentity` and `user.toggleModerator` needs
+      `retoolToggleModerator`; grant them per moderator via `POST /api/admin/permission`.
 
 - [ ] **`FRESHDESK_TOKEN` → `FRESHDESK_API_KEY`** — pre-existing bug, not from this migration.
       `freshdesk.service.ts:27` reads `env.FRESHDESK_API_KEY`; the local `.env` defines

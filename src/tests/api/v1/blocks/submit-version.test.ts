@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Minimal NextApiRequest/Response stand-in (avoids node-mocks-http), mirroring
-// the retool-endpoint test harness.
+// the moderator-endpoint test harness.
 function createMocks({
   method = 'POST',
   headers = {},

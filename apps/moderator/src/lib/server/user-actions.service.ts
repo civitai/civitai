@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { getRequestEvent } from '$app/server';
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
 import { getBuzz } from './buzz';
@@ -48,11 +49,21 @@ async function callMainApp(
   }
 }
 
-// The `/api/mod/retool/*` family authenticates with a moderator API key as a Bearer token, NOT the
-// webhook token — a different auth scheme from every other main-app call here. Retool held the key in
-// its own config; the spoke needs `CIVITAI_MOD_API_KEY` set or these actions refuse rather than fail
-// obscurely at the endpoint.
+// `/api/mod/*` (defineModeratorEndpoint) authenticates as the MODERATOR who is acting: the spoke is on
+// the same registrable domain as the hub, so the session cookie the browser sent here is one the hub
+// already accepts, and relaying it server-side attributes the audit row to a person rather than to a
+// shared key. This app therefore needs no moderator API key at all.
 export type JsonResult = { ok: true; body: Record<string, unknown> } | { ok: false; error: string };
+
+/** The refusal an endpoint wrote for the operator. A rate limit also carries how long is left, which
+ *  is the difference between "try later" and a moderator retrying immediately. */
+async function readError(res: Response): Promise<string | null> {
+  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  const error = typeof body?.error === 'string' ? body.error : null;
+  if (!error) return null;
+  const retry = body?.retryAfterSeconds;
+  return res.status === 429 && typeof retry === 'number' ? `${error} — retry in ${retry}s.` : error;
+}
 
 /** The one JSON poster. Two auth schemes because the endpoint families disagree, not because the
  *  callers do — everything else about them was identical and drifted independently. */
@@ -60,17 +71,24 @@ async function postJson(opts: {
   path: string;
   body: Record<string, unknown>;
   label: string;
-  auth: 'webhook' | 'modKey';
+  auth: 'webhook' | 'session';
   timeoutMs: number;
 }): Promise<JsonResult> {
   const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   let url = `${base}${opts.path}`;
 
-  if (opts.auth === 'modKey') {
-    const key = env.CIVITAI_MOD_API_KEY;
-    if (!key) return { ok: false, error: 'CIVITAI_MOD_API_KEY is not configured.' };
-    headers.authorization = `Bearer ${key}`;
+  if (opts.auth === 'session') {
+    // Throws when there is no request in scope (a job, a script). That is a programming error rather
+    // than a runtime condition, but it must not surface to the operator as a bare 500.
+    let cookie: string | null;
+    try {
+      cookie = getRequestEvent().request.headers.get('cookie');
+    } catch {
+      return { ok: false, error: `${opts.label} must be called while handling a request.` };
+    }
+    if (!cookie) return { ok: false, error: `${opts.label} failed: no session to forward.` };
+    headers.cookie = cookie;
   } else {
     const token = env.WEBHOOK_TOKEN;
     if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
@@ -84,11 +102,16 @@ async function postJson(opts: {
       body: JSON.stringify(opts.body),
       signal: AbortSignal.timeout(opts.timeoutMs),
     });
-    if (!res.ok) return { ok: false, error: `${opts.label} returned ${res.status}.` };
-    // ⚠️ The count in the body is rows FOUND, not rows CHANGED — `remove-images` and `restore-images`
-    // both return the length of a pre-update `findMany` over the submitted ids. So the zero-affected
-    // guards below fire only when an id does not exist at all: re-removing an already-blocked batch
-    // reports full success. Do not read these counts as proof a mutation happened.
+    if (!res.ok) {
+      // The endpoint writes its refusal FOR a human — which permission is missing, how long the rate
+      // limit has left. Reducing that to a status code is what makes a moderator retry the same
+      // forbidden action, or re-login against a 403 that re-logging in cannot fix.
+      const reason = await readError(res);
+      if (reason) return { ok: false, error: `${opts.label}: ${reason}` };
+      if (opts.auth === 'session' && res.status === 401)
+        return { ok: false, error: `${opts.label} was refused — sign in to civitai.com again.` };
+      return { ok: false, error: `${opts.label} returned ${res.status}.` };
+    }
     return {
       ok: true,
       body: ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown>,
@@ -99,12 +122,35 @@ async function postJson(opts: {
   }
 }
 
-export const callRetoolEndpoint = (
-  resource: string,
+/**
+ * Every `/api/mod/*` route the spoke calls. A bare string would make a typo a 404 that reads as a
+ * failed action; this makes it a compile error. Replaced by the generated client when that lands.
+ */
+export type ModEndpoint =
+  | 'comment/bulk-delete'
+  | 'comment/remove-as-tos'
+  | 'image/tag-vote'
+  | 'minor-flag/confirm'
+  | 'minor-flag/dismiss'
+  | 'minor-flag/resolve-appeal'
+  | 'minor-flag/revert'
+  | 'minor-flag/set-minor'
+  | 'restriction/resolve'
+  | 'review/delete'
+  | 'review/set-exclude'
+  | 'strike/create'
+  | 'user/toggle-moderator'
+  | 'user/update-identity';
+
+/** One `/api/mod/*` endpoint per action, called as the acting moderator. The ONLY place `auth`
+ *  becomes `'session'` — a call site that picks its own scheme is how one gets the wrong one. */
+export const callModEndpoint = (
+  path: ModEndpoint,
   body: Record<string, unknown>,
-  label: string
+  label: string,
+  timeoutMs = 30_000
 ): Promise<JsonResult> =>
-  postJson({ path: `/api/mod/retool/${resource}`, body, label, auth: 'modKey', timeoutMs: 30_000 });
+  postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
 
 /**
  * Retool's `UpdateUserDeets`, behind the Enable Edits toggle. The endpoint already carries this and
@@ -124,9 +170,9 @@ export async function updateUserIdentity(input: {
   if (input.name !== undefined) changed.name = input.name;
   if (!Object.keys(changed).length) return { ok: false, error: 'Nothing to change.' };
 
-  const result = await callRetoolEndpoint(
-    'user',
-    { action: 'updateIdentity', userId: input.userId, ...changed },
+  const result = await callModEndpoint(
+    'user/update-identity',
+    { userId: input.userId, ...changed },
     'Identity update'
   );
   if (!result.ok) return result;
@@ -145,9 +191,9 @@ export async function toggleModerator(input: {
   isModerator: boolean;
   moderatorId: number;
 }): Promise<ActionResult> {
-  const result = await callRetoolEndpoint(
-    'user',
-    { action: 'toggleModerator', userId: input.userId, isModerator: input.isModerator },
+  const result = await callModEndpoint(
+    'user/toggle-moderator',
+    { userId: input.userId, isModerator: input.isModerator },
     'Moderator toggle'
   );
   if (!result.ok) return result;
@@ -157,7 +203,7 @@ export async function toggleModerator(input: {
 }
 
 /**
- * Retool's `TagVote`, through `/api/mod/retool/image`. The endpoint applies the moderator vote weight
+ * Retool's `TagVote`, through `/api/mod/image/tag-vote`. The endpoint applies the moderator vote weight
  * itself, so callers pass a plain ±1 and the number that decides whether a tag is disabled stays in
  * one place — the main app's `addTagVotes`.
  */
@@ -165,7 +211,7 @@ export async function voteOnImageTags(
   votes: { imageId: number; tagId: number; vote: -1 | 0 | 1 }[]
 ): Promise<ActionResult> {
   if (!votes.length) return { ok: false, error: 'No votes to record.' };
-  const result = await callRetoolEndpoint('image', { action: 'tagVote', votes }, 'Tag vote');
+  const result = await callModEndpoint('image/tag-vote', { votes }, 'Tag vote');
   return result.ok ? { ok: true } : result;
 }
 
@@ -184,13 +230,9 @@ export async function bulkCommentAction(input: {
   if (!input.commentIds.length && !input.commentV2Ids.length)
     return { ok: false, error: 'Select at least one comment.' };
 
-  const result = await callRetoolEndpoint(
-    'comment',
-    {
-      action: input.action,
-      commentIds: input.commentIds,
-      commentV2Ids: input.commentV2Ids,
-    },
+  const result = await callModEndpoint(
+    input.action === 'bulkDelete' ? 'comment/bulk-delete' : 'comment/remove-as-tos',
+    { commentIds: input.commentIds, commentV2Ids: input.commentV2Ids },
     input.action === 'bulkDelete' ? 'Comment delete' : 'Comment ToS'
   );
   if (!result.ok) return result;
@@ -225,11 +267,11 @@ export async function bulkReviewAction(input: {
 }): Promise<ActionResult> {
   if (!input.reviewIds.length) return { ok: false, error: 'Select at least one review.' };
 
-  const body: Record<string, unknown> = { action: input.action, reviewIds: input.reviewIds };
+  const body: Record<string, unknown> = { reviewIds: input.reviewIds };
   if (input.action === 'setExclude') body.exclude = input.exclude ?? true;
 
-  const result = await callRetoolEndpoint(
-    'review',
+  const result = await callModEndpoint(
+    input.action === 'delete' ? 'review/delete' : 'review/set-exclude',
     body,
     input.action === 'delete' ? 'Review delete' : 'Review exclude'
   );
@@ -526,19 +568,17 @@ export async function issueStrike(input: {
   internalNotes?: string;
   moderatorId: number;
 }): Promise<ActionResult> {
-  const result = await postJson({
-    path: '/api/mod/retool/strike',
-    body: {
-      action: 'create',
+  const result = await callModEndpoint(
+    'strike/create',
+    {
       userId: input.userId,
       reason: 'ManualModAction',
       description: input.description,
       ...(input.internalNotes ? { internalNotes: input.internalNotes } : {}),
     },
-    label: 'Strike endpoint',
-    auth: 'modKey',
-    timeoutMs: 15_000,
-  });
+    'Strike endpoint',
+    15_000
+  );
   if (!result.ok) return result;
 
   // `{ skipped: true }` is the rate-limit path. It returns 200, so without this a refused strike is
@@ -562,10 +602,9 @@ export async function resolveRestriction(input: {
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
-  const result = await callRetoolEndpoint(
-    'restriction',
+  const result = await callModEndpoint(
+    'restriction/resolve',
     {
-      action: 'resolve',
       userRestrictionId: input.userRestrictionId,
       status: input.status,
       ...(input.resolvedMessage ? { resolvedMessage: input.resolvedMessage } : {}),
@@ -622,7 +661,11 @@ export async function setPaddleCustomer(input: {
     .executeTakeFirst();
   if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
 
-  await logAction(input.paddleCustomerId ? 'paddleLink' : 'paddleUnlink', input.userId, input.moderatorId);
+  await logAction(
+    input.paddleCustomerId ? 'paddleLink' : 'paddleUnlink',
+    input.userId,
+    input.moderatorId
+  );
 
   // The membership the page renders is read through caches keyed on the account, so without this the
   // panel keeps showing the pre-link subscription and the moderator re-links a second time.
@@ -778,6 +821,11 @@ export async function removeCosmetic(input: {
 // `callMainApp`.
 // A large batch takes real time on the other side; the 30s used elsewhere would abort a removal that
 // is actually succeeding, and a retry would then double-notify the owners.
+//
+// ⚠️ The count THESE two return is rows FOUND, not rows CHANGED: both answer with the length of a
+// pre-update `findMany` over the submitted ids. So their zero-affected guards fire only when an id
+// does not exist at all — re-removing an already-blocked batch reports full success. The `/api/mod/*`
+// endpoints do not share this: their counts are real affected-row counts.
 const postMainAppJson = (
   path: string,
   body: Record<string, unknown>,

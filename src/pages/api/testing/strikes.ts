@@ -15,7 +15,7 @@ import { StrikeStatus } from '~/shared/utils/prisma/enums';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 // NOTE: the mutating `create` / `void` actions were moved to the attributed
-// Retool endpoint at src/pages/api/mod/retool/strike.ts (issuedBy/voidedBy =
+// moderator endpoint at src/pages/api/mod/strike/create.ts (issuedBy/voidedBy =
 // calling moderator). This endpoint retains read + dry-run + job-trigger actions.
 const schema = z
   .object({

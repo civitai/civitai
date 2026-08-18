@@ -21,7 +21,7 @@ detail before doing anything destructive.
 
 | # | Do | Why it blocks |
 | --- | --- | --- |
-| 1 | Set **`CIVITAI_MOD_API_KEY`** (a moderator's API key, NOT `WEBHOOK_TOKEN`) | Bulk comment/review actions refuse up front → [detail](retool-migration-handover-detail.md#1-environment--appsmoderatorenv) |
+| ~~1~~ | ~~Set **`CIVITAI_MOD_API_KEY`**~~ **RESOLVED 2026-08-18 — do NOT provision this.** The spoke no longer holds a moderator key: every main-app call now goes to `/api/mod/*` and relays the acting moderator's own session cookie. The variable is gone from the code and from `.env.example`. |
 | 2 | Set **`RETOOL_DATABASE_URL`** in every deployed env | Otherwise notes/strikes/mutes read the wrong database → [detail](retool-migration-handover-detail.md#1-environment--appsmoderatorenv) |
 | 3 | Rename **`FRESHDESK_TOKEN` → `FRESHDESK_API_KEY`** | Support panel has shown "no contact found" for *every* user → [detail](retool-migration-handover-detail.md#1-environment--appsmoderatorenv) |
 | 4 | Apply **3 SQL migrations** by hand (each `CREATE INDEX CONCURRENTLY`, so outside a transaction) | Page-access table + mod-activity history + a report index → [detail](retool-migration-handover-detail.md#2-database-migrations--none-are-auto-applied) |

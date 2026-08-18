@@ -13,7 +13,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
  *
  * PATTERN: this reuses the established blocks fixed-window limiter — the SAME
  * INCR + EXPIRE + fail-open shape as `BlockTokenService.checkRateLimit` (the
- * per-token mint limiter) and the retool-endpoint MULTI limiter. It runs on the
+ * per-token mint limiter) and the moderator-endpoint MULTI limiter. It runs on the
  * `redis` cache client (like the mint limiter), NOT the createLimiter / sysRedis
  * DB-count limiter (that one is a sliding count of a fetched DB value — wrong
  * tool for a fast burst ceiling).

@@ -7,7 +7,7 @@ import { env } from '$env/dynamic/private';
 //   1. this Meilisearch enqueue          — main owns the search-index client
 //   2. `kono.ts` finalize                — main owns the new-order game engine + WebSocket signals
 //   3. `ban-user`                        — fans out to media purge, model unpublish, notifications, caches
-//   4. `/api/mod/retool/*` (comments,    — endpoint-side transactions the spoke would have to re-derive
+//   4. `/api/mod/*` (comments,         — endpoint-side transactions the spoke would have to re-derive
 //      reviews, buzz, purge)
 //   5. remove/restore/flag images        — `handleBlockImages`/`handleUnblockImages` re-sync the search
 //                                          index, recompute nsfwLevel and write ClickHouse tracking
