@@ -16,6 +16,8 @@ export const hubSortSchema = z.enum([
   ImageSort.MostComments,
 ]);
 
+export type HubSort = z.infer<typeof hubSortSchema>;
+
 export const userHubSourceSchema = z.object({
   id: z.number().optional(),
   type: z.enum(UserHubSourceType),

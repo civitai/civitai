@@ -1,14 +1,19 @@
-import { Center, Group, Loader, Text, Title } from '@mantine/core';
+import { Center, Group, Loader, Select, Text, TextInput } from '@mantine/core';
 import { useRouter } from 'next/router';
+import { useEffect, useRef, useState } from 'react';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
+import { HubSourcePanel } from '~/components/Hubs/HubSourcePanel';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { ImageSort } from '~/server/common/enums';
-import { hubSortSchema } from '~/server/schema/user-hub.schema';
+import type { HubSort } from '~/server/schema/user-hub.schema';
+import { hubLimits, hubSortSchema } from '~/server/schema/user-hub.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
@@ -22,11 +27,36 @@ export default Page(
   function HubFeedPage() {
     const router = useRouter();
     const hubId = Number(router.query.id);
+    const utils = trpc.useUtils();
 
     const { data: hub, isLoading } = trpc.userHub.getById.useQuery(
       { id: hubId },
       { enabled: Number.isInteger(hubId) }
     );
+
+    const [name, setName] = useState('');
+    // Seed once per hub, not on every query result. Initialising once would keep
+    // the previous hub's name after navigating between two of them; re-seeding on
+    // every result would overwrite what the user is typing when the query refetches.
+    const seededHubId = useRef<number | null>(null);
+    useEffect(() => {
+      if (hub && seededHubId.current !== hub.id) {
+        seededHubId.current = hub.id;
+        setName(hub.name);
+      }
+    }, [hub]);
+
+    const upsert = trpc.userHub.upsert.useMutation({
+      onSuccess: async () => {
+        await Promise.all([
+          utils.userHub.getById.invalidate({ id: hubId }),
+          utils.userHub.getAll.invalidate(),
+        ]);
+        await utils.image.getInfinite.invalidate();
+      },
+      onError: (error) =>
+        showErrorNotification({ title: 'Could not save hub', error: new Error(error.message) }),
+    });
 
     if (isLoading)
       return (
@@ -36,20 +66,72 @@ export default Page(
       );
     if (!hub) return <NotFound />;
 
+    // `sort` is a plain column, so a value written before the enum narrowed (or by
+    // hand) would otherwise reach the query as-is.
+    const sort = hubSortSchema.catch(ImageSort.Newest).parse(hub.sort);
+    const saveSettings = (changes: { sort?: HubSort; period?: MetricTimeframe; name?: string }) =>
+      upsert.mutate({
+        id: hub.id,
+        name: changes.name ?? name ?? hub.name,
+        sort: changes.sort ?? sort,
+        period: changes.period ?? hub.period,
+        sources: hub.sources.map(({ id: _id, ...source }) => source),
+      });
+
     const hasSources = hub.sources.some((s) => s.enabled);
 
     return (
       <>
         <Meta title={`${hub.name} | Civitai`} deIndex />
         <MasonryContainer className="min-h-full">
-          <div className="flex flex-col gap-2.5">
-            <Group justify="space-between">
-              <Title order={1}>{hub.name}</Title>
+          <div className="flex flex-col gap-4 py-4">
+            <Group justify="space-between" align="flex-end" wrap="wrap">
+              <TextInput
+                label="Hub name"
+                value={name}
+                maxLength={hubLimits.nameLength}
+                disabled={upsert.isPending}
+                onChange={(event) => setName(event.currentTarget.value)}
+                onBlur={() => {
+                  const trimmed = name.trim();
+                  if (!trimmed || trimmed === hub.name) {
+                    setName(hub.name);
+                    return;
+                  }
+                  saveSettings({ name: trimmed });
+                }}
+                className="grow"
+              />
+              <Group gap="xs">
+                <Select
+                  label="Sort"
+                  value={sort}
+                  disabled={upsert.isPending}
+                  data={hubSortSchema.options.map((value) => ({ value, label: value }))}
+                  onChange={(value) => value && saveSettings({ sort: value as HubSort })}
+                />
+                <Select
+                  label="Period"
+                  value={hub.period}
+                  disabled={upsert.isPending}
+                  data={Object.values(MetricTimeframe).map((value) => ({ value, label: value }))}
+                  onChange={(value) => value && saveSettings({ period: value as MetricTimeframe })}
+                />
+              </Group>
             </Group>
+
+            <HubSourcePanel
+              hubId={hub.id}
+              name={hub.name}
+              maxSources={hubLimits.sourcesPerHub}
+              sources={hub.sources.map(({ id: _id, ...source }) => source)}
+            />
+
             {!hasSources ? (
               <Text c="dimmed">
-                This hub has no active sources yet. Add a creator, model or collection to start
-                filling it.
+                {hub.sources.length === 0
+                  ? 'This hub is empty. Add a creator, model or collection above to start filling it.'
+                  : 'Every source in this hub is switched off.'}
               </Text>
             ) : (
               // disableStoreFilters keeps the global image-filter store out of a hub:
@@ -57,13 +139,7 @@ export default Page(
               <ImagesInfinite
                 showEof
                 disableStoreFilters
-                filters={{
-                  hubId: hub.id,
-                  // `sort` is a plain column, so a value written before the enum
-                  // narrowed (or by hand) would otherwise reach the query as-is.
-                  sort: hubSortSchema.catch(ImageSort.Newest).parse(hub.sort),
-                  period: hub.period,
-                }}
+                filters={{ hubId: hub.id, sort, period: hub.period }}
               />
             )}
           </div>
