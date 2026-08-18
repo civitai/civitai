@@ -10,7 +10,6 @@ import {
   Tabs,
   Text,
   Title,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import type { TooltipProps } from '@mantine/core';
@@ -330,6 +329,13 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
   const queryUtils = trpc.useUtils();
 
   const image = reviewData.image;
+  const rejectionCopy =
+    collectionItem.status === CollectionItemStatus.REJECTED
+      ? resolveRejectionCopy({
+          reason: collectionItem.rejectionReason,
+          detail: collectionItem.rejectionDetail,
+        })
+      : undefined;
 
   return (
     <div className="flex flex-col">
@@ -377,19 +383,9 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               )}
               {collectionItem.status === CollectionItemStatus.REJECTED &&
                 collectionItem.rejectionReason && (
-                  <Tooltip
-                    label={resolveRejectionCopy({
-                      reason: collectionItem.rejectionReason,
-                      detail: collectionItem.rejectionDetail,
-                    })}
-                    withinPortal
-                    multiline
-                    w={260}
-                  >
-                    <Badge variant="light" color="red" h={26} radius="xl">
-                      {getDisplayName(collectionItem.rejectionReason)}
-                    </Badge>
-                  </Tooltip>
+                  <Badge variant="light" color="red" h={26} radius="xl">
+                    {getDisplayName(collectionItem.rejectionReason)}
+                  </Badge>
                 )}
               {image?.type === 'video' && image.metadata && 'duration' in image.metadata && (
                 <DurationBadge duration={image.metadata.duration ?? 0} h={26} radius="xl" />
@@ -429,6 +425,11 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             {reviewData.title && (
               <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} inline>
                 {reviewData.title}
+              </Text>
+            )}
+            {rejectionCopy && (
+              <Text className={cardClasses.dropShadow} size="sm" lineClamp={3} inline>
+                {rejectionCopy}
               </Text>
             )}
             {reviewData.user && reviewData.user.id !== -1 && (
