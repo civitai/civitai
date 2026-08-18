@@ -490,9 +490,10 @@ export function ExistingChat() {
         <Center h="100%">
           <Loader />
         </Center>
-      ) : myMember.status === ChatMemberStatus.Joined ||
-        myMember.status === ChatMemberStatus.Left ||
-        myMember.status === ChatMemberStatus.Kicked ? (
+      ) : !myMember.filteredAt &&
+        (myMember.status === ChatMemberStatus.Joined ||
+          myMember.status === ChatMemberStatus.Left ||
+          myMember.status === ChatMemberStatus.Kicked) ? (
         <>
           <DismissibleAlert
             id="chat-scam-warning"
@@ -598,7 +599,8 @@ export function ExistingChat() {
             </Center>
           )}
         </>
-      ) : myMember.status === ChatMemberStatus.Invited ||
+      ) : !!myMember.filteredAt ||
+        myMember.status === ChatMemberStatus.Invited ||
         myMember.status === ChatMemberStatus.Ignored ? (
         <Center h="100%">
           <Stack>
@@ -612,7 +614,11 @@ export function ExistingChat() {
                 stripStickerTokens(messagesChronological[0].content).length > 70 ? '...' : ''
               }"`}</Text>
             )}
-            <Text align="center">Join the chat?</Text>
+            <Text align="center">
+              {myMember.status === ChatMemberStatus.Joined
+                ? 'Accept this request?'
+                : 'Join the chat?'}
+            </Text>
             <Group p="sm" justify="center">
               <Button
                 disabled={isJoining || myMember.status === ChatMemberStatus.Ignored}

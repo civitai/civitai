@@ -48,3 +48,27 @@ describe('chatBucketFor', () => {
     }
   });
 });
+
+/**
+ * The rail and the conversation view must agree on what a request is. They
+ * disagreed once — the rail bucketed on `filteredAt` while the accept CTA keyed
+ * on `status`, so a membership that was filtered while still `Joined` sat in
+ * Requests with no way to accept it and no way out.
+ */
+describe('a filtered membership is always actionable', () => {
+  const requestable = (m: { status: ChatMemberStatus; filteredAt: Date | null }) =>
+    chatBucketFor(m) === 'Requests';
+
+  it('lands in Requests from every status the mark can be applied to', () => {
+    for (const status of [ChatMemberStatus.Invited, ChatMemberStatus.Joined]) {
+      expect(requestable(member(status, NOW))).toBe(true);
+    }
+  });
+
+  it('leaves Requests once the mark is cleared', () => {
+    // Accepting clears `filteredAt`; so does replying. Either way the same
+    // membership must bucket back to the inbox.
+    expect(chatBucketFor(member(ChatMemberStatus.Joined, null))).toBe('Inbox');
+    expect(chatBucketFor(member(ChatMemberStatus.Invited, null))).toBe('Inbox');
+  });
+});

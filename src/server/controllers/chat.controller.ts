@@ -392,6 +392,7 @@ export const modifyUserHandler = async ({
       where: { id: chatMemberId },
       select: {
         userId: true,
+        status: true,
         user: {
           select: {
             username: true,
@@ -472,7 +473,9 @@ export const modifyUserHandler = async ({
       data: { status, ...rest, ...extra },
     });
 
-    if (!!status && status !== ChatMemberStatus.Invited) {
+    const statusChanged = !!status && status !== existing.status;
+
+    if (statusChanged && status !== ChatMemberStatus.Invited) {
       // Awaited to order the group change before the system message below, but
       // swallowed like every other emit here: the membership row is already
       // written, and letting an unreachable signals service throw reported the

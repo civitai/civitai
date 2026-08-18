@@ -422,6 +422,16 @@ export const createMessage = async ({
     }
   }
 
+  // Answering a request accepts it. Without this the sender's reply left their
+  // own membership marked, so the conversation stayed in their Requests tab with
+  // no way out but the Accept button they had already implicitly used.
+  if (userId !== -1) {
+    const me = chat.chatMembers.find((cm) => cm.userId === userId);
+    if (me?.filteredAt) {
+      await dbWrite.chatMember.update({ where: { id: me.id }, data: { filteredAt: null } });
+    }
+  }
+
   // Someone who deleted this conversation asked not to have it. The first
   // message that reaches them afterwards is a new approach, not a continuation,
   // so it re-enters the request flow regardless of their policy — the delete is
