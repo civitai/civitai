@@ -11,6 +11,7 @@ import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
+import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import { purgeCache } from '~/server/cloudflare/client';
 import {
   CacheTTL,
@@ -8457,7 +8458,7 @@ export function addBlockedImage({
 }) {
   return clickhouse?.insert({
     table: 'blocked_images',
-    values: [{ hash: Number(hash), reason }],
+    values: [{ hash: toClickhouseInt64(hash), reason }],
     format: 'JSONEachRow',
   });
 }
@@ -8470,7 +8471,7 @@ export function bulkAddBlockedImages({
   if (data.length === 0) return;
 
   const values = data.map(({ hash, reason }) => ({
-    hash: Number(hash),
+    hash: toClickhouseInt64(hash),
     reason: reason.toString(),
   }));
 
@@ -8483,14 +8484,14 @@ export function bulkAddBlockedImages({
 
 export async function bulkRemoveBlockedImages(hashes: Array<bigint | number>) {
   if (hashes.length === 0 || !clickhouse) return;
-  const blocked = await clickhouse.$query<{ hash: bigint; reason: string }>`
-    SELECT hash, reason
+  const blocked = await clickhouse.$query<{ hash: string; reason: string }>`
+    SELECT toString(hash) AS hash, reason
     FROM "blocked_images"
-    WHERE hash IN (${hashes.join(',')}) AND disabled = false
+    WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
   `;
 
   const values = blocked.map(({ hash, reason }) => ({
-    hash: Number(hash),
+    hash: toClickhouseInt64(hash),
     reason,
     disabled: true,
   }));
