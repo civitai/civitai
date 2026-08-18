@@ -20,6 +20,7 @@ export type TopImage = {
   imageId: number;
   reactions: number;
   views: number;
+  impressions: number;
   url: string;
   nsfwLevel: number;
   type: 'image' | 'video' | 'audio';
@@ -65,6 +66,9 @@ export type ImageViewDetail = {
   reactionTotal: number;
   commentSeries: TimePoint[];
   commentTotal: number;
+  /** Feed impressions on this image. Empty series when the entity type carries none. */
+  impressionSeries: TimePoint[];
+  impressionTotal: number;
 };
 
 // An article row on the /analytics/content Articles tab. `coverUrl` is null for an article with no cover.
@@ -73,6 +77,7 @@ export type TopArticle = {
   title: string;
   views: number;
   reactions: number;
+  impressions: number;
   coverUrl: string | null;
   nsfwLevel: number;
   publishedAt: string | null;
@@ -122,6 +127,8 @@ export type ArticleViewDetail = {
   lifetime: number;
   reactionSeries: TimePoint[];
   reactionTotal: number;
+  impressionSeries: TimePoint[];
+  impressionTotal: number;
 };
 
 // All-time reactions + comments on the creator's content. Reactions come from `reactions_owner_scores` (the same
@@ -150,7 +157,7 @@ export const getContentTotals = createCache({
 
 // Top reacted media over the range (images + videos, split by `type` on each page).
 export const getTopMedia = createCache({
-  name: 'analytics:top-media:v3',
+  name: 'analytics:top-media:v4',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchTopMedia(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -171,7 +178,7 @@ export const getModel3ds = createCache({
 }).get;
 
 export const getArticleViewDetail = createCache({
-  name: 'analytics:article-views:v1',
+  name: 'analytics:article-views:v2',
   fetch: ({
     userId,
     articleId,
@@ -191,7 +198,7 @@ export const getArticleViewDetail = createCache({
 }).get;
 
 export const getTopArticles = createCache({
-  name: 'analytics:top-articles:v2',
+  name: 'analytics:top-articles:v3',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchTopArticles(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -338,6 +345,12 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
   const shownIds = new Set([...viewsById.keys(), ...reactionsById.keys()]);
   if (!shownIds.size) return [];
 
+  const impressionsById = await fetchImpressionsByEntity(
+    VIEW_ENTITY.article,
+    [...shownIds],
+    from,
+    to
+  );
   const rows = await dbRead
     .selectFrom('Article')
     .leftJoin('Image', 'Image.id', 'Article.coverId')
@@ -357,6 +370,7 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
       title: a.title ?? `Article ${a.id}`,
       views: viewsById.get(a.id) ?? 0,
       reactions: reactionsById.get(a.id) ?? 0,
+      impressions: impressionsById.get(a.id) ?? 0,
       coverUrl: a.coverUrl ?? null,
       nsfwLevel: Number(a.nsfwLevel ?? 0),
       publishedAt: a.publishedAt ? new Date(a.publishedAt).toISOString() : null,
@@ -551,6 +565,32 @@ async function fetchViewsByImage(
   return new Map(rows.map((r) => [Number(r.imageId), Number(r.views)]));
 }
 
+// Per-entity feed impressions for a bounded id list. `daily_impressions` is keyed
+// `(entityType, entityId, createdDate)`, so this is the same prefix-seek shape as the views lookup — the
+// owner rollup answers "how many across everything I own", this answers "how many for this one thing".
+//
+// Only Image, Model and Article carry meaningful volume today (29.0M / 26.0M / 134.7k). Comics and 3D models
+// are not feed entities, so they have none — absent rather than zero.
+/** Gap-filled daily impressions for ONE entity, for the drilldown charts. */
+function entityImpressionsSql(entityType: string, id: number, from: string, to: string): string {
+  return `SELECT createdDate AS date, sum(impressions) AS value FROM daily_impressions WHERE entityType = '${entityType}' AND entityId = ${id} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
+}
+
+async function fetchImpressionsByEntity(
+  entityType: string,
+  ids: number[],
+  from: string,
+  to: string
+): Promise<Map<number, number>> {
+  if (!ids.length) return new Map();
+  const rows = await getClickhouse().$query<{ id: number | string; impressions: number | string }>(
+    `SELECT entityId AS id, sum(impressions) AS impressions FROM daily_impressions WHERE entityType = '${entityType}' AND entityId IN (${ids.join(
+      ','
+    )}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY id`
+  );
+  return new Map(rows.map((r) => [Number(r.id), Number(r.impressions)]));
+}
+
 // Look up the CF url + nsfwLevel for the top images (Postgres, by primary key) so the analytics grid can show real
 // thumbnails instead of bare IDs. Order is preserved from the ClickHouse ranking.
 async function enrichTopImages(
@@ -559,7 +599,7 @@ async function enrichTopImages(
   to: string
 ): Promise<TopImage[]> {
   const ids = raw.map((r) => Number(r.imageId));
-  const [rows, viewsById] = await Promise.all([
+  const [rows, viewsById, impressionsById] = await Promise.all([
     ids.length
       ? dbRead
           .selectFrom('Image')
@@ -568,6 +608,7 @@ async function enrichTopImages(
           .execute()
       : Promise.resolve([]),
     fetchViewsByImage(ids, from, to),
+    fetchImpressionsByEntity(VIEW_ENTITY.image, ids, from, to),
   ]);
   const byId = new Map(rows.map((i) => [i.id, i]));
   // Drop deleted images (no Image row / no url) — we don't surface them in the grid.
@@ -579,6 +620,7 @@ async function enrichTopImages(
         imageId: Number(r.imageId),
         reactions: Number(r.reactions),
         views: viewsById.get(Number(r.imageId)) ?? 0,
+        impressions: impressionsById.get(Number(r.imageId)) ?? 0,
         url: img.url,
         nsfwLevel: Number(img.nsfwLevel ?? 0),
         type: img.type as 'image' | 'video' | 'audio',
@@ -627,22 +669,23 @@ async function fetchImageViewDetail(
   // image ids past 139M. Joining it on an image id doesn't error, it silently returns whatever ancient image
   // shares that number. Postgres via `Thread` is the only correct source; `rootThreadId` picks up replies,
   // which count as comments on the image.
-  const [seriesRows, prevRows, lifetimeRows, reactionRows, commentRows] = await Promise.all([
-    ch.$query<{ date: string; value: number | string }>(
-      `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId = ${id} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ${fill}`
-    ),
-    ch.$query<{ value: number | string }>(
-      `SELECT sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId = ${id} AND createdDate >= toDate('${compareFrom}') AND createdDate <= toDate('${compareTo}')`
-    ),
-    ch.$query<{ value: number | string }>(
-      `SELECT sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId = ${id}`
-    ),
-    // Same net-of-deletes accounting as every other reaction figure in the Studio — un-reacting writes an
-    // `Image_Delete` row rather than removing the create, so a plain count would drift upward forever.
-    ch.$query<{ date: string; value: number | string }>(
-      `SELECT toDate(time) AS date, ${netReactions} AS value FROM reactions WHERE entityId = ${id} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY date ${fill}`
-    ),
-    sql<{ date: string; value: number | string }>`
+  const [seriesRows, prevRows, lifetimeRows, reactionRows, commentRows, impressionRows] =
+    await Promise.all([
+      ch.$query<{ date: string; value: number | string }>(
+        `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId = ${id} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ${fill}`
+      ),
+      ch.$query<{ value: number | string }>(
+        `SELECT sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId = ${id} AND createdDate >= toDate('${compareFrom}') AND createdDate <= toDate('${compareTo}')`
+      ),
+      ch.$query<{ value: number | string }>(
+        `SELECT sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.image}' AND entityId = ${id}`
+      ),
+      // Same net-of-deletes accounting as every other reaction figure in the Studio — un-reacting writes an
+      // `Image_Delete` row rather than removing the create, so a plain count would drift upward forever.
+      ch.$query<{ date: string; value: number | string }>(
+        `SELECT toDate(time) AS date, ${netReactions} AS value FROM reactions WHERE entityId = ${id} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY date ${fill}`
+      ),
+      sql<{ date: string; value: number | string }>`
       SELECT c."createdAt"::date AS date, count(*)::int AS value
       FROM "CommentV2" c
       JOIN "Thread" t ON t.id = c."threadId"
@@ -650,9 +693,12 @@ async function fetchImageViewDetail(
         AND c."createdAt" >= ${from}::date AND c."createdAt" < (${to}::date + 1)
       GROUP BY date ORDER BY date
     `
-      .execute(dbRead)
-      .then((r) => r.rows),
-  ]);
+        .execute(dbRead)
+        .then((r) => r.rows),
+      ch.$query<{ date: string; value: number | string }>(
+        entityImpressionsSql(VIEW_ENTITY.image, id, from, to)
+      ),
+    ]);
 
   const points = (rows: { date: string; value: number | string }[]) =>
     rows.map((r) => ({ date: String(r.date), value: Number(r.value) }));
@@ -669,6 +715,7 @@ async function fetchImageViewDetail(
     date: p.date,
     value: commentsByDate.get(p.date.slice(0, 10)) ?? 0,
   }));
+  const impressionSeries = points(impressionRows);
   return {
     imageId: id,
     url: image.url,
@@ -683,6 +730,8 @@ async function fetchImageViewDetail(
     reactionTotal: sum(reactionSeries),
     commentSeries,
     commentTotal: sum(commentSeries),
+    impressionSeries,
+    impressionTotal: sum(impressionSeries),
   };
 }
 
@@ -892,7 +941,7 @@ async function fetchArticleViewDetail(
 
   const ch = getClickhouse();
   const fill = `ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
-  const [seriesRows, prevRows, lifetimeRows, reactionRows] = await Promise.all([
+  const [seriesRows, prevRows, lifetimeRows, reactionRows, impressionRows] = await Promise.all([
     ch.$query<{ date: string; value: number | string }>(
       `SELECT createdDate AS date, sum(views) AS value FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId = ${id} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ${fill}`
     ),
@@ -906,6 +955,9 @@ async function fetchArticleViewDetail(
     // predicate is what keeps this off a full-table scan.
     ch.$query<{ date: string; value: number | string }>(
       `SELECT toDate(time) AS date, sum(if(type = 'Article_Create', 1, -1)) AS value FROM reactions WHERE entityId = ${id} AND type IN ('Article_Create', 'Article_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY date ${fill}`
+    ),
+    ch.$query<{ date: string; value: number | string }>(
+      entityImpressionsSql(VIEW_ENTITY.article, id, from, to)
     ),
   ]);
 
@@ -927,6 +979,8 @@ async function fetchArticleViewDetail(
     lifetime: Number(lifetimeRows[0]?.value ?? 0),
     reactionSeries,
     reactionTotal: sum(reactionSeries),
+    impressionSeries: points(impressionRows),
+    impressionTotal: sum(points(impressionRows)),
   };
 }
 

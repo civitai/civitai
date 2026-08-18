@@ -100,7 +100,19 @@
     };
   }
 
+  // Impressions only appear when the entity actually carries them — an empty panel would claim the number is
+  // zero, when for a type with no impression arm it is simply absent.
   const engagementCharts = $derived([
+    ...(image.impressionTotal > 0
+      ? [
+          {
+            title: 'Feed impressions',
+            total: image.impressionTotal,
+            series: image.impressionSeries,
+            color: 7,
+          },
+        ]
+      : []),
     {
       title: 'Reactions',
       total: image.reactionTotal,
@@ -154,7 +166,7 @@
     />
   </div>
 
-  <div class="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+  <div class="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
     <div class="cs-panel p-3">
       <p class="text-xs text-dark-2">Views {periodLabel}</p>
       <div class="mt-1 flex items-baseline gap-2">
@@ -183,6 +195,12 @@
       <p class="text-xs text-dark-2">Comments {periodLabel}</p>
       <p class="mt-1 text-xl font-semibold text-white">{num(image.commentTotal)}</p>
     </div>
+    {#if image.impressionTotal > 0}
+      <div class="cs-panel p-3">
+        <p class="text-xs text-dark-2">Feed impressions {periodLabel}</p>
+        <p class="mt-1 text-xl font-semibold text-white">{num(image.impressionTotal)}</p>
+      </div>
+    {/if}
   </div>
 </div>
 

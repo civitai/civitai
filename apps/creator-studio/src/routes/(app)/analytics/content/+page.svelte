@@ -7,7 +7,7 @@
   import { goto } from '$app/navigation';
   import { formatRange } from '$lib/date-range';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
-  import { IconEye, IconExternalLink } from '@tabler/icons-svelte';
+  import { IconEye, IconExternalLink, IconLayoutGrid } from '@tabler/icons-svelte';
   import type { TopImage } from '$lib/server/analytics';
   import type { PageData } from './$types';
 
@@ -54,6 +54,7 @@
   const SORTS = [
     { key: 'reactions', label: 'Reactions' },
     { key: 'views', label: 'Views' },
+    { key: 'impressions', label: 'Impressions' },
   ] as const;
   type SortKey = (typeof SORTS)[number]['key'];
   const sort = $derived(
@@ -80,14 +81,18 @@
       ? null
       : sort === 'views'
         ? [...(data[tab] as TopImage[])].sort((a, b) => b.views - a.views)
-        : (data[tab] as TopImage[])
+        : sort === 'impressions'
+          ? [...(data[tab] as TopImage[])].sort((a, b) => b.impressions - a.impressions)
+          : (data[tab] as TopImage[])
   );
   const articles = $derived(
     data.articles === null
       ? null
       : sort === 'views'
         ? [...data.articles].sort((a, b) => b.views - a.views)
-        : [...data.articles].sort((a, b) => b.reactions - a.reactions)
+        : sort === 'impressions'
+          ? [...data.articles].sort((a, b) => b.impressions - a.impressions)
+          : [...data.articles].sort((a, b) => b.reactions - a.reactions)
   );
   // Comics and 3D models arrive wrapped in a panel carrying a `tracking` flag, so that "nothing collected
   // yet" can be told apart from "you have none" — their ClickHouse tables are live but stay empty until the
@@ -158,7 +163,9 @@
         variant="outline"
         size="sm"
       >
-        {#each SORTS as s (s.key)}
+        <!-- Comics are not feed entities, so they have no impressions to rank by — the option is omitted
+             there rather than shown ranking everything at zero. -->
+        {#each SORTS.filter((s) => !(isComics && s.key === 'impressions')) as s (s.key)}
           <ToggleGroupItem value={s.key} class="text-xs">
             {isComics && s.key === 'reactions' ? 'Reads' : s.label}
           </ToggleGroupItem>
@@ -197,7 +204,11 @@
         {trackingLive ? `· ${periodLabel}` : '· by readers, not views'}
       </span>
     {:else}
-      Top {tab} by {sort === 'views' ? 'views' : 'reactions'}
+      Top {tab} by {sort === 'views'
+        ? 'views'
+        : sort === 'impressions'
+          ? 'impressions'
+          : 'reactions'}
       <span class="text-xs text-dark-3">
         {periodLabel}{isMedia && sort === 'views' ? ' · within your 100 most-reacted' : ''}
       </span>
@@ -321,6 +332,12 @@
                 {num(a.views)}
               </span>
               <span title="Reactions {periodLabel}">♥ {num(a.reactions)}</span>
+              {#if a.impressions > 0}
+                <span class="flex items-center gap-1" title="Feed impressions {periodLabel}">
+                  <IconLayoutGrid size={13} />
+                  {num(a.impressions)}
+                </span>
+              {/if}
             </p>
             {#if a.publishedAt}
               <p class="text-xs text-dark-3">Published {a.publishedAt.slice(0, 10)}</p>
