@@ -26,7 +26,7 @@ describe('resolveChatSettings (chat.getUserSettings SSR-seed byte-equality)', ()
       replaceBadWords: false,
       acknowledged: false,
       dmPolicy: 'everyone',
-      holdNewAccounts: true,
+      holdNewAccounts: false,
     });
     expect(resolveChatSettings(undefined)).toBe(DEFAULT_CHAT_SETTINGS);
   });

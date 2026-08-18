@@ -2,13 +2,16 @@ import { Grid, useComputedColorScheme } from '@mantine/core';
 import { registerCustomProtocol } from 'linkifyjs';
 import React from 'react';
 import { ChatList } from '~/components/Chat/ChatList';
+import { ChatListV1 } from '~/components/Chat/ChatListV1';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { ChatSettings } from '~/components/Chat/ChatSettings';
-import classes from './Chat.module.scss';
 import { ExistingChat } from '~/components/Chat/ExistingChat';
+import { ExistingChatV1 } from '~/components/Chat/ExistingChatV1';
 import { NewChat } from '~/components/Chat/NewChat';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import classes from './Chat.module.scss';
 
 registerCustomProtocol('civitai', true);
 
@@ -25,14 +28,21 @@ function ChatWindowContent() {
   const isCreating = useChatStore((state) => state.isCreating);
   const isSettingsOpen = useChatStore((state) => state.isSettingsOpen);
   const colorScheme = useComputedColorScheme('dark');
+  const features = useFeatureFlags();
 
   const isMobile = useContainerSmallerThan(700);
 
+  // The redesign replaced the message surface rather than extending it, so the
+  // previous chat ships alongside it until the flag ramps (868kguhpy).
+  const redesign = !!features.chatRedesign;
+  const List = redesign ? ChatList : ChatListV1;
+  const Conversation = redesign ? ExistingChat : ExistingChatV1;
+
   if (isMobile) {
-    if (isSettingsOpen) return <ChatSettings />;
-    if (!!existingChatId) return <ExistingChat />;
+    if (redesign && isSettingsOpen) return <ChatSettings />;
+    if (!!existingChatId) return <Conversation />;
     if (isCreating) return <NewChat />;
-    return <ChatList />;
+    return <List />;
   }
 
   return (
@@ -45,11 +55,17 @@ function ChatWindowContent() {
           height: '100%',
         }}
       >
-        <ChatList />
+        <List />
       </Grid.Col>
       {/* Chat Panel */}
       <Grid.Col span={{ base: 12, xs: 8 }} h="100%">
-        {isSettingsOpen ? <ChatSettings /> : !existingChatId ? <NewChat /> : <ExistingChat />}
+        {redesign && isSettingsOpen ? (
+          <ChatSettings />
+        ) : !existingChatId ? (
+          <NewChat />
+        ) : (
+          <Conversation />
+        )}
       </Grid.Col>
     </Grid>
   );

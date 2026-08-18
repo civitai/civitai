@@ -289,7 +289,7 @@ function GlobalChatSettings({
         <SettingsSwitch
           label="Hold messages from brand-new accounts"
           description="Accounts under 7 days old land in Requests, never your inbox."
-          checked={settings.holdNewAccounts ?? true}
+          checked={settings.holdNewAccounts ?? false}
           onChange={(checked) => update({ holdNewAccounts: checked })}
         />
         {showBadWords && (

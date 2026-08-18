@@ -103,7 +103,10 @@ describe('DEFAULT_CHAT_SETTINGS', () => {
     // so this default only covers the nothing-stored case — the ?? fallbacks at
     // each read site cover the rest.
     expect(DEFAULT_CHAT_SETTINGS.dmPolicy).toBe('everyone');
-    expect(DEFAULT_CHAT_SETTINGS.holdNewAccounts).toBe(true);
+    // Opt-in while the redesign is flag-gated: the toggle is only reachable
+    // behind `chatRedesign`, so defaulting it on would filter inbound chats for
+    // users who cannot see it.
+    expect(DEFAULT_CHAT_SETTINGS.holdNewAccounts).toBe(false);
     expect(resolveChatSettings(undefined)).toBe(DEFAULT_CHAT_SETTINGS);
   });
 });

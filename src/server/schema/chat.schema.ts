@@ -116,7 +116,10 @@ export const DEFAULT_CHAT_SETTINGS: UserSettingsChat = {
   replaceBadWords: false,
   acknowledged: false,
   dmPolicy: 'everyone',
-  holdNewAccounts: true,
+  // Opt-in, not opt-out: the setting is only reachable behind `chatRedesign`, so
+  // defaulting it on would filter inbound chats for users with no way to see or
+  // change it. Revisit when the flag ramps.
+  holdNewAccounts: false,
 };
 
 /**

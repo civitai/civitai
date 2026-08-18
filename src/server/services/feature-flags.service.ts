@@ -284,6 +284,10 @@ const featureFlags = createFeatureFlags({
     description: 'Send and receive DMs from users across the site.',
     availability: ['blue', 'red', 'user'],
   },
+  // The whole DM redesign (868kguhpy): rebuilt message surface, Inbox/Requests
+  // rail, chat settings, per-conversation controls, emoji. Mods only until it
+  // ramps; everyone else keeps the current chat, which still ships alongside it.
+  chatRedesign: { availability: ['mod'], fliptKey: 'chat-redesign' },
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
   vault: ['user'],

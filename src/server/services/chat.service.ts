@@ -85,7 +85,7 @@ const evaluateDmPolicies = async ({
     const routing = decideDmRouting({
       policy: resolveDmPolicy(settings),
       holdNewAccounts:
-        settings.chat?.holdNewAccounts ?? DEFAULT_CHAT_SETTINGS.holdNewAccounts ?? true,
+        settings.chat?.holdNewAccounts ?? DEFAULT_CHAT_SETTINGS.holdNewAccounts ?? false,
       senderIsNew,
       recipientFollowsSender: followsSender.has(recipientId),
       senderFollowsRecipient: followedBySender.has(recipientId),
