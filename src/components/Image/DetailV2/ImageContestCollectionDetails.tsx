@@ -6,12 +6,17 @@ import produce from 'immer';
 import { useState } from 'react';
 import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
+import {
+  openRejectCollectionItemsModal,
+  type RejectionSelection,
+} from '~/components/Collections/components/RejectCollectionItemsModal';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { resolveRejectionCopy } from '~/shared/constants/collection-rejection.constants';
 import { CollectionItemStatus, CollectionType } from '~/shared/utils/prisma/enums';
 import type { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -224,7 +229,11 @@ export const ImageContestCollectionDetails = ({
                 {item.status === CollectionItemStatus.REJECTED && (
                   <Text>
                     Your submission to the {item.collection.name} contest has been rejected and will
-                    not be visible in the contest collection.
+                    not be visible in the contest collection.{' '}
+                    {resolveRejectionCopy({
+                      reason: item.rejectionReason,
+                      detail: item.rejectionDetail,
+                    })}
                   </Text>
                 )}
 
@@ -341,13 +350,15 @@ function ReviewActions({
       },
     });
 
-  const handleSubmit = (status: CollectionItemStatus) => () => {
-    updateCollectionItemsStatusMutation.mutate({
-      collectionItemIds: [itemId],
-      status,
-      collectionId,
-    });
-  };
+  const handleSubmit =
+    (status: CollectionItemStatus, selection?: RejectionSelection) => () => {
+      updateCollectionItemsStatusMutation.mutate({
+        collectionItemIds: [itemId],
+        status,
+        collectionId,
+        ...selection,
+      });
+    };
 
   const status = updateCollectionItemsStatusMutation.variables?.status;
   const loading = updateCollectionItemsStatusMutation.isPending;
@@ -369,22 +380,21 @@ function ReviewActions({
         </InfoPopover>
       </div>
       <div className="flex items-center justify-center gap-4">
-        <PopConfirm
-          message="Are you sure you want to reject this entry?"
-          onConfirm={handleSubmit(CollectionItemStatus.REJECTED)}
-          withArrow
-          withinPortal
+        <Button
+          className="flex-1"
+          leftSection={<IconBan size="1.25rem" />}
+          color="red"
+          disabled={loading}
+          loading={loading && status === CollectionItemStatus.REJECTED}
+          onClick={() =>
+            openRejectCollectionItemsModal({
+              count: 1,
+              onConfirm: (selection) => handleSubmit(CollectionItemStatus.REJECTED, selection)(),
+            })
+          }
         >
-          <Button
-            className="flex-1"
-            leftSection={<IconBan size="1.25rem" />}
-            color="red"
-            disabled={loading}
-            loading={loading && status === CollectionItemStatus.REJECTED}
-          >
-            Reject
-          </Button>
-        </PopConfirm>
+          Reject
+        </Button>
         <PopConfirm
           message="Are you sure you want to approve this entry?"
           onConfirm={handleSubmit(CollectionItemStatus.ACCEPTED)}
