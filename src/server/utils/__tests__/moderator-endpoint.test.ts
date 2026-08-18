@@ -46,8 +46,16 @@ const { mockGetSession, mockServerSession, mockAudit } = vi.hoisted(() => ({
   mockAudit: vi.fn(),
 }));
 
-/** The INCR reply the rate-limit MULTI resolves to; a test raises it to cross the limit. */
+// `sysRedis` comes from the canonical redis mock, registered globally in
+// src/__tests__/setup.ts — see docs/testing/shared-module-mocks.md. Only the two commands this
+// endpoint uses are stubbed, in `beforeEach`; `REDIS_SYS_KEYS` stays the REAL table, so the
+// rate-limit key this test exercises is the one production builds, and it cannot go stale.
 const mockMultiIncr = { value: 1 };
+const multiFactory = () => ({
+  set: vi.fn().mockReturnThis(),
+  incr: vi.fn().mockReturnThis(),
+  exec: vi.fn().mockImplementation(async () => ['OK', mockMultiIncr.value]),
+});
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -95,11 +103,7 @@ const signedInAs = (user: Partial<typeof MOD>) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
-  redisMock.sysRedis.multi.mockReturnValue({
-    set: vi.fn().mockReturnThis(),
-    incr: vi.fn().mockReturnThis(),
-    exec: vi.fn().mockImplementation(async () => ['OK', mockMultiIncr.value]),
-  });
+  redisMock.sysRedis.multi.mockImplementation(multiFactory);
   redisMock.sysRedis.ttl.mockResolvedValue(60);
   signedInAs({});
 });
