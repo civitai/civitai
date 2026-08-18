@@ -278,6 +278,33 @@ describe('throwIfBlockedByEntityOwner — enforcement', () => {
     expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
   });
 
+  // `commentOld` has one consumer, `toggleReaction` (reaction.service.ts) — the legacy comment
+  // surface has no reaction of its own. Widening the arm to the model owner therefore changes
+  // reaction behaviour: reacting to somebody else's comment under a blocker's model now refuses.
+  it('refuses a reaction on a legacy comment when the MODEL owner blocks, not just the author', async () => {
+    const COMMENT_AUTHOR = 55;
+    mockDb.comment.findUnique.mockResolvedValue({ userId: COMMENT_AUTHOR, modelId: 3 });
+    mockDb.model.findUnique.mockResolvedValue({ userId: OWNER });
+    amIBlockedByUser.mockImplementation(
+      async (args) => (args as { targetUserId: number }).targetUserId === OWNER
+    );
+
+    await expect(
+      throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'commentOld', entityId: 1 })
+    ).rejects.toThrow();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+  });
+
+  it('allows that reaction when neither the author nor the model owner blocks', async () => {
+    mockDb.comment.findUnique.mockResolvedValue({ userId: 55, modelId: 3 });
+    mockDb.model.findUnique.mockResolvedValue({ userId: OWNER });
+
+    await expect(
+      throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'commentOld', entityId: 1 })
+    ).resolves.toBeUndefined();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+  });
+
   it('rejects a blocked user creating a model3d comment', async () => {
     mockDb.model3D.findUnique.mockResolvedValueOnce({ userId: OWNER });
     amIBlockedByUser.mockResolvedValueOnce(true);
