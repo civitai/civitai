@@ -377,6 +377,10 @@
               <span class="text-xs font-semibold text-white" title="Reactions {periodLabel}">
                 ♥ {num(m.reactions)}
               </span>
+              <span class="text-xs font-semibold text-white" title="Feed impressions {periodLabel}">
+                <IconLayoutGrid size={12} class="inline align-[-2px]" />
+                {num(m.impressions)}
+              </span>
             </div>
           </a>
           <a
