@@ -31,6 +31,12 @@ import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import {
+  openRejectCollectionItemsModal,
+  type RejectionSelection,
+} from '~/components/Collections/components/RejectCollectionItemsModal';
+import { resolveRejectionCopy } from '~/shared/constants/collection-rejection.constants';
+import { getDisplayName } from '~/utils/string-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CollectionItemStatus, CollectionMode, CollectionType } from '~/shared/utils/prisma/enums';
@@ -192,8 +198,9 @@ const ReviewCollection = () => {
 
       <Stack gap="sm" mb="lg">
         <Text c="dimmed">
-          You are reviewing items on the collection that are either pending review or have been
-          rejected. You can change the status of these to be accepted or rejected.
+          {isContestCollection
+            ? 'You are reviewing items on the collection that are either pending review or have been rejected. You can change the status of these to be accepted or rejected.'
+            : 'You are reviewing items waiting to join this collection. Accepting one adds it to the collection; rejecting it leaves it out. Either way it leaves this queue.'}
         </Text>
         {isContestCollection && collection.tags.length > 0 && (
           <CollectionCategorySelect
@@ -203,28 +210,32 @@ const ReviewCollection = () => {
           />
         )}
         <Group justify="space-between">
-          <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
-            <Group gap="xs">
-              <Chip value={CollectionItemStatus.REVIEW}>
-                <span>Review</span>
+          {isContestCollection && (
+            <>
+              <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
+                <Group gap="xs">
+                  <Chip value={CollectionItemStatus.REVIEW}>
+                    <span>Review</span>
+                  </Chip>
+                  <Chip value={CollectionItemStatus.REJECTED}>
+                    <span>Rejected</span>
+                  </Chip>
+                  <Chip value={CollectionItemStatus.ACCEPTED}>
+                    <span>Accepted</span>
+                  </Chip>
+                </Group>
+              </Chip.Group>
+              <Chip
+                checked={awaitingHumanReview}
+                onChange={() => {
+                  setAwaitingHumanReview((v) => !v);
+                  deselectAll();
+                }}
+              >
+                <span>Needs human review</span>
               </Chip>
-              <Chip value={CollectionItemStatus.REJECTED}>
-                <span>Rejected</span>
-              </Chip>
-              <Chip value={CollectionItemStatus.ACCEPTED}>
-                <span>Accepted</span>
-              </Chip>
-            </Group>
-          </Chip.Group>
-          <Chip
-            checked={awaitingHumanReview}
-            onChange={() => {
-              setAwaitingHumanReview((v) => !v);
-              deselectAll();
-            }}
-          >
-            <span>Needs human review</span>
-          </Chip>
+            </>
+          )}
 
           <SelectMenuV2
             label="Sort by"
@@ -323,6 +334,13 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
   const queryUtils = trpc.useUtils();
 
   const image = reviewData.image;
+  const rejectionCopy =
+    collectionItem.status === CollectionItemStatus.REJECTED
+      ? resolveRejectionCopy({
+          reason: collectionItem.rejectionReason,
+          detail: collectionItem.rejectionDetail,
+        })
+      : undefined;
 
   return (
     <div className="flex flex-col">
@@ -368,6 +386,12 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                   {collectionItem.status}
                 </Badge>
               )}
+              {collectionItem.status === CollectionItemStatus.REJECTED &&
+                collectionItem.rejectionReason && (
+                  <Badge variant="light" color="red" h={26} radius="xl">
+                    {getDisplayName(collectionItem.rejectionReason)}
+                  </Badge>
+                )}
               {image?.type === 'video' && image.metadata && 'duration' in image.metadata && (
                 <DurationBadge duration={image.metadata.duration ?? 0} h={26} radius="xl" />
               )}
@@ -406,6 +430,11 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             {reviewData.title && (
               <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={2} inline>
                 {reviewData.title}
+              </Text>
+            )}
+            {rejectionCopy && (
+              <Text className={cardClasses.dropShadow} size="sm" lineClamp={3} inline>
+                {rejectionCopy}
               </Text>
             )}
             {reviewData.user && reviewData.user.id !== -1 && (
@@ -478,27 +507,51 @@ function ModerationControls({
 
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
-      async onMutate({ collectionItemIds, status }) {
+      async onMutate({ collectionItemIds, status, rejectionReason }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
+
+        // Snapshot for onError: the item is about to leave the queue, and without a rollback a
+        // failed write hides an entry that is still pending review.
+        const prevData = queryUtils.collection.getAllCollectionItems.getInfiniteData({ ...filters });
+
+        // A decided item leaves the queue rather than flipping in place. Left visible it stays
+        // selectable, and the next bulk action silently re-decides it the other way.
+        const stillMatchesFilter = filters.statuses.includes(status);
 
         queryUtils.collection.getAllCollectionItems.setInfiniteData(
           { ...filters },
           produce((data) => {
             if (!data?.pages?.length) return;
 
-            for (const page of data.pages)
-              for (const item of page.collectionItems) {
+            for (const page of data.pages) {
+              if (!stillMatchesFilter) {
+                page.collectionItems = page.collectionItems.filter(
+                  (item) => !collectionItemIds.includes(item.id)
+                );
+                continue;
+              }
+
+              for (const item of page.collectionItems)
                 if (collectionItemIds.includes(item.id)) {
                   item.status = status;
+                  item.rejectionReason = rejectionReason ?? null;
+                  item.rejectionDetail = null;
                 }
-              }
+            }
           })
         );
+
+        return { prevData };
       },
       onSuccess() {
         showSuccessNotification({ message: `The items have been reviewed` });
       },
-      onError(error) {
+      onError(error, _variables, context) {
+        if (context?.prevData)
+          queryUtils.collection.getAllCollectionItems.setInfiniteData(
+            { ...filters },
+            context.prevData
+          );
         showNotification({
           id: 'error',
           title: 'Error',
@@ -508,12 +561,14 @@ function ModerationControls({
       },
     });
 
-  const handleRejectSelected = () => {
+  const handleRejectSelected = (selection: RejectionSelection) => {
+    const collectionItemIds = selected;
     deselectAll();
     updateCollectionItemsStatusMutation.mutate({
-      collectionItemIds: selected,
+      collectionItemIds,
       status: CollectionItemStatus.REJECTED,
       collectionId: filters.collectionId,
+      ...selection,
     });
   };
 
@@ -594,18 +649,21 @@ function ModerationControls({
           </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
-      <PopConfirm
-        message={`Are you sure you want to reject ${selected.length} image(s)?`}
-        position="bottom-end"
-        onConfirm={handleRejectSelected}
-        withArrow
-      >
-        <ButtonTooltip label="Reject" {...tooltipProps}>
-          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
-            <IconTrash size="1.25rem" />
-          </LegacyActionIcon>
-        </ButtonTooltip>
-      </PopConfirm>
+      <ButtonTooltip label="Reject" {...tooltipProps}>
+        <LegacyActionIcon
+          variant="outline"
+          disabled={!selected.length}
+          color="red"
+          onClick={() =>
+            openRejectCollectionItemsModal({
+              count: selected.length,
+              onConfirm: handleRejectSelected,
+            })
+          }
+        >
+          <IconTrash size="1.25rem" />
+        </LegacyActionIcon>
+      </ButtonTooltip>
       <ButtonTooltip label="Refresh" {...tooltipProps}>
         <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
           <IconReload size="1.25rem" />

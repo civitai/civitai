@@ -4593,6 +4593,16 @@ enum CollectionItemStatus {
   REJECTED
 }
 
+enum CollectionItemRejectionReason {
+  OffTopic
+  WrongFormat
+  Duplicate
+  Quality
+  RulesViolation
+  Other
+  Automated
+}
+
 model CollectionItem {
   id           Int                   @id @default(autoincrement())
   createdAt    DateTime?             @default(now())
@@ -4616,6 +4626,8 @@ model CollectionItem {
   reviewedAt   DateTime?
   note         String?
   status       CollectionItemStatus  @default(ACCEPTED)
+  rejectionReason CollectionItemRejectionReason?
+  rejectionDetail String?
   tagId        Int?
   tag          Tag?                  @relation(fields: [tagId], references: [id], onDelete: SetNull)
   scores       CollectionItemScore[]

@@ -88,6 +88,10 @@ function onsiteRow(over: Record<string, unknown> = {}) {
     cover: null,
     user: { id: 7, username: 'dev', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: {
       currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
       manifest: { name: 'Cool App', page: { path: '/run' } },
@@ -115,6 +119,10 @@ function offsiteExternalRow(over: Record<string, unknown> = {}) {
     cover: null,
     user: { id: 7, username: 'dev', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: null,
     screenshots: [],
     ...over,

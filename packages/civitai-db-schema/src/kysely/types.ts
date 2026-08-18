@@ -73,6 +73,7 @@ import type {
   CollectionType,
   CollectionMode,
   CollectionItemStatus,
+  CollectionItemRejectionReason,
   CollectionContributorPermission,
   CollectionCollaboratorRole,
   CollectionInviteStatus,
@@ -1820,6 +1821,8 @@ export type CollectionItem = {
   reviewedAt: Timestamp | null;
   note: string | null;
   status: Generated<CollectionItemStatus>;
+  rejectionReason: CollectionItemRejectionReason | null;
+  rejectionDetail: string | null;
   tagId: number | null;
 };
 export type CollectionItemScore = {

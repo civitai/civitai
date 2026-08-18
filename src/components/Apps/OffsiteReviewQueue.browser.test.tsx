@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -50,7 +51,15 @@ const mocks = vi.hoisted(() => ({
   assetsData: { current: null as unknown },
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock). A hand-written factory silently breaks the day the
+// module graph reaches an export it omits — measured: once the listing detail
+// began importing `SmartCreatorCard` (→ ChatUserButton → useChatEnabled), a
+// factory listing only `useFeatureFlags` made this whole FILE fail to import with
+// `does not provide an export named 'useFeatureFlagsReady'`, reported as 0 tests
+// collected rather than as a failure.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
 // The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
@@ -328,10 +337,31 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
   test('the modal labels the Category and Content-rating fields', async () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect.element(page.getByText('Category', { exact: true })).toBeInTheDocument();
+    // 🔴 SCOPED AWAY FROM THE PREVIEW PANE, for the same reason the Content-rating
+    // assertion below already is. The listing-preview detail now carries a store-style
+    // "Details" accordion whose rows are ALSO labelled `Category` / `Rating`, so a
+    // page-wide exact query resolves to 2 elements and the strict locator throws. This
+    // test is about the review FORM's own field labels — say so in the selector, rather
+    // than loosening to `.first()`, which would be satisfied by whichever happened to
+    // render first.
+    const previewDetail = page.getByTestId('apps-listing-preview-detail');
+    await expect.element(previewDetail).toBeInTheDocument();
+    // Positive control: the preview pane really does hold a `Category` row, so the
+    // scoped count below is a discrimination and not an accident of there being one.
+    expect(previewDetail.getByText('Category', { exact: true }).elements()).toHaveLength(1);
+    const formCategoryLabels = page
+      .getByText('Category', { exact: true })
+      .elements()
+      .filter((el) => !el.closest('[data-testid="apps-listing-preview-detail"]'));
+    expect(formCategoryLabels).toHaveLength(1);
     await expect.element(page.getByText('Content rating', { exact: true })).toBeInTheDocument();
-    // The badge values they label are still rendered.
-    await expect.element(page.getByText('utility', { exact: true })).toBeInTheDocument();
+    // The badge value the Category field labels is still rendered — scoped out of the
+    // preview pane, which now also prints the category in its Details row.
+    const formCategoryValues = page
+      .getByText('utility', { exact: true })
+      .elements()
+      .filter((el) => !el.closest('[data-testid="apps-listing-preview-detail"]'));
+    expect(formCategoryValues.length).toBeGreaterThan(0);
     // #3412 added the listing-preview detail pane (`apps-listing-preview-detail`), which
     // renders its OWN content-rating badge — so a bare exact 'g' now matches 2 elements and
     // the strict query throws. Scope to the Content-rating FIELD GROUP this test is about,

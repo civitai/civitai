@@ -725,6 +725,7 @@ export const getImageContestCollectionDetailsHandler = async ({
     const collectionItems = await getImageContestCollectionDetails({
       ...input,
       userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
     });
     const imageId = collectionItems?.[0]?.imageId;
     if (!imageId) return { collectionItems, post: null };
