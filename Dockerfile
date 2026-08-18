@@ -73,6 +73,35 @@ RUN --mount=type=cache,target=/app/.next/cache \
 # report health. Cheap: a few seconds of file reads.
 RUN node scripts/check-server-graph-singletons.mjs
 
+# Compiled-branch gate — the second HARD build-output gate, and for the same reason as the
+# one above: nothing that reads SOURCE can see this class of defect.
+#
+# Release 5.1.18 shipped `resolveStoreVisibilityScopeUninstrumented` as
+# `async function S(e){if(await p(e))return"full"}` — two of its three returns were absent
+# from the emitted chunk, so it returned `undefined` for every non-privileged caller. One
+# read path defaulted that to `'full'` and served the whole App-store catalog to anonymous
+# callers; the other defaulted it to `'none'` and showed the intended cohort an empty
+# store. The TypeScript was correct throughout, so a 75-test unit suite, an integration
+# suite driving the real feature-flag client, and four rounds of review were all
+# structurally incapable of catching it (civitai#3983).
+#
+# This reads the emitted `.js.map` `mappings` and asserts that each watched fail-closed
+# branch still has a representation in the output. Same placement rationale as the gate
+# above: `.next` exists in this stage, so there is no second build; and it exits 2 (not 0)
+# when it cannot observe its input. Adding a gate is one entry in
+# `scripts/compiled-branch-watchlist.mjs`.
+#
+# 🔴 `--warn-only` because THIS BUILD CURRENTLY VIOLATES IT. The bundler defect behind
+# civitai#3983 is not fixed — `main` and `release` carry byte-identical source for that
+# function and both emit it truncated — so a hard gate here would fail every production
+# build immediately. It reports loudly and exits 0 instead. `--warn-only` does NOT
+# downgrade exit 2, so a gate that cannot see its own input still fails the build.
+#
+# REMOVE `--warn-only` as part of fixing the underlying defect. That flip is the
+# definition of done for civitai#3983, and it is the only thing that turns this from a log
+# line back into a gate.
+RUN node scripts/assert-compiled-branches.mjs --warn-only
+
 # Bundle-size budget (report-only during the soak). Next 16 (Turbopack) emits
 # opaque hashed chunks and removed per-route build stats, so scripts/bundle-budget.mjs
 # parses .next/build-manifest.json to reconstruct per-page First Load JS (brotli)
