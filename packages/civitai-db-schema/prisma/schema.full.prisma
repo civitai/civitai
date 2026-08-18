@@ -3488,7 +3488,10 @@ model BlockSpendAttribution {
   /// (bounded, app-owned). NULL when the app supplied none.
   sharedContentKey    String? @map("shared_content_key")
 
-  status             String   @default("pending")
+  // Must stay equal to the column default in Postgres and to what backpay selects: Prisma supplies
+  // this itself on create, so a value backpay does not read makes an omitted-status row invisible to
+  // payout forever. Pinned by block-spend-attribution-status-default.test.ts.
+  status             String   @default("tracked")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.
   voidedReason       String?  @map("voided_reason")
