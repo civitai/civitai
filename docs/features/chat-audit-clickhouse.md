@@ -9,36 +9,51 @@ without them — `isFlipt` returns false for an unknown flag, so the write is a
 no-op — but **silence in an audit log is indistinguishable from "nothing
 happened"**, so treat it as unfinished until all three are done.
 
-## 1. The table
+## 1. The table — created
 
 ```sql
-CREATE TABLE IF NOT EXISTS chatAuditEvents
+CREATE TABLE IF NOT EXISTS default.chatAuditEvents
 (
-    createdAt   DateTime DEFAULT now(),
-    type        LowCardinality(String),   -- 'delete' | 'clear' | 'edit'
-    chatId      UInt32,
-    messageId   UInt32 DEFAULT 0,         -- 0 for 'clear', which acts on the conversation
-    actorId     UInt32,                   -- who performed the act
-    subjectId   UInt32,                   -- whose content it was; differs on a moderator delete
-    actorRole   LowCardinality(String),   -- 'owner' | 'moderator'
-    oldValue    String,
-    newValue    String,
-    truncated   UInt8 DEFAULT 0
+    `createdAt` DateTime64(3) DEFAULT now64(3),
+    `type` LowCardinality(String),        -- 'delete' | 'clear' | 'edit'
+    `chatId` Int32,
+    `messageId` Int32 DEFAULT 0,          -- 0 for 'clear', which acts on the conversation
+    `actorId` Int32,                      -- who performed the act
+    `subjectId` Int32,                    -- whose content it was; differs on a moderator delete
+    `actorRole` LowCardinality(String),   -- 'owner' | 'moderator'
+    `oldValue` String CODEC(ZSTD(3)),
+    `newValue` String CODEC(ZSTD(3)),
+    `truncated` UInt8 DEFAULT 0
 )
-ENGINE = MergeTree
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
 PARTITION BY toYYYYMM(createdAt)
 ORDER BY (chatId, createdAt)
-TTL createdAt + INTERVAL 2 YEAR;
+SETTINGS index_granularity = 8192
 ```
 
-`ORDER BY (chatId, createdAt)` matches the reviewer's primary question — "what
-happened in this conversation" — so that read is a bounded range scan. The
-`actorId` lookup is a scan; add a skip index if it gets used often.
+Shaped to match `entityChangeEvents`, which is the precedent this log follows:
 
-Set the TTL deliberately rather than inheriting a default. These rows hold up to
-4,000 characters of message body keyed to a user, and account deletion removes
-the Postgres copy without touching this one — so the retention window here is a
-privacy decision, not a storage one.
+- **`SharedMergeTree`, not `MergeTree`.** The cluster has two replicas; a plain
+  `MergeTree` would exist on whichever node ran the DDL and be missing from the
+  other. Verified present on both.
+- **`DateTime64(3)`**, so several events in the same second still order, which
+  the keyset pagination on the mod page depends on.
+- **Signed ints.** Chat system messages use `userId: -1`; `UInt32` would store
+  that as 4294967295.
+- **`ORDER BY (chatId, createdAt)`** — "what happened in this conversation" is
+  the reviewer's first question, so it is a bounded range scan. Filtering by
+  `actorId` is a scan; add a skip index if that becomes a common path.
+
+**No TTL, deliberately.** `entityChangeEvents` has none either, and a TTL on an
+audit log silently deletes evidence — adding one later is one statement, while
+recovering what one removed is impossible. But these rows hold up to 4,000
+characters of message body keyed to a user, and account deletion removes the
+Postgres copy without touching this one, so **the retention window is an open
+privacy decision, not a settled default**:
+
+```sql
+ALTER TABLE default.chatAuditEvents MODIFY TTL createdAt + INTERVAL 2 YEAR;
+```
 
 ## 2. The Flipt flag
 
