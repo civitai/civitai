@@ -13,6 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useState } from 'react';
+import { ModeratorChatThread } from '~/components/Chat/ModeratorChatThread';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -24,9 +25,15 @@ const typeOptions = [
   { value: 'delete', label: 'Message deletes' },
   { value: 'clear', label: 'Conversation clears' },
   { value: 'edit', label: 'Edits' },
+  { value: 'read', label: 'Moderator reads' },
 ];
 
-const typeColor: Record<string, string> = { delete: 'red', clear: 'violet', edit: 'orange' };
+const typeColor: Record<string, string> = {
+  delete: 'red',
+  clear: 'violet',
+  edit: 'orange',
+  read: 'gray',
+};
 
 export default function ChatAudit() {
   const [chatId, setChatId] = useState<number | undefined>();
@@ -34,12 +41,13 @@ export default function ChatAudit() {
   const [type, setType] = useState<string | null>(null);
   // Keyset pages, kept as a stack so Back does not refetch from the top.
   const [cursors, setCursors] = useState<Date[]>([]);
+  const [openChat, setOpenChat] = useState<number | null>(null);
 
   const cursor = cursors[cursors.length - 1];
   const { data, isLoading, isFetching } = trpc.chat.getAudit.useQuery({
     chatId,
     actorId,
-    type: (type ?? undefined) as 'delete' | 'clear' | 'edit' | undefined,
+    type: (type ?? undefined) as 'delete' | 'clear' | 'edit' | 'read' | undefined,
     cursor,
     limit: 50,
   });
@@ -128,7 +136,14 @@ export default function ChatAudit() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Text size="xs">#{row.chatId}</Text>
+                      <Text
+                        size="xs"
+                        c="blue"
+                        className="cursor-pointer"
+                        onClick={() => setOpenChat(row.chatId)}
+                      >
+                        #{row.chatId}
+                      </Text>
                       {!!row.messageId && (
                         <Text size="xs" c="dimmed">
                           msg #{row.messageId}
@@ -190,6 +205,7 @@ export default function ChatAudit() {
           </>
         )}
       </Stack>
+      <ModeratorChatThread chatId={openChat} onClose={() => setOpenChat(null)} />
     </div>
   );
 }

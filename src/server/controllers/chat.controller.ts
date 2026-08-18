@@ -22,7 +22,7 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
-import type { GetChatAuditInput } from '~/server/schema/chat-audit.schema';
+import type { GetChatAuditInput, GetModeratorChatInput } from '~/server/schema/chat-audit.schema';
 import { clickhouse } from '~/server/clickhouse/client';
 import {
   chatReferenceMessageSelect,
@@ -993,6 +993,84 @@ export const getChatAuditHandler = async ({ input }: { input: GetChatAuditInput 
     items,
     nextCursor: items.length === limit ? items[items.length - 1].createdAt : null,
   };
+};
+
+/**
+ * Read a whole conversation as a moderator.
+ *
+ * Deliberately ignores every per-user hiding rule — `deletedAt` on a message and
+ * `clearedAt` on a membership — because a report filed after a participant tidied
+ * their side is exactly the case this exists for. Deleted rows come back marked
+ * rather than omitted, and each member's watermark is returned so the caller can
+ * show what the participants themselves can no longer see.
+ *
+ * Reading someone's private conversation is itself recorded. Nothing else in the
+ * product logs that access.
+ */
+export const getModeratorChatHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetModeratorChatInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    const { chatId, limit } = input;
+
+    const chat = await dbRead.chat.findFirst({
+      where: { id: chatId },
+      select: {
+        id: true,
+        createdAt: true,
+        chatMembers: {
+          select: {
+            userId: true,
+            status: true,
+            isOwner: true,
+            clearedAt: true,
+            filteredAt: true,
+            user: { select: { id: true, username: true, isModerator: true } },
+          },
+        },
+      },
+    });
+
+    if (!chat) throw throwNotFoundError(`No chat found for ID (${chatId})`);
+
+    const messages = await dbRead.chatMessage.findMany({
+      where: { chatId },
+      orderBy: { id: 'asc' },
+      take: limit,
+      select: {
+        id: true,
+        createdAt: true,
+        userId: true,
+        content: true,
+        contentType: true,
+        deletedAt: true,
+        editedAt: true,
+        referenceMessageId: true,
+      },
+    });
+
+    await ctx.track
+      .chatAudit({
+        type: 'read',
+        chatId,
+        actorId: ctx.user.id,
+        subjectId: 0,
+        actorRole: 'moderator',
+        oldValue: '',
+        newValue: '',
+        truncated: 0,
+      })
+      .catch(() => undefined);
+
+    return { chat, messages };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
 };
 
 /**

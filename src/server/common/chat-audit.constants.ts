@@ -5,8 +5,11 @@ export const CHAT_AUDIT_FLAG = 'chat-audit-log';
  * view. A cleared conversation and a deleted message both stop being readable
  * in the product; without a record of the act, a `ChatReport` filed afterwards
  * points at a thread nobody can reconstruct.
+ *
+ * `read` is the inverse: a moderator opening someone's private conversation is
+ * itself an act worth a trail, and the log is the only place that records it.
  */
-export const chatAuditEventTypes = ['edit', 'delete', 'clear'] as const;
+export const chatAuditEventTypes = ['edit', 'delete', 'clear', 'read'] as const;
 export type ChatAuditEventType = (typeof chatAuditEventTypes)[number];
 
 export type ChatAuditRow = {
@@ -20,7 +23,10 @@ export type ChatAuditRow = {
    * overwrote them.
    */
   actorId: number;
-  /** Whose content it was. Differs from `actorId` on a moderator delete. */
+  /**
+   * Whose content it was. Differs from `actorId` on a moderator delete, and is
+   * 0 for events scoped to a conversation rather than a person (`read`).
+   */
   subjectId: number;
   /** `owner` when acting on your own, `moderator` otherwise. */
   actorRole: 'owner' | 'moderator';

@@ -71,7 +71,17 @@ SELECT * FROM chatAuditEvents ORDER BY createdAt DESC LIMIT 10;
 
 ## Reading it
 
-`/moderator/chat-audit` — moderator-gated page. Filter by chat id, actor user id
+`/moderator/chat-audit` — moderator-gated page. Clicking a chat id opens the
+**full thread**: every message, including ones a participant deleted and ones
+behind either side's clear watermark, each marked with who can no longer see it.
+Without that, retaining rows so a report "stays reviewable" was only half true —
+they survived, but nothing in the product could review them.
+
+Opening a thread writes a `read` event. A moderator reading someone's private
+conversation is an act worth a trail, and this log is the only place that
+records it.
+
+The list itself is moderator-gated too. Filter by chat id, actor user id
 and event type; keyset-paginated. Backed by `chat.getAudit`
 (`moderatorProcedure`), which returns empty rather than throwing when ClickHouse
 is absent, so the page reads as unconfigured rather than broken in dev.
@@ -86,3 +96,5 @@ is absent, so the page reads as unconfigured rather than broken in dev.
 - **Not recorded:** kicks, `filteredAt` transitions, notification and pin
   changes, DM-policy changes. Add them if moderation asks for the membership
   story rather than the content one.
+- **Thread reads are capped at 500 messages**, oldest first. Long conversations
+  truncate rather than paginate.

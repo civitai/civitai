@@ -4,6 +4,7 @@ import {
   createMessageHandler,
   deleteMessageHandler,
   getChatAuditHandler,
+  getModeratorChatHandler,
   getChatsForUserHandler,
   getInfiniteMessagesHandler,
   getMessageByIdHandler,
@@ -27,7 +28,7 @@ import {
   modifyUserInput,
   userSettingsChat,
 } from '~/server/schema/chat.schema';
-import { getChatAuditInput } from '~/server/schema/chat-audit.schema';
+import { getChatAuditInput, getModeratorChatInput } from '~/server/schema/chat-audit.schema';
 import { guardedProcedure, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -89,6 +90,10 @@ export const chatRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getChatAuditInput)
     .query(getChatAuditHandler),
+  getModeratorChat: moderatorProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getModeratorChatInput)
+    .query(getModeratorChatHandler),
   getUnreadCount: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getUnreadMessagesForUserHandler),
