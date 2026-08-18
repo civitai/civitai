@@ -92,7 +92,16 @@
   // Comics and 3D models arrive wrapped in a panel carrying a `tracking` flag, so that "nothing collected
   // yet" can be told apart from "you have none" — their ClickHouse tables are live but stay empty until the
   // emitting code deploys and the backfill runs.
-  const comics = $derived(data.comics?.comics ?? null);
+  const comics = $derived.by(() => {
+    const list = data.comics?.comics ?? null;
+    if (!list) return null;
+    // Comics rank by views vs chapter READS, not reactions: the `reactions` type enum has no Comic arm, so
+    // there is no reaction count to sort on. `sort` is shared with the other tabs, and its 'reactions' value
+    // maps to reads here — the control is relabelled rather than given a third vocabulary.
+    return sort === 'views'
+      ? [...list].sort((a, b) => b.projectViews - a.projectViews)
+      : [...list].sort((a, b) => b.chapterReads - a.chapterReads);
+  });
   const model3ds = $derived(data.model3ds?.models ?? null);
   const trackingLive = $derived(
     isComics ? (data.comics?.tracking ?? false) : is3d ? (data.model3ds?.tracking ?? false) : true
@@ -137,7 +146,7 @@
     {/each}
   </ToggleGroup>
 
-  {#if !isComics}
+  {#if !is3d}
     <div class="flex items-center gap-2">
       <span class="text-xs text-dark-3">Rank by</span>
       <ToggleGroup
@@ -150,7 +159,9 @@
         size="sm"
       >
         {#each SORTS as s (s.key)}
-          <ToggleGroupItem value={s.key} class="text-xs">{s.label}</ToggleGroupItem>
+          <ToggleGroupItem value={s.key} class="text-xs">
+            {isComics && s.key === 'reactions' ? 'Reads' : s.label}
+          </ToggleGroupItem>
         {/each}
       </ToggleGroup>
     </div>
@@ -181,9 +192,9 @@
         {trackingLive ? `· by views ${periodLabel}` : '· view tracking not collecting yet'}
       </span>
     {:else if isComics}
-      Your comics
+      Your comics by {sort === 'views' ? 'views' : 'chapter reads'}
       <span class="text-xs text-dark-3">
-        {trackingLive ? `· views and chapter reads ${periodLabel}` : '· by readers, not views'}
+        {trackingLive ? `· ${periodLabel}` : '· by readers, not views'}
       </span>
     {:else}
       Top {tab} by {sort === 'views' ? 'views' : 'reactions'}

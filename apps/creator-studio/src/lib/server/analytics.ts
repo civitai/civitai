@@ -44,10 +44,8 @@ export type ContentAnalytics = {
   imageViews: TimePoint[];
   articleViews: TimePoint[];
   modelViews: TimePoint[];
-  /** Feed impressions on the creator's images. Null while the pipeline is dark — see impressionsTracking. */
+  /** Feed impressions across the creator's images and models. */
   impressions: TimePoint[];
-  /** False until any impression row exists at all, so the UI can say "not collecting yet" instead of "0". */
-  impressionsTracking: boolean;
   totals: ContentTotals;
 };
 
@@ -137,7 +135,7 @@ export type AllTimeTotals = { reactions: number; comments: number };
 // of these queries changes, or warm keys keep serving the old shape past the deploy. These four expire independently,
 // so a stale one next to a fresh one puts contradictory reaction totals on /dashboard and /analytics at once.
 export const getContentAnalytics = createCache({
-  name: 'analytics:content:v3',
+  name: 'analytics:content:v4',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchContentAnalytics(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -406,8 +404,8 @@ const impressionArms = () =>
     .join(', ');
 
 // Impressions land in their own table rather than `daily_views`, so this cannot reuse `viewTrackingLive`.
-// Deliberately uncached — see the note on viewTrackingLive.
-async function impressionTrackingLive(): Promise<boolean> {
+// Deliberately uncached, and deliberately NOT part of the cached ContentAnalytics payload — see below.
+export async function impressionTrackingLive(): Promise<boolean> {
   const rows = await getClickhouse().$query<{ one: number }>(
     `SELECT 1 AS one FROM impressions_daily_by_owner WHERE entityType IN (${impressionArms()}) LIMIT 1`
   );
@@ -455,10 +453,7 @@ async function fetchContentAnalytics(
       series(modelViewsDailySql(modelIds, from, to)),
     ]);
 
-  const [impressions, impressionsTracking] = await Promise.all([
-    series(impressionsDailySql(uid, from, to)),
-    impressionTrackingLive(),
-  ]);
+  const impressions = await series(impressionsDailySql(uid, from, to));
 
   const sum = (s: TimePoint[]) => s.reduce((acc, p) => acc + p.value, 0);
   return {
@@ -471,7 +466,6 @@ async function fetchContentAnalytics(
     articleViews,
     modelViews,
     impressions,
-    impressionsTracking,
     totals: {
       reactions: sum(reactions),
       followers: sum(followers),

@@ -105,7 +105,7 @@
           // Impressions are omitted entirely until the pipeline is live, rather than shown as 0 — a real zero
           // beside a real number reads as a broken feature, and an empty chart already means both "not
           // collecting yet" and "mistyped entity type".
-          ...(data.analytics.impressionsTracking
+          ...(data.impressionsTracking
             ? [
                 {
                   label: 'Feed impressions',
@@ -208,7 +208,7 @@
             prev: data.analyticsPrev?.articleViews,
             color: 6,
           },
-          ...(data.analytics.impressionsTracking
+          ...(data.impressionsTracking
             ? [
                 {
                   title: 'Feed impressions',

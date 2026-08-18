@@ -119,14 +119,17 @@
 <AnalyticsHeader range={data.range} compare={data.compare} />
 
 <div class="mb-4">
+  <!-- Back to the tab this came from. The entity carries its own media type, so a video never sends you to
+       the images tab. -->
   <a
-    href="/analytics/content"
+    href="/analytics/content{image.type === 'video' ? '?tab=videos' : ''}"
     class="mb-1 inline-flex items-center gap-1 text-xs text-dark-2 hover:text-white"
   >
-    <IconArrowLeft size={13} /> All content
+    <IconArrowLeft size={13} />
+    {image.type === 'video' ? 'All videos' : 'All images'}
   </a>
   <h2 class="flex items-center gap-2 text-xl font-semibold text-white">
-    Image #{image.imageId}
+    {image.type === 'video' ? 'Video' : 'Image'} #{image.imageId}
     <a
       href={civitaiUrl}
       target="_blank"
