@@ -29,12 +29,22 @@ function mockContestCollection() {
   });
 }
 
-function mockPriorItem(status: CollectionItemStatus = CollectionItemStatus.REVIEW) {
+type PriorRejection = {
+  rejectionReason?: CollectionItemRejectionReason | null;
+  rejectionDetail?: string | null;
+};
+
+function mockPriorItem(
+  status: CollectionItemStatus = CollectionItemStatus.REVIEW,
+  prior: PriorRejection = {}
+) {
   mockDbWrite.collectionItem.findMany.mockResolvedValue([
     {
       id: ITEM_ID,
       addedById: SUBMITTER_ID,
       status,
+      rejectionReason: prior.rejectionReason ?? null,
+      rejectionDetail: prior.rejectionDetail ?? null,
       imageId: 1234,
       articleId: null,
       modelId: null,
@@ -215,6 +225,72 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
     });
     const [{ details }] = createNotificationMock.mock.calls[0];
     expect(details.reason).toBeUndefined();
+  });
+
+  // The UPDATE rewrites the reason unconditionally. If only the status guard held, a second
+  // reviewer could replace the stored reason — and `reviewedById` with it — while the submitter
+  // keeps reading the first reviewer's sentence.
+  it('notifies again when a re-reject changes the reason', async () => {
+    mockPriorItem(CollectionItemStatus.REJECTED, {
+      rejectionReason: CollectionItemRejectionReason.Duplicate,
+    });
+
+    await updateCollectionItemsStatus({
+      input: {
+        collectionId: COLLECTION_ID,
+        collectionItemIds: [ITEM_ID],
+        status: CollectionItemStatus.REJECTED,
+        rejectionReason: CollectionItemRejectionReason.Quality,
+      },
+      userId: REVIEWER_ID,
+      isSystem: true,
+    });
+
+    expect(createNotificationMock).toHaveBeenCalledTimes(1);
+    const [{ details }] = createNotificationMock.mock.calls[0];
+    expect(details.reason).toBe("It doesn't meet this collection's quality bar.");
+  });
+
+  it('stays silent when a re-reject repeats the same reason', async () => {
+    mockPriorItem(CollectionItemStatus.REJECTED, {
+      rejectionReason: CollectionItemRejectionReason.Duplicate,
+    });
+
+    await updateCollectionItemsStatus({
+      input: {
+        collectionId: COLLECTION_ID,
+        collectionItemIds: [ITEM_ID],
+        status: CollectionItemStatus.REJECTED,
+        rejectionReason: CollectionItemRejectionReason.Duplicate,
+      },
+      userId: REVIEWER_ID,
+      isSystem: true,
+    });
+
+    expect(createNotificationMock).not.toHaveBeenCalled();
+  });
+
+  it('notifies again when a re-reject rewrites the free text under Other', async () => {
+    mockPriorItem(CollectionItemStatus.REJECTED, {
+      rejectionReason: CollectionItemRejectionReason.Other,
+      rejectionDetail: 'Crop out the watermark.',
+    });
+
+    await updateCollectionItemsStatus({
+      input: {
+        collectionId: COLLECTION_ID,
+        collectionItemIds: [ITEM_ID],
+        status: CollectionItemStatus.REJECTED,
+        rejectionReason: CollectionItemRejectionReason.Other,
+        rejectionDetail: 'Actually, the watermark is fine — the crop is not.',
+      },
+      userId: REVIEWER_ID,
+      isSystem: true,
+    });
+
+    expect(createNotificationMock).toHaveBeenCalledTimes(1);
+    const [{ details }] = createNotificationMock.mock.calls[0];
+    expect(details.reason).toBe('Actually, the watermark is fine — the crop is not.');
   });
 });
 

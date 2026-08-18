@@ -2386,6 +2386,8 @@ export const updateCollectionItemsStatus = async ({
             id: true,
             addedById: true,
             status: true,
+            rejectionReason: true,
+            rejectionDetail: true,
             imageId: true,
             articleId: true,
             modelId: true,
@@ -2415,8 +2417,17 @@ export const updateCollectionItemsStatus = async ({
 
     await Promise.all(
       priorItems.map(async (item) => {
-        // Skip missing submitter, self-review, and no-op status changes.
-        if (!item.addedById || item.addedById === userId || item.status === status) return;
+        // A re-reject rewrites the stored reason, so "same status" alone is not a no-op: without
+        // the copy comparison the row would end up disagreeing with the sentence the submitter read.
+        const isNoop =
+          item.status === status &&
+          resolveRejectionCopy({
+            reason: item.rejectionReason,
+            detail: item.rejectionDetail,
+          }) === reason;
+
+        // Skip missing submitter, self-review, and no-op reviews.
+        if (!item.addedById || item.addedById === userId || isNoop) return;
 
         await createNotification({
           type: notificationType,
