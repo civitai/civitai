@@ -555,6 +555,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               ? paidAccessTerms.download.price
               : undefined
           }
+          listedPrice={
+            hasDownloadPermissions && isOwnerOrMod && paidAccessTerms?.download
+              ? paidAccessTerms.download.price
+              : undefined
+          }
           isLoadingAccess={isLoadingAccess}
           archived={archived}
           onPurchase={() => onPurchase('download')}
@@ -716,6 +721,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       generationPrice={
                         generationRequiresPurchase && !isLoadingAccess && paidAccessTerms
                           ? generationPrice(paidAccessTerms)
+                          : undefined
+                      }
+                      listedPrice={
+                        !generationRequiresPurchase && isOwnerOrMod && paidAccessTerms
+                          ? generationPrice(paidAccessTerms) || undefined
                           : undefined
                       }
                       onPurchase={() => onPurchase('generation')}

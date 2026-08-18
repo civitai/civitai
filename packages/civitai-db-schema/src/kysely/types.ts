@@ -73,6 +73,7 @@ import type {
   CollectionType,
   CollectionMode,
   CollectionItemStatus,
+  CollectionItemRejectionReason,
   CollectionContributorPermission,
   CollectionCollaboratorRole,
   CollectionInviteStatus,
@@ -305,6 +306,8 @@ export type AppBlockPublishRequest = {
   rejection_reason: string | null;
   approval_notes: string | null;
   forgejo_commit_sha: string | null;
+  source_commit: string | null;
+  source_dirty: boolean | null;
   deploy_state: string | null;
   deploy_detail: string | null;
   deploy_updated_at: Timestamp | null;
@@ -1813,6 +1816,8 @@ export type CollectionItem = {
   reviewedAt: Timestamp | null;
   note: string | null;
   status: Generated<CollectionItemStatus>;
+  rejectionReason: CollectionItemRejectionReason | null;
+  rejectionDetail: string | null;
   tagId: number | null;
 };
 export type CollectionItemScore = {

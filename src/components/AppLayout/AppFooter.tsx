@@ -78,6 +78,13 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     color: 'blue',
     children: 'Creators',
   },
+  {
+    key: 'advertising',
+    href: 'https://advertising.civitai.com',
+    target: '_blank',
+    rel: 'nofollow noreferrer',
+    children: 'Advertise',
+  },
   // {
   //   key: 'careers',
   //   href: '/content/careers',

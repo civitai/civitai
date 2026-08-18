@@ -205,6 +205,52 @@ export async function getBlockCheckOwnerIdsForComment(commentId: number): Promis
   return [...ids];
 }
 
+/**
+ * Owners to check for a write on the legacy model-comment surface (`Comment`).
+ *
+ * A create is aimed by the request; an edit writes `modelId`/`parentId` through from the request
+ * while being scoped by comment id alone, so an edit can re-home a comment onto another model or
+ * under another parent. Both the comment's stored home and the one the request names are resolved,
+ * so neither end of a move escapes the block. The writer's own id may come back among them —
+ * `throwIfBlockedByOwners` skips self.
+ */
+export async function getBlockCheckOwnerIdsForModelComment({
+  commentId,
+  modelId,
+  parentId,
+}: {
+  commentId?: number | null;
+  modelId?: number | null;
+  parentId?: number | null;
+}): Promise<number[]> {
+  const modelIds = new Set<number>();
+  const parentIds = new Set<number>();
+  if (modelId) modelIds.add(modelId);
+  if (parentId) parentIds.add(parentId);
+
+  if (commentId) {
+    const stored = await dbRead.comment.findUnique({
+      where: { id: commentId },
+      select: { modelId: true, parentId: true },
+    });
+    if (stored) {
+      modelIds.add(stored.modelId);
+      if (stored.parentId) parentIds.add(stored.parentId);
+    }
+  }
+
+  // Resolved through the switch rather than by reading the rows here, so a rule added to either
+  // entity type (a deleted model, a transferred owner) reaches this path too. At most two ids each.
+  const ids = new Set<number>();
+  for (const id of modelIds)
+    for (const owner of await getBlockCheckOwnerIds({ entityType: 'model', entityId: id }))
+      ids.add(owner);
+  for (const id of parentIds)
+    for (const owner of await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: id }))
+      ids.add(owner);
+  return [...ids];
+}
+
 // Resolves the content owner user id(s) relevant to an interaction on a given
 // entity, so we can enforce user-blocking on write paths (comment/reaction).
 export async function getBlockCheckOwnerIds({
@@ -277,11 +323,18 @@ export async function getBlockCheckOwnerIds({
       return r?.userId ? [r.userId] : [];
     }
     case 'commentOld': {
+      // Author AND the owner of the model the comment hangs off, mirroring `comment` above. The
+      // author alone still let a blocked user interact under a blocker's model, as long as the
+      // comment they aimed at belonged to somebody else.
       const r = await dbRead.comment.findUnique({
         where: { id: entityId },
-        select: { userId: true },
+        select: { userId: true, modelId: true },
       });
-      return r ? [r.userId] : [];
+      if (!r) return [];
+      const ids = new Set<number>([r.userId]);
+      for (const owner of await getBlockCheckOwnerIds({ entityType: 'model', entityId: r.modelId }))
+        ids.add(owner);
+      return [...ids];
     }
     case 'model3d': {
       const r = await dbRead.model3D.findUnique({

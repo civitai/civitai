@@ -17,6 +17,7 @@
     SOURCE_LABEL,
     SOURCE_COLOR,
     currencyMeta,
+    isBuzzCurrency,
     currencySort,
     formatAmount,
     hasDisplayValue,
@@ -91,11 +92,29 @@
       .map((s) => ({
         source: s,
         total: (data.summary ?? [])
-          .filter((b) => b.source === s && currencyMeta(b.currency).family === 'buzz')
+          .filter((b) => b.source === s && isBuzzCurrency(b.currency))
           .reduce((acc, b) => acc + b.total, 0),
       }))
       .filter((x) => Math.floor(x.total) >= 1)
   );
+
+  // Sales counts (868ktk1k9).
+  const salesInPeriod = $derived(
+    (data.summary ?? [])
+      .filter((b) => b.source === 'accessSale' && isBuzzCurrency(b.currency))
+      .reduce((n, b) => n + b.count, 0)
+  );
+  const salesOnLastDay = $derived(
+    (data.series ?? [])
+      .filter((p) => p.source === 'accessSale' && p.date === data.through)
+      .reduce((n, p) => n + p.count, 0)
+  );
+  const dayFmt = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+  const formatDay = (iso: string) => dayFmt.format(Date.parse(`${iso}T00:00:00Z`));
 
   // Authoritative Creator Program cash — the buzz-account balance from the service (matches the Buzz dashboard),
   // NOT a ClickHouse period sum. `formatAmount` renders these cash values in USD.
@@ -333,6 +352,15 @@
             label="vs {data.compare.label}"
           />
         </div>
+        {#if st.source === 'accessSale' && salesInPeriod > 0}
+          <p class="mt-1 text-xs text-dark-2">
+            {salesInPeriod.toLocaleString()} sale{salesInPeriod === 1
+              ? ''
+              : 's'}{#if salesOnLastDay > 0}
+              · {salesOnLastDay.toLocaleString()}
+              {data.throughIsToday ? 'today' : `on ${formatDay(data.through)}`}{/if}
+          </p>
+        {/if}
       </StatCard>
     {/each}
   </section>

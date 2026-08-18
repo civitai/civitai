@@ -415,9 +415,10 @@ describe('getDetailPrimaryAction — off-site', () => {
  *
  * `AppListingDetailBody`'s docstring states this in 🔴 terms, and the ONLY other
  * check on it is an absence assertion in `AppListingDetailBody.browser.test.tsx`
- * — which lives in the browser `component` project, **which CI does not run**
- * (see this file's header and `recentAppsRail.test.ts`). Without the check
- * below, re-adding `<iframe src={liveUrl}>` would pass every gate that runs.
+ * — which lives in the browser `component` project, **run only by the PR preview
+ * pipeline, report-only and not a required check** (see this file's header and
+ * `recentAppsRail.test.ts`). Without the check below, re-adding
+ * `<iframe src={liveUrl}>` would pass every gate that actually blocks.
  *
  * This replaces the equivalent gate that lived in the now-deleted
  * `appListingPreview.test.ts` — that one pinned the frame's hardening
@@ -549,6 +550,36 @@ describe('🔴 AppListingDetailBody mounts NO raw <iframe>', () => {
     // sits on a comment line. (a) alone is evadable by a `/*` inside a string
     // literal before the frame; (b) is what kills that.
     expect(uncommentedIframeLines(raw), WHY).toEqual([]);
+  });
+
+  /**
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — say so rather than let it read as
+   * a fix. The body has never linked to `/apps/<appBlockId>` since #3493 retired that
+   * route, so this assertion has always been green and could not have caught the
+   * defect it documents. It exists because the two-column rewrite moved every href in
+   * the file, and a hand-built `/apps/${appBlockId}` is the single most tempting thing
+   * to reach for when adding a rail link — and it would be a REDIRECT LOOP: that route
+   * 302s to `/apps/store-preview/<slug>`, which is the page the viewer is reading.
+   *
+   * The rule enforced is stronger and simpler than "no `/apps/<appBlockId>`": this
+   * file may build NO `/apps/…` URL by string interpolation at all. Every app URL it
+   * renders comes from a pure view-model (`getDetailPrimaryAction`, `getOwnerEditHref`,
+   * `getListingDetailHref`), which is where the routing decisions are already tested.
+   */
+  it('🔴 the body builds no /apps/ URL by interpolation (invariant guard)', () => {
+    // Positive control FIRST — the matcher must be able to SEE such a link, or the
+    // `not.toMatch` below is a zero from a regex wired to nothing.
+    const planted = 'const href = `/apps/${detail.kindData.appBlockId}`;';
+    expect(planted).toMatch(/\/apps\/\$\{/);
+
+    const raw = fs.readFileSync(SOURCE, 'utf8');
+    expect(
+      stripComments(raw),
+      'AppListingDetailBody.tsx is building an /apps/ URL by hand. Route decisions ' +
+        'belong in the pure view-models (getDetailPrimaryAction / getOwnerEditHref / ' +
+        'getListingDetailHref) — and `/apps/<appBlockId>` in particular redirects to ' +
+        'this very page, so linking it is a loop. See #3493.'
+    ).not.toMatch(/\/apps\/\$\{/);
   });
 
   it('the deleted preview view-model is not imported back', () => {

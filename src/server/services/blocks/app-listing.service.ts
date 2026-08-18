@@ -224,7 +224,14 @@ export const listingHydrateSelect = {
   icon: { select: { url: true } },
   cover: { select: { url: true } },
   user: { select: { id: true, username: true, image: true } },
-  metric: { select: { thumbsUpCount: true, thumbsDownCount: true } },
+  // Projected into the DETAIL DTO only (the header's "Updated: <date>" meta line).
+  // Harmless extra column for the card projection, which doesn't surface it.
+  updatedAt: true,
+  // `installCount` feeds the detail header's install stat chip. It is the SAME
+  // column the public `popular` sort already orders every approved listing by
+  // (`lpad(COALESCE(m.install_count, 0)…)` below), so the ordering is public
+  // already — see the DTO field's allowlist justification.
+  metric: { select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true } },
   // `currentVersionDeployedAt` powers the DEPLOY-GATE on the detail read (an
   // onsite listing whose backing block has never successfully deployed is
   // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
@@ -414,6 +421,12 @@ export function projectListingDetail(
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
+    // ISO-8601, not a `Date` — this DTO also crosses the transformer-less public REST
+    // boundary. See the field's docstring on `ListingDetail`.
+    updatedAt: row.updatedAt.toISOString(),
+    // `COALESCE(install_count, 0)` in projection form: a listing with no metric row
+    // has had no installs, exactly as the ranking SQL reads it.
+    installCount: row.metric?.installCount ?? 0,
     screenshots: galleryScreenshots(row),
     kindData: detailKindData(row),
   };

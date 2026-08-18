@@ -94,6 +94,10 @@ function hydratedRow(over: Record<string, unknown> = {}) {
     cover: { url: 'cover-key' },
     user: { id: 7, username: 'dev', image: 'avatar-key' },
     metric: { thumbsUpCount: 9, thumbsDownCount: 1 },
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: {
       // DEPLOY-GATE: a deployed onsite block (non-null timestamp) so the detail
       // read returns its projection. The dedicated deploy-gate suite covers the
@@ -378,6 +382,12 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'description',
         'iconUrl',
         'id',
+        // 🔴 The two fields added for the store-detail header. Both are in the
+        // ALLOWLIST deliberately (see their docstrings on `ListingDetail`):
+        // `installCount` is the very column the public `popular` sort already orders
+        // every approved listing by, and `updatedAt` is the direct analogue of the
+        // model page's public `Updated: <date>` line.
+        'installCount',
         'kind',
         'kindData',
         'name',
@@ -387,12 +397,34 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'serialId',
         'slug',
         'tagline',
+        'updatedAt',
       ].sort()
     );
     expect(detail).not.toHaveProperty('status');
     expect(detail.description).toBe('# Cool app\n\nbody');
     // The integer surrogate is surfaced for the CommentsV2 thread key.
     expect(detail.serialId).toBe(101);
+    // 🔴 ISO-8601 STRING, not a Date. This DTO also crosses the transformer-less
+    // public REST boundary, where a Date would serialise inconsistently. Pinned as a
+    // literal so a "just pass the Date through" change fails here.
+    expect(detail.updatedAt).toBe('2026-03-04T05:06:07.000Z');
+    expect(typeof detail.updatedAt).toBe('string');
+    // `hydratedRow()`'s metric carries no installCount → the COALESCE-to-0 branch.
+    expect(detail.installCount).toBe(0);
+  });
+
+  it('installCount is read from the metric rollup, and 0 when there is no metric row', () => {
+    // Positive control FIRST: the field CAN carry a non-zero value, so the zero
+    // asserted below is a real zero and not a projection wired to a constant.
+    // 4213 is pairwise-distinct from every other count in this file and from the
+    // `0` the null branch returns.
+    const withInstalls = projectListingDetail(
+      hydratedRow({ metric: { thumbsUpCount: 9, thumbsDownCount: 1, installCount: 4213 } }) as never
+    );
+    expect(withInstalls.installCount).toBe(4213);
+
+    const noMetric = projectListingDetail(hydratedRow({ metric: null }) as never);
+    expect(noMetric.installCount).toBe(0);
   });
 
   it('onsite detail kindData carries appBlockId, hasPage + the computed liveUrl', () => {

@@ -136,6 +136,8 @@ export type CollectionMode = "Contest" | "Bookmark";
 
 export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
+export type CollectionItemRejectionReason = "OffTopic" | "WrongFormat" | "Duplicate" | "Quality" | "RulesViolation" | "Other" | "Automated";
+
 export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "MANAGE";
 
 export type CollectionCollaboratorRole = "Contributor" | "Manager";
@@ -1985,6 +1987,8 @@ export interface AppBlockPublishRequest {
   rejectionReason: string | null;
   approvalNotes: string | null;
   forgejoCommitSha: string | null;
+  sourceCommit: string | null;
+  sourceDirty: boolean | null;
   deployState: string | null;
   deployDetail: string | null;
   deployUpdatedAt: Date | null;
@@ -3009,6 +3013,8 @@ export interface CollectionItem {
   reviewedAt: Date | null;
   note: string | null;
   status: CollectionItemStatus;
+  rejectionReason: CollectionItemRejectionReason | null;
+  rejectionDetail: string | null;
   tagId: number | null;
   tag?: Tag | null;
   scores?: CollectionItemScore[];

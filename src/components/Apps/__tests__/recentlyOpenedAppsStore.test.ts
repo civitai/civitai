@@ -18,9 +18,10 @@ import { resolveRecentApp } from '~/components/Apps/recentAppsRail';
  * whole v3 validation layer (`coerce`) exists because anybody can hand-edit
  * `localStorage.recentlyOpenedApps` and every previously-shipped entry shape is
  * still in the wild. The existing coverage lived only in
- * `recents-helper.browser.test.tsx` — and CI does not run the browser
- * (`component`) project AT ALL (no Chromium), so on a PR nothing was watching
- * that validation. The `unit` project at least runs on every PR
+ * `recents-helper.browser.test.tsx` — and the browser (`component`) project runs
+ * only in the PR preview pipeline, report-only and behind a preview build that
+ * fails intermittently, so on a PR very little was reliably watching that
+ * validation. The `unit` project at least runs on every PR
  * (`.github/workflows/lint.yml`), which is why behavioural coverage belongs
  * here; the browser suite keeps its real-`window` prepend/dedup/cap coverage.
  *

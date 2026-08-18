@@ -1210,6 +1210,9 @@ export async function resetOnsiteListingToPending(opts: {
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // #4059 — selected so the clone below can CARRY them. See the create.
+      sourceCommit: true,
+      sourceDirty: true,
     },
   });
   if (!lastApproved) {
@@ -1279,6 +1282,29 @@ export async function resetOnsiteListingToPending(opts: {
           fileSummary: lastApproved.fileSummary as Prisma.InputJsonValue,
           manifestDiffSummary: lastApproved.manifestDiffSummary as Prisma.InputJsonValue,
           forgejoCommitSha: lastApproved.forgejoCommitSha,
+          // #4059 — carry the client's provenance CLAIM forward, verbatim.
+          //
+          // The justification is narrow and it is the only one: this clone
+          // re-submits BYTE-IDENTICAL bundle bytes (same `bundleKey`, same
+          // `bundleSha256` as the approved row above). A claim about which tree
+          // those exact bytes came from is still the SAME claim about the SAME
+          // bytes — copying it invents nothing. Dropping it would permanently
+          // lose the answer to "which tree did these bytes come from?" for any
+          // app that goes through a suspend → reset-to-pending cycle, which is
+          // the archaeology #4059 exists to make unnecessary.
+          //
+          // Copied RAW, including NULL: a NULL on the source row means UNKNOWN
+          // and must stay UNKNOWN here. No `??` fallback of any kind — least of
+          // all to `forgejoCommitSha`, which is a SERVER-side sha in the
+          // platform's own repo and would fabricate an author's-tree claim
+          // nobody made. `false` likewise stays `false` (asserted CLEAN), never
+          // folded into UNKNOWN.
+          //
+          // 🔴 NOT the `recordPendingFromPush` case, which correctly writes
+          // NEITHER: that path has no client and no author work tree, so there
+          // is no claim in existence to carry.
+          sourceCommit: lastApproved.sourceCommit,
+          sourceDirty: lastApproved.sourceDirty,
           status: 'pending',
         },
       });

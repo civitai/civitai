@@ -25,20 +25,57 @@ import { trpc } from '~/utils/trpc';
  * Prefills from `getMyReview` so the SAME modal EDITS an existing review (the
  * backend upserts on (listing, user)); the current recommend state is shown +
  * changeable. DARK: reachable only on the mod-only store-preview surface today.
+ *
+ * 🔴 SPLIT INTO GATE + MODAL + BUTTON, and the split is structural rather than
+ * cosmetic. The listing detail's secondary actions now live in a `⋮` Menu, and a
+ * Mantine `Menu.Dropdown` is UNMOUNTED when the menu closes — so a modal rendered as
+ * a sibling of a `Menu.Item` trigger would be torn down the instant the item is
+ * clicked, i.e. the modal could never open. The trigger has to live inside the
+ * dropdown and the modal outside it, which means the `opened` state has to be owned
+ * by the caller. Hence:
+ *   - {@link useCanReviewListing} — the eligibility gate, in ONE place, so the Button
+ *     and the Menu item cannot disagree about who may review.
+ *   - {@link ReviewListingModal} — the form + mutation, mountable anywhere.
+ *   - {@link ReviewListingButton} — the original standalone affordance, composed from
+ *     the two. Its behaviour is unchanged and its own browser suite is the guard.
  */
-export function ReviewListingButton({
+
+/**
+ * May THIS viewer review THIS listing? Signed-in AND not the listing owner.
+ *
+ * Mirrors the server gate (`upsertReview` is protected and 403s a self-review); the
+ * server remains the source of truth and this only decides whether to render an
+ * affordance. Extracted so the Button and the detail page's `⋮` menu item read the
+ * same predicate instead of each re-deriving it.
+ */
+export function useCanReviewListing({ ownerUserId }: { ownerUserId: number | null }): boolean {
+  const currentUser = useCurrentUser();
+  if (!currentUser) return false;
+  if (ownerUserId != null && ownerUserId === currentUser.id) return false;
+  return true;
+}
+
+/**
+ * The review form modal. Renders NO trigger — the caller owns `opened`.
+ *
+ * 🔴 Applies NO eligibility gate of its own: a caller that mounts this has already
+ * decided the viewer may review (via {@link useCanReviewListing}), and duplicating
+ * the rule here would put it in two places. The server gate is the real one.
+ */
+export function ReviewListingModal({
   appListingId,
-  ownerUserId,
+  opened,
+  onClose,
 }: {
   appListingId: string;
-  /** The listing owner's user id — the CTA is hidden for them (no self-review). */
-  ownerUserId: number | null;
+  opened: boolean;
+  onClose: () => void;
 }) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
-  const [opened, { open, close }] = useDisclosure(false);
   const [recommended, setRecommended] = useState<boolean | null>(null);
   const [details, setDetails] = useState('');
+  const close = onClose;
 
   const enabled = !!currentUser && opened;
   const { data: myReview } = trpc.appListings.getMyReview.useQuery(
@@ -77,10 +114,6 @@ export function ReviewListingButton({
     },
   });
 
-  // Signed-out → no CTA (the proc is protected). Owner → no self-review CTA.
-  if (!currentUser) return null;
-  if (ownerUserId != null && ownerUserId === currentUser.id) return null;
-
   const isEditing = !!myReview;
   const overLimit = details.length > LISTING_REVIEW_DETAILS_MAX;
 
@@ -101,15 +134,6 @@ export function ReviewListingButton({
 
   return (
     <>
-      <Button
-        variant="light"
-        size="xs"
-        leftSection={<IconThumbUp size={14} />}
-        onClick={open}
-      >
-        {isEditing ? 'Edit review' : 'Leave a review'}
-      </Button>
-
       <Modal
         opened={opened}
         onClose={() => (upsert.isPending ? undefined : close())}
@@ -169,6 +193,44 @@ export function ReviewListingButton({
           </Button>
         </Stack>
       </Modal>
+    </>
+  );
+}
+
+/**
+ * The standalone review affordance: eligibility gate + a compact Button + the modal.
+ *
+ * UNCHANGED public API and unchanged behaviour — it is now composed from the two
+ * exports above rather than inlining them. `ReviewListingButton.browser.test.tsx` is
+ * the regression guard for that claim (gating for owner / signed-out / other, plus
+ * the write wiring, all asserted through this component).
+ */
+export function ReviewListingButton({
+  appListingId,
+  ownerUserId,
+}: {
+  appListingId: string;
+  /** The listing owner's user id — the CTA is hidden for them (no self-review). */
+  ownerUserId: number | null;
+}) {
+  const canReview = useCanReviewListing({ ownerUserId });
+  const [opened, { open, close }] = useDisclosure(false);
+  // Same query, same key as the modal's — react-query dedupes, so the label and the
+  // modal title cannot disagree about whether this is an edit.
+  const { data: myReview } = trpc.appListings.getMyReview.useQuery(
+    { appListingId },
+    { enabled: canReview && opened }
+  );
+
+  // Signed-out → no CTA (the proc is protected). Owner → no self-review CTA.
+  if (!canReview) return null;
+
+  return (
+    <>
+      <Button variant="light" size="xs" leftSection={<IconThumbUp size={14} />} onClick={open}>
+        {myReview ? 'Edit review' : 'Leave a review'}
+      </Button>
+      <ReviewListingModal appListingId={appListingId} opened={opened} onClose={close} />
     </>
   );
 }
