@@ -123,16 +123,21 @@ function PublicComicReader() {
     { id: projectId },
     { enabled: !isNaN(projectId) && projectId > 0 }
   );
+  // Above the loading gate on purpose: the project id is in the URL, so a project view never
+  // needed getPublicProjectForReader — and waiting on it put the threshold for a view at ~5-6s.
+  // Mounted ONCE, outside the branches: a remount resets TrackView's ref, so rendering it per
+  // branch would fire twice on slow connections and once on fast ones.
+  const trackProjectView = chapterDbPos == null && projectId > 0;
+
+  let body: React.ReactNode;
   if (isLoading) {
-    return (
+    body = (
       <div className={styles.loadingCenter} style={{ minHeight: '60vh' }}>
         <div className={styles.spinner} />
       </div>
     );
-  }
-
-  if (isError || !project) {
-    return (
+  } else if (isError || !project) {
+    body = (
       <div className={styles.notFound}>
         <IconPhotoOff size={48} />
         <p>{isError ? 'Failed to load comic' : 'Comic not found'}</p>
@@ -142,27 +147,32 @@ function PublicComicReader() {
         </Link>
       </div>
     );
-  }
-
-  // Block NSFW comics on green domain.
-  // Project nsfwLevel is bit_or of all chapters, so check for ANY NSFW bits.
-  if (
+  } else if (
+    // Block NSFW comics on green domain. Project nsfwLevel is bit_or of all chapters, so check
+    // for ANY NSFW bits.
     features.isGreen &&
     project.nsfwLevel !== 0 &&
     Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
   ) {
-    return (
+    body = (
       <div className="absolute inset-0 flex items-center justify-center">
         <Text>This content is not available on this site</Text>
       </div>
     );
+  } else if (chapterDbPos == null) {
+    body = <ComicOverview project={project} />;
+  } else {
+    body = <ChapterReader project={project} chapterDbPos={chapterDbPos} />;
   }
 
-  if (chapterDbPos == null) {
-    return <ComicOverview project={project} />;
-  }
-
-  return <ChapterReader project={project} chapterDbPos={chapterDbPos} />;
+  return (
+    <>
+      {trackProjectView && (
+        <TrackView entityId={projectId} entityType="ComicProject" type="ComicProjectView" />
+      )}
+      {body}
+    </>
+  );
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -399,7 +409,6 @@ function ComicOverview({ project }: { project: Project }) {
   return (
     <>
       <Meta title={`${project.name} - Civitai Comics`} canonical={`/comics/${project.id}`} />
-      <TrackView entityId={project.id} entityType="ComicProject" type="ComicProjectView" />
 
       <div className={styles.overviewRoot}>
         {/* Hero image */}
@@ -1084,7 +1093,14 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       {/* Gated on canRead so this counts the same event ComicChapterRead does —
           a paywalled chapter the viewer cannot open is not a read. */}
       {activeChapter && canRead && (
-        <TrackView entityId={activeChapter.id} entityType="ComicChapter" type="ComicChapterView" />
+        <TrackView
+          entityId={activeChapter.id}
+          entityType="ComicChapter"
+          type="ComicChapterView"
+          // Not 0: chapter-to-chapter is a shallow replace over loaded data with no wait in
+          // front of it, and Prev/Next is on the arrow keys, so 0 counts held-key skimming.
+          delayMs={250}
+        />
       )}
 
       <div className={styles.readerRoot}>

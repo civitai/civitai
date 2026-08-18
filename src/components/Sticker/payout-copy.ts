@@ -33,6 +33,123 @@ export function payoutCopy(
 }
 
 /**
+ * What the owner is told a decline costs, which is a different fact on a free
+ * placement.
+ *
+ * The paid sentence — the placer keeps most of what they paid, a fee stays with
+ * you — is the escrow's two-hold structure, and a free row has neither hold. So
+ * on a free row it is not a rounding error in the wording, it is a false
+ * statement about money made at the moment somebody decides.
+ *
+ * ⚠️ **`undefined` is a real case, not a missing value.** A bulk decline can hold
+ * both kinds at once, where neither sentence is true of everything selected —
+ * so that branch says only what covers both rather than picking the majority.
+ */
+export function declineConsequence(free: boolean | undefined) {
+  if (free === true)
+    return 'No Buzz moves — nothing was paid for this one. Their free placement for today is still spent.';
+  if (free === false) return 'The placer keeps most of what they paid, and a fee stays with you.';
+  return 'Any Buzz paid mostly returns to the placer with a fee staying with you; a free placement moves no Buzz.';
+}
+
+/**
+ * The queue row's headline, which is the only money statement on the card the
+ * Approve and Decline buttons sit under.
+ *
+ * Paid rows only. A free row carries `amount: 0`, enforced by the DB, so this
+ * sentence would assert a payment of zero on the page the free-placement
+ * notification sends the creator to — immediately above an irreversible choice.
+ * The caller says nothing about money on a free row and badges it instead.
+ */
+export const placementPaymentSummary = (amount: number) => `paid ${amount} Buzz`;
+
+/**
+ * Which of those a queue row says, which is the branch that must not be lost.
+ *
+ * Here rather than as a ternary in the page: `src/pages` cannot carry a test —
+ * Next treats every file under it as a route — so a `row.free ?` inline is a
+ * money statement with nothing able to assert it. Dropping the free arm makes
+ * the card read "paid 0 Buzz" over a free placement, on the page a "your
+ * placement was free" notification links to, immediately above an irreversible
+ * choice. Typecheck and every test still pass.
+ *
+ * The free arm names no amount at all — the badge beside it carries the fact.
+ */
+export const placementAmountLine = (free: boolean, amount: number) =>
+  free ? 'placed this' : placementPaymentSummary(amount);
+
+/**
+ * What a moderator take-down does to the money.
+ *
+ * Two axes, and free breaks the pending one specifically: a pending PAID row
+ * settles as a forfeit of the whole escrow, and a pending free row has no escrow
+ * to forfeit. Both statements are false on a free row in
+ * `RemoveReportedPlacement`, where the live branch also promises the creator was
+ * already paid.
+ */
+export function moderatorTakedownConsequence({
+  pending,
+  free,
+}: {
+  pending: boolean;
+  free: boolean;
+}) {
+  if (free)
+    return pending
+      ? 'This one is still awaiting the owner. Nothing was paid for it, so no Buzz moves, and nobody is notified.'
+      : 'The sticker comes off this content for everyone, recorded as a moderator takedown. Nothing was paid for it, so no Buzz moves, and nobody is notified.';
+
+  return pending
+    ? 'This one is still awaiting the owner. Taking it down forfeits everything the placer paid — they get nothing back, and nobody is notified.'
+    : 'The sticker comes off this content for everyone, recorded as a moderator takedown. No Buzz moves and nobody is notified.';
+}
+
+/**
+ * Whether a set of selected rows is all free, all paid, or mixed.
+ *
+ * Here rather than in the page because `declineConsequence` is what consumes it
+ * and its `undefined` branch is already covered — inline in a page component the
+ * collapse from "mixed" to "whichever kind we saw first" is a mutation nothing
+ * can observe, and it makes a bulk decline assert a sentence false of half the
+ * rows it is about.
+ *
+ * An id whose row is not paged in yet counts as unknown, which makes the whole
+ * selection mixed. That is the safe direction: it says only what covers both.
+ */
+export function selectionFree(
+  selected: number[],
+  rows: { id: number; free: boolean }[]
+): boolean | undefined {
+  const kinds = new Set(selected.map((id) => rows.find((row) => row.id === id)?.free));
+  return kinds.size === 1 ? [...kinds][0] : undefined;
+}
+
+/**
+ * Why a live sticker cannot be taken off yet.
+ *
+ * Mirrors the server's refusal in `removeApprovedSticker`, which is the thing
+ * that actually decides. The week is the same either way — Justin's call — so
+ * only the reason differs, and the paid reason is untrue on a free row.
+ */
+export const removalLockReason = (free: boolean) =>
+  free
+    ? 'Accepting a sticker is a commitment to keep it up for a week.'
+    : 'Someone paid to place this, so it stays up for a week.';
+
+/**
+ * What a removal does to the money, once it is allowed.
+ *
+ * The paid line reassures the owner that the Buzz they were paid stays with
+ * them. There is none on a free row, and inventing a reassurance about a payment
+ * that never happened is how a support thread starts with somebody insisting
+ * they were paid.
+ */
+export const removalConsequence = (free: boolean) =>
+  free
+    ? 'It comes off your image for everyone. No Buzz was paid for it, so none moves, and nobody is notified.'
+    : 'It comes off your image for everyone. The Buzz you were paid for it stays with you, and nobody is notified.';
+
+/**
  * The same chip, for the step before: buying the sticker itself.
  *
  * Named rather than "the creator" for the reason above, and more sharply here —

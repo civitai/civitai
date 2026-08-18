@@ -131,17 +131,20 @@ node .claude/skills/postgres-query/query.mjs --dev --writable "UPDATE ..."
 credential, so `--writable` only lifts the client-side guard. Whether a write lands is decided by
 the role in that URL.
 
-**DDL does not work through this credential.** `DEV_DATABASE_URL` connects as a
-non-superuser role, and the dev database has a `ddl_command_end` event trigger that
-reassigns each new object's ownership to the schema owner — which the connecting
-role cannot become. Any `CREATE TABLE` therefore rolls back with:
+**DDL does work through this credential** — verified 2026-08-17 on both dev and the prod primary as
+role `civitai`: `ALTER TABLE ... ADD COLUMN`, `ADD CONSTRAINT`, `CREATE INDEX` and a
+`CREATE TABLE`/`DROP TABLE` round trip all succeeded. Migrations can be applied with `--writable`.
 
-```
-must be able to SET ROLE "<schema owner>"
-```
+This section previously said the opposite — that a `ddl_command_end` event trigger reassigning object
+ownership made any `CREATE TABLE` roll back with `must be able to SET ROLE "<schema owner>"`. Nobody
+has observed that, and it is contradicted by the run above. It cost an escalation to an infra owner
+that was not needed. If you do hit an ownership error, record what you ran and correct this section
+again rather than restoring the blanket claim.
 
-Having `CREATE` on the schema is not enough and does not indicate otherwise. Ask an
-infra owner to run the DDL, or for a role that is a member of the schema owner.
+⚠️ **A multi-statement script needs `--writable` even when its first statement is harmless.** The
+client-side write guard checks every statement's leading keyword, so a migration opening with
+`SET lock_timeout` / `BEGIN` is still refused on account of the `ALTER`s underneath. That is
+deliberate.
 
 ## Querying the notifications-db
 

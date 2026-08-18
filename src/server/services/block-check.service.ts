@@ -1,7 +1,18 @@
 import { dbRead } from '~/server/db/client';
+import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
+/**
+ * Every entity type any write path can hand the owner resolver: comment surfaces
+ * plus reaction surfaces. Adding a member to either enum breaks the switch in
+ * `getBlockCheckOwnerIds` until an owner is resolved for it.
+ */
+export type BlockCheckEntityType = CommentConnectorInput['entityType'] | ReactionEntityType;
+
+// Must list EVERY owner-bearing FK on `Thread`. A column missing here resolves no
+// root owner for replies in that kind of thread, silently skipping the block.
 const threadContentSelect = {
   rootThreadId: true,
   imageId: true,
@@ -17,6 +28,8 @@ const threadContentSelect = {
   model3dReviewId: true,
   comicProjectId: true,
   comicChapterPosition: true,
+  challengeId: true,
+  appListingId: true,
 } as const;
 
 type ThreadContent = {
@@ -34,6 +47,8 @@ type ThreadContent = {
   model3dReviewId: number | null;
   comicProjectId: number | null;
   comicChapterPosition: number | null;
+  challengeId: number | null;
+  appListingId: number | null;
 };
 
 async function ownerOfThreadContent(thread: ThreadContent | null): Promise<number | undefined> {
@@ -104,7 +119,37 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
         select: { userId: true },
       })
     )?.userId;
+  if (thread.challengeId)
+    return (
+      (
+        await dbRead.challenge.findUnique({
+          where: { id: thread.challengeId },
+          select: { createdById: true },
+        })
+      )?.createdById ?? undefined
+    );
+  if (thread.appListingId)
+    return (
+      await dbRead.appListing.findUnique({
+        where: { serialId: thread.appListingId },
+        select: { userId: true },
+      })
+    )?.userId;
   return undefined;
+}
+
+/**
+ * The owner of the content a thread ultimately hangs off — the root thread's entity for a reply,
+ * the thread's own for a top-level comment.
+ */
+async function rootOwnerOfThread(thread: ThreadContent): Promise<number | undefined> {
+  const rootContent = thread.rootThreadId
+    ? await dbRead.thread.findUnique({
+        where: { id: thread.rootThreadId },
+        select: threadContentSelect,
+      })
+    : thread;
+  return ownerOfThreadContent(rootContent);
 }
 
 // For a CommentV2 reply target, block if blocked by the parent comment's author
@@ -116,17 +161,47 @@ async function ownersForCommentV2(commentId: number): Promise<number[]> {
   });
   if (!comment) return [];
   const ids = new Set<number>([comment.userId]);
-  const thread = comment.thread;
-  if (thread) {
-    const rootContent = thread.rootThreadId
-      ? await dbRead.thread.findUnique({
-          where: { id: thread.rootThreadId },
-          select: threadContentSelect,
-        })
-      : thread;
-    const rootOwner = await ownerOfThreadContent(rootContent);
+  if (comment.thread) {
+    const rootOwner = await rootOwnerOfThread(comment.thread);
     if (rootOwner) ids.add(rootOwner);
   }
+  return [...ids];
+}
+
+/**
+ * Owners to check when editing an EXISTING comment.
+ *
+ * The request's `entityType`/`entityId` are client-supplied and never verified against the comment
+ * being edited — the update is scoped by comment id alone — so an edit must resolve its target from
+ * the stored comment. Trusting the request instead would let a blocked user aim the check at an
+ * entity with no owner and edit freely.
+ *
+ * Resolves the same targets the create path checks: for a reply, the parent comment's author and
+ * the root content owner; for a top-level comment, the content owner. The editor's own id may come
+ * back among them — `throwIfBlockedByOwners` skips self.
+ */
+export async function getBlockCheckOwnerIdsForComment(commentId: number): Promise<number[]> {
+  const comment = await dbRead.commentV2.findUnique({
+    where: { id: commentId },
+    select: { thread: { select: { commentId: true, ...threadContentSelect } } },
+  });
+  const thread = comment?.thread;
+  if (!thread) return [];
+
+  const ids = new Set<number>();
+  // A reply's parent author is a target too, matching the create path. Only the author is needed —
+  // the parent hangs off the same root, resolved once below.
+  if (thread.commentId) {
+    const parent = await dbRead.commentV2.findUnique({
+      where: { id: thread.commentId },
+      select: { userId: true },
+    });
+    if (parent) ids.add(parent.userId);
+  }
+
+  const rootOwner = await rootOwnerOfThread(thread);
+  if (rootOwner) ids.add(rootOwner);
+
   return [...ids];
 }
 
@@ -136,7 +211,7 @@ export async function getBlockCheckOwnerIds({
   entityType,
   entityId,
 }: {
-  entityType: string;
+  entityType: BlockCheckEntityType;
   entityId: number;
 }): Promise<number[]> {
   switch (entityType) {
@@ -229,9 +304,29 @@ export async function getBlockCheckOwnerIds({
       });
       return r?.project?.userId ? [r.project.userId] : [];
     }
+    case 'challenge': {
+      const r = await dbRead.challenge.findUnique({
+        where: { id: entityId },
+        select: { createdById: true },
+      });
+      return r?.createdById ? [r.createdById] : [];
+    }
+    case 'appListing': {
+      // Threads key off the INTEGER surrogate, so `entityId` here is `serialId`,
+      // not the listing's ULID `id`.
+      const r = await dbRead.appListing.findUnique({
+        where: { serialId: entityId },
+        select: { userId: true },
+      });
+      return r ? [r.userId] : [];
+    }
     case 'comment':
       return ownersForCommentV2(entityId);
     default:
+      // Compile-time exhaustiveness: a new comment/reaction entity type fails to
+      // build here until it resolves an owner. Runtime still yields "no owner"
+      // rather than throwing, so an unexpected value can't take a write path down.
+      entityType satisfies never;
       return [];
   }
 }
@@ -262,11 +357,11 @@ export async function throwIfBlockedByEntityOwner({
   isModerator,
 }: {
   userId: number;
-  entityType: string;
+  entityType: BlockCheckEntityType;
   entityId: number;
   isModerator?: boolean;
 }) {
   if (isModerator) return;
   const ownerIds = await getBlockCheckOwnerIds({ entityType, entityId });
-  await throwIfBlockedByOwners({ userId, ownerIds });
+  await throwIfBlockedByOwners({ userId, ownerIds, isModerator });
 }

@@ -1,0 +1,115 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
+import type * as TrpcModule from '~/utils/trpc';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../test/component-setup';
+
+/**
+ * The free-slot control on the account settings page, and specifically the one
+ * property no server test can see: **what this page sends when the creator did
+ * not touch it.**
+ *
+ * `freeSlots` is three-way — NULL follows the surface default, a number stops
+ * following it, and 0 is the creator saying no. The mechanism only works while
+ * NULL survives an unrelated save. The first version of this control sent the
+ * on-screen number on every commit, so changing the mode wrote an explicit `1`;
+ * every assertion about the column, the cascade and the resolver stayed green,
+ * because each of them was true. Within a few weeks of ordinary use almost every
+ * space would have been frozen, and raising the default later would have reached
+ * nobody.
+ */
+
+const { mutate, spaces } = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  spaces: { value: [] as Record<string, unknown>[] },
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ stickerPlacement: true }),
+}));
+vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
+  trpc: {
+    useUtils: () => ({ placement: { invalidate: vi.fn() } }),
+    placement: {
+      getPriceRange: {
+        useQuery: () => ({ data: { min: 50, max: 500, freeSlotCap: 4, score: 0, tier: 'free' } }),
+      },
+      getMySpaces: {
+        useQuery: () => ({ data: spaces.value, isPending: false, isError: false }),
+      },
+      getPending: { useQuery: () => ({ data: { items: [], nextCursor: null } }) },
+      setSpace: { useMutation: () => ({ mutate, isPending: false }) },
+    },
+  },
+}));
+
+import { PlacementSpaceSection } from '~/components/Account/PlacementSpaceSection';
+
+/** A space row as `getMySpaces` returns it. */
+const givenSpace = (freeSlots: number | null) => {
+  spaces.value = [
+    { entityType: 'user', entityId: 7, mode: 'review', price: 100, freeSlots, settings: {} },
+  ];
+};
+
+const lastPayload = () => mutate.mock.calls[mutate.mock.calls.length - 1][0];
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  spaces.value = [];
+});
+
+describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
+  test('an unrelated save leaves a NULL count untouched', async () => {
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+
+    // Absent, not `null`. `null` is a different instruction — it CLEARS the
+    // level so it inherits — and both are distinguishable from a number, which
+    // is the whole point of the three-way schema. `toHaveProperty` rather than a
+    // value comparison, because `undefined` and an omitted key read the same in
+    // an equality assertion and only one of them is what the mutation sends.
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(lastPayload()).not.toHaveProperty('freeSlots', null);
+    expect(lastPayload().freeSlots).toBeUndefined();
+  });
+
+  test('an unrelated save leaves a stored count untouched too', async () => {
+    // The stored-number case is not covered by the NULL one. A control that sent
+    // its on-screen value would pass here by coincidence — the value happens to
+    // match — so this pins that the key is absent rather than that it is right.
+    givenSpace(3);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+
+    expect(lastPayload().freeSlots).toBeUndefined();
+  });
+
+  // The negative control. Without it, "never send freeSlots" would pass every
+  // assertion above and the creator could never change the number at all.
+  test('moving the control sends the number', async () => {
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    const slider = page.getByRole('slider', { name: /free stickers/i });
+    await expect.element(slider).toBeInTheDocument();
+    // Focused directly and driven by keyboard. A click on the thumb times out —
+    // it is a zero-size element the track paints over — and a synthesised drag
+    // does not reliably reach Mantine's `onChangeEnd`, which is what commits.
+    (slider.element() as HTMLElement).focus();
+    await userEvent.keyboard('{ArrowRight}');
+
+    expect(mutate).toHaveBeenCalled();
+    // The number CHOSEN, not merely a number. `typeof … === 'number'` passes for
+    // a control that sends its pre-move value, which moves the thumb, saves, and
+    // stores the old count. Fully determined: the space is unset, so the thumb
+    // rests on the surface default of 1 and one ArrowRight makes it 2.
+    expect(lastPayload().freeSlots).toBe(2);
+  });
+});

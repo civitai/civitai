@@ -46,6 +46,7 @@ import {
   inviteCollaboratorInput,
   removeCollaboratorInput,
   respondToInviteInput,
+  updateCollaboratorRoleInput,
 } from '~/server/schema/collection-collaborator.schema';
 import {
   getCollectionAiReview,
@@ -59,6 +60,7 @@ import {
   inviteCollaborator,
   removeCollaborator,
   respondToInvite,
+  updateCollaboratorRole,
 } from '~/server/services/collection-collaborator.service';
 import {
   guardedProcedure,
@@ -242,6 +244,12 @@ export const collectionRouter = router({
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(respondToInviteInput)
     .mutation(({ input, ctx }) => respondToInvite({ ...input, userId: ctx.user.id })),
+  updateCollaboratorRole: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(updateCollaboratorRoleInput)
+    .mutation(({ input, ctx }) =>
+      updateCollaboratorRole({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   removeCollaborator: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(removeCollaboratorInput)

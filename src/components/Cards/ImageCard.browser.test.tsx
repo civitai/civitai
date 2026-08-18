@@ -64,6 +64,24 @@ const CARD_WIDTH = 336;
 const NARROW_CARD_WIDTH = 296;
 const SINGLE_ROW_MAX_HEIGHT = 40;
 
+// How far the reaction bar may stick out past the narrow card before we call it a
+// regression. `reactionBarOverflow()` is a raw pixel distance driven by the WIDTH
+// OF RENDERED TEXT, so unlike the height assertions above it moves with font
+// metrics and therefore with the environment:
+//
+//   50px  the value this test shipped with (#4034) — measured off-CI
+//   57px  the CI browser, measured 2026-08-17 on two independent runs
+//
+// It shipped red for that reason: `preview / component-tests` is report-only, and
+// no component-tests status was ever posted on #4034, so nothing said so.
+//
+// The bound sits above the largest observed value rather than ON it, because the
+// regression this guards against — an extra control in the row, an un-hidden info
+// button, a wider count format — moves this number by TENS of px, while a browser
+// or font-stack change moves it by a few. Pinning it tight would buy no sensitivity
+// and would re-red the suite on an unrelated chromium bump.
+const MAX_NARROW_OVERFLOW_PX = 64;
+
 function imageData(counts: number) {
   return {
     id: 1,
@@ -170,7 +188,7 @@ describe('ImageCard action row at four-digit reaction counts', () => {
     const threeDigits = reactionBarOverflow();
 
     expect(threeDigits).toBeLessThan(0);
-    expect(fourDigits).toBeLessThanOrEqual(50);
+    expect(fourDigits).toBeLessThanOrEqual(MAX_NARROW_OVERFLOW_PX);
   });
 
   test('fits on one line at three-digit counts either way', async () => {

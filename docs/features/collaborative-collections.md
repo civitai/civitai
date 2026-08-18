@@ -4,7 +4,7 @@ Members can open a collection to submissions from other users and invite collabo
 run it. Two independent halves: **entry acceptance** (anyone submits, an owner or manager approves)
 and **collaborators** (named people granted permission on the collection).
 
-Tracker: CU 868kn5ehn.
+Trackers: CU 868kn5ehn (the build), CU 868krg9rw (the refinements that followed).
 
 ## Why it is small
 
@@ -13,7 +13,7 @@ status. It was only reachable because moderators alone could set that configurat
 
 | Capability | Gated on |
 | --- | --- |
-| Submissions land as `CollectionItemStatus.REVIEW` | `permission.writeReview`, i.e. `write = Review` |
+| Submissions land as `CollectionItemStatus.REVIEW` | `permission.writeReview`, i.e. `write = Review` — minus the people who work the queue, see "Where a submission lands" |
 | `/collections/[id]/review` approve/reject queue | `permissions.manage` |
 | "Review items" menu entry | `permissions.manage` |
 | A non-owner holding `manage` gets all of the above | the `MANAGE` contributor bit |
@@ -57,16 +57,83 @@ everyone for free? `freeGrantBaseline(collection)` derives that free set from th
 `read`/`write` columns, and `hasElevatedPermission(permissions, baseline)` applies it. Derive the
 baseline from those columns, never from a runtime-filtered permission array.
 
+## Submitting follows the collection
+
+Saving an entry writes a follow row for the submitter, and that row is what keeps the collection in
+their save picker afterwards. It is deliberate: without it, a collection you want to keep posting to
+is unreachable from the picker the moment you close the page you found it on — the picker only ever
+lists collections you hold a row on, and it does not search the ones you don't.
+
+Two properties the implementation depends on:
+
+- **The follow is a side effect of the entry landing.** `saveItemInCollections` queues the ids and
+  applies them after the write, so a save that goes on to write nothing — no write grant anywhere,
+  or the empty-transaction guard — leaves the user following nothing.
+- **Anyone who already holds a row is skipped.** `addContributorToCollection` upserts and
+  **replaces** the target's permissions, so following a collaborator's own seat would strip it back
+  to the free grant. The `!isContributor && !isOwner` guard is what stops that.
+
+A follow row is not a collaborator row and does not change where an entry lands. On a `write: Review`
+collection a follower gets exactly `[VIEW, ADD_REVIEW]` — the free grant — so `isCollaboratorRow`
+stays false on both halves (not elevated, no accepted seat) and they keep queuing. See
+[Where a submission lands](#where-a-submission-lands).
+
+`metadata.disableFollowOnSubmission` opts a collection out. The challenge jobs set it on every
+challenge collection they create, which is the one place the flooding is worst: without it every
+entrant in a daily challenge picks up a follow they never asked for.
+
+Open collections also carry a **Submit an entry** button on the collection page, the same entry point
+contests have always had. Before, a collection asking for submissions had no way to take one from its
+own page. It covers Image and Post collections; a Model collection is submitted to through the picker.
+
+## Where a submission lands
+
+`submissionStatus(permission)` decides `REVIEW` vs `ACCEPTED`, and both save paths call it. **The
+queue is for the public**: everyone the collection has vouched for — the owner, its managers, and
+the collaborators it invited — posts straight through. `writeReview && !manage && !isOwner &&
+!isCollaborator`.
+
+Reading `writeReview` alone — which is what both call sites did — files the owner and every Manager
+into their own queue, because that flag is granted to *everyone* on a `write: Review` collection.
+Production carries 108 items a collection's own owner submitted and never approved, the oldest from
+2025-01-03.
+
+`isCollaborator` carries the invited half, and it is what makes the Contributor role mean something
+on an open collection: without it, an invited Contributor's grant is identical to a follower's. It
+is false on contest and system collections (see `collectionSupportsCollaborators`), so contest
+entries still go to review. A follower whose row only mirrors the free grant is not elevated, so
+they queue like anyone else — `collection-save-existing-membership.service.test.ts` pins both.
+
 ## Roles
 
 | Role | Bits | Can do |
 | --- | --- | --- |
-| Contributor | `VIEW`, `ADD` | Add and remove items. |
-| Manager | `VIEW`, `ADD`, `MANAGE` | The above, plus work the review queue, edit name/description/cover, and invite Contributors. |
+| Contributor | `VIEW`, `ADD` | Add items without going through the review queue, and remove the ones they added or authored. |
+| Manager | `VIEW`, `ADD`, `MANAGE` | The above, plus remove anyone's item, work the review queue, edit name/description/cover, and invite Contributors. |
 
-No new permission bits. A Manager may invite and remove **Contributors** only; granting Manager and
-removing a Manager are owner-only; the owner is never removable. Changing privacy (`read`/`write`)
-and `mode` stays with the owner and moderators.
+No new permission bits. A Manager may invite and remove **Contributors** only; granting the Manager
+role, changing a Manager's role and removing a Manager are owner-only; the owner is never removable.
+Changing privacy (`read`/`write`) and `mode` stays with the owner and moderators.
+
+A seat's role changes in place from the roster, through `updateCollaboratorRole`. It **replaces** the
+row's permissions with `roleGrantPermissions(role, collection)` — the role's own bits plus the
+collection's free grant — rather than unioning onto what is stored. Unioning is what accepting an
+invite used to do, and it makes every demotion a silent no-op: someone who already held `MANAGE` and
+was re-invited as a Contributor kept it and went on reading as a Manager in the roster. Accepting an
+invite now builds the row the same way. A role change also rewrites the seat's
+`CollectionInvite.role`, because `countCollaborators` reads that row too and a stale one keeps
+occupying a Manager seat nothing displays.
+
+Removing an item accepts the entity's author, whoever added the row, a `manage` holder, or a
+moderator. For "whoever added the row", **every** row for that entity has to be theirs — removal
+takes them all, so holding one duplicate is not authorization over the others.
+
+Both collection surfaces gate their **Remove** menu entry on that same rule. They did not before,
+and each got it wrong in a different direction: the image collection offered it to `manage` holders
+but not to the image's author, the model collection the reverse. The image feed carries
+`collectionItemAddedById` (one column on the collection CTE in `getAllImages`, only selected when
+the feed is filtered by collection) so the card can offer removal to the submitter; the model feed
+does not, so a Contributor who added someone else's model still has to use the save picker.
 
 That last split is why `collection.upsert` carries **no ownership middleware**. Authorization lives in
 `upsertCollection`, which requires `manage` and then strips `read`/`write`/`mode` for anyone who is
@@ -80,8 +147,8 @@ wrong for as long as that was true. `collection.delete` keeps the middleware, de
 `CollectionInvite` holds pending invites, separate from `CollectionContributor` so that follow
 semantics stay untouched and a decline leaves no residue.
 
-- Accepting **unions** the role's bits onto whatever the row already has — accepting never takes
-  away what following already granted.
+- Accepting writes the role's bits **plus the collection's free grant**, so it never takes away what
+  following already granted and never leaves a higher role's bits behind (see Roles above).
 - Invites expire after **7 days**, derived from `createdAt`. No `Expired` status and no reaper job;
   stale invites are filtered at read and refused at accept.
 - Re-inviting after a decline or expiry upserts (there is a unique constraint on
@@ -177,12 +244,14 @@ Three properties hold it together, and all three are load-bearing:
   membership, with moderators bypassing membership but not lapse. The pre-flight answer and the
   write path must not be able to disagree; if you add a refusal to one, add it to the other.
 - The reason is returned **only to `manage` holders** (everyone else gets `canInvite: false` with a
-  `null` reason). That is what keeps `'owner-membership'` — which does disclose that the owner has
-  no active membership — inside the set of people already running the collection. It must never
-  widen to read-level callers; the visitor-copy rule above is the same principle.
-- The client keeps the **copy**, the server keeps the **reason**. An owner sees an upgrade CTA to
-  `/pricing`; a Manager sees that the owner needs a membership. Templating one string for both is
-  how the visitor/owner split gets lost.
+  `null` reason), and **`'owner-membership'` narrows further to the owner alone** — it names
+  somebody's billing state, and a Manager can act on it no better than on the generic string, so
+  they get `'collaboration-disabled'` instead. Collapsed on the server, not in the copy: the
+  payload is the disclosure surface, and a client-side string swap leaves the fact sitting in the
+  network tab.
+- The client keeps the **copy**, the server keeps the **reason**. The owner sees an upgrade CTA to
+  `/pricing`; everyone else sees that the collection isn't accepting collaborators right now.
+  Templating one string for both is how that split gets lost.
 
 ## Detail header
 
@@ -236,23 +305,20 @@ no collaborators.
 
 Known gaps, roughly in the order they'd block a release.
 
-- **The migration has not been applied.**
-  `20260806120000_collaborative_collections` is committed for review only — we do not run
-  `prisma migrate deploy`. Someone has to run the SQL by hand in each environment before any of this
-  works there.
-- **The Manager-facing `owner-membership` copy is an open question.** Telling a Manager that the
-  owner needs a membership discloses the owner's billing state to someone who is not the owner. It
-  is scoped to `manage` holders on purpose — the alternative, reusing the generic lapse string,
-  leaves the Manager with nothing to act on — but that trade has not been signed off. Tightening it
-  is one branch in `InviteBlockedNotice`.
+- **Submitting still follows, so a user's collection list still fills up with collections they
+  posted to once.** Justin called that out on the 2026-08-14 walkthrough. It was removed on this
+  branch and put back: without the follow, the picker only lists collections you already hold a row
+  on and offers no way to search the rest, so a collection you meant to keep posting to becomes
+  unreachable — a worse failure than a long list. The list needs its own answer (an unfollow
+  affordance in the picker, separating "submitted to" from "followed", or a
+  `disableFollowOnSubmission` default per collection type) rather than dropping the follow.
 - **`getMyInvites` truncates at 50 silently.** The cap bounds the per-invite roster reads, but
   nothing tells a user with more than 50 pending invites that they are seeing a subset.
+- **Collection items are read straight from the database, not the feed index.** Flagged as
+  something to sort out before this scales.
 - **Deferred from the designs**: the standalone "Manage collaborators" header button, and the
   status chips ("Open to submissions" / "N awaiting review" / "N items"). The actions behind both
   are reachable today, through the context menu and the roster popover.
-- **A collaborator's role cannot be changed in place.** The design gives each roster row a role
-  dropdown; promoting a Contributor today means removing them and inviting again, which they have
-  to accept. Needs its own mutation, with the same precedence `inviteCollaborator` uses.
 - **"Manager since \<date\>" is deliberately absent from the roster.** `getCollaborators` is a
   `publicProcedure` gated only on `read`, and the same payload feeds the public header stack, so a
   join date would be published to every reader. It needs a `manage`-gated payload first — this was
@@ -265,7 +331,9 @@ Known gaps, roughly in the order they'd block a release.
 | Area | File |
 | --- | --- |
 | Permission resolution, `isCollaborator` | `src/server/services/collection.service.ts` (`getUserCollectionPermissionsByIds`) |
-| Invites, roster, caps | `src/server/services/collection-collaborator.service.ts` |
+| Invites, roster, caps, role changes | `src/server/services/collection-collaborator.service.ts` |
+| Review-queue rule | `src/server/services/collection.service.ts` (`submissionStatus`) |
+| Save picker | `src/components/Collections/AddToCollectionModal.tsx` |
 | Shared seat definition | `src/server/services/collection-invite.utils.ts` |
 | Collaborator-row rule, free-grant baseline | `src/server/services/collection-permission.utils.ts` |
 | Lapse reconciler | `src/server/jobs/reconcile-collection-collaboration.ts` |

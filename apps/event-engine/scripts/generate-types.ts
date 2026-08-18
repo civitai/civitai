@@ -1,7 +1,12 @@
-import { EventHandler, ManualHandler, OutboxHandler } from '../src/types/handlers'
+import { EventHandler } from '../src/types/handlers'
 import { eventHandlers } from '../src/handlers'
 import { Operation } from '../src/types/events'
+import { ENTITY_METRIC_TYPES as EXISTING_METRIC_TYPES } from '../src/common/types/metric-types'
 import { faker } from '@faker-js/faker'
+
+// Marks a metric carried over from the committed types because no handler here emits it — see the
+// union in generateStructuredReport.
+const NOT_EMITTED_HERE = '(not emitted by this app)'
 
 interface MetricOutput {
   handler: string
@@ -53,11 +58,11 @@ class DebugActions {
     })
   }
 
-  incMetricCache = (update: any) => {
+  incMetricCache = (_update: any) => {
     // We don't use this in our handlers typically
   }
 
-  feedUpdate = (entityType: string, entityId: number | null | undefined, type: string = 'update') => {
+  feedUpdate = (entityType: string, entityId: number | null | undefined, _type: string = 'update') => {
     // Feed updates don't generate metrics, just track that it was called
   }
 
@@ -119,7 +124,7 @@ const createMockDatabases = (debugConfig: any) => ({
       }
       return null
     },
-    exec: async (sql: string, params?: any[]): Promise<number> => {
+    exec: async (_sql: string, _params?: any[]): Promise<number> => {
       // Mock exec - return 1 row affected
       return 1
     }
@@ -131,7 +136,7 @@ const createMockDatabases = (debugConfig: any) => ({
       }
       return []
     },
-    insert: async (table: string, data: any[]): Promise<void> => {
+    insert: async (_table: string, _data: any[]): Promise<void> => {
       // Mock insert
     }
   }
@@ -297,6 +302,25 @@ function generateStructuredReport(reports: Map<string, HandlerReport>): Structur
           structured.tables[table].push(metric)
         }
       }
+    }
+  }
+
+  // Union in whatever the committed types already declare. This generator discovers metrics by
+  // running THIS app's handlers against faker data, so it only ever sees what this app emits — a
+  // metric written by the main app (`updateEntityMetric`), a cron job, or a one-off backfill is
+  // invisible to it. Regenerating destructively therefore *deletes* real metrics: on the commit
+  // that introduced this guard it dropped `downloadCount` and `generationCount` from Model and
+  // ModelVersion, and renamed every Image reaction (`ReactionLike` → `Like`, `Comment` →
+  // `commentCount`), which broke `src/common/feeds/images.feed.ts` and made `pnpm typecheck` fail
+  // on a clean regen. Both names in each of those pairs exist in ClickHouse — the old ones carry
+  // years of history — so keeping both is the accurate answer, not a fudge.
+  //
+  // Consequence to know: this generator can no longer remove anything. A metric that is genuinely
+  // retired has to be deleted from `metric-types.ts` by hand, deliberately.
+  for (const [entityType, metricTypes] of Object.entries(EXISTING_METRIC_TYPES)) {
+    structured.entityTypes[entityType] ??= {}
+    for (const metricType of metricTypes) {
+      structured.entityTypes[entityType][metricType] ??= NOT_EMITTED_HERE
     }
   }
 

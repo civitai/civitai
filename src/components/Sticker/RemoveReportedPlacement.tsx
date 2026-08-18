@@ -2,6 +2,7 @@ import { Alert, Button, Group, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconEye, IconEyeOff, IconTrash } from '@tabler/icons-react';
 import { useForgetStickerPlacement } from '~/components/Sticker/placement.util';
+import { moderatorTakedownConsequence } from '~/components/Sticker/payout-copy';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -80,8 +81,17 @@ export function RemoveReportedPlacement({
             {placement.sticker?.name ?? 'This sticker'}, placed by{' '}
             {placement.placer?.username ?? 'an unknown user'}, comes off the image for everyone.
           </Text>
+          {/* Both branches were false on a free row: there is no escrow to
+              forfeit and no payment the creator already received. The suspension
+              pointer is worth keeping in the paid wording, so the two are
+              separate sentences rather than one with a clause swapped. */}
           <Text size="sm" c="dimmed">
-            {placement.status === 'pending'
+            {placement.free
+              ? moderatorTakedownConsequence({
+                  pending: placement.status === 'pending',
+                  free: true,
+                })
+              : placement.status === 'pending'
               ? 'It never went live, so its escrow is forfeited rather than refunded.'
               : 'No Buzz moves: the creator was already paid for it, and clawing that back would punish the wrong person. Suspend the placer if the problem is them rather than this one sticker.'}
           </Text>

@@ -88,9 +88,13 @@ jobs:
           git fetch -q origin "$BASE_REF"
           git diff --name-only --diff-filter=A FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > added.txt
           git diff --name-only --diff-filter=CMR FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > modified.txt
-          # eslint only has a config for src/ and packages/; skip anything else.
-          grep -E '^(src|packages)/' added.txt > added-lint.txt || true
-          grep -E '^(src|packages)/' modified.txt > modified-lint.txt || true
+          # Only paths an eslint config covers. apps/event-engine has its own `root: true`
+          # config, which eslint resolves per file, so linting it from here works; the other
+          # apps/ members have none and would fall through to the root Next config, whose
+          # typed rules crash outside src/.
+          LINTABLE='^(src|packages|apps/event-engine)/'
+          grep -E "$LINTABLE" added.txt > added-lint.txt || true
+          grep -E "$LINTABLE" modified.txt > modified-lint.txt || true
           echo "added ($(wc -l < added.txt)):"; cat added.txt
           echo "modified ($(wc -l < modified.txt)):"; cat modified.txt
 
@@ -370,8 +374,7 @@ jobs:
     # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
     # no required_status_checks — it is a signal someone has to look at and dismiss.
     #
-    # `apps/event-engine` and `apps/moderator` are absent on purpose: neither has a vitest
-    # config, and event-engine's one test file is a `node:test` suite by deliberate choice.
+    # `apps/moderator` is absent on purpose: it has no vitest config, so nothing selects it.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

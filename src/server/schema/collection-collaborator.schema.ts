@@ -14,6 +14,13 @@ export const respondToInviteInput = z.object({
   accept: z.boolean(),
 });
 
+export type UpdateCollaboratorRoleInput = z.infer<typeof updateCollaboratorRoleInput>;
+export const updateCollaboratorRoleInput = z.object({
+  collectionId: z.number(),
+  targetUserId: z.number(),
+  role: z.enum(CollectionCollaboratorRole),
+});
+
 export type RemoveCollaboratorInput = z.infer<typeof removeCollaboratorInput>;
 export const removeCollaboratorInput = z.object({
   collectionId: z.number(),

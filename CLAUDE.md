@@ -295,6 +295,17 @@ import styles from './Component.module.scss';
 - Define Props interfaces for components
 - Use enums from `~/shared/utils/prisma/enums`
 
+#### 5. A `Popover` inside anything that clips needs `withinPortal`
+
+`src/providers/ThemeProvider.tsx` sets `Popover: { defaultProps: { withinPortal: false } }` for the
+whole app. So a `Popover` rendered inside a `Card`, an `overflow-hidden` wrapper or a scroll area
+draws **inside** that container and is clipped by it — the dropdown comes out truncated, at every
+call site, with nothing in the JSX pointing at the cause. Pass `withinPortal` explicitly there.
+
+Only `Popover` carries it — `HoverCard` has no theme entry at all and `Tooltip`'s sets `withArrow`
+alone. Several components pass `withinPortal` to those two anyway, so grepping for the prop does not
+tell you which call sites actually needed it.
+
 ### Coding Standards
 
 #### Imports Order

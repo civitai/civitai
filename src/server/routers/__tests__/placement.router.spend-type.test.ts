@@ -109,4 +109,48 @@ describe('placement router — the charged currency is the domain’s', () => {
       expect.objectContaining({ spendType: 'green' })
     );
   });
+
+  /**
+   * The same shape as the currency above, and higher stakes.
+   *
+   * `createFreePlacement` takes `placerId` as a plain number and cannot tell
+   * where it came from, and every check below it — the daily allowance, the
+   * never-twice rule, self-placement — is *about* that id rather than a check
+   * *of* it. So a router reading it off the payload would let anyone spend
+   * someone else's free placement and submit under their account, with nothing
+   * downstream raising.
+   *
+   * Two independent things keep that true — the schema has no `placerId`, so zod
+   * strips it, and `...input` spreads before the session id — and this asserts
+   * the outcome rather than either mechanism. Measured: breaking one alone does
+   * not fail it, because the other still holds; adding `placerId` to the schema
+   * AND flipping the spread order does.
+   */
+  it('takes placerId from the session even when the client sends its own', async () => {
+    await callerOn(false).submitToRemixGallery({
+      hostImageId: 11,
+      imageId: 12,
+      free: true,
+      placerId: PLACER + 1,
+    } as never);
+
+    expect(createRemixGallerySubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ placerId: PLACER, free: true })
+    );
+  });
+
+  it('defaults a submission to paid when the client says nothing', async () => {
+    // The free path is asked for, never assumed: a client cached from before the
+    // free tier existed must keep paying rather than start spending an allowance
+    // it does not know it has.
+    await callerOn(false).submitToRemixGallery({
+      hostImageId: 11,
+      imageId: 12,
+      expectedPrice: 100,
+    } as never);
+
+    expect(createRemixGallerySubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ free: false })
+    );
+  });
 });

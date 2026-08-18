@@ -4,6 +4,7 @@ import {
   MAX_DECLINE_FEE_RATE,
   MIN_DECLINE_FEE_RATE,
   MIN_OWNER_SHARE,
+  PLACEMENT_FREE_SLOT_CAP_TIERS,
   PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
   placementSurfaces,
@@ -170,5 +171,72 @@ describe('placementPriceRange', () => {
     const range = await placementPriceRange(1, 'sticker');
     expect(range.score).toBe(0);
     expect(range.max).toBe(100);
+  });
+});
+
+describe('the free-slot cap table', () => {
+  const band = (caps: Record<string, number>) => [{ minScore: 0, caps }];
+
+  it('is what decides the free-slot cap, not the price table', async () => {
+    storedConfig({
+      priceCapTiers: band({ free: 999, bronze: 999, silver: 999, gold: 999 }),
+      freeSlotTiers: band({ free: 3, bronze: 4, silver: 5, gold: 6 }),
+    });
+
+    const range = await placementPriceRange(1, 'sticker');
+
+    // Two numbers from two tables through one query. Reading `max` for both is
+    // the failure this separates: a creator's Buzz ceiling is in the hundreds,
+    // and applied to slots it would be hundreds of free placements per image.
+    expect(range.freeSlotCap).toBe(3);
+    expect(range.max).toBe(999);
+  });
+
+  it('takes a per-surface override over the shared one', async () => {
+    storedConfig({
+      freeSlotTiers: band({ free: 2, bronze: 2, silver: 2, gold: 2 }),
+      freeSlotTiersBySurface: {
+        remixGallery: band({ free: 7, bronze: 7, silver: 7, gold: 7 }),
+      },
+    });
+
+    expect((await placementPriceRange(1, 'sticker')).freeSlotCap).toBe(2);
+    expect((await placementPriceRange(1, 'remixGallery')).freeSlotCap).toBe(7);
+  });
+
+  /**
+   * The failure this closes is not "the override is ignored" — it is the override
+   * falling back to the wrong table.
+   *
+   * A stored table with no zero band is unusable, and the shared helper that
+   * detects that has to be handed the FREE-SLOT defaults. Handed the price ones
+   * instead, a single malformed config edit silently grants 500-1000 free
+   * placements per space, which is the price cap read as a slot count.
+   */
+  it('falls back to the compiled free-slot table when the stored one is unusable', async () => {
+    storedConfig({ freeSlotTiers: band({ free: 5, bronze: 5, silver: 5, gold: 5 }) });
+    const configured = (await placementPriceRange(1, 'sticker')).freeSlotCap;
+
+    storedConfig({
+      freeSlotTiers: [{ minScore: 5_000, caps: { free: 5, bronze: 5, silver: 5, gold: 5 } }],
+    });
+    const fellBack = (await placementPriceRange(1, 'sticker')).freeSlotCap;
+
+    expect(configured).toBe(5);
+    // Asserted by identity against the compiled table rather than against a
+    // literal, the same way the price side is: a number would also match the
+    // price table's bottom band on the day someone gets the fallback wrong.
+    expect(fellBack).toBe(PLACEMENT_FREE_SLOT_CAP_TIERS[0].caps.free);
+    expect(fellBack).not.toBe(PLACEMENT_PRICE_CAP_TIERS[0].caps.free);
+  });
+
+  it('refuses a fractional slot count the same way it refuses a fractional price', async () => {
+    storedConfig({ freeSlotTiers: band({ free: 1.5, bronze: 2, silver: 3, gold: 4 }) });
+
+    // The whole config fails to parse and every accessor falls back, which is the
+    // documented behaviour: a bad edit must not take the feature down.
+    expect((await placementPriceRange(1, 'sticker')).freeSlotCap).toBe(
+      PLACEMENT_FREE_SLOT_CAP_TIERS[0].caps.free
+    );
   });
 });

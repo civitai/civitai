@@ -249,26 +249,35 @@ if (writable && target.readOnly) {
   process.exit(1);
 }
 
-// Client-side write guard. It matches the query's leading keyword, so it catches an accidental
+// Client-side write guard. It matches each statement's leading keyword, so it catches an accidental
 // write, not a determined one: anything nested deeper than a leading CTE gets through, and only
 // the role you connect as stops that. Comments and string literals are blanked first, so
 // `/* note */ DELETE` can't slip past and a SELECT mentioning "delete" in a literal isn't blocked.
+//
+// EVERY statement, not just the first. A migration file opens with a comment block, then
+// `SET lock_timeout`, then `BEGIN` — so a guard reading only the leading keyword of the whole string
+// sees `SET`, passes it, and runs the `ALTER TABLE`s underneath without --writable. Splitting on `;`
+// is not a parser (a dollar-quoted body containing a semicolon can be split mid-body), but the
+// failure direction is a spurious refusal rather than a wave-through, which is the right way round.
 if (!writable || target.readOnly) {
-  const upperQuery = query
+  const blanked = query
     .replace(/'([^']|'')*'/g, "''")
     .replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, ' ')
-    .toUpperCase()
-    .trim();
+    .toUpperCase();
   const writeOps = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE'];
-  for (const op of writeOps) {
-    const nested = upperQuery.startsWith('WITH') && new RegExp(`\\(\\s*${op}\\b`).test(upperQuery);
-    if (upperQuery.startsWith(op) || nested) {
-      const ctx = target.readOnly
-        ? `${target.flag} is read-only.`
-        : 'Use --writable flag to confirm.';
-      console.error(`Error: Write operation detected (${op}). ${ctx}`);
-      console.error('This requires explicit user permission as it modifies the database.');
-      process.exit(1);
+  for (const statement of blanked.split(';')) {
+    const upperQuery = statement.trim();
+    if (!upperQuery) continue;
+    for (const op of writeOps) {
+      const nested = upperQuery.startsWith('WITH') && new RegExp(`\\(\\s*${op}\\b`).test(upperQuery);
+      if (upperQuery.startsWith(op) || nested) {
+        const ctx = target.readOnly
+          ? `${target.flag} is read-only.`
+          : 'Use --writable flag to confirm.';
+        console.error(`Error: Write operation detected (${op}). ${ctx}`);
+        console.error('This requires explicit user permission as it modifies the database.');
+        process.exit(1);
+      }
     }
   }
 }
@@ -279,38 +288,77 @@ async function main() {
 
     const finalQuery = explain ? `EXPLAIN ANALYZE ${query}` : query;
     const start = Date.now();
-    const result = await client.query(finalQuery);
+    const queryResult = await client.query(finalQuery);
     const elapsed = Date.now() - start;
 
+    // A MULTI-STATEMENT query resolves to an ARRAY of Results, one per statement, not to a single
+    // Result. Reading `.rows` off that array yields undefined and `.rows.length` throws — which the
+    // catch below reported as `Query error: Cannot read properties of undefined (reading 'length')`
+    // AFTER the server had already executed and committed every statement. So the tool announced a
+    // failure for work it had done: two people read that message as "the DDL was refused" and went
+    // looking for a permissions problem that did not exist. Normalise to a list and render each.
+    const results = Array.isArray(queryResult) ? queryResult : [queryResult];
+
     if (jsonOutput) {
-      console.log(JSON.stringify({
-        rows: result.rows,
-        rowCount: result.rowCount,
-        elapsed,
-        fields: result.fields?.map(f => f.name)
-      }, null, 2));
+      const shape = (r) => ({
+        rows: r.rows ?? [],
+        rowCount: r.rowCount,
+        command: r.command,
+        fields: r.fields?.map((f) => f.name),
+      });
+      // Single statement keeps the original flat shape so existing callers parsing this don't break.
+      console.log(
+        JSON.stringify(
+          results.length === 1
+            ? { ...shape(results[0]), elapsed }
+            : { statements: results.map(shape), elapsed },
+          null,
+          2
+        )
+      );
     } else if (explain) {
-      console.log(result.rows.map(r => r['QUERY PLAN']).join('\n'));
+      console.log(
+        results
+          .flatMap((r) => (r.rows ?? []).map((row) => row['QUERY PLAN']))
+          .join('\n')
+      );
       if (!quiet) {
         console.error(`\nQuery time: ${elapsed}ms`);
       }
     } else {
-      if (!quiet && result.fields) {
-        console.log('Columns:', result.fields.map(f => f.name).join(', '));
-        console.log('─'.repeat(60));
-      }
-
-      if (result.rows.length === 0) {
-        console.log('(no rows returned)');
-      } else {
-        // Pretty print rows
-        for (const row of result.rows) {
-          console.log(row);
+      results.forEach((result, i) => {
+        // Only label the statements when there is more than one — a single-statement run should look
+        // exactly as it always has.
+        if (!quiet && results.length > 1) {
+          console.log(`\n── statement ${i + 1}/${results.length}${result.command ? ` (${result.command})` : ''}`);
         }
-      }
+
+        if (!quiet && result.fields?.length) {
+          console.log('Columns:', result.fields.map((f) => f.name).join(', '));
+          console.log('─'.repeat(60));
+        }
+
+        const rows = result.rows ?? [];
+        if (!result.fields?.length) {
+          // A DDL / SET / BEGIN statement returns no field descriptors and no rows. Say what it did
+          // rather than "(no rows returned)", which reads like a query that found nothing.
+          if (!quiet) console.log(`${result.command ?? 'OK'} — no result set`);
+        } else if (rows.length === 0) {
+          console.log('(no rows returned)');
+        } else {
+          for (const row of rows) {
+            console.log(row);
+          }
+        }
+      });
 
       if (!quiet) {
-        console.error(`\n${result.rowCount} row(s) in ${elapsed}ms`);
+        const total = results.reduce((sum, r) => sum + (r.rowCount ?? 0), 0);
+        const label =
+          results.length > 1
+            ? `${results.length} statement(s), ${total} row(s)`
+            : `${results[0]?.rowCount ?? 0} row(s)`;
+        console.error(`\n${label} in ${elapsed}ms`);
       }
     }
   } catch (err) {

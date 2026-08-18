@@ -185,7 +185,7 @@ export const collectionReadPrivacyData: Record<CollectionReadConfiguration, Priv
     icon: IconLock,
     label: 'Private',
     value: CollectionReadConfiguration.Private,
-    description: 'Only you and contributors for this collection can see this',
+    description: 'Only you and the collaborators you invite can see this',
   },
   [CollectionReadConfiguration.Public]: {
     icon: IconWorld,
@@ -204,22 +204,21 @@ export const collectionReadPrivacyData: Record<CollectionReadConfiguration, Priv
 export const collectionWritePrivacyData: Record<CollectionWriteConfiguration, PrivacyData> = {
   [CollectionWriteConfiguration.Private]: {
     icon: IconLock,
-    label: 'Private - only the owner can add content',
+    label: 'Me and my collaborators',
     value: CollectionWriteConfiguration.Private,
-    description: 'No one will be able to add content to this collection',
+    description: 'Only you and the collaborators you invite can add to this collection',
   },
   [CollectionWriteConfiguration.Public]: {
     icon: IconWorld,
-    label: 'Public - No review required',
+    label: 'Anyone, no review',
     value: CollectionWriteConfiguration.Public,
-    description: 'Anyone can add content to this collection. No review required.',
+    description: 'Anyone can add to this collection and their entries appear right away',
   },
   [CollectionWriteConfiguration.Review]: {
     icon: IconEyeOff,
-    label: 'Public - Review required',
+    label: 'Anyone, with review',
     value: CollectionWriteConfiguration.Review,
-    description:
-      'Anyone can add content to this collection, but content needs to be reviewed before it is visible.',
+    description: 'Anyone can submit, and you or a Manager approves entries before they appear',
   },
 };
 
