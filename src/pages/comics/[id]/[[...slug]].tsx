@@ -137,8 +137,10 @@ function PublicComicReader() {
   // wrong in a way that varies with the viewer's connection.
   //
   // The cost of firing before the query is that a view now also counts a load of a project that
-  // turns out not to exist, or one blocked on the green domain — neither knowable beforehand. Both
-  // are tiny (2 unresolvable project ids across 6 months of pageViews) against the ~50% recovered.
+  // turns out not to exist (2 unresolvable ids across 6 months of pageViews), or one blocked on the
+  // green domain — which is UNMEASURED, and on green every NSFW comic is blocked. Note this also
+  // moves toward, not away from, the baseline the fix is validated against: pageViews counts those
+  // same loads, so including them makes the two sources more comparable, not less.
   const trackProjectView = chapterDbPos == null && projectId > 0;
 
   let body: React.ReactNode;
@@ -1109,9 +1111,13 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
           entityId={activeChapter.id}
           entityType="ComicChapter"
           type="ComicChapterView"
-          // The query wait already proved intent; charging another second on top is what lost
-          // ~half of chapter reads.
-          delayMs={0}
+          // Short, not zero. The query wait proves intent for the FIRST chapter render only —
+          // chapter-to-chapter navigation is a shallow router.replace against already-loaded
+          // data, so there is no second wait and nothing else filtering it. Prev/Next is bound to
+          // the arrow keys, so at 0ms a reader holding ArrowRight through a 20-chapter comic
+          // books 20 reads in three seconds. 250ms kills held-key skimming and is noise against
+          // the ~5-6s this fix removes.
+          delayMs={250}
         />
       )}
 
