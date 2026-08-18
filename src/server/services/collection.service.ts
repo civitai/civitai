@@ -845,7 +845,8 @@ export const saveItemInCollections = async ({
 
   // Check if any featured collections are involved and validate ONCE
   const featuredCollections = collections.filter(
-    (c) => c.userId === -1 && !c.mode && c.name.includes('Featured')
+    (c) =>
+      c.userId === -1 && !c.mode && c.name.includes('Featured') && !unwrittenCollectionIds.has(c.id)
   );
   if (featuredCollections.length > 0) {
     // Validate once for all featured collections instead of in the loop
@@ -3664,7 +3665,6 @@ export const setCollectionItemNsfwLevel = async ({
     { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
 };
-
 
 export type CollectionEntityType = 'image' | 'model' | 'post' | 'article';
 
