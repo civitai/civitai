@@ -31,6 +31,10 @@ import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import {
+  openRejectCollectionItemsModal,
+  type RejectionSelection,
+} from '~/components/Collections/components/RejectCollectionItemsModal';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CollectionItemStatus, CollectionMode, CollectionType } from '~/shared/utils/prisma/enums';
@@ -508,12 +512,14 @@ function ModerationControls({
       },
     });
 
-  const handleRejectSelected = () => {
+  const handleRejectSelected = (selection: RejectionSelection) => {
+    const collectionItemIds = selected;
     deselectAll();
     updateCollectionItemsStatusMutation.mutate({
-      collectionItemIds: selected,
+      collectionItemIds,
       status: CollectionItemStatus.REJECTED,
       collectionId: filters.collectionId,
+      ...selection,
     });
   };
 
@@ -594,18 +600,21 @@ function ModerationControls({
           </LegacyActionIcon>
         </ButtonTooltip>
       </PopConfirm>
-      <PopConfirm
-        message={`Are you sure you want to reject ${selected.length} image(s)?`}
-        position="bottom-end"
-        onConfirm={handleRejectSelected}
-        withArrow
-      >
-        <ButtonTooltip label="Reject" {...tooltipProps}>
-          <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
-            <IconTrash size="1.25rem" />
-          </LegacyActionIcon>
-        </ButtonTooltip>
-      </PopConfirm>
+      <ButtonTooltip label="Reject" {...tooltipProps}>
+        <LegacyActionIcon
+          variant="outline"
+          disabled={!selected.length}
+          color="red"
+          onClick={() =>
+            openRejectCollectionItemsModal({
+              count: selected.length,
+              onConfirm: handleRejectSelected,
+            })
+          }
+        >
+          <IconTrash size="1.25rem" />
+        </LegacyActionIcon>
+      </ButtonTooltip>
       <ButtonTooltip label="Refresh" {...tooltipProps}>
         <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
           <IconReload size="1.25rem" />
