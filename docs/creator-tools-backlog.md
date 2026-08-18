@@ -128,9 +128,10 @@ they are a decision or a verification, not a known way in.
       set; optional follower notification on launch; a per-month cap on promotions per creator so
       notifications cannot be used as a spam channel. Optionally, automatic percentage-based price
       decay after a model has been listed N days, with a price-drop notification.
-- [ ] **Let creators filter the balance display to earned Buzz only.** The combined balance in the
-      top-right makes it hard to read earnings at a glance. Offer a setting to show only the earned
-      (yellow) balance.
+- [x] **Let creators filter the balance display to earned Buzz only.** Already shipped: an account
+      setting hides the non-earned balance from the header, leaving only the earned figure. It
+      predates the request, so the ask is really a discoverability problem — creators wrote their own
+      browser scripts for a toggle that already existed.
 - [ ] **Add a models-sold-today counter.** Creators track daily sales manually. A running count for
       the current day, visible without opening analytics, covers the need.
 - [ ] **Add video leaderboards, and all-time leaderboards.** Video creators have no leaderboard to
@@ -164,9 +165,14 @@ they are a decision or a verification, not a known way in.
       creators want to hide items they never use. Either per-item visibility in settings, or a
       denser layout. Related: the color coding on those entries no longer maps to anything
       meaningful and should be re-derived or dropped.
-- [ ] **Expose exact Buzz balances where precision matters.** The abbreviated display rounds to whole
-      millions, so large balances cannot be read precisely. The underlying account endpoint already
-      returns the exact figure.
+- [ ] **Show the exact balance on hover in the header.** Mostly built already: the balance component
+      takes an "abbreviate" switch, and its tooltip lists the exact figure per account type. The user
+      menu already uses both. The gap is only that the header balance passes no tooltip at all, so
+      hovering the top-right number gives nothing — which is where large balances get read as whole
+      millions.
+  - [ ] Treat this as a real change, not a prop addition: the header balance renders inside the user
+        menu's popover trigger, so adding a hover overlay there has to be checked against the menu
+        still opening on click.
 - [ ] **Document and price heavier training via the API.** Programmatic LoRA training is already
       possible through the orchestration API, but the path is not discoverable from creator-facing
       docs, and there is no offering for larger jobs such as checkpoint training at a premium rate.
