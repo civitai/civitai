@@ -27,7 +27,7 @@ import path from 'path';
  *
  * 🔴 WHY THE WALK COVERS `src/` AND NOT `src/server/`. It used to be rooted at
  * `src/server`, and two of the derivation sites live under `src/pages` —
- * `src/pages/api/auth/callback.ts` and `src/pages/api/mod/retool/comment.ts`,
+ * `src/pages/api/auth/callback.ts` and `src/pages/api/mod/comment/remove-as-tos.ts`,
  * both of which held the library edge at the time and were invisible to it. A
  * ledger that cannot see half the population is not a ledger; it reports a clean
  * set because it never looked. Widening the root is what makes "the set matches
@@ -196,7 +196,7 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
     symbol: 'resolveClientIpOrNull',
     why: 'Anonymous search-actor hashing. Must agree with the ctx.ip-fed sibling call sites.',
   },
-  'pages/api/mod/retool/comment.ts': {
+  'pages/api/mod/comment/remove-as-tos.ts': {
     symbol: 'resolveClientIpOrNull',
     why: 'Moderation audit-trail actor. Optional field, so the undefined sentinel is preserved.',
   },
