@@ -80,14 +80,17 @@ function UserPostsPage() {
                   size="xs"
                   value={section}
                   onChange={(section) => {
-                    setSection(section as 'published' | 'draft');
+                    const nextSection = section as 'published' | 'draft';
+                    setSection(nextSection);
                     replace({
-                      section: section as 'published' | 'draft',
+                      section: nextSection,
                       scheduled: undefined,
+                      // Carry the sort across the toggle. Only a count sort has to be
+                      // dropped, and only into drafts, where it would filter to nothing.
                       sort:
-                        section === 'draft' && draftSorts.includes(querySort)
-                          ? querySort
-                          : undefined,
+                        nextSection === 'draft' && !draftSorts.includes(querySort)
+                          ? undefined
+                          : querySort,
                     });
                   }}
                 />
