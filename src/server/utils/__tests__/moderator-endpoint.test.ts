@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as z from 'zod';
+import { redisMock } from '~/__tests__/mocks';
 
 // Minimal NextApiRequest/Response stand-in (avoids a node-mocks-http dependency).
 function createMocks({
@@ -39,31 +40,26 @@ function createMocks({
   return { req, res };
 }
 
-const { mockGetSession, mockServerSession, mockRedis, mockAudit, mockMultiIncr } = vi.hoisted(
-  () => {
-    const mockMultiIncr = { value: 1 };
-    const multiFactory = () => ({
-      set: vi.fn().mockReturnThis(),
-      incr: vi.fn().mockReturnThis(),
-      exec: vi.fn().mockImplementation(async () => ['OK', mockMultiIncr.value]),
-    });
-    return {
-      mockGetSession: vi.fn(),
-      mockServerSession: vi.fn(),
-      mockRedis: { multi: vi.fn(multiFactory), ttl: vi.fn().mockResolvedValue(60) },
-      mockAudit: vi.fn(),
-      mockMultiIncr,
-    };
-  }
-);
+const { mockGetSession, mockServerSession, mockAudit } = vi.hoisted(() => ({
+  mockGetSession: vi.fn(),
+  mockServerSession: vi.fn(),
+  mockAudit: vi.fn(),
+}));
+
+// `sysRedis` comes from the canonical redis mock, registered globally in
+// src/__tests__/setup.ts — see docs/testing/shared-module-mocks.md. Only the two commands this
+// endpoint uses are stubbed, in `beforeEach`; `REDIS_SYS_KEYS` stays the REAL table, so the
+// rate-limit key this test exercises is the one production builds, and it cannot go stale.
+const mockMultiIncr = { value: 1 };
+const multiFactory = () => ({
+  set: vi.fn().mockReturnThis(),
+  incr: vi.fn().mockReturnThis(),
+  exec: vi.fn().mockImplementation(async () => ['OK', mockMultiIncr.value]),
+});
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: mockServerSession,
-}));
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: mockRedis,
-  REDIS_SYS_KEYS: { RETOOL_ENDPOINT: { RATE_LIMIT: 'retool-endpoint:rate-limit' } },
 }));
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
@@ -107,7 +103,8 @@ const signedInAs = (user: Partial<typeof MOD>) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
-  mockRedis.ttl.mockResolvedValue(60);
+  redisMock.sysRedis.multi.mockImplementation(multiFactory);
+  redisMock.sysRedis.ttl.mockResolvedValue(60);
   signedInAs({});
 });
 
