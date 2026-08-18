@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SELECTABLE_REJECTION_REASONS } from '~/shared/constants/collection-rejection.constants';
-import { CollectionItemRejectionReason } from '~/shared/utils/prisma/enums';
+import type { CollectionItemRejectionReason } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 
 export type RejectionSelection = {

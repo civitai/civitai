@@ -324,22 +324,21 @@ function ReviewActions({
 
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
-      async onMutate({ collectionItemIds, status, rejectionReason }) {
+      async onMutate({ collectionItemIds }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
 
+        // Drop the item from every cached review queue. This writes across queries whose filters
+        // we cannot read here, and a decided item belongs in none of the pending ones — leaving it
+        // visible keeps it selectable for a bulk action that would re-decide it.
         const queryKey = getQueryKey(trpc.collection.getAllCollectionItems);
         queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
           produce(state, (old?: InfiniteData<CollectionGetAllItems>) => {
             if (!old?.pages?.length) return;
 
             for (const page of old.pages)
-              for (const item of page.collectionItems) {
-                if (collectionItemIds.includes(item.id)) {
-                  item.status = status;
-                  item.rejectionReason = rejectionReason ?? null;
-                  item.rejectionDetail = null;
-                }
-              }
+              page.collectionItems = page.collectionItems.filter(
+                (item) => !collectionItemIds.includes(item.id)
+              );
           })
         );
       },

@@ -510,19 +510,30 @@ function ModerationControls({
       async onMutate({ collectionItemIds, status, rejectionReason }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
 
+        // A decided item leaves the queue rather than flipping in place. Left visible it stays
+        // selectable, and the next bulk action silently re-decides it the other way.
+        const stillMatchesFilter = statuses.includes(status);
+
         queryUtils.collection.getAllCollectionItems.setInfiniteData(
           { ...filters },
           produce((data) => {
             if (!data?.pages?.length) return;
 
-            for (const page of data.pages)
-              for (const item of page.collectionItems) {
+            for (const page of data.pages) {
+              if (!stillMatchesFilter) {
+                page.collectionItems = page.collectionItems.filter(
+                  (item) => !collectionItemIds.includes(item.id)
+                );
+                continue;
+              }
+
+              for (const item of page.collectionItems)
                 if (collectionItemIds.includes(item.id)) {
                   item.status = status;
                   item.rejectionReason = rejectionReason ?? null;
                   item.rejectionDetail = null;
                 }
-              }
+            }
           })
         );
       },
