@@ -2763,6 +2763,15 @@ model AppBlockPublishRequest {
   rejectionReason       String?   @map("rejection_reason")
   approvalNotes         String?   @map("approval_notes")
   forgejoCommitSha      String?   @map("forgejo_commit_sha")                                // populated on approve after Forgejo commit succeeds
+  // #4059 build provenance — an UNTRUSTED CLIENT CLAIM about the tree the bundle
+  // was built from. NOT interchangeable with forgejoCommitSha above: that is a
+  // SERVER-side sha written on approve once the Forgejo commit succeeded, so it
+  // is a fact. These two are whatever the submitting client said; the server
+  // never confirms the bundle was actually built from sourceCommit, and nothing
+  // downstream may imply it did. NULL = unknown (a pre-feature row, or a client
+  // that sent nothing) — never "clean".
+  sourceCommit          String?   @map("source_commit")                                     // client-claimed 40-hex git sha the bundle was built from
+  sourceDirty           Boolean?  @map("source_dirty")                                      // client-claimed uncommitted-changes flag. NULL (unknown) != false (known clean)
   deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
   deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
   deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
