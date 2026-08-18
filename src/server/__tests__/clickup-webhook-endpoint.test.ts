@@ -2,8 +2,10 @@ import crypto from 'crypto';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BugService from '~/server/services/bug.service';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import { dbMock } from '~/__tests__/mocks/db.mock';
+// Imported for the side effect: loading these installs the canonical mocks that
+// bug.service's module-scope imports would otherwise reach for real.
+import '~/__tests__/mocks/logging.mock';
+import '~/__tests__/mocks/db.mock';
 
 const SECRET = 'clickup-test-signing-secret';
 const TASK_ID = '868kfwm3j';
@@ -17,7 +19,12 @@ const { env, resolveBugsByClickupTaskId } = vi.hoisted(() => ({
     CLICKUP_WEBHOOK_SECRET?: string;
     LOGGING: string;
   },
-  resolveBugsByClickupTaskId: vi.fn(async () => ({ matched: [1], resolved: [], skipped: [] })),
+  resolveBugsByClickupTaskId: vi.fn(async () => ({
+    matched: [1],
+    resolved: [],
+    skipped: [],
+    failed: [],
+  })),
 }));
 vi.mock('~/env/server', () => ({ env }));
 
@@ -110,6 +117,31 @@ describe('clickup webhook endpoint', () => {
     const res = await run(completion, sign(completion));
 
     expect(res._status()).toBe(503);
+    expect(resolveBugsByClickupTaskId).not.toHaveBeenCalled();
+  });
+
+  // 4xx tells ClickUp the request was bad, so it does not retry — a DB blip
+  // answered 400 would drop the completion permanently and leave the entry public.
+  it('answers 5xx when our own side fails, so ClickUp retries', async () => {
+    resolveBugsByClickupTaskId.mockRejectedValueOnce(
+      new Error('connect ETIMEDOUT 10.0.0.1:5432 while running `SELECT ...`')
+    );
+
+    const res = await run(completion, sign(completion));
+
+    expect(res._status()).toBe(500);
+    // The DB message can carry query/connection detail; it is logged, not echoed.
+    expect(String(res._body())).not.toContain('ETIMEDOUT');
+  });
+
+  it('caps the body it will buffer for an unauthenticated caller', async () => {
+    // bodyParser:false removes Next's 1MB limit, and the body is read BEFORE the
+    // signature can be checked — so the cap is the only thing bounding this.
+    const huge = 'x'.repeat(1_000_001);
+
+    const res = await run(huge, sign(huge));
+
+    expect(res._status()).toBe(413);
     expect(resolveBugsByClickupTaskId).not.toHaveBeenCalled();
   });
 

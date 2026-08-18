@@ -295,31 +295,44 @@ export const getBugReportStats = async ({
 
 export { BUG_CLOSED_STATUSES };
 
-/** `https://app.clickup.com/t/8459928/868kfwm3j` -> `868kfwm3j` */
+/**
+ * `https://app.clickup.com/t/8459928/868kfwm3j` -> `868kfwm3j`. Tolerates `-`/`_`
+ * so a ClickUp custom task id (`DEV-1234`) parses rather than silently reading
+ * as "no link".
+ */
 export const clickupTaskIdFromUrl = (url?: string | null) => {
   if (!url) return null;
   const last = url.split('?')[0].split('#')[0].replace(/\/+$/, '').split('/').pop();
-  return last && /^[a-z0-9]+$/i.test(last) ? last : null;
+  return last && /^[a-z0-9_-]+$/i.test(last) ? last : null;
 };
 
 const CLICKUP_DONE_TYPES = new Set(['closed', 'done']);
 
 /**
  * The status a task landed on if this payload moved it into a done state, else null.
- * ClickUp's own status *type* is authoritative because workspaces rename statuses
- * ("Shipped", "QA passed"); BUG_CLOSED_STATUSES is the fallback for payloads that
- * carry a bare status string with no type.
+ * ClickUp's status *type* is authoritative when present, because workspaces both
+ * rename statuses ("Shipped") and use done-sounding names for intermediate ones
+ * ("Resolved" -> "Verified" -> "Closed"). BUG_CLOSED_STATUSES is consulted only
+ * for a bare status string carrying no type.
  */
 export const clickupDoneStatusFromPayload = (payload: ClickupWebhookPayload) => {
   for (const item of payload.history_items ?? []) {
     if (item.field !== 'status') continue;
+
+    // `after` is unknown by design — see clickupWebhookSchema.
     const after = item.after;
-    if (!after) continue;
-    const status = typeof after === 'string' ? after : after.status ?? null;
-    const type = typeof after === 'string' ? null : after.type ?? null;
+    let status: string | null = null;
+    let type: string | null = null;
+    if (typeof after === 'string') status = after;
+    else if (after && typeof after === 'object') {
+      const shape = after as { status?: unknown; type?: unknown };
+      if (typeof shape.status === 'string') status = shape.status;
+      if (typeof shape.type === 'string') type = shape.type;
+    }
     if (!status) continue;
-    if ((type && CLICKUP_DONE_TYPES.has(type.trim().toLowerCase())) || isBugClosed(status))
-      return status;
+
+    const done = type ? CLICKUP_DONE_TYPES.has(type.trim().toLowerCase()) : isBugClosed(status);
+    if (done) return status;
   }
   return null;
 };
@@ -328,35 +341,45 @@ export const clickupDoneStatusFromPayload = (payload: ClickupWebhookPayload) => 
  * Close every board entry linked to a completed ClickUp task. Entries already
  * closed are left alone, so a replayed delivery cannot re-stamp resolvedAt.
  */
-export const resolveBugsByClickupTaskId = async ({
-  taskId,
-  status = 'Complete',
-}: {
-  taskId: string;
-  status?: string;
-}) => {
-  const candidates = await dbRead.bug.findMany({
-    where: { clickupUrl: { contains: taskId } },
-    select: { id: true, status: true, resolvedAt: true, clickupUrl: true },
-  });
+export const resolveBugsByClickupTaskId = async ({ taskId }: { taskId: string }) => {
+  const findLinked = async (client: typeof dbRead) => {
+    const candidates = await client.bug.findMany({
+      where: { clickupUrl: { contains: taskId } },
+      select: { id: true, status: true, resolvedAt: true, clickupUrl: true },
+    });
+    // `contains` also matches a longer id this one is a prefix of, so an entry is
+    // only ours when its task segment is exactly the task that completed.
+    return candidates.filter((bug) => clickupTaskIdFromUrl(bug.clickupUrl) === taskId);
+  };
 
-  // `contains` also matches a longer id this one is a prefix of, so an entry is
-  // only ours when its task segment is exactly the task that completed.
-  const linked = candidates.filter((bug) => clickupTaskIdFromUrl(bug.clickupUrl) === taskId);
+  // An entry linked moments ago may not have reached the replica yet, and ClickUp
+  // does not redeliver a 200 — so an empty read is re-checked on the writer rather
+  // than reported as "no entry links this task".
+  let linked = await findLinked(dbRead);
+  if (!linked.length) linked = await findLinked(dbWrite);
+
   const isClosed = (bug: { status: string; resolvedAt: Date | null }) =>
     !!bug.resolvedAt || isBugClosed(bug.status);
   const alreadyClosed = linked.filter(isClosed);
   const toClose = linked.filter((bug) => !isClosed(bug));
 
   const resolved: { id: number; previousStatus: string }[] = [];
+  const failed: { id: number; error: string }[] = [];
   for (const bug of toClose) {
-    await updateBug({ id: bug.id, status });
-    resolved.push({ id: bug.id, previousStatus: bug.status });
+    // One unclosable entry (deleted between the read and the write) must not
+    // abandon the others, nor discard the closes already made.
+    try {
+      await updateBug({ id: bug.id, status: 'Complete' });
+      resolved.push({ id: bug.id, previousStatus: bug.status });
+    } catch (error) {
+      failed.push({ id: bug.id, error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   return {
     matched: linked.map((bug) => bug.id),
     resolved,
     skipped: alreadyClosed.map((bug) => bug.id),
+    failed,
   };
 };

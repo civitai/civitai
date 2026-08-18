@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clickupWebhookSchema } from '~/server/schema/bug.schema';
 import type { ClickupWebhookPayload } from '~/server/schema/bug.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 type BugUpdateArgs = { where: { id: number }; data: { status?: string; resolvedAt?: Date | null } };
-type HistoryItem = NonNullable<ClickupWebhookPayload['history_items']>[number];
 
 /**
  * Distinct ids throughout: a value arriving in the wrong place cannot pass by
@@ -17,6 +17,7 @@ const NEIGHBOUR_BUG = 52;
 const CLOSED_BUG = 63;
 
 const bugFindMany = dbMock.dbRead.bug.findMany;
+const bugWriteFindMany = dbMock.dbWrite.bug.findMany;
 const bugFindUnique = dbMock.dbRead.bug.findUnique;
 const bugUpdate = dbMock.dbWrite.bug.update;
 
@@ -41,6 +42,13 @@ const row = (
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // reset, not clear: `...Once` queues survive clearAllMocks and would otherwise
+  // bleed a previous test's return value into this one.
+  bugFindMany.mockReset();
+  bugWriteFindMany.mockReset();
+  bugUpdate.mockReset();
+  bugFindMany.mockResolvedValue([]);
+  bugWriteFindMany.mockResolvedValue([]);
   bugUpdate.mockImplementation(async ({ where, data }: BugUpdateArgs) => ({
     id: where.id,
     ...data,
@@ -54,10 +62,11 @@ describe('clickupTaskIdFromUrl', () => {
     expect(clickupTaskIdFromUrl(`${url(TASK_ID)}/?block=abc#c`)).toBe(TASK_ID);
   });
 
-  // Justin's note on the ticket: entries may carry a bare task id rather than a
-  // full link, so both spellings have to resolve to the same task.
-  it('accepts a bare task id', () => {
+  // `-`/`_` matter: a ClickUp custom task id (DEV-1234) must parse rather than
+  // read as "no link at all", which is silent.
+  it('accepts a bare task id and a custom task id', () => {
     expect(clickupTaskIdFromUrl(TASK_ID)).toBe(TASK_ID);
+    expect(clickupTaskIdFromUrl('https://app.clickup.com/t/9008/DEV-1234')).toBe('DEV-1234');
   });
 
   it('is null when there is no link and when the segment is not an id', () => {
@@ -68,7 +77,7 @@ describe('clickupTaskIdFromUrl', () => {
 });
 
 describe('clickupDoneStatusFromPayload', () => {
-  const payload = (after: HistoryItem['after'], field = 'status'): ClickupWebhookPayload => ({
+  const payload = (after: unknown, field = 'status'): ClickupWebhookPayload => ({
     event: 'taskStatusUpdated',
     task_id: TASK_ID,
     history_items: [{ field, after }],
@@ -79,6 +88,36 @@ describe('clickupDoneStatusFromPayload', () => {
       'shipped'
     );
     expect(clickupDoneStatusFromPayload(payload({ status: 'shipped', type: 'open' }))).toBeNull();
+  });
+
+  // The trap this guards: a QA flow with Resolved -> Verified -> Closed would
+  // publicly mark the board entry fixed the moment it reached the FIRST of them.
+  it('does not treat a done-SOUNDING name as done when ClickUp typed it otherwise', () => {
+    expect(
+      clickupDoneStatusFromPayload(payload({ status: 'Resolved', type: 'custom' }))
+    ).toBeNull();
+    expect(
+      clickupDoneStatusFromPayload(payload({ status: 'Complete', type: 'custom' }))
+    ).toBeNull();
+  });
+
+  // ClickUp sends an array for tag/watcher edits and a number for priority. A
+  // schema that rejected those would fail the whole delivery, dropping the status
+  // item beside them — and repeated failures disable the webhook at ClickUp.
+  it('reads the status item even when other history items carry other shapes', () => {
+    const mixed = {
+      event: 'taskUpdated',
+      task_id: TASK_ID,
+      history_items: [
+        { field: 'tag', after: [{ name: 'known-issue' }] },
+        { field: 'priority', after: 2 },
+        { field: 'status', after: { status: 'complete', type: 'closed' } },
+      ],
+    };
+    const parsed = clickupWebhookSchema.safeParse(mixed);
+
+    expect(parsed.success).toBe(true);
+    expect(clickupDoneStatusFromPayload(parsed.data as ClickupWebhookPayload)).toBe('complete');
   });
 
   it('falls back to the board closed-status list for a bare status string', () => {
@@ -109,13 +148,39 @@ describe('resolveBugsByClickupTaskId', () => {
   });
 
   it('leaves an entry whose task merely starts with this id alone', async () => {
+    // On BOTH clients, so this proves the segment filter rather than an empty read.
     bugFindMany.mockResolvedValue([row(NEIGHBOUR_BUG, NEIGHBOUR_TASK_ID)]);
+    bugWriteFindMany.mockResolvedValue([row(NEIGHBOUR_BUG, NEIGHBOUR_TASK_ID)]);
 
     const result = await resolveBugsByClickupTaskId({ taskId: TASK_ID });
 
     expect(result.matched).toEqual([]);
     expect(result.resolved).toEqual([]);
     expect(bugUpdate).not.toHaveBeenCalled();
+  });
+
+  // A moderator can link an entry seconds before the task completes; the read
+  // replica may not have it yet, and ClickUp never redelivers a 200.
+  it('re-checks the writer when the replica returns nothing', async () => {
+    bugFindMany.mockResolvedValue([]);
+    bugWriteFindMany.mockResolvedValue([row(OPEN_BUG, TASK_ID)]);
+
+    const result = await resolveBugsByClickupTaskId({ taskId: TASK_ID });
+
+    expect(result.resolved).toEqual([{ id: OPEN_BUG, previousStatus: 'Open' }]);
+  });
+
+  it('closes the remaining entries when one of them cannot be closed', async () => {
+    bugFindMany.mockResolvedValue([
+      row(CLOSED_BUG, TASK_ID, { status: 'Open' }),
+      row(OPEN_BUG, TASK_ID),
+    ]);
+    bugUpdate.mockRejectedValueOnce(new Error('row vanished'));
+
+    const result = await resolveBugsByClickupTaskId({ taskId: TASK_ID });
+
+    expect(result.failed.map((f) => f.id)).toEqual([CLOSED_BUG]);
+    expect(result.resolved).toEqual([{ id: OPEN_BUG, previousStatus: 'Open' }]);
   });
 
   it('does not re-stamp an entry that is already closed', async () => {
