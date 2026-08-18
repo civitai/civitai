@@ -18,6 +18,7 @@ vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser }));
 
 import {
   getBlockCheckOwnerIds,
+  getBlockCheckOwnerIdsForModelComment,
   throwIfBlockedByEntityOwner,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
@@ -169,6 +170,68 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
   it('returns [] when the entity does not exist', async () => {
     mockDb.image.findUnique.mockResolvedValueOnce(null);
     expect(await getBlockCheckOwnerIds({ entityType: 'image', entityId: 1 })).toEqual([]);
+  });
+});
+
+describe('getBlockCheckOwnerIdsForModelComment — legacy model comments', () => {
+  const PARENT_AUTHOR = 55;
+  const OTHER_OWNER = 200;
+
+  it('resolves the model owner for a new top-level comment', async () => {
+    mockDb.model.findMany.mockResolvedValueOnce([{ userId: OWNER }]);
+    expect(await getBlockCheckOwnerIdsForModelComment({ modelId: 1 })).toEqual([OWNER]);
+    expect(mockDb.model.findMany).toHaveBeenCalledWith({
+      where: { id: { in: [1] } },
+      select: { userId: true },
+    });
+  });
+
+  it('resolves the parent author as well as the model owner for a reply', async () => {
+    mockDb.model.findMany.mockResolvedValueOnce([{ userId: OWNER }]);
+    mockDb.comment.findMany.mockResolvedValueOnce([{ userId: PARENT_AUTHOR }]);
+    expect(await getBlockCheckOwnerIdsForModelComment({ modelId: 1, parentId: 9 })).toEqual([
+      OWNER,
+      PARENT_AUTHOR,
+    ]);
+  });
+
+  it('resolves an edit target from the stored comment, not only the request', async () => {
+    // The stored comment lives on model 1; the request re-homes it onto model 2.
+    mockDb.comment.findUnique.mockResolvedValueOnce({ modelId: 1, parentId: null });
+    mockDb.model.findMany.mockResolvedValueOnce([{ userId: OTHER_OWNER }, { userId: OWNER }]);
+
+    expect(await getBlockCheckOwnerIdsForModelComment({ commentId: 5, modelId: 2 })).toEqual([
+      OTHER_OWNER,
+      OWNER,
+    ]);
+    expect(mockDb.comment.findUnique).toHaveBeenCalledWith({
+      where: { id: 5 },
+      select: { modelId: true, parentId: true },
+    });
+    // Both ends of the move are looked up — dropping either would let a re-home escape the block.
+    expect(mockDb.model.findMany).toHaveBeenCalledWith({
+      where: { id: { in: [2, 1] } },
+      select: { userId: true },
+    });
+  });
+
+  it('resolves the stored parent author on an edit', async () => {
+    mockDb.comment.findUnique.mockResolvedValueOnce({ modelId: 1, parentId: 9 });
+    mockDb.model.findMany.mockResolvedValueOnce([{ userId: OWNER }]);
+    mockDb.comment.findMany.mockResolvedValueOnce([{ userId: PARENT_AUTHOR }]);
+
+    expect(await getBlockCheckOwnerIdsForModelComment({ commentId: 5, modelId: 1 })).toEqual([
+      OWNER,
+      PARENT_AUTHOR,
+    ]);
+    expect(mockDb.comment.findMany).toHaveBeenCalledWith({
+      where: { id: { in: [9] } },
+      select: { userId: true },
+    });
+  });
+
+  it('returns [] when nothing resolves', async () => {
+    expect(await getBlockCheckOwnerIdsForModelComment({ commentId: 5 })).toEqual([]);
   });
 });
 

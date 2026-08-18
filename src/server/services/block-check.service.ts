@@ -205,6 +205,58 @@ export async function getBlockCheckOwnerIdsForComment(commentId: number): Promis
   return [...ids];
 }
 
+/**
+ * Owners to check for a write on the legacy model-comment surface (`Comment`).
+ *
+ * A create is aimed by the request; an edit writes `modelId`/`parentId` through from the request
+ * while being scoped by comment id alone, so an edit can re-home a comment onto another model or
+ * under another parent. Both the comment's stored home and the one the request names are resolved,
+ * so neither end of a move escapes the block. The writer's own id may come back among them —
+ * `throwIfBlockedByOwners` skips self.
+ */
+export async function getBlockCheckOwnerIdsForModelComment({
+  commentId,
+  modelId,
+  parentId,
+}: {
+  commentId?: number | null;
+  modelId?: number | null;
+  parentId?: number | null;
+}): Promise<number[]> {
+  const modelIds = new Set<number>();
+  const parentIds = new Set<number>();
+  if (modelId) modelIds.add(modelId);
+  if (parentId) parentIds.add(parentId);
+
+  if (commentId) {
+    const stored = await dbRead.comment.findUnique({
+      where: { id: commentId },
+      select: { modelId: true, parentId: true },
+    });
+    if (stored) {
+      modelIds.add(stored.modelId);
+      if (stored.parentId) parentIds.add(stored.parentId);
+    }
+  }
+
+  const ids = new Set<number>();
+  if (modelIds.size) {
+    const models = await dbRead.model.findMany({
+      where: { id: { in: [...modelIds] } },
+      select: { userId: true },
+    });
+    for (const model of models) ids.add(model.userId);
+  }
+  if (parentIds.size) {
+    const parents = await dbRead.comment.findMany({
+      where: { id: { in: [...parentIds] } },
+      select: { userId: true },
+    });
+    for (const parent of parents) ids.add(parent.userId);
+  }
+  return [...ids];
+}
+
 // Resolves the content owner user id(s) relevant to an interaction on a given
 // entity, so we can enforce user-blocking on write paths (comment/reaction).
 export async function getBlockCheckOwnerIds({

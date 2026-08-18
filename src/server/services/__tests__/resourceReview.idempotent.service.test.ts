@@ -9,7 +9,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { Prisma } from '@prisma/client';
 
-const { mockDb } = vi.hoisted(() => ({
+const { mockDb, amIBlockedByUser } = vi.hoisted(() => ({
+  amIBlockedByUser: vi.fn(async (..._a: unknown[]): Promise<boolean> => false),
   mockDb: {
     user: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     // createResourceReviewNotification (fired best-effort after the create
@@ -19,6 +20,8 @@ const { mockDb } = vi.hoisted(() => ({
     model: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ userId: 1 })) },
     imageResourceNew: { count: vi.fn(async (..._a: unknown[]): Promise<number> => 0) },
     resourceReview: {
+      // The edit branch resolves the review's stored model before the block check.
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
       update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
       findUniqueOrThrow: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
@@ -49,7 +52,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   HiddenUsers: { getCached: vi.fn(async () => []) },
 }));
 vi.mock('~/server/services/user.service', () => ({
-  amIBlockedByUser: vi.fn(async () => false),
+  amIBlockedByUser,
   getBasicDataForUsers: vi.fn(async () => new Map()),
   getCosmeticsForUsers: vi.fn(async () => ({})),
   getProfilePicturesForUsers: vi.fn(async () => ({})),
@@ -78,6 +81,9 @@ const baseInput = {
 beforeEach(() => {
   vi.clearAllMocks();
   mockDb.user.findFirst.mockResolvedValue({ username: 'tester' });
+  amIBlockedByUser.mockResolvedValue(false);
+  mockDb.model.findUnique.mockResolvedValue({ userId: 1 });
+  mockDb.resourceReview.findUnique.mockResolvedValue(null);
 });
 
 describe('createResourceReview — idempotent on P2002 race', () => {
@@ -117,5 +123,49 @@ describe('upsertResourceReview (create branch) — idempotent on P2002 race', ()
         where: { modelVersionId_userId: { modelVersionId: 20, userId: 42 } },
       })
     );
+  });
+});
+
+/**
+ * A review written before a block stayed editable afterwards: the guard ran on create only, and an
+ * edit writes `modelId` through from the request while being scoped by review id — so it could also
+ * be re-homed onto a model whose owner had blocked the author.
+ */
+describe('upsertResourceReview (edit branch) — block enforcement', () => {
+  const OWNER = 1;
+  const OTHER_OWNER = 2;
+  const AUTHOR = 42;
+
+  it('throws and never updates when the author is blocked by the stored model owner', async () => {
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: 10 });
+    amIBlockedByUser.mockResolvedValue(true);
+
+    await expect(upsertResourceReview({ ...baseInput, id: 7, userId: AUTHOR })).rejects.toThrow();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: OWNER });
+    expect(mockDb.resourceReview.update).not.toHaveBeenCalled();
+  });
+
+  it('updates when the author is not blocked', async () => {
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: 10 });
+    mockDb.resourceReview.update.mockResolvedValueOnce({ id: 7, modelId: 10, modelVersionId: 20 });
+
+    await upsertResourceReview({ ...baseInput, id: 7, userId: AUTHOR });
+
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: OWNER });
+    expect(mockDb.resourceReview.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks the model the edit points at, not only the one it is stored on', async () => {
+    // Stored on model 11 (owner 1, no block); the request re-homes it onto model 10 (owner 2).
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: 11 });
+    mockDb.model.findUnique.mockImplementation(async (args: unknown) => ({
+      userId: (args as { where: { id: number } }).where.id === 10 ? OTHER_OWNER : OWNER,
+    }));
+    amIBlockedByUser.mockImplementation(
+      async (args) => (args as { targetUserId: number }).targetUserId === OTHER_OWNER
+    );
+
+    await expect(upsertResourceReview({ ...baseInput, id: 7, userId: AUTHOR })).rejects.toThrow();
+    expect(mockDb.resourceReview.update).not.toHaveBeenCalled();
   });
 });

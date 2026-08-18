@@ -324,13 +324,26 @@ export const upsertResourceReview = async ({
   ...data
 }: UpsertResourceReviewInput & { userId: number; isModerator?: boolean }) => {
   if (data.details) await throwOnBlockedLinkDomain(data.details);
-  if (!data.id) {
+  // Edits too, not just creates — a review written before a block would otherwise stay editable
+  // into anything afterwards. An edit writes `modelId` through from the request while being scoped
+  // by review id, so the review's stored model is checked alongside the one the request names.
+  const storedModelId = data.id
+    ? (
+        await dbRead.resourceReview.findUnique({
+          where: { id: data.id },
+          select: { modelId: true },
+        })
+      )?.modelId
+    : undefined;
+  for (const modelId of new Set([data.modelId, storedModelId].filter((x): x is number => !!x)))
     await throwIfBlockedByEntityOwner({
       userId,
       entityType: 'model',
-      entityId: data.modelId,
+      entityId: modelId,
       isModerator,
     });
+
+  if (!data.id) {
     const ret = await dbWrite.resourceReview
       .create({
         data: { ...data, userId, thread: { create: {} } },
