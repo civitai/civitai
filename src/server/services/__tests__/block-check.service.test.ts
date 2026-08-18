@@ -61,8 +61,8 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
   // reaction path (the only `commentOld` consumer) open under a blocker's model.
   it('resolves the legacy comment (commentOld) author and the model owner', async () => {
     const COMMENT_AUTHOR = 55;
-    mockDb.comment.findUnique.mockResolvedValue({ userId: COMMENT_AUTHOR, modelId: 3 });
-    mockDb.model.findUnique.mockResolvedValue({ userId: OWNER });
+    mockDb.comment.findUnique.mockResolvedValueOnce({ userId: COMMENT_AUTHOR, modelId: 3 });
+    mockDb.model.findUnique.mockResolvedValueOnce({ userId: OWNER });
 
     expect(await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: 1 })).toEqual([
       COMMENT_AUTHOR,
@@ -75,7 +75,7 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
   });
 
   it('resolves nothing for a legacy comment that no longer exists', async () => {
-    mockDb.comment.findUnique.mockResolvedValue(null);
+    mockDb.comment.findUnique.mockResolvedValueOnce(null);
     expect(await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: 1 })).toEqual([]);
   });
 

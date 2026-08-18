@@ -321,8 +321,10 @@ const createResourceReviewNotification = async ({
   }).catch();
 };
 
+// Read through the writer: on the replica a review created seconds ago resolves no model, the
+// guard finds no owner to refuse against, and the write it guards then succeeds anyway.
 const storedReviewModelId = async (id: number) =>
-  (await dbRead.resourceReview.findUnique({ where: { id }, select: { modelId: true } }))?.modelId;
+  (await dbWrite.resourceReview.findUnique({ where: { id }, select: { modelId: true } }))?.modelId;
 
 /**
  * A review is content on someone else's model, so the model's owner is the block target. Resolved

@@ -141,6 +141,9 @@ describe('resource review writes — block enforcement', () => {
 
   // Keyed on the model asked for, so an assertion about the stored model cannot be satisfied by a
   // lookup of the requested one.
+  // This file aliases dbRead and dbWrite to one object, so nothing here can tell which client the
+  // stored-review lookup uses. It reads through the writer on purpose — see the comment there — and
+  // that choice is untested.
   const owners = (byModelId: Record<number, number>) =>
     mockDb.model.findUnique.mockImplementation(async (args: unknown) => {
       const id = (args as { where: { id: number } }).where.id;
@@ -245,6 +248,40 @@ describe('resource review writes — block enforcement', () => {
       userId: AUTHOR,
       isModerator: true,
     });
+    // The upsert branch too — it is the one with two model ids to resolve, so it is the one where
+    // a dropped `isModerator` would refuse a moderator twice over.
+    await upsertResourceReview({
+      ...baseInput,
+      id: 7,
+      modelId: REQUEST_MODEL,
+      userId: AUTHOR,
+      isModerator: true,
+    });
     expect(amIBlockedByUser).not.toHaveBeenCalled();
+  });
+
+  // `userId` and `isModerator` are guard inputs, not columns. They reach these functions as part of
+  // one object, so a destructure that stops pulling them out sends them into the Prisma payload:
+  // on `update` that rewrites the review's author, since the row is scoped by id alone and a
+  // moderator may edit someone else's review.
+  it('keeps the guard inputs out of the Prisma payload', async () => {
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDb.resourceReview.update.mockResolvedValue({ id: 7, modelId: 11, modelVersionId: 20 });
+
+    await updateResourceReview({ id: 7, rating: 5, details: null, userId: AUTHOR });
+    const updateArgs = mockDb.resourceReview.update.mock.calls[0][0] as { data: object };
+    expect(updateArgs.data).not.toHaveProperty('userId');
+    expect(updateArgs.data).not.toHaveProperty('isModerator');
+
+    await createResourceReview({
+      ...baseInput,
+      modelId: REQUEST_MODEL,
+      userId: AUTHOR,
+      isModerator: true,
+    });
+    const createArgs = mockDb.resourceReview.create.mock.calls[0][0] as { data: object };
+    // `userId` IS a column on create — the review's author. `isModerator` never is.
+    expect(createArgs.data).toHaveProperty('userId', AUTHOR);
+    expect(createArgs.data).not.toHaveProperty('isModerator');
   });
 });
