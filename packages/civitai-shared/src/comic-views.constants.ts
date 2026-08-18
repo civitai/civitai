@@ -1,36 +1,44 @@
 /**
- * The day comic view tracking went live.
+ * Where comic view history changes measurement.
  *
- * Comic views before this date do not exist as `views` rows — they are reconstructed from
+ * Comic views before this point do not exist as `views` rows — they are reconstructed from
  * `pageViews` paths by the comic view backfill (civitai-scripts, `backfill/comic-views.js`), which
- * writes straight into
- * `daily_views`. The reconstruction is close but not identical, and one difference is visible to
- * anyone reading a chart:
+ * writes straight into `daily_views`.
  *
- *   Chapter reads are gated on `canRead`, so a paywalled early-access chapter a viewer could not
- *   open is not a read. `pageViews` cannot see that gate, so backfilled chapter counts include
- *   those locked hits. For a comic that sells early access, the chapter series STEPS DOWN on this
- *   date — permanently — and reads as the comic losing readers the day the feature shipped.
- *
- * Anything charting comic views should draw the span before this date differently and say why,
- * rather than presenting one continuous series. The backfill asserts its `--until` equals this
- * value, so the two cannot drift apart.
- *
- * Exclusive: this date is the first day of live tracking, and the last backfilled day is the one
- * before it.
- *
- * It is OBSERVED, not chosen. The backfill (civitai-scripts, `backfill/comic-views.js`) refuses to
- * run until `default.views` actually holds a day of real comic views, then asserts that the first
- * such day equals this value and names the correct one if it does not — so this is a checked
- * contract rather than a date someone picked in advance.
- * A guessed date fails silently in both directions: a day early and live rows land inside the
- * backfilled window; a day late and that day gets neither backfill nor tracking. The boundary is
- * UTC midnight, which falls the previous evening in US timezones, so a hand-picked date is
- * ambiguous before a 20-30 minute deploy is even factored in.
- *
- * Placeholder until the tracking code deploys; the backfill will tell you the real value.
+ * The boundary is a TIMESTAMP, not a date, and that is not a detail. Tracking went live mid-day, so
+ * the backfill ran to the exact moment of the first beacon and no date can express it: treat
+ * 2026-08-17 as reconstructed and 17 hours of live data are mislabelled; treat it as live and the
+ * same 17 hours of reconstructed data are. `daily_views` is date-granular and sums, so that day's
+ * TOTAL is correct — but its provenance is mixed, and a chart that colours by provenance has to say
+ * so rather than pick a side.
  */
-export const COMIC_VIEW_TRACKING_CUTOVER = '2026-08-18';
+export const COMIC_VIEW_TRACKING_CUTOVER = '2026-08-17T17:20:57Z';
+
+/**
+ * The one day that is partly both: reconstructed 00:00-17:20:57 UTC, live beacons after. Every day
+ * before it is wholly reconstructed; every day after, wholly live.
+ */
+export const COMIC_VIEW_MIXED_DAY = '2026-08-17';
+
+/**
+ * The window where live tracking was live but undercounting, and which nothing back-fills.
+ *
+ * Comic view tracking shipped on 2026-08-17 recording only ~50% of what `pageViews` saw — its
+ * `TrackView` sat behind a slow query, so the effective threshold for a view was ~5-6s and 47% of
+ * comic visits are shorter (measured: project 0.48, chapter 0.54, against 1.06-1.08 for articles
+ * and posts in the same window). Fixed in PR #4066.
+ *
+ * 🔴 So a chart spanning this period has TWO steps, not one: down at the cutover, and back up when
+ * the fix deployed, with an undercounted trough between them. The trough is permanent — the
+ * backfill stops at the cutover and does not cover it. Do not describe either step to creators as
+ * a change in readership.
+ *
+ * Set the end to the #4066 deploy date once it ships; null means the fix is not out yet.
+ */
+export const COMIC_VIEW_UNDERCOUNT_WINDOW: { start: string; end: string | null } = {
+  start: '2026-08-17T17:20:57Z',
+  end: null,
+};
 
 /** Human-readable reason, for a tooltip or footnote on a chart that spans the cutover. */
 export const COMIC_VIEW_BACKFILL_NOTE =
