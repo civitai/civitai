@@ -245,7 +245,8 @@ export type CosmeticType =
   | 'ContentDecoration'
   | 'ProfileDecoration'
   | 'ProfileBackground'
-  | 'Sticker';
+  | 'Sticker'
+  | 'ChatTheme';
 
 export type CosmeticSource = 'Trophy' | 'Purchase' | 'Event' | 'Membership' | 'Claim';
 

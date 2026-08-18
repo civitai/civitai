@@ -4107,6 +4107,7 @@ enum CosmeticType {
   ProfileDecoration
   ProfileBackground
   Sticker
+  ChatTheme
 }
 
 enum CosmeticSource {

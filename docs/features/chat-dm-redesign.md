@@ -4,10 +4,10 @@ Working plan for ClickUp `868kguhpy`, built against Ellie's mockup (*Civitai Cha
 Mockup*, 2026-08-01) and the 2026-08-12 product call. Companion to
 [chat-system.md](chat-system.md), which describes the system as it exists today.
 
-Not everything in the mockup is in this plan. Emoji, stickers, reactions and chat themes depend
-on the cosmetics work in `868kk3t0t` (Entity Reactions V2, `CosmeticType.Sticker`,
-`CosmeticType.ChatTheme`) and are tracked there. This plan covers the four slices that are
-buildable against the chat system as it stands:
+Not everything in the mockup is in this plan. Reactions depend on the cosmetics work in
+`868kk3t0t` (Entity Reactions V2) and are tracked there. Stickers, the base emoji pack and chat
+themes are built here. This plan covers the slices that are buildable against the chat system as
+it stands:
 
 | Phase | Slice | Migration? | Status |
 |-------|-------|-----------|--------|
@@ -253,13 +253,37 @@ Edits, conversation clears and per-message deletes emit rows to a ClickHouse tab
 Retaining the record is what keeps a `ChatReport` reviewable after a participant clears their
 side of the thread; without it, a report filed today can be rendered unreviewable tomorrow.
 
+## Themes
+
+A theme is a palette applied as CSS variables on the chat window and nothing else — the other
+side of a conversation sees their own. `default` is free; `citron`, `bubblegum` and `terminal`
+each need the matching `ChatTheme` cosmetic.
+
+The palettes live in `src/shared/constants/chat-theme.ts`, not in the cosmetic's `data`. The
+cosmetic carries only a slug, so a cosmetic record can never become a channel for arbitrary CSS,
+and an unrecognized slug renders as the default.
+
+The *choice* is a chat user setting; the *entitlement* is the cosmetic. Resolution happens at
+render (`resolveChatTheme`), which is what makes a lost grant self-correcting: the window falls
+back to the default with no revoke job, and picks the theme back up if the grant returns.
+
+A named theme is a fixed palette in both colour schemes. Picking Terminal is picking the terminal
+look, not a preference the light/dark setting gets to reinterpret; only `default` follows the
+app's own tokens.
+
 ## Open
 
 - **Sticker asset spec** — emoji are fixed at 128×128 (D6). Stickers render far larger and need
   their own numbers before any creator uploads one. Belongs in `cosmeticImageRequirements`.
   Tracked in `868kk3t0t`.
-- **Chat themes at lapsed membership** — Civitai cosmetics persist once granted; Discord revokes
-  Nitro themes on lapse. Product call, plus the tier map. Tracked in `868kk3t0t`.
+- **Chat theme tier map** — the three themes exist as `ChatTheme` cosmetics and the window
+  renders whichever one the user owns and picked, but nothing grants them yet. Which tier gets
+  which theme is a product call; the mockup assumed two for any membership with Terminal as
+  Gold-exclusive. Until it lands, `/api/testing/chat-themes` grants one to a single account.
+- **Chat themes at lapsed membership** — the seeded cosmetics are `permanentUnlock = true`,
+  following the Civitai precedent that a grant is never clawed back; Discord revokes Nitro themes
+  on lapse. Entitlement is resolved at render, so flipping to revoke-on-lapse needs only the
+  grant removed — no stored choice to clean up. Product call, tracked in `868kk3t0t`.
 - **Status banner** — the 2026-06-04 outage generated 11 tickets in a day and was never
   acknowledged in-product. Surfacing the existing incident feed inside the chat panel is on the
   card but not scheduled here.

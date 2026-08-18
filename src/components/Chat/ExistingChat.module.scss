@@ -77,7 +77,7 @@
 .replyQuote {
   display: block;
   border-left: 2px solid var(--chat-accent);
-  background-color: light-dark(var(--mantine-color-blue-0), rgb(77 171 247 / 8%));
+  background-color: var(--chat-accent-soft);
   border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
   padding: 3px 9px;
   margin: 2px 0 4px;
@@ -172,6 +172,10 @@
   }
 }
 
+.sendButton:not(:disabled):not([data-disabled]) {
+  background-color: var(--chat-send);
+}
+
 /* Disabled has to stay a filled circle, or the composer loses its anchor the
    moment the field is empty. */
 .sendButton:disabled,
@@ -182,7 +186,7 @@
 
 .replyStrip {
   border-left: 2px solid var(--chat-accent);
-  background-color: light-dark(var(--mantine-color-blue-0), rgb(77 171 247 / 8%));
+  background-color: var(--chat-accent-soft);
   border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
   margin: 8px 8px 0;
   padding-bottom: var(--mantine-spacing-xs);

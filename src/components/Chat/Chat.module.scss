@@ -11,6 +11,61 @@
      sits on, so the band stays visible instead of landing on the neighbouring
      shade of the surface it is meant to lift off. */
   --chat-hover: light-dark(rgb(0 0 0 / 5%), rgb(255 255 255 / 6%));
+
+  /* Matches what `.card` already paints, so the default theme is unchanged —
+     it exists so a theme has one variable to move the window with. The class is
+     doubled to outrank `.card`, which is the same specificity and could win on
+     source order alone. */
+  --chat-bg: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  --chat-send: var(--mantine-color-blue-filled);
+
+  /* Derived so a theme only has to name its accent — the quote and reply tints
+     follow it instead of each carrying a hand-mixed colour. */
+  --chat-accent-soft: color-mix(in srgb, var(--chat-accent) 12%, transparent);
+}
+
+.surface.surface {
+  background-color: var(--chat-bg);
+}
+
+.themeOption {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  padding: 7px 9px 6px;
+  border: 1px solid var(--chat-line);
+  background-color: var(--chat-panel);
+  border-radius: var(--mantine-radius-md);
+  font-size: 10.5px;
+  color: var(--chat-meta);
+
+  &:hover:not(:disabled) {
+    border-color: var(--chat-accent);
+  }
+
+  &[aria-pressed='true'] {
+    border-color: var(--chat-accent);
+    color: var(--chat-accent);
+  }
+}
+
+.themeLocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.themeSwatch {
+  width: 56px;
+  height: 30px;
+  border-radius: 5px;
+  border: 1px solid var(--chat-line);
+}
+
+.themeLock {
+  position: absolute;
+  top: 3px;
+  right: 4px;
 }
 
 .groupHead {

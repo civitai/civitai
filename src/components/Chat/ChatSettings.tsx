@@ -9,12 +9,14 @@ import {
   Stack,
   Switch,
   Text,
+  UnstyledButton,
 } from '@mantine/core';
-import { IconArrowLeft, IconX } from '@tabler/icons-react';
+import { IconArrowLeft, IconLock, IconX } from '@tabler/icons-react';
 import produce from 'immer';
 import React from 'react';
 import type { ChatSettingsScope } from '~/components/Chat/ChatProvider';
 import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatTheme } from '~/components/Chat/useChatTheme';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -22,6 +24,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { ChatDmPolicy, UserSettingsChat } from '~/server/schema/chat.schema';
 import { DEFAULT_CHAT_SETTINGS } from '~/server/schema/chat.schema';
+import type { ChatThemeSlug } from '~/shared/constants/chat-theme';
+import { CHAT_THEME_DEFAULT, chatThemes } from '~/shared/constants/chat-theme';
 import { ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -302,6 +306,10 @@ function GlobalChatSettings({
         )}
       </SettingsGroup>
 
+      <SettingsGroup title="Appearance">
+        <ChatThemePicker value={settings.theme} onChange={(theme) => update({ theme })} />
+      </SettingsGroup>
+
       <SettingsGroup title="Notifications">
         <SettingsSwitch
           label="Message sounds"
@@ -315,6 +323,49 @@ function GlobalChatSettings({
           onChange={(checked) => update({ muteSounds: !checked })}
         />
       </SettingsGroup>
+    </>
+  );
+}
+
+function ChatThemePicker({
+  value,
+  onChange,
+}: {
+  value: ChatThemeSlug | undefined;
+  onChange: (slug: ChatThemeSlug) => void;
+}) {
+  const { ownedSlugs } = useChatTheme();
+  const selected = value ?? CHAT_THEME_DEFAULT;
+
+  return (
+    <>
+      <Group gap={7} wrap="wrap" role="group" aria-label="Chat theme">
+        {chatThemes.map((theme) => {
+          const locked = !theme.free && !ownedSlugs.includes(theme.slug);
+          return (
+            <UnstyledButton
+              key={theme.slug}
+              className={clsx(classes.themeOption, { [classes.themeLocked]: locked })}
+              aria-pressed={selected === theme.slug}
+              disabled={locked}
+              onClick={() => onChange(theme.slug)}
+            >
+              <span
+                className={classes.themeSwatch}
+                style={{
+                  background: `linear-gradient(135deg, ${theme.swatch[0]} 62%, ${theme.swatch[1]} 62%)`,
+                }}
+              />
+              {theme.name}
+              {locked && <IconLock size={11} className={classes.themeLock} />}
+            </UnstyledButton>
+          );
+        })}
+      </Group>
+      <Text size="xs" c="dimmed">
+        Themes reskin <b>your</b> chat window only — the other side sees their own. Everything past
+        Civitai comes with a membership.
+      </Text>
     </>
   );
 }

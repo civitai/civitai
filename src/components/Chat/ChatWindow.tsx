@@ -10,14 +10,21 @@ import { ExistingChatV1 } from '~/components/Chat/ExistingChatV1';
 import { NewChat } from '~/components/Chat/NewChat';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { useChatTheme } from '~/components/Chat/useChatTheme';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from './Chat.module.scss';
 
 registerCustomProtocol('civitai', true);
 
 export function ChatWindow() {
+  const { theme } = useChatTheme();
+
   return (
-    <ContainerProvider containerName="chat-window" className={`size-full card ${classes.surface}`}>
+    <ContainerProvider
+      containerName="chat-window"
+      className={`size-full card ${classes.surface}`}
+      style={theme.vars as React.CSSProperties | undefined}
+    >
       <ChatWindowContent />
     </ContainerProvider>
   );
