@@ -852,18 +852,17 @@ export const createMessageHandler = async ({
 };
 
 /**
- * Edit a message as a moderator.
+ * Edit a message. Authors edit their own; moderators edit anyone's.
  *
- * Redaction, not authorship: the point is to strip a link or a slur out of a
- * thread without destroying the context a report is being judged on. The
- * original content goes to the audit log before it is overwritten, so the edit
- * is reconstructible.
+ * Either way the pre-edit content goes to the audit log first, so a message
+ * rewritten after a report was filed still resolves to what it said when it was
+ * reported.
  *
  * Content passes the same blocklist scans `createMessage` applies — the previous
  * incarnation of this handler wrote `content` through unchecked, which is why it
  * was never routed.
  */
-export const moderatorUpdateMessageHandler = async ({
+export const updateMessageHandler = async ({
   input,
   ctx,
 }: {
@@ -872,16 +871,27 @@ export const moderatorUpdateMessageHandler = async ({
 }) => {
   try {
     const { messageId, content } = input;
+    const { id: userId, isModerator, muted, bannedAt } = ctx.user;
+    if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
+    assertChatRedesign(ctx);
 
     const existing = await dbWrite.chatMessage.findFirst({
       where: { id: messageId },
       select: { id: true, chatId: true, userId: true, content: true, deletedAt: true },
     });
 
-    if (!existing) throw throwNotFoundError(`No message found for ID (${messageId})`);
+    const isOwn = existing?.userId === userId;
+    if (!existing || (!isOwn && !isModerator)) {
+      throw throwNotFoundError(`No message found for ID (${messageId})`);
+    }
+    // An edit writes content, so it answers to the same restriction sending does.
+    if (muted && !isModerator) {
+      throw throwAuthorizationError('You cannot edit messages while restricted');
+    }
     if (existing.userId === -1) {
       throw throwBadRequestError('System messages cannot be edited');
     }
+    if (existing.deletedAt) throw throwBadRequestError('Deleted messages cannot be edited');
 
     const trimmed = content.trim();
     if (!trimmed.length) throw throwBadRequestError('Message cannot be empty');
@@ -905,9 +915,9 @@ export const moderatorUpdateMessageHandler = async ({
         type: 'edit',
         chatId: existing.chatId,
         messageId: existing.id,
-        actorId: ctx.user.id,
+        actorId: userId,
         subjectId: existing.userId,
-        actorRole: 'moderator',
+        actorRole: isOwn ? 'owner' : 'moderator',
         oldValue: before.value,
         newValue: after.value,
         truncated: before.truncated || after.truncated,

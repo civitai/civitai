@@ -51,14 +51,13 @@ export function ModeratorChatThread({
     onError: onActionError('Failed to delete message.'),
   });
 
-  const { mutate: editMessage, isPending: isEditing } =
-    trpc.chat.moderatorUpdateMessage.useMutation({
-      onSuccess: () => {
-        setEditing(null);
-        refresh();
-      },
-      onError: onActionError('Failed to edit message.'),
-    });
+  const { mutate: editMessage, isPending: isEditing } = trpc.chat.updateMessage.useMutation({
+    onSuccess: () => {
+      setEditing(null);
+      refresh();
+    },
+    onError: onActionError('Failed to edit message.'),
+  });
 
   const confirmDelete = (messageId: number) =>
     openConfirmModal({

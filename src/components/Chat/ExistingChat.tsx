@@ -23,6 +23,7 @@ import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowBack,
+  IconCheck,
   IconChevronDown,
   IconChevronLeft,
   IconChevronUp,
@@ -31,6 +32,7 @@ import {
   IconCircleX,
   IconCrown,
   IconSend,
+  IconPencil,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -142,6 +144,7 @@ export function ExistingChat() {
   const [typingText, setTypingText] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
   const [replyId, setReplyId] = useState<number | undefined>(undefined);
+  const [editing, setEditing] = useState<{ id: number; content: string } | undefined>(undefined);
 
   // TODO there is a bug here. upon rejoining, you won't get a signal for the messages in the timespan between leaving and rejoining
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage, isError, error } =
@@ -531,7 +534,11 @@ export function ExistingChat() {
                     </Center>
                   </InViewLoader>
                 )}
-                <DisplayMessages chats={messagesChronological} setReplyId={setReplyId} />
+                <DisplayMessages
+                  chats={messagesChronological}
+                  setReplyId={setReplyId}
+                  setEditing={setEditing}
+                />
               </Stack>
             ) : (
               <Center h="100%">
@@ -548,7 +555,26 @@ export function ExistingChat() {
           <Divider />
           {myMember.status === ChatMemberStatus.Joined ? (
             <>
-              {!!replyId && (
+              {!!editing && (
+                <Group px="sm" pt="xs" gap={8} wrap="nowrap" className={classes.replyStrip}>
+                  <Text size="xs" c="yellow" fw={600}>
+                    Editing message
+                  </Text>
+                  <Text size="xs" truncate style={{ minWidth: 0 }}>
+                    {stripStickerTokens(editing.content)}
+                  </Text>
+                  <LegacyActionIcon
+                    size="sm"
+                    variant="subtle"
+                    onClick={() => setEditing(undefined)}
+                    ml="auto"
+                    aria-label="Cancel edit"
+                  >
+                    <IconX size={14} />
+                  </LegacyActionIcon>
+                </Group>
+              )}
+              {!!replyId && !editing && (
                 <Group px="sm" pt="xs" gap={8} wrap="nowrap" className={classes.replyStrip}>
                   <Text size="xs" c="blue" fw={600}>
                     Replying to
@@ -573,6 +599,8 @@ export function ExistingChat() {
                 isModSender={!!modSender}
                 replyId={replyId}
                 setReplyId={setReplyId}
+                editing={editing}
+                setEditing={setEditing}
                 getTypingStatus={getTypingStatus}
                 setTypingStatus={setTypingStatus}
                 setTypingText={setTypingText}
@@ -650,6 +678,8 @@ function ChatInputBox({
   isModSender,
   replyId,
   setReplyId,
+  editing,
+  setEditing,
   getTypingStatus,
   setTypingStatus,
   setTypingText,
@@ -657,6 +687,8 @@ function ChatInputBox({
   isModSender: boolean;
   replyId: number | undefined;
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
+  editing: { id: number; content: string } | undefined;
+  setEditing: React.Dispatch<React.SetStateAction<{ id: number; content: string } | undefined>>;
   getTypingStatus: (newEntry: { [p: string]: boolean }) => {
     newTotalStatus: {
       // noinspection JSUnusedLocalSymbols
@@ -673,6 +705,7 @@ function ChatInputBox({
 
   const [isSending, setIsSending] = useState(false);
   const [chatMsg, setChatMsg] = useState<string>('');
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
   const ownedSticker = useOwnedSticker();
 
@@ -706,6 +739,34 @@ function ChatInputBox({
       ),
     [currentUser, doIsTyping, isMuted, existingChatId]
   );
+
+  const { mutate: updateMessage, isPending: isSavingEdit } = trpc.chat.updateMessage.useMutation({
+    onSuccess({ messageId, chatId, content }) {
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId },
+        produce((old) => {
+          if (!old) return old;
+          for (const page of old.pages) {
+            const msg = page.items.find((m) => m.id === messageId);
+            if (msg) {
+              msg.content = content;
+              msg.editedAt = new Date();
+            }
+          }
+        })
+      );
+      queryUtils.chat.getAllByUser.invalidate();
+      setEditing(undefined);
+      setChatMsg('');
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to edit message.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
 
   const { mutate } = trpc.chat.createMessage.useMutation({
     // TODO onMutate for optimistic
@@ -787,12 +848,22 @@ function ChatInputBox({
   };
 
   const sendMessage = () => {
-    if (isSending || isOverLimit) return;
+    if (isSending || isOverLimit || isSavingEdit) return;
 
     // TODO can probably handle this earlier to disable from sending blank messages
     const strippedMessage = chatMsg.trim();
     if (!strippedMessage.length) {
       setChatMsg('');
+      return;
+    }
+
+    if (editing) {
+      updateMessage({
+        messageId: editing.id,
+        content: resolveStickerTokens(strippedMessage, {
+          resolveSlug: (slug) => ownedSticker.bySlug.get(slug)?.id,
+        }),
+      });
       return;
     }
 
@@ -819,7 +890,29 @@ function ChatInputBox({
 
   useEffect(() => {
     setChatMsg('');
+    setEditing(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingChatId]);
+
+  // Picking a message to reply to or edit is an instruction to start typing;
+  // without this the composer still has to be clicked before it takes a key.
+  useEffect(() => {
+    if (replyId || editing) inputRef.current?.focus();
+  }, [replyId, editing]);
+
+  useEffect(() => {
+    // Stored content carries resolved `:sticker:<id>:` tokens; show the slug the
+    // sender typed so an edit doesn't read as machine output.
+    setChatMsg(
+      editing
+        ? editing.content.replace(/:(?:sticker|emoji):(\d{1,9}):/g, (match, id: string) => {
+            const slug = ownedSticker.sticker.find((x) => x.id === Number(id))?.slug;
+            return slug ? `:${slug}:` : match;
+          })
+        : ''
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.id]);
 
   return (
     <>
@@ -838,15 +931,23 @@ function ChatInputBox({
           onSelectEmoji={(char) => handleChatTyping(`${chatMsg}${char}`)}
         />
         <Textarea
+          ref={inputRef}
           style={{ flexGrow: 1 }}
           disabled={isMuted}
-          placeholder={isMuted ? 'Your account has been restricted' : 'Send message'}
+          placeholder={
+            isMuted ? 'Your account has been restricted' : editing ? 'Edit message' : 'Send message'
+          }
           autosize
           minRows={1}
           maxRows={4}
           value={chatMsg}
           onChange={(event) => handleChatTyping(event.currentTarget.value)}
           onKeyDown={(e) => {
+            if (e.key === 'Escape' && editing) {
+              e.preventDefault();
+              setEditing(undefined);
+              return;
+            }
             if (e.key === 'Enter') {
               if (!e.shiftKey) {
                 e.preventDefault();
@@ -862,15 +963,29 @@ function ChatInputBox({
           variant="filled"
           className={classes.sendButton}
           onClick={sendMessage}
-          disabled={isSending || !chatMsg.length || isMuted || isOverLimit}
-          aria-label="Send"
+          disabled={isSending || isSavingEdit || !chatMsg.length || isMuted || isOverLimit}
+          aria-label={editing ? 'Save edit' : 'Send'}
         >
-          {isSending ? <Loader size="xs" /> : <IconSend size={18} />}
+          {isSending || isSavingEdit ? (
+            <Loader size="xs" />
+          ) : editing ? (
+            <IconCheck size={18} />
+          ) : (
+            <IconSend size={18} />
+          )}
         </LegacyActionIcon>
       </div>
       <div className={classes.composerFoot}>
         <Text className={classes.hint}>
-          <b>Enter</b> to send · <b>Shift+Enter</b> for a new line
+          {editing ? (
+            <>
+              <b>Enter</b> to save · <b>Esc</b> to cancel
+            </>
+          ) : (
+            <>
+              <b>Enter</b> to send · <b>Shift+Enter</b> for a new line
+            </>
+          )}
         </Text>
         {isOverLimit && (
           <Text size="xs" c="red">
@@ -955,9 +1070,11 @@ const EmbedMessage = ({ content }: { content: string }) => {
 function DisplayMessages({
   chats,
   setReplyId,
+  setEditing,
 }: {
   chats: ChatAllMessages;
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
+  setEditing: React.Dispatch<React.SetStateAction<{ id: number; content: string } | undefined>>;
 }) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
@@ -1093,6 +1210,7 @@ function DisplayMessages({
                           })}
                         >
                           <ChatMessageContent content={c.content} blur={blur} />
+                          {!!c.editedAt && <span className={classes.editedTag}>edited</span>}
                         </div>
                       </Tooltip>
                     </div>
@@ -1108,6 +1226,21 @@ function DisplayMessages({
                           <IconArrowBack size={16} />
                         </LegacyActionIcon>
                       </Tooltip>
+                      {isMe && (
+                        <Tooltip label="Edit" withArrow openDelay={350}>
+                          <LegacyActionIcon
+                            size="sm"
+                            variant="subtle"
+                            aria-label="Edit message"
+                            onClick={() => {
+                              setReplyId(undefined);
+                              setEditing({ id: c.id, content: c.content });
+                            }}
+                          >
+                            <IconPencil size={16} />
+                          </LegacyActionIcon>
+                        </Tooltip>
+                      )}
                       {(isMe || currentUser?.isModerator) && (
                         <Tooltip label="Delete" withArrow openDelay={350}>
                           <LegacyActionIcon

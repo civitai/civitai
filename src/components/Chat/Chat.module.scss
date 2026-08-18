@@ -6,6 +6,11 @@
   --chat-line: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
   --chat-panel: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
   --chat-meta: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+
+  /* Translucent rather than a palette step: it composites over whatever the row
+     sits on, so the band stays visible instead of landing on the neighbouring
+     shade of the surface it is meant to lift off. */
+  --chat-hover: light-dark(rgb(0 0 0 / 5%), rgb(255 255 255 / 6%));
 }
 
 .groupHead {

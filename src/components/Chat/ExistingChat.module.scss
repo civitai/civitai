@@ -21,7 +21,7 @@
 
   &:hover,
   &:focus-within {
-    background-color: var(--chat-panel);
+    background-color: var(--chat-hover);
   }
 
   /* Consecutive messages from one sender collapse under a single header. */
@@ -107,6 +107,13 @@
     font-size: inherit;
     line-height: inherit;
   }
+}
+
+.editedTag {
+  font-size: 10px;
+  color: var(--chat-meta);
+  margin-left: 6px;
+  user-select: none;
 }
 
 .messageActions {

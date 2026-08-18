@@ -5,8 +5,8 @@ import {
   deleteMessageHandler,
   getChatAuditHandler,
   getModeratorChatHandler,
-  moderatorUpdateMessageHandler,
   getChatsForUserHandler,
+  updateMessageHandler,
   getInfiniteMessagesHandler,
   getMessageByIdHandler,
   getUnreadMessagesForUserHandler,
@@ -83,6 +83,10 @@ export const chatRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(deleteMessageInput)
     .mutation(deleteMessageHandler),
+  updateMessage: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(updateMessageInput)
+    .mutation(updateMessageHandler),
   isTyping: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(isTypingInput)
@@ -91,10 +95,6 @@ export const chatRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getChatAuditInput)
     .query(getChatAuditHandler),
-  moderatorUpdateMessage: moderatorProcedure
-    .meta({ requiredScope: TokenScope.SocialWrite })
-    .input(updateMessageInput)
-    .mutation(moderatorUpdateMessageHandler),
   getModeratorChat: moderatorProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getModeratorChatInput)
