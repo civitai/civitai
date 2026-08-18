@@ -72,7 +72,7 @@ export const COMPILED_BRANCH_WATCHLIST = [
       },
       {
         code: "return 'none';",
-        why: 'the fail-closed default. Lost, the function falls off the end and returns `undefined`, which a `?? \'full\'` default upstream turns into a full-catalog grant.',
+        why: "the fail-closed default. Lost, the function falls off the end and returns `undefined`, which a `?? 'full'` default upstream turns into a full-catalog grant.",
       },
     ],
   },

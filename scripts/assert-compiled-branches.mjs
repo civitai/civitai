@@ -199,7 +199,8 @@ async function main() {
   if (WATCHLIST_PATH) {
     const mod = await import(new URL(`file://${WATCHLIST_PATH}`).href);
     watched = mod.COMPILED_BRANCH_WATCHLIST;
-    if (!Array.isArray(watched)) die(2, `--watchlist ${WATCHLIST_PATH} exports no COMPILED_BRANCH_WATCHLIST array`);
+    if (!Array.isArray(watched))
+      die(2, `--watchlist ${WATCHLIST_PATH} exports no COMPILED_BRANCH_WATCHLIST array`);
   }
   if (!watched.length) die(2, 'the watchlist is empty — this gate would examine nothing');
 
@@ -287,19 +288,29 @@ async function main() {
   }
 
   if (AS_JSON) {
-    console.log(JSON.stringify({ ok: violations.length === 0, chunksScanned: mapFiles.length, report }, null, 2));
+    console.log(
+      JSON.stringify(
+        { ok: violations.length === 0, chunksScanned: mapFiles.length, report },
+        null,
+        2
+      )
+    );
   } else {
     console.log(`compiled-branches: scanned ${mapFiles.length} source maps under ${SERVER_DIR}`);
     if (unreadable) console.log(`compiled-branches: ${unreadable} map(s) unreadable (skipped)`);
     for (const r of report) {
-      const verdict = r.missing.length ? `✗ ${r.missing.length}/${r.required} MISSING` : `✓ ${r.required}/${r.required}`;
+      const verdict = r.missing.length
+        ? `✗ ${r.missing.length}/${r.required} MISSING`
+        : `✓ ${r.required}/${r.required}`;
       console.log(`  ${verdict}  ${r.id}  (${r.module}, emitted into ${r.chunks} chunk(s))`);
     }
   }
 
   if (violations.length) {
     console.error('');
-    console.error('compiled-branches: A SECURITY-RELEVANT BRANCH IS ABSENT FROM THE COMPILED OUTPUT.');
+    console.error(
+      'compiled-branches: A SECURITY-RELEVANT BRANCH IS ABSENT FROM THE COMPILED OUTPUT.'
+    );
     console.error('');
     for (const { entry, missing } of violations) {
       console.error(`  ${entry.id} — ${entry.module}`);
