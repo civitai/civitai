@@ -4,6 +4,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import { agentLog } from './freshdesk-debug';
+import { HEALTH_CHECK_LABELS, HEALTH_CHECK_ORDER } from './health-check-labels';
 
 // Helper to safely run a parameterized query and return rows (empty array on error)
 async function safeQuery<T>(sql: Prisma.Sql): Promise<T[]> {
@@ -763,16 +764,13 @@ export async function checkSiteStatus(): Promise<string> {
   if ('error' in healthResult) {
     lines.push(`Overall: UNKNOWN (${healthResult.error})`);
   } else {
-    const checks: [string, boolean | undefined][] = [
-      ['Database (read)', healthResult.read],
-      ['Database (write)', healthResult.write],
-      ['PG (read)', healthResult.pgRead],
-      ['PG (write)', healthResult.pgWrite],
-      ['Redis', healthResult.redis],
-      ['System Redis', healthResult.sysRedis],
-      ['Search/Metrics', healthResult.searchMetrics],
-      ['ClickHouse', healthResult.clickhouse],
-    ];
+    // Derived from HEALTH_CHECK_ORDER rather than hand-listed here. The hand-written list this
+    // replaces was a mirror of /api/health's check set, and a mirror drifts: a renamed or
+    // removed check arrives as an ABSENT key, indistinguishable from one an operator disabled.
+    const checks: [string, boolean | undefined][] = HEALTH_CHECK_ORDER.map((key) => [
+      HEALTH_CHECK_LABELS[key],
+      healthResult[key],
+    ]);
 
     // Summarise from the PER-CHECK results, not from `healthy`.
     //
@@ -782,11 +780,11 @@ export async function checkSiteStatus(): Promise<string> {
     // "Overall: HEALTHY" during a write outage while "Database (write): FAILING" sat three
     // lines below, and this text is fed to an LLM that drafts customer replies.
     //
-    // Three states, not two: a check can be OK, FAILING, or absent because it was DISABLED.
+    // Three states, not two: a check can be OK, FAILING, or NOT REPORTED.
     // Folding absent into FAILING is what a plain truthiness test does, and it would report a
     // permanent false DEGRADED whenever an operator disables a dependency on purpose — which
-    // HEALTHCHECK_DISABLED exists to let them do. Only checks that actually RAN count toward
-    // the verdict.
+    // HEALTHCHECK_DISABLED exists to let them do. Only checks that actually reported count
+    // toward the verdict.
     //
     // `healthy` is kept as a necessary condition even though it is currently unreachable-false
     // here (the route answers 500 when it is false, so this function takes its error branch
@@ -795,11 +793,25 @@ export async function checkSiteStatus(): Promise<string> {
     // been moving.
     const ranChecks = checks.filter(([, ok]) => ok !== undefined);
     const allRanChecksOk = ranChecks.every(([, ok]) => ok);
-    lines.push(`Overall: ${healthResult.healthy && allRanChecksOk ? 'HEALTHY' : 'DEGRADED'}`);
+    // `ranChecks.length > 0` is load-bearing, not defensive noise: `.every()` on an empty array
+    // is vacuously TRUE, so a body carrying no check keys at all would have reported HEALTHY on
+    // the strength of having measured nothing. /api/health can genuinely produce that — it
+    // computes `healthy` the same way over its own empty active-check set and answers 200 — if
+    // every check is disabled, or if this consumer's key set ever drifts from the producer's.
+    // "I checked nothing and everything is fine" is the one verdict this report must not give.
+    lines.push(
+      ranChecks.length === 0
+        ? 'Overall: UNKNOWN (no checks reported)'
+        : `Overall: ${healthResult.healthy && allRanChecksOk ? 'HEALTHY' : 'DEGRADED'}`
+    );
     lines.push('');
     lines.push('--- Service Health ---');
     for (const [name, ok] of checks) {
-      lines.push(`  ${name}: ${ok === undefined ? 'SKIPPED (disabled)' : ok ? 'OK' : 'FAILING'}`);
+      // `NOT REPORTED`, not `SKIPPED (disabled)`. An absent key means /api/health did not
+      // report this check; "an operator disabled it" is the likeliest reason but not the only
+      // one — a renamed or removed check looks identical from here. Stating the observation is
+      // accurate; stating the cause would be a guess presented to an LLM as fact.
+      lines.push(`  ${name}: ${ok === undefined ? 'NOT REPORTED' : ok ? 'OK' : 'FAILING'}`);
     }
   }
 

@@ -39,7 +39,11 @@ function logError({ error, name, details }: { error: Error; name: string; detail
 // Type for cancellable check functions
 type CancellableCheckFn = (signal: AbortSignal) => Promise<boolean>;
 
-const checkFns: Record<string, CancellableCheckFn> = {
+// `satisfies Record<CheckKey, …>` rather than an annotation: it makes the compiler reject a
+// check added here without extending the CheckKey union (previously silently widened by the
+// `as CheckKey[]` cast on ALL_CHECK_KEYS) AND a CheckKey with no implementation. The type alias
+// is declared below; aliases are hoisted, so the forward reference is fine.
+const checkFns = {
   // Prisma checks (Prisma doesn't support AbortSignal). `statement_timeout`
   // only bounds the query's *server-side duration once it RUNS* — it does NOT
   // bound the wait to acquire a pool connection (the slow path during a deploy
@@ -161,7 +165,7 @@ const checkFns: Record<string, CancellableCheckFn> = {
       return false;
     }
   },
-};
+} satisfies Record<CheckKey, CancellableCheckFn>;
 // Exported because it appears in the public signature of `runHealthChecks`
 // below (its `results` return type), which /api/ready imports. A module-private
 // name in an exported signature compiles under `next build` but errors under
@@ -245,7 +249,7 @@ const STARTUP_ONLY_CRITICAL_CHECKS: readonly CheckKey[] = ['write', 'pgWrite'];
 // Runtime list of every check, exported so a test can DERIVE its coverage from the real set
 // rather than mirroring it by hand. A hand-written mirror silently omits any check added
 // later — the new check simply gets no case, and nothing goes red to say so.
-export const ALL_CHECK_KEYS = Object.keys(checkFns) as CheckKey[];
+export const ALL_CHECK_KEYS = Object.keys(checkFns) as CheckKey[]; // keys proven by the `satisfies` above
 
 /**
  * Which readiness contract the caller wants.

@@ -105,6 +105,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
 
 import { ALL_CHECK_KEYS, runHealthChecks, softCheckKeysForMode } from '~/pages/api/health';
+// A leaf module with no runtime imports (its CheckKey import is type-only), so pinning it here
+// costs nothing and needs no extra mocks.
+import {
+  HEALTH_CHECK_LABELS,
+  HEALTH_CHECK_ORDER,
+} from '~/server/freshdesk-agent/health-check-labels';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // A never-aborted signal so runHealthChecks runs the full check set.
@@ -502,8 +508,20 @@ describe('softCheckKeysForMode — the exact soft set per mode', () => {
     expect(critical.sort()).toEqual(
       ['clickhouse', 'pgRead', 'read', 'redis', 'searchMetrics'].sort()
     );
-    // If this count moves, a check was added or removed: classify it above and give it a
-    // behavioural case, then update these lists.
-    expect(ALL_CHECK_KEYS).toHaveLength(8);
+    // No length assertion here: the two equalities above are derived from the same
+    // ALL_CHECK_KEYS, so any add/remove/rename trips one of them FIRST and a `toHaveLength`
+    // could never be the failing assertion. A guard whose killing mutation always dies to a
+    // different guard is not coverage, so it is not counted as such.
+  });
+
+  // CROSS-MODULE SEAM. The support-agent status report labels these checks, and its label set
+  // used to be a hand-written mirror — so a renamed or removed check arrived there as an absent
+  // key, which that report then described as deliberately disabled. The map is typed
+  // `Record<CheckKey, string>`, which makes the compiler enforce the same thing; this pins the
+  // RUNTIME set, because the type cannot see a key list built at runtime.
+  it('the support-agent label map covers exactly the real check set', () => {
+    expect(Object.keys(HEALTH_CHECK_LABELS).sort()).toEqual([...ALL_CHECK_KEYS].sort());
+    // …and the render order is the same set, not a subset that silently drops a check.
+    expect([...HEALTH_CHECK_ORDER].sort()).toEqual([...ALL_CHECK_KEYS].sort());
   });
 });

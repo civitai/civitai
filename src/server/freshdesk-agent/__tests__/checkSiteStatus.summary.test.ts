@@ -17,9 +17,10 @@ import { resetSharedMocks, setEnv } from '~/__tests__/mocks';
 // freshdesk-investigation-tools module graph. Both values are read at CALL time, so per-test
 // `setEnv` in beforeEach is sufficient and registers nothing.
 //
-// The clickhouse mock DOES stay: it is imported at module scope by the module under test, and
-// mocking it avoids evaluating the real client shim (which constructs a client) during a unit
-// test. That is the reason, not habit.
+// The clickhouse mock stays, but NOT for the reason first given here: the real shim gates
+// construction on CLICKHOUSE_HOST/USERNAME, neither of which is in the test env defaults, so it
+// would evaluate to `undefined` and construct nothing. What the mock actually buys is not
+// importing `@civitai/clickhouse/client` at all. Cheap and defensible — just not load-bearing.
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({ default: {} }));
 vi.mock('~/server/freshdesk-agent/freshdesk-debug', () => ({ agentLog: vi.fn() }));
@@ -97,7 +98,7 @@ describe('checkSiteStatus — the Overall line', () => {
     stubHealth(withoutClickhouse);
     const report = await checkSiteStatus();
     expect(overallLine(report)).toBe('Overall: HEALTHY');
-    expect(report).toContain('ClickHouse: SKIPPED (disabled)');
+    expect(report).toContain('ClickHouse: NOT REPORTED');
     // The checks that DID run are still reported normally.
     expect(report).toContain('Database (write): OK');
   });
@@ -109,8 +110,18 @@ describe('checkSiteStatus — the Overall line', () => {
     stubHealth({ ...rest, write: false });
     const report = await checkSiteStatus();
     expect(overallLine(report)).toBe('Overall: DEGRADED');
-    expect(report).toContain('ClickHouse: SKIPPED (disabled)');
+    expect(report).toContain('ClickHouse: NOT REPORTED');
     expect(report).toContain('Database (write): FAILING');
+  });
+
+  // 🔴 `.every()` on an empty array is vacuously TRUE, so a body with no check keys at all
+  // would otherwise report HEALTHY on the strength of having measured nothing. That is the one
+  // verdict this report must never give, and /api/health can genuinely produce that body.
+  it('a 200 body with NO check keys → Overall: UNKNOWN, never HEALTHY', async () => {
+    stubHealth({ healthy: true });
+    const report = await checkSiteStatus();
+    expect(overallLine(report)).toBe('Overall: UNKNOWN (no checks reported)');
+    expect(report).not.toContain('Overall: HEALTHY');
   });
 
   // INVARIANT GUARD: unchanged behaviour, but adjacent to the edit and cheap to pin.
