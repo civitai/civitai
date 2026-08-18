@@ -230,6 +230,24 @@ export default defineNextConfig(
       //
       // Off because the builder's memory ceiling is now enforced and that ~+33% peak RSS is
       // what puts the release build over it. Re-enable only with a measured peak-RSS margin.
+      //
+      // SECOND REASON THIS FLAG MATTERS, and the reason to revisit it: the emitted server
+      // chunk COUNT is what drives the intermittent `Two or more assets with different
+      // content were emitted to the same output path` build failure. Turbopack names a
+      // server chunk `<namespace>_<7-char-hash>._.js`, and that hash's first character is
+      // bounded in practice to {0,1,2} — so the usable space is ~2 x 38^6, not 38^7, and
+      // the failure is an ordinary birthday collision between two UNRELATED chunks. It is
+      // deterministic for a given module graph (so a rebuild of the same commit fails
+      // again), and it moves to a different pair whenever the graph changes at all — which
+      // is why bisecting finds a commit but never a responsible file.
+      //
+      // Turning this flag ON is the only lever here that attacks the mechanism, because
+      // P(collision) grows with the SQUARE of the chunk count. Measured on one tree:
+      // 24,552 server chunks with the flag off vs 7,122 with it on (-71%).
+      // See claudedocs/turbopack-chunk-hash-collision-2026-08-18.md before flipping it —
+      // in particular, this flag is BROKEN on Next 16.3.0 (it fails the build with 19
+      // `__turbopack_context__.a is not a function` PostCSS errors) and only usable from
+      // 16.3.1 onward.
       turbopackServerSideNestedAsyncChunking: false,
       // Not the same as omitting it: Next 16.3.0 defaults this to true, and turbopack-build
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
