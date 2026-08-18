@@ -181,6 +181,29 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).
 
+# Boot-graph gate — the first gate in this file that runs against the RUNTIME filesystem
+# rather than the build tree, and the only one that can see this class of defect.
+#
+# `output: 'standalone'` ships the subset @vercel/nft traced, not node_modules. nft resolves a
+# bare specifier under `require`/`default`; Node (>= 22.10) additionally honours `module-sync`
+# for a CJS `require`. When a package's `exports` map points those at different files the build
+# traces one and the process asks for the other: the build is green, the source is correct,
+# every gate above passes, and the container crash-loops before the first line of application
+# code. That is exactly what the Next 16.3.1 bump did via @swc/helpers 0.5.15 -> 0.5.23
+# (civitai#4075) — a green PR whose only red signal was the preview deploy.
+#
+# It MUST run here and not in the builder: `/app` in this stage is byte-for-byte what ships,
+# whereas the builder's complete `/app/node_modules` sits above `.next/standalone` on the
+# resolution path and can satisfy a require the image cannot. Cheap (~2s) and needs no env: it
+# reads the GENERATED server.js for the specifiers that process requires at module scope and
+# loads them in a child rooted at `/app`. Nothing is hardcoded — no package, version,
+# virtual-store path or patch hash — so it keeps covering this after the next bump.
+#
+# Exits 2 (not 0) when it cannot observe its input, same rule as the build-output gates above.
+# The script is removed in the same layer chain so it is not part of the served image.
+COPY --from=builder /app/scripts/ci/assert-standalone-boot-graph.mjs /tmp/assert-standalone-boot-graph.mjs
+RUN node /tmp/assert-standalone-boot-graph.mjs /app && rm -f /tmp/assert-standalone-boot-graph.mjs
+
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
