@@ -28,6 +28,13 @@ function sendView(input: AddViewSchema) {
   });
 }
 
+/**
+ * `delayMs` is the intent filter: a page the viewer bounced off within the window is not a view.
+ * The 1s default is right when the component mounts with the page. It is WRONG when the component
+ * is gated behind a slow query — the wait itself already proves intent, and charging another
+ * second on top pushed the effective threshold to ~5-6s on the comic reader and silently lost
+ * ~50% of its views. Pass 0 there rather than lowering it for everyone.
+ */
 export function TrackView({
   type,
   entityType,
@@ -35,7 +42,8 @@ export function TrackView({
   details,
   nsfw: nsfwOverride,
   nsfwLevel,
-}: AddViewSchema) {
+  delayMs = 1000,
+}: AddViewSchema & { delayMs?: number }) {
   const observedEntityId = useRef<number | null>(null);
   const { adsEnabled, adsBlocked, useDirectAds } = useAdsContext();
 
@@ -58,11 +66,11 @@ export function TrackView({
           nsfwLevel,
         });
       }
-    }, 1000);
+    }, delayMs);
     return () => {
       clearTimeout(timeout);
     };
-  }, [entityId, type, entityType, details]);
+  }, [entityId, type, entityType, details, delayMs]);
 
   return null;
 }

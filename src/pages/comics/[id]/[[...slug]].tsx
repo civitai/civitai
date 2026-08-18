@@ -123,16 +123,33 @@ function PublicComicReader() {
     { id: projectId },
     { enabled: !isNaN(projectId) && projectId > 0 }
   );
+  // Emitted from HERE, above the loading gate, rather than from inside ComicOverview. The project
+  // id comes from the URL, so nothing about a project view needs `getPublicProjectForReader` — and
+  // that query pulls every chapter, panel and image, so waiting on it put the effective threshold
+  // for a view at ~5-6s. 47% of comic visits are shorter than that, and measured against pageViews
+  // roughly half of all comic views were being lost. Articles and posts sit at parity because they
+  // render TrackView off server-side props with no data gate.
+  //
+  // 🔴 It is mounted ONCE, outside the branches, on purpose. Rendering it in both the loading
+  // branch and the loaded branch remounts it when the query resolves — and a remount resets
+  // TrackView's `observedEntityId` ref, so a slow query would fire the beacon TWICE while a fast
+  // one fired once. That turns an undercount into a load-dependent overcount, which is worse:
+  // wrong in a way that varies with the viewer's connection.
+  //
+  // The cost of firing before the query is that a view now also counts a load of a project that
+  // turns out not to exist, or one blocked on the green domain — neither knowable beforehand. Both
+  // are tiny (2 unresolvable project ids across 6 months of pageViews) against the ~50% recovered.
+  const trackProjectView = chapterDbPos == null && projectId > 0;
+
+  let body: React.ReactNode;
   if (isLoading) {
-    return (
+    body = (
       <div className={styles.loadingCenter} style={{ minHeight: '60vh' }}>
         <div className={styles.spinner} />
       </div>
     );
-  }
-
-  if (isError || !project) {
-    return (
+  } else if (isError || !project) {
+    body = (
       <div className={styles.notFound}>
         <IconPhotoOff size={48} />
         <p>{isError ? 'Failed to load comic' : 'Comic not found'}</p>
@@ -142,27 +159,32 @@ function PublicComicReader() {
         </Link>
       </div>
     );
-  }
-
-  // Block NSFW comics on green domain.
-  // Project nsfwLevel is bit_or of all chapters, so check for ANY NSFW bits.
-  if (
+  } else if (
+    // Block NSFW comics on green domain. Project nsfwLevel is bit_or of all chapters, so check
+    // for ANY NSFW bits.
     features.isGreen &&
     project.nsfwLevel !== 0 &&
     Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
   ) {
-    return (
+    body = (
       <div className="absolute inset-0 flex items-center justify-center">
         <Text>This content is not available on this site</Text>
       </div>
     );
+  } else if (chapterDbPos == null) {
+    body = <ComicOverview project={project} />;
+  } else {
+    body = <ChapterReader project={project} chapterDbPos={chapterDbPos} />;
   }
 
-  if (chapterDbPos == null) {
-    return <ComicOverview project={project} />;
-  }
-
-  return <ChapterReader project={project} chapterDbPos={chapterDbPos} />;
+  return (
+    <>
+      {trackProjectView && (
+        <TrackView entityId={projectId} entityType="ComicProject" type="ComicProjectView" />
+      )}
+      {body}
+    </>
+  );
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -399,7 +421,6 @@ function ComicOverview({ project }: { project: Project }) {
   return (
     <>
       <Meta title={`${project.name} - Civitai Comics`} canonical={`/comics/${project.id}`} />
-      <TrackView entityId={project.id} entityType="ComicProject" type="ComicProjectView" />
 
       <div className={styles.overviewRoot}>
         {/* Hero image */}
@@ -1084,7 +1105,14 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       {/* Gated on canRead so this counts the same event ComicChapterRead does —
           a paywalled chapter the viewer cannot open is not a read. */}
       {activeChapter && canRead && (
-        <TrackView entityId={activeChapter.id} entityType="ComicChapter" type="ComicChapterView" />
+        <TrackView
+          entityId={activeChapter.id}
+          entityType="ComicChapter"
+          type="ComicChapterView"
+          // The query wait already proved intent; charging another second on top is what lost
+          // ~half of chapter reads.
+          delayMs={0}
+        />
       )}
 
       <div className={styles.readerRoot}>
