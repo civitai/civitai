@@ -108,4 +108,33 @@ describe('createKyselyClients applies pool defaults', () => {
     expect(dbRead).toBeDefined();
     expect(dbWrite).toBeDefined();
   });
+
+  it('forces sslmode=no-verify on both pools, and still applies the defaults', () => {
+    // Pins an ORDER DEPENDENCY that the defaults object introduced. `config` snapshots
+    // `poolConfig.connectionString`, so the sslNoVerify rewrite has to run BEFORE that snapshot.
+    // Move it after and the primary pool connects without `sslmode=no-verify` — rejected by the
+    // pooler's self-signed cert, i.e. dead in production — while every other test here stays green,
+    // because no other case passes sslNoVerify at all.
+    createKyselyClients<TestDB>({
+      connectionString: PRIMARY_URL,
+      replicaConnectionString: REPLICA_URL,
+      sslNoVerify: true,
+    });
+
+    expect(createdPools).toHaveLength(2);
+    const [primary, replica] = createdPools;
+
+    // Assert host AND sslmode together: host alone cannot see a missing rewrite, and sslmode alone
+    // could be satisfied by reading the wrong pool.
+    expect(primary.options.connectionString).toContain('primary.example.test');
+    expect(primary.options.connectionString).toContain('sslmode=no-verify');
+    expect(replica.options.connectionString).toContain('replica.example.test');
+    expect(replica.options.connectionString).toContain('sslmode=no-verify');
+
+    // The SSL path must not bypass the defaults.
+    expect(primary.options.max).toBe(20);
+    expect(primary.options.connectionTimeoutMillis).toBe(5_000);
+    expect(replica.options.max).toBe(20);
+    expect(replica.options.connectionTimeoutMillis).toBe(5_000);
+  });
 });
