@@ -6,8 +6,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // and the row count looks right, so the only thing that catches it is asserting the exact
 // value at the clickhouse boundary.
 //
-// image.service is the graph root; the mock scaffold mirrors the established recipe
-// (unblock-image-nsfwlevel-reset.test.ts) so importing it boots no real infra.
+// image.service is the graph root. db/redis/logging come from the canonical shared mocks
+// registered in setup; what is left here is the clickhouse boundary this asserts on, plus
+// the env and submodule stubs image.service needs to import at all.
 
 const capturedInserts: Array<{ table: string; values: any[] }> = [];
 const capturedQueries: string[] = [];
@@ -29,8 +30,6 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   return new Proxy(function () {}, handler);
 }
-
-vi.mock('~/server/db/client', () => ({ dbRead: makePermissive(), dbWrite: makePermissive() }));
 
 // event-engine-common is a git submodule, not checked out by default.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -74,18 +73,6 @@ vi.mock('~/server/clickhouse/client', () => ({
     },
   }),
 }));
-
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: makePermissive({ packed: makePermissive() }),
-    sysRedis: makePermissive(),
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-  };
-});
 
 const { addBlockedImage, bulkAddBlockedImages, bulkRemoveBlockedImages } = await import(
   '../image.service'
