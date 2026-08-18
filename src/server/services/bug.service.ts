@@ -4,6 +4,7 @@ import { BUG_CLOSED_STATUSES, CacheTTL, isBugClosed } from '~/server/common/cons
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type {
+  ClickupWebhookPayload,
   CreateBugInput,
   DeleteBugInput,
   GetBugByIdInput,
@@ -293,3 +294,69 @@ export const getBugReportStats = async ({
 };
 
 export { BUG_CLOSED_STATUSES };
+
+/** `https://app.clickup.com/t/8459928/868kfwm3j` -> `868kfwm3j` */
+export const clickupTaskIdFromUrl = (url?: string | null) => {
+  if (!url) return null;
+  const last = url.split('?')[0].split('#')[0].replace(/\/+$/, '').split('/').pop();
+  return last && /^[a-z0-9]+$/i.test(last) ? last : null;
+};
+
+const CLICKUP_DONE_TYPES = new Set(['closed', 'done']);
+
+/**
+ * The status a task landed on if this payload moved it into a done state, else null.
+ * ClickUp's own status *type* is authoritative because workspaces rename statuses
+ * ("Shipped", "QA passed"); BUG_CLOSED_STATUSES is the fallback for payloads that
+ * carry a bare status string with no type.
+ */
+export const clickupDoneStatusFromPayload = (payload: ClickupWebhookPayload) => {
+  for (const item of payload.history_items ?? []) {
+    if (item.field !== 'status') continue;
+    const after = item.after;
+    if (!after) continue;
+    const status = typeof after === 'string' ? after : after.status ?? null;
+    const type = typeof after === 'string' ? null : after.type ?? null;
+    if (!status) continue;
+    if ((type && CLICKUP_DONE_TYPES.has(type.trim().toLowerCase())) || isBugClosed(status))
+      return status;
+  }
+  return null;
+};
+
+/**
+ * Close every board entry linked to a completed ClickUp task. Entries already
+ * closed are left alone, so a replayed delivery cannot re-stamp resolvedAt.
+ */
+export const resolveBugsByClickupTaskId = async ({
+  taskId,
+  status = 'Complete',
+}: {
+  taskId: string;
+  status?: string;
+}) => {
+  const candidates = await dbRead.bug.findMany({
+    where: { clickupUrl: { contains: taskId } },
+    select: { id: true, status: true, resolvedAt: true, clickupUrl: true },
+  });
+
+  // `contains` also matches a longer id this one is a prefix of, so an entry is
+  // only ours when its task segment is exactly the task that completed.
+  const linked = candidates.filter((bug) => clickupTaskIdFromUrl(bug.clickupUrl) === taskId);
+  const isClosed = (bug: { status: string; resolvedAt: Date | null }) =>
+    !!bug.resolvedAt || isBugClosed(bug.status);
+  const alreadyClosed = linked.filter(isClosed);
+  const toClose = linked.filter((bug) => !isClosed(bug));
+
+  const resolved: { id: number; previousStatus: string }[] = [];
+  for (const bug of toClose) {
+    await updateBug({ id: bug.id, status });
+    resolved.push({ id: bug.id, previousStatus: bug.status });
+  }
+
+  return {
+    matched: linked.map((bug) => bug.id),
+    resolved,
+    skipped: alreadyClosed.map((bug) => bug.id),
+  };
+};

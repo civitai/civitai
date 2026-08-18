@@ -723,6 +723,11 @@ export const serverSchema = z
     // verifies orders/* HMAC. Admin auth: the custom app uses the client_credentials
     // grant (CLIENT_ID + CLIENT_SECRET → short-lived token); set SHOPIFY_ADMIN_TOKEN
     // instead only if using a static store custom-app token.
+    // ClickUp -> Known Issues board sync. Signing secret ClickUp returns when the
+    // webhook is created; unset disables the receiver (503) rather than trusting
+    // unsigned deliveries.
+    CLICKUP_WEBHOOK_SECRET: z.string().optional(),
+
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
     SHOPIFY_CLIENT_ID: z.string().optional(),

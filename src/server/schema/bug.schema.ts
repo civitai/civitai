@@ -53,3 +53,25 @@ export type GetBugReportStatsInput = z.infer<typeof getBugReportStatsInput>;
 export const getBugReportStatsInput = z.object({
   bugIds: z.number().int().positive().array().min(1).max(200),
 });
+
+// ClickUp fires this at us on every task event we subscribe to; only the status
+// history items matter here, and every other field is ignored on purpose so a
+// payload shape change upstream cannot fail the request.
+const clickupStatusValue = z.union([
+  z.string(),
+  z.object({ status: z.string().nullish(), type: z.string().nullish() }),
+]);
+
+export type ClickupWebhookPayload = z.infer<typeof clickupWebhookSchema>;
+export const clickupWebhookSchema = z.object({
+  event: z.string(),
+  task_id: z.string().optional(),
+  history_items: z
+    .array(
+      z.object({
+        field: z.string().optional(),
+        after: clickupStatusValue.nullish(),
+      })
+    )
+    .optional(),
+});
