@@ -96,9 +96,14 @@
 -- `tests/preview-apps-publish.spec.ts`, the only smoke spec that submits — on
 -- two successive commits, while a control PR passed 65/65 in the same window.
 -- The SQL below was then applied to that dev clone (columns confirmed present,
--- nullable, no default; a re-apply is a clean no-op). Whether that clears the
--- smoke run is being confirmed on the commit carrying this correction — do not
--- read this paragraph as reporting a green.
+-- nullable, no default; a re-apply is a clean no-op) and the very next run went
+-- `success — 65 passed, 0 flaky`, matching the control PR exactly. So the apply
+-- is not merely correlated with the fix: it is the whole fix, and this migration
+-- is a HARD PREREQUISITE of the deploy rather than a tidy-up that can follow it.
+--
+-- 🔴 THE SAME APPLIES TO PROD, FOR THE SAME REASON. The preview failure is what
+-- a prod deploy-before-apply looks like, observed in a safe place: every submit
+-- and every status poll, down, for everyone, until the columns exist.
 --
 -- Same precedent as 20260731120000_app_block_spend_tier_and_cap_override; the
 -- generic form of the hazard is that Prisma enumerates every scalar in the
