@@ -27,6 +27,7 @@ import {
   strikeBatchOwners,
   type BulkBatch,
 } from '$lib/server/bulk-image.service';
+import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
 
 // `source` + `q` in the URL so a moderator can hand a colleague the exact batch they are looking at.
 // `limit` rides along for the same reason. Retool's cap was 200 and that stayed the default, but an
@@ -287,17 +288,15 @@ export const actions: Actions = {
     const input = parseForm(
       // A submit button carries one name/value pair, so the flag and the direction share a field.
       idsSchema.extend({
-        flagValue: z.enum(['poi:true', 'poi:false', 'minor:true', 'minor:false']),
+        flagValue: imageFlagValueSchema,
       }),
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
 
-    const [flag, value] = input.flagValue.split(':');
     const result = await setImageFlag({
+      ...splitImageFlagValue(input.flagValue),
       imageIds: input.imageIds,
-      flag: flag as 'poi' | 'minor',
-      value: value === 'true',
       moderatorId: locals.user.id,
     });
     if (!result.ok) return actionFail(result.error);

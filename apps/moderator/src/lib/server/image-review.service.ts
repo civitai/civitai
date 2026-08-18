@@ -191,6 +191,8 @@ export type ReportedImageItem = {
   height: number | null;
   type: MediaType;
   needsReview: string | null;
+  minor: boolean;
+  poi: boolean;
   userId: number;
   username: string | null;
   report: {
@@ -230,6 +232,8 @@ export async function getReportedImageQueue({
       'i.height',
       'i.type',
       'i.needsReview',
+      'i.minor',
+      'i.poi',
       'i.userId',
       'u.username',
       'r.id as reportId',
@@ -259,6 +263,8 @@ export async function getReportedImageQueue({
     height: r.height,
     type: r.type,
     needsReview: r.needsReview,
+    minor: r.minor,
+    poi: r.poi,
     userId: r.userId,
     username: r.username,
     report: {
@@ -293,6 +299,8 @@ export type AppealImageItem = {
   height: number | null;
   type: MediaType;
   needsReview: string | null;
+  minor: boolean;
+  poi: boolean;
   blockedFor: string | null;
   userId: number;
   username: string | null;
@@ -344,6 +352,8 @@ export async function getAppealImageQueue({
       'i.height',
       'i.type',
       'i.needsReview',
+      'i.minor',
+      'i.poi',
       'i.blockedFor',
       'i.userId',
       'u.username',
@@ -422,6 +432,8 @@ export async function getAppealImageQueue({
     height: r.height,
     type: r.type,
     needsReview: r.needsReview,
+    minor: r.minor,
+    poi: r.poi,
     blockedFor: r.blockedFor,
     userId: r.userId,
     username: r.username,

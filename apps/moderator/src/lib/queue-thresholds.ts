@@ -70,6 +70,7 @@ const COUNT_KEY_ALIASES: Record<string, string> = {
   // once, so `report:bounty` -> `bounties` is unaffected by this entry.
   bounties: 'bountyTask',
   articleRatings: 'articleReviews',
+  ingestionErrors: 'errors',
   minor: 'minors',
   tag: 'blockedTags',
   imageTags: 'tags',

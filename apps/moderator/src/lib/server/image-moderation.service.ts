@@ -131,11 +131,15 @@ export async function blockImage({
   userId,
   ip,
   userAgent,
+  violationType,
+  violationDetails,
 }: {
   imageId: number;
   userId: number;
   ip?: string;
   userAgent?: string;
+  violationType?: string;
+  violationDetails?: string;
 }): Promise<void> {
   const img = await dbRead
     .selectFrom('Image')
@@ -166,7 +170,14 @@ export async function blockImage({
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
 
   // `img` is the pre-block row (read above, before the update).
-  await applyBlockSideEffects(img, { imageId, actorUserId: userId, ip, userAgent });
+  await applyBlockSideEffects(img, {
+    imageId,
+    actorUserId: userId,
+    ip,
+    userAgent,
+    violationType,
+    violationDetails,
+  });
 }
 
 export type AppealDecision = 'Approved' | 'Rejected';

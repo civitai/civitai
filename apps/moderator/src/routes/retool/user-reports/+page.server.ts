@@ -29,6 +29,7 @@ import { getSuspectImages } from '$lib/server/report-triage.service';
 import { getLiveStrikes } from '$lib/server/user-lookup.service';
 import { getModActivity } from '$lib/server/user-account.service';
 import { getReportsOnUser } from '$lib/server/user-reports.service';
+import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
 import { ingestionErrorLevelSet } from '@civitai/shared';
 
 // `user` opens the drill-down for one suspect, in the URL so a moderator can hand a colleague the exact
@@ -368,17 +369,15 @@ export const actions: Actions = {
     if (!canAccess(locals.user, '/users')) return scopedFail('images', 'Not permitted.');
     const input = parseForm(
       idsSchema.extend({
-        flagValue: z.enum(['poi:true', 'poi:false', 'minor:true', 'minor:false']),
+        flagValue: imageFlagValueSchema,
       }),
       await request.formData()
     );
     if (typeof input === 'string') return scopedFail('images', input);
 
-    const [flag, value] = input.flagValue.split(':');
     const result = await setImageFlag({
+      ...splitImageFlagValue(input.flagValue),
       imageIds: input.imageIds,
-      flag: flag as 'poi' | 'minor',
-      value: value === 'true',
       moderatorId: locals.user.id,
     });
     if (!result.ok) return scopedFail('images', result.error);

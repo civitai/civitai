@@ -4,7 +4,7 @@ The moderation team reviews the app in a feedback channel and reports as they go
 place to see what they asked for and whether it is done, so the state does not have to live in code
 comments or in a chat scrollback.
 
-**Scope:** everything reported between 2026-08-05 and 2026-08-17.
+**Scope:** everything reported between 2026-08-05 and 2026-08-18.
 
 Where the detail already exists, this file links rather than copies:
 
@@ -27,6 +27,137 @@ carries the state. A ticked box therefore means shipped — not "shipped and ack
 staying open here is not evidence that nobody looked at it.
 
 ---
+
+## Review pass over both 2026-08-18 rounds
+
+The three review agents were run over the two rounds above and found twelve defects, all of them in the
+new code. Recorded because two are repeats of things this file already documents.
+
+- [x] **The reason picker's Delete would have silently done nothing** under `prefers-reduced-motion`.
+      The popover closed in the submit button's own click handler, so the portaled form was torn down
+      before the browser ran the activation behaviour — the exact defect `ConfirmSubmit.svelte` carries a
+      written note against, and which was reported in the previous round as "comment deletion silently
+      cancels". It only worked because the exit animation deferred the unmount. Closing happens in the
+      `enhance` callback now.
+- [x] **The appeal queue still had the mass-action trap** the round set out to fix: only the review and
+      reported cards lost their per-card verdict buttons while selected, so selecting twenty appeals and
+      pressing Approve on one card resolved that one and left nineteen open.
+- [x] **The new `setRating` was unguarded**, against the precedent in Front Page Audit's own action:
+      `updateImageNsfwLevel` throws bare errors, and uncaught that replaces the queue with an error page
+      and loses the record of what was already actioned. The bulk path now also names which ids failed
+      rather than reporting a partial batch as success.
+- [x] **`setFlag` accepted malformed input and cleared the flag.** It hand-split `flag:value` where the
+      three sibling actions use `z.enum`, so `minor` with no colon resolved to *false*. The protocol
+      moved to `$lib/image-flags.ts` and all four actions plus the three pickers use it.
+- [x] **The bulk bar's rating and flag controls showed invented state** — `nsfwLevel=0, minor=false` for a
+      mixed selection, so clearing a flag across a batch took two clicks, the first a no-op write. A
+      `null` now means "mixed", rendering explicit Set/Clear pairs and no active rating chip.
+- [x] **The bulk reason picker kept its violation type across selections** (its neighbour was keyed and it
+      was not), so a reason chosen for one batch was posted with the next.
+- [x] **`Images to Ingest` is `informational`** — the page has no actions and the count is upload
+      throughput, so summing it into the Images badge reads as a review backlog whenever the scanner
+      stalls.
+- [x] **The Most reported rewrite evaluated its seventeen subplans below the sort**, i.e. for every
+      qualifying report rather than the twenty kept — Postgres cannot project through a `Sort`, and the
+      comment claimed the opposite. The LIMIT is taken in a CTE and the ids resolved outside it.
+- [x] **The "Recently worked" window could be filled by one bulk action.** `ModActivity` is one row per
+      entity and bulk removals write thousands, which would collapse the panel to that single action and
+      drop precisely the least-recently-worked rows it exists to surface. Window widened to 20,000,
+      automated writers excluded, and the whole call bounded so the board renders without it.
+- [x] **Refusals were invisible** on the image queues — the page never rendered `form`, so a rejected
+      rating or flag looked like a mis-click.
+- [x] **Rating chips are gone from the appeal queue.** Those images are `Blocked`; setting a level there
+      wrote `nsfwLevelLocked` over a state the appeal decision is about to replace. (It did not
+      re-expose anything — feeds gate on `ingestion`.)
+- [x] **Bulk Image Manager's gallery predicate was an `OR` across two tables**, which cannot become a
+      semi-join, so it fell back to a per-row subplan over all of `Image` — run twice, for the rows and
+      the count. It is a `UNION` of two id sets now, each driving its own index.
+
+Taken while there, from the abstraction pass: `isRatingLevel` deduplicated (`$lib/nsfw-levels.ts`), the
+violation input schema shared by all four removal actions, `bounded` promoted to `$lib/server/bounded.ts`
+now it has a second caller, the ingestion-error predicate shared between its queue and its badge, the
+dashboard's four hand-copied service types derived via `Jsonified`, and both new components moved beside
+the route that owns them (they hardcode `?/setRating`, so they were page-local by construction).
+
+**Not done, and why:** `reportEntityJoin` and `REPORT_SOURCES` remain two maps of one fact — the next
+report type still has to be added to both, which is the same failure one level up from the bug fixed
+above. Splitting `images/[slug]/+page.svelte` (600 lines, three queues' markup) is likewise a refactor of
+code this round only touched.
+
+## Round 2026-08-18 (second batch) — the board and the links
+
+Seven reports. Five were the same underlying thing twice over: a panel or a link that only knows about
+the `Report` table, and so is blind to every queue that resolves no report.
+
+- [x] **Working Image Ratings never showed in "Recently worked" — and every image queue logged as
+      "Reported images" only.** The panel read `Report.statusSetBy` alone, so a queue that closes no
+      report appeared nowhere and the one that does appeared as its report type. It now also reads
+      `ModActivity`, the log every queue in this app writes, grouped by (entityType, activity) —
+      "Image reviews", "Image ratings", "Image appeals", "Image minor flags". Report rows are relabelled
+      "<Type> reports" so the two sources are told apart.
+      - The granularity stops at the kind of work, not the individual queue: which queue an image review
+        came from is `needsReview`, which the action clears. Finer rows would mean writing the queue
+        into `ModActivity.activity`, whose values are a contract shared with the main app.
+      - Bounded to the newest 2,000 rows (an index scan on `ModActivity_createdAt_idx`) rather than a
+        date window, which would sort every row in it. An activity absent from that window is one nobody
+        has worked recently — the same answer the panel would give.
+      - Retool logged every rating change on the whole site, which is the opposite failure: a feed, not
+        a board. This is deliberately the middle.
+- [x] **Urgent content was missing hyperlinks, and chat reports did not link at all.** One cause: *Most
+      reported* joined five of the fifteen report tables (image, model, post, article, user). The other
+      ten — chat, comment, commentV2, bounty, bounty entry, collection, resource review, comic, 3D model,
+      3D review — fell through to `other` with a null id, so they rendered as unidentified grey text.
+      All fifteen are now resolved from `reportEntityJoin`, and the table uses `getReportItemUrl` (the
+      helper the reports queue already used) rather than bare `entityUrl`: a chat goes to its Chat Audit
+      transcript, and a comment to its deep link with the row highlighted.
+- [x] **Bulk Image Manager showed only showcase images for a model version.** `getImagesForModelVersion`
+      selected images by `Post.modelVersionId` — that is the creator's own posts to the version. The
+      gallery joins through `ImageResourceNew`, which is what the main app's gallery filters on and where
+      reportable content actually accumulates. Both sets are now returned, for the model-wide source too.
+- [x] **Ingestion Errors and Images to Ingest showed no counts anywhere.** Neither nav entry had a
+      `countKey` and the errors queue had no count function at all. Both now badge, on the sidebar and
+      the dashboard, using each queue's own predicates so a drained queue reaches zero.
+      - The two counts are wrapped in a timeout: they run inside the one `Promise.all` every navigation
+        waits on, and `Image.ingestion` has no index of its own. On timeout the key is omitted.
+      - Fixed while here: the dashboard turned a **missing** count into `0`, which both reads as "empty"
+        and hides the row under the quiet-queue filter. An unmeasurable count now renders as no number,
+        the way the sidebar already did.
+      - Downleveled is deliberately still uncounted: it is a ClickHouse log that only grows, so a badge
+        on it would never fall.
+- [ ] **User Lookup unavailable for the staff role.** Not a defect — it is the `/admin` grant still
+      outstanding in [`permissions-handoff.md`](permissions-handoff.md). Nothing to build.
+
+## Round 2026-08-18 — the image queues are a review screen, not an action screen
+
+Five reports, four of them one complaint: the card shows you the image and offers a verdict, and every
+other moderation decision — the rating, the minor flag, the reason a removal is filed under — needed a
+second window. Closed together, since they are the same missing control set.
+
+- [x] **Ratings could not be changed from a queue.** Every card now carries the five rating buttons,
+      posting the same `updateImageNsfwLevel` the Ratings queue uses (which locks the level, so a later
+      Accept's recompute leaves it alone). Rating does not clear `needsReview` — it is a correction, and
+      the image still has to be accepted or removed.
+- [x] **The minor flag was not on the image.** Minor and POI toggles now sit beside the rating, both
+      directions, on every image queue. Same `/api/mod/update-image-flag` path Image Lookup already used.
+- [x] **Removing an image recorded no reason.** Delete now opens the violation list (the main app's
+      `TOS_REASONS` wording) plus an optional details box, and both ride to the ClickHouse `DeleteTOS`
+      event. The plumbing already accepted `violationType`/`violationDetails` and nothing passed them, so
+      every removal from these queues was filed as whatever the queue implied. The chosen violation is
+      also what the appeal queue shows the next reviewer as the reason for removal.
+      - [ ] The user-facing notification still says only "removed due to a Terms of Service violation".
+            Putting the reason in it is a main-app change to `systemNotifications` and a deploy.
+- [x] **Selecting several images and pressing Accept on one accepted only that one.** The bulk bar
+      existed; it was findable only after selecting something, and the per-card buttons stayed live
+      underneath. A selected card now loses its own verdict buttons and says where they went, the bulk
+      labels carry the count ("Accept 12"), Delete in the bar takes the same reason picker, and a
+      **Select all N** control sits with the filters — a batch was fifty clicks to assemble.
+- [x] **"Urgent Content is missing."** It is not — and the reporter's own hedge was right. *Most reported*
+      is that data; the banner above it counts the same rows at `URGENT_REPORT_COUNT`+ reports. Nothing to
+      build, so the two were made legibly the same thing: the section says so, and rows at or above the
+      threshold now carry a red count instead of a grey one.
+
+Not verified in a browser — the changes typecheck and the actions are the ones the neighbouring pages
+already use, but nobody has worked a queue with them yet.
 
 ## Context that set the ordering
 

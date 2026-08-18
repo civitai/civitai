@@ -27,7 +27,11 @@ import { appealResolutionEmail } from './emails/appeal-resolution.email';
  * why the same click was sometimes fine — this makes the rest of the set behave the same way, and logs
  * so a degraded dependency is visible instead of silent.
  */
-async function bestEffort(step: string, imageId: number, run: () => Promise<unknown>): Promise<void> {
+async function bestEffort(
+  step: string,
+  imageId: number,
+  run: () => Promise<unknown>
+): Promise<void> {
   try {
     await run();
   } catch (error) {
@@ -238,7 +242,9 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
           ip: input.ip ?? 'unknown',
           userAgent: input.userAgent ?? 'unknown',
           ownerId,
-          tosReason: needsReview ?? 'other',
+          // The moderator's explicit call outranks the queue the image came from — this field is what
+          // the appeal queue shows the next reviewer as the reason for removal.
+          tosReason: input.violationType ?? needsReview ?? 'other',
           violationType: input.violationType ?? mapToViolationType(needsReview, report?.violation),
           violationDetails: input.violationDetails ?? report?.comment ?? '',
           resources: resourceRows.map((r) => r.modelVersionId),
@@ -298,9 +304,16 @@ export type BlockedImageRow = {
 
 export async function applyBlockSideEffects(
   img: BlockedImageRow,
-  actor: { imageId: number; actorUserId: number; ip?: string; userAgent?: string }
+  actor: {
+    imageId: number;
+    actorUserId: number;
+    ip?: string;
+    userAgent?: string;
+    violationType?: string;
+    violationDetails?: string;
+  }
 ): Promise<void> {
-  const { imageId, actorUserId, ip, userAgent } = actor;
+  const { imageId, actorUserId, ip, userAgent, violationType, violationDetails } = actor;
   await Promise.all([
     bestEffort('blocklist', imageId, () =>
       addImagesToBlocklist([
@@ -315,6 +328,8 @@ export async function applyBlockSideEffects(
       actorUserId,
       ip,
       userAgent,
+      violationType,
+      violationDetails,
     }),
     notifyImageTosViolation({ imageId, ownerId: img.userId, postId: img.postId }),
     bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),

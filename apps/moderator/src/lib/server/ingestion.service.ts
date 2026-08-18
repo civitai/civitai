@@ -53,6 +53,14 @@ export async function countImagesPendingIngestion(): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
+/** Shared by the queue and its badge: a divergence here is a count that never reaches zero. */
+const ingestionErrorWhere = sql`
+  i."createdAt" > now() - INTERVAL '2 days'
+  AND i."createdAt" < now() - INTERVAL '1 hour'
+  AND i.ingestion = 'Error'::"ImageIngestionStatus"
+  AND i."nsfwLevel" = 0
+`;
+
 export type IngestionErrorImage = {
   id: number;
   url: string;
@@ -74,10 +82,7 @@ export async function getIngestionErrorImages({
   const result = await sql<IngestionErrorImage>`
     SELECT i.id, i.url, i.name, i."nsfwLevel", i.type, i.width, i.height, i."createdAt"
     FROM "Image" i
-    WHERE i."createdAt" > now() - INTERVAL '2 days'
-      AND i."createdAt" < now() - INTERVAL '1 hour'
-      AND i.ingestion = 'Error'::"ImageIngestionStatus"
-      AND i."nsfwLevel" = 0
+    WHERE ${ingestionErrorWhere}
       AND (${cursor != null ? sql`i.id < ${cursor}` : sql`TRUE`})
     ORDER BY i."createdAt" DESC
     LIMIT ${limit + 1}
@@ -88,6 +93,17 @@ export async function getIngestionErrorImages({
   if (items.length > limit) nextCursor = items.pop()?.id;
 
   return { items, nextCursor };
+}
+
+/** The badge for `/images/ingestion-errors` — same window and predicates as the queue, or the count
+ *  never reaches zero on a page that has been drained. */
+export async function countIngestionErrorImages(): Promise<number> {
+  const result = await sql<{ count: string }>`
+    SELECT count(*) AS count
+    FROM "Image" i
+    WHERE ${ingestionErrorWhere}
+  `.execute(dbRead);
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 export async function resolveIngestionError({

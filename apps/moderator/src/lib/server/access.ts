@@ -89,8 +89,15 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },
-      { path: '/images/to-ingest', label: 'Images to Ingest' },
-      { path: '/images/ingestion-errors', label: 'Ingestion Errors' },
+      // `informational`: the page has no actions — the count is upload throughput, and the whole
+      // backlog whenever the scanner stalls. Summed into the group badge it reads as a review backlog.
+      {
+        path: '/images/to-ingest',
+        label: 'Images to Ingest',
+        countKey: 'toIngest',
+        informational: true,
+      },
+      { path: '/images/ingestion-errors', label: 'Ingestion Errors', countKey: 'ingestionErrors' },
     ],
   },
   // Models gets its own group beside Images and Articles rather than a single top-level entry — the

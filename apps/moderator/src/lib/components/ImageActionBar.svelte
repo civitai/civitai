@@ -8,7 +8,8 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
-  import { VIOLATION_TYPES } from '$lib/violations';
+  import { VIOLATION_TYPES, VIOLATION_LABELS } from '$lib/violations';
+  import { IMAGE_FLAG_VALUES } from '$lib/image-flags';
   import { TOS_REASONS, type CannedReason } from '$lib/moderation-reasons';
 
   let {
@@ -63,6 +64,7 @@
   };
 
   let violationType = $state('none');
+  const violationLabel = (v: string) => VIOLATION_LABELS[v as keyof typeof VIOLATION_LABELS] ?? v;
   let confirming = $state<'remove' | 'restore' | null>(null);
   let notifying = $state(false);
   let flagging = $state(false);
@@ -175,7 +177,7 @@
                   : 'border-dark-4 text-dark-2 hover:bg-dark-5 hover:text-dark-0'
               )}
             >
-              {r.label}
+              {r.violation ? VIOLATION_LABELS[r.violation] : r.label}
             </button>
           {/each}
         </div>
@@ -191,12 +193,12 @@
                alone left every removal from this page unclassified. -->
           <Select.Root type="single" bind:value={violationType}>
             <Select.Trigger class="w-52">
-              {violationType === 'none' ? 'Violation type (optional)' : violationType}
+              {violationType === 'none' ? 'Violation type (optional)' : violationLabel(violationType)}
             </Select.Trigger>
             <Select.Content>
               <Select.Item value="none">No violation type</Select.Item>
               {#each VIOLATION_TYPES as v (v)}
-                <Select.Item value={v}>{v}</Select.Item>
+                <Select.Item value={v}>{VIOLATION_LABELS[v]}</Select.Item>
               {/each}
             </Select.Content>
           </Select.Root>
@@ -285,7 +287,9 @@
       </p>
       <!-- One field carries both, because a submit button contributes a single name/value pair. -->
       <div class="flex flex-wrap gap-2">
-        {#each [['poi:true', 'Set POI'], ['poi:false', 'Clear POI'], ['minor:true', 'Set minor'], ['minor:false', 'Clear minor']] as [value, label] (value)}
+        {#each IMAGE_FLAG_VALUES as value (value)}
+          {@const [flag, on] = value.split(':')}
+          {@const label = `${on === 'true' ? 'Set' : 'Clear'} ${flag === 'poi' ? 'POI' : 'minor'}`}
           <Button
             type="submit"
             name="flagValue"

@@ -5,6 +5,7 @@ import { parseQuery } from '$lib/server/query';
 import { validNsfwLevels, NsfwLevel } from '@civitai/shared';
 import { getImageRatingRequests } from '$lib/server/image-rating-review.service';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { isRatingLevel } from '$lib/nsfw-levels';
 
 const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
@@ -16,8 +17,6 @@ export const load: PageServerLoad = async ({ url }) => {
   const data = await getImageRatingRequests({ cursor, limit });
   return { limit, wide: true, ...data };
 };
-
-const isRatingLevel = (n: number) => validNsfwLevels.has(n) || n === NsfwLevel.Blocked;
 
 // Access is enforced globally (hooks.server.ts). The mutation runs internally via Kysely.
 export const actions: Actions = {

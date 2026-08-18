@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { imageFlagValue } from '$lib/image-flags';
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -80,7 +81,7 @@
       <Button
         type="submit"
         name="flagValue"
-        value={image.minor ? 'minor:false' : 'minor:true'}
+        value={imageFlagValue('minor', !image.minor)}
         size="sm"
         variant="outline"
         disabled={flagging}
@@ -90,7 +91,7 @@
       <Button
         type="submit"
         name="flagValue"
-        value={image.poi ? 'poi:false' : 'poi:true'}
+        value={imageFlagValue('poi', !image.poi)}
         size="sm"
         variant="outline"
         disabled={flagging}

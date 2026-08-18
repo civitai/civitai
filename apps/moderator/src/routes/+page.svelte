@@ -13,7 +13,11 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { entityUrl, userLookupUrl } from '$lib/entity-url';
+  import { userLookupUrl } from '$lib/entity-url';
+  import { getReportItemUrl, reportEntityLabels } from '$lib/reports';
+  import type { Jsonified } from '$lib/format';
+  import type { MostReportedRow } from '$lib/server/reports.service';
+  import type { BoardPayload } from './api/moderation-board/types';
   import { LINK_CLASS } from '$lib/format';
   import { sidebarCounts } from '$lib/sidebar-counts.svelte';
   import { URGENT_REPORT_COUNT, queueSeverityClass } from '$lib/queue-thresholds';
@@ -29,15 +33,7 @@
   const name = $derived(data.user?.username ?? 'moderator');
   const counts = sidebarCounts();
 
-  type Reported = {
-    id: number;
-    reason: string;
-    createdAt: string;
-    reportCount: number;
-    entity: 'image' | 'model' | 'post' | 'article' | 'reportedUser' | 'other';
-    entityId: number | null;
-    reportedByUsername: string | null;
-  };
+  type Reported = Jsonified<MostReportedRow>;
 
   // Fetched client-side for the same reason as the sidebar counts: the query joins six report tables and
   // runs ~200ms, which does not belong in the dashboard's first paint.
@@ -70,19 +66,7 @@
 
   // Retool's board: who last worked each queue, how far behind each swept task is, and the scam
   // detector's own mutes. A count alone cannot tell an untouched queue from one being drained.
-  type Board = {
-    activity: Record<string, { type: string; at: string; moderator: string | null }>;
-    lag: { task: string; label: string; lastUpdate: string; lastUpdateBy: string | null }[];
-    sweeps: { task: string; since: string | null; count: number }[];
-    autoBlocked: {
-      id: number;
-      userId: number;
-      username: string | null;
-      createdAt: string;
-      bannedAt: string | null;
-      muted: boolean | null;
-    }[];
-  };
+  type Board = BoardPayload;
   // Derived rather than fetched into $state, so `boardVersion` can refetch it: "Mark swept" changes
   // data this endpoint owns, and `invalidateAll` would only refresh `load`, which the board never reads.
   let boardVersion = $state(0);
@@ -104,7 +88,15 @@
     }
   });
 
-  const contentUrl = (row: Reported) => entityUrl(data.civitaiUrl, row.entity, row.entityId);
+  // `getReportItemUrl`, not `entityUrl`: a chat has no page on the site (its transcript is Chat Audit,
+  // in this app) and a comment hangs off a parent, so neither is derivable from the entity id.
+  const entityLabel = (row: Reported) =>
+    row.entity === 'other' ? 'unknown' : reportEntityLabels[row.entity];
+
+  const contentUrl = (row: Reported) =>
+    row.entity === 'other'
+      ? null
+      : getReportItemUrl(data.civitaiUrl, row.entity, row.entityId, row.contextUrl);
 
   const age = (iso: string) => {
     const hours = Math.floor((Date.now() - new Date(iso).getTime()) / 3_600_000);
@@ -135,7 +127,7 @@
 
   // Oldest first: the queue nobody has touched is the one worth seeing, not the busiest.
   const recentlyWorked = (b: Board) =>
-    Object.values(b.activity).sort((a, c) => new Date(a.at).getTime() - new Date(c.at).getTime());
+    [...b.activity].sort((a, c) => new Date(a.at).getTime() - new Date(c.at).getTime());
 
   // Refetches the board rather than invalidating: the swept count lives behind /api/moderation-board,
   // which `load` does not touch.
@@ -153,7 +145,9 @@
       path: link.path as string,
       label: link.label,
       informational: link.informational,
-      count: link.countKey ? (counts.value?.[link.countKey] ?? 0) : null,
+      // `?? null`, not `?? 0`: a key the counts endpoint omitted is one it could not measure, and 0
+      // both reads as "empty" and hides the row under the quiet-queue filter.
+      count: link.countKey ? (counts.value?.[link.countKey] ?? null) : null,
       countKey: link.countKey,
     });
     const byCount = (a: Item, b: Item) => (b.count ?? -1) - (a.count ?? -1);
@@ -226,8 +220,8 @@
   Most reported
 </h2>
 <p class="mb-3 text-sm text-dark-2">
-  Pending reports from the last week with more than one reporter, worst first. Already-blocked images are
-  excluded. Resolving closes the <em>report</em> — it does not remove the content.
+  Pending reports from the last week with more than one reporter, worst first — this is the same data
+  the urgent-content banner counts, at {URGENT_REPORT_COUNT}+ reports. Already-blocked images are excluded. Resolving closes the <em>report</em> — it does not remove the content.
 </p>
 
 {#if reported === null}
@@ -255,7 +249,11 @@
         {#each reported as row (row.id)}
           {@const done = outcome[row.id]}
           <TableRow class={done && done !== 'failed' ? 'opacity-40' : undefined}>
-            <TableCell><Badge variant="secondary">{row.reportCount}</Badge></TableCell>
+            <TableCell>
+              <Badge variant={row.reportCount >= URGENT_REPORT_COUNT ? 'destructive' : 'secondary'}>
+                {row.reportCount}
+              </Badge>
+            </TableCell>
             <TableCell>
               {#if contentUrl(row)}
                 <a
@@ -264,10 +262,10 @@
                   rel="noreferrer"
                   class="text-blue-4 hover:underline"
                 >
-                  {row.entity} {row.entityId}
+                  {entityLabel(row)} {row.entityId}
                 </a>
               {:else}
-                <span class="text-dark-2">{row.entity} {row.entityId ?? ''}</span>
+                <span class="text-dark-2">{entityLabel(row)} {row.entityId ?? ''}</span>
               {/if}
             </TableCell>
             <TableCell class="text-sm">{row.reason}</TableCell>
@@ -411,7 +409,9 @@
     {#if worked.length}
       <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
         <h2 class="mb-1 text-sm font-semibold text-white">Recently worked</h2>
-        <p class="mb-3 text-xs text-dark-2">Last report resolved in each queue.</p>
+        <p class="mb-3 text-xs text-dark-2">
+          Last report resolved, and last moderator action logged, per kind of work.
+        </p>
         <ul class="space-y-1 text-sm">
           {#each worked as a (a.type)}
             <li class="flex flex-wrap items-baseline justify-between gap-x-3">

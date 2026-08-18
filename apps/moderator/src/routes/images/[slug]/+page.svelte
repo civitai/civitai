@@ -8,11 +8,13 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import ImageCardModTools from './ImageCardModTools.svelte';
+  import TosDeleteButton from './TosDeleteButton.svelte';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
-  import type { PageData } from './$types';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 
   // Moderators filter on Blocked too (a mis-rated image can carry the Blocked bit).
   const filterLevels = [...browsingLevels, NsfwLevel.Blocked];
@@ -53,6 +55,9 @@
     messages.clear();
     selected.clear();
   });
+
+  const itemKeys = $derived(data.items.map((i) => ('report' in i ? i.report.id : i.id)));
+  const allSelected = $derived(itemKeys.length > 0 && selected.size === itemKeys.length);
 
   const selectedItems = $derived(
     data.items.filter((i) => selected.has('report' in i ? i.report.id : i.id))
@@ -127,15 +132,35 @@
   };
 </script>
 
+{#if form?.error}
+  <div
+    class="mb-3 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200"
+    role="alert"
+  >
+    {form.error}
+  </div>
+{/if}
+
 <header class="page-header flex flex-wrap items-center justify-between gap-2">
   <h1>{data.title}</h1>
   <div class="flex items-center gap-1">
+    {#if itemKeys.length > 0}
+      <button
+        class="rounded border border-border px-2 py-1 text-xs font-semibold text-muted-foreground transition hover:border-muted-foreground"
+        onclick={() => {
+          if (allSelected) selected.clear();
+          else for (const k of itemKeys) selected.add(k);
+        }}
+      >
+        {allSelected ? 'Deselect all' : `Select all ${itemKeys.length}`}
+      </button>
+    {/if}
     {#each filterLevels as bit (bit)}
       {@const on = (data.level & bit) !== 0}
       <button
         class="rounded border px-2 py-1 text-xs font-semibold transition {on
           ? 'border-primary bg-primary text-primary-foreground'
-          : 'border-border text-muted-foreground hover:border-muted-foreground'}"
+          : 'border-dark-4 text-dark-2 hover:border-dark-2'}"
         onclick={() => toggleLevel(bit)}
       >
         {getBrowsingLevelLabel(bit)}
@@ -151,7 +176,7 @@
           Tags{activeCount > 0 ? ` (${activeCount})` : ''}
         </Popover.Trigger>
         <Popover.Content align="end" class="max-h-[60vh] w-64 overflow-y-auto">
-          <p class="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+          <p class="mb-1 text-xs font-semibold uppercase text-dark-2">
             Filter by review tag
           </p>
           <div class="flex flex-col gap-0.5">
@@ -206,86 +231,102 @@
 <!-- Accept / Delete for the review + reported queues. A `reportId` couples the report status
      (accept → Unactioned, block → Actioned). `minor` adds the "Accept + clear minor" button; plain
      Accept keeps the flag for SFW and auto-clears it for R+ (handled server-side). -->
-{#snippet reviewActions(item: { id: number }, opts: { reportId?: number; minor?: boolean })}
+{#snippet reviewActions(
+  item: { id: number; nsfwLevel: number; minor: boolean; poi: boolean },
+  opts: { reportId?: number; minor?: boolean }
+)}
   {@const verdict = acted.get(item.id)}
   {#if verdict}
     {@render verdictBadge(verdict)}
   {:else}
-    <div class="flex flex-wrap gap-1.5">
-      <form method="POST" action="?/accept" use:enhance={submit}>
-        <input type="hidden" name="imageId" value={item.id} />
-        {#if opts.reportId}<input type="hidden" name="reportId" value={opts.reportId} />{/if}
-        <button
-          type="submit"
-          class="rounded border border-teal-600/40 px-2 py-0.5 text-xs font-semibold text-teal-400 transition hover:bg-teal-500/10"
-        >
-          Accept
-        </button>
-      </form>
-      {#if opts.minor}
+    <ImageCardModTools
+      imageIds={String(item.id)}
+      nsfwLevel={item.nsfwLevel}
+      minor={item.minor}
+      poi={item.poi}
+    />
+    <!-- A selected card loses its own verdict buttons: pressing Accept there acted on the one image
+         while the moderator believed it applied to the batch. -->
+    {#if selected.has(opts.reportId ?? item.id)}
+      <span class="text-xs text-primary">In selection — accept or delete it from the bar below.</span>
+    {:else}
+      <div class="flex flex-wrap gap-1.5">
         <form method="POST" action="?/accept" use:enhance={submit}>
           <input type="hidden" name="imageId" value={item.id} />
-          <input type="hidden" name="removeMinorFlag" value="true" />
+          {#if opts.reportId}<input type="hidden" name="reportId" value={opts.reportId} />{/if}
           <button
             type="submit"
-            class="rounded border border-cyan-600/40 px-2 py-0.5 text-xs font-semibold text-cyan-400 transition hover:bg-cyan-500/10"
+            class="rounded border border-teal-600/40 px-2 py-0.5 text-xs font-semibold text-teal-400 transition hover:bg-teal-500/10"
           >
-            Accept + clear minor
+            Accept
           </button>
         </form>
-      {/if}
-      <form method="POST" action="?/block" use:enhance={submit}>
-        <input type="hidden" name="imageId" value={item.id} />
-        {#if opts.reportId}<input type="hidden" name="reportId" value={opts.reportId} />{/if}
-        <button
-          type="submit"
-          class="rounded border border-rose-500/40 px-2 py-0.5 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
-        >
-          Delete
-        </button>
-      </form>
-    </div>
+        {#if opts.minor}
+          <form method="POST" action="?/accept" use:enhance={submit}>
+            <input type="hidden" name="imageId" value={item.id} />
+            <input type="hidden" name="removeMinorFlag" value="true" />
+            <button
+              type="submit"
+              class="rounded border border-cyan-600/40 px-2 py-0.5 text-xs font-semibold text-cyan-400 transition hover:bg-cyan-500/10"
+            >
+              Accept + clear minor
+            </button>
+          </form>
+        {/if}
+        <TosDeleteButton
+          action="?/block"
+          {submit}
+          hidden={opts.reportId
+            ? { imageId: item.id, reportId: opts.reportId }
+            : { imageId: item.id }}
+        />
+      </div>
+    {/if}
   {/if}
 {/snippet}
 
-{#snippet appealActions(item: { id: number })}
+{#snippet appealActions(item: { id: number; minor: boolean; poi: boolean })}
   {@const verdict = acted.get(item.id)}
   {#if verdict}
     {@render verdictBadge(verdict)}
   {:else}
     <div class="flex flex-col gap-1.5">
-      <textarea
-        placeholder="Resolution message (optional)"
-        value={messages.get(item.id) ?? ''}
-        oninput={(e) => messages.set(item.id, e.currentTarget.value)}
-        rows="2"
-        maxlength={1000}
-        class="w-full resize-none rounded border border-border bg-background px-2 py-1 text-xs"
-      ></textarea>
-      <div class="flex flex-wrap gap-1.5">
-        <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
-          <input type="hidden" name="imageId" value={item.id} />
-          <input type="hidden" name="status" value="Approved" />
-          <input type="hidden" name="resolvedMessage" value={messages.get(item.id) ?? ''} />
-          <button
-            type="submit"
-            class="rounded border border-emerald-600/40 px-2 py-0.5 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/10"
-          >
-            Approve
-          </button>
-        </form>
-        <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
-          <input type="hidden" name="imageId" value={item.id} />
-          <input type="hidden" name="status" value="Rejected" />
-          <input type="hidden" name="resolvedMessage" value={messages.get(item.id) ?? ''} />
-          <button
-            type="submit"
-            class="rounded border border-rose-500/40 px-2 py-0.5 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
-          >
-            Reject
-          </button>
-        </form>
-      </div>
+      <ImageCardModTools
+        imageIds={String(item.id)}
+        nsfwLevel={null}
+        rating={false}
+        minor={item.minor}
+        poi={item.poi}
+      />
+      <!-- A selected card loses its own verdict buttons: pressing Approve there resolved the one
+           appeal while the moderator believed it applied to the batch. -->
+      {#if selected.has(item.id)}
+        <span class="text-xs text-primary">In selection — resolve it from the bar below.</span>
+      {:else}
+        <textarea
+          placeholder="Resolution message (optional)"
+          value={messages.get(item.id) ?? ''}
+          oninput={(e) => messages.set(item.id, e.currentTarget.value)}
+          rows="2"
+          maxlength={1000}
+          class="w-full resize-none rounded border border-dark-4 bg-dark-6 px-2 py-1 text-xs"
+        ></textarea>
+        <div class="flex flex-wrap gap-1.5">
+          {#each [{ status: 'Approved', label: 'Approve', cls: 'border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10' }, { status: 'Rejected', label: 'Reject', cls: 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10' }] as choice (choice.status)}
+            <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
+              <input type="hidden" name="imageId" value={item.id} />
+              <input type="hidden" name="status" value={choice.status} />
+              <input type="hidden" name="resolvedMessage" value={messages.get(item.id) ?? ''} />
+              <button
+                type="submit"
+                class="rounded border px-2 py-0.5 text-xs font-semibold transition {choice.cls}"
+              >
+                {choice.label}
+              </button>
+            </form>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 {/snippet}
@@ -542,18 +583,37 @@
       <span class="text-sm font-semibold">{selected.size} selected</span>
       <button
         onclick={() => selected.clear()}
-        class="text-xs text-muted-foreground hover:text-foreground">Clear</button
+        class="text-xs text-dark-2 hover:text-white">Clear</button
       >
+      <!-- Keyed on the selection: the tools and the reason picker hold what was set locally, and that
+           state belongs to the batch it was set on, not to the next one.
+           `null` throughout — a batch has no single current rating or flag to show as active. -->
+      {#key selectedImageIds}
+        <ImageCardModTools
+          imageIds={selectedImageIds}
+          nsfwLevel={null}
+          minor={null}
+          poi={null}
+          rating={data.kind !== 'appeal'}
+        />
+      {/key}
       <div class="ml-auto flex flex-wrap gap-2">
         {#if data.kind === 'appeal'}
-          {@render bulkButton('?/bulkResolveAppeal', 'Approve', 'border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10', { status: 'Approved' })}
-          {@render bulkButton('?/bulkResolveAppeal', 'Reject', 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10', { status: 'Rejected' })}
+          {@render bulkButton('?/bulkResolveAppeal', `Approve ${selected.size}`, 'border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10', { status: 'Approved' })}
+          {@render bulkButton('?/bulkResolveAppeal', `Reject ${selected.size}`, 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10', { status: 'Rejected' })}
         {:else}
-          {@render bulkButton('?/bulkAccept', 'Accept', 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10')}
+          {@render bulkButton('?/bulkAccept', `Accept ${selected.size}`, 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10')}
           {#if data.view === 'minor'}
-            {@render bulkButton('?/bulkAccept', 'Accept + clear minor', 'border-cyan-600/40 text-cyan-400 hover:bg-cyan-500/10', { removeMinorFlag: 'true' })}
+            {@render bulkButton('?/bulkAccept', `Accept ${selected.size} + clear minor`, 'border-cyan-600/40 text-cyan-400 hover:bg-cyan-500/10', { removeMinorFlag: 'true' })}
           {/if}
-          {@render bulkButton('?/bulkBlock', 'Delete', 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10')}
+          {#key selectedImageIds}
+            <TosDeleteButton
+              action="?/bulkBlock"
+              submit={bulkSubmit}
+              label={`Delete ${selected.size}`}
+              hidden={{ imageIds: selectedImageIds, reportIds: selectedReportIds }}
+            />
+          {/key}
         {/if}
       </div>
     </div>

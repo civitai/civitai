@@ -12,6 +12,7 @@ import {
   resolvePostId,
 } from '$lib/server/image-lookup.service';
 import { hasImageEvents } from '$lib/server/image-signals.service';
+import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
 
 // Retool's Image Lookup could write: a screenshot of the live app shows `Toggle Minor ON` and
 // `Toggle Poi ON` beside the image data. Its export carries no mutation query and is stale against that
@@ -93,17 +94,15 @@ export const actions: Actions = {
     const input = parseForm(
       z.object({
         imageId: z.coerce.number().int().positive(),
-        flagValue: z.enum(['poi:true', 'poi:false', 'minor:true', 'minor:false']),
+        flagValue: imageFlagValueSchema,
       }),
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
 
-    const [flag, value] = input.flagValue.split(':');
     const result = await setImageFlag({
+      ...splitImageFlagValue(input.flagValue),
       imageIds: [input.imageId],
-      flag: flag as 'poi' | 'minor',
-      value: value === 'true',
       moderatorId: locals.user.id,
     });
     if (!result.ok) return fail(400, { error: result.error });

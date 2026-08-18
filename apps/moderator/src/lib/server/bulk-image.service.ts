@@ -1,4 +1,4 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { dbRead } from './db';
 import { issueStrike } from './user-actions.service';
@@ -120,25 +120,42 @@ export async function getImagesForPost(
   return batchFrom(imageBase().where('i.postId', '=', postId), limit, order);
 }
 
+/**
+ * A resource's images are TWO sets, and only one hangs off `Post.modelVersionId`: the images the
+ * creator posted to the version, its showcase. The gallery — everything on the site that used the
+ * resource, which is where reportable content accumulates — joins through `ImageResourceNew`, the
+ * table the main app's own gallery filters on. Posts alone returned the showcase and nothing else,
+ * which reads as "the batch is small" rather than "the batch is wrong".
+ *
+ * A UNION of the two id sets, NOT `postId IN (...) OR EXISTS (...)`: an OR across two tables cannot
+ * become a semi-join, so the planner falls back to a per-row subplan over all of `Image` — the
+ * largest table here — and `batchFrom` runs the predicate twice, for the rows and for the count.
+ * Each arm of the union drives its own index instead.
+ */
+const imagesOfVersions = (versionIds: RawBuilder<unknown>) =>
+  sql<number>`
+    SELECT im."id" FROM "Image" im
+    JOIN "Post" p ON p."id" = im."postId"
+    WHERE p."modelVersionId" IN (${versionIds})
+    UNION
+    SELECT irr."imageId" FROM "ImageResourceNew" irr
+    WHERE irr."modelVersionId" IN (${versionIds})
+  `;
+
 /** Every image across every VERSION of a model — Retool's three chained queries as one join. */
 export async function getImagesForModel(modelId: number, limit = 200): Promise<BulkBatch> {
-  const posts = dbRead
-    .selectFrom('Post')
-    .select('id')
-    .where('modelVersionId', 'in', (eb) =>
-      eb.selectFrom('ModelVersion').select('id').where('modelId', '=', modelId)
-    );
-
-  return batchFrom(imageBase().where('i.postId', 'in', posts), limit);
+  const versions = sql`SELECT mv."id" FROM "ModelVersion" mv WHERE mv."modelId" = ${modelId}`;
+  return batchFrom(imageBase().where('i.id', 'in', imagesOfVersions(versions)), limit);
 }
 
 export async function getImagesForModelVersion(
   modelVersionId: number,
   limit = 200
 ): Promise<BulkBatch> {
-  const posts = dbRead.selectFrom('Post').select('id').where('modelVersionId', '=', modelVersionId);
-
-  return batchFrom(imageBase().where('i.postId', 'in', posts), limit);
+  return batchFrom(
+    imageBase().where('i.id', 'in', imagesOfVersions(sql`${modelVersionId}`)),
+    limit
+  );
 }
 
 export async function getImagesForCollection(

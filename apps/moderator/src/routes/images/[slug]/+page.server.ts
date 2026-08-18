@@ -1,7 +1,7 @@
 import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { parseIdList, parseQuery } from '$lib/server/query';
+import { parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import {
   getImageReviewQueue,
   getReportedImageQueue,
@@ -21,6 +21,11 @@ import { getActorMeta } from '$lib/server/request-meta';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
 import { IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
+import { violationInputSchema } from '$lib/violations';
+import { parseImageFlagValue } from '$lib/image-flags';
+import { isRatingLevel } from '$lib/nsfw-levels';
+import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { setImageFlag } from '$lib/server/user-actions.service';
 import { allBrowsingLevelsWithBlockedFlag } from '@civitai/shared';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 
@@ -31,6 +36,15 @@ const querySchema = z.object({
 });
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
+
+/** `string`, not the union: `blockImage` takes the ClickHouse column's type, and the schema is what
+ *  guarantees the value is one of the enum's. Returns the refusal message on a bad value, like the
+ *  three sibling removal actions — a dropped reason files the removal under nothing at all. */
+function parseViolation(
+  form: FormData
+): { violationType?: string; violationDetails?: string } | string {
+  return parseForm(violationInputSchema, form);
+}
 
 async function withModel3d<T extends { id: number }>(items: T[]) {
   const model3ds = await getModel3DsByThumbnailImageIds(items.map((i) => i.id));
@@ -164,7 +178,15 @@ export const actions: Actions = {
     if (!imageId) return fail(400, { error: 'Missing image id.' });
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
 
-    await blockImage({ imageId, userId: locals.user.id, ...getActorMeta(event) });
+    const violation = parseViolation(form);
+    if (typeof violation === 'string') return fail(400, { error: violation });
+
+    await blockImage({
+      imageId,
+      userId: locals.user.id,
+      ...violation,
+      ...getActorMeta(event),
+    });
     if (reportId)
       await setReportStatus({
         id: reportId,
@@ -186,6 +208,59 @@ export const actions: Actions = {
 
     await resolveImageAppeal({ imageId, status, resolvedMessage, userId: locals.user.id });
     return { success: true, imageId };
+  },
+
+  // Rating and flag are corrections, not verdicts: neither clears `needsReview`, so the image stays in
+  // the queue and still has to be accepted or removed.
+  setRating: async ({ request, locals }) => {
+    const form = await request.formData();
+    const imageIds = parseIds(form.get('imageIds'));
+    const nsfwLevel = Number(form.get('nsfwLevel'));
+    if (!imageIds.length) return fail(400, { error: 'Missing image id.' });
+    if (!isRatingLevel(nsfwLevel)) return fail(400, { error: 'Invalid rating level.' });
+
+    // `updateImageNsfwLevel` throws bare Errors (missing image, Redis down). Uncaught, a form action
+    // error replaces the queue with an error page, taking the record of what was already actioned
+    // with it — and sometimes AFTER the rating committed. Same guard as Front Page Audit's.
+    //
+    // Sequential, and the failures are named: a partial batch the moderator cannot see is worse than
+    // a refusal, because the images it did rate are indistinguishable from the ones it did not.
+    const failed: number[] = [];
+    for (const id of imageIds) {
+      try {
+        await updateImageNsfwLevel({
+          id,
+          nsfwLevel,
+          reason: 'Moderator queue rating',
+          userId: locals.user.id,
+        });
+      } catch (e) {
+        console.error('[images] setRating failed', { id, error: e });
+        failed.push(id);
+      }
+    }
+    if (failed.length)
+      return fail(400, {
+        error:
+          failed.length === imageIds.length
+            ? 'Could not set that rating — reload the queue.'
+            : `Rated ${imageIds.length - failed.length} of ${
+                imageIds.length
+              }. Failed: ${failed.join(', ')}.`,
+      });
+    return { success: true, nsfwLevel };
+  },
+
+  setFlag: async ({ request, locals }) => {
+    const form = await request.formData();
+    const imageIds = parseIds(form.get('imageIds'));
+    const flagValue = parseImageFlagValue(String(form.get('flagValue') ?? ''));
+    if (!imageIds.length) return fail(400, { error: 'Missing image id.' });
+    if (!flagValue) return fail(400, { error: 'Unknown flag.' });
+
+    const result = await setImageFlag({ ...flagValue, imageIds, moderatorId: locals.user.id });
+    if (!result.ok) return fail(400, { error: result.error });
+    return { success: true };
   },
 
   unpublishModel3d: async ({ request, locals }) => {
@@ -223,7 +298,9 @@ export const actions: Actions = {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
     const reportIds = parseIds(form.get('reportIds'));
-    const actor = getActorMeta(event);
+    const violation = parseViolation(form);
+    if (typeof violation === 'string') return fail(400, { error: violation });
+    const actor = { ...violation, ...getActorMeta(event) };
     await Promise.all(
       imageIds.map((imageId) => blockImage({ imageId, userId: locals.user.id, ...actor }))
     );

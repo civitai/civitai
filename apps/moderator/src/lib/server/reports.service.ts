@@ -7,6 +7,7 @@ import {
   NEW_REPORT_STATUSES,
   ReportStatus,
   reportCountKey,
+  reportEntities,
   type ReportEntity,
   type ReportReason,
 } from '$lib/reports';
@@ -312,8 +313,11 @@ export type MostReportedRow = {
   reason: ReportReason;
   createdAt: Date;
   reportCount: number;
-  entity: 'image' | 'model' | 'post' | 'article' | 'reportedUser' | 'other';
+  /** `other` only when the report has no row in ANY of the fifteen report tables. */
+  entity: ReportEntity | 'other';
   entityId: number | null;
+  /** Site-relative deep link for entities with no page of their own — see `commentContextUrl`. */
+  contextUrl: string | null;
   reportedByUsername: string | null;
 };
 
@@ -334,64 +338,76 @@ export function getMostReported(limit = 20, now = Date.now()): Promise<MostRepor
 }
 
 async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
-  // `alsoReportedBy` is a Postgres array and the ordering key, so this stays raw sql.
+  // Raw sql throughout: `alsoReportedBy` is a Postgres array and the ordering key, and the fifteen
+  // per-type id columns are generated from `reportEntityJoin` rather than written out.
   //
   // The +1 is the report's own filer: `alsoReportedBy` holds every reporter EXCEPT `Report.userId`,
-  // which is how the main app counts them too (`report.alsoReportedBy.length + 1`, and
-  // `[report.userId, ...report.alsoReportedBy]` for the reward). Without it the column read one short,
-  // `> 1` hid every two-reporter item behind copy promising "more than one reporter", and the
-  // dashboard's URGENT_REPORT_COUNT fired a reporter late. `array_length` is NULL on an empty array,
-  // not 0, so the coalesce is load-bearing rather than defensive.
+  // which is how the main app counts them too. Without it the column read one short, `> 1` hid every
+  // two-reporter item behind copy promising "more than one reporter", and the dashboard's
+  // URGENT_REPORT_COUNT fired a reporter late. `array_length` is NULL on an empty array, not 0.
+  //
+  // The LIMIT is taken in a CTE and the seventeen subplans resolved OUTSIDE it. Postgres cannot project
+  // through a Sort, so in one flat query the target list is evaluated below the ORDER BY — for every
+  // pending report of the week, not the twenty kept.
   const reportCount = sql<number>`coalesce(array_length(t."alsoReportedBy", 1), 0) + 1`;
-  const rows = await dbRead
-    .selectFrom('Report as t')
-    .leftJoin('ImageReport as ir', 'ir.reportId', 't.id')
-    .leftJoin('ModelReport as mr', 'mr.reportId', 't.id')
-    .leftJoin('UserReport as ur', 'ur.reportId', 't.id')
-    .leftJoin('PostReport as pr', 'pr.reportId', 't.id')
-    .leftJoin('ArticleReport as ar', 'ar.reportId', 't.id')
-    .leftJoin('Image as i', 'i.id', 'ir.imageId')
-    .innerJoin('User as u', 'u.id', 't.userId')
-    .select([
-      't.id',
-      't.reason',
-      't.createdAt',
-      'ir.imageId',
-      'mr.modelId',
-      'ur.userId as reportedUserId',
-      'pr.postId',
-      'ar.articleId',
-      'u.username as reportedByUsername',
-      reportCount.as('reportCount'),
-    ])
-    .where('t.status', '=', ReportStatus.Pending)
-    .where(reportCount, '>', 1)
-    .where('t.createdAt', '>', sql<Date>`now() - interval '1 week'`)
-    .where('i.blockedFor', 'is', null)
-    .orderBy(reportCount, 'desc')
-    .orderBy('t.createdAt', 'desc')
-    .limit(limit)
-    .execute();
+  const entityId = (type: ReportEntity) => {
+    const join = reportEntityJoin[type];
+    return sql<number | null>`(SELECT er.${sql.ref(join.fk)} FROM ${sql.table(join.table)} er
+                WHERE er."reportId" = top.id LIMIT 1)`;
+  };
+
+  const { rows } = await sql<
+    Record<ReportEntity, number | null> & {
+      id: number;
+      reason: ReportReason;
+      createdAt: Date;
+      reportCount: number;
+      reportedByUsername: string | null;
+      commentContext: string | null;
+      commentV2Context: string | null;
+    }
+  >`
+    WITH top AS (
+      SELECT t.id, t.reason, t."createdAt", t."userId", ${reportCount} AS "reportCount"
+      FROM "Report" t
+      LEFT JOIN "ImageReport" ir ON ir."reportId" = t.id
+      LEFT JOIN "Image" i ON i.id = ir."imageId"
+      WHERE t.status = ${ReportStatus.Pending}::"ReportStatus"
+        AND ${reportCount} > 1
+        AND t."createdAt" > now() - interval '1 week'
+        AND i."blockedFor" IS NULL
+      ORDER BY "reportCount" DESC, t."createdAt" DESC
+      LIMIT ${limit}
+    )
+    SELECT
+      top.id, top.reason, top."createdAt", top."reportCount",
+      u.username AS "reportedByUsername",
+      ${sql.join(
+        reportEntities.map((type) => sql`${entityId(type)} AS ${sql.ref(type)}`),
+        sql`, `
+      )},
+      ${commentContextUrl('comment', entityId('comment'))} AS "commentContext",
+      ${commentContextUrl('commentV2', entityId('commentV2'))} AS "commentV2Context"
+    FROM top
+    JOIN "User" u ON u.id = top."userId"
+    ORDER BY top."reportCount" DESC, top."createdAt" DESC
+  `.execute(dbRead);
 
   return rows.map((r) => {
-    const [entity, entityId] = r.imageId
-      ? (['image', r.imageId] as const)
-      : r.modelId
-      ? (['model', r.modelId] as const)
-      : r.postId
-      ? (['post', r.postId] as const)
-      : r.articleId
-      ? (['article', r.articleId] as const)
-      : r.reportedUserId
-      ? (['reportedUser', r.reportedUserId] as const)
-      : (['other', null] as const);
+    const entity = reportEntities.find((type) => r[type] != null);
     return {
       id: r.id,
-      reason: r.reason as ReportReason,
+      reason: r.reason,
       createdAt: r.createdAt,
       reportCount: Number(r.reportCount ?? 0),
-      entity,
-      entityId,
+      entity: entity ?? 'other',
+      entityId: entity ? Number(r[entity]) : null,
+      contextUrl:
+        entity === 'comment'
+          ? r.commentContext
+          : entity === 'commentV2'
+          ? r.commentV2Context
+          : null,
       reportedByUsername: r.reportedByUsername,
     };
   });

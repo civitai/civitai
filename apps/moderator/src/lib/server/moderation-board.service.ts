@@ -41,12 +41,75 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
 
       const row = found[0];
       return row
-        ? ([label, { type: label, at: row.statusSetAt, moderator: row.username }] as const)
+        ? ([
+            label,
+            { type: `${label} reports`, at: row.statusSetAt, moderator: row.username },
+          ] as const)
         : null;
     })
   );
 
   return new Map(rows.filter((r): r is NonNullable<typeof r> => r !== null));
+}
+
+/**
+ * The other half of "who last worked what" — `ModActivity`, the log every queue in this app writes to.
+ * `getRecentQueueActivity` above reads `Report` alone, so a queue that closes no report showed up
+ * nowhere.
+ *
+ * Grouped by (entityType, activity) because that is the granularity the log carries. Do NOT put the
+ * queue into the stored `activity` string to get finer rows — its values are a contract with the main
+ * app, which writes and types them too.
+ *
+ * The window is a row count, not a date range: `ModActivity_createdAt_idx` makes it an index scan,
+ * where `DISTINCT ON` over a fortnight would sort every row in it. It is large because the log is one
+ * row PER ENTITY — a single bulk action can write thousands — and a window a burst can fill collapses
+ * the panel to that one action, dropping exactly the least-recently-worked rows it exists to surface.
+ */
+const RECENT_ACTIVITY_ROWS = 20_000;
+
+/** Automated writers use a sentinel id. They belong to the sweeps strip, not to a panel whose whole
+ *  claim is which PERSON last touched a queue — a cron rendering as a nameless moderator is worse
+ *  than its absence. */
+const AUTOMATED_USER_ID = 0;
+
+const MOD_ACTIVITY_LABELS: Record<string, string> = {
+  review: 'reviews',
+  setNsfwLevel: 'ratings',
+  setNsfwLevelKono: 'ratings (KoNO)',
+  resolveAppeal: 'appeals',
+  ratingReview: 'rating disputes',
+};
+
+/** Flag writes are stored as `minor:true` / `poi:false`; the direction is per-row and this panel is
+ *  about who worked the queue, not which way they went. Anything unmapped is humanised rather than
+ *  enumerated — the log gains values from the main app without passing through here. */
+function modActivityLabel(entityType: string | null, activity: string): string {
+  const entity = (entityType ?? 'other').replace(/^./, (c) => c.toUpperCase());
+  const [name] = activity.split(':');
+  const known = MOD_ACTIVITY_LABELS[activity];
+  if (known) return `${entity} ${known}`;
+  const words = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+  return activity.includes(':') ? `${entity} ${words} flags` : `${entity} ${words}`;
+}
+
+export async function getRecentModActivity(): Promise<QueueActivity[]> {
+  const rows = await dbRead
+    .selectFrom('ModActivity as ma')
+    .leftJoin('User as u', 'u.id', 'ma.userId')
+    .select(['ma.entityType', 'ma.activity', 'ma.createdAt', 'u.username'])
+    .where('ma.userId', '>', AUTOMATED_USER_ID)
+    .orderBy('ma.createdAt', 'desc')
+    .limit(RECENT_ACTIVITY_ROWS)
+    .execute();
+
+  const latest = new Map<string, QueueActivity>();
+  for (const row of rows) {
+    const type = modActivityLabel(row.entityType, row.activity);
+    // Rows arrive newest-first, so the first sighting of a label is its most recent.
+    if (!latest.has(type)) latest.set(type, { type, at: row.createdAt, moderator: row.username });
+  }
+  return [...latest.values()];
 }
 
 /**
@@ -163,10 +226,7 @@ async function countCivitaiModelsSince(since: Date): Promise<number> {
 /** Retool's `ArticleTimer` / `BountyTimer`: what has been published since the last sweep. `createdAt`
  *  rather than `publishedAt` because that is the column Retool bounded on, and the two differ for a
  *  draft that sat before publishing — matching it keeps the count comparable across the cutover. */
-async function countSince(
-  table: 'Article' | 'Bounty',
-  since: Date
-): Promise<number> {
+async function countSince(table: 'Article' | 'Bounty', since: Date): Promise<number> {
   const row = await dbRead
     .selectFrom(table)
     .select((eb) => eb.fn.countAll<string>().as('count'))
