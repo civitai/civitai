@@ -115,14 +115,37 @@ export function createKyselyClients<DB>(
     ? forceSslNoVerify(replicaConnectionString)
     : replicaConnectionString;
 
+  // Pool sizing defaults for the connection-string path. Callers that pass only a connection string
+  // otherwise inherit pg's own defaults, and one of those is actively harmful: pg leaves
+  // `connectionTimeoutMillis` unset and treats that as "wait forever", so once the pool is exhausted
+  // every further caller queues indefinitely and never errors — a pool problem surfaces as an
+  // unbounded hang rather than a failure. A finite timeout makes it fail fast at the call site.
+  //
+  // These pools carry NO acquire-latency metric and NO retry: the error reaches the caller as-is,
+  // and a caller that wants either has to add it (see the transient-error retry in
+  // apps/notifications). `max`/`idleTimeoutMillis` match the sibling `createPool` factory;
+  // `connectionTimeoutMillis` is deliberately STRICTER than createPool (which defaults it to 0) and
+  // matches the value the monolith already runs in production.
+  //
+  // Caller-supplied values win — `poolConfig` is spread last.
+  // ORDER-DEPENDENT: this snapshots `poolConfig.connectionString`, so the `sslNoVerify` rewrite
+  // above must stay ABOVE it — otherwise the primary pool silently connects without
+  // `sslmode=no-verify`. Pinned by the sslNoVerify case in kysely.pool-defaults.test.ts.
+  const config: PoolConfig = {
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    ...poolConfig,
+  };
+
   const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
-  const primary = make(pool ?? new Pool(poolConfig));
+  const primary = make(pool ?? new Pool(config));
   if (singleClient) return { db: primary };
 
   const dbRead =
     readPool || replicaString
-      ? make(readPool ?? new Pool({ ...poolConfig, connectionString: replicaString }))
+      ? make(readPool ?? new Pool({ ...config, connectionString: replicaString }))
       : primary;
   return { dbRead, dbWrite: primary };
 }
