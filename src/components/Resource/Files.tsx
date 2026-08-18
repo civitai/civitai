@@ -180,8 +180,10 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
     onDrop(droppedFiles, defaultType, skipInference);
   };
 
-  const primaryAccept = { 'mime/type': primary.extensions };
-  const additionalAccept = { 'mime/type': additional.extensions };
+  // iOS resolves `accept` entries to UTIs with no extension fallback, so a bare
+  // `.safetensors` greys out every file in the picker; octet-stream maps to `public.data`.
+  const primaryAccept = { 'application/octet-stream': primary.extensions };
+  const additionalAccept = { 'application/octet-stream': additional.extensions };
   const makeRejectHandler =
     (section: 'primary' | 'additional') => (rejectedFiles: FileRejection[]) => {
       const sectionConfig = section === 'primary' ? primary : additional;
