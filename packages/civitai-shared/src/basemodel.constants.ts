@@ -1053,9 +1053,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // OpenAI - checkpoint only
   { ecosystemId: ECO.OpenAI, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // Imagen4 - checkpoint only
-  { ecosystemId: ECO.Imagen4, supportType: 'generation', modelTypes: checkpointOnly },
-
   // Veo3 - checkpoint only
   { ecosystemId: ECO.Veo3, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1486,13 +1483,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.OpenAI,
     defaults: {
       model: { id: 1733399 },
-      modelLocked: true,
-    },
-  },
-  {
-    ecosystemId: ECO.Imagen4,
-    defaults: {
-      model: { id: 1889632 },
       modelLocked: true,
     },
   },
@@ -2132,7 +2122,8 @@ export const BM = {
 export const supportOverrides: SupportOverride[] = [
   // NOTE: Models with `disabled: true` on BaseModelRecord don't need entries here.
   // The disabled flag provides root-level disable for all support types.
-  // Disabled models: SD3, SD35, SD35Large, SD35LargeTurbo, SD35Medium, SDXLTurbo, SVD, SVDXT
+  // Disabled models: SD3, SD35, SD35Large, SD35LargeTurbo, SD35Medium, SDXLTurbo, SVD, SVDXT,
+  // Imagen4
   // Group-level overrides (for when only specific support types should be disabled)
   // SD3 group - no training (redundant since all SD3 models are disabled, but kept for documentation)
   // { ecosystemId: ECO.SD3, supportType: 'training', enabled: false },
@@ -2766,7 +2757,9 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 15,
   },
 
-  // Imagen4
+  // Imagen4 - fully disabled (no support for any type), retired alongside
+  // Google's Imagen 4 shutdown in Aug 2026. The record stays so existing images
+  // keep resolving their base model.
   {
     id: BM.Imagen4,
     name: 'Imagen4',
@@ -2774,6 +2767,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Imagen4,
     hidden: true,
+    disabled: true,
     licenseId: 21,
   },
 
