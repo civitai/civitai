@@ -91,16 +91,16 @@ RUN node scripts/check-server-graph-singletons.mjs
 # when it cannot observe its input. Adding a gate is one entry in
 # `scripts/compiled-branch-watchlist.mjs`.
 #
-# 🔴 `--warn-only` because THIS BUILD CURRENTLY VIOLATES IT. The bundler defect behind
-# civitai#3983 is not fixed — `main` and `release` carry byte-identical source for that
-# function and both emit it truncated — so a hard gate here would fail every production
-# build immediately. It reports loudly and exits 0 instead. `--warn-only` does NOT
-# downgrade exit 2, so a gate that cannot see its own input still fails the build.
-#
-# REMOVE `--warn-only` as part of fixing the underlying defect. That flip is the
-# definition of done for civitai#3983, and it is the only thing that turns this from a log
-# line back into a gate.
-RUN node scripts/assert-compiled-branches.mjs --warn-only
+# HARD as of the Next 16.3.1 bump. It shipped `--warn-only` for exactly one build, because
+# 16.3.0's Turbopack value analyzer modelled a bare `return someAsyncFn()` tail call as
+# `Promise<Promise<T>>` — always truthy — so an awaiting caller was analysed as always-true
+# and every statement after the resulting conditional was eliminated as dead code
+# (vercel/next.js#96601, backported as #96675, shipped in 16.3.1). With 16.3.0 pinned the
+# gate genuinely failed every production build, and a permanently-red gate is worse than no
+# gate. With 16.3.1 pinned the build satisfies it, so the downgrade is removed in the same
+# commit as the bump: the gate's strictness now tracks the toolchain, and a revert of the
+# bump turns this red instead of silently passing.
+RUN node scripts/assert-compiled-branches.mjs
 
 # Bundle-size budget (report-only during the soak). Next 16 (Turbopack) emits
 # opaque hashed chunks and removed per-route build stats, so scripts/bundle-budget.mjs
@@ -180,6 +180,29 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # NOTE: server source maps are intentionally NOT copied into the runtime image.
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).
+
+# Boot-graph gate — the first gate in this file that runs against the RUNTIME filesystem
+# rather than the build tree, and the only one that can see this class of defect.
+#
+# `output: 'standalone'` ships the subset @vercel/nft traced, not node_modules. nft resolves a
+# bare specifier under `require`/`default`; Node (>= 22.10) additionally honours `module-sync`
+# for a CJS `require`. When a package's `exports` map points those at different files the build
+# traces one and the process asks for the other: the build is green, the source is correct,
+# every gate above passes, and the container crash-loops before the first line of application
+# code. That is exactly what the Next 16.3.1 bump did via @swc/helpers 0.5.15 -> 0.5.23
+# (civitai#4075) — a green PR whose only red signal was the preview deploy.
+#
+# It MUST run here and not in the builder: `/app` in this stage is byte-for-byte what ships,
+# whereas the builder's complete `/app/node_modules` sits above `.next/standalone` on the
+# resolution path and can satisfy a require the image cannot. Cheap (~2s) and needs no env: it
+# reads the GENERATED server.js for the specifiers that process requires at module scope and
+# loads them in a child rooted at `/app`. Nothing is hardcoded — no package, version,
+# virtual-store path or patch hash — so it keeps covering this after the next bump.
+#
+# Exits 2 (not 0) when it cannot observe its input, same rule as the build-output gates above.
+# The script is removed in the same layer chain so it is not part of the served image.
+COPY --from=builder /app/scripts/ci/assert-standalone-boot-graph.mjs /tmp/assert-standalone-boot-graph.mjs
+RUN node /tmp/assert-standalone-boot-graph.mjs /app && rm -f /tmp/assert-standalone-boot-graph.mjs
 
 USER nextjs
 EXPOSE 3000
