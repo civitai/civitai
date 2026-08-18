@@ -56,6 +56,8 @@
  * `/apps/store-preview/` (an open redirect) or splicing a query/fragment onto it.
  */
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
+import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
+import type { AppsStoreFeatureFlags } from '~/shared/utils/app-blocks-access';
 
 export type LegacyAppRedirectResult =
   | { redirect: { destination: string; permanent: false } }
@@ -134,34 +136,72 @@ export function approvedListingSlugQuery(appBlockId: string) {
  *   2. DEPLOY — `row.kind === 'onsite' && appBlock.currentVersionDeployedAt == null`.
  *   3. MATURITY — `!redCapable && isMatureContentRating(row.contentRating)`.
  *
- * (2) and (3) are 0-instance today and would each affect a handful of apps at
- * most. (1) is categorically different and is the reason this disclosure is worth
- * reading twice: this route's param is an `AppBlock.id`, and EVERY listing that
- * carries an `appBlockId` is `kind='onsite'` — so **every** listing this route can
- * resolve is exactly the set `public-external` exists to hide. Under that scope
- * the coverage gap is 100%, not a corner.
+ * ## (1) IS NOW REPLICATED HERE. (2) and (3) ARE STILL OWED.
  *
- * It is UNREACHABLE TODAY, and only by an accident of flag alignment: the page
- * gate (`resolveAppsPageAccess`) grants on `features.appListings || appBlocks`,
- * and `features.appListings` reads the same `app-listings` Flipt key that
- * `resolveStoreVisibilityScope`'s axis 1 uses to return `full`. So any viewer who
- * gets past the page gate resolves `full`, where the kind gate is a no-op, and any
- * viewer who would resolve `public-external` is already 404'd by the page gate. If
- * `app-listings-public-external` is switched on and the PAGE gate is widened
- * alongside it, that alignment breaks and every `/apps/<appBlockId>` becomes a 302
- * disclosing an on-site app's slug to a viewer whose store scope excludes on-site
- * entirely.
+ * 🔴 THE ALIGNMENT ARGUMENT THIS COMMENT USED TO REST ON IS GONE — DO NOT RESTORE
+ * IT. It said gate (1) was unreachable "by an accident of flag alignment": the page
+ * gate granted on `features.appListings || appBlocks`, `features.appListings` read
+ * the same `app-listings` Flipt key that `resolveStoreVisibilityScope`'s axis 1
+ * uses to return `full`, so every viewer past the page gate resolved `full` and
+ * every viewer who would resolve `public-external` was already 404'd. That
+ * coincidence ENDED when the page gate gained a third term
+ * (`appListingsPublicExternal`) so the external-only cohort could reach `/apps`:
+ * from then on a `public-external` viewer passes the page gate, and without a
+ * scope check every `/apps/<appBlockId>` would 302 with an on-site listing's slug
+ * in the `Location` header — disclosing both the slug and the existence of an
+ * approved on-site listing to precisely the audience `public-external` exists to
+ * hide on-site apps from. (The destination 404s for them, so the leak is the
+ * header and the DB read, not the page.)
  *
- * So: replicating gates here needs all THREE — a store-scope check (which for this
- * route reduces to "`public-external` → `notFound`", since the resolvable set is
- * wholly on-site), a `currentVersionDeployedAt` filter, and a `contentRating`
- * filter keyed on the request's red-capability. NOT DONE IN THIS CHANGE and still
- * owed: it needs the resolved store scope and red-capability threaded into this
- * SSR resolver, neither of which it takes today. Doing it before the store widens
- * past its current audience is the fix.
+ * So the guard is no longer an alignment coincidence — it is the explicit
+ * `storeScope` check below, and it is what the no-disclosure property now rests
+ * on. `storeScope` is a REQUIRED argument for that reason: a caller that forgets
+ * it is a compile error, not a silent re-opening.
+ *
+ * It is an ALLOWLIST (`!== 'full'`), not a denylist on `public-external`. A
+ * denylist fails OPEN the moment a fourth scope is added — and the scope union is
+ * exactly the kind of thing that grows. `none` is rejected by the same line, which
+ * also closes a case the page gate alone does not: during a Flipt OUTAGE a
+ * moderator's `features.appListings` resolves true from its static
+ * `availability: ['mod']` fallback while the server resolves scope `none`, so the
+ * page gate grants where the data layer would serve nothing.
+ *
+ * STILL OWED (deliberately not done here — each needs another input threaded into
+ * this SSR resolver, and neither is reachable today): a `currentVersionDeployedAt`
+ * filter, and a `contentRating` filter keyed on the request's red-capability. Both
+ * are 0-instance today and would each affect a handful of apps at most.
+ *
+ * ⚠️ A SIZING CLAIM THAT USED TO LIVE HERE WAS WRONG, and is corrected rather than
+ * deleted so nobody re-derives it: this comment asserted that "EVERY listing that
+ * carries an `appBlockId` is `kind='onsite'`", making the gap under
+ * `public-external` exactly 100%. `schema.full.prisma` says otherwise — `appBlockId`
+ * is set for on-site listings AND for the #2821 off-site backfilled rows, and it is
+ * explicitly "NOT a kind discriminator: discriminate on `kind`, never on appBlockId
+ * nullness." The guard below is unaffected (it rejects the scope outright rather
+ * than reasoning about kinds), but the old blast-radius estimate was unreliable.
+ * Tracked in issue #3932 with the other findings from #3928's audit.
  */
 export async function resolveLegacyAppRoute(args: {
-  features?: { appBlocks?: boolean; appListings?: boolean } | null;
+  // The SHARED flag type (derived from `FeatureAccess`), so a rename at GA is a
+  // compile error here too — this resolver forwards straight into the store gate.
+  features?: AppsStoreFeatureFlags;
+  /**
+   * The viewer's resolved store scope, from the SERVER helper
+   * `resolveStoreVisibilityScope({ user })` — NOT re-derived from `features`.
+   *
+   * 🔴 Why the server helper and not the client feature object: they are two
+   * evaluations of the same flags and they can disagree (a Flipt outage makes the
+   * client fall back to each flag's static `availability` while the server has no
+   * such fallback). This is a DISCLOSURE gate, so it must key off the same value
+   * the DATA layer keys off — `getListingDetail`'s `scope` — or the gate and the
+   * thing it is gating are answering different questions. This is an async SSR
+   * resolver, so the server helper is simply available; there is no reason to
+   * approximate it.
+   *
+   * REQUIRED, not optional-with-a-default: a default would let a new caller
+   * silently re-open the disclosure.
+   */
+  storeScope: StoreVisibilityScope;
   appBlockId?: unknown;
   /** Approved-only slug lookup. Use `approvedListingSlugQuery` to build it. */
   findApprovedListingSlug: (appBlockId: string) => Promise<string | null | undefined>;
@@ -169,6 +209,13 @@ export async function resolveLegacyAppRoute(args: {
   // 🔒 GATE FIRST — before the param is read, before anything is queried.
   const access = resolveAppsPageAccess({ features: args.features });
   if ('notFound' in access) return { notFound: true };
+
+  // 🔒 STORE-SCOPE GATE, also before the param and the query. ALLOWLIST: only a
+  // `full` viewer may resolve this route. `public-external` must not learn an
+  // on-site listing's slug from a `Location` header, and `none` has no store at
+  // all. See the block comment — this replaces an alignment coincidence that the
+  // widened page gate ended.
+  if (args.storeScope !== 'full') return { notFound: true };
 
   const appBlockId = typeof args.appBlockId === 'string' ? args.appBlockId.trim() : '';
   if (!appBlockId) return { notFound: true };

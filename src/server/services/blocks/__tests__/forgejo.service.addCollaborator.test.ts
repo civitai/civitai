@@ -50,11 +50,8 @@ vi.mock('~/env/server', () => ({
   },
 }));
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(() => Promise.resolve()),
-}));
-
 import { logToAxiom } from '~/server/logging/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const ORG = 'civitai-apps';
 const SLUG = 'gen-matrix';

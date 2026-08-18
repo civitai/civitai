@@ -40,6 +40,14 @@ export type EditScreenshot = {
 export type ListingEditContext = {
   parentId: string;
   slug: string;
+  /**
+   * The listing's KIND.
+   *
+   * 🔴 OPTIONAL, and absent means OFF-SITE — this form began life as the off-site submit
+   * wizard's edit mode, so every pre-existing context and fixture predates the field and
+   * must keep its exact behaviour. See {@link isOnsiteEdit}.
+   */
+  kind?: 'onsite' | 'offsite';
   status: string;
   hasPendingRevision: boolean;
   shadowId: string | null;
@@ -112,6 +120,78 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
   };
 }
 
+/**
+ * Is this edit context an ON-SITE listing? PURE.
+ *
+ * 🔴 WHY THIS PREDICATE EXISTS AT ALL. This form is the off-site submit wizard in edit
+ * mode, and until the canonical authoring page defaulted to its DETAILS tab, an on-site
+ * owner never reached it — the block-keyed editor opened on the manifest tab. Changing
+ * the default changed the POPULATION, not the form, and the form is not kind-aware: it
+ * offers an "App URL" step and an OAuth-scope disclosure that mean nothing for a listing
+ * whose CTA is its own hosted page.
+ *
+ * 🔴 FAIL-SAFE DEFAULT: anything that is not the literal `'onsite'` — including an absent
+ * kind — reads as off-site, i.e. as today's behaviour. The narrowing only ever applies to
+ * a context that positively declares itself on-site, so it cannot silently strip the URL
+ * field from the listings that need it.
+ */
+export function isOnsiteEdit(ctx: Pick<ListingEditContext, 'kind'>): boolean {
+  return ctx.kind === 'onsite';
+}
+
+/**
+ * The edit form's HEADER copy, by kind. PURE.
+ *
+ * 🔴 THIS FINISHES A PATTERN THAT WAS ALREADY HERE, it does not start one. The wizard
+ * SHAPE went kind-aware — an on-site listing gets no App URL step and no scope
+ * disclosure, and `buildScalarPatch` refuses to emit `externalUrl` for it — but the
+ * header alert was left behind, hardcoded to the off-site case. So the canonical editor
+ * for an ON-SITE listing rendered an external-link icon over the sentence "Update your
+ * external-link app. Change the link, details, or assets…", about an app that has no
+ * link and no external anything. Observed in production, not inferred.
+ *
+ * 🔴 KEYED ON THE SAME BOOLEAN THE WIZARD SHAPE USES (`showUrlStep`, i.e.
+ * `!isOnsiteEdit(edit)`), deliberately, rather than taking its own look at `ctx.kind`. A
+ * second kind check is a second thing to get wrong: the header could then promise a step
+ * the wizard does not render, which is the exact class of defect this is fixing. One
+ * predicate decides whether the URL step exists AND whether the header may mention a
+ * link, so the two cannot disagree.
+ *
+ * The fail-safe default rides along for free: `isOnsiteEdit` reads an absent kind as
+ * off-site, so a context that predates the field keeps today's copy verbatim.
+ *
+ * The `testId` is what makes this assertable as STATE rather than as a substring — the
+ * two branches render DIFFERENT elements, so a test can pin which one exists instead of
+ * grepping the page for a word that some other feature might also spell.
+ */
+export type ListingEditHeaderCopy = {
+  kind: 'onsite' | 'offsite';
+  testId: string;
+  blurb: string;
+};
+
+export function listingEditHeaderCopy(showUrlStep: boolean): ListingEditHeaderCopy {
+  return showUrlStep
+    ? {
+        kind: 'offsite',
+        testId: 'apps-listing-edit-header-offsite',
+        // UNCHANGED, character for character — an off-site listing really does have a
+        // link, and the URL step really is one of "the steps below".
+        blurb:
+          'Update your external-link app. Change the link, details, or assets across the ' +
+          'steps below, then save.',
+      }
+    : {
+        kind: 'onsite',
+        testId: 'apps-listing-edit-header-onsite',
+        // 🔴 MUST NOT SAY "the link". An on-site listing has no external URL, and the
+        // wizard renders it no step that could change one.
+        blurb:
+          'Update your app’s listing. Change the details or assets across the steps below, ' +
+          'then save.',
+      };
+}
+
 /** True iff two string→string maps have identical keys + values. PURE. */
 function shallowEqualStringMap(
   a: Record<string, string>,
@@ -139,8 +219,13 @@ export function buildScalarPatch(
   const name = current.name.trim();
   if (name !== original.name.trim()) patch.name = name;
 
-  const url = current.externalUrl.trim();
-  if (url !== original.externalUrl.trim()) patch.externalUrl = url;
+  // 🔴 NEVER patch `externalUrl` on an ON-SITE listing. Its CTA is its hosted page; an
+  // external URL is not a field it has, and the edit form must not be able to write one
+  // through a step it should not even be showing.
+  if (!isOnsiteEdit(ctx)) {
+    const url = current.externalUrl.trim();
+    if (url !== original.externalUrl.trim()) patch.externalUrl = url;
+  }
 
   const tagline = current.tagline.trim();
   const originalTagline = original.tagline.trim();

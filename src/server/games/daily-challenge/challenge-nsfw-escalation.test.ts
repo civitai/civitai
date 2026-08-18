@@ -1,33 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
-const {
-  mockDbRead,
-  mockDbWrite,
-  mockVoidChallenge,
-  mockCreateNotification,
-  mockLogToAxiom,
-  mockCloseChallengeCollection,
-} = vi.hoisted(() => ({
-  mockDbRead: {
-    challenge: { findUnique: vi.fn() },
-    collection: { findUnique: vi.fn() },
-  },
-  mockDbWrite: {
-    challenge: { update: vi.fn() },
-    collection: { updateMany: vi.fn() },
-  },
-  mockVoidChallenge: vi.fn(),
-  mockCreateNotification: vi.fn(),
-  mockLogToAxiom: vi.fn(),
-  mockCloseChallengeCollection: vi.fn(),
-}));
+const { mockVoidChallenge, mockCreateNotification, mockCloseChallengeCollection } = vi.hoisted(
+  () => ({
+    mockVoidChallenge: vi.fn(),
+    mockCreateNotification: vi.fn(),
+    mockCloseChallengeCollection: vi.fn(),
+  })
+);
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/challenge.service', () => ({ voidChallenge: mockVoidChallenge }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   closeChallengeCollection: mockCloseChallengeCollection,
 }));
@@ -53,7 +42,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.challenge.update.mockResolvedValue({});
   mockDbWrite.collection.updateMany.mockResolvedValue({ count: 1 });
-  mockDbRead.collection.findUnique.mockResolvedValue({ metadata: { forcedBrowsingLevel: PG_PG13 } });
+  mockDbRead.collection.findUnique.mockResolvedValue({
+    metadata: { forcedBrowsingLevel: PG_PG13 },
+  });
   mockVoidChallenge.mockResolvedValue({ success: true, voided: true });
   mockCreateNotification.mockResolvedValue(undefined);
   mockLogToAxiom.mockResolvedValue(undefined);

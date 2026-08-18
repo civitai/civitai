@@ -147,6 +147,7 @@ describe('capabilitiesForKind — capabilities are DERIVED, never configured', (
   it('onsite supports everything', () => {
     expect(capabilitiesForKind('onsite')).toEqual({
       listingContent: true,
+      listingMedia: true,
       submitForReview: true,
       analytics: true,
       earnings: true,
@@ -154,11 +155,25 @@ describe('capabilitiesForKind — capabilities are DERIVED, never configured', (
     });
   });
 
-  it('🔴 offsite supports content / review / analytics but NOT earnings or submit-version', () => {
-    // Both `false` cells are STRUCTURAL: BlockBuzzAttribution is keyed on appBlockId,
-    // and there is no bundle or Forgejo repo. They are not policy toggles.
+  it('🔴 offsite: content / review / analytics YES; media, earnings, submit-version NO', () => {
+    // `earnings` and `submitVersion` are STRUCTURAL: BlockBuzzAttribution is keyed on
+    // appBlockId, and there is no bundle or Forgejo repo. They are not policy toggles.
+    //
+    // 🔴 `listingMedia` is a SURFACE fact and is the newest, narrowest cell: an off-site
+    // listing CAN hold and edit assets (the submit/edit wizard does exactly that, through
+    // listing-keyed asset procs), and since civitai/civitai#3984 the standalone editor's
+    // HOST RESOLVER reaches it too — `getMyListingForApp` takes `appBlockId` OR `slug`.
+    // What still withholds the surface is the WEB tab gate `editorTabsFor`, whose `media`
+    // arm requires `ctx.appBlockId != null` on top of this cell, and an off-site listing
+    // has no block id to give it. The cell stays `false`, but for a NARROWER reason than
+    // it was written with: it is about the TAB now, not about the resolver. It is split
+    // out from `listingContent` — which stays TRUE for both kinds, because listing
+    // scalars really are editable on both — so the table stops asserting a surface the UI
+    // does not offer. Tracked by https://github.com/civitai/civitai/issues/3893; flipping
+    // this cell (and dropping that block-id clause) is what that issue's fix does.
     expect(capabilitiesForKind('offsite')).toEqual({
       listingContent: true,
+      listingMedia: false,
       submitForReview: true,
       analytics: true,
       earnings: false,
@@ -173,7 +188,7 @@ describe('capabilitiesForKind — capabilities are DERIVED, never configured', (
     const differing = (
       Object.keys(CAPABILITIES_BY_KIND.onsite) as Array<keyof typeof CAPABILITIES_BY_KIND.onsite>
     ).filter((k) => CAPABILITIES_BY_KIND.onsite[k] !== CAPABILITIES_BY_KIND.offsite[k]);
-    expect(differing.sort()).toEqual(['earnings', 'submitVersion']);
+    expect(differing.sort()).toEqual(['earnings', 'listingMedia', 'submitVersion']);
   });
 
   it('🔴 an UNKNOWN kind falls back to the NARROWER (offsite) row — fail closed', () => {
@@ -182,6 +197,7 @@ describe('capabilitiesForKind — capabilities are DERIVED, never configured', (
     // default to `onsite` (the "normal" case).
     expect(listingKindSupports('something-new', 'earnings')).toBe(false);
     expect(listingKindSupports('something-new', 'submitVersion')).toBe(false);
+    expect(listingKindSupports('something-new', 'listingMedia')).toBe(false);
     expect(listingKindSupports('something-new', 'listingContent')).toBe(true);
   });
 

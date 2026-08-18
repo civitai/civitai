@@ -851,8 +851,10 @@ const editableListingSelect = {
  * copy of the owner for an ON-SITE listing — the canonical owner is the backing
  * `AppBlock.app.userId`. Comparing against the copy inverts the gate in BOTH directions
  * on a drifted row: it refuses the real owner and admits whoever the stale row names.
- * `resolveListingAccess` resolves the owner from the block, hops a shadow revision to its
- * parent, and answers the seat question in the same call.
+ * `resolveListingAccess` resolves the owner KIND-AWARE (the block's `OauthClient.userId`
+ * for an onsite listing; the PARENT listing's own column for an offsite one, even when it
+ * carries a block — issue #3844), hops a shadow revision to its parent, and answers the
+ * seat question in the same call.
  *
  * 🔴 WHERE THE DRIFT ACTUALLY COMES FROM — a SHADOW REVISION, and this is worth stating
  * precisely because an earlier version of this comment named the wrong mechanism and
@@ -1312,6 +1314,14 @@ export type ListingEditScreenshot = {
 };
 
 export type GetMyListingForEditResult = {
+  /**
+   * The listing's KIND. 🔴 Additive OUTPUT field (no input schema is touched), and the
+   * edit form branches on it: an ON-SITE listing must not be offered the App URL step or
+   * the OAuth-scope disclosure, and `buildScalarPatch` refuses to emit `externalUrl` for
+   * it. Needed because the canonical authoring page now opens on the DETAILS tab, which
+   * routes on-site owners into this form for the first time.
+   */
+  kind: string;
   /** The LIVE (parent) listing id — always the caller's edit target identity. */
   parentId: string;
   /** The parent's PUBLIC slug — immutable in edit mode (identity/URL). */
@@ -1383,7 +1393,7 @@ async function loadListingEditView(
   connectRequestedScopes: number | null;
   connectScopeJustifications: Record<string, string> | null;
 }> {
-  const { getEdgeUrl } = await import('~/client-utils/cf-images-utils');
+  const { getEdgeUrl } = await import('~/client-utils/edge-url');
   const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
@@ -1564,6 +1574,7 @@ export async function getMyListingForEdit(opts: {
 
   return {
     parentId: listingId,
+    kind: listing.kind,
     slug: listing.slug,
     status: listing.status,
     hasPendingRevision,
@@ -1632,18 +1643,28 @@ export type GetMyListingForAppResult = {
 };
 
 /**
- * OWNER: resolve the caller's OWN listing for the owner-facing on-site
- * listing-media page. Resolves by backing `appBlockId` (`AppListing.appBlockId` is
- * `@unique`) when the app is approved; falls back to the pre-approval DRAFT BY SLUG
- * (`kind='onsite', appBlockId IS NULL, status='draft'`) for a FIRST-version app that
- * is still pending (no AppBlock exists yet) — the W13 draft-at-submit wiring gap that
- * lets the author set media WHILE pending. At least one of `appBlockId` / `slug` must
- * be given. Returns the `AppListing.id` (the target the page then passes to
+ * OWNER: resolve the caller's OWN listing for a listing-media surface. TWO selectors,
+ * and `appBlockId` WINS: the backing `appBlockId` (`AppListing.appBlockId` is `@unique`)
+ * is tried first, and the slug arm runs only when that lookup MISSED or no `appBlockId`
+ * was supplied — so passing both a block id and a slug that name DIFFERENT listings
+ * returns the `appBlockId` one. At least one of the two must be given (enforced by the
+ * schema's `.refine`).
+ *
+ * The slug arm resolves ANY TOP-LEVEL listing — either `kind`, any `status`, with or
+ * without a backing `appBlockId` — narrowed only by `revisionOfId: null`
+ * (civitai/civitai#3984). It is deliberately NOT scoped to the W13 pre-approval draft it
+ * was first written for; that shape is one member of the set, alongside an OFF-SITE
+ * listing (which `appBlockId` cannot address, see the inline comment) and an approved
+ * on-site listing whose caller only holds the slug. A `removed` / `rejected` listing
+ * resolves too and comes back carrying an `editBlockedReason` instead of throwing, so
+ * the surface renders the reason rather than a blank page.
+ *
+ * Returns the `AppListing.id` (the target the caller then passes to
  * `beginListingRevision` + the owner-gated asset procs), the listing's lifecycle
  * status + content rating, and whether a revision is already under review.
  * Owner-bound: a listing owned by another user → NOT_OWNED (→FORBIDDEN); no listing
  * row for the app → NOT_FOUND. Kind-agnostic (works for both on-site and off-site
- * listings — the on-site owner UI is the first caller).
+ * listings — the on-site owner UI was the first caller).
  *
  * ALSO projects the EDITABLE target's current `assets` (+ its `shadowId`). Without
  * them the media editor had no way to see the icon/cover it is about to edit: it
@@ -1684,16 +1705,45 @@ export async function getMyListingForApp(opts: {
         select: entrySelect,
       })
     : null;
-  // (W13 draft-at-submit) Pre-approval DRAFT fallback: a FIRST-version app has no
-  // backing AppBlock yet, so its draft listing (minted at submit) has
-  // `appBlockId = NULL` and is only reachable BY SLUG. Resolve it when the appBlockId
-  // lookup missed (or only a slug was supplied) so the owner-media page can reach the
-  // draft to set icon/cover/screenshots WHILE the app is pending. Scoped to the exact
-  // pre-approval-draft shape so this can never resolve some other kind/status by slug.
-  // Owner-bound below (unchanged).
+  // SLUG fallback — 🔴 SECOND, and only on a MISS. `appBlockId` is the primary selector
+  // and wins whenever it resolves; this arm runs when that lookup missed or when no
+  // `appBlockId` was supplied. (Pinned: "appBlockId WINS over a slug naming a DIFFERENT
+  // listing" in `offsite-listing.get-my-listing-for-app.service.test.ts`.) Two callers
+  // need it:
+  //   - (W13 draft-at-submit) a FIRST-version on-site app has no backing AppBlock yet,
+  //     so its draft listing (minted at submit) has `appBlockId = NULL` and is only
+  //     reachable BY SLUG while it is pending; and
+  //   - any client whose ONLY handle is the slug — in particular an OFF-SITE listing,
+  //     which in practice carries no AppBlock, so `appBlockId` cannot address it
+  //     (civitai/civitai#3984).
+  //
+  // 🟡 "off-site ⇒ no AppBlock" is EMPIRICAL, NOT STRUCTURAL — do not restate it as
+  // "never, ever". `AppListing.appBlockId` is "set for EVERY backfilled row — on-site
+  // AND the #2821 off-site rows (both come from an AppBlock). It is NOT a kind
+  // discriminator: discriminate on `kind`, never on appBlockId nullness"
+  // (schema.full.prisma). Only a NATIVELY-created off-site listing leaves it NULL, and
+  // `mapAppBlockToListing` can still mint `kind:'offsite'` + a non-null `appBlockId`.
+  // That shape measured 0 rows in production on 2026-08-11 (see
+  // `resolveAccessibleAppBlockIds` / `appListingEditorTabs.ts`), so today the slug is
+  // the only handle every off-site listing has — but a backfilled class exists and the
+  // widening below is correct either way: it admits the row on EITHER selector.
+  //
+  // 🔴 `revisionOfId: null` IS LOAD-BEARING, not decoration. `beginListingRevision`
+  // mints a shadow with a synthetic `rev-<ulid>` slug that is never public but IS a
+  // real row — `kind: parent.kind`, `appBlockId` NULL, status `draft`. For an ON-SITE
+  // parent that is exactly the previous, apparently-narrower clause, so those shadows
+  // matched it; a shadow of an OFF-SITE parent is `kind:'offsite'` and did not. Either
+  // way, excluding revisions here is what makes the comment below ("only ever sees a
+  // top-level parent") true by construction rather than by the accident that nobody
+  // knows a shadow's slug — and it is now the ONLY clause standing between the widened
+  // arm and every shadow in the table.
+  //
+  // `AppListing.slug` is `@unique` across BOTH kinds (schema.full.prisma), so this is
+  // unambiguous without an index change. Owner-bound below (unchanged): a slug that
+  // is not yours is refused by `resolveListingRole`, not by this `where`.
   if (!listing && slug) {
     listing = await dbRead.appListing.findFirst({
-      where: { slug, kind: 'onsite', appBlockId: null, status: 'draft' },
+      where: { slug, revisionOfId: null },
       select: entrySelect,
     });
   }

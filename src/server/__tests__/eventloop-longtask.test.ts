@@ -26,10 +26,6 @@ vi.mock('~/server/prom/client', () => ({
   },
 }));
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
 import {
   classifyDrift,
   runWithLongTaskLabel,
@@ -37,6 +33,7 @@ import {
   __setLongTaskLabelsArmedForTests,
   __hasActiveLabelStoreForTests,
 } from '~/server/eventloop-longtask';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 describe('eventloop-longtask: disarmed passthrough is wrapper-free', () => {
   beforeEach(() => {

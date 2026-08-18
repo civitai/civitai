@@ -49,19 +49,10 @@ vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));
 
-const findUnique = vi.fn();
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    image: { findUnique: (...args: unknown[]) => findUnique(...args) },
-    // No stored resource rows: `getResourceData([])` short-circuits, so the whole
-    // resource-enrichment path stays out of this test.
-    imageResourceNew: { findMany: vi.fn().mockResolvedValue([]) },
-  },
-  dbWrite: {},
-}));
-
+const findUnique = dbMock.dbRead.image.findUnique;
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import type { SessionUser } from '~/types/session';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const OWNER_ID = 555;
 

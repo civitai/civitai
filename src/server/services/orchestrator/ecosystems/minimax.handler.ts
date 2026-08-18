@@ -17,7 +17,13 @@ import type {
   VideoGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { resolveImageDimensions } from '~/utils/aspect-ratio-helpers';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
+import {
+  minimaxComfyAspectRatios,
+  minimaxComfyDefaultAspectRatio,
+} from '~/shared/data-graph/generation/minimax-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
@@ -32,6 +38,10 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
   const isRef2Vid = data.workflow === 'img2vid:ref2vid';
   const hasImages = !!images?.length;
 
+  // H3 rejects a text-less request on every workflow, images or not (2013).
+  const prompt = data.prompt?.trim();
+  if (!prompt) throw throwBadRequestError('A prompt is required for MiniMax H3');
+
   if (data.minimaxVariant === 'comfy') {
     const loras: Record<string, number> = {};
     for (const resource of data.resources ?? []) {
@@ -40,7 +50,7 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
 
     const shared = {
       engine: 'minimax-h3-comfy' as const,
-      prompt: data.prompt,
+      prompt,
       duration: data.duration,
       seed: data.seed,
       steps: data.steps,
@@ -69,6 +79,15 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
 
     const firstFrame = hasImages ? images?.[0]?.url : undefined;
     const lastFrame = images && images.length > 1 ? images[1]?.url : undefined;
+    // Take the framing from the supplied frame, snapped to a supported 720p
+    // entry. The picker is hidden on these workflows, so this is the only thing
+    // deciding the dimensions — and the comfy backend rejects anything that
+    // isn't a multiple of 32, which the table already accounts for.
+    const { width, height } = resolveImageDimensions(
+      images?.[0],
+      minimaxComfyAspectRatios,
+      data.aspectRatio ?? minimaxComfyDefaultAspectRatio
+    );
     return [
       {
         $type: 'videoGen',
@@ -77,9 +96,8 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
           operation: 'imageToVideo',
           firstFrame,
           lastFrame,
-          // A supplied frame dictates the framing; only txt2vid needs explicit dimensions.
-          width: firstFrame ? undefined : data.aspectRatio?.width,
-          height: firstFrame ? undefined : data.aspectRatio?.height,
+          width,
+          height,
         }) as ComfyMiniMaxH3ImageToVideoInput,
       },
     ];
@@ -95,7 +113,7 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
       $type: 'videoGen',
       input: removeEmpty({
         engine: 'minimax-h3',
-        prompt: data.prompt,
+        prompt,
         // A supplied frame dictates the framing, so let the provider adapt to it.
         aspectRatio: firstFrameImage
           ? 'adaptive'

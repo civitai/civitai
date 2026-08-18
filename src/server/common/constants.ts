@@ -577,6 +577,10 @@ type LicenseDetails = {
   name: string;
   notice?: string;
   poweredBy?: string;
+  // Set only when the licence obliges us to name the model in the product's own
+  // UI, and holds the exact string it demands. Distinct from `poweredBy`, which
+  // several licences use for a liability disclaimer rather than an attribution.
+  attribution?: string;
   restrictedNsfwLevels?: NsfwLevel[];
   // When true, mature content is restricted (auto-derives `restrictedNsfwLevels`
   // to MATURE_NSFW_LEVELS). Use this instead of hand-listing levels.
@@ -756,6 +760,18 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
   },
+  'minimax h3': {
+    // Permalinked to the 2 Aug 2026 revision. The model page tracks the latest
+    // commit, and section III.1 obliges us to hand over a stable copy.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
+    name: 'MiniMax H3 Community License Agreement',
+    notice:
+      'MiniMax H3 is licensed by MiniMax under the MiniMax H3 Community License Agreement. That agreement’s Applicable Territory excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America. Your use of H3 and of any H3 derivative is subject to that agreement and its Acceptable Use Policy.',
+    // Section IV.2 demands this exact string in the product UI. "Powered by
+    // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
+    attribution: 'MiniMax H3',
+    poweredBy: 'MiniMax H3',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -838,6 +854,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Vidu Q1': baseLicenses['vidu'],
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
+  'MiniMax H3': baseLicenses['minimax h3'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

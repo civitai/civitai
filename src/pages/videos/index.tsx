@@ -28,6 +28,7 @@ function VideosPage() {
               filters={{ ...filters, types: ['video'] }}
               showEof
               showAds
+              showFeedbackPrompt
             />
           </IsClient>
         </Stack>

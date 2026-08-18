@@ -11,9 +11,11 @@ import {
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import { stickerPlacementAcceptedReward } from '~/server/rewards/active/stickerPlacementAccepted.reward';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+import { isPlacementSpendType } from '~/shared/constants/placement.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   PlacementRemovedBy,
@@ -30,6 +32,25 @@ import {
 
 /** Where held Buzz sits between placement and settlement. */
 const ESCROW_ACCOUNT_ID = 0;
+
+/**
+ * What a placement settles in.
+ *
+ * A row written before the currency was recorded settles as yellow, which is
+ * what its escrow legs record: the old debit named no destination, so the Buzz
+ * service credited its default and a green placement was booked into escrow as
+ * yellow.
+ *
+ * Yellow rather than the placer's true currency is a choice, not a constraint —
+ * the bank is not balance-constrained, so those rows COULD be paid in green. The
+ * choice is to leave settled history reading the way the ledger recorded it
+ * rather than re-characterising it from the outside, for one pending prod row
+ * worth 100 Buzz. Going forward the column carries the truth.
+ */
+export const settledSpendType = (placement: { spendType: string | null }): BuzzSpendType =>
+  isPlacementSpendType(placement.spendType ?? '')
+    ? (placement.spendType as BuzzSpendType)
+    : 'yellow';
 
 /**
  * Receipt for a leg where nothing leaves the escrow account. Without it the row
@@ -149,6 +170,12 @@ export const listExhaustedLegs = ({ limit = 100 }: { limit?: number } = {}) =>
       attempts: true,
       lastAttemptAt: true,
       lastError: true,
+      // The currency, because escrow is no longer yellow-only. An operator
+      // releasing a stuck leg by hand can read every other field and still pay
+      // the wrong kind — the bank does not refuse it, so that mints one currency
+      // and strands the other with nothing left to report it. NULL means the row
+      // predates the column and its escrow really is yellow.
+      placement: { select: { spendType: true } },
     },
     orderBy: { lastAttemptAt: 'desc' },
     take: limit,
@@ -378,14 +405,40 @@ export async function holdPlacementEscrow({
   placerId,
   surface,
   amount,
+  spendType,
 }: {
   placementId: number;
   placerId: number;
   surface: PlacementSurface;
   amount: number;
+  /**
+   * The one currency this placement is paid in, decided by the domain it was
+   * made on. Required rather than defaulted: a default would silently reinstate
+   * the mixed-currency spend this parameter exists to end.
+   */
+  spendType: BuzzSpendType;
 }) {
+  // Checked here rather than trusted from the type: the value crosses a router
+  // boundary, and paying out a currency the escrow cannot hold is worse than a
+  // refused placement. Blue in particular must never reach this.
+  if (!isPlacementSpendType(spendType))
+    throw new Error(`placement escrow: ${spendType} is not a placement spend type`);
   if (!Number.isSafeInteger(amount) || amount < 0)
     throw new Error(`placement escrow: amount must be a non-negative integer, got ${amount}`);
+
+  // A free placement must never reach the escrow, even for zero. `amount === 0`
+  // returns harmlessly below, so this is not about the money — it is about
+  // `expiresAt` and `spendType` being stamped by whichever path made the row, and
+  // about a caller that reached here having taken the wrong branch somewhere
+  // upstream. Refused on the mutation rather than absorbed, because absorbing it
+  // is how the free path silently acquires a second, half-built creation route.
+  const row = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: { free: true },
+  });
+  if (!row) throw new Error(`placement escrow: placement ${placementId} not found`);
+  if (row.free)
+    throw new Error(`placement escrow: placement ${placementId} is free and takes no escrow`);
 
   // Stamped from the surface's compiled default BEFORE the config is read.
   // `getPlacementConfig` touches KeyValue, so it can throw — and a throw here
@@ -395,10 +448,41 @@ export async function holdPlacementEscrow({
   // pending slots against that creator for good. The operator override is
   // applied immediately after, so a configured expiry still wins.
   const fallbackHours = PLACEMENT_SURFACES[surface].expiryHours;
+  // `spendType` rides the same statement so the two cannot disagree: settlement
+  // reads the currency off the row, and a row that got a deadline without one
+  // would settle as legacy yellow while its escrow really holds green.
   const stamped = await dbWrite.placement.updateMany({
     where: { id: placementId, expiresAt: null },
-    data: { expiresAt: new Date(Date.now() + fallbackHours * 3_600_000) },
+    data: { expiresAt: new Date(Date.now() + fallbackHours * 3_600_000), spendType },
   });
+
+  // The stamp is conditional; the charge below is not. A second run — this
+  // function is deliberately idempotent, so a hold retried after a lock failure
+  // re-enters here — must still leave the currency recorded, or the holds below
+  // charge in green against a row whose NULL `spendType` settles as yellow,
+  // stranding the green with no leg naming it.
+  //
+  // Recording it separately rather than refusing keeps the re-run a no-op. What
+  // is refused is the one case that cannot be reconciled: a row already carrying
+  // a DIFFERENT currency, where the escrow can only hold one of them.
+  if (!stamped.count) {
+    const recorded = await dbWrite.placement.updateMany({
+      where: { id: placementId, spendType: null },
+      data: { spendType },
+    });
+
+    if (!recorded.count) {
+      const row = await dbWrite.placement.findUnique({
+        where: { id: placementId },
+        select: { spendType: true },
+      });
+
+      if (row?.spendType !== spendType)
+        throw new Error(
+          `placement escrow: placement ${placementId} is held in ${row?.spendType}, refusing to charge ${spendType}`
+        );
+    }
+  }
 
   const config = await getPlacementConfig();
   const configured = config.expiryHours(surface);
@@ -423,9 +507,18 @@ export async function holdPlacementEscrow({
           fromAccountId: placerId,
           toAccountId: ESCROW_ACCOUNT_ID,
           type: TransactionType.Fee,
-          // Yellow and Green only. Blue is non-transferable by design, and a
-          // placement that took it and paid it out would be a laundering channel.
-          fromAccountTypes: PLACEMENT_SPEND_TYPES,
+          // One currency, the domain's, and the escrow records it in kind.
+          //
+          // Bookkeeping, NOT solvency: the escrow is the bank, which is not a
+          // balance-constrained account (`buzz.service.ts` exempts account 0
+          // from the sufficiency check), so a payout can be made in a currency
+          // the bank was never credited in — the cosmetic shop has paid creators
+          // green out of a yellow-credited bank in production for months. What
+          // naming the destination buys is a ledger that says what actually
+          // happened, so a reader reconciling a placement is not told the escrow
+          // took yellow for a green placement.
+          fromAccountTypes: [spendType],
+          toAccountType: spendType,
           description: `Placement escrow (${kind}) for placement ${placementId}`,
           externalTransactionIdPrefix,
         },
@@ -531,7 +624,55 @@ export async function settlePlacement({
 
   await payOutPlacement(placement);
 
+  if (count > 0 && status === 'approved') await rewardAccepted(placement);
+
   return { settled: count > 0, placement };
+}
+
+/**
+ * The owner's reward for accepting a placement onto their space.
+ *
+ * Hung off `count > 0` rather than off the approve callers: that is the settle
+ * whose `WHERE status = 'pending'` matched, and it happens exactly once per
+ * placement no matter how many approvals race or how often a caller retries. The
+ * reward's ledger key never expires while its daily cap does, so a second
+ * presentation of the same placement would silently burn a tenth of the owner's
+ * day and pay nothing.
+ *
+ * 🔴 **Sticker only, and no other surface may be added here.** The remix gallery
+ * reward is granted from `actOnRemixGallerySubmission`, which is the only way a
+ * remix submission is approved. A `remixGallery` branch in this function would
+ * not replace that call, it would double it — and nothing downstream catches a
+ * double: the two reward types have different `externalTransactionId`s, and the
+ * daily cap hash is keyed `userId:type`, so both grants look legitimate to every
+ * guard either reward has. A surface whose approvals arrive only through its own
+ * action handler belongs there, not here.
+ *
+ * After the payout, so a reward failure can never be why an approved placement
+ * went unpaid — and swallowed, because the money has already moved and a throw
+ * would 500 an approval that succeeded. Note what that costs: `base.reward`
+ * deliberately rethrows a genuine ClickHouse schema break so it surfaces as a
+ * 500, and this `.catch` takes that away. Such a break arrives here as an Axiom
+ * error rather than an alerting one, which is the trade this call site makes.
+ */
+async function rewardAccepted(placement: PlacementRow) {
+  if (placement.surface !== 'sticker') return;
+
+  await stickerPlacementAcceptedReward
+    .apply({
+      placementId: placement.id,
+      ownerId: placement.ownerId,
+      placerId: placement.placerId,
+    })
+    .catch((error) =>
+      logToAxiom({
+        name: 'placement-escrow',
+        type: 'error',
+        message: 'accept reward failed',
+        placementId: placement.id,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => null)
+    );
 }
 
 type PlacementRow = NonNullable<Awaited<ReturnType<typeof dbWrite.placement.findUnique>>>;
@@ -600,6 +741,16 @@ async function payoutLegsFor(
   placement: PlacementRow,
   held: Map<string, number>
 ): Promise<PlannedLeg[]> {
+  // A free placement never entered escrow, so there is nothing to release on any
+  // path: no principal, no decline fee, no seller split, no forfeit.
+  //
+  // Stated rather than left to arithmetic. Every branch below already computes to
+  // zero from the empty `held` map and would be filtered out before persisting —
+  // but that is a property of four separate expressions all happening to reduce
+  // to nothing, which the next person to add a leg has to rediscover. The row
+  // says it is free; this says what free means, once.
+  if (placement.free) return [];
+
   const fee = held.get('holdFee') ?? 0;
   const principal = held.get('holdPrincipal') ?? 0;
   const outcome = placementOutcomeFromStatus(
@@ -661,13 +812,20 @@ async function payOutPlacement(placement: PlacementRow) {
   const held = await heldAmountsFor(placement.id);
   const plan = await planPayout(placement, held);
 
+  // What was paid in is what is paid out, and what the escrow is drawn from.
+  // NULL settles as yellow — see `settledSpendType` for why that is a choice
+  // about legacy rows rather than a limit on what the bank can pay.
+  const spendType = settledSpendType(placement);
+
   const payFromEscrow = (kind: PlacementTransactionKind, toAccountId: number, amount: number) =>
     runLeg(placement.id, kind, amount, async (externalTransactionId, payAmount) => {
       const { transactionId } = await createBuzzTransaction(
         {
           amount: payAmount,
           fromAccountId: ESCROW_ACCOUNT_ID,
+          fromAccountType: spendType,
           toAccountId,
+          toAccountType: spendType,
           type: TransactionType.Fee,
           description: `Placement ${placement.id} (${kind})`,
           externalTransactionId,
@@ -693,6 +851,19 @@ async function payOutPlacement(placement: PlacementRow) {
         },
         BUZZ_CALL_OPTIONS
       );
+
+      // The mirror of the hold's `transactionCount === 0` check, and it matters
+      // more here: this is the only path that returns a placer's money. Without
+      // it a refund that moved nothing still gets a receipt, and a receipted leg
+      // is invisible to BOTH recovery queries — the unpaid sweep skips it
+      // because `transactionId` is set, and `listExhaustedLegs` skips it for the
+      // same reason. The money would sit in escrow with nothing able to find it.
+      //
+      // Zero rather than an exact-amount assertion: the service reverses per
+      // original leg, and refusing a short-but-real refund would burn attempts
+      // and strand the leg for a discrepancy a human should read, not a retry.
+      if (!result.refundedTransactions.length)
+        throw new Error(`placement escrow: ${kind} refunded nothing for placement ${placement.id}`);
 
       return result.externalTransactionIdPrefix;
     });

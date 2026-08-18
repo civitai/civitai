@@ -1,5 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * Regression test for CU 868khnkuc: the 1-year `immutable` Cache-Control was set BEFORE the
@@ -11,20 +14,16 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 const IMMUTABLE = 'public, max-age=31536000, s-maxage=31536000, immutable';
 const NO_STORE = 'private, no-store';
 
-const { mockFindUnique, mockGetFileForModelVersion, mockGetFullTensorAnalysisCached } = vi.hoisted(
+const { mockGetFileForModelVersion, mockGetFullTensorAnalysisCached } = vi.hoisted(
   () => ({
-    mockFindUnique: vi.fn(),
     mockGetFileForModelVersion: vi.fn(),
     mockGetFullTensorAnalysisCached: vi.fn(),
   })
 );
+const mockFindUnique = dbMock.dbRead.modelFile.findUnique;
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, undefined),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { modelFile: { findUnique: (...args: any[]) => mockFindUnique(...args) } },
 }));
 
 vi.mock('~/server/services/file.service', () => ({
@@ -40,17 +39,6 @@ vi.mock('~/server/services/tensor-metadata.service', () => ({
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: (_key: string, fetcher: () => Promise<unknown>) => fetcher(),
 }));
-
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CACHES: {
-      TENSOR_METADATA: 'packed:caches:tensor-metadata',
-      TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
-    },
-  },
-}));
-
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
 const analysis = {
   format: 'SafeTensor',

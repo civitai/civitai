@@ -188,8 +188,11 @@ export function canOwnerEditListing(opts: {
 
 /**
  * The owner "Edit" deep-link target, by kind:
- *   - on-site  → `/apps/<appBlockId>/edit` (the UNIFIED tabbed editor — App/Manifest
- *     + Listing media; defaults to the manifest tab). Null when the on-site listing
+ *   - on-site  → `/apps/<appBlockId>/edit`, which now 302s to the CANONICAL listing-keyed
+ *     editor `/apps/listing/<appListingId>/edit` whenever the block has a listing. That
+ *     page opens on the DETAILS tab (it is the one tab every kind and every role can
+ *     always open); it used to open on the manifest tab, and this comment said so long
+ *     after it stopped being true. Null when the on-site listing
  *     has no backing `appBlockId` (nothing to edit) — the caller then hides the
  *     button rather than routing to a dead link.
  *   - off-site → `/apps/submit?edit=<listingId>` (the off-site submit editor,

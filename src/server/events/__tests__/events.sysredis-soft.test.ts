@@ -81,7 +81,6 @@ vi.mock('~/server/integrations/discord', () => ({
 // Heavy runtime deps in the module graph — stub so import doesn't pull DB /
 // clickhouse / buzz factories.
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
   getAccountSummary: vi.fn(),
@@ -91,6 +90,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 
 import { eventEngine } from '~/server/events/index';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();

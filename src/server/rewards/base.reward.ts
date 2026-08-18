@@ -13,6 +13,8 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
+import type { ResolvedRewardConfig } from '~/server/rewards/reward-config';
+import { resolveRewardConfig } from '~/server/rewards/reward-config';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
@@ -31,7 +33,7 @@ const log = (event: BuzzEventLog, data: MixedObject) => {
     type: 'error',
     event: JSON.stringify(event),
     ...data,
-  }).catch();
+  }).catch(() => null);
 };
 
 // Lua script for atomic on-demand reward processing.
@@ -41,9 +43,17 @@ const log = (event: BuzzEventLog, data: MixedObject) => {
 // ARGV[2] = cache key (hashed event key for dedup)
 // ARGV[3] = effective award amount (already multiplied)
 // ARGV[4] = effective cap (already multiplied)
-// ARGV[5] = timestamp for cache entry
-// ARGV[6] = end-of-day unix timestamp for hash expiry
-const ON_DEMAND_REWARD_SCRIPT = `
+// ARGV[5] = end-of-day unix timestamp for hash expiry
+//
+// Each dedup entry stores WHAT IT PAID (`a:<amount>`), not a timestamp. Deriving
+// the day's earnings as `entry count * the CURRENT award` instead means changing
+// the award mid-day rewrites history: at award 2 and cap 100, a user capped out
+// at 50 entries; drop the award to 1 to spend less and those same 50 entries
+// re-price to 50 earned, freeing 50 more — a day total of 150 from an edit meant
+// to reduce it. Entries written before this (timestamps) fall back to the old
+// count-based reading for the rest of the day; `rewardsDailyReset` clears the
+// hash at 00:00 UTC, after which every entry carries its own amount.
+export const ON_DEMAND_REWARD_SCRIPT = `
   local cacheJson = redis.call('HGET', KEYS[1], ARGV[1])
   local cache = cjson.decode(cacheJson or '{}')
 
@@ -52,22 +62,30 @@ const ON_DEMAND_REWARD_SCRIPT = `
     return -1
   end
 
-  -- Count entries and enforce cap
-  local count = 0
-  for _ in pairs(cache) do count = count + 1 end
-  local awarded = count * tonumber(ARGV[3])
+  -- Sum what the day's entries actually paid, and enforce the cap against that
+  local awarded = 0
+  for _, entry in pairs(cache) do
+    local paid = string.match(tostring(entry), '^a:(%d+)$')
+    awarded = awarded + (paid and tonumber(paid) or tonumber(ARGV[3]))
+  end
   local remaining = math.max(tonumber(ARGV[4]) - awarded, 0)
   local toAward = math.min(tonumber(ARGV[3]), remaining)
 
   -- Update cache with new entry
-  cache[ARGV[2]] = ARGV[5]
+  cache[ARGV[2]] = 'a:' .. tostring(toAward)
   redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(cache))
 
   -- Set hash expiry to end of UTC day
-  redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[6]))
+  redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[5]))
 
   return toAward
 `;
+
+/** `a:<amount>` as written by the Lua; `undefined` for a legacy timestamp entry. */
+function parseEntryAmount(entry: unknown): number | undefined {
+  const match = /^a:(\d+)$/.exec(String(entry));
+  return match ? Number(match[1]) : undefined;
+}
 
 export function createBuzzEvent<T>({
   type,
@@ -83,30 +101,41 @@ export function createBuzzEvent<T>({
   const types = [type];
   if (isProcessable) types.push(...(buzzEvent.includeTypes ?? []));
 
+  const capEntries = 'caps' in buzzEvent ? buzzEvent.caps ?? [] : [];
+  // One number cannot say whether it means the daily cap or the monthly one, so
+  // a multi-entry table refuses the override rather than guessing an entry.
+  const capOverridable = isOnDemand || capEntries.length === 1;
+  const defaultCap =
+    'cap' in buzzEvent ? buzzEvent.cap : capEntries.length === 1 ? capEntries[0].amount : undefined;
+
+  const resolveConfig = () =>
+    resolveRewardConfig(type, { awardAmount, cap: defaultCap, capOverridable });
+
   const getUserRewardDetails = async (userId: number) => {
+    const config = await resolveConfig();
+    // A reward disabled at runtime must not stay advertised with an amount and
+    // a cap that will never pay.
+    if (!config.enabled) return null;
+
+    const intervalCap = capEntries.filter((cap) => !!cap.interval)?.[0];
     const data = {
       // We'll return the event details
       // so that they can be presented on the UI.
       type,
-      awardAmount,
+      awardAmount: config.awardAmount,
       description,
       onDemand: isOnDemand,
-      cap:
-        'cap' in buzzEvent
-          ? buzzEvent.cap
-          : 'caps' in buzzEvent
-          ? buzzEvent.caps?.filter((cap) => !!cap.interval)?.[0]?.amount
-          : undefined,
-      interval:
-        'caps' in buzzEvent
-          ? buzzEvent.caps?.filter((cap) => !!cap.interval)?.[0]?.interval
-          : undefined,
+      cap: config.cap ?? intervalCap?.amount,
+      interval: intervalCap?.interval,
       triggerDescription: buzzEvent.triggerDescription,
       tooltip: buzzEvent.tooltip,
       // -1 determines that this award is not on demand, as such, would require a full
       // clickhouse query to determine the awarded amount. For the time being, this won't be
       // done.
       awarded: -1,
+      // How many times the reward fired today, which is NOT derivable from
+      // `awarded`: a grant the cap trimmed to zero happened but paid nothing.
+      awardedCount: -1,
       accountType: buzzEvent.toAccountType ?? 'blue',
     };
 
@@ -149,9 +178,18 @@ export function createBuzzEvent<T>({
 
     const typeCacheJson = (await redis.hGet(REDIS_KEYS.BUZZ_EVENTS, `${userId}:${type}`)) ?? '{}';
     const typeCache = JSON.parse(typeCacheJson);
-    const eventCount = Object.keys(typeCache).length;
 
-    data.awarded = Math.min(eventCount * data.awardAmount, data.cap ?? Infinity);
+    // Read the same per-entry amounts the Lua enforces the cap against, or the
+    // UI reports a different day total than the one being paid.
+    const entries = Object.values(typeCache);
+    data.awardedCount = entries.length;
+    data.awarded = Math.min(
+      entries.reduce<number>(
+        (sum, entry) => sum + (parseEntryAmount(entry) ?? data.awardAmount),
+        0
+      ),
+      data.cap ?? Infinity
+    );
 
     return data;
   };
@@ -186,14 +224,20 @@ export function createBuzzEvent<T>({
     );
   };
 
-  const processOnDemand = async (key: BuzzEventKey, multiplier: number) => {
+  const processOnDemand = async (
+    key: BuzzEventKey,
+    multiplier: number,
+    config: ResolvedRewardConfig
+  ) => {
     if (!isOnDemand) return false;
 
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
-    const effectiveAward = Math.ceil(awardAmount * multiplier);
-    const effectiveCap = Math.ceil((buzzEvent.cap ?? Infinity) * multiplier);
-    const now = Date.now().toString();
+    const effectiveAward = Math.ceil(config.awardAmount * multiplier);
+    // An uncapped reward needs a finite ceiling: `tonumber('Infinity')` is nil in
+    // Lua, which would throw out of the script and into the user's mutation.
+    const effectiveCap =
+      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * multiplier);
     const endOfDay = Math.floor(new Date().setUTCHours(23, 59, 59, 999) / 1000);
 
     const result = (await redis.eval(ON_DEMAND_REWARD_SCRIPT, {
@@ -203,17 +247,24 @@ export function createBuzzEvent<T>({
         cacheKey,
         String(effectiveAward),
         String(effectiveCap),
-        now,
         String(endOfDay),
       ],
     })) as number;
 
     if (result === -1) return false; // Already awarded
-    return result; // 0 (capped) or effectiveAward
+    // `toAward` is what the cap left, which is NOT always the full award.
+    return { toAward: result, effectiveAward };
   };
 
   const apply = async (input: T, tracking?: { ip?: string }) => {
     if (!clickhouse) return;
+
+    // Gate before `getKey`. A disabled reward must cost one early return, not a
+    // getKey query, a multiplier lookup (Redis + DB), a Redis dedup script and a
+    // ClickHouse insert — `orchestrator.router` calls this once per feedback
+    // patch inside a live generation mutation.
+    const config = await resolveConfig();
+    if (!config.enabled) return;
 
     // Fail-soft (resolution): getKey / getMultipliersForUser / getTransactionDetails hit the DB/Redis/CH and
     // run SYNCHRONOUSLY inside the triggering user mutation (collection.saveItem, toggleFollow, post.update,
@@ -237,7 +288,7 @@ export function createBuzzEvent<T>({
         rewardType: type,
         error: (error as Error)?.message,
         stack: (error as Error)?.stack,
-      }).catch();
+      }).catch(() => null);
       rewardFailedCounter?.inc?.();
       return null;
     });
@@ -249,7 +300,7 @@ export function createBuzzEvent<T>({
     const key = { type, ...definedKey } as BuzzEventKey;
     const event: BuzzEventLog = {
       ...key,
-      awardAmount,
+      awardAmount: config.awardAmount,
       multiplier: rewardsMultiplier,
       status: 'pending',
       ip: ['::1', ''].includes(ip ?? '') ? undefined : ip,
@@ -257,13 +308,26 @@ export function createBuzzEvent<T>({
     };
 
     if (isOnDemand) {
-      const toAward = await processOnDemand(key, rewardsMultiplier);
-      if (toAward === false) return; // already awarded
+      const outcome = await processOnDemand(key, rewardsMultiplier, config);
+      if (outcome === false) return; // already awarded
+      const { toAward, effectiveAward } = outcome;
 
       event.status = toAward > 0 ? 'awarded' : 'capped';
-      // Keep base awardAmount and multiplier for ClickHouse storage consistency.
-      // processOnDemand already enforced the cap using multiplied values.
-      if (event.status === 'capped') event.awardAmount = 0;
+      if (event.status === 'capped') {
+        event.awardAmount = 0;
+      } else if (toAward < effectiveAward) {
+        // The cap trimmed this grant. Paying the full award here is how an award
+        // that does not divide its cap overshoots it — 34 grants of 3 against a
+        // cap of 100 paid 102, and an operator raising the award above the cap
+        // would pay the whole award on the first grant. `toAward` is already
+        // multiplied, so record it whole and neutralise the multiplier rather
+        // than applying it twice in `sendAward`.
+        event.awardAmount = toAward;
+        event.multiplier = 1;
+      }
+      // Otherwise keep the base awardAmount and multiplier for ClickHouse
+      // storage consistency; processOnDemand enforced the cap on the multiplied
+      // values and this grant was not trimmed.
     }
 
     // Fail-soft: the inline `apply` path runs synchronously inside user mutations
@@ -324,6 +388,28 @@ export function createBuzzEvent<T>({
 
   const process = async (ctx: ProcessingContext) => {
     if (!isProcessable || !clickhouse) return;
+
+    const config = await resolveConfig();
+    // `apply` only writes a `pending` row for a processable reward; this job is
+    // what pays it. So gating `apply` alone still pays out everything already in
+    // the pipe when the reward was turned off. Skipping those rows would strand
+    // them, because the job scans `time >= lastUpdate` and never looks back —
+    // hence a terminal `unqualified`, the state `process` already uses for
+    // "seen, earns nothing".
+    //
+    // This lives in the reader rather than in a sweep hung off the config write:
+    // the row is a `KeyValue` that gets edited from Retool or psql, where no
+    // application code runs at all, and a per-run check also cannot lose the
+    // race against rows written between the flip and the next run.
+    if (!config.enabled) {
+      for (const event of ctx.toProcess) {
+        event.status = 'unqualified';
+        event.awardAmount = 0;
+      }
+      await updateBuzzEvents(ctx.toProcess);
+      return;
+    }
+
     await buzzEvent.preprocess?.(ctx);
     const targeted = ctx.toProcess.filter((event) => event.status !== 'unqualified');
 
@@ -373,7 +459,8 @@ export function createBuzzEvent<T>({
           const prevAward = prevAwards[key] ?? 0;
 
           // Determine amount remaining against cap
-          const remaining = Math.max(amount - prevAward, 0);
+          const capAmount = capOverridable ? config.cap ?? amount : amount;
+          const remaining = Math.max(capAmount - prevAward, 0);
           event.awardAmount = Math.min(event.awardAmount, remaining);
         }
       }
@@ -410,7 +497,7 @@ export function createBuzzEvent<T>({
           for (const event of chunk) {
             if (event.status !== 'unqualified') {
               event.status = 'pending';
-              event.awardAmount = awardAmount;
+              event.awardAmount = config.awardAmount;
             }
           }
           await updateBuzzEvents(chunk);
@@ -427,12 +514,31 @@ export function createBuzzEvent<T>({
     }
   };
 
+  /**
+   * The operator's answer to "which rewards are on, and at what amounts?".
+   * Resolves through the same `resolveConfig` the grant path uses, so what it
+   * reports and what gets paid cannot drift.
+   */
+  const describeConfig = async () => {
+    const config = await resolveConfig();
+    return {
+      type,
+      visible,
+      onDemand: isOnDemand,
+      capOverridable,
+      defaults: { awardAmount, cap: defaultCap },
+      effective: { enabled: config.enabled, awardAmount: config.awardAmount, cap: config.cap },
+      rejected: config.rejected,
+    };
+  };
+
   return {
     types,
     visible,
     apply,
     process,
     getUserRewardDetails,
+    describeConfig,
   };
 }
 

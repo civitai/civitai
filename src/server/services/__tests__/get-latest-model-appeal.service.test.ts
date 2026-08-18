@@ -1,19 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-/**
- * The model page needs to tell an owner whether they already have an appeal
- * in flight for a minor flag, without pulling in the whole Appeal row.
- */
-
-const { mockFindFirst } = vi.hoisted(() => ({ mockFindFirst: vi.fn() }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appeal: { findFirst: mockFindFirst } },
-  dbWrite: {},
-}));
-
 import { getLatestModelAppeal } from '~/server/services/report.service';
 import { EntityType } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockFindFirst = dbMock.dbRead.appeal.findFirst;
 
 beforeEach(() => {
   vi.clearAllMocks();

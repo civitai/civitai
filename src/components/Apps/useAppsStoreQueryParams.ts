@@ -43,8 +43,18 @@ export function useAppsStoreQueryParams(): {
    * can coalesce our write's render away entirely, so the URL value never even
    * appears to CHANGE and a dependency-array effect never fires. That is the
    * exact shape of the stale-search bug.
+   *
+   * 🔴 A FUNCTION, NOT A BOOLEAN, AND THAT IS THE WHOLE POINT. It used to be
+   * `isWritePending: boolean` — a value computed DURING RENDER — and that made
+   * it structurally blind to the one write it most needed to mask: a write
+   * issued from a SIBLING EFFECT of the very same commit. `setFilters` bumps
+   * this counter in the effect phase, i.e. AFTER the render that produced the
+   * boolean, so the consumer's effect closed over `false` while a write to that
+   * exact field was already on its way. See the ping-pong write-up in
+   * `AppListingsMarketplaceBody.tsx`. Calling it inside the effect reads the ref
+   * at the moment the question is actually being asked.
    */
-  isWritePending: boolean;
+  hasPendingWrite: () => boolean;
 } {
   const { query, replace } = useZodRouteParams(appsStoreQuerySchema);
 
@@ -124,5 +134,12 @@ export function useAppsStoreQueryParams(): {
     [replace, urlFilters]
   );
 
-  return { filters, setFilters, isWritePending: inFlightRef.current > 0 };
+  /**
+   * Stable identity (refs never change), so a consumer can hold this in a
+   * dependency array — or, as the search box does, in an effect with NO
+   * dependency array — without re-subscribing.
+   */
+  const hasPendingWrite = useCallback(() => inFlightRef.current > 0, []);
+
+  return { filters, setFilters, hasPendingWrite };
 }

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
-import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -84,7 +84,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   resolveVerifiedSourceImageIds,
   sanitizeProvenance,
@@ -1366,13 +1366,21 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
   });
 
+  // `meta` is optional on this input, and the difference matters: absent means "leave the
+  // stored metadata alone" (the hide/show-prompt toggle sends only `hideMeta`), while an
+  // explicit `null` means "clear it". Collapsing the two writes SQL NULL over metadata the
+  // caller never touched, so the write below is skipped entirely unless the key was sent.
+  const metaProvided = image.meta !== undefined;
+
   // This edit replaces meta wholesale from client input, so provenance has to be
   // re-derived from the row rather than accepted: otherwise editing an image you
   // already own is a way to assert a derivation you never made.
-  const meta = sanitizeProvenance(
-    image.meta as Record<string, unknown> | null | undefined,
-    storedSourceImageIds(currentImage.meta)
-  );
+  const meta = metaProvided
+    ? sanitizeProvenance(
+        image.meta as Record<string, unknown> | null | undefined,
+        storedSourceImageIds(currentImage.meta)
+      )
+    : undefined;
 
   const blockedForVerification = currentImage.blockedFor === BlockedReason.AiNotVerified;
   const updatedIsVerifiable = isValidAIGeneration({
@@ -1389,7 +1397,12 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       ...image,
       id: undefined, // prevent updating the id!
       updatedAt: new Date(),
-      meta: meta != null ? (meta as Prisma.JsonObject) : Prisma.JsonNull,
+      // undefined = omit the column from the UPDATE; Prisma.JsonNull = write SQL NULL.
+      meta: metaProvided
+        ? meta != null
+          ? (meta as Prisma.JsonObject)
+          : Prisma.JsonNull
+        : undefined,
       // If this image was blocked due to missing metadata, we need to set it back to pending
       ingestion: shouldIngest ? 'Pending' : undefined,
       blockedFor: shouldIngest ? null : undefined,
@@ -1416,9 +1429,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     //
     // The delete path (deleteImageFromS3 below) deliberately does NOT pass a scope — there the row
     // is already gone and the image must stop serving entirely.
-    cacheRefreshPromises.push(
-      purgeResizeCache({ url: result.url, scope: 'hidden-meta-orphans' })
-    );
+    cacheRefreshPromises.push(purgeResizeCache({ url: result.url, scope: 'hidden-meta-orphans' }));
   }
   // Bust the image-delivery metadata cache on ANY hideMeta change (both directions): that
   // cache serves { hideMeta } to the delivery/resize path, and a stale value would keep
@@ -1485,7 +1496,7 @@ export const addResourceToPostImage = async ({
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
   // TODO technically this can be called with a combo of on/off site imgs
-  if (images.some((i) => i.type !== MediaType.video && isMadeOnSite(i.meta as ImageMetaProps))) {
+  if (images.some((i) => i.type !== MediaType.video && isImageMetaOnSite(i.meta as ImageMetaProps))) {
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
 import ts from 'typescript';
 
 import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
@@ -70,6 +69,8 @@ import { REQUEST_RESOLVED_GENERATION_SURFACES } from '~/server/services/orchestr
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
+
+const NEEDLE = 'buildGenerationContext';
 
 /** The declaration itself — not a call site. */
 const DEFINITION_FILE = 'src/server/services/orchestrator/orchestration-new.service.ts';
@@ -210,7 +211,7 @@ const EXPECTED_SURFACE_BY_CALL_SITE: Record<CallSiteKey, SurfacePin> = {
 /**
  * Candidate files, enumerated from the TREE rather than from a hand-kept list.
  *
- * The grep needle is the BARE identifier (no trailing paren): it only has to
+ * The needle is the BARE identifier (no trailing paren): it only has to
  * over-approximate, because the AST walk below decides what is really a call.
  * That removes every formatting dependency from the enumeration.
  *
@@ -219,15 +220,20 @@ const EXPECTED_SURFACE_BY_CALL_SITE: Record<CallSiteKey, SurfacePin> = {
  * (`src/**\/__tests__/**`) — see the arity guard for why that matters.
  */
 function candidateFiles({ includeTests }: { includeTests: boolean }): string[] {
-  const out = execFileSync(
-    'grep',
-    ['-rl', '--include=*.ts', '--include=*.tsx', 'buildGenerationContext', 'src'],
-    { cwd: REPO_ROOT, encoding: 'utf8' }
-  );
-  return out
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
+  const found: string[] = [];
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(path.join(REPO_ROOT, rel), { withFileTypes: true })) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (
+        /\.tsx?$/.test(entry.name) &&
+        readFileSync(path.join(REPO_ROOT, child), 'utf8').includes(NEEDLE)
+      )
+        found.push(child);
+    }
+  };
+  walk('src');
+  return found
     .filter((f) => f !== DEFINITION_FILE && f !== GUARD_FILE)
     .filter((f) => includeTests || !(f.includes('__tests__') || f.endsWith('.test.ts')));
 }
@@ -396,9 +402,20 @@ function collectCallSites({ includeTests }: { includeTests: boolean }): CallSite
 const keyOf = (c: CallSite): CallSiteKey => `${c.file}::${c.fn}`;
 
 describe('generation-context surface wiring', () => {
-  const sites = collectCallSites({ includeTests: false });
+  // A throw in the describe BODY happens during registration, so no `it` below
+  // is declared and the file collects zero while reading green — which is how
+  // the `grep` shell-out this replaced hid on Windows. Catching it keeps
+  // registration total, so the guard below reports the breakage instead.
+  let sites: CallSite[] = [];
+  let enumerationError: unknown;
+  try {
+    sites = collectCallSites({ includeTests: false });
+  } catch (e) {
+    enumerationError = e;
+  }
 
   it('finds the call sites at all (guard the guard)', () => {
+    if (enumerationError) throw enumerationError;
     // Without this, a broken enumeration would make every assertion below pass
     // vacuously over an empty list.
     expect(sites.length).toBeGreaterThanOrEqual(Object.keys(EXPECTED_SURFACE_BY_CALL_SITE).length);

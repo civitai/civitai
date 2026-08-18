@@ -11,10 +11,13 @@
  */
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { logToAxiom } from '~/server/logging/client';
+import { TRPCError } from '@trpc/server';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { removePlacementByModerator } from '~/server/services/placement-moderation.service';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+
+/** The service's marker for a condition the caller can fix, as opposed to a server fault. */
+const EXPECTED_PREFIX = 'placement:';
 
 const schema = z.object({
   placementId: z.coerce.number().int().positive(),
@@ -51,18 +54,19 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({ placementId, ...result });
   } catch (e) {
-    const err = e as Error;
-    // The service throws for "no longer exists" and "already <status>" — both are the caller's
-    // problem to report, not server faults, so they come back as 400 with the message intact.
-    const expected = err.message.startsWith('placement:');
-    if (!expected) {
-      logToAxiom({
-        type: 'error',
-        name: 'mod-remove-placement-error',
-        message: err.message,
-        details: { placementId, moderatorId },
-      });
-    }
-    return res.status(expected ? 400 : 500).json({ error: err.message });
+    // The service throws `placement:` for "no longer exists" and "already <status>" — the caller's
+    // problem to report, not a server fault. Both arms go through the shared handler so the one rule
+    // about whose text may reach the wire lives in one place.
+    const message = e instanceof Error ? e.message : String(e);
+    if (message.startsWith(EXPECTED_PREFIX))
+      return handleEndpointError(
+        res,
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: message.slice(EXPECTED_PREFIX.length).trim(),
+          cause: e,
+        })
+      );
+    return handleEndpointError(res, e);
   }
 });

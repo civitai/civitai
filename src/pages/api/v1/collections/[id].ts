@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 import * as z from 'zod';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,

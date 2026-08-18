@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Mock the redis + db layers so we can assert how often the underlying redis
 // GET actually fires for the memoized global blobs. Defined via vi.hoisted so
@@ -11,14 +12,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // COLLAPSE within the TTL, per-key isolation, and FAIL-OPEN (a rejected read is
 // never cached, so the next call retries). Each test re-imports the module after
 // vi.resetModules() so it starts from a FRESH (empty) memo slate.
-const { packedGet, packedSet, redisGet, redisSet, queryRaw, tagFindMany } = vi.hoisted(() => ({
+const { packedGet, packedSet, redisGet, redisSet,  } = vi.hoisted(() => ({
   packedGet: vi.fn(),
   packedSet: vi.fn(),
   redisGet: vi.fn(),
   redisSet: vi.fn(),
-  queryRaw: vi.fn(),
-  tagFindMany: vi.fn(),
+  
 }));
+const tagFindMany = dbMock.dbWrite.tag.findMany;
+const queryRaw = dbMock.dbWrite.$queryRaw;
 
 vi.mock('~/server/redis/client', () => ({
   redis: {
@@ -38,11 +40,6 @@ vi.mock('~/server/redis/client', () => ({
     LIVE_NOW: 'live-now',
   },
   REDIS_SYS_KEYS: { SYSTEM: {}, CLIENT: 'client' },
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { tag: { findMany: vi.fn() }, tagsOnTags: { findMany: vi.fn() } },
-  dbWrite: { tag: { findMany: tagFindMany }, $queryRaw: queryRaw },
 }));
 
 vi.mock('~/server/redis/fail-open-log', () => ({

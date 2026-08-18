@@ -77,7 +77,6 @@ import type {
 } from '~/server/schema/model.schema';
 import { ingestModelSchema } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
@@ -124,9 +123,11 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
+  bustUserSettings,
   deleteBasicDataForUser,
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
+  patchUserSettings,
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -199,7 +200,6 @@ import type {
 import { Flags } from '~/shared/utils/flags';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { isDev } from '~/env/other';
-import { userUpdateCounter } from '~/server/prom/client';
 import { pgDbRead } from '~/server/db/pgDb';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
@@ -3938,19 +3938,14 @@ export async function copyGallerySettingsToAllModelsByUser({
     const user = await tx.user.findUnique({ where: { id: userId }, select: { settings: true } });
     if (!user) throw throwNotFoundError(`No user with id ${userId}`);
 
-    const userSettings = user.settings as UserSettingsSchema;
-
-    await tx.user.update({
-      where: { id: userId },
-      data: {
-        settings: {
-          ...userSettings,
-          gallerySettings: { ...userSettings.gallerySettings, ...settings },
-        },
-      },
-    });
-
-    userUpdateCounter?.inc({ location: 'model.service:updateGallerySettings' });
+    // Merge in Postgres, over the stored column. Writing the whole blob back from a JS
+    // snapshot replaced every other settings key with its read-time value, discarding
+    // anything that landed in between.
+    await patchUserSettings(
+      userId,
+      { mergeInto: { gallerySettings: settings }, location: 'model.service:updateGallerySettings' },
+      tx
+    );
 
     // Flagged models keep the SFW level a moderator forced on them — otherwise one
     // "copy to all my models" re-opens every model the user has ever had flagged.
@@ -3968,8 +3963,11 @@ export async function copyGallerySettingsToAllModelsByUser({
     `;
   });
 
-  // Count-cache refresh hits Redis — run after commit, off the txn budget.
-  await userModelCountCache.refresh(userId);
+  // Count-cache refresh hits Redis — run after commit, off the txn budget. Same for the
+  // user-settings cache, which this path never busted at all: `getUserSettings` went on
+  // serving pre-copy gallery defaults for up to its 4h TTL, and the next whole-blob
+  // writer then persisted that stale snapshot.
+  await Promise.all([userModelCountCache.refresh(userId), bustUserSettings(userId)]);
 
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);

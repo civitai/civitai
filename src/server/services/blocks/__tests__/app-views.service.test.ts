@@ -22,16 +22,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  */
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(() => Promise.resolve()),
-}));
-
 import {
   VIEWS_QUERY_TIMEOUT_SECONDS,
   emptyViews,
   getAppViews,
   unavailableViews,
 } from '../app-views.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const IDS = ['apb_one', 'apb_two'];
 const FROM = new Date('2026-07-01T00:00:00.000Z');

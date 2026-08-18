@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
 
-const { mockDbWrite, mockGetChallengeById, mockCloseCollection, mockRefund } = vi.hoisted(() => ({
-  mockDbWrite: { challenge: { updateMany: vi.fn() } },
+const { mockGetChallengeById, mockCloseCollection, mockRefund } = vi.hoisted(() => ({
   mockGetChallengeById: vi.fn(),
   mockCloseCollection: vi.fn().mockResolvedValue(undefined),
   mockRefund: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: mockDbWrite }));
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   buildWinnerPayoutTransactions: vi.fn(),
   chargeInitialPrize: vi.fn(),

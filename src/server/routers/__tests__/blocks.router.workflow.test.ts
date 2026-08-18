@@ -32,25 +32,19 @@ const {
   mockGetDailyCompensation,
   mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
-  mockDbRead,
-  mockRedis,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockDailyBoostApply,
   mockDailyBoostGetDetails,
   mockGetUserBuzzAccounts,
-  mockLogToAxiom,
-  mockSysRedis,
   mockResolveCanGenerateForVersions,
   mockGetResourceData,
   mockGetHighestTierSubscription,
   mockRecordSpendAttribution,
-  mockDbWriteUserFindUnique,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   // getMyViewer reads the viewer's ban/mute/deleted state from dbWrite.user
   // (the PRIMARY, like /blocks/me). Hoisted so tests can drive it + reset it.
-  mockDbWriteUserFindUnique: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
   mockGetOrchestratorToken: vi.fn(),
   mockSubmitWorkflow: vi.fn(),
@@ -70,42 +64,14 @@ const {
   // here, but getSessionUser must still be stubbed so the real resolver doesn't
   // hit the DB/redis.
   mockGetSessionUser: vi.fn(),
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    // Required by resolveBlockCheckpoint (LoRA path) — published checkpoint
-    // resolution reads both tables in parallel.
-    modelBlockInstall: { findUnique: vi.fn() },
-    blockUserSettings: { findUnique: vi.fn() },
-    // Required by the platform-fallback rung (most-popular Checkpoint —
-    // queried via ModelMetric so we can orderBy thumbsUpCount).
-    modelMetric: { findFirst: vi.fn() },
-  },
   // Complete `redis` client stub. `checkBlockCatalogRateLimit` (used by the buzz
   // self-read mutations) calls incrBy/expire/ttl on this client; the buzz mutations
   // also mock the limiter itself (below), but stubbing every method the client
   // exposes keeps ANY redis path — the limiter or a transitive cache read — from
   // crashing with `redis.<fn> is not a function` in the preview (get/set alone
   // was the gap the pr-preview surfaced).
-  mockRedis: {
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    incr: vi.fn(async () => 1),
-    incrBy: vi.fn(async () => 1),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-    exists: vi.fn(async () => 0),
-  },
   // sysRedis surface used by the cumulative Buzz-cap (audit A7). Default to an
   // empty window (get → null) so the cap is non-binding unless a test seeds it.
-  mockSysRedis: {
-    get: vi.fn(async () => null),
-    incrBy: vi.fn(async () => 0),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-  },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   // Developer soft-launch (Phase B): the runtime AUTHZ gate now checks the
   // `appBlocksAuthor` capability against the token subject (was: isModerator).
@@ -124,7 +90,6 @@ const {
     onDemand: true,
   })),
   mockGetUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
-  mockLogToAxiom: vi.fn(async () => undefined),
   // W10 page branch: the canonical generation-entitlement gate. The router
   // dynamic-imports it from generation.service; we mock the module so the
   // heavy generation import graph (image.service → event-engine-common) stays
@@ -379,17 +344,6 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  // dbWrite is referenced for install-management procedures; stub the few
-  // shapes the unrelated procedures could hit so the import doesn't crash.
-  dbWrite: {
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    // getMyViewer's ban/mute/deleted lookup (mirrors /blocks/me — PRIMARY read).
-    user: { findUnique: (...a: unknown[]) => mockDbWriteUserFindUnique(...a) },
-  },
-}));
 // blocks.router transitively pulls in many redis-cache modules that read
 // `REDIS_KEYS.<GROUP>.<KEY>` AT IMPORT TIME. The real keys live in redis/client
 // (which connects on import, so we can't importActual it). A hand-trimmed
@@ -415,12 +369,6 @@ const { completeKeys } = vi.hoisted(() => {
   return { completeKeys };
 });
 
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: completeKeys({ BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } }),
-  REDIS_SYS_KEYS: completeKeys({ BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } }),
-}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
@@ -453,9 +401,6 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
 }));
 // W3 flow A — the submit path dynamic-imports recordSpendAttribution from
 // here. Mock the whole module so we drive the spend-write behavior; the
@@ -512,6 +457,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 // W13 — the submit path fires recordScopeInvocation (detached) with a structured
@@ -529,6 +475,24 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 // honest about the shape it consumes.
 import { createModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
 import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.incr.mockImplementation(async () => 1);
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.decrBy.mockImplementation(async () => 0);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => -1);
+redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.expire.mockImplementation(async () => true);
+redisMock.sysRedis.ttl.mockImplementation(async () => -1);
+const mockDbRead = dbMock.dbRead;
+const mockDbWriteUserFindUnique = dbMock.dbWrite.user.findUnique;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -786,6 +750,7 @@ beforeEach(() => {
   mockDailyBoostApply.mockResolvedValue(undefined);
   mockDailyBoostGetDetails.mockResolvedValue({
     awarded: 0,
+    awardedCount: 0,
     awardAmount: 25,
     accountType: 'blue',
     type: 'dailyBoost',
@@ -2162,6 +2127,21 @@ describe('blocks.submitWorkflow', () => {
   // = 5000) INSTEAD OF the ordinary 50k/day cap. This is invariant #6: a low
   // per-call budget alone cannot bound a hostile app looping sub-budget calls.
   describe('run-for-real aggregate Buzz cap (#2831)', () => {
+    // Golden value, and deliberately separate from the behavioural assertion below.
+    //
+    // The two guard different failures and neither subsumes the other. Naming the CONSTANT
+    // in the behavioural test stops it re-inventing a key — the class that made this file's
+    // old assertion match its own fixture's placeholder. Pinning the LITERAL here makes a
+    // rename of the key loud: the wire value addresses live Redis entries written by
+    // deployed code, so changing it orphans whatever is under the old name, and that should
+    // be a deliberate decision rather than something a test silently follows. (archer's
+    // argument, against his own preferred version.)
+    it('pins the wire value of the review-session key', () => {
+      expect(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP).toBe(
+        'system:blocks:review-run-for-real-buzz-cap'
+      );
+    });
+
     // Run-for-real tokens are dev:true (signDevScopedPageToken) + carry the pubreq
     // id as appBlockId. dev:true also skips the G8 per-app reserve (synthetic id).
     const runForRealClaims = () =>
@@ -2189,9 +2169,12 @@ describe('blocks.submitWorkflow', () => {
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
       expect(result.snapshot.workflowId).toBe('wf_real');
       const incrKey = String(mockSysRedis.incrBy.mock.calls[0][0]);
-      // The review-session key (auto-vivified REDIS_SYS_KEYS placeholder) — bound to
-      // the pubreq id and NOT the ordinary daily buzz-cap key.
-      expect(incrKey).toContain('REVIEW_RUN_FOR_REAL_BUZZ_CAP');
+      // The review-session key — bound to the pubreq id and NOT the ordinary daily
+      // buzz-cap key. This asserted the literal string `REVIEW_RUN_FOR_REAL_BUZZ_CAP`
+      // while the file supplied its own placeholder REDIS_SYS_KEYS, so expected and actual
+      // were both the fixture's invention. Named through the constant rather than as a
+      // literal, so it cannot drift again.
+      expect(incrKey).toContain(REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP);
       expect(incrKey).toContain('pubreq_ABC');
       expect(incrKey).not.toContain('system:blocks:buzz-cap');
     });
@@ -2992,10 +2975,11 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
     happyVersionLookup();
     happyUser();
-    // Balance short of cost but boost is already claimed (awarded > 0).
+    // Balance short of cost but the boost already fired today.
     mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 10, blue: 0, green: 0 });
     mockDailyBoostGetDetails.mockResolvedValue({
       awarded: 25,
+      awardedCount: 1,
       awardAmount: 25,
       accountType: 'blue',
       type: 'dailyBoost',
@@ -3043,6 +3027,53 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
       amount: 25,
       accountType: 'blue',
     });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
+  // A claim the cap trimmed to zero still consumed the day's dedup entry, so it
+  // pays nothing on every later attempt. Gating on the amount instead of the
+  // count would tell the iframe Buzz was claimed on every submit for the rest of
+  // the day.
+  it('does NOT claim again after a claim that the cap trimmed to zero', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 5, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue({
+      awarded: 0,
+      awardedCount: 1,
+      awardAmount: 25,
+      accountType: 'blue',
+      type: 'dailyBoost',
+      description: 'd',
+      cap: 25,
+      onDemand: true,
+    });
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
+  });
+
+  // `getUserRewardDetails` returns null for a reward turned off through
+  // `rewards:config`. Without the null guard the submit 500s the first time
+  // anyone flips dailyBoost off.
+  it('submit still proceeds when the dailyBoost reward is disabled at runtime', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 5, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue(null);
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
     expect(result.snapshot.workflowId).toBe('wf_real');
   });
 
@@ -6482,7 +6513,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     // recipe path produces (the recipe's own estimate; the recipe entitlement
     // gate + a reserve), never by the absence of an error.
     // ─────────────────────────────────────────────────────────────────────────
-    describe("🔴 recipe-arm routing — an explicit `mode` must NOT reach the inline path", () => {
+    describe('🔴 recipe-arm routing — an explicit `mode` must NOT reach the inline path', () => {
       // The three legal recipe spellings, exercised identically. `no mode` is the
       // control: it was already covered and must stay green.
       const RECIPE_SPELLINGS: Array<[string, Record<string, unknown>]> = [

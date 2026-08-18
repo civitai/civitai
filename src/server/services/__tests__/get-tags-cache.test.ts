@@ -7,9 +7,6 @@ import { hashifyObject } from '~/utils/string-helpers';
 // HIT returns the stored value WITHOUT touching the DB. This lets us assert both the
 // "cache hit skips DB" contract and the bounded-key routing purely from DB call counts.
 const {
-  dbReadQueryRaw,
-  dbWriteExecuteRaw,
-  dbWriteQueryRaw,
   bustCacheTag,
   cacheableStore,
   cacheableOptions,
@@ -19,11 +16,7 @@ const {
   getSystemTags,
   getReplacedTagIds,
   getCategoryTags,
-  redisDel,
 } = vi.hoisted(() => ({
-  dbReadQueryRaw: vi.fn(),
-  dbWriteExecuteRaw: vi.fn().mockResolvedValue(undefined),
-  dbWriteQueryRaw: vi.fn().mockResolvedValue([]),
   bustCacheTag: vi.fn().mockResolvedValue(undefined),
   cacheableStore: new Map<string, unknown>(),
   cacheableOptions: [] as unknown[],
@@ -33,14 +26,14 @@ const {
   getSystemTags: vi.fn().mockResolvedValue([]),
   getReplacedTagIds: vi.fn().mockResolvedValue([]),
   getCategoryTags: vi.fn().mockResolvedValue([]),
-  redisDel: vi.fn().mockResolvedValue(1),
 }));
 
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustCacheTag,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  queryCache: (db: any) =>
+  queryCache:
+    (db: any) =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (query: any, options: any) => {
       cacheableOptions.push(options);
@@ -64,20 +57,6 @@ vi.mock('~/server/redis/caches', () => ({
   tagCache: { fetch: vi.fn(), bust: vi.fn() },
 }));
 
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/redis/client')>();
-  return {
-    ...actual,
-    // Keep the real REDIS_KEYS; stub only the client so mutations never hit a connection.
-    redis: { del: redisDel, packed: { get: vi.fn(), set: vi.fn() } },
-  };
-});
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: dbReadQueryRaw },
-  dbWrite: { $executeRaw: dbWriteExecuteRaw, $queryRaw: dbWriteQueryRaw },
-}));
-
 vi.mock('~/server/services/tagsOnImageNew.service', () => ({
   upsertTagsOnImageNew,
 }));
@@ -89,6 +68,15 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 
 import { addTags, deleteTags, disableTags, getTags } from '~/server/services/tag.service';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const redisDel = redisMock.redis.del;
+const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const dbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+redisMock.redis.del.mockResolvedValue(1);
+dbMock.dbWrite.$executeRaw.mockResolvedValue(undefined);
+dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
 
 const ROWS = [
   { id: 1, name: 'anime' },

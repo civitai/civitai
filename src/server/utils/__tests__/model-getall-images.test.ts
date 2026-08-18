@@ -8,6 +8,7 @@ import {
   selectSlimGetAllModelImages,
   stripGetAllModelImage,
 } from '~/server/utils/model-getall-images';
+import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 
 // The browse-feed (`model.getAll`) response is the #1 serialize-freeze source.
 // Its image trim has two parts: an ALWAYS-ON per-image field drop
@@ -51,6 +52,14 @@ describe('model-getall-images — cap', () => {
     expect(GET_ALL_IMAGES_PER_MODEL).toBe(12);
     expect(GET_ALL_IMAGES_PER_MODEL_SLIM).toBe(6);
     expect(GET_ALL_IMAGES_PER_MODEL_SLIM).toBeLessThan(GET_ALL_IMAGES_PER_MODEL);
+  });
+
+  it('keeps room for one representative of every browsing level', () => {
+    // What makes the slim cap safe is `selectSlimGetAllModelImages` fitting a
+    // representative of every distinct nsfwLevel bit, so a viewer who had a visible
+    // image still has one. Below this the guarantee is silently gone, and the two
+    // home blocks that rely on it have no flag to fall back to.
+    expect(GET_ALL_IMAGES_PER_MODEL_SLIM).toBeGreaterThanOrEqual(browsingLevels.length);
   });
 
   it('caps to at most the default limit', () => {

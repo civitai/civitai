@@ -1,57 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-/**
- * F-E E1 — anon-exposure security tests for the marketplace listing
- * (`BlockRegistry.listAvailable`, served by the anon-capable
- * `blocks.listAvailable` publicProcedure).
- *
- * The marketplace is anon-CAPABLE (dark today behind the mod-segmented flag,
- * lit at launch by widening the segment). These tests pin the two exposure
- * protections so they FAIL if either regresses:
- *
- *   1. APPROVED-ONLY — the SQL hard-filters `ab.status = 'approved'`, so
- *      pending / rejected / withdrawn apps can never reach an anon caller.
- *      Belt-and-suspenders, we also seed a pending row into the (mocked) DB
- *      result and assert the projection carries no status/secret fields.
- *   2. PUBLIC FIELD ALLOWLIST — the raw stored `manifest` jsonb is arbitrary
- *      publisher JSON plus server-SET internal fields (`trustTier`, the
- *      internal `iframe.src` host, `renderMode`, `scopes`, …). The listing
- *      must project ONLY the vetted public subset
- *      (name / description / targets[].slotId) — never the raw manifest.
- *
- * We don't run the query (no DB in unit tests). We mock dbRead.$queryRaw to:
- *   - capture the SQL template (assert the status='approved' filter), and
- *   - return seeded rows so we can assert the SHAPE of the projected output.
- */
-
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    blockUserSubscription: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    // sAdd: used by cache-helpers tagCacheKey — the `rating` sort caches the
-    // global-mean scalar through queryCache, which tags the key.
-    sAdd: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  },
-  sysRedis: { sMembers: vi.fn(async () => []) },
-  REDIS_KEYS: {
-    TAG: 'cache:tag',
-    BLOCKS: { REGISTRY: 'packed:caches:block-registry', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.sAdd.mockImplementation(async () => 0);
+redisMock.redis.scanIterator.mockImplementation(async function* () {});
+const mockDbRead = dbMock.dbRead;
 
 /**
  * Reconstructs the SQL string Prisma received. listAvailable composes the
@@ -347,7 +301,9 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     // ONLY ONE $queryRaw is queued (the list query). If the service re-read the
     // global mean it would consume this and the list query would get []; instead
     // the pinned mean short-circuits the read so this feeds the list query.
-    mockDbRead.$queryRaw.mockResolvedValueOnce([rawRow({ id: 'ab_9', sort_key: '00000002400000' })]);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      rawRow({ id: 'ab_9', sort_key: '00000002400000' }),
+    ]);
     const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'rating', cursor });
     // The list query ran and projected the row → the pinned mean fed it directly.
     expect(items).toHaveLength(1);

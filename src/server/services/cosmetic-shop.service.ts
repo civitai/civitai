@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
@@ -713,6 +714,8 @@ export const purchaseCosmeticShopItem = async ({
   viaShopUserId,
   payWith = 'default',
   buzzType = 'yellow',
+  idempotencyKey,
+  expectedUnitAmount,
   stickersEnabled,
   packsEnabled,
 }: PurchaseCosmeticShopItemInput & {
@@ -858,12 +861,13 @@ export const purchaseCosmeticShopItem = async ({
 
   const singleCosmeticId = shopItem.cosmeticId;
   const singleCosmetic = shopItem.cosmetic;
+  // Stickers are deliberately absent: they are spent rather than worn, so a
+  // repeat purchase is another batch of uses rather than a mistake.
   const onlySupportsSinglePurchase =
     shopItem.cosmetic.type == CosmeticType.Badge ||
     shopItem.cosmetic.type == CosmeticType.NamePlate ||
     shopItem.cosmetic.type == CosmeticType.ProfileBackground ||
-    shopItem.cosmetic.type == CosmeticType.ProfileDecoration ||
-    shopItem.cosmetic.type == CosmeticType.Sticker;
+    shopItem.cosmetic.type == CosmeticType.ProfileDecoration;
 
   if (onlySupportsSinglePurchase) {
     // Confirm the user doesn't own it already:
@@ -877,6 +881,29 @@ export const purchaseCosmeticShopItem = async ({
     if (userCosmetic) {
       throw new Error('You already own this cosmetic');
     }
+  }
+
+  // A repeat sticker purchase buys uses, so there has to be a balance for it to
+  // add to. An unlimited holding is inexhaustible — charging for more would sell
+  // a balance that can never be spent, the same refusal `purchaseStickerUses`
+  // makes for the same reason.
+  if (shopItem.cosmetic.type === CosmeticType.Sticker) {
+    const unlimited = await dbWrite.userCosmetic.findFirst({
+      where: { userId, cosmeticId: singleCosmeticId, remaining: null },
+      select: { claimKey: true },
+    });
+    if (unlimited) throw new Error('You already have unlimited uses of this sticker');
+  }
+
+  // The buyer confirmed a number on a button. A listing re-priced between that
+  // render and the press must refuse rather than charge a number they never
+  // agreed to — the same guard `purchaseStickerUses` makes, and the one place a
+  // stale price is most likely: a shop panel and a draft can sit open for as
+  // long as the image does.
+  if (expectedUnitAmount !== undefined && expectedUnitAmount !== shopItem.unitAmount) {
+    throw new Error(
+      `The price changed to ${shopItem.unitAmount} Buzz. Check the new price and try again.`
+    );
   }
 
   const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
@@ -909,7 +936,31 @@ export const purchaseCosmeticShopItem = async ({
   // bank is the system ledger, not a balance-constrained account, so the
   // per-color payouts below don't depend on what the bank was credited in
   // (auction bids and green-domain purchases have always worked this way).
-  const transactionId = `cosmetic-purchase-${userId}-${shopItemId}-${Date.now()}`;
+  // Random, not a timestamp. This id is both the purchase row's primary key and
+  // the `UserCosmetic` claim key, so two purchases of one item by one user in
+  // the same millisecond used to be impossible — the single-ownership guard
+  // refused the second before it reached the money. Stickers are repeatable now,
+  // and the collision is worse than a failed purchase: the second request's
+  // grant throws on the primary key, and its catch refunds
+  // `externalTransactionIdPrefix` — which would be the FIRST request's charge,
+  // reversing it while the buyer keeps the sticker. Same reason
+  // `purchaseStickerUses` has always used a uuid.
+  const transactionId = `cosmetic-purchase-${userId}-${shopItemId}-${
+    idempotencyKey ?? randomUUID()
+  }`;
+
+  // The buyer's own intent, checked before any money moves. A retry, a
+  // double-click or a second tab replaying the same purchase arrives with the
+  // key it already used, and is refused here rather than charged again — the
+  // ownership check used to be what made that impossible for every type, and it
+  // no longer covers stickers.
+  if (idempotencyKey) {
+    const alreadyProcessed = await dbWrite.userCosmeticShopPurchases.findUnique({
+      where: { buzzTransactionId: transactionId },
+      select: { buzzTransactionId: true },
+    });
+    if (alreadyProcessed) throw new Error('This purchase has already been completed');
+  }
   const transaction = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,
     fromAccountTypes,

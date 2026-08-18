@@ -33,15 +33,18 @@ import requestIp from 'request-ip';
  *     choose per surface, they differ deliberately — survives untouched, so it
  *     was repointed rather than deleted.
  *
- *  3. DUPLICATED VALIDATION, DELIBERATELY LEFT IN PLACE. `isBareAddress` and
- *     `isIpAddress` apply the same rule and return the same verdict for every
- *     string input. Collapsing them was explicitly NOT done here: it would
- *     change the tRPC rate limiter and the download blocklist in the same
- *     commit, and a conflict resolution in this file should be as boring as it
- *     can be. A follow-up consolidates the two, together with the `getClientIp`
- *     wrapper in `src/pages/api/v1/block-tokens/index.ts`. Until then the two
- *     carry lockstep notes pointing at each other, and their agreement is
- *     pinned by a test rather than by hope — see either predicate.
+ *  3. DUPLICATED VALIDATION — NOW RESOLVED. The merge left `isBareAddress` and
+ *     `isIpAddress` in place as two independent copies of one rule, agreeing by
+ *     convention and held together by a test rather than by structure. That
+ *     follow-up has happened: there is now exactly ONE predicate that decides
+ *     what an address is, `isIpAddress`, and `resolveClientIp` calls it. The
+ *     lockstep notes the two carried are gone with the duplication, because a
+ *     rule with one implementation cannot drift from itself.
+ *
+ *     The two DERIVATIONS below (`resolveClientIp`, `getTrustedClientIp`) are a
+ *     different thing and remain two, deliberately — they differ in what they
+ *     are willing to trust, which is a real distinction, whereas the two
+ *     validators differed in nothing.
  */
 
 /**
@@ -81,8 +84,8 @@ import requestIp from 'request-ip';
  *
  * WHAT THE RETURN VALUE IS: a BARE, well-formed IPv4/IPv6 address, or the
  * literal `'unknown'` when the request carries no resolvable address at all.
- * Both branches validate against the same grammar — see `isBareAddress` — so the
- * value is bounded in length and in content. That is load-bearing wherever this
+ * Both branches validate against the same grammar — see `isIpAddress`, the one
+ * predicate in this module — so the value is bounded in length and in content. That is load-bearing wherever this
  * is used as a key: an unbounded key space is unbounded storage, and a caller
  * able to vary the key at will can rotate away from its own bucket. Callers must
  * still NAMESPACE their keys — see `middleware.trpc.ts` — because a key space
@@ -99,53 +102,6 @@ import requestIp from 'request-ip';
  */
 const MAX_TEXTUAL_ADDRESS_LENGTH = 45;
 
-/**
- * A BARE address — a well-formed IPv4/IPv6 address with no IPv6 zone identifier,
- * no longer than the grammar permits.
- *
- * `net.isIP` on its own is NOT this check, and the difference matters. It accepts
- * a zone-scoped address (`fe80::1%eth0`) and bounds neither the zone part's
- * length nor its contents, while the `request-ip` fallback's own `is.ip()`
- * rejects exactly those values — so a validator resting on `isIP` alone lets the
- * two branches of `resolveClientIp` disagree about what counts as an address,
- * and lets an arbitrary-length caller-supplied suffix through the accepting one.
- *
- * Measured across both families, the zone suffix is the ENTIRE disagreement
- * between the two validators: every value they score differently contains a `%`.
- * Excluding it is therefore what makes the two branches agree.
- *
- * ON THE LENGTH BOUND — it is DEFENCE IN DEPTH, not the working check, and the
- * distinction is recorded so nobody mistakes it for load-bearing. Once `%` is
- * excluded, `isIP` cannot accept anything longer than the grammar's own maximum
- * anyway: probing ~1.4M `%`-free strings of length 46-80, plus every maximal
- * canonical form, produced ZERO acceptances above 45. So deleting this line is a
- * provably EQUIVALENT mutation — no input can distinguish it, and the mutation
- * battery reports it as a survivor for that reason rather than for want of a
- * test. It is kept as a bound that still holds if `isIP`'s accepted grammar ever
- * widens. Its VALUE is pinned: tightening it below 45 fails the longest-legal-
- * address control in `src/server/utils/__tests__/client-ip.test.ts`.
- *
- * That file also pins the zone rejection in content and in length, with controls
- * proving the bare address is still accepted.
- *
- * ⚠️ LOCKSTEP WITH `isIpAddress` — DO NOT CHANGE ONE WITHOUT THE OTHER.
- * `isIpAddress`, further down this file, applies the same rule to the same
- * grammar and returns the same accept/reject verdict for every string input.
- * They are two independent copies of one rule: neither fails when the other
- * changes, so a divergence would be silent at every call site of both. They are
- * kept separate ON PURPOSE for now — see the note at the top of this file — and a follow-up
- * consolidates them. Do not collapse them here. Their agreement is pinned by
- * `src/server/utils/__tests__/client-ip-predicate-agreement.test.ts`, which
- * runs one shared table of inputs through both and fails on any divergence.
- * The differing SIGNATURES (`string` → `boolean` here, `unknown` → type
- * predicate there) are deliberate and are not the duplication.
- */
-function isBareAddress(value: string): boolean {
-  if (value.length > MAX_TEXTUAL_ADDRESS_LENGTH) return false;
-  if (value.includes('%')) return false;
-  return isIP(value) !== 0;
-}
-
 export function resolveClientIp(req: NextApiRequest): string {
   // `req.headers` is optional-chained rather than assumed. This is reached from
   // middleware with no try/catch, and at least one call path supplies `req`
@@ -155,12 +111,55 @@ export function resolveClientIp(req: NextApiRequest): string {
   const cfip = req.headers?.['cf-connecting-ip'];
   const cf = Array.isArray(cfip) ? cfip[0] : cfip;
   const candidate = cf?.trim();
-  // Validate rather than pass through: an unvalidated edge header is a
-  // caller-controlled string, and every consumer of this uses the result as a
-  // key. A header that does not validate falls through to the fallback, which
-  // yields a real address rather than the value that was presented.
-  if (candidate && isBareAddress(candidate)) return candidate;
-  return requestIp.getClientIp(req) ?? 'unknown';
+  // Validate rather than pass through: every consumer of this uses the result as
+  // a key, so a value that does not validate falls through to the fallback,
+  // which yields a real address rather than the string that was presented.
+  //
+  // This is `isIpAddress` — THE one predicate in this module that decides what
+  // an address is. It used to be a private near-copy of it (`isBareAddress`);
+  // the two were folded together because two implementations of one rule can
+  // only ever agree by convention, and neither failed when the other changed.
+  if (isIpAddress(candidate)) return candidate;
+  return requestIp.getClientIp(req) ?? UNRESOLVED_CLIENT_IP;
+}
+
+/**
+ * The label `resolveClientIp` returns when no address resolves at all.
+ *
+ * Exported so a caller can RECOGNISE it rather than string-matching `'unknown'`
+ * at the call site. It is not a valid address under `isIpAddress`, and the
+ * library fallback cannot produce it either, so it is unambiguous: a value equal
+ * to this came from the unresolvable branch and from nowhere else.
+ */
+export const UNRESOLVED_CLIENT_IP = 'unknown';
+
+/**
+ * `resolveClientIp` for surfaces whose "no address" sentinel is FALSY rather
+ * than the shared label.
+ *
+ * Same derivation — this is a thin adapter over `resolveClientIp`, not a second
+ * opinion about where an address comes from. It exists because the label and the
+ * falsy sentinel are not interchangeable at every call site, and the difference
+ * is load-bearing in three places that were measured rather than guessed:
+ *
+ *  - `base.reward.ts` folds `''` (and `::1`) to `undefined` before an address
+ *    reaches a buzz-transaction idempotency key. `'unknown'` is not in that
+ *    list, so handing it the label would change a key that guards real money.
+ *  - The captcha verifier forwards the value to an external verification API as
+ *    a remote-address field. A non-address string there is a change to a
+ *    payment-gating call whose far side cannot be observed from this repo.
+ *  - `buildSearchActor` hashes `ip ?? ''`, and its three call sites must agree
+ *    with each other or one caller gets two different actor labels depending on
+ *    which entry point served the request.
+ *
+ * So: surfaces that already treat `'unknown'` as their own sentinel (the
+ * ClickHouse tracker, whose `actor.ip` is initialised to exactly that) call
+ * `resolveClientIp` directly. Surfaces built around a falsy sentinel call this,
+ * and keep the sentinel they already had.
+ */
+export function resolveClientIpOrNull(req: NextApiRequest): string | null {
+  const ip = resolveClientIp(req);
+  return ip === UNRESOLVED_CLIENT_IP ? null : ip;
 }
 
 /**
@@ -286,23 +285,45 @@ type IpSourceRequest = {
  * value is allowed to reach a query, a cache key, or a comparison — see
  * `fetchDownloadCount` for a call site that depends on it.
  *
- * ⚠️ LOCKSTEP WITH `isBareAddress` — DO NOT CHANGE ONE WITHOUT THE OTHER.
- * `isBareAddress`, further up this file, applies the same rule to the same
- * grammar and returns the same accept/reject verdict for every string input
- * (it also carries an explicit 45-character bound, which is why the two agree
- * on length as well — that bound is redundant while `%` is excluded, and is
- * documented there as such). They are two independent copies of one rule:
- * neither fails when the other changes, so a divergence would be silent at
- * every call site of both. They are kept separate ON PURPOSE for now — see the note at the top
- * of this file — and a follow-up consolidates them. Do not collapse them here.
- * Their agreement is pinned by
- * `src/server/utils/__tests__/client-ip-predicate-agreement.test.ts`, which
- * runs one shared table of inputs through both and fails on any divergence.
- * The differing SIGNATURES (`unknown` → type predicate here, `string` →
- * `boolean` there) are deliberate and are not the duplication.
+ * ── THE ONLY PLACE THAT DECIDES WHAT AN ADDRESS IS ────────────────────────
+ *
+ * There used to be two of these: this one, and a private `isBareAddress` that
+ * `resolveClientIp` called. They applied the same rule to the same grammar and
+ * returned the same verdict for every string, so nothing structural held them
+ * together — neither failed when the other changed, and a divergence would have
+ * been silent at every call site of both. They are now one function, and BOTH
+ * derivations in this module call it. Do not reintroduce a second one: if a
+ * surface needs a different rule, that is a different question and wants an
+ * explicitly different name, not a near-copy of this.
+ *
+ * Both original signatures are served by this one. `unknown` → type predicate
+ * is the wider of the two and narrows for callers that need it
+ * (`getTrustedClientIp`, `fetchDownloadCount`); a caller that already holds a
+ * `string` (`resolveClientIp`) passes it unchanged. The narrowing is deliberate
+ * and is pinned — do not weaken the parameter to `string` to "tidy" it, or the
+ * `unknown`-typed call sites silently lose their guard.
+ *
+ * ON THE LENGTH BOUND — DEFENCE IN DEPTH, not the working check, recorded so
+ * nobody mistakes it for load-bearing. Once `%` is excluded, `isIP` cannot
+ * accept anything longer than the grammar's own maximum anyway: probing
+ * ~1.4M `%`-free strings of length 46-80, plus every maximal canonical form,
+ * produced ZERO acceptances above 45 (re-measured on node 22 when the two
+ * predicates were folded together — the probe carries a positive control, so
+ * the zero is a result and not an unwired harness). So deleting the line is a
+ * provably EQUIVALENT mutation: no input can distinguish it, and the mutation
+ * battery reports it as a survivor for that reason rather than for want of a
+ * test. It is kept as a bound that still holds if `isIP`'s accepted grammar
+ * ever widens. Its VALUE is pinned — tightening it below 45 fails the
+ * longest-legal-address control in
+ * `src/server/utils/__tests__/client-ip.test.ts`.
+ *
+ * The bound came from `isBareAddress` and was carried onto this predicate by
+ * the fold rather than dropped, so the surviving rule is the STRICTER of the
+ * two originals on paper and identical to both in behaviour.
  */
 export function isIpAddress(value: unknown): value is string {
   if (typeof value !== 'string') return false;
+  if (value.length > MAX_TEXTUAL_ADDRESS_LENGTH) return false;
   // Reject a scoped address outright. Cheaper and clearer than parsing the zone
   // off, and there is no consumer here that wants one.
   if (value.includes('%')) return false;

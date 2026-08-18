@@ -16,7 +16,8 @@ import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { ITEMS_PER_ROW, useCappedItems } from '~/components/HomeBlocks/homeBlockItems';
+import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -27,7 +28,7 @@ import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
+type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; blockIndex: number };
 
 export const FeedHomeBlock = (props: Props) => (
   <HomeBlockWrapper py={32}>
@@ -40,7 +41,7 @@ export const FeedHomeBlock = (props: Props) => (
  * mirrors CollectionHomeBlock (same grid, rows and per-user cap) — the difference is
  * only where the items come from.
  */
-const FeedHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
+const FeedHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
@@ -127,9 +128,19 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     isLoading || !feedItems ? (
       <FeedSkeleton rows={rows} />
     ) : feedItems.entity === 'images' ? (
-      <ImageFeedGrid items={feedItems.items} rows={rows} maxPerUser={metadata.feed?.maxPerUser} />
+      <ImageFeedGrid
+        items={feedItems.items}
+        rows={rows}
+        maxPerUser={metadata.feed?.maxPerUser}
+        order={dedupeOrder(blockIndex)}
+      />
     ) : (
-      <ModelFeedGrid items={feedItems.items} rows={rows} maxPerUser={metadata.feed?.maxPerUser} />
+      <ModelFeedGrid
+        items={feedItems.items}
+        rows={rows}
+        maxPerUser={metadata.feed?.maxPerUser}
+        order={dedupeOrder(blockIndex)}
+      />
     );
 
   return (
@@ -170,19 +181,25 @@ function useShuffled<T>(items: T[]) {
   return useMemo(() => shuffle([...items]), [items]);
 }
 
-type GridProps<T> = { items: T; rows: number; maxPerUser?: number };
+type GridProps<T> = { items: T; rows: number; maxPerUser?: number; order: number };
 
 function ImageFeedGrid({
   items,
   rows,
   maxPerUser,
+  order,
 }: GridProps<Extract<FeedBlockItems, { entity: 'images' }>['items']>) {
   const rotated = useShuffled(items);
   const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
     type: 'images',
     data: rotated,
   });
-  const visible = useCappedItems(filtered, rows, maxPerUser);
+  const visible = useDedupedCappedItems(filtered, {
+    order,
+    entity: 'image',
+    rows,
+    maxPerUser,
+  });
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 
@@ -203,13 +220,19 @@ function ModelFeedGrid({
   items,
   rows,
   maxPerUser,
+  order,
 }: GridProps<Extract<FeedBlockItems, { entity: 'models' }>['items']>) {
   const rotated = useShuffled(items);
   const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
     type: 'models',
     data: rotated,
   });
-  const visible = useCappedItems(filtered, rows, maxPerUser);
+  const visible = useDedupedCappedItems(filtered, {
+    order,
+    entity: 'model',
+    rows,
+    maxPerUser,
+  });
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 

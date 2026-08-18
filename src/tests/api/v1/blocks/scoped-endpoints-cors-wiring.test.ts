@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Wiring guard for the opaque-origin CORS fix on the SCOPED block endpoints
@@ -71,7 +72,6 @@ vi.mock('~/server/utils/region-blocking', () => ({
 vi.mock('~/server/controllers/buzz.controller', () => ({
   createBuzzTipTransactionHandler: vi.fn(),
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ Tracker: class {} }));
 vi.mock('~/server/utils/block-tip-rate-limit', () => ({
   BLOCK_TIP_CAP_PER_DAY: 0,

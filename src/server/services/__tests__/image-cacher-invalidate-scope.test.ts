@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // purgeResizeCache tells the image-cache service to drop an image's derived variants. Three
 // things about that call are easy to get wrong and impossible to see afterwards:
@@ -19,10 +22,14 @@ const { envOverrides } = vi.hoisted(() => ({
   envOverrides: { IMAGE_CACHER_ADMIN_SECRET: 'test-shared-secret' as string | undefined },
 }));
 
-const { mockLogToAxiom, mockFindFirst, mockFetch } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn(async () => undefined),
-  mockFindFirst: vi.fn(),
-  mockFetch: vi.fn(async () => ({ ok: true })),
+const mockFindFirst = dbMock.dbWrite.image.findFirst;
+
+const { mockFetch } = vi.hoisted(() => ({
+  // Typed rather than inferred: a zero-arg `vi.fn` makes `mock.calls` the empty
+  // tuple, and `invalidateCalls()` below reads both positions off it.
+  mockFetch: vi.fn<(url: string | URL, init?: RequestInit) => Promise<{ ok: boolean }>>(
+    async () => ({ ok: true })
+  ),
 }));
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
@@ -43,11 +50,6 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
     return undefined;
   }, handler);
 }
-
-const dbWrite = makePermissive({ image: makePermissive({ findFirst: mockFindFirst }) });
-const dbRead = makePermissive();
-
-vi.mock('~/server/db/client', () => ({ dbRead, dbWrite }));
 
 // event-engine-common is a git submodule, not checked out by default.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -88,23 +90,6 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: makePermissive({ insert: async () => undefined }),
-}));
-
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: makePermissive({ packed: makePermissive() }),
-    sysRedis: makePermissive(),
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-  };
-});
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: mockLogToAxiom,
 }));
 
 vi.mock('~/server/search-index', async (importOriginal) => ({

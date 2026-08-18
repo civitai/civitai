@@ -38,11 +38,8 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => ({ user: { id: 42, bannedAt: null } })),
 }));
 
-// The real s3-utils imports ~/server/db/client (dbWrite); stub it so loading the
-// real module for `classifyS3MultipartError` doesn't spin up a real Prisma engine.
-vi.mock('~/server/db/client', () => ({ dbWrite: {}, dbRead: {} }));
-
 import handler from '~/pages/api/upload/abort';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 function makeRes() {
   const headers: Record<string, string> = {};

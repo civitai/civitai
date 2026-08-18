@@ -123,6 +123,7 @@ async function listSessionsCli() {
     log(`  ${C.cyn}${i + 1}.${C.r} [${s.id}] ${s.branch}`);
     log(`     ${C.dim}Port:${C.r} ${s.port}  ${C.dim}Status:${C.r} ${status}  ${C.dim}Ready:${C.r} ${ready}`);
     log(`     ${C.dim}URL:${C.r} ${s.url}`);
+    if (s.envModeSummary) log(`     ${C.dim}Env:${C.r} ${s.envModeSummary}`);
     log('');
   });
   return sessions;
@@ -178,18 +179,36 @@ async function cmdDashboard(initialWorktree) {
   });
 
   let sessionId;
+  let attachNotice = null;
   if (startResult.ok) {
     sessionId = startResult.data.session.id;
+  } else if (startResult.data?.session?.id) {
+    // A refusal that names the session it refused for — a session already running this worktree
+    // with env modes a bare start would not reproduce. Watching it is what was asked for, but the
+    // dashboard must say so: the request and the session it attaches to disagree. Held for the
+    // alternate screen rather than logged here, where the dashboard's first repaint erases it.
+    attachNotice = startResult.data.error ?? 'Attached to a session with different env modes';
+    sessionId = startResult.data.session.id;
   } else {
-    // Try to find an existing session
+    // Scoped to THIS worktree. An unfiltered `find` opened the dashboard on whichever session came
+    // first in the map — another tree, another branch, its logs, and nothing saying so.
+    const sameTree = (s) =>
+      process.platform === 'win32'
+        ? resolve(s.worktree ?? '').toLowerCase() === cwd.toLowerCase()
+        : resolve(s.worktree ?? '') === cwd;
     const listResult = await daemonRequest('/sessions');
-    if (listResult.ok && listResult.data.sessions?.length) {
-      const running = listResult.data.sessions.find(s => s.status === 'running');
-      sessionId = running ? running.id : listResult.data.sessions[0].id;
-    } else {
-      log(`${C.red}No session available${C.r}`);
+    const mine = listResult.ok ? (listResult.data.sessions ?? []).filter(sameTree) : [];
+    const running = mine.find((s) => s.status === 'running');
+    sessionId = running ? running.id : mine[0]?.id;
+    if (!sessionId) {
+      log(`${C.red}No session available for ${cwd}${C.r}`);
+      if (startResult.data?.error) log(`${C.dim}${startResult.data.error}${C.r}`);
       process.exit(1);
     }
+    // The start was refused — a malformed env-modes.local carries no session in the body — and the
+    // session found here predates that edit. Repainting a healthy dashboard over it would read as
+    // the edit having taken effect.
+    if (startResult.data?.error) attachNotice = startResult.data.error;
   }
 
   const write = (s) => process.stdout.write(s);
@@ -225,6 +244,8 @@ async function cmdDashboard(initialWorktree) {
 
   // Enter alternate screen
   write(ALT_ON + CUR_HIDE);
+
+  if (attachNotice) flash(attachNotice);
 
   // Raw mode
   process.stdin.setRawMode(true);
@@ -323,7 +344,14 @@ async function cmdDashboard(initialWorktree) {
       case 'r':
         flash('Restarting session...');
         try {
-          await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
+          // daemonRequest resolves for every response, so a refusal arrives here as ok:false.
+          // Reporting it as a restart would clear the log pane as confirmation of something that
+          // did not happen — pressing `r` during a restart is exactly when that reads as damage.
+          const restart = await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
+          if (!restart.ok) {
+            flash(restart.data?.error || `Restart refused (${restart.status})`);
+            break;
+          }
           logCursor = -1;
           logLines = [];
           flash('Session restarted');
@@ -508,7 +536,16 @@ async function cmdDashboard(initialWorktree) {
       const statusStr = s.status === 'running' ? `${C.grn}running${C.r}` : `${C.ylw}${s.status}${C.r}`;
       const readyStr = s.ready ? `${C.grn}ready${C.r}` : `${C.ylw}starting${C.r}`;
       const uptimeStr = s.startedAt ? fmtUptime(Math.floor((Date.now() - new Date(s.startedAt).getTime()) / 1000)) : '';
-      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}`;
+      // `base` counts as production here: it means no section applied and the .env value stands,
+      // and this repo's .env is production for everything it does not override.
+      const prodGroups = Object.entries(s.envModes ?? {})
+        .filter(([, mode]) => mode !== 'dev')
+        .map(([group, mode]) => (mode === 'prod' ? group : `${group}(${mode})`));
+      const modeStr = prodGroups.length ? `  ${C.ylw}prod:${prodGroups.join(',')}${C.r}` : '';
+      // Sticky, not a 3s flash: this says the session is NOT what the dashboard asked to start, and
+      // after the flash cleared a mismatched dashboard looked exactly like a healthy one.
+      const noticeStr = attachNotice ? `  ${C.ylw}!env${C.r}` : '';
+      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}${modeStr}${noticeStr}`;
     }
     // Session counter, top-right. `n/N` so you know where you are in the rotation.
     if (allSessions.length) {

@@ -1,6 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { isConsumableCosmeticType } from '~/server/schema/creator-shop.schema';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+  fn({
+    $executeRaw: (...a: unknown[]) => executeRaw(...a),
+    userCosmetic: {
+      findMany: (...a: unknown[]) => ownedFindMany(...a),
+      createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
+    },
+    userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
+    userCosmeticShopPurchaseCosmetic: {
+      createMany: (...a: unknown[]) => createManyComponents(...a),
+    },
+    cosmeticShopItem: { update: vi.fn() },
+  })
+);
 
 /**
  * A conservation property over the whole pack purchase, table-driven rather than
@@ -18,32 +34,12 @@ const spend = vi.fn();
 const pay = vi.fn();
 const refund = vi.fn();
 const executeRaw = vi.fn();
-const ownedFindMany = vi.fn();
+const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;
 const createManyComponents = vi.fn();
 const createManyUserCosmetic = vi.fn();
 const purchaseCreate = vi.fn();
-const purchaseUpdate = vi.fn();
+const purchaseUpdate = dbMock.dbWrite.userCosmeticShopPurchases.update;
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: {
-    userCosmetic: { findMany: (...a: unknown[]) => ownedFindMany(...a) },
-    $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
-      fn({
-        $executeRaw: (...a: unknown[]) => executeRaw(...a),
-        userCosmetic: {
-          findMany: (...a: unknown[]) => ownedFindMany(...a),
-          createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
-        },
-        userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
-        userCosmeticShopPurchaseCosmetic: {
-          createMany: (...a: unknown[]) => createManyComponents(...a),
-        },
-        cosmeticShopItem: { update: vi.fn() },
-      }),
-    userCosmeticShopPurchases: { update: (...a: unknown[]) => purchaseUpdate(...a) },
-  },
-}));
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction: (...a: unknown[]) => spend(...a),
   createBuzzTransaction: (...a: unknown[]) => pay(...a),
@@ -53,12 +49,6 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('~/server/redis/caches', () => ({ refreshOwnedStickerCache: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({
-  // Returns a promise, like the real one: the scaled-payout path attaches
-  // `.catch` to it, and a bare `vi.fn()` would throw inside the payout block.
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
 const { purchaseCosmeticPack } = await import('~/server/services/cosmetic-pack.service');
 
 const BUYER = 901;

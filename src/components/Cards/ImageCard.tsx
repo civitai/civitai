@@ -64,7 +64,7 @@ export function ImageCard({ data }: Props) {
               disableBuzzTip={data.poi}
             />
             {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
-            {data.hasMeta && (
+            {features.imageCardInfoButton && data.hasMeta && (
               <ImageMetaPopover2 imageId={data.id} type={data.type}>
                 <ThemeIcon className={cardClasses.infoChip} variant="light">
                   <IconInfoCircle color="white" strokeWidth={2.5} size={18} />

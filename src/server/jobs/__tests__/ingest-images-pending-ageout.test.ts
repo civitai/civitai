@@ -34,7 +34,13 @@ const ROWS = [
   // 1: old, non-backfill, Pending  -> AGED OUT to Error (not sent, kept in queue)
   mkRow({ id: 1, ingestion: 'Pending', createdAt: OLD, isBackfill: false, scanRequestedAt: null }),
   // 2: fresh, non-backfill, Pending -> NOT aged out; sent this run
-  mkRow({ id: 2, ingestion: 'Pending', createdAt: FRESH, isBackfill: false, scanRequestedAt: null }),
+  mkRow({
+    id: 2,
+    ingestion: 'Pending',
+    createdAt: FRESH,
+    isBackfill: false,
+    scanRequestedAt: null,
+  }),
   // 3: old, BACKFILL, Pending       -> NOT aged out (backfill excluded); sent low-pri
   mkRow({ id: 3, ingestion: 'Pending', createdAt: OLD, isBackfill: true, scanRequestedAt: null }),
   // 4: Error, under the cap, cooled  -> re-tried via the Error lane (proves the
@@ -80,38 +86,19 @@ function mkRow(overrides: {
   };
 }
 
-const { execLog, mockDbRead, mockDbWrite, mockIngestImage, mockDeleteImages, mockLimitConcurrency } =
-  vi.hoisted(() => {
-    const execLog: { sql: string; values: unknown[] }[] = [];
-    return {
-      execLog,
-      mockDbRead: {
-        jobQueue: {
-          // Return one queue row per fixture id, oldest-first.
-          findMany: vi.fn(async () => [1, 2, 3, 4, 5].map((entityId) => ({ entityId }))),
-        },
-      },
-      mockDbWrite: {
-        // Image SELECT -> the fixture rows.
-        $queryRaw: vi.fn(async () => ROWS),
-        // Record every write so the test can distinguish the age-out UPDATE
-        // (contains 'Pending'), the exhaustedRescan UPDATE ('Rescan'), and the
-        // JobQueue prune DELETE, plus inspect the id array each targets.
-        $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
-          execLog.push({ sql: strings.join('?'), values });
-          return 0;
-        }),
-      },
-      mockIngestImage: vi.fn(async () => true),
-      mockDeleteImages: vi.fn(async () => undefined),
-      // Sequential for deterministic assertions.
-      mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
-        for (const t of tasks) await t();
-      }),
-    };
-  });
+const { execLog, mockIngestImage, mockDeleteImages, mockLimitConcurrency } = vi.hoisted(() => {
+  const execLog: { sql: string; values: unknown[] }[] = [];
+  return {
+    execLog,
+    mockIngestImage: vi.fn(async () => true),
+    mockDeleteImages: vi.fn(async () => undefined),
+    // Sequential for deterministic assertions.
+    mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
+      for (const t of tasks) await t();
+    }),
+  };
+});
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/image.service', () => ({
   ingestImage: mockIngestImage,
   deleteImages: mockDeleteImages,
@@ -128,6 +115,19 @@ vi.mock('~/env/server', () => ({
 }));
 
 import { ingestImages } from '~/server/jobs/image-ingestion';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbRead.jobQueue.findMany.mockImplementation(async () =>
+  [1, 2, 3, 4, 5].map((entityId) => ({ entityId }))
+);
+dbMock.dbWrite.$queryRaw.mockImplementation(async () => ROWS);
+dbMock.dbWrite.$executeRaw.mockImplementation(
+  async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    execLog.push({ sql: strings.join('?'), values });
+    return 0;
+  }
+);
 
 const ctx = {} as Parameters<typeof ingestImages.run>[0];
 async function runJob<T extends { run: (ctx: any) => { result: Promise<unknown> } }>(
@@ -172,7 +172,7 @@ describe('ingest-images pending age-out', () => {
     // Bound UPDATE targeting exactly the aged-out id, guarded on the current status
     // so a concurrent verdict is never clobbered.
     expect(targetIds(update)).toEqual([1]);
-    expect(update!.sql).toContain("ingestion = 'Pending'::\"ImageIngestionStatus\"");
+    expect(update!.sql).toContain('ingestion = \'Pending\'::"ImageIngestionStatus"');
     expect(result.agedOutPending).toBe(1);
   });
 

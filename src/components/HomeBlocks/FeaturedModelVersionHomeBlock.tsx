@@ -15,6 +15,8 @@ import { IconArrowRight, IconCategory, IconInfoCircle } from '@tabler/icons-reac
 import { useMemo } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
@@ -29,7 +31,11 @@ import { trpc } from '~/utils/trpc';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import clsx from 'clsx';
 
-type Props = { homeBlockId: number; metadata: Pick<HomeBlockMetaSchema, 'title' | 'description'> };
+type Props = {
+  homeBlockId: number;
+  metadata: Pick<HomeBlockMetaSchema, 'title' | 'description'>;
+  blockIndex: number;
+};
 
 export const FeaturedModelVersionHomeBlock = ({ ...props }: Props) => {
   return (
@@ -40,9 +46,8 @@ export const FeaturedModelVersionHomeBlock = ({ ...props }: Props) => {
 };
 
 const ROWS = 2;
-const ITEMS_PER_ROW = 7;
 
-const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
+const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
 
@@ -55,7 +60,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
 
   const shuffled = useMemo(() => {
     if (!featuredModels) return [];
-    return shuffle(featuredModels);
+    return shuffle([...featuredModels]);
   }, [featuredModels]);
 
   const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
@@ -63,10 +68,11 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
     data: shuffled,
   });
 
-  const items = useMemo(() => {
-    const itemsToShow = ITEMS_PER_ROW * ROWS;
-    return filtered.slice(0, itemsToShow);
-  }, [filtered]);
+  const items = useDedupedCappedItems(filtered, {
+    order: dedupeOrder(blockIndex),
+    entity: 'model',
+    rows: ROWS,
+  });
 
   const title = metadata.title ?? 'Featured Models';
   const useGrid = metadata.description && !currentUser;

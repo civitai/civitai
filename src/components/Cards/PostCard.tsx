@@ -21,6 +21,7 @@ export function PostCard({ data }: Props) {
 
   return (
     <AspectRatioImageCard
+      impression={{ entityType: 'Post', entityId: data.id }}
       href={`/posts/${data.id}`}
       alt={data.title || 'View post'}
       aspectRatio="square"

@@ -179,6 +179,8 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const canConfigurePrivacy = isOwner || !!currentUser?.isModerator;
   const canOpenSubmissions = (isMember && isOwner) || !!currentUser?.isModerator;
   const isImageCollection = collection?.type === CollectionType.Image;
+  // Matches the form's own normalization above, where a null type is read as Model.
+  const isModelCollection = (collection?.type ?? CollectionType.Model) === CollectionType.Model;
   const isContestMode = collection?.mode === CollectionMode.Contest;
   const joinUrl =
     env.NEXT_PUBLIC_BASE_URL && collectionId
@@ -338,28 +340,26 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       placeholder="Leave blank for unlimited"
                       clearable
                     />
-                    <InputMultiSelect
-                      name="metadata.baseModels"
-                      label="Allowed base models"
-                      description="Model entries need a version on one of these base models. With a submission start date, the same version must also have been added during the submission period. Leave empty to allow all base models."
-                      placeholder="Leave empty to allow all base models"
-                      // Full list, not activeBaseModels — hidden base models are still valid
-                      // contest targets, and this field is moderator-only.
-                      data={baseModels}
-                      searchable
-                      clearable
-                    />
+                    {/* The gate this drives runs only against model submissions, so on any other
+                        collection type the field is a control that silently does nothing. */}
+                    {isModelCollection && (
+                      <InputMultiSelect
+                        name="metadata.baseModels"
+                        label="Allowed base models"
+                        description="Model entries need a version on one of these base models. With a submission start date, the same version must also have been added during the submission period. Leave empty to allow all base models."
+                        placeholder="Leave empty to allow all base models"
+                        // Full list, not activeBaseModels — hidden base models are still valid
+                        // contest targets, and this field is moderator-only.
+                        data={baseModels}
+                        searchable
+                        clearable
+                      />
+                    )}
                     {isImageCollection && (
                       <InputCheckbox
                         name="metadata.existingEntriesDisabled"
                         label="Existing entries disabled"
                         description="Makes it so that the + button takes you directly to the create flow, bypassing existing images selection. Users can still circumbent this by following the collection & selecting an image."
-                      />
-                    )}
-                    {isImageCollection && (
-                      <InputCheckbox
-                        name="metadata.disableFollowOnSubmission"
-                        label="Submitting an entry will not follow the collection"
                       />
                     )}
                     <InputDatePicker

@@ -10,29 +10,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * the read handlers) when the acting user is blocked by that owner.
  */
 
-const { mockDb, amIBlockedByUser } = vi.hoisted(() => ({
+const { amIBlockedByUser } = vi.hoisted(() => ({
   amIBlockedByUser: vi.fn(async (..._a: unknown[]): Promise<boolean> => false),
-  mockDb: {
-    image: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    post: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    article: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    model: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    resourceReview: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    question: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    answer: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    bounty: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    bountyEntry: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    comment: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    commentV2: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    thread: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    model3D: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    model3DReview: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    comicChapter: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    comicProject: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-  },
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser }));
 
 import {
@@ -40,6 +21,8 @@ import {
   throwIfBlockedByEntityOwner,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDb = dbMock.dbRead;
 
 const OWNER = 100;
 const VIEWER = 7;
@@ -114,6 +97,35 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     expect(owners).toEqual(expect.arrayContaining([PARENT_AUTHOR, OWNER]));
   });
 
+  // A reply resolves its root owner from columns selected off `Thread`. Both halves
+  // matter: the column has to be SELECTED and the owner branch has to exist. The
+  // select assertion is the half a mocked db can't catch by return value alone.
+  it('resolves the root owner for a reply in an appListing thread', async () => {
+    const PARENT_AUTHOR = 55;
+    mockDb.commentV2.findUnique.mockResolvedValueOnce({
+      userId: PARENT_AUTHOR,
+      thread: { rootThreadId: null, appListingId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
+
+    const owners = await getBlockCheckOwnerIds({ entityType: 'comment', entityId: 1 });
+    expect(owners).toEqual(expect.arrayContaining([PARENT_AUTHOR, OWNER]));
+  });
+
+  it('selects every owner-bearing thread column when resolving a reply root', async () => {
+    mockDb.commentV2.findUnique.mockResolvedValueOnce({
+      userId: 55,
+      thread: { rootThreadId: 999 },
+    });
+    mockDb.thread.findUnique.mockResolvedValueOnce({ rootThreadId: null });
+
+    await getBlockCheckOwnerIds({ entityType: 'comment', entityId: 1 });
+
+    const select = mockDb.thread.findUnique.mock.calls[0]?.[0]?.select ?? {};
+    for (const column of ['challengeId', 'appListingId'])
+      expect(select).toHaveProperty(column, true);
+  });
+
   it('resolves the model3d owner', async () => {
     mockDb.model3D.findUnique.mockResolvedValueOnce({ userId: OWNER });
     expect(await getBlockCheckOwnerIds({ entityType: 'model3d', entityId: 1 })).toEqual([OWNER]);
@@ -133,8 +145,24 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     ]);
   });
 
-  it('returns [] for unowned/unknown entity types (no false blocks)', async () => {
-    expect(await getBlockCheckOwnerIds({ entityType: 'appListing', entityId: 1 })).toEqual([]);
+  it('resolves the appListing owner by its integer surrogate, not its ULID', async () => {
+    mockDb.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'appListing', entityId: 42 })).toEqual([
+      OWNER,
+    ]);
+    expect(mockDb.appListing.findUnique).toHaveBeenCalledWith({
+      where: { serialId: 42 },
+      select: { userId: true },
+    });
+  });
+
+  it('resolves the challenge creator', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({ createdById: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'challenge', entityId: 1 })).toEqual([OWNER]);
+  });
+
+  it('returns [] for a system challenge with no creator', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({ createdById: null });
     expect(await getBlockCheckOwnerIds({ entityType: 'challenge', entityId: 1 })).toEqual([]);
   });
 

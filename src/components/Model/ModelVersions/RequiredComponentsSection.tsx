@@ -31,11 +31,8 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import { getPrimaryFile, type GroupedFileVariants } from '~/server/utils/model-helpers';
 import type { ModelById } from '~/types/router';
-import {
-  componentTypeConfig,
-  getFileDescription,
-  getFileLabel,
-} from '~/utils/file-display-helpers';
+import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
+import { componentTypeConfig } from '~/utils/file-display-icons';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getModelUrl } from '~/utils/string-helpers';

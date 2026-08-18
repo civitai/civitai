@@ -27,7 +27,10 @@ const { hGet, mockWithSysReadDeadline, mockLogSysRedisFailOpen } = vi.hoisted(()
 
 vi.mock('~/server/redis/client', () => ({
   sysRedis: { hGet },
-  REDIS_SYS_KEYS: { SYSTEM: { FEATURES: 'system:features' }, TRAINING: { STATUS: 'training:status' } },
+  REDIS_SYS_KEYS: {
+    SYSTEM: { FEATURES: 'system:features' },
+    TRAINING: { STATUS: 'training:status' },
+  },
   withSysReadDeadline: mockWithSysReadDeadline,
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
@@ -44,17 +47,25 @@ vi.mock('~/server/schema/training.schema', () => ({
 }));
 
 // Heavy import-graph deps — trivial stubs so the module imports in node.
-vi.mock('@aws-sdk/lib-storage', () => ({ Upload: class {} }));
+// `default` alongside the named export: pre-bundling wraps this CJS dep for interop, so the
+// consumer resolves through `default` and a factory without one yields undefined. It fails by
+// collecting almost no tests rather than by going red, so the check is the collected count.
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {};
+  return { Upload, default: { Upload } };
+});
 vi.mock('@civitai/client', () => ({}));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({ preventModelVersionLag: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: {} }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
 vi.mock('~/utils/s3-utils', () => ({ getS3Client: vi.fn(), deleteObject: vi.fn() }));
-vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({ getOrchestratorCaller: vi.fn() }));
+vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
+  getOrchestratorCaller: vi.fn(),
+}));
 
 import { getTrainingServiceStatus } from '~/server/services/training.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();

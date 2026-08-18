@@ -1501,6 +1501,72 @@ export const getUserBookmarkedModels = async ({ userId }: { userId: number }) =>
   return bookmarked.map(({ modelId }) => modelId).filter(isDefined);
 };
 
+const leaderboardRankInsert = ({
+  leaderboardFilter,
+  userFilter,
+  onConflict = Prisma.empty,
+}: {
+  leaderboardFilter: Prisma.Sql;
+  userFilter: Prisma.Sql;
+  onConflict?: Prisma.Sql;
+}) => Prisma.sql`
+  WITH user_positions AS (
+    SELECT
+      lr."userId",
+      lr."leaderboardId",
+      l."title",
+      lr.position,
+      -- The showcase is a PREFERENCE, not a filter. Applied as a WHERE clause it
+      -- deleted the badge outright whenever the showcased board couldn't produce
+      -- one — a RED-exclusive or non-public board, or one the user has since
+      -- dropped out of the top 100 on. Measured on prod 2026-08-14: 62 users had
+      -- a top-100 placement on an eligible board and no UserRank row at all.
+      row_number() OVER (
+        PARTITION BY lr."userId"
+        ORDER BY
+          (lr."leaderboardId" IS NOT DISTINCT FROM u."leaderboardShowcase") DESC,
+          lr."position"
+      ) row_num
+    FROM "User" u
+    JOIN "LeaderboardResult" lr ON lr."userId" = u.id
+    JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
+    WHERE lr.date = current_date
+      AND lr.position <= 100
+      -- UserRank is a single global table but the badge (title + cosmetic) renders
+      -- on every domain, so a RED-EXCLUSIVE board would leak its name sitewide —
+      -- e.g. "Creators (mature)" on civitai.com. Exclude only those; a board that
+      -- is visible on any SFW domain still earns a badge (requiring 'all' would
+      -- strip the badge from everyone on the green/blue-scoped boards).
+      AND NOT (l.domain <@ ARRAY['red']::"DomainColor"[])
+      ${leaderboardFilter}
+      ${userFilter}
+  ),
+  lowest_position AS (
+    SELECT
+      up."userId",
+      up.position,
+      up."leaderboardId",
+      up."title" "leaderboardTitle",
+      (SELECT data ->> 'url'
+       FROM "Cosmetic" c
+       WHERE c."leaderboardId" = up."leaderboardId"
+         AND up.position <= c."leaderboardPosition"
+       ORDER BY c."leaderboardPosition"
+       LIMIT 1) as "leaderboardCosmetic"
+    FROM user_positions up
+    WHERE row_num = 1
+  )
+  INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
+  SELECT
+    "userId",
+    position,
+    "leaderboardId",
+    "leaderboardTitle",
+    "leaderboardCosmetic"
+  FROM lowest_position
+  ${onConflict};
+`;
+
 export const updateLeaderboardRank = async ({
   leaderboardIds,
 }: {
@@ -1516,56 +1582,44 @@ export const updateLeaderboardRank = async ({
     // Truncate the table - much faster than DELETE and we're rebuilding anyway
     dbWrite.$executeRaw`TRUNCATE TABLE "UserRank";`,
     // Only insert users with top 100 ranks (position <= 100)
-    dbWrite.$executeRaw`
-      WITH user_positions AS (
-        SELECT
-          lr."userId",
-          lr."leaderboardId",
-          l."title",
-          lr.position,
-          row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
-        FROM "User" u
-        JOIN "LeaderboardResult" lr ON lr."userId" = u.id
-        JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
-        WHERE lr.date = current_date
-          AND lr.position <= 100
-          -- UserRank is a single global table but the badge (title + cosmetic) renders
-          -- on every domain, so a RED-EXCLUSIVE board would leak its name sitewide —
-          -- e.g. "Creators (mature)" on civitai.com. Exclude only those; a board that
-          -- is visible on any SFW domain still earns a badge (requiring 'all' would
-          -- strip the badge from everyone on the green/blue-scoped boards).
-          AND NOT (l.domain <@ ARRAY['red']::"DomainColor"[])
-          ${leaderboardFilter}
-          AND (
-            u."leaderboardShowcase" IS NULL
-            OR lr."leaderboardId" = u."leaderboardShowcase"
-          )
-      ),
-      lowest_position AS (
-        SELECT
-          up."userId",
-          up.position,
-          up."leaderboardId",
-          up."title" "leaderboardTitle",
-          (SELECT data ->> 'url'
-           FROM "Cosmetic" c
-           WHERE c."leaderboardId" = up."leaderboardId"
-             AND up.position <= c."leaderboardPosition"
-           ORDER BY c."leaderboardPosition"
-           LIMIT 1) as "leaderboardCosmetic"
-        FROM user_positions up
-        WHERE row_num = 1
-      )
-      INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
-      SELECT
-        "userId",
-        position,
-        "leaderboardId",
-        "leaderboardTitle",
-        "leaderboardCosmetic"
-      FROM lowest_position;
-    `,
+    dbWrite.$executeRaw(leaderboardRankInsert({ leaderboardFilter, userFilter: Prisma.empty })),
   ]);
+};
+
+/**
+ * Per-user variant, for when a user changes their showcase and expects to see it.
+ * `updateLeaderboardRank` cannot serve that: it TRUNCATEs a table the whole site
+ * reads, so calling it on a profile save blanks every user's badge mid-rebuild.
+ * Measured on the prod replica 2026-08-14: 0.87 ms scoped vs 196 ms full.
+ *
+ * Upsert-only, deliberately. Deleting first would strip a badge and then have nothing
+ * to replace it with on any day the 23:00 population failed — the exact symptom this
+ * path exists to fix, re-entered through a new door. `prepare-leaderboard` guards the
+ * nightly rebuild with `isLeaderboardPopulated` for that reason, and removal stays that
+ * job's business: under the ordering above a user with any eligible placement always
+ * produces a row, so a save never needs to remove one. It also keeps two concurrent
+ * saves off a delete-then-insert race into the `UserRank` primary key.
+ */
+export const updateLeaderboardRankForUsers = async ({
+  userIds,
+}: {
+  userIds: number | number[];
+}) => {
+  const ids = Array.isArray(userIds) ? userIds : [userIds];
+  if (!ids.length) return;
+
+  await dbWrite.$executeRaw(
+    leaderboardRankInsert({
+      leaderboardFilter: Prisma.empty,
+      userFilter: Prisma.sql`AND u.id IN (${Prisma.join(ids)})`,
+      onConflict: Prisma.sql`
+    ON CONFLICT ("userId") DO UPDATE SET
+      "leaderboardRank" = EXCLUDED."leaderboardRank",
+      "leaderboardId" = EXCLUDED."leaderboardId",
+      "leaderboardTitle" = EXCLUDED."leaderboardTitle",
+      "leaderboardCosmetic" = EXCLUDED."leaderboardCosmetic"`,
+    })
+  );
 };
 
 /**
@@ -2599,12 +2653,15 @@ export async function updateContentSettings({
     await userSettingsCache().bust([userId]);
   }
   if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
-    const settings = await getUserSettings(userId);
-    if (domain === 'red' && browsingLevel !== undefined) {
-      settings.redBrowsingLevel = browsingLevel;
-    }
-
-    await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
+    // Only the keys this call is changing. Re-reading the blob and writing it back
+    // would restore every other key to the value it held at read time, discarding a
+    // concurrent write to any of them (notice dismissals, feature toggles, …).
+    await setUserSetting(userId, {
+      ...removeEmpty(data),
+      ...(domain === 'red' && browsingLevel !== undefined
+        ? { redBrowsingLevel: browsingLevel }
+        : {}),
+    });
   }
   // Await so the refresh marker is set in Redis before this mutation returns.
   // Otherwise the fire-and-forget can race the next API call / session read
@@ -2687,9 +2744,14 @@ function userSettingsCache() {
 }
 
 /**
- * JSON-settings-only view. Used by internal callers (e.g. setUserSetting) that
- * need to read the JSON blob and write it back without polluting it with the
- * User-column fields.
+ * JSON-settings-only view, without the User-column fields.
+ *
+ * 🔴 Redis-backed (4h TTL) and READ-ONLY as far as writers are concerned. No caller may
+ * read this and write the result back — that read-modify-write is the lost-update bug
+ * `patchUserSettings` exists to remove, and the cache makes its window the TTL rather
+ * than a few milliseconds. Read it to DECIDE something (a toggle's next value, whether a
+ * value changed); never to build a write payload. Do not call it inside a transaction
+ * either: it is a Redis round trip on the transaction's clock.
  */
 export async function getUserSettings(id: number): Promise<UserSettingsSchema> {
   const result = await userSettingsCache().fetch([id]);
@@ -2712,48 +2774,198 @@ export async function getUserContentSettings(id: number): Promise<UserContentSet
   return rest;
 }
 
-export async function setUserSetting(userId: number, settings: UserSettingsInput) {
-  const toSet = removeEmpty(settings);
-  const keys = Object.keys(toSet);
-  if (!keys.length) return;
+/**
+ * The one place `User.settings` is written.
+ *
+ * `settings` is a single JSON column with many independent writers (content
+ * prefs, feature toggles, tour progress, notice dismissals, creator shop,
+ * gallery defaults). Every one of them used to read the blob into JS, compute a
+ * new object, and write that object back. Two such writers overlapping lose one
+ * of the two edits: the second writer's snapshot was taken before the first
+ * writer's commit, so writing it back restores the pre-edit value of every key
+ * it happens to carry — including keys it was never asked to change.
+ *
+ * The cure is structural rather than temporal: never send a value that was read
+ * in JS. Each op below compiles to an expression over the *current* column, so
+ * the read and the write are one statement and there is no JS-side window at
+ * all. Under READ COMMITTED, Postgres re-evaluates a SET expression against the
+ * updated row when a concurrent transaction has just written it, so two
+ * overlapping patches compose instead of clobbering.
+ *
+ * Ops (all optional, all applied in one statement, in this order):
+ *  - `set`       — replace these top-level keys outright. The patch WINS over the
+ *                  stored value; that is the whole point, so the operand order of
+ *                  the `||` below is load-bearing rather than stylistic.
+ *  - `mergeInto` — merge one level INTO these top-level object keys, so a
+ *                  sibling sub-key another writer added survives.
+ *  - `remove`    — delete these top-level keys.
+ *
+ * 🔴 `set` and `mergeInto` do NOT compose on the SAME top-level key. `mergeInto`
+ * reads `settings->key` — the STORED column — not the partially-built expression,
+ * so passing one key to both ops makes `mergeInto` merge onto the pre-`set` value
+ * and win. No caller does this today; if one ever needs to, make `mergeInto` read
+ * from the accumulated expression instead of the column.
+ *
+ * Values are bound as parameters, never spliced into the statement text —
+ * `JSON.stringify` escapes `"` and `\` but not `'`, so a setting value holding
+ * an apostrophe would otherwise close the literal early.
+ *
+ * Pass `tx` to run inside a caller's transaction; the caller then owns the
+ * cache bust, which must happen after commit (Redis I/O inside a transaction
+ * burns the transaction's wall-clock budget).
+ */
+export type UserSettingsPatch = {
+  set?: Record<string, unknown>;
+  mergeInto?: Record<string, Record<string, unknown>>;
+  remove?: string[];
+  /** `userUpdateCounter` label, so consolidating the writers does not collapse the
+   *  per-call-site attribution the metric already carried. */
+  location?: string;
+};
 
-  // Parameterised: the payload is bound, not spliced into a string literal.
-  // `JSON.stringify` escapes `"` and `\` but not `'`, so a setting value holding an
-  // apostrophe used to close the literal early and corrupt the statement.
-  await dbWrite.$executeRaw`
-      UPDATE "User"
-      SET settings = COALESCE(settings, '{}'::jsonb) || ${JSON.stringify(toSet)}::jsonb
-      WHERE id = ${userId}
-    `;
-  userUpdateCounter?.inc({ location: 'user.service:setUserSetting:set' });
+type RawClient = Pick<typeof dbWrite, '$queryRawUnsafe'>;
 
-  const toRemove = Object.entries(settings)
-    .filter(([, value]) => value === undefined)
-    .map(([key]) => key);
-  if (toRemove.length) {
-    // `jsonb - text[]` drops every listed key in one go, so the key names bind as a
-    // single array. The previous form hand-quoted them into a chain of `- 'key'`
-    // and emitted a trailing `}`, which made the statement unparseable.
-    await dbWrite.$executeRaw`
-      UPDATE "User"
-      SET settings = settings - ${toRemove}::text[]
-      WHERE id = ${userId}
-    `;
-    userUpdateCounter?.inc({ location: 'user.service:setUserSetting:remove' });
+export async function patchUserSettings(
+  userId: number,
+  patch: UserSettingsPatch,
+  tx?: RawClient
+): Promise<UserSettingsSchema> {
+  const set = patch.set && Object.keys(patch.set).length ? patch.set : undefined;
+  const mergeInto = Object.entries(patch.mergeInto ?? {}).filter(
+    ([, value]) => value && Object.keys(value).length
+  );
+  const remove = patch.remove?.length ? patch.remove : undefined;
+
+  const client = tx ?? dbWrite;
+
+  // Nothing to write, but the contract is still "the settings this user now has".
+  // Read the ROW, never the cache: `getUserSettings` is Redis-backed, and both `tx`
+  // callers reach this branch with an empty patch — `updateCreatorShopSettings` when
+  // every field of its all-optional input is omitted, and the gallery copy when the
+  // model already carries default gallery settings. A Redis round trip there would
+  // burn the caller's interactive-transaction budget (Prisma's default is 5s), and
+  // the repo's `no-io-in-transaction` lint rule is a call-name denylist that cannot
+  // see it. Reading the row also keeps the return value consistent with the write
+  // path below, which returns `RETURNING settings` rather than a cached blob.
+  if (!set && !mergeInto.length && !remove) {
+    const current = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
+      `SELECT settings FROM "User" WHERE id = $1`,
+      userId
+    );
+    if (!current.length) throw throwNotFoundError(`No user with id ${userId}`);
+    return current[0]?.settings ?? {};
   }
 
+  const values: unknown[] = [];
+  // Returns the `$N` placeholder for a newly bound value.
+  const bind = (value: unknown) => `$${values.push(value)}`;
+
+  let expr = `COALESCE(settings, '{}'::jsonb)`;
+  if (set) expr = `(${expr} || ${bind(JSON.stringify(set))}::jsonb)`;
+  for (const [key, value] of mergeInto) {
+    // `settings->$key` reads the CURRENT column inside the same statement — that is
+    // what makes the nested merge atomic rather than a read-modify-write.
+    const k = bind(key);
+    expr =
+      `(${expr} || jsonb_build_object(${k}::text, ` +
+      `COALESCE(settings->${k}::text, '{}'::jsonb) || ${bind(JSON.stringify(value))}::jsonb))`;
+  }
+  // `jsonb - text[]` drops every listed key in one go, so the names bind as one array.
+  if (remove) expr = `(${expr} - ${bind(remove)}::text[])`;
+
+  const rows = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
+    `UPDATE "User" SET settings = ${expr} WHERE id = ${bind(userId)} RETURNING settings`,
+    ...values
+  );
+  // A raw UPDATE matching no row is a silent no-op, where the `user.update` this
+  // replaced raised Prisma P2025. A moderator acting on a deleted user must not get
+  // a success back.
+  if (!rows.length) throw throwNotFoundError(`No user with id ${userId}`);
+  userUpdateCounter?.inc({ location: patch.location ?? 'user.service:patchUserSettings' });
+
+  if (!tx) await bustUserSettings(userId);
+  return rows[0]?.settings ?? {};
+}
+
+/** Drop every per-user cache that mirrors the settings blob. */
+export async function bustUserSettings(userId: number) {
   await userSettingsCache().bust([userId]);
   // Keep the read-time metric-privacy defaults cache consistent with a settings write
   // (the `hideModel*` flags live in `settings`); TTL backstops any other writer.
   await bustUserMetricPrivacyDefaultsCache(userId);
 }
 
-export async function setDismissedAlerts(userId: number, alertIds: string[]) {
-  await dbWrite.$executeRawUnsafe(
-    `UPDATE "User" SET settings = jsonb_set(COALESCE(settings, '{}'), '{dismissedAlerts}', $1::jsonb) WHERE id = $2`,
-    JSON.stringify(alertIds),
+/**
+ * Split a caller-supplied settings object into the keys to write and the keys to
+ * delete. An explicit `undefined` marks a key for removal — the tRPC transformer
+ * carries that over the wire and zod keeps the key, so `user.setSettings` really
+ * can ask for one. Single source of this rule: every settings write goes through
+ * it, so the two halves cannot drift apart at one call site.
+ */
+export function splitSettingsPatch(settings: UserSettingsInput): UserSettingsPatch {
+  return {
+    set: removeEmpty(settings),
+    remove: Object.entries(settings)
+      .filter(([, value]) => value === undefined)
+      .map(([key]) => key),
+  };
+}
+
+/**
+ * Shallow set/remove of top-level settings keys. A key whose value is
+ * `undefined` is deleted; everything else is written as given.
+ */
+export async function setUserSetting(userId: number, settings: UserSettingsInput) {
+  return patchUserSettings(userId, {
+    ...splitSettingsPatch(settings),
+    // Was two statements with two labels (`:set` and `:remove`); it is one statement now,
+    // so it reports one.
+    location: 'user.service:setUserSetting:set',
+  });
+}
+
+/**
+ * Add or drop one id in `settings.dismissedAlerts`, as a set operation on the
+ * stored array rather than a whole-array rewrite. Two dismissals of *different*
+ * notices can now overlap without either being lost — which the previous
+ * read-the-array-in-JS-and-write-it-back form could not survive.
+ */
+export async function setAlertDismissed(userId: number, alertId: string, dismissed: boolean) {
+  // `settings->'dismissedAlerts'` is read inside the statement, so nothing about the
+  // array is carried through JS. Add is idempotent (`@>` containment guard); `jsonb_agg`
+  // over an empty set yields NULL, hence the COALESCE to an empty array.
+  //
+  // `WITH ORDINALITY` + `ORDER BY ord` makes the surviving elements' order explicit rather
+  // than incidental. Nothing DEPENDS on that order — `dismissedAlerts` is read as a set
+  // (membership tests only) — and no test pins it, so treat this as intent, not a
+  // guarantee: dropping the `ORDER BY` is very likely an equivalent mutant.
+  //
+  // The `jsonb_typeof` test is not paranoia about our own writers — nothing enforces a
+  // shape on a JSON column, and `jsonb_array_elements` raises on a non-array, which
+  // would turn one malformed row into a permanent 500 on every dismissal for that user.
+  // Treating a non-array as empty self-heals it on the next write, which is what the
+  // whole-array rewrite used to do implicitly.
+  const current = `CASE WHEN jsonb_typeof(settings->'dismissedAlerts') = 'array'
+                        THEN settings->'dismissedAlerts' ELSE '[]'::jsonb END`;
+  const next = dismissed
+    ? `CASE WHEN ${current} @> to_jsonb($1::text) THEN ${current}
+            ELSE ${current} || jsonb_build_array($1::text) END`
+    : `COALESCE((
+         SELECT jsonb_agg(e ORDER BY ord)
+         FROM jsonb_array_elements(${current}) WITH ORDINALITY AS t(e, ord)
+         WHERE e <> to_jsonb($1::text)
+       ), '[]'::jsonb)`;
+
+  const rows = await dbWrite.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
+    `UPDATE "User"
+     SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{dismissedAlerts}', ${next})
+     WHERE id = $2
+     RETURNING settings`,
+    alertId,
     userId
   );
-  await userSettingsCache().bust([userId]);
+  userUpdateCounter?.inc({ location: 'user.service:setAlertDismissed' });
+  await bustUserSettings(userId);
+  return rows[0]?.settings?.dismissedAlerts ?? [];
 }
 // #endregion

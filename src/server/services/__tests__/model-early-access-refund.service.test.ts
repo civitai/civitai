@@ -1,44 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Unit tests for getModelEarlyAccessRefundRequirement and the refundEarlyAccess gate in
 // unpublishModelById. model.service.ts has a very large import graph, so most of its transitive
 // service/db/search dependencies are stubbed out below to keep this a real unit test rather than
 // an integration test. Mirrors the mock scaffold used in set-model-minor.service.test.ts.
 
-const { mockDbRead, mockDbWrite, mockTx } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    delete: vi.fn(),
-    deleteMany: vi.fn(),
-  });
-  const tx = { model: mk(), $executeRaw: vi.fn() };
-  return {
-    mockTx: tx,
-    mockDbRead: { model: mk(), modelVersion: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      model: mk(),
-      modelVersion: mk(),
-      paidAccess: mk(),
-      entityAccess: mk(),
-      post: mk(),
-      image: mk(),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-      $transaction: vi.fn((fn: (tx: typeof tx) => unknown) => fn(tx)),
+// 🔴 `mockTx` stays a SEPARATE object from the write client. `mockTx.model.update` is asserted
+// below and means "updated inside unpublishModelById's transaction"; the canonical `$transaction`
+// default hands the callback `dbMock.dbWrite`, which would collapse that into the direct calls.
+const { mockTx } = vi.hoisted(() => ({
+  mockTx: {
+    model: {
+      findFirst: vi.fn(),
+      findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      findMany: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
-  };
-});
+    $executeRaw: vi.fn(),
+  },
+}));
+
+// Both entry points read and write on dbWrite throughout — `modelVersion.findMany`
+// (model.service:2806), `paidAccess.findMany` (:2815), `entityAccess.findMany` (:2825) and
+// `.deleteMany` (:2915), `model.findUniqueOrThrow` (:2877), `$transaction` (:2967),
+// `post.findMany` (:3028), `image.findMany` (:3032) — so the old alias's split was never exercised.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 const {
   mockModelsQueueUpdate,
   mockQueueImageSearchIndexUpdate,
-  mockLogToAxiom,
   mockDeleteBidsForModel,
   mockGetMultiAccountTransactionsByPrefix,
   mockGetUserBuzzAccountByAccountTypes,
@@ -46,14 +43,12 @@ const {
 } = vi.hoisted(() => ({
   mockModelsQueueUpdate: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
-  mockLogToAxiom: vi.fn(),
   mockDeleteBidsForModel: vi.fn(),
   mockGetMultiAccountTransactionsByPrefix: vi.fn(),
   mockGetUserBuzzAccountByAccountTypes: vi.fn(),
   mockRefundMultiAccountTransaction: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: vi.fn(),
   getDbWithoutLag: vi.fn(async () => mockDbRead),
@@ -69,10 +64,6 @@ vi.mock('~/server/redis/caches', () => ({
   modelVotableTagsCache: { bust: vi.fn() },
   userBasicCache: {},
   userModelCountCache: { refresh: vi.fn() },
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: { del: vi.fn() },
-  REDIS_KEYS: { MODEL: { GALLERY_SETTINGS: 'model:gallery-settings' } },
 }));
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
@@ -118,7 +109,6 @@ vi.mock('~/server/services/model-version.service', () => ({
   publishModelVersionsWithEarlyAccess: vi.fn(),
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/services/subscriptions.service', () => ({ getHighestTierSubscription: vi.fn() }));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({

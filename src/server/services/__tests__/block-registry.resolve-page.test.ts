@@ -16,49 +16,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * granted-scope computation).
  */
 
-const { mockDbRead, mockDbWrite, mockRedis, mockSysRedis } = vi.hoisted(() => {
-  const dbRead = {
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    appBlock: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-    },
-  };
-  const dbWrite = {
-    appBlock: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-    },
-  };
-  const redis = {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  };
-  const sysRedis = { sMembers: vi.fn(async () => []) };
-  return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockRedis: redis, mockSysRedis: sysRedis };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'r', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
-
 import { BlockRegistry } from '~/server/services/block-registry.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.scanIterator.mockImplementation(async function* () {});
 
 /** A valid approved page AppBlock row as Prisma would return it from the
  *  resolvePageBlockBySlug select (id/blockId/appId/manifest/trustTier). */
-function pageRow(opts: {
-  manifest: Record<string, unknown>;
-  trustTier: string;
-}) {
+function pageRow(opts: { manifest: Record<string, unknown>; trustTier: string }) {
   return {
     id: 'apb_page',
     blockId: 'hello-page',
@@ -165,7 +136,10 @@ describe('BlockRegistry.resolvePageBlockBySlug — sandbox + scopes', () => {
 
   it('returns null for a non-page manifest (no page descriptor)', async () => {
     mockDbRead.appBlock.findFirst.mockResolvedValue(
-      pageRow({ manifest: { name: 'x', iframe: { src: 'https://x.civit.ai' } }, trustTier: 'verified' })
+      pageRow({
+        manifest: { name: 'x', iframe: { src: 'https://x.civit.ai' } },
+        trustTier: 'verified',
+      })
     );
     const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
     expect(res).toBeNull();

@@ -14,7 +14,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 const { mockIsAppBlocksEnabled, mockFindUnique, mockUser, mockS3Send } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn<() => Promise<boolean>>(async () => true),
   mockFindUnique: vi.fn<(...a: unknown[]) => Promise<unknown>>(async () => null),
-  mockUser: { value: { id: 1, isModerator: true } as { id: number; isModerator?: boolean } | undefined },
+  mockUser: {
+    value: { id: 1, isModerator: true } as { id: number; isModerator?: boolean } | undefined,
+  },
   // Typed param so `.mock.calls[0][0]` is a real (non-empty) tuple element.
   // Receives the GetObjectCommand instance (its input is on `.input`).
   mockS3Send: vi.fn(async (_cmd: { input?: { Key?: string } }) => ({
@@ -22,7 +24,9 @@ const { mockIsAppBlocksEnabled, mockFindUnique, mockUser, mockS3Send } = vi.hois
   })),
 }));
 
-vi.mock('~/server/services/app-blocks-flag', () => ({ isAppBlocksEnabled: mockIsAppBlocksEnabled }));
+vi.mock('~/server/services/app-blocks-flag', () => ({
+  isAppBlocksEnabled: mockIsAppBlocksEnabled,
+}));
 vi.mock('~/server/db/client', () => ({ dbRead: { appBlock: { findUnique: mockFindUnique } } }));
 // Faithful MixedAuthEndpoint reproduction: GET-only, passes the (maybe-undefined)
 // user straight to the handler — the route's own logic does ALL the gating.
@@ -44,14 +48,18 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 // GetObjectCommand is a real class (constructable) — `new vi.fn()` on an
 // arrow-impl spy doesn't reliably return the arg, which made the route's S3 leg
 // throw → 404. A class instance carries the input on `.input` (matches the SDK).
-vi.mock('@aws-sdk/client-s3', () => ({
-  GetObjectCommand: class {
+// `default` mirrors the named export: pre-bundling wraps this CJS dep for interop, so the
+// consumer resolves through `default` and a factory without one yields undefined. It fails by
+// collecting almost no tests rather than by going red, so the check is the collected count.
+vi.mock('@aws-sdk/client-s3', () => {
+  const GetObjectCommand = class {
     input: unknown;
     constructor(input: unknown) {
       this.input = input;
     }
-  },
-}));
+  };
+  return { GetObjectCommand, default: { GetObjectCommand } };
+});
 vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',
   getBundleS3Client: () => ({ send: mockS3Send }),

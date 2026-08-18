@@ -11,6 +11,42 @@ import {
 
 export type StickerInteraction = 'move' | 'resize' | 'rotate';
 
+/**
+ * What a draft dragged out of the shop still has to be paid for before it can be
+ * placed. Absent on a sticker the placer already owns, which is every draft that
+ * came out of the tray.
+ */
+export type DraftPurchase = {
+  /**
+   * Buying the sticker itself. Set on a draft dragged out of the shop; absent
+   * once it is owned, because a sticker cannot be sold to the same person twice.
+   */
+  pack?: {
+    shopItemId: number;
+    unitAmount: number;
+    acceptsBlue: boolean;
+    /** How many uses it comes with; null is unlimited, undefined not known here. */
+    uses?: number | null;
+    /** Attributes the sale to the storefront it came from, as the shop grids do. */
+    viaShopUserId?: number;
+  };
+  /**
+   * Price of one more use, for a sticker that is owned and spent. Absent when
+   * the sticker sells no top-ups at all, which is a real state — a sticker sold
+   * before per-use pricing existed has no price to charge.
+   */
+  perUse?: number;
+  /**
+   * Whether this is a refill of a sticker already owned rather than a first
+   * purchase. Decides what the button calls itself, which `pack` alone cannot:
+   * a sticker that sells no uses at all is refillable only by the pack, and
+   * would otherwise offer to sell itself to someone who owns it.
+   */
+  refill?: boolean;
+  /** Who made the sticker, for the "this goes to" line on the purchase button. */
+  creatorUsername?: string | null;
+};
+
 export type StickerDraft = {
   /**
    * Client-side identity. Not the cosmetic: the same sticker can be laid down
@@ -27,6 +63,8 @@ export type StickerDraft = {
   rotation: number;
   flip: boolean;
   opacity: number;
+  /** Set while this sticker is still unbought. Cleared by `markPurchased`. */
+  purchase?: DraftPurchase;
 };
 
 /**
@@ -99,7 +137,25 @@ interface StickerPlacementDraftStore {
   select: (id: string) => void;
   setSurface: (element: HTMLElement | null) => void;
   setTray: (element: HTMLElement | null) => void;
-  begin: (cosmeticId: number, at?: { x: number; y: number }, maxScale?: number) => void;
+  begin: (
+    cosmeticId: number,
+    at?: { x: number; y: number },
+    maxScale?: number,
+    purchase?: DraftPurchase
+  ) => void;
+  /**
+   * The sticker has been paid for.
+   *
+   * Without a draft id this clears the gate from EVERY draft of that sticker,
+   * which is right for a pack: it grants the sticker itself, and a second copy
+   * still asking to be bought would be selling it twice.
+   *
+   * With one, only that draft is freed. That is the single-use purchase: it buys
+   * exactly one placement, and freeing its siblings would put a Place button on
+   * stickers the server refuses at `assertHasUse` — a button that says paid on
+   * something that was not.
+   */
+  markPurchased: (cosmeticId: number, draftId?: string) => void;
   setInteraction: (interaction: StickerInteraction | null, pointerId?: number) => void;
   /**
    * Moves one draft by id rather than "the current one". A gesture outlives the
@@ -220,11 +276,21 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   setSurface: (element) => set({ surface: element }),
   setTray: (element) => set({ tray: element }),
 
-  begin: (cosmeticId, at, maxScale) =>
+  markPurchased: (cosmeticId, draftId) =>
+    set((state) => ({
+      drafts: state.drafts.map((draft) =>
+        draft.cosmeticId === cosmeticId && draft.purchase && (!draftId || draft.id === draftId)
+          ? { ...draft, purchase: undefined }
+          : draft
+      ),
+    })),
+
+  begin: (cosmeticId, at, maxScale, purchase) =>
     set((state) => {
       if (state.targetImageId == null) return state;
 
       const draft: StickerDraft = {
+        ...(purchase ? { purchase } : {}),
         id: nextDraftId(),
         imageId: state.targetImageId,
         cosmeticId,

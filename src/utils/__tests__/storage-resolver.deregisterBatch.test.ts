@@ -58,7 +58,9 @@ describe('deregisterFileLocationsBatch', () => {
     expect(url).toBe('http://storage-resolver.internal/deregister');
     expect((init as RequestInit).method).toBe('POST');
     expect((init as any).headers.Authorization).toBe('Bearer test-token');
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ modelVersionIds: [1, 2, 3] });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      modelVersionIds: [1, 2, 3],
+    });
     // Per-chunk unconditional abort so a hung resolver can't stall bulk cleanup.
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
@@ -158,5 +160,22 @@ describe('deregisterFileLocationsBatch', () => {
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'deregister-file-locations-error' })
     );
+  });
+
+  it('must NOT tag its events with key=file — that discriminator belongs to the per-file path', async () => {
+    // 🔴 THE OTHER HALF OF THE SEAM. `key: 'file'` only distinguishes the
+    // per-file path from THIS one; its meaning is a RELATIONSHIP between two
+    // functions, and asserting it on one side alone leaves the discriminator
+    // worthless if this side ever grows the same tag. Verified: adding
+    // key: 'file' to all three batch sites passed the whole suite 34/34.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('boom'),
+    });
+
+    await deregisterFileLocationsBatch([1, 2, 3]);
+
+    expect(logToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ key: 'file' }));
   });
 });

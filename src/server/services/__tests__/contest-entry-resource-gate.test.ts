@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Task 11: validate the required-resource rule (Challenge.modelVersionIds) BEFORE the
@@ -19,50 +20,14 @@ const USER_ID = 5;
 const IMAGE_ID = 9001;
 const CREATOR_ID = 4242;
 
-const {
-  mockChargeEntryFees,
-  mockChallengeFindFirst,
-  mockImageResourceNewFindMany,
-  mockDbRead,
-  mockAmIBlockedByUser,
-} = vi.hoisted(() => {
-  const mockChargeEntryFees = vi.fn();
-  const mockChallengeFindFirst = vi.fn();
-  const mockImageResourceNewFindMany = vi.fn();
-  const mockAmIBlockedByUser = vi.fn(async () => false);
-  const mockDbRead = {
-    user: { findUnique: vi.fn() },
-    challenge: { findFirst: mockChallengeFindFirst },
-    collectionItem: { count: vi.fn(), findFirst: vi.fn() },
-    collection: { findMany: vi.fn() },
-    image: { findMany: vi.fn() },
-    article: { findMany: vi.fn() },
-    model: { findMany: vi.fn() },
-    post: { findMany: vi.fn() },
-    imageResourceNew: { findMany: mockImageResourceNewFindMany },
-    $queryRaw: vi.fn(),
-  };
-  return {
-    mockChargeEntryFees,
-    mockChallengeFindFirst,
-    mockImageResourceNewFindMany,
-    mockDbRead,
-    mockAmIBlockedByUser,
-  };
-});
+const { mockChargeEntryFees, mockAmIBlockedByUser } = vi.hoisted(() => ({
+  mockChargeEntryFees: vi.fn(),
+  mockAmIBlockedByUser: vi.fn(async () => false),
+}));
 
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { get: vi.fn(), set: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: { get: vi.fn(), set: vi.fn() },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-    withSysReadDeadline: vi.fn((p) => p),
-  };
-});
+const mockDbRead = dbMock.dbRead;
+const mockChallengeFindFirst = mockDbRead.challenge.findFirst;
+const mockImageResourceNewFindMany = mockDbRead.imageResourceNew.findMany;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
@@ -73,7 +38,6 @@ vi.mock('@civitai/db', () => ({
   loadDbEnv: vi.fn(() => ({})),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),

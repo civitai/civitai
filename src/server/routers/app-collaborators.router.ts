@@ -187,9 +187,21 @@ export const appCollaboratorsRouter = router({
     }),
 
   /**
-   * COLLABORATOR: opt in/out of the PUBLIC BYLINE. Applies immediately (no mod
-   * review) — safe by construction because the flag lives on the collaborator row,
-   * outside the shadow-revision copy sets. See the service.
+   * Set the PUBLIC BYLINE flag on a seat. Applies immediately (no mod review) — safe by
+   * construction because the flag lives on the collaborator row, outside the
+   * shadow-revision copy sets. See the service.
+   *
+   * 🔴 TWO PATHS, chosen by whether `targetUserId` is supplied:
+   *   - omitted → SELF-SERVICE, the shape this proc shipped with, unchanged;
+   *   - supplied → the caller must be the listing OWNER (resolved canonically) or a
+   *     MODERATOR, else FORBIDDEN.
+   *
+   * The owner path is a deliberate product decision — an owner may remove a
+   * collaborator's public credit while leaving the seat intact. It is enforced in the
+   * SERVICE, not here, so a different caller cannot bypass it. Last writer wins; the
+   * service header says why there is no precedence rule.
+   *
+   * 🔴 `isModerator` is read from the SESSION, never from the wire.
    */
   setDisplayed: protectedProcedure
     .use(enforceAppBlocksAuthorFlag)
@@ -202,7 +214,9 @@ export const appCollaboratorsRouter = router({
         setCollaboratorDisplayed({
           appListingId: input.appListingId,
           userId: ctx.user!.id,
+          targetUserId: input.targetUserId,
           displayed: input.displayed,
+          isModerator: !!ctx.user?.isModerator,
         })
       );
     }),
@@ -215,6 +229,30 @@ export const appCollaboratorsRouter = router({
         '~/server/services/blocks/app-collaborator.service'
       );
       return run(() => listMyPendingInvites(ctx.user!.id));
+    }),
+
+  /**
+   * The caller's own live ownership OFFERS (the same inbox surface).
+   *
+   * 🔴 KEYED ON THE RECIPIENT, which is what makes the transfer feature reachable at
+   * all. `getPendingTransfer` is keyed per LISTING, so it can only answer a question the
+   * recipient is unable to ask: a pending offer confers no role, so they cannot resolve
+   * the listing and, in the ordinary case, do not know it exists.
+   *
+   * Gated like its sibling `listMyPendingInvites` — `protectedProcedure +
+   * enforceAppBlocksAuthorFlag`, NOT `appDeveloperProcedure`. Being offered your FIRST
+   * app is precisely the case where "do you already own an app" is the wrong gate.
+   *
+   * Scoped to `ctx.user.id` in the SERVICE signature, so there is no id on the wire that
+   * a caller could point at somebody else's inbox.
+   */
+  listMyPendingTransfers: protectedProcedure
+    .use(enforceAppBlocksAuthorFlag)
+    .query(async ({ ctx }) => {
+      const { listMyPendingTransfers } = await import(
+        '~/server/services/blocks/app-ownership-transfer.service'
+      );
+      return run(() => listMyPendingTransfers(ctx.user!.id));
     }),
 
   // -------------------------------------------------------------------------

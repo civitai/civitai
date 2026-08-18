@@ -4,9 +4,13 @@
  * Handles xAI Grok Imagine workflows for both image and video generation.
  * Image workflows use imageGen step type, video workflows use videoGen step type.
  *
- * Image operations (version-less on the API — v1.5 is video-only):
+ * Image operations, v1.0:
  * - createImage: Text to image (GrokCreateImageGenInput)
  * - editImage: Edit with source images (GrokEditImageGenInput)
+ *
+ * Image operations, v2.0 (Grok Imagine Image 2.0 — image-only version):
+ * - createImage: Text to image (GrokV2CreateImageGenInput)
+ * - editImage: Edit with 1-3 source images (GrokV2EditImageGenInput)
  *
  * Video operations, v1.0:
  * - text-to-video: Text to video (GrokTextToVideoInput)
@@ -22,6 +26,8 @@
 import type {
   GrokCreateImageGenInput,
   GrokEditImageGenInput,
+  GrokV2CreateImageGenInput,
+  GrokV2EditImageGenInput,
   GrokTextToVideoInput,
   GrokImageToVideoInput,
   GrokEditVideoInput,
@@ -37,6 +43,7 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation/genera
 import {
   grokVideoAspectRatiosByResolution,
   isGrokV15,
+  isGrokV2,
 } from '~/shared/data-graph/generation/grok-graph';
 import { defineHandler } from './handler-factory';
 
@@ -46,7 +53,7 @@ type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 
 /**
  * Creates imageGen input for Grok image workflows.
- * Handles both createImage and editImage operations.
+ * Handles both createImage and editImage operations, on v1.0 and v2.0.
  */
 export const createGrokImageInput = defineHandler<GrokCtx, [ImageGenStepTemplate]>((data) => {
   const hasImages = !!data.images?.length;
@@ -58,12 +65,50 @@ export const createGrokImageInput = defineHandler<GrokCtx, [ImageGenStepTemplate
     aspectRatio: data.aspectRatio?.value,
   };
 
+  if (isGrokV2(data.model?.id)) {
+    const v2Base = {
+      ...baseData,
+      version: 'v2.0' as const,
+      resolution:
+        'resolution' in data
+          ? (data.resolution as GrokV2CreateImageGenInput['resolution'])
+          : undefined,
+      quality:
+        'quality' in data ? (data.quality as GrokV2CreateImageGenInput['quality']) : undefined,
+    };
+
+    if (hasImages) {
+      return [
+        {
+          $type: 'imageGen',
+          input: removeEmpty({
+            ...v2Base,
+            operation: 'editImage',
+            images: data.images!.map((x) => x.url),
+          }) as GrokV2EditImageGenInput,
+        },
+      ];
+    }
+
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          ...v2Base,
+          operation: 'createImage',
+        }) as GrokV2CreateImageGenInput,
+      },
+    ];
+  }
+
+  const v1Base = { ...baseData, version: 'v1.0' as const };
+
   if (hasImages) {
     return [
       {
         $type: 'imageGen',
         input: removeEmpty({
-          ...baseData,
+          ...v1Base,
           operation: 'editImage',
           images: data.images!.map((x) => x.url),
         }) as GrokEditImageGenInput,
@@ -75,7 +120,7 @@ export const createGrokImageInput = defineHandler<GrokCtx, [ImageGenStepTemplate
     {
       $type: 'imageGen',
       input: removeEmpty({
-        ...baseData,
+        ...v1Base,
         operation: 'createImage',
       }) as GrokCreateImageGenInput,
     },

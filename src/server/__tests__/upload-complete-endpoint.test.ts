@@ -51,10 +51,6 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => ({ user: { id: 42, bannedAt: null } })),
 }));
 
-// The real s3-utils imports ~/server/db/client (dbWrite); stub it so loading the
-// real module for `classifyS3MultipartError` doesn't spin up a real Prisma engine.
-vi.mock('~/server/db/client', () => ({ dbWrite: {}, dbRead: {} }));
-
 // NOTE: lives under src/server/__tests__ (not beside the handler) — Next.js scans
 // every .ts under src/pages/api as an API route and its route-type validator
 // rejects a test module.
@@ -65,6 +61,7 @@ import { logToAxiom } from '~/server/logging/client';
 // `headObject` itself is unit-tested in src/utils/__tests__/s3-utils.test.ts, including
 // the tri-state mapping and the client-cannot-be-constructed case.
 import { env } from '~/env/server';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 function makeRes() {
   const headers: Record<string, string> = {};

@@ -1,15 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
-const { mockDbRead, mockGetHighestTierSubscription } = vi.hoisted(() => ({
-  mockDbRead: {
-    user: { findUnique: vi.fn() },
-    userStrike: { count: vi.fn() },
-    challenge: { count: vi.fn() },
-  },
+const { mockGetHighestTierSubscription } = vi.hoisted(() => ({
   mockGetHighestTierSubscription: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: mockGetHighestTierSubscription,
 }));

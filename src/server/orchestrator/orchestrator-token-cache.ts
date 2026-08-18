@@ -13,12 +13,6 @@
  *       yet),
  *   (c) hourly TTL rotation when the cached hash field has expired.
  *
- * (Cookie-mode flow exists in the source but is currently dead code:
- * `TOKEN_STORE` at get-orchestrator-token.ts is statically `'redis'`
- * because of an unconditional ternary, so the cookie else-branch is
- * unreachable at runtime. If that gets flipped, the cookie-absent path
- * also funnels through this cache.)
- *
  * So the cache runs on healthy steady-state traffic, NOT only during
  * outage windows. The primary motivation below remains amplification
  * protection during a sysRedis outage (that's the worst-case load), but

@@ -36,13 +36,17 @@
 - **Pickers** — `BaseModelInput` / `WorkflowInput` read one per-item state;
   `FormFooter` resolves the selected ecosystem's state (members-only reuses the
   existing upsell + CTA).
-- **Mod UI** — a "Gate rules" rule-card editor on `/moderator/generation-config`.
-  The old ecosystem-config form is gone; only an `experimentalEcosystems` alert
-  control (not a gate) remains alongside it.
+- **Mod UI** — a "Gate rules" rule-card editor on `/moderator/generation-config`,
+  the only section on the page besides the two status cards.
+- **`experimental` presentation** — a third presentation that gates nothing and
+  only annotates; see "`experimental` — a rule that gates nothing" below. It
+  replaced the `experimentalEcosystems` list, and with it the whole
+  `generation:ecosystem-config` store (schema, service, mod endpoints and form
+  are gone; `resolveTestingAccess` is what's left of the read).
 
 **Kept (not folded into rules):** the self-hosted toggle (`selfHostedMode` +
-`SELF_HOSTED_ECOSYSTEM_KEYS`), the `generation-testing` Flipt flag (resolves the
-`testers` tier), and `experimentalEcosystems` (an alert flag).
+`SELF_HOSTED_ECOSYSTEM_KEYS`) and the `generation-testing` Flipt flag (resolves
+the `testers` tier).
 
 ## Why
 
@@ -76,8 +80,10 @@ type GatePresentation =
   | 'disabled' // STILL SHOWN — greyed, not selectable, with a message saying it's
   //              off right now ("currently unavailable" / "members only"). The
   //              feature visibly exists. This is the default for most gating.
-  | 'hidden'; //  Removed from the picker. Use only when it shouldn't be
-//              advertised at all — because hidden reads as "the feature is gone".
+  | 'hidden' //   Removed from the picker. Use only when it shouldn't be
+  //              advertised at all — because hidden reads as "the feature is gone".
+  | 'experimental'; // NOT A GATE — fully usable, just annotated with the
+//              "Experimental Build" alert. See below.
 
 // A rule is ONE gate config (who + how + message) with any number of targets
 // attached to it — not one row per item.
@@ -151,9 +157,29 @@ Example rules (each one gate, many targets):
   ecosystems: ['SecretX'], workflows: [], modelVersionIds: [] }
 ```
 
-> **`experimental` is not a gate** — it doesn't hide or disable, it just shows an
-> "experimental build" banner on a usable item. It stays its own small concern
-> (a separate annotation list), not a `GateRule`, so it doesn't muddy hide/disable.
+### `experimental` — a rule that gates nothing
+
+`presentation: 'experimental'` rides on the same rule card (so a mod can flag an
+ecosystem, a workflow or a set of version IDs in one place) but is **not** a
+gate: the target stays visible and selectable, and the only effect is the
+"Experimental Build" alert in the generator form.
+
+It is therefore kept **out of the state machine entirely** — `rulesToStates`
+skips these rules, so they can never reach a picker's hidden/disabled set, the
+node refines, or `canGenerate`. The form reads them separately with
+`experimentalTargets(rules)`. A rule's `message` replaces the alert's body copy.
+
+**`availableTo` does not apply.** It names who keeps _access_, and an
+experimental rule grants none — so there is nobody to exempt, and
+`applicableRulesFor` passes these rules through for every user. The mod UI hides
+the field for this presentation and pins the stored value to `nobody`. (It was
+briefly the other way: the audience filter ran, which made the field read as
+"who does _not_ see the warning" — an inversion nobody would guess from the
+label.)
+
+The static `experimental` base-model flags (`isEcosystemExperimental`) still
+apply and are unioned in. The Redis-backed `experimentalEcosystems` list this
+replaced is gone — see "Migration".
 
 ## Resolved state — three states, per item
 
@@ -228,20 +254,36 @@ node `meta`. `BaseModelInput`'s badge + the `FormFooter` alert use the per-item
 A **list of rule cards** on `/moderator/generation-config`. Each card edits one
 `GateRule`:
 
-- **Available to** dropdown (`moderators` / `testers` / `members` / `nobody`) +
-  **presentation** dropdown (disabled / hidden).
-- **Message** field — optional extra copy on top of the standard badge/alert;
-  for `members` + `disabled` the card notes the upsell CTA is auto-added.
+- **One `Rule` dropdown** of whole outcomes, grouped by presentation — "Hidden
+  from everyone except moderators", "Members only — greyed out with a
+  Become-a-member CTA", "Experimental warning — usable, nothing blocked", and so
+  on. `(presentation, availableTo)` stay orthogonal in storage; the select
+  encodes the pair as `presentation:availableTo` and splits it on change.
+  Two dropdowns each stated half of an inverted condition, which the reader then
+  had to compose — the flattened list says the outcome outright. `experimental`
+  is one entry, not four, because it has no exempt tier to vary.
+- A **header badge + target count** (`3 ecosystems · 1 workflow`) so a long list
+  is scannable and an empty rule is visible as one.
+- **Message** field — optional extra copy on top of the standard badge/alert
+  (replaces the body copy for `experimental`).
 - Three target inputs — **ecosystems**, **workflows**, **model version IDs**.
 - Add rule / remove rule.
+
+> Nine options today. If a fourth presentation ever lands, revisit — the flat
+> list grows as presentations × tiers.
 
 ## Migration (deploy cutover)
 
 There was **no auto-migration**. The legacy `generation:ecosystem-config` gating
 lists were removed in code; production gating is recreated as **rules by hand**
 (updating `generation:gate-rules` via the mod UI) before/at deploy, so it's a
-clean switch. `experimentalEcosystems` (alert flag) stays in the ecosystem-config
-store.
+clean switch.
+
+`experimentalEcosystems` — the last field in that store — went the same way when
+the `experimental` presentation landed: whatever ecosystems were flagged there
+must be **re-entered as an `experimental` rule** (available to `nobody`), or they
+silently stop warning. The `generation:ecosystem-config` hash field is now dead
+and can be deleted.
 
 ## Folding in the self-hosted toggle (still deferred)
 

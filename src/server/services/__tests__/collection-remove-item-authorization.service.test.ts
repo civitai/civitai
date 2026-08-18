@@ -1,21 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AUTO_FEATURE_NOTE_PREFIX } from '~/server/common/auto-feature';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // `permissions.writeReview` is granted to every authenticated user on a `write: Review`
 // collection (and `permissions.write` likewise on `write: Public`), independent of ownership.
 // Removal must not accept those as authorization — a write grant lets you ADD an item, not
 // delete somebody else's.
-
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn(), user: { findFirst: vi.fn() } },
-  mockDbWrite: {
-    $queryRaw: vi.fn(),
-    collectionItem: { updateMany: vi.fn(), deleteMany: vi.fn() },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
 const { removeCollectionItem } = await import('~/server/services/collection.service');
 
@@ -140,6 +133,33 @@ describe('removeCollectionItem authorization', () => {
     expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: [ITEM_ROW_ID] } },
     });
+  });
+
+  // The save modal offers Remove on the strength of "you added this", so refusing it here left a
+  // Contributor with a button that 401s.
+  it('allows whoever added the row to remove it', async () => {
+    arrangeCollection({
+      write: 'Review',
+      item: { id: ITEM_ROW_ID, addedById: OUTSIDER_ID, note: null },
+    });
+
+    await expect(remove({ userId: OUTSIDER_ID })).resolves.toBeTruthy();
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [ITEM_ROW_ID] } },
+    });
+  });
+
+  // Removal takes every row for the entity, so holding one of them is not authorization over the
+  // rest — otherwise adding a duplicate would be enough to delete someone else's entry.
+  it('rejects a submitter when another row for the same entity is not theirs', async () => {
+    arrangeCollection({ write: 'Review' });
+    mockDbWrite.$queryRaw.mockResolvedValue([
+      { id: ITEM_ROW_ID, addedById: OUTSIDER_ID, note: null },
+      { id: ITEM_ROW_ID + 1, addedById: COLLECTION_OWNER_ID, note: null },
+    ]);
+
+    await expect(remove({ userId: OUTSIDER_ID })).rejects.toThrow(/permission/i);
+    expect(mockDbWrite.collectionItem.deleteMany).not.toHaveBeenCalled();
   });
 
   it('allows the collection owner to remove any entry', async () => {

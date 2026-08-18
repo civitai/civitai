@@ -31,7 +31,6 @@ import {
   bulkSaveItems,
   checkUserOwnsCollectionAndItem,
   deleteCollectionById,
-  enableCollectionYoutubeSupport,
   getAllCollections,
   getCollectionById,
   getCollectionCoverImages,
@@ -53,6 +52,7 @@ import {
   updateCollectionItemsStatus,
   upsertCollection,
 } from '~/server/services/collection.service';
+import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
 import { setModelShowcaseCollection } from '~/server/services/model.service';
@@ -461,8 +461,8 @@ export const followHandler = ({
 
   try {
     return addContributorToCollection({
-      targetUserId: input.userId || user?.id,
-      userId: user?.id,
+      targetUserId: user.id,
+      userId: user.id,
       collectionId,
     });
   } catch (error) {
@@ -482,8 +482,8 @@ export const unfollowHandler = ({
 
   try {
     return removeContributorFromCollection({
-      targetUserId: input.userId || user?.id,
-      userId: user?.id,
+      targetUserId: user.id,
+      userId: user.id,
       collectionId,
     });
   } catch (error) {

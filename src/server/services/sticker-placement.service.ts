@@ -1,3 +1,4 @@
+import { toQueueImage } from '~/server/utils/queue-image';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -5,7 +6,7 @@ import {
   settlePlacement,
   MAX_LEG_ATTEMPTS,
 } from '~/server/services/placement-escrow.service';
-import { recordPlacementTip } from '~/server/services/placement-metrics.service';
+import { createFreePlacement } from '~/server/services/free-placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
@@ -15,10 +16,19 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { PlacementStatus } from '~/shared/utils/placement';
+import {
+  PLACEMENT_QUEUE_PAGE_SIZE,
+  PLACEMENT_SURFACES,
+  encodePlacementQueueCursor,
+  parsePlacementQueueCursor,
+  placementQueueKeyset,
+} from '~/shared/utils/placement';
 import type {
   PlacementSettlementState,
   StickerPlacementData,
+  StickerPlacementInput,
 } from '~/shared/utils/sticker-placement';
 import {
   isStickerPlacementData,
@@ -38,8 +48,11 @@ const TARGET_TYPE = 'image' as const;
  * A cap rather than a rate limit: the cost is already real Buzz, so this is not
  * about spam economics but about a review queue an owner can actually work
  * through. Their remedy for the rest is block, which declines all of them.
+ *
+ * In the surface table because the free path enforces it too, and three copies
+ * of one number is how they start disagreeing.
  */
-const MAX_PENDING_PER_OWNER = 10;
+const MAX_PENDING_PER_OWNER = PLACEMENT_SURFACES.sticker.maxPendingPerOwner;
 
 /**
  * The note on a placement, if this viewer may read it.
@@ -103,11 +116,29 @@ async function loadPlaceableSticker({
 }
 
 export type CreateStickerPlacement = {
+  /**
+   * 🔴 From the session, never from the request body. Every free-tier rule —
+   * the daily allowance, never-twice-here, the block and suspension checks — is
+   * a statement *about* this id, so none of them notice when it is the wrong
+   * one: a placer read off the payload would spend someone else's allowance and
+   * place under their name with nothing raising.
+   */
   placerId: number;
   imageId: number;
-  data: Omit<StickerPlacementData, 'cosmeticId'> & { cosmeticId: number };
-  /** Moderators may exceed a creator's size limit. Justin's call. */
-  isModerator?: boolean;
+  data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
+  /**
+   * Which of the two offers the placer took. A choice, not a claim: it selects
+   * the path, and the path re-decides every rule for itself under a lock. The
+   * number the client rendered is stale by the time it is read, so a `true` here
+   * is a request for a free slot rather than an assertion that one is free.
+   */
+  free?: boolean;
+  /**
+   * The domain's currency, decided at the router from the request's own feature
+   * flags rather than anything the client sends — a client-supplied currency
+   * would let a request on one domain spend the other's Buzz.
+   */
+  spendType: BuzzSpendType;
 };
 
 /**
@@ -152,7 +183,8 @@ export async function createStickerPlacement({
   placerId,
   imageId,
   data,
-  isModerator = false,
+  free = false,
+  spendType,
 }: CreateStickerPlacement) {
   const space = await resolvePlacementSpaceFor({
     surface: SURFACE,
@@ -170,9 +202,6 @@ export async function createStickerPlacement({
   if (space.ownerId === placerId)
     throw throwBadRequestError('placement: you cannot place a sticker on your own content');
 
-  if (space.price == null)
-    throw throwBadRequestError('placement: this creator has not set a price yet');
-
   // The creator's size limit, refused rather than clamped. Quietly shrinking a
   // sticker someone just paid for is the same shape as v1's recurring defect: a
   // rule applied as a filter where a refusal was needed. The editor also caps
@@ -183,12 +212,27 @@ export async function createStickerPlacement({
   // they were accepted at, and a creator lowering their limit is not a licence
   // to take back something already paid for.
   const maxScale = stickerMaxScale(space.settings);
-  if (!isModerator && data.scale > maxScale)
+  if (data.scale > maxScale)
     throw throwBadRequestError(
       `placement: this creator allows stickers up to ${Math.round(
         maxScale * 100
       )}% of the image width`
     );
+
+  // Everything below is the paid path: the escrow, the price, and the two
+  // refusals `createFreePlacement` makes for itself under its lock. Branching
+  // here rather than threading `free` through them keeps one creation route per
+  // offer — the alternative is a paid path with free-shaped holes in it, which
+  // is the guard-versus-filter shape this feature has already shipped five
+  // times.
+  if (free) return placeFreeSticker({ placerId, imageId, data, space });
+
+  // Below the branch rather than above it, and not a `!free` condition: a
+  // creator can open free capacity on a space they have never priced, so an
+  // unset price is only a refusal for the offer that needs one. Placed here it
+  // also narrows the type for the escrow, which a conditional guard cannot.
+  if (space.price == null)
+    throw throwBadRequestError('placement: this creator has not set a price yet');
 
   await assertCanPlace({ ownerId: space.ownerId, placerId });
 
@@ -235,6 +279,7 @@ export async function createStickerPlacement({
       placerId,
       surface: SURFACE,
       amount: space.price,
+      spendType,
     });
 
     await spendStickerUsesFor({ userId: placerId, counts: new Map([[sticker.id, 1]]) });
@@ -256,21 +301,122 @@ export async function createStickerPlacement({
 
   // `auto` settles immediately, which is what makes the placement live. `review`
   // leaves it pending, visible only to its placer, until the owner acts.
-  if (space.mode === 'auto') {
-    const { settled } = await settlePlacement({
+  if (space.mode === 'auto')
+    await settlePlacement({
       placementId: placement.id,
       action: 'approve',
       actorId: space.ownerId,
     });
-    // Gated on the settle actually claiming the transition, not on reaching this
-    // line: `settlePlacement` returns `settled: false` when something else got
-    // there first, and counting then would add the placement's Buzz to the image
-    // twice for one payment.
-    if (settled)
-      await recordPlacementTip({ surface: SURFACE, imageId, amount: space.price, placerId });
-  }
 
   return { placementId: placement.id, status: space.mode === 'auto' ? 'approved' : 'pending' };
+}
+
+/**
+ * The same placement, taken out of the creator's free capacity instead of paid
+ * for.
+ *
+ * Free of Buzz, not of everything: the use still comes out of the placer's
+ * sticker inventory, so a free placement costs the same thing the paid one does
+ * minus the creator's price.
+ *
+ * **No refusal is re-implemented here.** The mode, the self-placement rule, the
+ * block and suspension checks, the per-owner pending cap, the daily allowance,
+ * never-twice-here and the slot count all live inside `createFreePlacement`,
+ * where the last three are decided under a lock in the transaction that
+ * inserts. Anything this function checked instead would be a second opinion
+ * that is free to disagree with the one that actually holds.
+ *
+ * 🔴 **The approval at the end is not optional.** `createFreePlacement` always
+ * writes `pending` and deliberately never settles — settlement is the money
+ * path and does I/O, and the claim runs inside a transaction. Sticker's
+ * `allowedModes` includes `auto`, so an auto space is reachable here, and
+ * without this the placement sits pending for 48 hours holding a slot while the
+ * placer has been told it is live and the creator watches a review queue they
+ * turned off. It fails silently in both directions, which is why it is the last
+ * thing this function does rather than a caller's job.
+ */
+async function placeFreeSticker({
+  placerId,
+  imageId,
+  data,
+  space,
+}: {
+  placerId: number;
+  imageId: number;
+  data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
+  space: Awaited<ReturnType<typeof resolvePlacementSpaceFor>>;
+}) {
+  const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId });
+  await assertHasUse({ userId: placerId, cosmeticId: sticker.id });
+
+  const comment = commentFrom(data);
+
+  const placement = await createFreePlacement({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: imageId,
+    placerId,
+    // Carried for the same reason the paid path carries it — settlement is
+    // resumable and a sweeper never sees an argument. A free approval plans no
+    // legs, so nothing is ever paid out against it.
+    sellerId: sticker.createdById,
+    data: {
+      cosmeticId: sticker.id,
+      ...normalizeStickerPlacement(data),
+      ...(comment ? { comment } : {}),
+    },
+  });
+
+  try {
+    await spendStickerUsesFor({ userId: placerId, counts: new Map([[sticker.id, 1]]) });
+  } catch (error) {
+    await discardFreePlacement(placement.id);
+    throw error;
+  }
+
+  if (space.mode === 'auto')
+    await settlePlacement({
+      placementId: placement.id,
+      action: 'approve',
+      actorId: space.ownerId,
+    });
+
+  return { placementId: placement.id, status: space.mode === 'auto' ? 'approved' : 'pending' };
+}
+
+/**
+ * The unwind for a free placement, which DELETES the row rather than expiring
+ * it.
+ *
+ * The paid path expires, because the escrow's claim rows are the evidence
+ * recovery depends on and rolling them back destroys it. A free row has none —
+ * no holds, no ledger, nothing carrying a foreign key to it — so there is
+ * nothing to preserve, and expiring it would cost the placer their whole day:
+ * the daily allowance counts on `createdAt` across every status, so an expired
+ * row is indistinguishable from one a creator declined. Being unforgiving about
+ * a decline is deliberate; being unforgiving about our own failed spend is not.
+ *
+ * Scoped to a pending free row so a claim someone has since acted on cannot be
+ * deleted out from under them.
+ */
+async function discardFreePlacement(placementId: number) {
+  try {
+    await dbWrite.placement.deleteMany({
+      where: { id: placementId, free: true, status: 'pending' },
+    });
+  } catch (error) {
+    // The row still carries its deadline, so the expiry sweep releases the
+    // creator's slot within the window either way. What is lost is the placer's
+    // free placement for the day, which is why this is worth a line rather than
+    // a swallow.
+    logToAxiom({
+      name: 'sticker-placement',
+      type: 'error',
+      message: 'could not discard a free placement whose use spend failed',
+      placementId,
+      error: (error as Error).message,
+    }).catch(() => null);
+  }
 }
 
 /**
@@ -302,6 +448,8 @@ export type StickerPlacementView = {
   ownerId: number;
   status: PlacementStatus;
   amount: number;
+  /** Placed against the creator's free capacity, so no Buzz moved for it. */
+  free: boolean;
   data: StickerPlacementData;
   /**
    * When it was placed, which is what decides what covers what — and, on the
@@ -374,6 +522,11 @@ export async function getStickerPlacementDetail({
       createdAt: true,
       resolvedAt: true,
       status: true,
+      // Every surface built on this card says something about money — what a
+      // decline returns, why a removal is locked, what the owner keeps. All of
+      // it is false on a free row, and without this column the client has to
+      // infer it from `amount`, which is a number rather than a fact.
+      free: true,
       data: true,
       ownerId: true,
       placerId: true,
@@ -406,6 +559,7 @@ export async function getStickerPlacementDetail({
     // queue for two days did not change that.
     placedAt: placement.createdAt,
     status: placement.status as PlacementStatus,
+    free: placement.free,
     placer: placement.placer,
     comment: data ? visibleStickerComment(data, isParty) ?? null : null,
     /**
@@ -497,6 +651,11 @@ export async function getStickerPlacements({
       ownerId: true,
       status: true,
       amount: true,
+      // Beside `amount` rather than derived from it. Zero is what a free row
+      // carries, but it is not what makes it free — and the owner controls the
+      // copy that depends on the answer, so an inference is a wrong sentence
+      // about money rather than a missing one.
+      free: true,
       data: true,
       createdAt: true,
     },
@@ -517,6 +676,7 @@ export async function getStickerPlacements({
         ownerId: row.ownerId,
         status: row.status as PlacementStatus,
         amount: row.amount,
+        free: row.free,
         placedAt: row.createdAt,
         // The note's text is deliberately NOT in the listing, which runs for
         // every image on a feed page — only whether there is one, so an overlay
@@ -656,6 +816,7 @@ export async function actOnStickerPlacement({
       amount: true,
       status: true,
       surface: true,
+      free: true,
       data: true,
       createdAt: true,
       resolvedAt: true,
@@ -685,17 +846,6 @@ export async function actOnStickerPlacement({
     actorId: userId,
   });
 
-  // Gated on the settle claiming the transition rather than on the action asked
-  // for: two owners' tabs both pressing approve would otherwise count the same
-  // payment on the image twice.
-  if (action === 'approve' && settled)
-    await recordPlacementTip({
-      surface: SURFACE,
-      imageId: placement.targetId,
-      amount: placement.amount,
-      placerId: placement.placerId,
-    });
-
   return { settled };
 }
 
@@ -703,6 +853,7 @@ type ActionablePlacement = {
   id: number;
   ownerId: number;
   status: string;
+  free: boolean;
   data: unknown;
   createdAt: Date;
   resolvedAt: Date | null;
@@ -748,7 +899,16 @@ async function removeApprovedSticker({
     const removableAt = stickerRemovableAt(placement.resolvedAt ?? placement.createdAt);
     if (removableAt > new Date())
       throw throwBadRequestError(
-        `placement: this sticker can be removed from ${removableAt.toISOString()}. Someone paid to place it, so it stays up for a week after you accept it.`
+        `placement: this sticker can be removed from ${removableAt.toISOString()}. ${
+          placement.free
+            ? // Nobody paid for a free row, so the paid path's reason is simply
+              // untrue here — and a stated reason that is false is worse than a
+              // shorter one, because it is what a support answer repeats. The
+              // week itself is unchanged: Justin's call, 2026-08-17, on the
+              // grounds that accepting is the commitment whatever it cost.
+              'Accepting a sticker is a commitment to keep it up for a week.'
+            : 'Someone paid to place it, so it stays up for a week after you accept it.'
+        }`
       );
   }
 
@@ -829,42 +989,92 @@ export async function setStickerCommentHidden({
  * Carries the image and the placer with it, because the queue's whole job is
  * deciding without leaving — a list of ids would send someone to eleven pages to
  * answer eleven placements.
+ *
+ * Pages, because escrow sits behind every entry: an owner who saw the first 50
+ * and nothing else had the rest expire without ever being offered the choice.
  */
 export async function getPendingStickerPlacements({
   ownerId,
-  limit = 50,
+  limit = PLACEMENT_QUEUE_PAGE_SIZE,
+  cursor,
+  domainLevels,
+  viewerLevels,
 }: {
   ownerId: number;
   limit?: number;
+  cursor?: string | null;
+  /** Levels this domain may serve. Rows above it come back without their asset. */
+  domainLevels: number;
+  /** The viewer own band. Marked on each row, never filtered on. */
+  viewerLevels: number;
 }) {
   const rows = await dbRead.placement.findMany({
-    where: { surface: SURFACE, ownerId, status: 'pending' },
+    where: {
+      surface: SURFACE,
+      ownerId,
+      status: 'pending',
+      ...placementQueueKeyset(parsePlacementQueueCursor(cursor)),
+    },
     select: {
       id: true,
       targetId: true,
       placerId: true,
       amount: true,
+      // The queue's decline confirmation states what a decline costs, which is a
+      // different sentence on a free row — and a bulk selection can hold both
+      // kinds, so the caller needs it per row rather than per page.
+      free: true,
       data: true,
       createdAt: true,
       expiresAt: true,
       placer: { select: { id: true, username: true, image: true } },
     },
-    orderBy: { createdAt: 'asc' },
-    take: limit,
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: limit + 1,
   });
 
+  // Read off the row the page ends on, before the unparseable ones are dropped
+  // below. Taking it from what is returned would hand back a cursor pointing at
+  // an earlier row, and everything between the two would be served twice.
+  const page = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? encodePlacementQueueCursor(page[page.length - 1]) : null;
+
+  // `nsfwLevel` is not decoration here: without it this payload cannot express
+  // the domain ceiling at all, and the queue deliberately sends no browsing
+  // level — so it was an image listing with nothing between an above-ceiling
+  // asset and a SFW client.
   const images = await dbRead.image.findMany({
-    where: { id: { in: rows.map((row) => row.targetId) } },
-    select: { id: true, url: true, name: true, width: true, height: true, type: true },
+    where: { id: { in: page.map((row) => row.targetId) } },
+    select: {
+      id: true,
+      url: true,
+      name: true,
+      width: true,
+      height: true,
+      type: true,
+      metadata: true,
+      nsfwLevel: true,
+    },
   });
   const byId = new Map(images.map((image) => [image.id, image]));
 
-  return rows.flatMap((row) => {
+  const items = page.flatMap((row) => {
     const data = parseStickerPlacementData(row.data);
     if (!data) return [];
 
-    return [{ ...row, data, image: byId.get(row.targetId) ?? null }];
+    return [
+      {
+        ...row,
+        data,
+        // The image is the owner's own upload, so nothing is filtered out here.
+        // Dropping the row would take the approve/decline with it and the escrow
+        // would expire unanswered — withheld, not hidden.
+        image: toQueueImage(byId.get(row.targetId), domainLevels, viewerLevels),
+      },
+    ];
   });
+
+  return { items, nextCursor };
 }
 
 /**

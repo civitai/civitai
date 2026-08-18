@@ -86,7 +86,7 @@ import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { moderatorApp } from '~/server/services/moderator-app.service';
 import { ModeratorClientError } from '@civitai/moderation';
-import requestIp from 'request-ip';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 export const moderateImageHandler = async ({
   input,
@@ -105,7 +105,7 @@ export const moderateImageHandler = async ({
       ids: input.ids,
       reviewAction: input.reviewAction,
       userId: ctx.user.id,
-      ip: requestIp.getClientIp(ctx.req) ?? undefined,
+      ip: resolveClientIpOrNull(ctx.req) ?? undefined,
       userAgent: ctx.req.headers['user-agent'],
     });
   } catch (error) {
@@ -116,6 +116,7 @@ export const moderateImageHandler = async ({
       throw new TRPCError({
         code: error.status === 409 ? 'CONFLICT' : 'BAD_REQUEST',
         message: error.message,
+        cause: error,
       });
     throw throwDbError(error);
   }
@@ -337,7 +338,7 @@ export const getInfiniteImagesHandler = async ({
         }),
       });
     } else {
-      return await getAllImages({
+      const result = await getAllImages({
         ...input,
         user,
         domain: getRequestBoardDomainColor(ctx.req),
@@ -346,6 +347,12 @@ export const getInfiniteImagesHandler = async ({
         include: [...input.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
+      // Name this branch too, like the index path's `source`. Stamped here rather
+      // than inside getAllImages because the index result type is derived from its
+      // return. Without it, a DB page and an index page that returned nothing are
+      // indistinguishable on the wire, and a client asking "is BitDex serving this
+      // feed" cannot tell the flag going off mid-session from the end of the feed.
+      return { ...result, source: 'db' as const };
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;

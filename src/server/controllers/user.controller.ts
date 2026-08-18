@@ -90,12 +90,14 @@ import {
   getUsers,
   getUserContentSettings,
   getUserSettings,
-  setDismissedAlerts,
+  setAlertDismissed,
   getUsersWithSearch,
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
   setUserSetting,
+  patchUserSettings,
+  splitSettingsPatch,
   toggleBan,
   toggleBookmarked,
   toggleContestBan,
@@ -109,6 +111,7 @@ import {
   toggleUserBountyEngagement,
   unequipCosmeticByType,
   updateLeaderboardRank,
+  updateLeaderboardRankForUsers,
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
@@ -553,6 +556,15 @@ export const updateUserHandler = async ({
 
     if (isSettingCosmetics)
       postUpdatePromises.push(equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds }));
+
+    // Without this the new showcase isn't visible until the nightly rebuild, up to 24h later.
+    // The modal sends the field on every user-level save, so this recomputes on cosmetic
+    // saves too. That is deliberate: comparing against the stored value would have to read
+    // it back, and the only cheap read is the replica — an A->B->A save inside the
+    // replication window would then compare equal and skip the recompute it needs. The
+    // upsert is 0.87 ms and idempotent, so the redundant call costs less than that risk.
+    if (input.leaderboardShowcase !== undefined)
+      postUpdatePromises.push(updateLeaderboardRankForUsers({ userIds: id }));
 
     if (userReferralCode || source || landingPage) {
       postUpdatePromises.push(
@@ -1287,11 +1299,16 @@ export const userByReferralCodeHandler = async ({ input }: { input: UserByReferr
 export const userRewardDetailsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     // TODO.Optimization: This will make multiple requests to redis, we could probably do it in one and make this faster. This will get slower as we add more Active rewards.
-    const rewardDetails = await Promise.all(
-      Object.values(rewards)
-        .filter((x) => x.visible)
-        .map((x) => x.getUserRewardDetails(ctx.user.id))
-    );
+    // `visible` is compile-time ("the kind of reward we advertise"); a null here
+    // is the runtime disable. Filtering `visible` first keeps an unadvertised
+    // reward off the config read entirely.
+    const rewardDetails = (
+      await Promise.all(
+        Object.values(rewards)
+          .filter((x) => x.visible)
+          .map((x) => x.getUserRewardDetails(ctx.user.id))
+      )
+    ).filter((x) => x !== null);
 
     // sort by `onDemand` first
     return orderBy(rewardDetails, ['onDemand', 'awardAmount'], ['desc', 'asc']);
@@ -1384,18 +1401,21 @@ export const toggleUserFeatureFlagHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const { features = {}, ...restSettings } = await getUserSettings(id);
+    const { features = {} } = await getUserSettings(id);
 
-    const updatedFeatures: Partial<FeatureAccess> = {
-      ...features,
-      [input.feature]: isDefined(features[input.feature])
-        ? input.value ?? !features[input.feature]
-        : input.value ?? !defaultToggleableFeatures[input.feature],
-    };
+    // The read decides what this ONE flag toggles to; it must not decide what gets
+    // written. Only the toggled flag is sent, merged into `settings.features` by the
+    // database, so a concurrent write to any other setting — or to another flag —
+    // survives instead of being reverted to its read-time value.
+    const value = isDefined(features[input.feature])
+      ? input.value ?? !features[input.feature]
+      : input.value ?? !defaultToggleableFeatures[input.feature];
 
-    await setUserSetting(id, { ...restSettings, features: updatedFeatures });
+    const settings = await patchUserSettings(id, {
+      mergeInto: { features: { [input.feature]: value } },
+    });
 
-    return updatedFeatures;
+    return (settings.features ?? { [input.feature]: value }) as Partial<FeatureAccess>;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1429,20 +1449,42 @@ export const setUserSettingHandler = async ({
       throw throwAuthorizationError('You do not have permission to perform this action');
     }
 
-    const { tourSettings, ...restSettings } = await getUserSettings(id);
-    const newSettings = {
-      ...restSettings,
-      ...restInput,
-      tourSettings: tourSettings ? { ...tourSettings, ...tour } : { ...tour },
-    };
-
-    await setUserSetting(id, newSettings);
+    // Read for COMPARISON only — the two side effects below fire on a change, so they
+    // need the previous value. Nothing read here is written back: the patch carries
+    // only the keys this request is changing, and the database merges them onto
+    // whatever the column holds at write time. Spreading the read snapshot into the
+    // write is what used to revert a concurrent notice dismissal / feature toggle.
+    const restSettings = await getUserSettings(id);
+    const newSettings = await patchUserSettings(id, {
+      ...splitSettingsPatch(restInput),
+      // One level deep, so a tour another request just completed is not dropped.
+      ...(tour && Object.keys(tour).length ? { mergeInto: { tourSettings: tour } } : {}),
+    });
 
     const privacyKeys = ['hideModelBuzz', 'hideModelDownloads', 'hideModelGenerations'] as const;
     const metricPrivacyChanged = privacyKeys.some(
       (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+
+    // `isEarlyAdopter` is the one settings key PROJECTED ONTO THE SESSION (auth hub
+    // `shapeSessionUser` → `SessionUser.isEarlyAdopter` → `buildFliptContext`), and the
+    // hub caches that projection in `session:data2:{id}` for 4h. Without this the toggle
+    // reads as instantly applied client-side (the `getSettings` cache is patched
+    // optimistically) while every Flipt evaluation keeps the OLD value until the cache
+    // expires — the toggle appears to do nothing. `refreshSession` busts that cache and
+    // signals the browser to re-pull. Awaited so the bust lands before the mutation
+    // returns; same reason `updateContentSettings` awaits its own call.
+    //
+    // Gated on a CHANGE, not on key presence, and compared against `restInput` — the keys
+    // THIS request sent — rather than against the stored blob. Mirrors the
+    // `metricPrivacyChanged` comparison directly above. (The payload no longer carries the
+    // whole blob, so a presence check on it would no longer fire on unrelated toggles the
+    // way it did when this handler rewrote everything; the change comparison is still the
+    // right test, because re-sending the value a user already holds is not a change.)
+    const earlyAdopterChanged =
+      'isEarlyAdopter' in restInput && restSettings.isEarlyAdopter !== restInput.isEarlyAdopter;
+    if (earlyAdopterChanged) await refreshSession(id, { caller: 'profile' });
 
     return newSettings;
   } catch (error) {
@@ -1459,13 +1501,9 @@ export const dismissAlertHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const { dismissedAlerts = [] } = await getUserSettings(id);
-
-    const updated = input.dismiss
-      ? [...new Set([...dismissedAlerts, input.alertId])]
-      : dismissedAlerts.filter((a: string) => a !== input.alertId);
-
-    await setDismissedAlerts(id, updated);
+    // One statement, computed over the stored array. The array is never read into
+    // JS, so two dismissals of different notices arriving together both land.
+    await setAlertDismissed(id, input.alertId, input.dismiss);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1480,11 +1518,11 @@ export const restoreAlertHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const { dismissedAlerts = [] } = await getUserSettings(id);
-
-    await setUserSetting(id, {
-      dismissedAlerts: dismissedAlerts.filter((a: string) => a !== input.alertId),
-    });
+    // Same write path as `dismissAlert({ dismiss: false })`. It previously went through
+    // the whole-blob merge instead, which had a second defect: `removeEmpty` drops an
+    // EMPTY array, so restoring the user's last remaining dismissal wrote nothing at
+    // all and the notice stayed hidden.
+    await setAlertDismissed(id, input.alertId, false);
   } catch (error) {
     throw throwDbError(error);
   }

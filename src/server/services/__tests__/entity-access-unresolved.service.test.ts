@@ -43,13 +43,8 @@ vi.mock('@prisma/client', () => {
   );
 });
 
-const dbReadQueryRaw = vi.fn();
-const dbWriteQueryRaw = vi.fn();
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: (...args: unknown[]) => dbReadQueryRaw(...args) },
-  dbWrite: { $queryRaw: (...args: unknown[]) => dbWriteQueryRaw(...args) },
-}));
-
+const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
 const modelVersionAccessFetch = vi.fn();
 const lookupModelVersionAccessMock = vi.fn();
 vi.mock('~/server/redis/caches', () => ({
@@ -63,6 +58,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
 }));
 
 import { hasEntityAccess } from '~/server/services/common.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const PUBLIC_VERSION = {
   entityId: 3156705,

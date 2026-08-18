@@ -22,6 +22,34 @@ export function findClosestAspectRatio<TSource extends AspectRatio, TCompare ext
   return comparisonArr[index];
 }
 
+/**
+ * Width/height for an image-to-video request: the source image's own framing,
+ * snapped to the nearest entry the ecosystem supports.
+ *
+ * The snap is the point. A user's upload can be any size, and passing those
+ * dimensions through means an ecosystem generating video at whatever an arbitrary
+ * image happens to be — outside the resolutions its weights were trained for, and
+ * outside any constraint the backend expects (e.g. a multiple of 32). Nearest
+ * supported entry keeps the framing the user chose without the extremes.
+ *
+ * Falls back to an explicit selection, then to the first supported entry, for the
+ * workflows where the same branch also serves text-to-video.
+ */
+export function resolveImageDimensions<TOption extends { width: number; height: number }>(
+  image: { width?: number; height?: number } | undefined,
+  supported: TOption[],
+  fallback?: { width: number; height: number }
+): { width: number; height: number } {
+  if (image?.width && image?.height) {
+    const match = findClosestAspectRatio({ width: image.width, height: image.height }, supported);
+    if (match) return { width: match.width, height: match.height };
+  }
+  return {
+    width: fallback?.width ?? supported[0].width,
+    height: fallback?.height ?? supported[0].height,
+  };
+}
+
 function getSizeFromAspectRatio(value: AspectRatio) {
   if (typeof value === 'string') {
     const [width, height] = value.split(':').map(Number);

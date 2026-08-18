@@ -1,6 +1,9 @@
 import * as z from 'zod';
 import { CosmeticShopSort } from '~/server/common/enums';
-import { COSMETIC_SHOP_DEFAULT_PAGE_SIZE } from '~/shared/constants/cosmetic-shop.constants';
+import {
+  COSMETIC_SHOP_DEFAULT_PAGE_SIZE,
+  COSMETIC_SIMILARITY_LIMIT,
+} from '~/shared/constants/cosmetic-shop.constants';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { STICKER_MAX_ASPECT_RATIO, STICKER_SIZE } from '~/shared/utils/sticker-token';
 
@@ -678,6 +681,14 @@ export const getCommunityCosmeticsSchema = z.object({
   // Capped quantity and/or a hard end date.
   limited: z.boolean().optional(),
   acceptsBlueBuzz: z.boolean().optional(),
+  // Matched against the listing title and the cosmetic's own name. Empty after
+  // trimming is dropped so a cleared search box doesn't filter on ''.
+  query: z
+    .string()
+    .trim()
+    .max(100)
+    .optional()
+    .transform((value) => (value ? value : undefined)),
 });
 
 export type ReviewCreatorShopItemInput = z.infer<typeof reviewCreatorShopItemSchema>;
@@ -754,3 +765,9 @@ export const updateCreatorShopSettingsSchema = z.object({
   coverImageId: z.number().nullish(),
   sections: z.array(creatorShopSectionSchema).optional(),
 });
+
+export const getSimilarCosmeticsSchema = z.object({
+  cosmeticId: z.number(),
+  limit: z.number().min(1).max(COSMETIC_SIMILARITY_LIMIT).optional(),
+});
+export type GetSimilarCosmeticsInput = z.infer<typeof getSimilarCosmeticsSchema>;

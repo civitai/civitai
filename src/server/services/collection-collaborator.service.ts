@@ -21,6 +21,7 @@ import {
   CollectionInviteStatus,
   CollectionItemStatus,
   CollectionMode,
+  UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -56,6 +57,18 @@ function roleFromPermissions(
   return permissions.includes(CollectionContributorPermission.MANAGE)
     ? CollectionCollaboratorRole.Manager
     : CollectionCollaboratorRole.Contributor;
+}
+
+// What a seat at `role` holds: the role's own bits plus whatever the collection hands out for
+// free. Derived from the collection rather than unioned onto the stored row, so that moving
+// someone DOWN a role actually takes the higher role's bits away while still never revoking a
+// grant they would hold as a plain follower. Unioning with the stored row instead makes a
+// demotion a silent no-op, which is how a Contributor kept reading as a Manager.
+function roleGrantPermissions(
+  role: CollectionCollaboratorRole,
+  collection: { read: CollectionReadConfiguration; write: CollectionWriteConfiguration }
+): CollectionContributorPermission[] {
+  return Array.from(new Set([...ROLE_PERMISSIONS[role], ...freeGrantBaseline(collection)]));
 }
 
 // Both counts must include non-expired pending invites, not just accepted rows — counting
@@ -180,6 +193,24 @@ export async function inviteCollaborator({
     throw throwBadRequestError('The collection owner is already a collaborator.');
   }
 
+  // Both directions, and one message for both: telling the inviter which way the
+  // block runs discloses that the target blocked them, which they are not
+  // otherwise told. Moderators are not exempt — the dropdown hides blocked users
+  // from everyone else, so a moderator reaching this is the case worth refusing.
+  const block = await dbRead.userEngagement.findFirst({
+    where: {
+      type: UserEngagementType.Block,
+      OR: [
+        { userId, targetUserId },
+        { userId: targetUserId, targetUserId: userId },
+      ],
+    },
+    select: { userId: true },
+  });
+  if (block) {
+    throw throwBadRequestError('You cannot invite this user.');
+  }
+
   if (!isModerator) {
     const ownerIsMember = permission.isOwner ? !!isMember : await isMemberUser(collection?.userId);
     if (!ownerIsMember) {
@@ -256,28 +287,20 @@ export async function respondToInvite({
   // after the decline branch so a stale invite can always be cleared off the inbox.
   const collection = await dbRead.collection.findUnique({
     where: { id: invite.collectionId },
-    select: { mode: true },
+    select: { mode: true, read: true, write: true },
   });
-  if (collection?.mode === CollectionMode.Bookmark || collection?.mode === CollectionMode.Contest) {
+  if (!collection) throw throwBadRequestError('Invite not found.');
+  if (collection.mode === CollectionMode.Bookmark || collection.mode === CollectionMode.Contest) {
     throw throwBadRequestError('This collection does not support collaborators.');
   }
 
+  const permissions = roleGrantPermissions(invite.role, collection);
+
   await dbWrite.$transaction(async (tx) => {
-    const existing = await tx.collectionContributor.findUnique({
-      where: { userId_collectionId: { userId, collectionId: invite.collectionId } },
-      select: { permissions: true },
-    });
-
-    // Union onto whatever the row already has — the invitee may already hold
-    // follow-derived permissions, and accepting must not take those away.
-    const merged = Array.from(
-      new Set([...(existing?.permissions ?? []), ...ROLE_PERMISSIONS[invite.role]])
-    );
-
     await tx.collectionContributor.upsert({
       where: { userId_collectionId: { userId, collectionId: invite.collectionId } },
-      create: { userId, collectionId: invite.collectionId, permissions: merged },
-      update: { permissions: merged },
+      create: { userId, collectionId: invite.collectionId, permissions },
+      update: { permissions },
     });
 
     await tx.collectionInvite.update({
@@ -287,6 +310,108 @@ export async function respondToInvite({
   });
 
   return { accepted: true };
+}
+
+export async function updateCollaboratorRole({
+  collectionId,
+  userId,
+  targetUserId,
+  role,
+  isModerator,
+}: {
+  collectionId: number;
+  userId: number;
+  targetUserId: number;
+  role: CollectionCollaboratorRole;
+  isModerator?: boolean;
+}) {
+  const permission = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId,
+    isModerator,
+  });
+
+  if (!permission.manage) {
+    throw throwAuthorizationError('You do not have permission to manage this collection.');
+  }
+
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, userId: true, read: true, write: true, mode: true },
+  });
+
+  if (!collection || !collectionSupportsCollaborators(collection)) {
+    throw throwBadRequestError('This collection does not support collaborators.');
+  }
+  if (collection.userId === targetUserId) {
+    throw throwBadRequestError("The collection owner's role cannot be changed.");
+  }
+
+  const [existing, seat] = await Promise.all([
+    dbWrite.collectionContributor.findUnique({
+      where: { userId_collectionId: { userId: targetUserId, collectionId } },
+      select: { permissions: true },
+    }),
+    dbWrite.collectionInvite.findUnique({
+      where: { collectionId_userId: { collectionId, userId: targetUserId } },
+      select: { id: true, status: true },
+    }),
+  ]);
+
+  // Deliberately the same seat test the roster uses: a follower on a write:Public collection holds
+  // {VIEW, ADD} exactly like a Contributor, and promoting one to Manager off a plain follow would
+  // hand out the collection to anyone who clicked follow.
+  const isCollaborator =
+    !!existing &&
+    isCollaboratorRow({
+      permissions: existing.permissions,
+      freeBaseline: freeGrantBaseline(collection),
+      hasAcceptedSeat: seat?.status === CollectionInviteStatus.Accepted,
+    });
+
+  if (!isCollaborator) {
+    throw throwBadRequestError('That user is not a collaborator on this collection.');
+  }
+
+  const currentRole = roleFromPermissions(existing.permissions);
+  if (currentRole === role) return { role };
+
+  // Owner-only in BOTH directions: granting Manager is the same authority as taking it away, and
+  // `removeCollaborator` already reserves removing a Manager to the owner. Without the second half
+  // a Manager could demote every other Manager and then hold the collection alone.
+  if (
+    !permission.isOwner &&
+    !isModerator &&
+    (role === CollectionCollaboratorRole.Manager ||
+      currentRole === CollectionCollaboratorRole.Manager)
+  ) {
+    throw throwAuthorizationError('Only the collection owner can change a Manager role.');
+  }
+
+  if (role === CollectionCollaboratorRole.Manager) {
+    const [, managers] = await countCollaborators(collectionId, targetUserId);
+    if (managers >= MANAGER_CAP) {
+      throw throwBadRequestError(`A collection can have at most ${MANAGER_CAP} managers.`);
+    }
+  }
+
+  const permissions = roleGrantPermissions(role, collection);
+
+  await dbWrite.$transaction(async (tx) => {
+    await tx.collectionContributor.update({
+      where: { userId_collectionId: { userId: targetUserId, collectionId } },
+      data: { permissions },
+    });
+
+    // The seat's invite row carries the role too, and `countCollaborators` reads it — leaving it
+    // stale makes a promoted Contributor count against the Manager cap twice, or a demoted
+    // Manager keep occupying a Manager seat nobody can see.
+    if (seat) {
+      await tx.collectionInvite.update({ where: { id: seat.id }, data: { role } });
+    }
+  });
+
+  return { role };
 }
 
 export async function removeCollaborator({
@@ -455,11 +580,17 @@ export async function getCollaborators({
     isModerator ? Promise.resolve(true) : isMemberUser(collection.userId),
   ]);
 
-  const inviteBlockedReason: InviteBlockedReason | null = permission.collaborationDisabled
+  // `owner-membership` names the owner's billing state, so only the owner is told it. Everyone
+  // else — Managers included — gets the same reason a lapse produces: the invite form is closed,
+  // and why is between the owner and their subscription. Collapsed here rather than in the copy so
+  // the payload itself carries nothing to read.
+  const blocked: InviteBlockedReason | null = permission.collaborationDisabled
     ? 'collaboration-disabled'
     : ownerIsMember
     ? null
     : 'owner-membership';
+  const inviteBlockedReason =
+    blocked === 'owner-membership' && !permission.isOwner ? 'collaboration-disabled' : blocked;
 
   return { collaborators, invites, canInvite: !inviteBlockedReason, inviteBlockedReason };
 }

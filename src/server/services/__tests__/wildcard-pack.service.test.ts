@@ -10,27 +10,20 @@ import type { SessionUser } from '~/types/session';
 // maturity math (getServerBrowsingLevel + Flags + allowMatureContentForCeiling)
 // run, since that's the security-relevant logic.
 
-const { modelVersionFindFirst, modelFileFindUnique, getFileForModelVersionMock } = vi.hoisted(
+const { getFileForModelVersionMock } = vi.hoisted(
   () => ({
-    modelVersionFindFirst: vi.fn(),
-    modelFileFindUnique: vi.fn(),
     getFileForModelVersionMock: vi.fn(),
   })
 );
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    modelVersion: { findFirst: modelVersionFindFirst },
-    modelFile: { findUnique: modelFileFindUnique },
-  },
-  dbWrite: {},
-}));
-
 vi.mock('~/server/services/file.service', () => ({
   getFileForModelVersion: getFileForModelVersionMock,
 }));
 
 // eslint-disable-next-line import/first
 import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const modelVersionFindFirst = dbMock.dbRead.modelVersion.findFirst;
+const modelFileFindUnique = dbMock.dbRead.modelFile.findUnique;
 
 const sfwUser: SessionUser = {
   id: 7,

@@ -34,10 +34,6 @@ vi.mock('~/server/redis/client', () => {
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
-// Collapse the heavy sibling-service graph: these are only used at runtime by
-// code paths the five readers under test never reach, so empty/vi.fn stubs keep
-// the import light without touching DB / search-index / image feed infra.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -67,9 +63,9 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 import {
   getGenerationStatus,
   getUnstableResources,
-  getGenerationEcosystemConfig,
   getGateRules,
 } from '~/server/services/generation/generation.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -140,42 +136,6 @@ describe('getUnstableResources — sysRedis soft-dependency', () => {
     const result = await getUnstableResources();
 
     expect(result).toEqual([]);
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
-  });
-});
-
-describe('getGenerationEcosystemConfig — sysRedis soft-dependency', () => {
-  it('happy path: returns the parsed config through withSysReadDeadline, no fail-open', async () => {
-    mockHGet.mockResolvedValue(JSON.stringify({ experimentalEcosystems: ['flux'] }));
-
-    const result = await getGenerationEcosystemConfig({});
-
-    expect(result.experimentalEcosystems).toEqual(['flux']);
-    expect(result.hasTestingAccess).toBe(false);
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
-  });
-
-  it('DOWN: hGet throws → fails open to defaults, no throw, logs read-degraded', async () => {
-    mockHGet.mockRejectedValue(new Error('sysRedis connection is down'));
-
-    const result = await getGenerationEcosystemConfig({});
-
-    expect(result.hasTestingAccess).toBe(false);
-    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
-    expect(mockLogSysRedisFailOpen.mock.calls[0][1]).toBe('getGenerationEcosystemConfig');
-  });
-
-  it('SLOW/half-open: hGet NEVER settles + deadline REJECTS → fails open to defaults (fail-on-revert)', async () => {
-    mockHGet.mockReturnValue(new Promise(() => undefined));
-    mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
-
-    const result = await getGenerationEcosystemConfig({});
-
-    expect(result.hasTestingAccess).toBe(false);
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');

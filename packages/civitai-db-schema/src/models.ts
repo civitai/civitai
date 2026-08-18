@@ -530,6 +530,7 @@ export interface User {
   engagedModelVersions?: ModelVersionEngagement[];
   metrics?: UserMetric[];
   reports?: Report[];
+  feedback?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -1780,6 +1781,17 @@ export interface KeyValue {
   value: JsonValue;
 }
 
+export interface Feedback {
+  id: number;
+  area: string;
+  userId: number;
+  user?: User;
+  message: string;
+  context: JsonValue;
+  status: string;
+  createdAt: Date;
+}
+
 export interface ApiKey {
   id: number;
   key: string;
@@ -2686,6 +2698,9 @@ export interface Cosmetic {
   createdById: number | null;
   pHash: bigint | null;
   pHashUrl: string | null;
+  pHashHex: string | null;
+  pHashVersion: string | null;
+  pHashFailedAt: Date | null;
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];
@@ -5302,6 +5317,7 @@ export interface PlacementSpace {
   entityId: number;
   mode: string;
   price: number | null;
+  freeSlots: number | null;
   settings: JsonValue;
   createdAt: Date;
   updatedAt: Date;
@@ -5320,6 +5336,8 @@ export interface Placement {
   status: string;
   removedBy: string | null;
   amount: number;
+  free: boolean;
+  spendType: string | null;
   sellerId: number | null;
   seller?: User | null;
   feeWaived: boolean;
@@ -5329,6 +5347,9 @@ export interface Placement {
   resolvedById: number | null;
   takenDownAt: Date | null;
   takenDownById: number | null;
+  metricCountedAt: Date | null;
+  metricClaimedAt: Date | null;
+  metricAttempts: number;
   transactions?: PlacementTransaction[];
 }
 

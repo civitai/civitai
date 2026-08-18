@@ -1,24 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockDbRead, mockDbWrite, mockDeregisterBatch, mockLogToAxiom, calls } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn() },
-  mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
+const { mockDeregisterBatch, calls } = vi.hoisted(() => ({
   mockDeregisterBatch: vi.fn(() => Promise.resolve({ deleted: 0 })),
   // Tracked so we can assert the per-batch error path fired (the job's internal
   // errorCount has no external surface other than this Axiom error log).
-  mockLogToAxiom: vi.fn(),
   // Ordered log of the side effects we care about, so we can assert the
   // versionId collection happens BEFORE the delete and deregister happens AFTER.
   calls: [] as string[],
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: mockDeregisterBatch }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
 vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: unknown) => fn }));
 
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -87,9 +87,7 @@ describe('removeOldDrafts', () => {
     });
 
     // Job must not throw out — a failed batch is caught and the loop continues.
-    await expect(
-      (removeOldDrafts as unknown as () => Promise<void>)()
-    ).resolves.toBeUndefined();
+    await expect((removeOldDrafts as unknown as () => Promise<void>)()).resolves.toBeUndefined();
 
     // The failed batch's versions ([100, 101]) are NEVER deregistered — the delete
     // never committed, so there are no orphaned file_locations to reap.
@@ -122,10 +120,7 @@ describe('removeOldDrafts', () => {
 
     // The version SELECT is scoped to exactly one batch of model ids per call.
     const selectBatches = mockDbWrite.$queryRaw.mock.calls.map((c) => c[1] as number[]);
-    expect(selectBatches).toEqual([
-      Array.from({ length: 10 }, (_, i) => i + 1),
-      [11],
-    ]);
+    expect(selectBatches).toEqual([Array.from({ length: 10 }, (_, i) => i + 1), [11]]);
 
     // Deregister runs once per batch, each with only that batch's version ids —
     // no cross-batch bleed (batch 1's [1000,1001] and batch 2's [2000] never mix).

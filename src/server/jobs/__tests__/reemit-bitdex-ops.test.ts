@@ -1,39 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  mockDbWrite,
   mockIsFlipt,
   mockCounters,
   mockHistogram,
   mockGetJobDate,
   mockSetLastRun,
   mockSetSweepLastRun,
-} =
-  vi.hoisted(() => ({
-    mockDbWrite: { $queryRaw: vi.fn() },
-    mockIsFlipt: vi.fn(),
-    mockCounters: {
-      attempts: { inc: vi.fn() },
-      runs: { inc: vi.fn() },
-      errors: { inc: vi.fn() },
-      posts: { inc: vi.fn() },
-      images: { inc: vi.fn() },
-      scheduledPosts: { inc: vi.fn() },
-      scheduledImages: { inc: vi.fn() },
-      skipped: { inc: vi.fn() },
-    },
-    mockHistogram: { observe: vi.fn() },
-    mockSetLastRun: vi.fn(() => Promise.resolve()),
-    mockSetSweepLastRun: vi.fn(() => Promise.resolve()),
-    mockGetJobDate: vi.fn(),
-  }));
+} = vi.hoisted(() => ({
+  mockIsFlipt: vi.fn(),
+  mockCounters: {
+    attempts: { inc: vi.fn() },
+    runs: { inc: vi.fn() },
+    errors: { inc: vi.fn() },
+    posts: { inc: vi.fn() },
+    images: { inc: vi.fn() },
+    scheduledPosts: { inc: vi.fn() },
+    scheduledImages: { inc: vi.fn() },
+    skipped: { inc: vi.fn() },
+  },
+  mockHistogram: { observe: vi.fn() },
+  mockSetLastRun: vi.fn(() => Promise.resolve()),
+  mockSetSweepLastRun: vi.fn(() => Promise.resolve()),
+  mockGetJobDate: vi.fn(),
+}));
 
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
   FLIPT_FEATURE_FLAGS: { BITDEX_PUBLISH_REEMITTER: 'bitdex-publish-reemitter' },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 vi.mock('~/server/prom/client', () => ({
   reemitAttemptsCounter: mockCounters.attempts,
   reemitRunsCounter: mockCounters.runs,
@@ -60,6 +55,9 @@ import {
   getScheduledSweepEnabled,
   reemitBitdexOps,
 } from '~/server/jobs/reemit-bitdex-ops';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbWrite = dbMock.dbWrite;
 
 const runJob = reemitBitdexOps as unknown as () => Promise<unknown>;
 

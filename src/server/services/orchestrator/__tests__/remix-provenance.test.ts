@@ -2,6 +2,7 @@ import { createCipheriv, createHash, randomBytes } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DbClient from '~/server/db/client';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const findMany = vi.fn();
 const getWorkflowMock = vi.fn();
@@ -19,10 +20,6 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
 
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: (...args: unknown[]) => getTokenMock(...args),
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('~/env/client', () => ({

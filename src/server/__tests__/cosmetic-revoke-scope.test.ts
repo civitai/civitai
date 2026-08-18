@@ -1,17 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const findMany = vi.fn();
-const deleteMany = vi.fn();
+const findMany = dbMock.dbWrite.userCosmetic.findMany;
+const deleteMany = dbMock.dbWrite.userCosmetic.deleteMany;
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: {
-    userCosmetic: {
-      findMany: (...args: unknown[]) => findMany(...args),
-      deleteMany: (...args: unknown[]) => deleteMany(...args),
-    },
-  },
-}));
 vi.mock('~/server/redis/caches', () => ({
   userCosmeticCache: { refresh: vi.fn() },
   cosmeticEntityCaches: {},

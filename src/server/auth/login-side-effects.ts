@@ -4,8 +4,6 @@ import { NotificationCategory } from '~/server/common/enums';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { createNotification } from '~/server/services/notification.service';
 import { createUserReferral } from '~/server/services/user.service';
-import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
-import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 // The login side-effects, lifted out of next-auth's `events.signIn` so they fire identically whether the
 // session is minted by next-auth (legacy) OR by the centralized hub (which redirects back through the main
@@ -27,9 +25,6 @@ export async function runLoginSideEffects({
   /** The login `reason`, now passed in via the post-login URL (re-homed off the legacy LoginContent cookie). */
   loginRedirectReason?: string;
 }): Promise<void> {
-  // Orchestrator service-auth cookie is reissued per-session; clear the stale one on (re)login.
-  deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
-
   const source = req.cookies['ref_source'] as string;
   const landingPage = req.cookies['ref_landing_page'] as string;
   // Prefer the reason threaded through the post-login URL; fall back to the legacy `ref_login_redirect_reason`

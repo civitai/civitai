@@ -150,7 +150,24 @@ beforeEach(() => {
     app: { userId: OWNER },
   });
   mockDb.appListing.findUnique.mockResolvedValue(draftListing());
-  mockDb.appListing.findFirst.mockResolvedValue(null);
+  // 🔴 PREDICATE-AWARE. Two different reads land on `appListing.findFirst`:
+  //   - `getMyListingForApp`'s SLUG arm (`where.slug`) — must HIT, or the off-site half
+  //     of that entry point could not resolve at all and its DENY cells would pass
+  //     vacuously (right verdict, wrong reason: NOT_FOUND, not the access gate);
+  //   - the shadow-existence probe (`where.revisionOfId`) — must MISS, or
+  //     `beginListingRevision` reports a shadow that does not exist.
+  mockDb.appListing.findFirst.mockImplementation(async (args: unknown) => {
+    const w = (args as { where?: Record<string, unknown> }).where ?? {};
+    if (w.slug == null) return null; // the shadow-existence probe
+    // 🔴 …and it HONOURS the rest of the clause. A mock that handed the row back for any
+    // `where` containing a slug would let the off-site ALLOW cells pass under the OLD,
+    // narrow `{ slug, kind:'onsite', appBlockId:null, status:'draft' }` clause too — i.e.
+    // it would assert nothing about the widening it exists to depend on. Measured: with
+    // this evaluation in place, restoring `kind:'onsite'` to the service reddens the
+    // off-site ALLOW cells; without it, they stay green.
+    const row = draftListing() as Record<string, unknown>;
+    return Object.entries(w).every(([f, v]) => f === 'slug' || row[f] === v) ? row : null;
+  });
   mockDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
     const w = (args as { where: { appListingId?: string; userId: number; status?: string } }).where;
     // 🔴 The seat lives on the LIVE parent listing. Honouring `appListingId` is what
@@ -208,6 +225,30 @@ const MATRIX: Record<string, Record<string, boolean>> = {
     stranger: false,
     moderator: false,
   },
+  // offsite-listing: getMyListingForApp (NO mod bypass).
+  //
+  // 🔴 THIS ROW USED TO LIVE IN A SEPARATE `ONSITE_ONLY` BUCKET, on the rationale that the
+  // proc "is keyed on an `appBlockId`; an off-site listing does not have one, so the proc
+  // is not denied for offsite — it is UNCALLABLE, the same structural mechanism that makes
+  // `submitVersion: false` real". 🔴 THAT MECHANISM NO LONGER EXISTS. civitai/civitai#3984
+  // re-keyed the proc to `appBlockId` OR `slug`, and the slug arm resolves any TOP-LEVEL
+  // listing of either kind — so an off-site listing IS reachable, and the classification
+  // was stale, not merely mis-worded. It is therefore kind-CROSSED like every other row:
+  // the off-site run calls it the way an off-site client must (by slug) and asserts the
+  // identical allow/deny column, which is the claim "the widening moved the refusal onto
+  // the OWNER GATE and changed nobody's access".
+  //
+  // (`CAPABILITIES_BY_KIND.offsite.listingMedia` stays `false` regardless: that cell is
+  // held by the WEB tab gate `editorTabsFor`, whose `media` arm still requires
+  // `ctx.appBlockId != null`. Flipping it is civitai/civitai#3893, not this.)
+  'offsite.getMyListingForApp': {
+    owner: true,
+    'accepted editor': true,
+    'PENDING editor': false,
+    'REJECTED editor': false,
+    stranger: false,
+    moderator: false,
+  },
   // app-collaborators: listCollaborators — the ROSTER read. A moderator DOES pass here
   // (the service takes an explicit isModerator), unlike the two author-edit gates above.
   'collaborators.list': {
@@ -221,23 +262,13 @@ const MATRIX: Record<string, Record<string, boolean>> = {
 };
 
 /**
- * Entry points that exist for ONE kind only, and why — so their absence from the
- * kind-crossed run reads as a decision rather than an oversight.
- *
- * `getMyListingForApp` is keyed on an `appBlockId`. An off-site listing does not have
- * one, so the proc is not "denied" for offsite — it is UNCALLABLE, which is the same
- * structural mechanism that makes `submitVersion: false` real.
+ * 🔴 THERE IS NO LONGER AN `ONSITE_ONLY` BUCKET. It held exactly one entry,
+ * `offsite.getMyListingForApp`, on the (once true, now false) rationale that the proc was
+ * block-keyed and therefore structurally UNCALLABLE for an off-site listing.
+ * civitai/civitai#3984 gave it a slug selector, so it is callable for both kinds and has
+ * moved into the kind-crossed {@link MATRIX} above. Do not re-add a bucket for it: an
+ * "absent for this kind" classification has to name a mechanism that still exists.
  */
-const ONSITE_ONLY: Record<string, Record<string, boolean>> = {
-  'offsite.getMyListingForApp': {
-    owner: true,
-    'accepted editor': true,
-    'PENDING editor': false,
-    'REJECTED editor': false,
-    stranger: false,
-    moderator: false,
-  },
-};
 
 const { getListingAssets } = await import('~/server/services/blocks/app-listing-assets.service');
 const { getMyListingForApp, getMyListingForEdit, beginListingRevision } = await import(
@@ -249,7 +280,14 @@ const RUNNERS: Record<string, (s: Subject) => Promise<unknown>> = {
   'assets.getListingAssets': (s) =>
     getListingAssets({ listingId: LIVE }, { id: s.id, isModerator: s.isModerator } as never),
   'offsite.getMyListingForEdit': (s) => getMyListingForEdit({ listingId: LIVE, userId: s.id }),
-  'offsite.getMyListingForApp': (s) => getMyListingForApp({ appBlockId: APP, userId: s.id }),
+  // 🔴 KIND-AWARE BY DESIGN: each kind is called the way its only real client CAN call
+  // it. An on-site caller holds the block id; an off-site listing has no AppBlock, so
+  // the slug is its only handle (civitai/civitai#3984). Hard-coding `appBlockId` for
+  // both would make the off-site row a test of the on-site selector.
+  'offsite.getMyListingForApp': (s) =>
+    KIND === 'offsite'
+      ? getMyListingForApp({ slug: 'my-app', userId: s.id })
+      : getMyListingForApp({ appBlockId: APP, userId: s.id }),
   'collaborators.list': (s) =>
     listCollaborators({ appListingId: LIVE, viewerUserId: s.id, isModerator: s.isModerator }),
 };
@@ -281,24 +319,6 @@ describe.each(KINDS)('permission matrix — kind=%s × role × entry point', (ki
     expect(row.kind).toBe(kind);
     expect(row.appBlockId).toBe(kind === 'onsite' ? APP : null);
   });
-});
-
-describe('ONSITE-ONLY entry points (block-keyed, so structurally absent for offsite)', () => {
-  beforeEach(() => {
-    KIND = 'onsite';
-    mockDb.appListing.findUnique.mockResolvedValue(draftListing());
-  });
-
-  for (const [entry, row] of Object.entries(ONSITE_ONLY)) {
-    for (const subject of SUBJECTS) {
-      const allowed = row[subject.label];
-      it(`${entry} · ${subject.label} → ${allowed ? 'ALLOW' : 'DENY'}`, async () => {
-        const call = RUNNERS[entry](subject);
-        if (allowed) await expect(call).resolves.toBeTruthy();
-        else await expect(call).rejects.toBeTruthy();
-      });
-    }
-  }
 });
 
 describe('matrix hygiene', () => {

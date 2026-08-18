@@ -1,4 +1,3 @@
-import { SimpleGrid } from '@mantine/core';
 import {
   IconBolt,
   IconBuildingStore,
@@ -20,7 +19,11 @@ export function ManageStats({
   resaleStats?: CreatorShopResaleStats;
 }) {
   return (
-    <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="md">
+    // Wrapping is driven by how much room a card needs, not by the viewport, so
+    // six sit on one row wherever six fit and only fold when they would squash.
+    // auto-FIT, not auto-fill: the count here is fixed at six, so empty tracks
+    // would be dead space rather than room for more cards.
+    <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
       <StatCard
         label="Published"
         value={stats.published}
@@ -60,6 +63,6 @@ export function ManageStats({
         icon={<IconBuildingStore size={20} />}
         sub="from other creators"
       />
-    </SimpleGrid>
+    </div>
   );
 }

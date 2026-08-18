@@ -1,6 +1,9 @@
 import { isEmpty, startCase } from 'lodash-es';
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+} from '~/server/notifications/base.notifications';
 import { QS } from '~/utils/qs';
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
@@ -98,6 +101,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."parentId" IS NULL
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m."userId"
+          AND ${notBlockedBetween('m."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-model:owner:v1:', details->>'commentId') "key",
@@ -138,6 +142,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE m."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != p."userId"
+          AND ${notBlockedBetween('p."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-response:owner:v1:', details->>'commentId') "key",
@@ -177,6 +182,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."parentId" IS NOT NULL
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m."userId"
+          AND ${notBlockedBetween('m."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-nested:user:v1:', details->>'commentId') "key",
@@ -245,6 +251,7 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" root ON root.id = t."rootThreadId"
         WHERE c."createdAt" > '${lastSent}' AND c."userId" != pc."userId"
+          AND ${notBlockedBetween('pc."userId"', 'c."userId"')}
           -- Exclude appListing (app-store listing) threads: they are addressed by
           -- SLUG, not the id this query has, so threadUrlMap can't build a reply
           -- URL (→ url:undefined). appListing reply notifications are deferred
@@ -285,7 +292,10 @@ export const commentNotifications = createNotificationProcessor({
     prepareQuery: ({ lastSent }) => `
       WITH new_thread_response AS (
         SELECT DISTINCT
-          UNNEST((SELECT ARRAY_AGG("userId") FROM "Comment" cu WHERE cu."parentId" = c."parentId" AND cu."userId" != c."userId")) "ownerId",
+          UNNEST((SELECT ARRAY_AGG("userId") FROM "Comment" cu WHERE cu."parentId" = c."parentId" AND cu."userId" != c."userId" AND ${notBlockedBetween(
+            'cu."userId"',
+            'c."userId"'
+          )})) "ownerId",
           JSONB_BUILD_OBJECT(
             'modelId', c."modelId",
             'commentId', c.id,
@@ -302,7 +312,10 @@ export const commentNotifications = createNotificationProcessor({
         UNION
 
         SELECT DISTINCT
-          UNNEST((SELECT ARRAY_AGG("userId") FROM "CommentV2" cu WHERE cu."threadId" = c."threadId" AND cu."userId" != c."userId")) "ownerId",
+          UNNEST((SELECT ARRAY_AGG("userId") FROM "CommentV2" cu WHERE cu."threadId" = c."threadId" AND cu."userId" != c."userId" AND ${notBlockedBetween(
+            'cu."userId"',
+            'c."userId"'
+          )})) "ownerId",
           JSONB_BUILD_OBJECT(
             'version', 2,
             'commentId', c.id,
@@ -438,6 +451,7 @@ export const commentNotifications = createNotificationProcessor({
       WHERE m."userId" > 0
         AND c."createdAt" > '${lastSent}'
         AND c."userId" != r."userId"
+        AND ${notBlockedBetween('r."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-review-response:owner:v2:', details->>'commentId') "key",
@@ -510,6 +524,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE i."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != i."userId"
+          AND ${notBlockedBetween('i."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-image:owner:v2:', details->>'commentId') "key",
@@ -572,6 +587,7 @@ export const commentNotifications = createNotificationProcessor({
           -- any first batch to ~7 days (~500 rows at the measured 3/hour) however far the cursor drifted.
           AND c."createdAt" > NOW() - INTERVAL '7 days'
           AND c."userId" != p."userId"
+          AND ${notBlockedBetween('p."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-post:owner:v2:', details->>'commentId') "key",
@@ -613,6 +629,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE a."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != a."userId"
+          AND ${notBlockedBetween('a."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-article:owner:v2:', details->>'commentId') "key",
@@ -652,6 +669,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."createdAt" > '2024-02-24'
           AND c."userId" != b."userId"
+          AND ${notBlockedBetween('b."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-bounty:owner:v2:', details->>'commentId') "key",
@@ -704,6 +722,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '2026-08-06'
           AND c."createdAt" > NOW() - INTERVAL '7 days'
           AND c."userId" != be."userId"
+          AND ${notBlockedBetween('be."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-bounty-entry:owner:v2:', details->>'commentId') "key",
@@ -742,6 +761,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE ch."createdById" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != ch."createdById"
+          AND ${notBlockedBetween('ch."createdById"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-challenge:owner:v2:', details->>'commentId') "key",
@@ -783,6 +803,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE m3d."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m3d."userId"
+          AND ${notBlockedBetween('m3d."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-model3d:owner:v2:', details->>'commentId') "key",
@@ -828,6 +849,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE root."model3dId" IS NOT NULL
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != pc."userId"
+          AND ${notBlockedBetween('pc."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-response-model3d:owner:v2:', details->>'commentId') "key",
@@ -874,6 +896,7 @@ export const commentNotifications = createNotificationProcessor({
           AND m3d."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m3d."userId"
+          AND ${notBlockedBetween('m3d."userId"', 'c."userId"')}
       )
       SELECT
         concat('new-comment-nested-model3d:user:v2:', details->>'commentId') "key",

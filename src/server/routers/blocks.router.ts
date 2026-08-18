@@ -1311,6 +1311,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
       return { ok: true };
@@ -1430,7 +1431,11 @@ export const blocksRouter = router({
           declaredScopes: input.declaredScopes,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1657,7 +1662,11 @@ export const blocksRouter = router({
           modUserId: ctx.user.id,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1687,7 +1696,11 @@ export const blocksRouter = router({
           modUserId: ctx.user.id,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1741,7 +1754,11 @@ export const blocksRouter = router({
           runForReal: input.runForReal,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1782,7 +1799,11 @@ export const blocksRouter = router({
         // review is already running" — which the P2 panel keys on to fall into
         // the running state); only opaque errors collapse to BAD_REQUEST.
         if (err instanceof TRPCError) throw err;
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1848,7 +1869,11 @@ export const blocksRouter = router({
         // render the right inline message; only opaque errors collapse to
         // BAD_REQUEST. NEVER a 500 leak.
         if (err instanceof TRPCError) throw err;
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1874,7 +1899,11 @@ export const blocksRouter = router({
       try {
         return await teardownPreview({ publishRequestId: input.publishRequestId });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1897,7 +1926,11 @@ export const blocksRouter = router({
     try {
       return await listActiveReviewPreviews();
     } catch (err) {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: (err as Error).message,
+        cause: err,
+      });
     }
   }),
 
@@ -1925,6 +1958,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
     }),
@@ -1956,6 +1990,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
     }),
@@ -2069,6 +2104,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
       return { ok: true };
@@ -2118,7 +2154,7 @@ export const blocksRouter = router({
             serviceCode === 'TRIGGER_FAILED'
             ? 'INTERNAL_SERVER_ERROR'
             : 'BAD_REQUEST';
-        throw new TRPCError({ code, message: (err as Error).message });
+        throw new TRPCError({ code, message: (err as Error).message, cause: err });
       }
     }),
 
@@ -2540,12 +2576,19 @@ export const blocksRouter = router({
       hasSubmissions: false,
       hasApprovedApps: false,
       isReviewer: false,
+      hasEditableApps: false,
+      hasPendingInvites: false,
     };
     if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
     const user = ctx.user;
     if (!user) return allFalse;
 
-    const [install, submission, approvedApp] = await Promise.all([
+    // 🔴 The two COLLABORATOR-AWARE flags are resolved by `resolveAppsNavAccess`, NOT
+    // open-coded here. Writing the seat probes inline put a third copy of the
+    // `status: 'accepted'` consent filter in the codebase and failed
+    // `app-access.call-site-ledger.test.ts` on the growth — one home, one filter.
+    const { resolveAppsNavAccess } = await import('~/server/services/blocks/app-access.service');
+    const [install, submission, approvedApp, navAccess] = await Promise.all([
       dbRead.blockUserSubscription.findFirst({
         where: { userId: user.id },
         select: { id: true },
@@ -2558,6 +2601,7 @@ export const blocksRouter = router({
         where: { app: { userId: user.id }, status: 'approved' },
         select: { id: true },
       }),
+      resolveAppsNavAccess(user.id),
     ]);
 
     return {
@@ -2565,6 +2609,15 @@ export const blocksRouter = router({
       hasSubmissions: submission !== null,
       hasApprovedApps: approvedApp !== null,
       isReviewer: isAppReviewer(user),
+      /**
+       * 🔴 The seat disjunct inside `hasEditableApps` is the load-bearing half, and is
+       * why this cannot reuse `hasSubmissions`: a collaborator has submitted nothing, so
+       * every pre-existing flag on this summary is `false` for them and there would be no
+       * nav entry to any app they can actually edit. `hasPendingInvites` is
+       * owner-independent for the same reason.
+       */
+      hasEditableApps: navAccess.hasEditableApps,
+      hasPendingInvites: navAccess.hasPendingInvites,
     };
   }),
 
@@ -7944,9 +7997,15 @@ async function maybeAutoClaimDailyBoost({
     return undefined;
   }
 
-  // Already claimed today, or the reward has no payout (e.g. user is
-  // rewardsIneligible — multiplier zeroed the amount).
-  if (boostDetails.awarded > 0 || boostDetails.awardAmount <= 0) return undefined;
+  // Disabled at runtime, already claimed today, or the reward has no payout
+  // (e.g. user is rewardsIneligible — multiplier zeroed the amount).
+  //
+  // Gated on the claim COUNT, not on `awarded > 0`: a claim the cap trimmed to
+  // zero still consumed the day's dedup entry, so an amount-based check would
+  // pass, `apply` would no-op against the dedup guard, and the iframe would be
+  // told Buzz was claimed on every submit for the rest of the day.
+  if (!boostDetails || boostDetails.awardedCount > 0 || boostDetails.awardAmount <= 0)
+    return undefined;
 
   // Balance already covers the cost — boost would just sit unused today.
   if (balanceSum >= cost) return undefined;

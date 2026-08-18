@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import { STICKER_REMOVAL_LOCK_HOURS } from '~/shared/utils/sticker-placement';
+import type { CreateStickerPlacement } from '~/server/services/sticker-placement.service';
 
 /**
  * Fixture discipline: every quantity in scope is a distinct number, so a value
@@ -13,6 +19,8 @@ const SELLER = 63;
 const IMAGE = 74;
 const COSMETIC = 85;
 const PLACEMENT = 96;
+/** Distinct from `PLACEMENT`: the two creation routes must not be confusable. */
+const FREE_PLACEMENT = 107;
 
 /**
  * `setPrice` is what the owner asks; `price` is `min(setPrice, cap)` — what a
@@ -26,7 +34,7 @@ const CAP = 700;
 const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn();
-const settlePlacement = vi.fn(async () => ({ settled: true }));
+const settlePlacement = vi.fn<PrismaStub<{ settled: boolean }>>(async () => ({ settled: true }));
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
   settlePlacement,
@@ -42,6 +50,22 @@ vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSp
 const spendStickerUsesFor = vi.fn(async () => undefined);
 vi.mock('~/server/services/sticker.service', () => ({ spendStickerUsesFor }));
 
+/**
+ * The whole free claim, stubbed at its own boundary.
+ *
+ * Deliberately not re-implemented here: the daily allowance, never-twice-here
+ * and the slot count are decided inside it under a lock, and a fake that
+ * enforced them would let this file pass while the service checked nothing. What
+ * these tests are for is the part that is genuinely this service's — that it
+ * routes through the claim rather than around it, and what it does after one
+ * succeeds.
+ */
+const createFreePlacement = vi.fn<PrismaStub<{ id: number }>>(async () => {
+  calls.push('claim');
+  return { id: FREE_PLACEMENT };
+});
+vi.mock('~/server/services/free-placement.service', () => ({ createFreePlacement }));
+
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 
 /**
@@ -51,21 +75,35 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValu
  */
 const calls: string[] = [];
 
+/**
+ * Every Prisma stub declares its argument, rather than letting `vi.fn(async () => …)`
+ * infer a zero-arg signature. That inference makes `mock.calls` the empty tuple `[]`,
+ * so the `calls[0][0]` reads below — which are how this file asserts the WHERE clauses
+ * the guards are made of — are type errors against their own mock. `unknown` is the
+ * honest parameter type: the per-site casts stay, and they are what pins each shape.
+ */
+type PrismaStub<T> = (args: unknown) => Promise<T>;
+
 const queryRaw = vi.fn();
-const placementCreate = vi.fn(async () => {
+const placementCreate = vi.fn<PrismaStub<{ id: number }>>(async () => {
   calls.push('create');
   return { id: PLACEMENT };
 });
-const placementCount = vi.fn(async () => 0);
-const placementFindMany = vi.fn(async () => [] as unknown[]);
-const placementGroupBy = vi.fn(async () => [] as unknown[]);
-const transactionFindMany = vi.fn(async () => [] as unknown[]);
-const placementFindFirst = vi.fn(async () => null as unknown);
-const cosmeticFindUnique = vi.fn(async () => null as unknown);
+const placementCount = vi.fn<PrismaStub<number>>(async () => 0);
+const placementFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const placementGroupBy = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const transactionFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const placementFindFirst = vi.fn<PrismaStub<unknown>>(async () => null);
+const cosmeticFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
 
-const placementFindUnique = vi.fn(async () => null as unknown);
-const placementUpdate = vi.fn(async () => ({}));
-const placementUpdateMany = vi.fn(async () => ({ count: 1 }));
+const imageFindMany = vi.fn<PrismaStub<unknown[]>>(async () => []);
+const placementFindUnique = vi.fn<PrismaStub<unknown>>(async () => null);
+const placementUpdate = vi.fn<PrismaStub<object>>(async () => ({}));
+const placementUpdateMany = vi.fn<PrismaStub<{ count: number }>>(async () => ({ count: 1 }));
+const placementDeleteMany = vi.fn<PrismaStub<{ count: number }>>(async () => {
+  calls.push('discard');
+  return { count: 1 };
+});
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: {
@@ -76,6 +114,7 @@ vi.mock('~/server/db/client', () => ({
       findUnique: placementFindUnique,
       update: placementUpdate,
       updateMany: placementUpdateMany,
+      deleteMany: placementDeleteMany,
     },
   },
   dbRead: {
@@ -84,6 +123,7 @@ vi.mock('~/server/db/client', () => ({
       groupBy: placementGroupBy,
       findFirst: placementFindFirst,
     },
+    image: { findMany: imageFindMany },
     placementTransaction: { findMany: transactionFindMany },
     cosmetic: { findUnique: cosmeticFindUnique },
   },
@@ -102,6 +142,7 @@ const {
   getStickerPlacements,
   getPlacementSettlementStates,
   getStickerPlacementDetail,
+  getPendingStickerPlacements,
 } = await import('~/server/services/sticker-placement.service');
 
 const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: ASKED, price: PRICE, cap: CAP };
@@ -121,10 +162,18 @@ const givenStickerAndBalance = (
     .mockResolvedValueOnce([balance]);
 };
 
-const placeInput = {
+// Same discipline as the numbers above, applied to the currency: the escrow test
+// overrides the fixture default, and the two must differ or a service that
+// stopped forwarding the caller's currency would pass by matching the fixture.
+// Kept apart as constants so that stays true when someone edits one of them.
+const FIXTURE_SPEND = 'yellow' as const;
+const CALLER_SPEND = 'green' as const;
+
+const placeInput: CreateStickerPlacement = {
   placerId: PLACER,
   imageId: IMAGE,
   data: { cosmeticId: COSMETIC, x: 0.25, y: 0.75, scale: 0.2, rotation: 15 },
+  spendType: FIXTURE_SPEND,
 };
 
 beforeEach(() => {
@@ -149,7 +198,8 @@ beforeEach(() => {
   spendStickerUsesFor.mockImplementation(async () => {
     calls.push('spend');
   });
-  settlePlacement.mockImplementation(async ({ action }: { action: string }) => {
+  settlePlacement.mockImplementation(async (args) => {
+    const { action } = args as { action: string };
     calls.push(`settle:${action}`);
     return { settled: true };
   });
@@ -235,13 +285,45 @@ describe("the creator's size limit", () => {
     expect(placementCreate).not.toHaveBeenCalled();
   });
 
-  it('lets a moderator exceed it', async () => {
+  /**
+   * The refusal sits above `if (free) return placeFreeSticker(...)`, so the free
+   * offer inherits it. That is positional, and nothing else here would notice a
+   * merge that kept both lines and put the branch first — the free path would
+   * stop refusing while every other test stayed green, and free placements carry
+   * no price, so no settlement figure would look wrong either.
+   *
+   * The message assertion carries that property on its own. The second one reads
+   * `createFreePlacement` because that is what the free branch delegates to
+   * today: give `placeFreeSticker` a different callee and it goes quiet rather
+   * than failing.
+   */
+  it('refuses a free placement the same way, before the free branch', async () => {
     resolvePlacementSpaceFor.mockResolvedValue(capped);
     givenStickerAndBalance();
 
     await expect(
-      createStickerPlacement({ ...placeInput, data: OVERSIZE, isModerator: true })
-    ).resolves.toMatchObject({ placementId: PLACEMENT });
+      createStickerPlacement({ ...placeInput, data: OVERSIZE, free: true })
+    ).rejects.toThrow(/up to 20%/);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The limit is the creator's, so nobody is above it — moderating someone's
+   * content is not a licence to put a bigger sticker on it.
+   *
+   * `isModerator` is no longer part of this input at all, and is sent here
+   * anyway, cast: a revert reinstating the exemption gives the field a reader
+   * again, and this is then the test that fails rather than one asserting a
+   * flag nothing looks at.
+   */
+  it('refuses a moderator the same way', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(capped);
+    givenStickerAndBalance();
+
+    await expect(
+      createStickerPlacement({ ...placeInput, data: OVERSIZE, isModerator: true } as never)
+    ).rejects.toThrow(/up to 20%/);
+    expect(placementCreate).not.toHaveBeenCalled();
   });
 
   it('applies the default when the creator has set nothing', async () => {
@@ -404,6 +486,21 @@ describe('the space mode decides whether a placement is live', () => {
 });
 
 describe('what gets written to the row', () => {
+  // The currency is decided by the domain at the router and carried through
+  // untouched. A placement that reached the escrow without it would be held —
+  // and later paid out — in whatever the Buzz service defaults to.
+  it('carries the caller currency into the escrow', async () => {
+    // The assertion below is only worth anything while these differ.
+    expect(CALLER_SPEND).not.toBe(FIXTURE_SPEND);
+    givenStickerAndBalance();
+
+    await createStickerPlacement({ ...placeInput, spendType: CALLER_SPEND });
+
+    expect(holdPlacementEscrow).toHaveBeenCalledWith(
+      expect.objectContaining({ spendType: CALLER_SPEND })
+    );
+  });
+
   it('persists the seller and the normalized position', async () => {
     givenStickerAndBalance();
 
@@ -720,52 +817,30 @@ describe("a placement counts toward the image's Buzz counter", () => {
       resolvedAt: null,
     });
 
-  it('counts what the placer paid when an auto space approves on placement', async () => {
-    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
-    givenStickerAndBalance();
-
-    await createStickerPlacement(placeInput);
-
-    expect(updateEntityMetricDetached).toHaveBeenCalledWith({
-      entityType: 'Image',
-      entityId: IMAGE,
-      metricType: 'Buzz',
-      // `price`, not `setPrice`: the cap is what was actually charged.
-      amount: PRICE,
-      // Attributed to the placer, the way a tip is attributed to its tipper —
-      // and load-bearing, because `userId` is part of the pipeline's dedupe key.
-      userId: PLACER,
-    });
-  });
-
   /**
-   * The guard that stops one payment being counted twice. `settlePlacement`
-   * returns `settled: false` when something else claimed the transition first —
-   * a double-submitted approve, a retried call — so counting on the action asked
-   * for rather than on the transition won would add the Buzz again with no
-   * second payment behind it.
+   * The settlement paths emit NOTHING. The counter is moved by
+   * `placement-sweep-uncounted` reading `metricCountedAt`, and these paths
+   * exist here so that stays true: an emit put back on any of them is one the
+   * sweep will emit again, and the counter never comes back down.
    */
-  it('does not count a settle that lost the race', async () => {
+  it('emits nothing when an auto space approves on placement', async () => {
     resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
     givenStickerAndBalance();
-    settlePlacement.mockImplementation(async () => ({ settled: false }));
 
     await createStickerPlacement(placeInput);
 
     expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 
-  it('counts when the owner approves from the queue', async () => {
+  it('emits nothing when the owner approves from the queue', async () => {
     givenApprovable();
 
     await actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
 
-    expect(updateEntityMetricDetached).toHaveBeenCalledWith(
-      expect.objectContaining({ entityId: IMAGE, amount: PRICE, userId: PLACER })
-    );
+    expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
 
-  it('counts nothing when the owner declines', async () => {
+  it('emits nothing when the owner declines', async () => {
     givenApprovable();
 
     await actOnStickerPlacement({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
@@ -905,7 +980,10 @@ describe('the note on a placement', () => {
   it('stores no comment key at all when the field was left blank', async () => {
     givenStickerAndBalance();
 
-    await createStickerPlacement({ ...placeInput, data: { ...placeInput.data, comment: '   ' } });
+    await createStickerPlacement({
+      ...placeInput,
+      data: { ...placeInput.data, comment: '   ' },
+    });
 
     const [write] = placementCreate.mock.calls[0] as [{ data: { data: Record<string, unknown> } }];
     expect(write.data.data).not.toHaveProperty('comment');
@@ -1150,5 +1228,453 @@ describe('the note on a placement', () => {
     });
 
     expect(placementUpdate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The sticker copy of the queue paging. Its own tests rather than trusting the
+ * remix twin: the two are hand-duplicated, and the failure mode is a placement
+ * nobody ever reviews while its escrow expires.
+ */
+describe('getPendingStickerPlacements paging', () => {
+  const LEVELS = { domainLevels: allBrowsingLevelsFlag, viewerLevels: allBrowsingLevelsFlag };
+  const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
+
+  const queueRow = (id: number, data: unknown, createdAt: string) => ({
+    id,
+    targetId: IMAGE,
+    placerId: PLACER,
+    amount: PRICE,
+    data,
+    createdAt: new Date(createdAt),
+    expiresAt: null,
+    placer: { id: PLACER, username: 'someone', image: null },
+  });
+
+  it('takes the cursor from the last row of the page, not the last row it returns', async () => {
+    // Row 2 is dropped below for an unreadable payload; row 3 is the probe.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, good, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, { nonsense: true }, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, good, '2026-01-03T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2, ...LEVELS });
+
+    expect(result.items.map((item) => item.id)).toEqual([1]);
+    // Row 2's key. Built from what was returned it would say row 1, and row 2
+    // would be served again on the next page.
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('still hands back a cursor when EVERY row on the page was filtered out', async () => {
+    // Same contract the remix twin pins, and the one the empty-state guard in
+    // the page reads: no items is not the same as no more.
+    placementFindMany.mockResolvedValue([
+      queueRow(1, { nonsense: true }, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, { nonsense: true }, '2026-01-02T00:00:00.000Z'),
+      queueRow(3, good, '2026-01-03T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2, ...LEVELS });
+
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBe(`${new Date('2026-01-02T00:00:00.000Z').getTime()}:2`);
+  });
+
+  it('reports no next page when the queue ends exactly on the page boundary', async () => {
+    placementFindMany.mockResolvedValue([
+      queueRow(1, good, '2026-01-01T00:00:00.000Z'),
+      queueRow(2, good, '2026-01-02T00:00:00.000Z'),
+    ]);
+
+    const result = await getPendingStickerPlacements({ ownerId: OWNER, limit: 2, ...LEVELS });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('resumes strictly after the cursor row, including its same-millisecond twin', async () => {
+    placementFindMany.mockResolvedValue([]);
+    const createdAt = new Date('2026-01-02T00:00:00.000Z');
+
+    await getPendingStickerPlacements({
+      ...LEVELS,
+      ownerId: OWNER,
+      limit: 2,
+      cursor: `${createdAt.getTime()}:2`,
+    });
+
+    const { where, orderBy, take } = placementFindMany.mock.calls.at(-1)?.[0] as {
+      where: { OR?: unknown[] };
+      orderBy: unknown;
+      take: number;
+    };
+    expect(where.OR).toEqual([{ createdAt: { gt: createdAt } }, { createdAt, id: { gt: 2 } }]);
+    expect(orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+    expect(take).toBe(3);
+  });
+});
+
+/**
+ * The queue carries no browsing level by design — an owner has to see what is
+ * waiting on them — so the payload is the only thing standing between an
+ * above-ceiling asset and a SFW client. Unlike the remix gallery the image here
+ * is the owner's OWN upload, which changes who is being protected from what but
+ * not whether the domain may be sent it.
+ */
+describe('getPendingStickerPlacements domain ceiling', () => {
+  const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
+
+  const ask = ({
+    nsfwLevel,
+    domainLevels,
+    viewerLevels = allBrowsingLevelsFlag,
+  }: {
+    nsfwLevel: number;
+    domainLevels: number;
+    viewerLevels?: number;
+  }) => {
+    placementFindMany.mockResolvedValue([
+      {
+        id: 1,
+        targetId: IMAGE,
+        placerId: PLACER,
+        amount: PRICE,
+        data: good,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        expiresAt: null,
+        placer: { id: PLACER, username: 'someone', image: null },
+      },
+    ]);
+    imageFindMany.mockResolvedValue([
+      {
+        id: IMAGE,
+        url: 'asset',
+        name: 'a name',
+        width: 1,
+        height: 1,
+        type: 'image',
+        metadata: null,
+        nsfwLevel,
+      },
+    ]);
+
+    return getPendingStickerPlacements({ ownerId: OWNER, limit: 10, domainLevels, viewerLevels });
+  };
+
+  it('sends the asset when the image is inside the ceiling', async () => {
+    // The positive control: without it every assertion below passes against a
+    // queue that withholds everything, which is what `domainLevels: undefined`
+    // silently produced before this parameter was required.
+    const { items } = await ask({
+      nsfwLevel: NsfwLevel.PG,
+      domainLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items[0].image).toMatchObject({ viewable: true, url: 'asset', name: 'a name' });
+  });
+
+  it('withholds the asset above the ceiling while keeping the row actionable', async () => {
+    const { items } = await ask({ nsfwLevel: NsfwLevel.X, domainLevels: sfwBrowsingLevelsFlag });
+
+    expect(items).toHaveLength(1);
+    expect(items[0].image).toEqual({ viewable: false, id: IMAGE, nsfwLevel: NsfwLevel.X });
+    // The fields, not just the flag: a branch that sets `viewable: false` and
+    // spreads the row anyway passes a flag check while shipping the bytes.
+    for (const field of ['url', 'name', 'metadata', 'width', 'height', 'type'])
+      expect(items[0].image, `${field} reached a domain that may not serve it`).not.toHaveProperty(
+        field
+      );
+  });
+
+  it('sends an above-ceiling asset on a domain that may serve it', async () => {
+    const { items } = await ask({ nsfwLevel: NsfwLevel.X, domainLevels: allBrowsingLevelsFlag });
+
+    expect(items[0].image).toMatchObject({ viewable: true, url: 'asset' });
+  });
+
+  it('marks what is outside the viewer band without withholding it', async () => {
+    const { items } = await ask({
+      nsfwLevel: NsfwLevel.R,
+      domainLevels: allBrowsingLevelsFlag,
+      viewerLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(items[0].image).toMatchObject({
+      viewable: true,
+      withinViewerLevel: false,
+      url: 'asset',
+    });
+  });
+});
+
+/**
+ * The free path: same placement, taken out of the creator's free capacity.
+ *
+ * `createFreePlacement` is stubbed, so nothing here asserts the three free-tier
+ * refusals — those belong to `free-placement.service.test.ts`, where they can be
+ * tested against the lock and the transaction that actually enforce them. What
+ * is this service's own is everything around the claim: routing through it
+ * rather than around it, spending the use, and the settle a claim deliberately
+ * does not do.
+ */
+describe('the free path', () => {
+  const freeInput: CreateStickerPlacement = { ...placeInput, free: true };
+
+  beforeEach(() => {
+    givenStickerAndBalance();
+  });
+
+  it('claims through createFreePlacement rather than writing its own row', async () => {
+    const result = await createStickerPlacement(freeInput);
+
+    expect(result).toEqual({ placementId: FREE_PLACEMENT, status: 'pending' });
+    // The two things a second creation route would show up as. A free branch
+    // that built the row itself would have to re-implement the daily allowance,
+    // never-twice-here and the slot count outside the lock that makes them true.
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+  });
+
+  it('hands the claim the session placer and the sticker seller, and no space', async () => {
+    await createStickerPlacement(freeInput);
+
+    const args = createFreePlacement.mock.calls[0][0] as Record<string, unknown>;
+    expect(args).toMatchObject({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: IMAGE,
+      placerId: PLACER,
+      sellerId: SELLER,
+    });
+    // Not a resolved space. One alongside a separate target id is two facts
+    // that can disagree, and the claim resolves from the id on purpose.
+    expect(args).not.toHaveProperty('space');
+    expect(args).not.toHaveProperty('ownerId');
+  });
+
+  it('spends a use, because free is free of Buzz and of nothing else', async () => {
+    await createStickerPlacement(freeInput);
+
+    expect(spendStickerUsesFor).toHaveBeenCalledWith({
+      userId: PLACER,
+      counts: new Map([[COSMETIC, 1]]),
+    });
+    // After the claim: a spend before it would take a use for a placement the
+    // slot count then refuses.
+    expect(calls).toEqual(['claim', 'spend']);
+  });
+
+  /**
+   * The hazard this path was written around.
+   *
+   * `createFreePlacement` always writes `pending` and never settles, and
+   * sticker's `allowedModes` includes `auto` — so without this the free sticker
+   * sits pending for the full expiry window holding one of the creator's slots,
+   * while the placer has been told it is live and the creator watches a queue
+   * they turned off. Nothing throws in either direction, which is why it is
+   * asserted rather than assumed.
+   */
+  it('approves a free placement on an auto space, which the claim will not do', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
+
+    const result = await createStickerPlacement(freeInput);
+
+    expect(settlePlacement).toHaveBeenCalledWith({
+      placementId: FREE_PLACEMENT,
+      action: 'approve',
+      actorId: OWNER,
+    });
+    expect(result.status).toBe('approved');
+    // Last, so nothing can put a placement live before the use behind it is
+    // spent.
+    expect(calls).toEqual(['claim', 'spend', 'settle:approve']);
+  });
+
+  it('leaves a free placement on a review space pending', async () => {
+    const result = await createStickerPlacement(freeInput);
+
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(result.status).toBe('pending');
+  });
+
+  /**
+   * The unwind deletes rather than expiring, and that is a decision about the
+   * placer's day rather than about tidiness: the daily allowance counts on
+   * `createdAt` across every status, so an expired row is indistinguishable
+   * from one a creator declined. A free row has no escrow legs to preserve, so
+   * the delete destroys nothing.
+   */
+  it('deletes the row when the use spend fails, rather than expiring it', async () => {
+    spendStickerUsesFor.mockRejectedValueOnce(new Error('no uses left'));
+
+    await expect(createStickerPlacement(freeInput)).rejects.toThrow(/no uses left/);
+
+    expect(placementDeleteMany).toHaveBeenCalledWith({
+      // Scoped, so a claim someone has since acted on cannot be deleted out
+      // from under them.
+      where: { id: FREE_PLACEMENT, free: true, status: 'pending' },
+    });
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('does not approve a placement whose use spend failed', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
+    spendStickerUsesFor.mockRejectedValueOnce(new Error('no uses left'));
+
+    await expect(createStickerPlacement(freeInput)).rejects.toThrow(/no uses left/);
+
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(calls).toEqual(['claim', 'discard']);
+  });
+
+  it('refuses without spending a use when the claim refuses', async () => {
+    createFreePlacement.mockRejectedValueOnce(
+      new Error('placement: the free slots on this one are taken')
+    );
+
+    await expect(createStickerPlacement(freeInput)).rejects.toThrow(/free slots/);
+
+    expect(spendStickerUsesFor).not.toHaveBeenCalled();
+    expect(placementDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it('places free on a space that has never been priced', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, setPrice: null, price: null });
+
+    // The price refusal gates the offer that needs one. A creator can open free
+    // capacity without ever setting a price, and refusing here would close the
+    // free tier on exactly the spaces it was built for.
+    await expect(createStickerPlacement(freeInput)).resolves.toMatchObject({
+      placementId: FREE_PLACEMENT,
+    });
+  });
+
+  it('still refuses a sticker the placer does not own', async () => {
+    queryRaw.mockReset();
+    givenStickerAndBalance({ owned: false, createdById: SELLER });
+
+    await expect(createStickerPlacement(freeInput)).rejects.toThrow(/do not own that sticker/);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a sticker larger than the creator allows', async () => {
+    await expect(
+      createStickerPlacement({ ...freeInput, data: { ...freeInput.data, scale: 0.99 } })
+    ).rejects.toThrow(/allows stickers up to/);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The removal lock's copy, which was justified by a payment a free row never
+ * made.
+ *
+ * The week itself is unchanged — Justin's call, 2026-08-17 — so what is asserted
+ * here is only that the reason given is true of the row it is given for. A
+ * stated reason that is false is worse than a shorter one, because it is what a
+ * support answer repeats back.
+ */
+describe('the removal lock explains itself truthfully on a free row', () => {
+  const approvedAt = new Date(Date.now() - 60_000);
+  const remove = () =>
+    actOnStickerPlacement({ placementId: PLACEMENT, action: 'remove', userId: OWNER });
+
+  const givenApproved = (free: boolean) =>
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      placerId: PLACER,
+      targetId: IMAGE,
+      amount: free ? 0 : PRICE,
+      status: 'approved',
+      surface: 'sticker',
+      free,
+      data: { cosmeticId: COSMETIC, x: 0.1, y: 0.1, scale: 0.2, rotation: 0 },
+      createdAt: approvedAt,
+      resolvedAt: approvedAt,
+    });
+
+  it('does not claim someone paid for a free placement', async () => {
+    givenApproved(true);
+
+    await expect(remove()).rejects.toThrow(/commitment to keep it up for a week/);
+    await expect(remove()).rejects.not.toThrow(/paid/);
+  });
+
+  it('keeps the paid reason on a paid placement', async () => {
+    givenApproved(false);
+
+    await expect(remove()).rejects.toThrow(/Someone paid to place it/);
+  });
+
+  it('refuses both for the same week, whatever the reason says', async () => {
+    givenApproved(true);
+
+    await expect(remove()).rejects.toThrow(/can be removed from/);
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the free claim is actually handed.
+ *
+ * The tests above pin that the claim was CALLED and what happened after. Nothing
+ * pinned the payload, so deleting the normaliser or the note spread left every
+ * one of them green while free stickers landed at unnormalised coordinates, or
+ * silently without the note their placer wrote.
+ */
+describe('the payload handed to the free claim', () => {
+  beforeEach(() => {
+    givenStickerAndBalance();
+  });
+
+  const claimData = () =>
+    (createFreePlacement.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+
+  it('normalises the position rather than forwarding the raw draft', async () => {
+    await createStickerPlacement({
+      ...placeInput,
+      free: true,
+      // Past both bounds on purpose. The normaliser is the only thing between a
+      // drag that ran off the edge and a sticker rendered outside the image.
+      data: { ...placeInput.data, x: 1.4, y: -0.3, rotation: 15 },
+    });
+
+    const data = claimData();
+    expect(data.x).toBeLessThanOrEqual(1);
+    expect(data.x).toBeGreaterThanOrEqual(0);
+    expect(data.y).toBeLessThanOrEqual(1);
+    expect(data.y).toBeGreaterThanOrEqual(0);
+    // The cosmetic comes from the row the server loaded, not from the payload —
+    // the same id either way here, which is why the bounds above are what makes
+    // this test fail on a deleted normaliser.
+    expect(data.cosmeticId).toBe(COSMETIC);
+  });
+
+  it('carries the note the placer wrote', async () => {
+    await createStickerPlacement({
+      ...placeInput,
+      free: true,
+      data: { ...placeInput.data, comment: 'nice one' },
+    });
+
+    expect(claimData().comment).toBe('nice one');
+  });
+
+  /**
+   * Omitted rather than stored empty, so "left the field blank" and "typed only
+   * spaces" are the same row — the property the paid path already has, asserted
+   * here because the free path builds its own payload.
+   */
+  it('omits a note that is only whitespace', async () => {
+    await createStickerPlacement({
+      ...placeInput,
+      free: true,
+      data: { ...placeInput.data, comment: '   ' },
+    });
+
+    expect(claimData()).not.toHaveProperty('comment');
   });
 });

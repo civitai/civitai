@@ -24,7 +24,8 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
-import { ITEMS_PER_ROW, useCappedItems } from '~/components/HomeBlocks/homeBlockItems';
+import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -60,7 +61,7 @@ export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
   );
 };
 
-const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
+const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
@@ -74,7 +75,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
   const shuffled = useMemo(() => {
     if (!collection?.items) return [];
-    return shuffle(collection.items);
+    return shuffle([...collection.items]);
   }, [collection?.items]);
 
   const shuffledData = useMemo(() => shuffled.map((x) => x.data), [shuffled]);
@@ -87,11 +88,12 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   });
 
   const maxPerUser = metadata.collection?.maxPerUser;
-  const items = useCappedItems(
-    filtered as { user?: { id: number } | null }[],
+  const items = useDedupedCappedItems(filtered as { id: number; user?: { id: number } | null }[], {
+    order: dedupeOrder(blockIndex),
+    entity: type,
     rows,
-    maxPerUser
-  ) as typeof filtered;
+    maxPerUser,
+  }) as typeof filtered;
 
   // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 
@@ -272,4 +274,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   );
 };
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; showAds?: boolean };
+type Props = {
+  homeBlockId: number;
+  metadata: HomeBlockMetaSchema;
+  showAds?: boolean;
+  blockIndex: number;
+};

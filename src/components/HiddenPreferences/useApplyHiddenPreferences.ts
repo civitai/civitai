@@ -294,7 +294,7 @@ export function filterPreferences<
           return sortedImages.length || (showImageless && (isModelOwner || isModerator))
             ? {
                 ...x,
-                images: filteredImages,
+                images: sortedImages,
               }
             : null;
         })

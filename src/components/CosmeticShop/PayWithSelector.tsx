@@ -67,7 +67,7 @@ export function PayWithSelector({
         <UnstyledButton
           onClick={() => setOpened((o) => !o)}
           aria-label="Choose how to pay"
-          className="w-full rounded-md border border-solid border-gray-3 px-3 py-2 transition-colors hover:bg-gray-0 dark:border-dark-4 dark:hover:bg-dark-5"
+          className="w-full rounded-full border border-solid border-gray-3 px-4 py-2 transition-colors hover:bg-gray-0 dark:border-dark-4 dark:hover:bg-dark-5"
         >
           <Group gap={8} wrap="nowrap" justify="space-between">
             <Group gap={8} wrap="nowrap">

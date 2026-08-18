@@ -12,4 +12,6 @@ export { reportAcceptedReward } from './passive/reportAccepted.reward';
 export { firstDailyFollowReward } from './active/firstDailyFollow.reward';
 export { dailyBoostReward } from './active/dailyBoost.reward';
 export { generatorFeedbackReward } from './active/generatorFeedback.reward';
+export { stickerPlacementAcceptedReward } from './active/stickerPlacementAccepted.reward';
+export { remixAcceptReward } from './active/remixAccept.reward';
 // export { adWatchedReward } from './active/adWatched.reward';

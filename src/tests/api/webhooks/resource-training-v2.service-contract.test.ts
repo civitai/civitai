@@ -36,15 +36,8 @@ vi.mock('@civitai/client', () => ({
   submitWorkflow: vi.fn(),
 }));
 
-const { mockFindFirst, mockGetWorkflow } = vi.hoisted(() => ({
-  mockFindFirst: vi.fn(),
+const { mockGetWorkflow } = vi.hoisted(() => ({
   mockGetWorkflow: vi.fn(),
-}));
-
-// Mock ONLY the DB layer — the REAL service runs and throws the REAL typed errors.
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: { modelFile: { findFirst: mockFindFirst } },
 }));
 
 // Orchestrator workflow fetch the handler calls before the real service.
@@ -56,11 +49,6 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: any) => handler,
 }));
-
-const { mockLogToAxiom } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn(() => Promise.resolve()),
-}));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 // Heavy / connection-opening leaf deps the service + handler import at module
 // load but that the throw paths never execute — stub so import is cheap and no
@@ -104,6 +92,10 @@ import {
   TrainingRecordNotFoundError,
   updateTrainingWorkflowRecords,
 } from '~/server/services/training.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockFindFirst = dbMock.dbWrite.modelFile.findFirst;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 function createMocks(body: unknown = { workflowId: 'wf-3111039', status: 'succeeded' }) {
   const req = {

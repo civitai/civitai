@@ -28,6 +28,7 @@ import {
   STICKER_TOPUP_CLAIM_KEY,
   STICKER_TOPUP_MAX_QUANTITY,
   stickerPricePerUseFromCosmeticData,
+  stickerUsesFromCosmeticData,
 } from '~/shared/utils/sticker-token';
 
 /**
@@ -219,6 +220,124 @@ export type StickerUsageRow = {
   entityType: string;
   entityId: number;
 };
+
+export type StickerOffer = {
+  cosmeticId: number;
+  /** What one more use costs, or null where the sticker sells none. */
+  pricePerUse: number | null;
+  /** Who made it — the party a purchase of either kind pays. */
+  creatorUsername: string | null;
+  /**
+   * The listing to buy another batch through, when one is on sale right now.
+   * Null covers both "never listed on its own" and "no longer for sale", which
+   * are the same thing to a buyer looking at the price.
+   */
+  listing: {
+    shopItemId: number;
+    unitAmount: number;
+    acceptsBlue: boolean;
+    uses: number | null;
+    /** The storefront the sale is credited to, as the shop grids pass. */
+    viaShopUserId: number | null;
+  } | null;
+};
+
+/**
+ * What a sticker costs today, both ways: one more use, or another batch of them
+ * through its listing.
+ *
+ * Its own query rather than a wider `getSticker`, which resolves artwork on
+ * every surface that renders a sticker — a comment thread would pay for a shop
+ * lookup it never shows.
+ *
+ * ⚠️ Every refusal `purchaseCosmeticShopItem` makes has to be made here too, or
+ * the tray offers a price the press then rejects. That is why it takes the
+ * viewer: self-created, blocked and sold-out are answers about a person and a
+ * moment, not about a listing.
+ */
+export async function getStickerOffers({
+  ids,
+  viewerId,
+}: {
+  ids: number[];
+  viewerId: number;
+}): Promise<StickerOffer[]> {
+  if (!ids.length) return [];
+
+  const cosmetics = await dbRead.cosmetic.findMany({
+    where: { id: { in: ids }, type: CosmeticType.Sticker },
+    select: { id: true, data: true, createdById: true, creator: { select: { username: true } } },
+  });
+  if (!cosmetics.length) return [];
+
+  // Same block semantics as buying one outright, and for the same reason: a
+  // price offered here is a purchase the server would refuse.
+  const blockedPairIds = await getBlockedPairIds(viewerId);
+
+  // `listed` as well as published: delisting stops new sales, which is exactly
+  // what the pack option is.
+  const listings = await dbRead.cosmeticShopItem.findMany({
+    where: {
+      cosmeticId: { in: cosmetics.map((c) => c.id) },
+      status: CosmeticShopItemStatus.Published,
+      listed: true,
+      AND: [
+        { OR: [{ availableFrom: null }, { availableFrom: { lte: new Date() } }] },
+        { OR: [{ availableTo: null }, { availableTo: { gte: new Date() } }] },
+      ],
+    },
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      cosmeticId: true,
+      unitAmount: true,
+      meta: true,
+      availableQuantity: true,
+      addedById: true,
+      // The purchase counts rows, not `meta.purchases` — that counter is written
+      // from a snapshot read and loses increments under concurrency, so a
+      // listing genuinely out of stock still reads as available through it.
+      _count: { select: { purchases: true } },
+    },
+  });
+
+  const byCosmetic = new Map<number, (typeof listings)[number]>();
+  for (const listing of listings)
+    if (listing.cosmeticId != null && !byCosmetic.has(listing.cosmeticId))
+      byCosmetic.set(listing.cosmeticId, listing);
+
+  return cosmetics.map((cosmetic) => {
+    const listing = byCosmetic.get(cosmetic.id);
+    const meta = (listing?.meta ?? {}) as CosmeticShopItemMeta;
+    // A capped listing that has sold out is not on sale, whatever its row says.
+    const soldOut =
+      listing?.availableQuantity != null &&
+      listing.availableQuantity - (listing._count?.purchases ?? 0) <= 0;
+    // The creator is granted their own sticker on approval, so the shop refuses
+    // to sell it to them; the block is refused in either direction, against both
+    // the maker and whoever listed it.
+    const refusedForViewer =
+      cosmetic.createdById === viewerId ||
+      (cosmetic.createdById != null && blockedPairIds.includes(cosmetic.createdById)) ||
+      (listing?.addedById != null && blockedPairIds.includes(listing.addedById));
+
+    return {
+      cosmeticId: cosmetic.id,
+      pricePerUse: stickerPricePerUseFromCosmeticData(cosmetic.data),
+      creatorUsername: cosmetic.creator?.username ?? null,
+      listing:
+        listing && !soldOut && !refusedForViewer
+          ? {
+              shopItemId: listing.id,
+              unitAmount: listing.unitAmount,
+              acceptsBlue: !!meta.acceptsBlueBuzz,
+              uses: stickerUsesFromCosmeticData(cosmetic.data),
+              viaShopUserId: listing.addedById,
+            }
+          : null,
+    };
+  });
+}
 
 /**
  * Buys N additional uses of a sticker the way the picker offers them: at the

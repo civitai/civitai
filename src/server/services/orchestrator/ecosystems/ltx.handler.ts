@@ -28,9 +28,9 @@ import type {
   VideoGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
+import { resolveImageDimensions } from '~/utils/aspect-ratio-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import type { AspectRatioOption, ResourceData } from '~/shared/data-graph/generation/common';
+import type { ResourceData } from '~/shared/data-graph/generation/common';
 import {
   ltxv2AspectRatios,
   ltxv23AspectRatiosByResolution,
@@ -60,29 +60,6 @@ function buildLoras(data: LTXCtx, ctx: HandlerExtCtx) {
     }
   }
   return Object.keys(loras).length > 0 ? loras : undefined;
-}
-
-/**
- * Resolves width/height from the first uploaded image by snapping to the
- * nearest supported aspect ratio. Falls back to the selected aspectRatio
- * node, then to the first entry in the list.
- */
-function resolveImageDimensions(
-  firstImage: { width?: number; height?: number } | undefined,
-  aspectRatios: AspectRatioOption[],
-  fallbackAspectRatio?: { width: number; height: number }
-) {
-  if (firstImage?.width && firstImage?.height) {
-    const match = findClosestAspectRatio(
-      { width: firstImage.width, height: firstImage.height },
-      aspectRatios
-    );
-    if (match) return { width: match.width, height: match.height };
-  }
-  return {
-    width: fallbackAspectRatio?.width ?? aspectRatios[0].width,
-    height: fallbackAspectRatio?.height ?? aspectRatios[0].height,
-  };
 }
 
 /**

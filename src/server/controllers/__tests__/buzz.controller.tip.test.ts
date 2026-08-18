@@ -37,18 +37,6 @@ vi.mock('~/server/services/buzz.service', () => ({
   previewMultiAccountTransaction: vi.fn(),
 }));
 
-const { mockUserFindMany, mockUserFindUnique } = vi.hoisted(() => ({
-  mockUserFindMany: vi.fn(),
-  mockUserFindUnique: vi.fn(),
-}));
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    user: {
-      findMany: (...a: unknown[]) => mockUserFindMany(...(a as [])),
-      findUnique: (...a: unknown[]) => mockUserFindUnique(...(a as [])),
-    },
-  },
-}));
 vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
 vi.mock('~/server/services/entity-collaborator.service', () => ({
   getEntityCollaborators: vi.fn(async () => []),
@@ -72,6 +60,9 @@ vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
 }));
 
 import { createBuzzTipTransactionHandler } from '../buzz.controller';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockUserFindMany = dbMock.dbWrite.user.findMany;
+const mockUserFindUnique = dbMock.dbWrite.user.findUnique;
 
 // A ledger mock that dedupes on externalTransactionId — a duplicate id is a benign
 // conflict (money already moved), NOT a new debit. Returns the {transactions, conflicts}

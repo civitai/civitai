@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 const schema = z.object({
@@ -37,7 +37,10 @@ export default AuthedEndpoint(
         }))
       );
     } catch (error) {
-      return res.status(500).json({ message: 'An unexpected error occurred', error });
+      // civitai#3845 (population B): a Prisma error's enumerable own props
+      // (`code`, `meta.{table,column}`, `clientVersion`) used to be serialized
+      // straight into `error`.
+      return handleEndpointError(res, error);
     }
   },
   ['GET']

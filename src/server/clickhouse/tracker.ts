@@ -4,7 +4,7 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
-import requestIp from 'request-ip';
+import { resolveClientIp } from '~/server/utils/client-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
@@ -12,6 +12,7 @@ import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { sleep } from '~/utils/errorHandling';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
@@ -20,7 +21,6 @@ import type {
   BountyEngagementType,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
-  EntityType,
   NewOrderRankType,
   ReportReason,
   ReportStatus,
@@ -32,6 +32,21 @@ import type { EntityChangeRow } from '~/server/common/entity-change.constants';
 import { ENTITY_CHANGE_TRACKING_FLAG } from '~/server/common/entity-change.constants';
 import { isFlipt } from '~/server/flipt/client';
 
+/**
+ * Whether the caller waits for the tracker to accept the row.
+ *
+ * Off by default, and that default is right for the request paths this class
+ * exists for — a view or a reaction must not add a network round trip to a
+ * response. It is wrong for a caller that writes down "this was counted"
+ * afterwards, which is what `awaitDelivery` is for: without it the write
+ * records a dispatch, and a dropped event becomes permanently invisible instead
+ * of being retried. Raises on a failure the retries could not fix.
+ */
+export type TrackDelivery = { awaitDelivery?: boolean };
+
+/** Per attempt, so three of these plus the backoff is the worst case wait. */
+const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
+
 export type ViewType =
   | 'ProfileView'
   | 'ImageView'
@@ -41,7 +56,31 @@ export type ViewType =
   | 'ArticleView'
   | 'CollectionView'
   | 'BountyView'
-  | 'BountyEntryView';
+  | 'BountyEntryView'
+  | 'Model3DView'
+  | 'ComicProjectView'
+  | 'ComicChapterView';
+
+/**
+ * The `entityType` arm of the ClickHouse `views` Enum8 — deliberately NOT the
+ * Prisma `EntityType`, which this used to be typed as. Prisma's enum carries
+ * values the ClickHouse column has never had (`Comment`, `CommentV2`,
+ * `ResourceReview`, `ChatMessage`, `UserProfile`), so it type-checked rows the
+ * insert would reject. Keep this list in lockstep with the column.
+ */
+export type ViewEntityType =
+  | 'User'
+  | 'Image'
+  | 'Post'
+  | 'Model'
+  | 'ModelVersion'
+  | 'Article'
+  | 'Collection'
+  | 'Bounty'
+  | 'BountyEntry'
+  | 'Model3D'
+  | 'ComicProject'
+  | 'ComicChapter';
 
 export type UserActivityType =
   | 'Registration'
@@ -244,7 +283,23 @@ export class Tracker {
     if (req && res) {
       this.req = req;
       this.res = res;
-      this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
+      // ATTRIBUTION surface: this value becomes the `ip` column on every event
+      // this Tracker writes. It is a record of who acted, not a gate on whether
+      // they may — so it takes the derivation that always yields a label, not
+      // the fail-closed one, which would collapse every non-edge caller onto a
+      // shared hop and destroy exactly the distinction these rows exist to keep.
+      //
+      // `resolveClientIp` is total and already answers `'unknown'` when nothing
+      // resolves, which is the same value this field is initialised to — so the
+      // `?? this.actor.ip` coalesce it replaces has no remaining case to cover.
+      //
+      // ⚠️ SEAM: this column is READ back by `fetchDownloadCount` under a
+      // different derivation. That seam — how far this change narrows it and
+      // what remains — is described ONCE, in `~/server/utils/download-count`,
+      // which owns the read half. Do not restate it here; two copies of a
+      // seam description drift, and the read side is where the gap is
+      // actionable.
+      this.actor.ip = resolveClientIp(req);
       this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
     }
     if (session !== undefined) {
@@ -256,9 +311,15 @@ export class Tracker {
 
   private async send(
     table: string,
-    data: object | ((args: { session: Session | null; actor: TrackRequest }) => object)
+    data: object | ((args: { session: Session | null; actor: TrackRequest }) => object),
+    options?: TrackDelivery
   ) {
-    if (!env.CLICKHOUSE_TRACKER_URL) return;
+    // No tracker configured is closer to the kill-switch than to a failure —
+    // it is every dev and preview environment — so it is reported through the
+    // same channel rather than raised. `awaitDelivery` callers must still not
+    // read it as delivered: `send` returns false, `updateEntityMetric` passes
+    // that on, and the row stays queued instead of being stamped counted.
+    if (!env.CLICKHOUSE_TRACKER_URL) return false;
     await this.resolveSession();
 
     const body =
@@ -270,82 +331,113 @@ export class Tracker {
     // Prior version only handled network rejection from fetch(), so any
     // 5xx response from the tracker — common when NATS publish ack times
     // out — was silently dropped.
+    //
+    // `awaitDelivery` is for the one kind of caller that cannot use that: one
+    // that writes a durable "this was counted" record afterwards. Dispatching
+    // and marking would record a lost event as delivered, which is worse than
+    // the loss it replaced — the row then looks accounted for forever.
+    if (options?.awaitDelivery) {
+      await this.sendWithRetry(url, body, table, 1, true);
+      return true;
+    }
+
     void this.sendWithRetry(url, body, table);
+    return true;
   }
 
   private async sendWithRetry(
     url: string,
     body: object,
     table: string,
-    attempt = 1
+    attempt = 1,
+    /** Raise on a failure the retries could not fix, instead of only logging it. */
+    rethrow = false
   ): Promise<void> {
     const MAX_ATTEMPTS = 3;
     const baseDelayMs = 250;
 
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        body: JSON.stringify(body),
-        headers: { 'Content-Type': 'application/json' },
-      });
+    // A loop rather than recursion, so `rethrow` has somewhere to throw from
+    // that the retry `catch` cannot swallow. Recursing and throwing inside the
+    // `try` would be caught by this frame's own handler and retried as if it
+    // were a network fault, multiplying the attempts.
+    let failure: Error | null = null;
 
-      if (res.ok) return;
+    for (; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (attempt > 1) await sleep(baseDelayMs * 2 ** (attempt - 2) + Math.random() * baseDelayMs);
 
-      // 4xx: tracker rejected the payload. Retrying won't help. Log and bail.
-      if (res.status >= 400 && res.status < 500) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: { 'Content-Type': 'application/json' },
+          // Built per attempt, and only when someone is waiting. Nothing here
+          // configures an undici dispatcher, so an unsignalled fetch inherits a
+          // 300s header timeout — three of those on one row is a wedge rather
+          // than a retry. One signal for the whole loop would be worse than
+          // none: `fetch` rejects immediately on an already-aborted signal, so
+          // the first slow attempt would consume the other two. Fire-and-forget
+          // keeps the unbounded behaviour; nobody is holding a response open.
+          signal: rethrow ? AbortSignal.timeout(AWAIT_DELIVERY_TIMEOUT_MS) : undefined,
+        });
+
+        if (res.ok) return;
+
+        // 4xx: tracker rejected the payload. Retrying won't help. Log and bail.
+        if (res.status >= 400 && res.status < 500) {
+          const errBody = await res.text().catch(() => '');
+          logToAxiom(
+            {
+              type: 'warning',
+              name: 'Failed to track (4xx)',
+              details: { table, status: res.status, attempt, response: errBody.slice(0, 500) },
+              message: `Tracker returned ${res.status}`,
+            },
+            'clickhouse'
+          ).catch(() => {});
+          failure = new Error(`tracker: ${table} rejected with ${res.status}`);
+          break;
+        }
+
+        // 5xx: transient — NATS publish timeout, JetStream rejection, etc.
+        failure = new Error(`tracker: ${table} returned ${res.status}`);
+        if (attempt < MAX_ATTEMPTS) continue;
+
         const errBody = await res.text().catch(() => '');
         logToAxiom(
           {
-            type: 'warning',
-            name: 'Failed to track (4xx)',
-            details: { table, status: res.status, attempt, response: errBody.slice(0, 500) },
-            message: `Tracker returned ${res.status}`,
+            type: 'error',
+            name: 'Failed to track (5xx, exhausted)',
+            details: {
+              table,
+              status: res.status,
+              attempts: attempt,
+              response: errBody.slice(0, 500),
+            },
+            message: `Tracker returned ${res.status} after ${attempt} attempts`,
           },
           'clickhouse'
         ).catch(() => {});
-        return;
-      }
+      } catch (e) {
+        const error = e as Error;
+        failure = error;
+        // Network-level failure. Retry the same as 5xx.
+        if (attempt < MAX_ATTEMPTS) continue;
 
-      // 5xx: transient — NATS publish timeout, JetStream rejection, etc.
-      if (attempt < MAX_ATTEMPTS) {
-        await sleep(baseDelayMs * 2 ** (attempt - 1) + Math.random() * baseDelayMs);
-        return this.sendWithRetry(url, body, table, attempt + 1);
-      }
-
-      const errBody = await res.text().catch(() => '');
-      logToAxiom(
-        {
-          type: 'error',
-          name: 'Failed to track (5xx, exhausted)',
-          details: {
-            table,
-            status: res.status,
-            attempts: attempt,
-            response: errBody.slice(0, 500),
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'Failed to track (network, exhausted)',
+            details: { table, attempts: attempt },
+            message: error.message,
+            stack: error.stack,
+            cause: error.cause,
           },
-          message: `Tracker returned ${res.status} after ${attempt} attempts`,
-        },
-        'clickhouse'
-      ).catch(() => {});
-    } catch (e) {
-      const error = e as Error;
-      // Network-level failure. Retry the same as 5xx.
-      if (attempt < MAX_ATTEMPTS) {
-        await sleep(baseDelayMs * 2 ** (attempt - 1) + Math.random() * baseDelayMs);
-        return this.sendWithRetry(url, body, table, attempt + 1);
+          'clickhouse'
+        ).catch(() => {});
       }
-      logToAxiom(
-        {
-          type: 'error',
-          name: 'Failed to track (network, exhausted)',
-          details: { table, attempts: attempt },
-          message: error.message,
-          stack: error.stack,
-          cause: error.cause,
-        },
-        'clickhouse'
-      ).catch(() => {});
     }
+
+    if (rethrow && failure) throw failure;
   }
 
   private async sendMany(
@@ -382,19 +474,23 @@ export class Tracker {
   private async track(
     table: string,
     custom: object | ((session: Session | null) => object),
-    options?: { skipActorMeta: boolean }
-  ): Promise<void> {
-    const { skipActorMeta = false } = options ?? {};
+    options?: { skipActorMeta: boolean } & TrackDelivery
+  ): Promise<boolean> {
+    const { skipActorMeta = false, awaitDelivery } = options ?? {};
 
-    await this.send(table, ({ session, actor }) => {
-      const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
-      const customData = typeof custom === 'function' ? custom(session) : custom;
+    return this.send(
+      table,
+      ({ session, actor }) => {
+        const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
+        const customData = typeof custom === 'function' ? custom(session) : custom;
 
-      return {
-        ...actorMeta,
-        ...customData,
-      };
-    });
+        return {
+          ...actorMeta,
+          ...customData,
+        };
+      },
+      { awaitDelivery }
+    );
   }
 
   private async trackMany(
@@ -416,7 +512,7 @@ export class Tracker {
 
   public view(values: {
     type: ViewType;
-    entityType: EntityType;
+    entityType: ViewEntityType;
     entityId: number;
     // Optional client-supplied context, forwarded verbatim into the `views`
     // ClickHouse row (same shape the track.addView tRPC resolver passed
@@ -428,6 +524,43 @@ export class Tracker {
     details?: Record<string, unknown>;
   }) {
     return this.track('views', values);
+  }
+
+  // Feed impressions — entities SEEN in a feed rather than opened. Deliberately
+  // its own table: impressions outnumber views by roughly an order of magnitude,
+  // so folding them into `views` would silently redefine every view number on the
+  // platform (and the three materialized views built on it) overnight.
+  //
+  // Uses trackMany, NOT track. `track` posts one HTTP request per row to the
+  // tracker service, which is what makes the single-event methods above viable at
+  // their volume and would make this one ruinous: a 250-entity flush would become
+  // 250 outbound requests, so client-side batching would buy nothing. trackMany
+  // sends the whole array as one insert, so one browser flush is one insert.
+  //
+  // The part-count concern that volume raises — many pods each inserting on a
+  // short interval — is already handled: the shared client sets `async_insert`
+  // for every insert it makes (packages/civitai-clickhouse/src/client.ts).
+  public impressions(values: {
+    sessionKey: string;
+    surface: ImpressionSurface;
+    entities: { entityType: ImpressionEntityType; entityId: number }[];
+  }) {
+    const { sessionKey, surface, entities } = values;
+    return this.trackMany(
+      'impressions',
+      entities.map(({ entityType, entityId }) => ({ entityType, entityId, sessionKey, surface })),
+      // 🔴 `skipActorMeta` stamps userId only, dropping ip and userAgent. On this
+      // table that is not a detail: measured on `views`, ip is 4.74 B/row and
+      // userAgent 3.92 B/row out of 15.99 — together 54% of the stored bytes, for
+      // two columns an impression has no use for. Halving the row is worth more
+      // here than anywhere else on the platform because this table takes ~10x the
+      // `views` insert rate.
+      //
+      // It also means impressions carry no IP. Anything wanting per-viewer
+      // forensics on this data needs a deliberate decision to start collecting it,
+      // rather than finding it already there.
+      { skipActorMeta: true }
+    );
   }
 
   // App Blocks Analytics Phase 2 — block render/impression event. Fired once per
@@ -701,16 +834,19 @@ export class Tracker {
     return this.track('knights_new_order_image_rating', { ...values, createdAt: new Date() });
   }
 
-  public entityMetric(values: {
-    entityType: EntityMetric_EntityType_Type;
-    entityId: number;
-    metricType: EntityMetric_MetricType_Type;
-    metricValue: number;
-  }) {
+  public entityMetric(
+    values: {
+      entityType: EntityMetric_EntityType_Type;
+      entityId: number;
+      metricType: EntityMetric_MetricType_Type;
+      metricValue: number;
+    },
+    options?: TrackDelivery
+  ) {
     return this.track(
       'entityMetricEvents',
       { ...values, createdAt: new Date() },
-      { skipActorMeta: true }
+      { skipActorMeta: true, awaitDelivery: options?.awaitDelivery }
     );
   }
 

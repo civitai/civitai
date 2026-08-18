@@ -51,12 +51,9 @@ vi.mock('~/server/redis/client', () => ({
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
-// db/client pulls the Prisma factory graph — stub it (neither function under
-// test touches the DB on these paths).
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/shared/constants/browsing-settings-addons';
 import { DEFAULT_LIVE_FEATURE_FLAGS } from '~/server/common/constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Fresh module (fresh in-proc memos) per test — see file header note.
 async function loadSystemCache() {

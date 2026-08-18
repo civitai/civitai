@@ -68,19 +68,28 @@ export function Home() {
               return (
                 <React.Fragment key={homeBlock.id}>
                   {homeBlock.type === HomeBlockType.Collection && (
-                    <CollectionHomeBlock homeBlockId={homeBlock.id} metadata={homeBlock.metadata} />
+                    <CollectionHomeBlock
+                      homeBlockId={homeBlock.id}
+                      metadata={homeBlock.metadata}
+                      blockIndex={i}
+                    />
                   )}
                   {homeBlock.type === HomeBlockType.FeaturedCollections && (
                     <FeaturedCollectionsHomeBlock
                       homeBlockId={homeBlock.id}
                       metadata={homeBlock.metadata}
+                      blockIndex={i}
                     />
                   )}
                   {/* {homeBlock.type === HomeBlockType.Announcement && (
                     <AnnouncementHomeBlock homeBlockId={homeBlock.id} />
                   )} */}
                   {homeBlock.type === HomeBlockType.Feed && (
-                    <FeedHomeBlock homeBlockId={homeBlock.id} metadata={homeBlock.metadata} />
+                    <FeedHomeBlock
+                      homeBlockId={homeBlock.id}
+                      metadata={homeBlock.metadata}
+                      blockIndex={i}
+                    />
                   )}
                   {homeBlock.type === HomeBlockType.Leaderboard && (
                     <LeaderboardsHomeBlock
@@ -104,6 +113,7 @@ export function Home() {
                     <FeaturedModelVersionHomeBlock
                       homeBlockId={homeBlock.id}
                       metadata={homeBlock.metadata}
+                      blockIndex={i}
                     />
                   )}
                   {showAds && <AdUnitTop className="py-3" />}
@@ -162,6 +172,7 @@ export function Home() {
 
                       <ImagesInfinite
                         showAds
+                        showFeedbackPrompt
                         disableStoreFilters
                         filters={{
                           period: MetricTimeframe.Week,

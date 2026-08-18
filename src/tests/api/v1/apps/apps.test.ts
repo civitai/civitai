@@ -5,13 +5,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *   - GET /api/v1/apps          (list + filter, keyset paginated)
  *   - GET /api/v1/apps/{slug}   (single detail)
  *
- * The security crux is the DEFAULT-CLOSED per-user scope gate: an anonymous /
- * non-privileged caller resolves scope `none` and MUST receive the empty page /
- * 404 — NEVER the full catalog — even though the underlying listing service
- * defaults to `full`. The load-bearing guards (`does NOT leak the catalog to
- * anon`) mock the service to return NON-empty data and assert the handler still
- * returns nothing for an unscoped caller, so deleting the scope wiring fails the
- * test.
+ * These endpoints are a PUBLIC catalog by decision: a caller who resolves no scope
+ * of their own — anonymous or merely non-privileged — is served the catalog under
+ * the deliberate grant in `~/server/services/blocks/public-apps-catalog`, and an
+ * operator kill switch is the one thing that takes it away. A caller who DOES
+ * resolve a scope (`full` for a mod / app-dev-tester, `public-external` for the
+ * external-only cohort) keeps it verbatim, and the scope is threaded EXPLICITLY
+ * into the listing service on every path — the guards below mock the service to
+ * return NON-empty data so a handler that stopped threading the scope, or stopped
+ * honouring the kill switch, fails rather than passing on an incidentally-empty
+ * page.
+ *
+ * 🔴 WHAT THIS SUITE STRUCTURALLY CANNOT SEE — twice over:
+ *   - its resolver mock returns only `full`, `public-external` or `none`, so the
+ *     case production actually hit (civitai#3983: the resolver returning NOTHING)
+ *     is not exercised here at all. Those cases live in
+ *     `apps.absent-scope-fail-closed.test.ts`; keep them there rather than assuming
+ *     this suite covers them.
+ *   - every scope, flag and service answer here is a MOCK, so nothing in this file
+ *     can attest that the live endpoint serves anything. It pins what the handler
+ *     does with an answer, never what the answer is in production.
  */
 
 const {
@@ -21,6 +34,7 @@ const {
   mockRateLimit,
   mockGetNextPage,
   mockIsHostForColor,
+  mockIsFlipt,
 } = vi.hoisted(() => ({
   mockResolveScope: vi.fn(),
   mockList: vi.fn(),
@@ -28,12 +42,15 @@ const {
   mockRateLimit: vi.fn(),
   mockGetNextPage: vi.fn(),
   mockIsHostForColor: vi.fn(),
+  mockIsFlipt: vi.fn(),
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   MixedAuthEndpoint: (handler: unknown) => handler,
-  handleEndpointError: (res: { status: (n: number) => { json: (b: unknown) => unknown } }, e: unknown) =>
-    res.status(500).json({ message: (e as Error)?.message ?? 'error' }),
+  handleEndpointError: (
+    res: { status: (n: number) => { json: (b: unknown) => unknown } },
+    e: unknown
+  ) => res.status(500).json({ message: (e as Error)?.message ?? 'error' }),
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   resolveStoreVisibilityScope: mockResolveScope,
@@ -51,7 +68,15 @@ vi.mock('~/server/utils/pagination-helpers', () => ({
 vi.mock('~/server/utils/server-domain', () => ({
   isHostForColor: mockIsHostForColor,
 }));
+// The public-catalog KILL SWITCH is a Flipt flag, so the flag client is the seam.
+// Spread the real module (rather than replacing it) so this stays honest if the
+// decision module ever reads another export from it.
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: mockIsFlipt,
+}));
 
+import type * as FliptClient from '~/server/flipt/client';
 import listHandler from '~/pages/api/v1/apps/index';
 import detailHandler from '~/pages/api/v1/apps/[slug]';
 
@@ -112,33 +137,63 @@ beforeEach(() => {
     baseUrl: new URL('http://localhost/api/v1/apps'),
     nextPage: nextCursor ? `http://localhost/api/v1/apps?cursor=${nextCursor}` : undefined,
   }));
-  // Default identity scope: mods → full, everyone else → none (the pre-launch default).
+  // Default identity scope: mods → full, everyone else → none (they then meet the
+  // public-catalog grant, which is what makes these endpoints public).
   mockResolveScope.mockImplementation(async ({ user }: { user?: { isModerator?: boolean } }) =>
     user?.isModerator ? 'full' : 'none'
   );
+  // The kill switch is a DISABLE flag: `false` is its absent/dark state and means
+  // the public catalog is OPEN. This mirrors what `isFlipt` returns for a flag that
+  // does not exist — which is the as-merged production configuration.
+  mockIsFlipt.mockResolvedValue(false);
   mockList.mockResolvedValue({ items: [card('a'), card('b')], nextCursor: undefined });
   mockDetail.mockResolvedValue(detail('a'));
 });
 
 describe('GET /api/v1/apps (list)', () => {
-  it('SECURITY: anonymous caller gets the CLOSED scope — empty page, NOT the full catalog', async () => {
-    // The service is mocked to ALWAYS return items; the handler must still return
-    // empty for an unscoped (anon) caller. This fails if the scope gate is removed.
-    mockList.mockResolvedValue({ items: [card('leak-a'), card('leak-b')], nextCursor: 'x' });
+  // 🔴 PUBLIC BY DECISION. An anonymous caller resolves `none` of their own and is
+  // then served the catalog by the deliberate grant. This is the assertion that
+  // fails if someone removes the grant, so the endpoint cannot silently go dark
+  // again — which is exactly what merging the #4041 hardening alone would have done
+  // to a live public URL.
+  it('PUBLIC GRANT: an anonymous caller is served the catalog, under an explicit `full` scope', async () => {
     const { req, res } = createMocks();
     await (listHandler as unknown as Handler)(req, res, undefined);
     expect(res._status()).toBe(200);
-    expect((res._json() as { items: unknown[] }).items).toEqual([]);
-    // The catalog service is never consulted for a `none` scope.
-    expect(mockList).not.toHaveBeenCalled();
+    expect((res._json() as { items: unknown[] }).items).toHaveLength(2);
+    // Threaded EXPLICITLY — never left to a service-side default (civitai#3983).
+    expect(mockList).toHaveBeenCalledTimes(1);
+    expect(mockList.mock.calls[0][1]).toMatchObject({ scope: 'full' });
   });
 
-  it('SECURITY: a normal (non-privileged) authed user also gets the closed scope', async () => {
-    mockList.mockResolvedValue({ items: [card('leak')], nextCursor: undefined });
+  it('PUBLIC GRANT: a normal (non-privileged) authed user is served the same public catalog', async () => {
     const { req, res } = createMocks();
     await (listHandler as unknown as Handler)(req, res, NORMAL);
-    expect((res._json() as { items: unknown[] }).items).toEqual([]);
-    expect(mockList).not.toHaveBeenCalled();
+    expect(res._status()).toBe(200);
+    expect((res._json() as { items: unknown[] }).items).toHaveLength(2);
+    expect(mockList.mock.calls[0][1]).toMatchObject({ scope: 'full' });
+  });
+
+  // The KILL SWITCH, asserted as a DISCRIMINATION rather than as one state: both
+  // arms run in one test against one mocked catalog, so a handler that ignores the
+  // switch fails the OFF→ON arm and a handler that serves nothing fails the ON→OFF
+  // arm. Asserting only the "switch on → empty" half would pass on a handler that
+  // is simply dark, which is the regression this whole change exists to prevent.
+  it('KILL SWITCH discriminates: OFF → the catalog; ON → an empty page and the service is never reached', async () => {
+    mockList.mockResolvedValue({ items: [card('a'), card('b')], nextCursor: 'x' });
+
+    mockIsFlipt.mockResolvedValue(false);
+    const open = createMocks();
+    await (listHandler as unknown as Handler)(open.req, open.res, undefined);
+    expect((open.res._json() as { items: unknown[] }).items).toHaveLength(2);
+
+    mockIsFlipt.mockResolvedValue(true);
+    const shut = createMocks();
+    await (listHandler as unknown as Handler)(shut.req, shut.res, undefined);
+    expect(shut.res._status()).toBe(200);
+    expect((shut.res._json() as { items: unknown[] }).items).toEqual([]);
+    // Withheld means SHORT-CIRCUITED, not "the service returned nothing".
+    expect(mockList).toHaveBeenCalledTimes(1);
   });
 
   it('a mod (full scope) gets the catalog — service called WITH the resolved scope', async () => {
@@ -210,13 +265,13 @@ describe('GET /api/v1/apps (list)', () => {
     expect(opts).toMatchObject({ redCapable: true });
   });
 
-  it('invalid/expired token → treated as anonymous (no 500): user undefined → empty page', async () => {
-    // MixedAuthEndpoint resolves an invalid bearer to `undefined`; the handler
-    // must treat that as anon (empty), never crash.
+  it('invalid/expired token → treated as anonymous (no 500): the public catalog, never a crash', async () => {
+    // MixedAuthEndpoint resolves an invalid bearer to `undefined`; the handler must
+    // treat that as anon — i.e. the public grant applies — never as an error.
     const { req, res } = createMocks({ headers: { authorization: 'Bearer garbage' } });
     await (listHandler as unknown as Handler)(req, res, undefined);
     expect(res._status()).toBe(200);
-    expect((res._json() as { items: unknown[] }).items).toEqual([]);
+    expect((res._json() as { items: unknown[] }).items).toHaveLength(2);
   });
 
   it('400 on an out-of-range limit', async () => {
@@ -231,10 +286,12 @@ describe('GET /api/v1/apps (list)', () => {
   });
 
   it('429 when rate-limited: the limiter short-circuits before any scope/service work', async () => {
-    mockRateLimit.mockImplementationOnce(async ({ res }: { res: { status: (n: number) => { json: (b: unknown) => unknown } } }) => {
-      res.status(429).json({ message: 'Rate limit exceeded' });
-      return true;
-    });
+    mockRateLimit.mockImplementationOnce(
+      async ({ res }: { res: { status: (n: number) => { json: (b: unknown) => unknown } } }) => {
+        res.status(429).json({ message: 'Rate limit exceeded' });
+        return true;
+      }
+    );
     const { req, res } = createMocks();
     await (listHandler as unknown as Handler)(req, res, MOD);
     expect(res._status()).toBe(429);
@@ -251,13 +308,31 @@ describe('GET /api/v1/apps (list)', () => {
 });
 
 describe('GET /api/v1/apps/{slug} (detail)', () => {
-  it('SECURITY: an out-of-scope (anon) caller gets 404, and the service is never called', async () => {
-    // Service mocked to return a real listing; the scope gate must still 404.
-    mockDetail.mockResolvedValue(detail('secret-app'));
-    const { req, res } = createMocks({ query: { slug: 'secret-app' } });
+  // 🔴 PUBLIC BY DECISION — the detail sibling of the list guard above. Fails if the
+  // grant is removed, so `/api/v1/apps/{slug}` cannot silently start 404ing.
+  it('PUBLIC GRANT: an anonymous caller is served the detail, under an explicit `full` scope', async () => {
+    const { req, res } = createMocks({ query: { slug: 'my-app' } });
     await (detailHandler as unknown as Handler)(req, res, undefined);
-    expect(res._status()).toBe(404);
-    expect(mockDetail).not.toHaveBeenCalled();
+    expect(res._status()).toBe(200);
+    expect(mockDetail).toHaveBeenCalledWith(
+      { slug: 'my-app' },
+      expect.objectContaining({ scope: 'full' })
+    );
+  });
+
+  it('KILL SWITCH discriminates: OFF → 200 with the detail; ON → 404 and the service is never reached', async () => {
+    mockDetail.mockResolvedValue(detail('secret-app'));
+
+    mockIsFlipt.mockResolvedValue(false);
+    const open = createMocks({ query: { slug: 'secret-app' } });
+    await (detailHandler as unknown as Handler)(open.req, open.res, undefined);
+    expect(open.res._status()).toBe(200);
+
+    mockIsFlipt.mockResolvedValue(true);
+    const shut = createMocks({ query: { slug: 'secret-app' } });
+    await (detailHandler as unknown as Handler)(shut.req, shut.res, undefined);
+    expect(shut.res._status()).toBe(404);
+    expect(mockDetail).toHaveBeenCalledTimes(1);
   });
 
   it('found in scope → 200 with the detail + manifest-derived fields', async () => {
@@ -286,17 +361,22 @@ describe('GET /api/v1/apps/{slug} (detail)', () => {
     expect(mockDetail).not.toHaveBeenCalled();
   });
 
-  it('invalid/expired token → anonymous → 404 (not a 500)', async () => {
-    const { req, res } = createMocks({ query: { slug: 'my-app' }, headers: { authorization: 'Bearer garbage' } });
+  it('invalid/expired token → anonymous → served under the public grant (not a 500)', async () => {
+    const { req, res } = createMocks({
+      query: { slug: 'my-app' },
+      headers: { authorization: 'Bearer garbage' },
+    });
     await (detailHandler as unknown as Handler)(req, res, undefined);
-    expect(res._status()).toBe(404);
+    expect(res._status()).toBe(200);
   });
 
   it('429 when rate-limited: short-circuits before scope/service', async () => {
-    mockRateLimit.mockImplementationOnce(async ({ res }: { res: { status: (n: number) => { json: (b: unknown) => unknown } } }) => {
-      res.status(429).json({ message: 'Rate limit exceeded' });
-      return true;
-    });
+    mockRateLimit.mockImplementationOnce(
+      async ({ res }: { res: { status: (n: number) => { json: (b: unknown) => unknown } } }) => {
+        res.status(429).json({ message: 'Rate limit exceeded' });
+        return true;
+      }
+    );
     const { req, res } = createMocks({ query: { slug: 'my-app' } });
     await (detailHandler as unknown as Handler)(req, res, MOD);
     expect(res._status()).toBe(429);

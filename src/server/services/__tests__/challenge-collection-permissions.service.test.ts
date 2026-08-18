@@ -1,17 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 const JUDGE_USER_ID = 8_675_309;
 const CREATOR_USER_ID = 42;
 const COLLECTION_ID = 10;
-
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn(), collection: { findFirstOrThrow: vi.fn() } },
-  mockDbWrite: {
-    collection: { findUnique: vi.fn(), findFirstOrThrow: vi.fn(), delete: vi.fn() },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
 const {
   getUserCollectionPermissionsById,

@@ -262,9 +262,11 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 
 ## Generation & training
 
-### `generation/generation.service.ts`  ·  used by: generation, ~~generation-config~~
-- [ ] `getGenerationResources` — *Postgres + search index*
-- ~~`getGenerationEcosystemConfig` / `setGenerationEcosystemConfig` / `getGateRules` / `setGateRules`~~ — **Excluded: `/moderator/generation-config` stays in the main app** (decision 2026-07-10).
+### `generation/generation.service.ts`  ·  used by: generation-config
+- ~~`getGenerationResources`~~ — **removed** along with the `/moderator/generation` page; the
+  generation blacklist now lives on the `ModelVersion.flags` `GenerationDisabled` bit.
+- [ ] `getGateRules` — *Redis sysRedis; audience tiers resolve via `resolveTestingAccess` (Flipt `GENERATION_TESTING`)*
+- [ ] `setGateRules`
 
 ### User-restriction service  ·  used by: generation-restrictions, prompt-audit-test  ·  **NEW service (extract)**
 > Logic is **inline in `user-restriction.router.ts`** today — extract into a service.

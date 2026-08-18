@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisClientModule from '@civitai/redis/client';
 import type * as StringHelpers from '~/utils/string-helpers';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * NAMESPACED half of the environment-scoped cache-key prefixing coverage (production half is
@@ -66,8 +67,6 @@ vi.mock('~/server/prom/client', () => ({
   cacheFailOpenDegradedCounter: { inc: vi.fn() },
   cacheFailOpenOriginFetchCounter: { inc: vi.fn() },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-
 describe('cache-helpers key prefixing — namespaced', () => {
   const rows = [{ id: 1, name: 'anime' }];
   const sql = {} as never;

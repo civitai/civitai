@@ -1,31 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-/**
- * App Blocks agentic mod code-review report — P0 lookup layer (DARK).
- *
- * Covers the prior-report selection: picks the latest COMPLETE report strictly
- * semver-older than the version under review (semver, not lexical, ordering),
- * queries only status='complete' (so running/failed/torn-down/cost-capped are
- * excluded at the DB), scopes to the stable `slug` key, returns null when there
- * is no earlier report, and enforces the non-empty-slug + valid semver
- * invariants. Plus getAgentReport's by-review lookup.
- */
-
-const { mockFindMany, mockFindFirst } = vi.hoisted(() => ({
-  mockFindMany: vi.fn(),
-  mockFindFirst: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    appReviewAgentReport: { findMany: mockFindMany, findFirst: mockFindFirst },
-  },
-}));
-
 import {
   getAgentReport,
   getPriorAgentReport,
 } from '../app-review-report.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockFindMany = dbMock.dbRead.appReviewAgentReport.findMany;
+const mockFindFirst = dbMock.dbRead.appReviewAgentReport.findFirst;
 
 // Minimal row factory — only the fields the selection logic reads.
 const report = (over: {

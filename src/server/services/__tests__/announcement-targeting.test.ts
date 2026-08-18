@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const redisGet = redisMock.redis.get;
 
 // Targeted announcements ride the same global per-domain cache flagged with
 // `targeted: true`; getCurrentAnnouncements resolves per-user visibility with a
@@ -7,44 +10,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // see a targeted announcement, members do, the internal `targeted` flag never
 // leaks into the returned DTOs, and the membership query is skipped entirely
 // when nothing is targeted.
-const {
-  redisGet,
-  membershipFindMany,
-  announcementCreate,
-  userFindMany,
-  createNotificationMock,
-  targetDeleteMany,
-  targetCreateMany,
-} = vi.hoisted(() => ({
-  redisGet: vi.fn(),
-  membershipFindMany: vi.fn(),
-  announcementCreate: vi.fn(),
-  userFindMany: vi.fn(),
+const { createNotificationMock } = vi.hoisted(() => ({
   createNotificationMock: vi.fn(),
-  targetDeleteMany: vi.fn(),
-  targetCreateMany: vi.fn(),
 }));
+const membershipFindMany = dbMock.dbRead.announcementUser.findMany;
+const announcementCreate = dbMock.dbWrite.announcement.create;
+const targetDeleteMany = dbMock.dbWrite.announcementUser.deleteMany;
+const targetCreateMany = dbMock.dbWrite.announcementUser.createMany;
+const userFindMany = dbMock.dbWrite.user.findMany;
 
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { day: 86400 } }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: createNotificationMock,
-}));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    announcement: { findMany: vi.fn(), count: vi.fn() },
-    announcementUser: { findMany: membershipFindMany },
-    $transaction: vi.fn(),
-  },
-  dbWrite: {
-    announcement: { findMany: vi.fn(), create: announcementCreate, update: vi.fn() },
-    announcementUser: { deleteMany: targetDeleteMany, createMany: targetCreateMany },
-    user: { findMany: userFindMany },
-    $transaction: vi.fn(),
-  },
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: redisGet, set: vi.fn(), del: vi.fn() },
-  REDIS_KEYS: { CACHES: { ANNOUNCEMENTS: 'packed:caches:announcements' } },
 }));
 vi.mock('~/server/utils/pagination-helpers', () => ({
   DEFAULT_PAGE_SIZE: 20,

@@ -32,6 +32,7 @@ import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-revie
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
+import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
 import { challengeActivationJob } from '~/server/jobs/challenge-activation';
@@ -79,6 +80,7 @@ import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publ
 import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
+import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
@@ -176,6 +178,7 @@ export const jobs: Job[] = [
   reconcileWildcardSetsJob,
   auditWildcardSetCategoriesJob,
   ...metricReconciliationJobs,
+  ...clickhouseRefreshJobs,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
@@ -188,6 +191,7 @@ export const jobs: Job[] = [
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
   sweepStaleAgentReviewsJob,
+  cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
   checkImageExistence,
   fullImageExistence,

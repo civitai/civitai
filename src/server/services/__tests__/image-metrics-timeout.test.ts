@@ -44,10 +44,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 // must be an array (db/client filters it).
 vi.mock('~/env/server', () => ({
   env: new Proxy(
-    { CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: 20, LOGGING: [] as string[] } as Record<
-      string,
-      unknown
-    >,
+    { CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: 20, LOGGING: [] as string[] } as Record<string, unknown>,
     {
       get: (target, prop) => {
         if (prop in target) return target[prop as string];
@@ -69,24 +66,10 @@ vi.mock('~/env/server', () => ({
   ),
 }));
 
-// Stub the infra clients so no real DB/Redis connection is opened on import.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-// REDIS_KEYS / REDIS_SYS_KEYS are deeply path-accessed at module load; a Proxy
-// returns a string for any key without enumerating the whole namespace tree.
-// Built inside the factory (vi.mock is hoisted — no outer-scope refs allowed).
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
-
 import { getImageMetricsObject } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const never = () => new Promise<never>(() => {});
 

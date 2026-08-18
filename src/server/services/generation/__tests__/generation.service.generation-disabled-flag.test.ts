@@ -24,7 +24,6 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -52,6 +51,7 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 
 import { getResourceCanGenerate } from '~/server/services/generation/generation.service';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const noHiddenGates = { ecosystems: new Set<string>(), versionIds: new Set<number>() };
 

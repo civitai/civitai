@@ -49,6 +49,8 @@ export interface ImageProps {
   thumbnailUrl?: string | null;
   minor?: boolean;
   poi?: boolean;
+  /** Only set on a collection-filtered feed; the collection page reads it for the remove rule. */
+  collectionItemAddedById?: number | null;
 }
 
 type ImageViewerState = {

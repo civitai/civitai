@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
 
-export const ITEMS_PER_ROW = 7;
+export const ITEMS_PER_ROW = HOME_BLOCK_ITEMS_PER_ROW;
 
 type CappableItem = { user?: { id: number } | null };
 
@@ -34,15 +34,4 @@ export function capPerUser<T extends CappableItem>(
     capped.push(item);
   }
   return capped;
-}
-
-export function useCappedItems<T extends CappableItem>(
-  items: T[],
-  rows: number,
-  maxPerUser?: number
-) {
-  return useMemo(
-    () => capPerUser(items, ITEMS_PER_ROW * rows, maxPerUser),
-    [items, rows, maxPerUser]
-  );
 }

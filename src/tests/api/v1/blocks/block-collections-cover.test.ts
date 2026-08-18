@@ -11,17 +11,17 @@ import { beforeEach, describe, it, expect, vi } from 'vitest';
  */
 
 // Echo the args so we can assert exactly what getEdgeUrl was asked to produce.
-vi.mock('~/client-utils/cf-images-utils', () => ({
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (src: string, opts: Record<string, unknown>) => JSON.stringify({ src, ...opts }),
 }));
-const mockQueryRaw = vi.hoisted(() => vi.fn());
-vi.mock('~/server/db/client', () => ({ dbRead: { $queryRaw: mockQueryRaw } }));
+const mockQueryRaw = dbMock.dbRead.$queryRaw;
 vi.mock('~/server/auth/session-client', () => ({ sessionClient: {} }));
 
 import {
   getFallbackCoverImages,
   toCoverImageUrl,
 } from '~/server/services/blocks/block-collections.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('toCoverImageUrl', () => {
   it('returns null when the image / url is missing', () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * Regression coverage for GET /api/v1/model-versions/[id] — per-file
@@ -54,8 +55,7 @@ vi.mock('~/server/services/creator-program.service', () => ({
 vi.mock('~/server/services/file.service', () => ({
   getDownloadFilename: ({ file }: any) => `${file.id}.safetensors`,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   MixedAuthEndpoint: (handler: any) => handler,
   // by-hash/[hash] is wrapped in PublicEndpoint(handler, ['GET'], {maxAge}).

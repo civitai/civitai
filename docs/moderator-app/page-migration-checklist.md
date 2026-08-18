@@ -203,12 +203,14 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 ## 4. Generation & training
 
-- [ ] **`/moderator/generation`** — `generation.tsx` — flag: none
-  - Procedures: `generation.getResources` (query)
-  - Services: `generation/generation.service.ts` → `getGenerationResources`
-  - Schemas: `generation.schema.ts` (`getGenerationResourcesSchema`)
-  - Infra: **Postgres** (+ search index). `toggleUnavailableResource` lives in a child component — verify on migration.
-- [ ] ~~**`/moderator/generation-config`**~~ — `generation-config.tsx` — **Excluded — stays in the main app** (decision 2026-07-10). Not migrating.
+- ~~**`/moderator/generation`**~~ — **removed**. The "Unavailable Resources" list was replaced by a
+  per-version "Block generation" action on the model-version menu, backed by the
+  `ModelVersionFlag.GenerationDisabled` bit on `ModelVersion.flags`. No page to migrate.
+- [ ] **`/moderator/generation-config`** — `generation-config.tsx` — flag: none
+  - Procedures: `getGateRules` (query); `setGateRules` (mutation)
+  - Services: `generation/generation.service.ts` (`getGateRules`, `setGateRules`)
+  - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
+  - Infra: **Redis (sysRedis `SYSTEM.FEATURES`) + Flipt** (`GENERATION_TESTING`)
 - [ ] **`/moderator/generation-restrictions`** — `generation-restrictions.tsx` — flag: none (nav-gated on `csamReports`)
   - Procedures: `userRestriction.getAll` (query); `userRestriction.resolve`, `userRestriction.saveSuspiciousMatches` (mutations) — **logic inline in router**
   - Services: extract inline logic; `user.service.ts` (`updateUserById`), `orchestrator/promptAuditing.ts` (`resetProhibitedRequestCount`, `bustPromptAllowlistCache`), `notification.service.ts` (`createNotification`), `auth/session-invalidation.ts` (`refreshSession`)

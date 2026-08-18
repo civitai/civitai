@@ -80,30 +80,9 @@ vi.mock('~/env/server', () => ({
 // at the call under inspection. Everything after it in `getAllImages` is a raw
 // SQL feed query whose mocking would add nothing to what is being pinned.
 const STOP = new Error('__stop_after_hasSystemPosts__');
-const postFindFirst = vi.fn();
+const postFindFirst = dbMock.dbRead.post.findFirst;
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    post: {
-      findFirst: (...args: unknown[]) => postFindFirst(...args),
-    },
-  },
-  dbWrite: {},
-}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  // A self-returning Proxy: every key lookup yields another one, so any depth of
-  // `REDIS_KEYS.A.B.C` read at module load resolves without enumerating them.
-  const make = (): unknown => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
-
 // The branch under test sits after this — stub it so `getAllImages` proceeds.
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
@@ -117,6 +96,8 @@ vi.mock('../../flipt/client', async (importOriginal) => {
 });
 
 import { getAllImages } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const SYSTEM_USER_ID = -1;
 const MODEL_VERSION_ID = 456;

@@ -10,7 +10,9 @@ import type {
   PlacementSurface,
 } from '~/shared/utils/placement';
 import {
+  effectiveFreeSlots,
   effectivePlacementPrice,
+  FREE_SLOT_HOLDING_STATUSES,
   PLACEMENT_SURFACES,
   resolvePlacementSpace,
   surfaceAcceptsTarget,
@@ -68,9 +70,67 @@ export type ResolvedPlacementSpace = {
    * stop being true.
    */
   ownerShare: number;
+  /**
+   * The count the cascade resolved, before the cap — the same relationship
+   * `setPrice` has to `price`, so a caller can say "you have set 9, we are
+   * honouring 2" rather than only showing the smaller number.
+   */
+  setFreeSlots: number;
+  /** `min(setFreeSlots, freeSlotCap)`, computed here and never stored. */
+  freeSlots: number;
+  freeSlotCap: number;
+  /**
+   * How many free placements this space will still accept, right now.
+   *
+   * Never negative. A creator who lowers their slider below what is already
+   * reserved is not taking anything back — the placements they already accepted
+   * stay — so the space simply accepts nothing further until they release.
+   *
+   * ⚠️ This is what a caller SHOWS. It is not what a caller may decide on: by the
+   * time it is read the count is already stale. The refusal lives in
+   * `createFreePlacement`, which re-counts under a lock in the same transaction
+   * that inserts.
+   */
+  freeSlotsRemaining: number;
   /** Surface-owned; this layer carries it without reading inside it. */
   settings: PlacementSpaceSettings;
 };
+
+/**
+ * How many of a space's free slots are spoken for.
+ *
+ * Pending counts, and that is the whole feature: a free placement holds its slot
+ * from the moment it is made. Without it fifty people submit into four slots and
+ * the creator gets a fifty-item review queue — the exact outcome the slider
+ * exists to prevent. Declined, expired and removed rows are absent from the
+ * status list, so a released slot is claimable by the next caller with no sweep
+ * in between.
+ *
+ * Paid placements are not counted. The two counters are independent, so a
+ * fully-booked paid image still shows its free slots as available.
+ */
+export const reservedFreeSlots = (
+  /**
+   * Narrowed to the one model it touches so a transaction client satisfies it.
+   * The claim MUST pass its `tx` — counting on any other connection would read
+   * outside the lock it just took, and the count would be a listing again.
+   */
+  client: Pick<typeof dbWrite, 'placement'>,
+  {
+    surface,
+    targetType,
+    targetId,
+  }: { surface: PlacementSurface; targetType: PlacementSpaceEntity; targetId: number }
+) =>
+  client.placement.count({
+    where: {
+      surface,
+      targetType,
+      targetId,
+      free: true,
+      status: { in: [...FREE_SLOT_HOLDING_STATUSES] },
+    },
+  });
 
 /**
  * The space that governs one target, with the cascade already applied.
@@ -102,7 +162,7 @@ export async function resolvePlacementSpaceFor({
         { entityType: 'user', entityId: ownerId },
       ],
     },
-    select: { entityType: true, mode: true, price: true, settings: true },
+    select: { entityType: true, mode: true, price: true, freeSlots: true, settings: true },
   });
 
   const at = (entityType: PlacementSpaceEntity): PlacementSpaceSetting | undefined => {
@@ -111,6 +171,7 @@ export async function resolvePlacementSpaceFor({
       ? {
           mode: row.mode as PlacementSpaceMode,
           price: row.price,
+          freeSlots: row.freeSlots,
           settings: (row.settings ?? {}) as PlacementSpaceSettings,
         }
       : undefined;
@@ -122,8 +183,25 @@ export async function resolvePlacementSpaceFor({
     user: at('user'),
   });
 
-  const { max: cap } = await placementPriceRange(ownerId, surface);
+  const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface);
   const shares = (await getPlacementConfig()).approvalShares(surface);
+
+  // `resolvePlacementSpace` is the one place the surface default is applied, so
+  // this reads it rather than defaulting again — the same shape as `setPrice`
+  // directly above.
+  const setFreeSlots = resolved.freeSlots;
+  const freeSlots = effectiveFreeSlots(setFreeSlots, freeSlotCap);
+  // `dbRead`, unlike everything above it. The rest of this function decides
+  // whether a mutation is allowed and what it charges, which a lagging replica
+  // must not answer; `freeSlotsRemaining` is display-only by construction — the
+  // claim re-counts under its own lock — and this read is on a public query
+  // reached from every image detail view.
+  //
+  // Skipped when there is no capacity to reserve against. That is rarer than it
+  // looks: the default and the bottom band are both 1, so it fires only for a
+  // creator who has explicitly closed their slots.
+  const reserved =
+    freeSlots > 0 ? await reservedFreeSlots(dbRead, { surface, targetType, targetId }) : 0;
 
   return {
     ownerId,
@@ -133,6 +211,10 @@ export async function resolvePlacementSpaceFor({
     price: effectivePlacementPrice(resolved.price, cap),
     cap,
     ownerShare: 1 - shares.seller - shares.platform,
+    setFreeSlots,
+    freeSlots,
+    freeSlotCap,
+    freeSlotsRemaining: Math.max(freeSlots - reserved, 0),
     settings: resolved.settings ?? {},
   };
 }
@@ -175,6 +257,7 @@ export async function setPlacementSpace({
   entityId,
   mode,
   price,
+  freeSlots,
   settings,
   userId,
 }: {
@@ -183,6 +266,17 @@ export async function setPlacementSpace({
   entityId: number;
   mode: PlacementSpaceMode;
   price?: number | null;
+  /**
+   * `undefined` leaves this level's count alone, `null` clears it so the level
+   * inherits again, and a number sets it — the same three-way distinction
+   * `price` carries, for the same reason: an unset count follows the surface
+   * default when that moves, where a stored one freezes today's.
+   *
+   * Stored uncapped. The score/tier ceiling is applied at read, exactly like the
+   * price cap, so a creator whose tier lapses and returns gets their number back
+   * rather than having found it silently rewritten.
+   */
+  freeSlots?: number | null;
   settings?: PlacementSpaceSettings;
   userId: number;
 }) {
@@ -230,9 +324,7 @@ export async function setPlacementSpace({
   // the floor; lets an existing one be carried.
   const floor = PLACEMENT_SURFACES[surface].serverMinPrice;
   if (price != null && price < floor && price !== existing?.price)
-    throw throwBadRequestError(
-      `placement: the lowest you can charge is ${floor} Buzz`
-    );
+    throw throwBadRequestError(`placement: the lowest you can charge is ${floor} Buzz`);
 
   await dbWrite.placementSpace.upsert({
     where: { surface_entityType_entityId: { surface, entityType, entityId } },
@@ -242,11 +334,13 @@ export async function setPlacementSpace({
       entityId,
       mode,
       price: price ?? null,
+      freeSlots: freeSlots ?? null,
       settings: (settings ?? {}) as Prisma.InputJsonValue,
     },
     update: {
       mode,
       ...(price === undefined ? {} : { price }),
+      ...(freeSlots === undefined ? {} : { freeSlots }),
       // Replaced wholesale, not merged: the caller sends the settings it owns,
       // and a merge here would make a removed key impossible to express.
       ...(settings === undefined ? {} : { settings: settings as Prisma.InputJsonValue }),
@@ -308,7 +402,14 @@ export const getPlacementSpaces = ({
 }) =>
   dbRead.placementSpace.findMany({
     where: { surface, entityType: 'user', entityId: userId },
-    select: { entityType: true, entityId: true, mode: true, price: true, settings: true },
+    select: {
+      entityType: true,
+      entityId: true,
+      mode: true,
+      price: true,
+      freeSlots: true,
+      settings: true,
+    },
   });
 
 /**
@@ -334,7 +435,7 @@ export async function getPlacementSpaceRow({
 
   return dbRead.placementSpace.findUnique({
     where: { surface_entityType_entityId: { surface, entityType, entityId } },
-    select: { mode: true, price: true, settings: true },
+    select: { mode: true, price: true, freeSlots: true, settings: true },
   });
 }
 

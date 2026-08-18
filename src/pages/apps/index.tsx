@@ -6,6 +6,7 @@ import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -20,10 +21,9 @@ export default function AppsPage() {
   const features = useFeatureFlags();
 
   // W13 (PR-W1a/D8): store-visibility gate = dedicated `appListings` OR-falling-
-  // back to `appBlocks` (mirrors the SSR `resolveAppsPageAccess` gate). Zero
-  // behavior change today — `app-listings` doesn't exist yet, so `appListings`
-  // resolves mods-only and `appBlocks` covers the app-dev-testers cohort.
-  if (!(features.appListings || features.appBlocks)) return <NotFound />;
+  // back to `appBlocks`. The SHARED predicate, so this body and the SSR
+  // `resolveAppsPageAccess` gate above are literally the same rule.
+  if (!hasAppsStoreAccess(features)) return <NotFound />;
 
   return (
     <>
@@ -36,7 +36,8 @@ export default function AppsPage() {
           `AppListing` record (both on-site App Blocks AND off-site OAuth apps)
           via `AppListingsMarketplaceBody` (the P2a `appListings.listAvailable`
           read path). Still dark/mod-only — the page gate is UNCHANGED
-          (`resolveAppsPageAccess` → `features.appBlocks` Flipt mod segment,
+          (`resolveAppsPageAccess` → the shared `hasAppsStoreAccess` predicate,
+          i.e. `appListings || appBlocks`, both mod-segmented in Flipt today;
           `deIndex`), this only swaps WHICH grid renders.
 
           ROLLBACK = one-line revert: the legacy AppBlock path

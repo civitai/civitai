@@ -23,34 +23,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: {
-      findUnique: mocks.shopItemFindUnique,
-      findMany: mocks.shopItemFindMany,
-      // Withdrawing an item also runs the pack delist cascade.
-      findFirst: mocks.shopItemFindFirst,
-    },
-    cosmeticShopItemCosmetic: { findMany: mocks.packMemberFindMany },
-    user: { findUnique: mocks.userFindUnique },
-    userCosmeticShopItemResale: {
-      findUnique: mocks.resaleFindUnique,
-      findMany: mocks.resaleFindMany,
-      aggregate: mocks.resaleAggregate,
-    },
-    $queryRaw: mocks.queryRaw,
-  },
-  dbWrite: {
-    userCosmeticShopItemResale: {
-      create: mocks.resaleCreate,
-      deleteMany: mocks.resaleDeleteMany,
-      updateMany: mocks.resaleUpdateMany,
-    },
-    cosmeticShopItem: { update: mocks.shopItemUpdate, updateMany: mocks.shopItemUpdateMany },
-    cosmetic: { update: mocks.cosmeticUpdate },
-    $transaction: mocks.transaction,
-  },
-}));
 vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -79,6 +51,55 @@ import {
   unarchiveCreatorShopItem,
   updateCreatorShopItem,
 } from '../creator-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItem.findFirst.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindFirst as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItemCosmetic.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.packMemberFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.user.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.userFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmeticShopItemResale.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmeticShopItemResale.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmeticShopItemResale.aggregate.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleAggregate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.$queryRaw.mockImplementation((...args: unknown[]) =>
+  (mocks.queryRaw as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopItemResale.create.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleCreate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopItemResale.deleteMany.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleDeleteMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopItemResale.updateMany.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleUpdateMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.updateMany.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdateMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmetic.update.mockImplementation((...args: unknown[]) =>
+  (mocks.cosmeticUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.$transaction.mockImplementation((...args: unknown[]) =>
+  (mocks.transaction as (...a: unknown[]) => unknown)(...args)
+);
 
 const RESELLER_ID = 200;
 const CREATOR_ID = 11;
@@ -272,6 +293,21 @@ describe('getShopItemResellers', () => {
     expect(await getShopItemResellers({ shopItemId: SHOP_ITEM_ID, userId: CREATOR_ID })).toEqual(
       []
     );
+  });
+
+  // Most creators have no `user.image` at all — the avatar lives on the
+  // `profilePicture` relation, and the decorations, nameplate and badges live on
+  // equipped `cosmetics`. UserAvatar falls back to `image` only when the
+  // relation is absent, so a select missing either renders a bare placeholder
+  // for nearly every reseller, which is what shipped.
+  it('selects everything UserAvatar draws, not just user.image', async () => {
+    mocks.resaleFindMany.mockResolvedValue([]);
+
+    await getShopItemResellers({ shopItemId: SHOP_ITEM_ID, userId: CREATOR_ID });
+
+    const userSelect = mocks.resaleFindMany.mock.calls[0][0].select.user.select;
+    expect(userSelect.profilePicture).toBeTruthy();
+    expect(userSelect.cosmetics).toBeTruthy();
   });
 
   it('refuses to tell a stranger who resells someone else’s item', async () => {

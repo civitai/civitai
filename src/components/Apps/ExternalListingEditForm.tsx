@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconApps,
   IconDeviceFloppy,
   IconExternalLink,
   IconInfoCircle,
@@ -39,8 +40,10 @@ import { useListingAutofill } from '~/components/Apps/useListingAutofill';
 import {
   buildScalarPatch,
   editContextToForm,
+  isOnsiteEdit,
   hasScalarChanges,
   isApprovedEdit,
+  listingEditHeaderCopy,
   type ListingEditContext,
 } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -71,15 +74,30 @@ import { trpc } from '~/utils/trpc';
  */
 
 const STEP_URL = 0;
-const STEP_DETAILS = 1;
-const STEP_ASSETS = 2;
 
 export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) {
   const router = useRouter();
   const utils = trpc.useUtils();
   const approved = isApprovedEdit(edit);
 
-  const [active, setActive] = useState<number>(STEP_URL);
+  /**
+   * 🔴 KIND-AWARE WIZARD SHAPE. An ON-SITE listing has no App URL and no OAuth-connect
+   * client, so it gets neither the URL step nor the scope disclosure — both are off-site
+   * concepts, and offering them to an on-site owner invites an edit the model has no
+   * field for (`buildScalarPatch` refuses to emit `externalUrl` for this kind, so the
+   * step would also be inert).
+   *
+   * The step INDICES are derived rather than constant, because dropping a `Stepper.Step`
+   * renumbers the ones after it — a fixed `STEP_DETAILS = 1` would silently point at
+   * Assets on an on-site listing. Off-site keeps 0/1/2 exactly as before.
+   */
+  const showUrlStep = !isOnsiteEdit(edit);
+  // 🔴 The HEADER reads the SAME flag the wizard shape does — see `listingEditHeaderCopy`.
+  const headerCopy = listingEditHeaderCopy(showUrlStep);
+  const STEP_DETAILS = showUrlStep ? 1 : 0;
+  const STEP_ASSETS = showUrlStep ? 2 : 1;
+
+  const [active, setActive] = useState<number>(showUrlStep ? STEP_URL : STEP_DETAILS);
   const [values, setValues] = useState<OffsiteSubmitFormValues>(() => editContextToForm(edit));
   // Latest `values` for the OG-apply effect's emptiness check (the effect must read
   // current emptiness WITHOUT depending on `values`, and the async `setValues` updater
@@ -210,7 +228,8 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       // Steer the author to the step that carries the first error.
-      if (nextErrors.externalUrl) setActive(STEP_URL);
+      // An on-site listing has no URL step to send them back to (and no URL error).
+      if (nextErrors.externalUrl && showUrlStep) setActive(STEP_URL);
       else {
         if (nextErrors.scopeJustifications) setShowScopeErrors(true);
         setActive(STEP_DETAILS);
@@ -253,16 +272,18 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
 
   return (
     <Stack gap="md" data-testid="apps-offsite-edit-form">
+      {/* 🔴 KIND-AWARE HEADER, off the SAME `showUrlStep` flag as the wizard shape. Both
+          the icon and the sentence used to be hardcoded to the off-site case, so an
+          on-site listing was told to "change the link" — under an external-link icon —
+          about an app that has no link and no URL step. See `listingEditHeaderCopy`. */}
       <Alert
         color="blue"
         variant="light"
-        icon={<IconExternalLink size={16} />}
+        icon={showUrlStep ? <IconExternalLink size={16} /> : <IconApps size={16} />}
         title={`Editing ${edit.slug}`}
+        data-testid={headerCopy.testId}
       >
-        <Text size="sm">
-          Update your external-link app. Change the link, details, or assets across the steps below,
-          then save.
-        </Text>
+        <Text size="sm">{headerCopy.blurb}</Text>
       </Alert>
 
       {approved && (
@@ -307,6 +328,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       )}
 
       <Stepper active={active} onStepClick={setActive} size="sm">
+        {showUrlStep ? (
         <Stepper.Step
           label="URL"
           description="The link"
@@ -396,11 +418,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
             </Stack>
           </FadeIn>
         </Stepper.Step>
+        ) : null}
 
         <Stepper.Step
           label="Details"
           description="Name & metadata"
-          allowStepClick={isUrlStepComplete(values)}
+          allowStepClick={!showUrlStep || isUrlStepComplete(values)}
           data-testid="apps-offsite-wizard-step-details"
         >
           <FadeIn>
@@ -472,7 +495,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               />
             </Group>
 
-            {edit.connectClientId != null && (
+            {/* 🔴 OFF-SITE ONLY. An on-site app is not an OAuth-connect integration —
+                there is no linked client whose scopes a user would be consenting to, so
+                the disclosure would be describing a grant that does not exist. */}
+            {showUrlStep && edit.connectClientId != null && (
               <DerivedScopesDisclosure
                 requestedScopes={values.requestedScopes}
                 justifications={values.scopeJustifications}
@@ -483,10 +509,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               />
             )}
 
-            <Group justify="space-between">
-              <Button variant="default" onClick={() => setActive(STEP_URL)}>
-                Back
-              </Button>
+            <Group justify={showUrlStep ? 'space-between' : 'flex-end'}>
+              {showUrlStep ? (
+                <Button variant="default" onClick={() => setActive(STEP_URL)}>
+                  Back
+                </Button>
+              ) : null}
               <Button onClick={() => setActive(STEP_ASSETS)}>Next</Button>
             </Group>
           </Stack>

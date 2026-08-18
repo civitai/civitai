@@ -466,6 +466,7 @@ model User {
   engagedModelVersions ModelVersionEngagement[]
   metrics              UserMetric[]
   reports              Report[]
+  feedback             Feedback[]
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -953,7 +954,9 @@ model Model {
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
-  allowCommercialUse    CommercialUse[] @default([Sell])
+  // Must stay equal to the column default in Postgres: Prisma supplies this itself on create, so a
+  // narrower value here never reaches the database default and silently licenses the row instead.
+  allowCommercialUse    CommercialUse[] @default([Image, RentCivit, Rent, Sell])
   allowDerivatives      Boolean         @default(true)
   allowDifferentLicense Boolean         @default(true)
 
@@ -2303,6 +2306,22 @@ model Partner {
 model KeyValue {
   key   String @id
   value Json
+}
+
+/// Free-text feedback captured from in-product prompts. `area` is a plain
+/// string, not an enum, so adding a feedback surface needs no migration.
+model Feedback {
+  id        Int      @id @default(autoincrement())
+  area      String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   String
+  context   Json     @default("{}")
+  status    String   @default("new")
+  createdAt DateTime @default(now())
+
+  @@index([area, status, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum ApiKeyType {
@@ -4133,6 +4152,9 @@ model Cosmetic {
   createdById         Int?
   pHash               BigInt?
   pHashUrl            String?
+  pHashHex            String?
+  pHashVersion        String?
+  pHashFailedAt      DateTime?
   creator             User?                       @relation("CosmeticCreator", fields: [createdById], references: [id], onDelete: SetNull)
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]
@@ -7836,6 +7858,17 @@ model PlacementSpace {
   /// What the owner asks. The charged price is min(price, cap) computed at read; a
   /// stored effective price goes stale the moment a membership lapses.
   price      Int?
+  /// How many free placements this space accepts. NULL means the owner has never
+  /// chosen, which resolves to the surface's default (1) rather than to zero —
+  /// free capacity is opt-out. An explicit 0 is the owner taking none, which is
+  /// why this replaces an on/off toggle instead of sitting beside one.
+  ///
+  /// Stored uncapped and ceilinged at read by the score/tier table, exactly like
+  /// `price`: a stored effective value goes stale the moment a membership lapses.
+  ///
+  /// A column rather than a key in `settings`, because the foundation reads it
+  /// and `settings` is surface-owned by construction.
+  freeSlots  Int?
   /// Surface-owned settings, read only by the surface that wrote them — a max
   /// sticker size means nothing to a remix gallery. Kept as JSON so this layer
   /// does not grow a column per surface idea.
@@ -7875,7 +7908,29 @@ model Placement {
   removedBy             String?
   /// What the placer paid into escrow, in Buzz. Kept per row rather than read back from
   /// the space, whose price may move between placement and release.
+  ///
+  /// Always 0 on a free placement, and nothing reads it there — the payout is
+  /// derived from receipted holds, of which a free placement has none.
   amount                Int
+  /// A placement made against the space's free capacity rather than paid for.
+  ///
+  /// Escrow is bypassed entirely: zero-amount Buzz transactions are a landmine,
+  /// and the escrow's two-hold structure has neither a decline fee nor a
+  /// principal to hold. Settlement moves no money at all for one of these.
+  ///
+  /// On the row rather than inferred from `amount = 0`, which is also what a paid
+  /// placement into a zero-priced space looks like. It also has to be immutable
+  /// and readable by a sweeper that never saw the request that made it.
+  free                  Boolean   @default(false)
+  /// Which Buzz the placer paid in, so the settlement pays the same kind back out.
+  /// On the row for the same reason `amount` is: settlement is resumable, and the
+  /// domain that decided the currency is not visible to a sweeper.
+  ///
+  /// NULL means a placement made before this column existed. Those were booked
+  /// into escrow as yellow whatever was spent, and settle as yellow to match the
+  /// ledger. Deliberately not backfilled — the bank is not balance-constrained,
+  /// so it is a choice about legacy rows, not a limit. See `settledSpendType`.
+  spendType             String?
   /// Who sold the thing being placed, when an approved placement owes them a cut.
   /// On the row rather than passed in, because the settlement is resumable and a
   /// sweeper that never saw the argument would strand the seller's share.
@@ -7895,12 +7950,56 @@ model Placement {
   /// one path whose purpose is a moderation record would destroy the approval trail.
   takenDownAt           DateTime?
   takenDownById         Int?
+  /// When this placement's Buzz reached the target's counter. The counter lives in
+  /// ClickHouse, which has no per-placement key to ask, so the fact that it was
+  /// counted is recorded here or nowhere. NULL on a placement that reached
+  /// `approved` is the reconcile sweep's work queue.
+  metricCountedAt       DateTime?
+  /// When a sweep took this row to count it. Two columns rather than one because
+  /// the claim has to be atomic and the confirmation cannot be: two sweeps can
+  /// overlap (the job lock fails open when Redis is down), and without a claim
+  /// both read the same unstamped rows and both emit before either stamps. The
+  /// counter never reverses, so that over-count is permanent. A claim older than
+  /// the recovery window is retried, which is what stops a crash between the two
+  /// writes turning into the loss this whole feature exists to end.
+  metricClaimedAt       DateTime?
+  /// How many times a sweep has taken this row. A row the tracker rejects fails
+  /// identically on every retry, and the claim orders by `resolvedAt`, so
+  /// without a ceiling one poisoned row sits at the head of the queue being
+  /// re-claimed forever and starves everything behind it.
+  metricAttempts        Int       @default(0)
   transactions          PlacementTransaction[]
 
   @@index([surface, targetType, targetId, status])
   @@index([ownerId, status])
+  /// The owner review queue's paging order. Without it each page rescans and
+  /// re-sorts every pending row the owner has, and a refetch of a walk N pages
+  /// deep pays that N+1 times.
+  ///
+  /// `surface` is in it because both queues filter on it, and left out it cannot
+  /// be an index condition — an owner with 900 pending stickers would touch all
+  /// 900 heap tuples to fill one 50-row page of remix submissions. It sits after
+  /// `ownerId` rather than first so this does not become a strict prefix of
+  /// `[ownerId, status]` above, which the moderation lookups still want.
+  @@index([ownerId, surface, status, createdAt, id])
   @@index([placerId, status])
+  /// Both free-placement entitlement checks, which run inside the claim
+  /// transaction and so are on the latency path of every free placement: the
+  /// daily allowance (this placer, free rows, since midnight UTC) and the
+  /// never-twice rule (this placer, free rows, this target). One index serves
+  /// both because the allowance bounds a placer to one free row per day, so
+  /// "every free row this placer has" is a handful of tuples either way.
+  ///
+  /// Applied as a PARTIAL index (`WHERE free`) — see the migration. Prisma cannot
+  /// express the predicate, and without it this indexes every placement ever made
+  /// to answer questions only about the free ones.
+  @@index([placerId, free, createdAt])
   @@index([status, expiresAt])
+  /// Applied as a PARTIAL index (`WHERE "metricCountedAt" IS NULL`) — see the
+  /// migration. Prisma can express neither the predicate nor the reason the key
+  /// is `resolvedAt` alone, so the declaration here is the shape and the
+  /// migration is the truth.
+  @@index([resolvedAt])
 }
 
 /// One row per movement of money for a placement. `UNIQUE (placementId, kind)` is the

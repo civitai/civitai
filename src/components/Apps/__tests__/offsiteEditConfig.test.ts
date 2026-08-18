@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildScalarPatch,
+  isOnsiteEdit,
+  listingEditHeaderCopy,
   editContextToForm,
   hasScalarChanges,
   isApprovedEdit,
@@ -54,6 +56,65 @@ describe('editContextToForm', () => {
     expect(form.contentRating).toBe('g');
     expect(form.externalUrl).toBe('');
     expect(form.changelog).toBe('');
+  });
+});
+
+/**
+ * 🔴 KIND-AWARE EDITING. The canonical authoring page now defaults to the DETAILS tab,
+ * which means an ON-SITE owner clicking "Edit" lands in this form — a population it never
+ * saw while the default was the manifest tab. It is the off-site submit wizard's edit
+ * mode, so without a kind branch it offers an on-site app an "App URL" step and an
+ * OAuth-scope disclosure that mean nothing for it, and `buildScalarPatch` can emit an
+ * `externalUrl` onto a listing whose CTA is its hosted page.
+ *
+ * `kind` is OPTIONAL on the context and absent ⇒ off-site, so every pre-existing fixture
+ * and caller keeps its exact behaviour — the branch only narrows the new population.
+ */
+describe('kind-aware editing (isOnsiteEdit)', () => {
+  it('an explicit onsite kind is on-site; offsite and ABSENT are not', () => {
+    expect(isOnsiteEdit(makeCtx({ kind: 'onsite' }))).toBe(true);
+    expect(isOnsiteEdit(makeCtx({ kind: 'offsite' }))).toBe(false);
+    // 🔴 Back-compat: an older context with no kind must behave exactly as before.
+    expect(isOnsiteEdit(makeCtx())).toBe(false);
+  });
+
+  it('🔴 an ON-SITE patch NEVER carries externalUrl, however the field changed', () => {
+    const ctx = makeCtx({ kind: 'onsite' });
+    const form = { ...editContextToForm(ctx), externalUrl: 'https://evil.example.com/' };
+    const patch = buildScalarPatch(ctx, form);
+    expect(patch.externalUrl).toBeUndefined();
+    expect('externalUrl' in patch).toBe(false);
+  });
+
+  it('an ON-SITE patch still carries every OTHER changed scalar', () => {
+    // The narrowing must be surgical: this is what stops "drop externalUrl" turning into
+    // "the on-site details form saves nothing".
+    const ctx = makeCtx({ kind: 'onsite' });
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      name: 'Renamed',
+      externalUrl: 'https://evil.example.com/',
+    });
+    expect(patch.name).toBe('Renamed');
+    expect(patch.externalUrl).toBeUndefined();
+  });
+
+  it('an OFF-SITE patch DOES carry externalUrl — the control that stops over-reach', () => {
+    const ctx = makeCtx({ kind: 'offsite' });
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      externalUrl: 'https://moved.example.com/',
+    });
+    expect(patch.externalUrl).toBe('https://moved.example.com/');
+  });
+
+  it('a context with NO kind still carries externalUrl (unchanged behaviour)', () => {
+    const ctx = makeCtx();
+    const patch = buildScalarPatch(ctx, {
+      ...editContextToForm(ctx),
+      externalUrl: 'https://moved.example.com/',
+    });
+    expect(patch.externalUrl).toBe('https://moved.example.com/');
   });
 });
 
@@ -181,5 +242,54 @@ describe('isApprovedEdit', () => {
     expect(isApprovedEdit(makeCtx({ status: 'approved' }))).toBe(true);
     expect(isApprovedEdit(makeCtx({ status: 'draft' }))).toBe(false);
     expect(isApprovedEdit(makeCtx({ status: 'pending' }))).toBe(false);
+  });
+});
+
+/**
+ * 🔴 THE HEADER BLURB, keyed on the SAME flag as the wizard shape.
+ *
+ * The defect this pins was observed in production: the canonical editor for an ON-SITE
+ * listing rendered "Update your external-link app. Change the link, details, or
+ * assets…" over an external-link icon, about an app with no link and no URL step. The
+ * wizard SHAPE was already kind-aware; only the header was left behind.
+ */
+describe('listingEditHeaderCopy', () => {
+  it('🔴 the ON-SITE blurb never promises a link', () => {
+    const onsite = listingEditHeaderCopy(false);
+    expect(onsite.kind).toBe('onsite');
+    expect(onsite.blurb).not.toMatch(/\blinks?\b/i);
+    expect(onsite.blurb).not.toMatch(/external/i);
+    expect(onsite.blurb).not.toMatch(/\burl\b/i);
+    // …and it still says what CAN be changed, so the fix is not "delete the sentence".
+    expect(onsite.blurb).toMatch(/details/i);
+    expect(onsite.blurb).toMatch(/assets/i);
+  });
+
+  it('the OFF-SITE blurb is UNCHANGED, character for character', () => {
+    const offsite = listingEditHeaderCopy(true);
+    expect(offsite.kind).toBe('offsite');
+    // 🔴 A LITERAL, not a pattern derived from the implementation. An off-site listing
+    // really does have a link, and this is the string that shipped.
+    expect(offsite.blurb).toBe(
+      'Update your external-link app. Change the link, details, or assets across the steps below, then save.'
+    );
+  });
+
+  it('the two branches render DIFFERENT elements, so a test can pin STATE not spelling', () => {
+    expect(listingEditHeaderCopy(true).testId).not.toBe(listingEditHeaderCopy(false).testId);
+  });
+
+  /**
+   * 🔴 THE SEAM WITH THE WIZARD SHAPE. `showUrlStep` is `!isOnsiteEdit(edit)`, so an
+   * absent kind must yield the OFF-SITE header for the same reason it yields the URL
+   * step — one predicate, one answer. Asserting the composition rather than the two
+   * halves is what stops the header promising a step the wizard does not render.
+   */
+  it('🔴 a header that mentions the link is rendered EXACTLY when the URL step is', () => {
+    for (const ctx of [makeCtx({ kind: 'onsite' }), makeCtx({ kind: 'offsite' }), makeCtx()]) {
+      const showUrlStep = !isOnsiteEdit(ctx);
+      const copy = listingEditHeaderCopy(showUrlStep);
+      expect(/\blink\b/i.test(copy.blurb), `kind=${String(ctx.kind)}`).toBe(showUrlStep);
+    }
   });
 });

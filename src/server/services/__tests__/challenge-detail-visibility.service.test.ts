@@ -1,24 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
 
 // getChallengeDetail visibility: moderators and the challenge owner must be able to open the
 // detail page of a user challenge regardless of its scan/POI/cover state (a stuck-Scheduled
 // challenge 404'd for mods because the scan gate only exempted the creator). The public gates
 // must keep applying to everyone else.
-const { mockDbRead, mockGetChallengeById, mockAmIBlockedByUser } = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRaw: vi.fn(),
-    modelVersion: { findMany: vi.fn() },
-    image: { findUnique: vi.fn(), findFirst: vi.fn() },
-    challenge: { findUnique: vi.fn() },
-    collectionItem: { count: vi.fn() },
-  },
+const { mockGetChallengeById, mockAmIBlockedByUser } = vi.hoisted(() => ({
   mockGetChallengeById: vi.fn(),
   mockAmIBlockedByUser: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {},
 }));
 
 vi.mock('~/server/services/buzz.service', () => ({
@@ -88,10 +79,6 @@ vi.mock('~/server/services/challenge-judge.service', () => ({
 
 vi.mock('~/server/services/text-moderation.service', () => ({
   submitTextModeration: vi.fn(),
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(),
 }));
 
 vi.mock('~/utils/errorHandling', () => ({

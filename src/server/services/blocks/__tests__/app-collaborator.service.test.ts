@@ -109,9 +109,27 @@ const ONSITE_NO_BLOCK = 'apl_onsite_no_block';
  * `app-access.denormalized-owner-drift.test.ts`.)
  */
 const DRIFTED = 'apl_drifted';
+/**
+ * 🔴 An OFF-SITE listing that carries a block whose `OauthClient.userId` names SOMEONE
+ * ELSE — issue #3844. For an off-site listing `AppListing.userId` IS the owner (there is
+ * no OauthClient in the chain), and both off-site ownership writers (`acceptTransfer`'s
+ * offsite path, `claimListing`) move only that column, so the attached block keeps naming
+ * whoever owned it before. `toSeatListing` resolved BLOCK-FIRST until #3844, which meant
+ * `assertOwner` — seat MANAGEMENT — was answered by the block: the dispossessed
+ * impersonator could still invite and remove collaborators on the rightful owner's app.
+ */
+const OFFSITE_BLOCK_DRIFTED = 'apl_offsite_block_drifted';
 const OWNER = 10;
 const TARGET = 20;
 const STRANGER = 50;
+/** A SECOND accepted collaborator — the "an editor is not an owner" fixture. */
+const SECOND_SEAT = 30;
+/**
+ * The refusal `setCollaboratorDisplayed` raises for a non-owner acting on someone ELSE's
+ * seat. Asserted VERBATIM so a mutant that breaks this gate dies to THIS error rather
+ * than to a neighbouring owner check (`assertOwner`'s message is different on purpose).
+ */
+const BYLINE_NOT_OWNER_MESSAGE = 'Only the app owner can change a collaborator’s public byline';
 /** The name left behind in a stale denormalized `AppListing.userId`. */
 const STALE_OWNER = 77;
 const NOW = new Date('2026-08-10T12:00:00Z');
@@ -181,6 +199,23 @@ function listingTable(): Record<string, Record<string, unknown>> {
       revisionOfId: null,
       revisionOf: null,
       appBlock: null,
+    },
+    // 🔴 OFFSITE, carrying a block whose OauthClient names someone ELSE — issue #3844.
+    // The column is canonical for an off-site listing, so OWNER owns this row and
+    // STRANGER (whom the block names) does not.
+    [OFFSITE_BLOCK_DRIFTED]: {
+      id: OFFSITE_BLOCK_DRIFTED,
+      slug: 'offsite-block-drifted',
+      kind: 'offsite',
+      userId: OWNER,
+      appBlockId: 'ab_offsiteDrifted',
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: {
+        appId: 'oc_offsiteDrifted',
+        blockId: 'offsite-drifted-repo',
+        app: { userId: STRANGER },
+      },
     },
     // 🔴 onsite, with the canonical owner and the denormalized column DISAGREEING.
     [DRIFTED]: {
@@ -354,7 +389,12 @@ describe('inviteCollaborator', () => {
 
   it('inviting the OWNER is INVALID_TARGET', async () => {
     await expect(
-      inviteCollaborator({ appListingId: LISTING, targetUserId: OWNER, actorUserId: OWNER, now: NOW })
+      inviteCollaborator({
+        appListingId: LISTING,
+        targetUserId: OWNER,
+        actorUserId: OWNER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
   });
 
@@ -1108,6 +1148,276 @@ describe('setCollaboratorDisplayed', () => {
     await expect(
       setCollaboratorDisplayed({ appListingId: OFFSITE, userId: TARGET, displayed: false })
     ).resolves.toMatchObject({ appListingId: OFFSITE, displayed: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Byline — OWNER control over someone else's seat.
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 A DELIBERATE PRODUCT DECISION, not an emergent capability: the app OWNER may set a
+ * collaborator's `displayed` flag, which means an owner can remove a collaborator's
+ * public credit without removing their seat.
+ *
+ * The narrower alternative — `displayed` as a purely self-service preference belonging to
+ * the person named — was implemented first and explicitly overruled. It is recorded here
+ * because the code alone cannot distinguish "decided" from "not yet noticed", and the
+ * ledger of who may touch a public-credit flag is exactly the thing a later reader will
+ * want to know was chosen on purpose.
+ *
+ * SELF-SERVICE IS UNCHANGED AND STILL PRESENT: `targetUserId` is OPTIONAL, and omitting
+ * it means "my own row" — the shape the proc already shipped with. This widens, it does
+ * not replace, which is the only safe direction for an already-deployed input schema.
+ */
+describe('setCollaboratorDisplayed — OWNER control (targetUserId)', () => {
+  it('the OWNER may set ANOTHER seat’s flag, and the write targets that seat', async () => {
+    const res = await setCollaboratorDisplayed({
+      appListingId: LISTING,
+      userId: OWNER,
+      targetUserId: TARGET,
+      displayed: false,
+    });
+    expect(res).toMatchObject({ appListingId: LISTING, userId: TARGET, displayed: false });
+    const upd = mockDb.appCollaborator.updateMany.mock.calls[0][0] as {
+      where: { userId: number; status: string };
+      data: { displayed: boolean };
+    };
+    // 🔴 The TARGET's row, not the caller's — the mutant that "works" by ignoring
+    // targetUserId would silently flip the owner's own (nonexistent) seat instead.
+    expect(upd.where.userId).toBe(TARGET);
+    // The ACCEPTED guard survives owner control: an owner cannot pre-arrange credit for
+    // a pending invitee either.
+    expect(upd.where.status).toBe('accepted');
+    expect(upd.data.displayed).toBe(false);
+  });
+
+  it('the audit event records the OWNER as actor and the collaborator as target', async () => {
+    await setCollaboratorDisplayed({
+      appListingId: LISTING,
+      userId: OWNER,
+      targetUserId: TARGET,
+      displayed: false,
+    });
+    const evt = mockDb.appOwnershipEvent.create.mock.calls[0][0] as {
+      data: { action: string; actorUserId: number; targetUserId: number };
+    };
+    expect(evt.data.action).toBe('display');
+    expect(evt.data.actorUserId).toBe(OWNER);
+    expect(evt.data.targetUserId).toBe(TARGET);
+  });
+
+  /**
+   * 🔴 THE CASE MOST LIKELY TO BE WRONG. An accepted EDITOR holds a seat, so any gate
+   * that asks "does the caller have a role here?" instead of "is the caller the OWNER?"
+   * lets them through — and they would then be able to strip a PEER's public credit.
+   */
+  it('a non-owner ACCEPTED EDITOR may NOT set another seat’s flag', async () => {
+    await expect(
+      setCollaboratorDisplayed({
+        appListingId: LISTING,
+        userId: SECOND_SEAT,
+        targetUserId: TARGET,
+        displayed: false,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_OWNER', message: BYLINE_NOT_OWNER_MESSAGE });
+    expect(mockDb.appCollaborator.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a STRANGER may NOT set another seat’s flag', async () => {
+    await expect(
+      setCollaboratorDisplayed({
+        appListingId: LISTING,
+        userId: STRANGER,
+        targetUserId: TARGET,
+        displayed: true,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_OWNER', message: BYLINE_NOT_OWNER_MESSAGE });
+    expect(mockDb.appCollaborator.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a MODERATOR may set another seat’s flag — granted, and pinned so', async () => {
+    // Consistent with `listCollaborators`, which already admits a moderator to the full
+    // roster INCLUDING `displayed:false` seats. A public byline is moderatable content.
+    await expect(
+      setCollaboratorDisplayed({
+        appListingId: LISTING,
+        userId: STRANGER,
+        targetUserId: TARGET,
+        displayed: false,
+        isModerator: true,
+      })
+    ).resolves.toMatchObject({ userId: TARGET, displayed: false });
+  });
+
+  it('SELF-SERVICE survives: a plain collaborator with NO targetUserId still works', async () => {
+    const res = await setCollaboratorDisplayed({
+      appListingId: LISTING,
+      userId: TARGET,
+      displayed: false,
+    });
+    expect(res.userId).toBe(TARGET);
+    const upd = mockDb.appCollaborator.updateMany.mock.calls[0][0] as {
+      where: { userId: number };
+    };
+    expect(upd.where.userId).toBe(TARGET);
+  });
+
+  it('SELF-SERVICE survives when targetUserId names the CALLER explicitly', async () => {
+    // A client that always sends the field must not accidentally require ownership.
+    await expect(
+      setCollaboratorDisplayed({
+        appListingId: LISTING,
+        userId: TARGET,
+        targetUserId: TARGET,
+        displayed: true,
+      })
+    ).resolves.toMatchObject({ userId: TARGET, displayed: true });
+  });
+
+  /**
+   * 🔴 OWNERSHIP MUST RESOLVE CANONICALLY — `AppBlock.app.userId`, not the denormalized
+   * `AppListing.userId`. Both directions on the SAME drifted row, because a gate that
+   * reads the column fails BOTH ways at once: it refuses the real owner on their own app
+   * AND admits whoever the stale row happens to name.
+   */
+  describe('on a DRIFTED on-site listing', () => {
+    it('the REAL (canonical) owner is admitted', async () => {
+      await expect(
+        setCollaboratorDisplayed({
+          appListingId: DRIFTED,
+          userId: OWNER,
+          targetUserId: TARGET,
+          displayed: false,
+        })
+      ).resolves.toMatchObject({ userId: TARGET, displayed: false });
+    });
+
+    it('the STALE denormalized name is REFUSED', async () => {
+      await expect(
+        setCollaboratorDisplayed({
+          appListingId: DRIFTED,
+          userId: STALE_OWNER,
+          targetUserId: TARGET,
+          displayed: false,
+        })
+      ).rejects.toMatchObject({ code: 'NOT_OWNER', message: BYLINE_NOT_OWNER_MESSAGE });
+      expect(mockDb.appCollaborator.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * 🔴 ISSUE #3844 — the OFF-SITE mirror image, and the one `toSeatListing` got wrong.
+   *
+   * On an off-site listing the column IS the owner and the attached block must NOT
+   * override it. `toSeatListing` resolved block-first, so on this row seat MANAGEMENT
+   * answered to whoever the block named — i.e. the ex-owner, or the impersonator a
+   * moderator had just dispossessed with `claimListing`, since both off-site ownership
+   * writers move only the column.
+   */
+  describe('on an OFF-SITE listing that CARRIES A BLOCK (#3844)', () => {
+    it('POSITIVE CONTROL: the fixture is offsite, has a block, and the two owners differ', async () => {
+      const row = (await mockDb.appListing.findUnique({
+        where: { id: OFFSITE_BLOCK_DRIFTED },
+      })) as { kind: string; userId: number; appBlock: { app: { userId: number } } };
+      expect(row.kind).toBe('offsite');
+      expect(row.userId).toBe(OWNER);
+      expect(row.appBlock.app.userId).toBe(STRANGER);
+      expect(OWNER).not.toBe(STRANGER);
+    });
+
+    it('the COLUMN owner may manage seats', async () => {
+      await expect(
+        setCollaboratorDisplayed({
+          appListingId: OFFSITE_BLOCK_DRIFTED,
+          userId: OWNER,
+          targetUserId: TARGET,
+          displayed: false,
+        })
+      ).resolves.toMatchObject({ userId: TARGET, displayed: false });
+    });
+
+    it('🔴 the user the BLOCK names is REFUSED — and writes nothing', async () => {
+      await expect(
+        setCollaboratorDisplayed({
+          appListingId: OFFSITE_BLOCK_DRIFTED,
+          userId: STRANGER,
+          targetUserId: TARGET,
+          displayed: false,
+        })
+      ).rejects.toMatchObject({ code: 'NOT_OWNER', message: BYLINE_NOT_OWNER_MESSAGE });
+      expect(mockDb.appCollaborator.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * 🔴 TWO ASSERTIONS THAT CLOSE SURVIVED MUTANTS. Both lines were added by this feature
+   * and both survived the first mutation sweep — i.e. they were unpinned behaviour that
+   * looked pinned because the surrounding tests were green.
+   */
+  it('the NO_INVITE message names the TARGET when an owner acts on someone else', async () => {
+    // Self and owner-driven failures are different situations: "you are not an active
+    // collaborator" is simply wrong copy to show an owner who picked a stale row.
+    mockDb.appCollaborator.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      setCollaboratorDisplayed({
+        appListingId: LISTING,
+        userId: OWNER,
+        targetUserId: TARGET,
+        displayed: false,
+      })
+    ).rejects.toMatchObject({
+      code: 'NO_INVITE',
+      message: 'That user is not an active collaborator on this app',
+    });
+  });
+
+  it('…and keeps the SELF wording on the self path', async () => {
+    mockDb.appCollaborator.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      setCollaboratorDisplayed({ appListingId: LISTING, userId: TARGET, displayed: false })
+    ).rejects.toMatchObject({
+      code: 'NO_INVITE',
+      message: 'You are not an active collaborator on this app',
+    });
+  });
+
+  it('the audit metadata records `byOwner` — the two paths are distinguishable', async () => {
+    // Without it the log cannot tell an owner un-crediting a collaborator from the
+    // collaborator opting out, which is the one question this event exists to answer.
+    await setCollaboratorDisplayed({
+      appListingId: LISTING,
+      userId: OWNER,
+      targetUserId: TARGET,
+      displayed: false,
+    });
+    const owned = mockDb.appOwnershipEvent.create.mock.calls[0][0] as {
+      data: { metadata: { byOwner: boolean; displayed: boolean } };
+    };
+    expect(owned.data.metadata.byOwner).toBe(true);
+    expect(owned.data.metadata.displayed).toBe(false);
+
+    vi.clearAllMocks();
+    mockDb.appCollaborator.updateMany.mockResolvedValue({ count: 1 });
+    await setCollaboratorDisplayed({ appListingId: LISTING, userId: TARGET, displayed: true });
+    const self = mockDb.appOwnershipEvent.create.mock.calls[0][0] as {
+      data: { metadata: { byOwner: boolean } };
+    };
+    expect(self.data.metadata.byOwner).toBe(false);
+  });
+
+  it('an OFF-SITE listing’s owner may set a seat’s flag — the column IS canonical there', async () => {
+    // The control that keeps the canonical resolution from over-reaching: an off-site
+    // listing has no OauthClient in its ownership chain, so `AppListing.userId` is the
+    // owner and must still be honoured.
+    await expect(
+      setCollaboratorDisplayed({
+        appListingId: OFFSITE,
+        userId: OWNER,
+        targetUserId: TARGET,
+        displayed: false,
+      })
+    ).resolves.toMatchObject({ appListingId: OFFSITE, userId: TARGET, displayed: false });
   });
 });
 

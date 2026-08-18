@@ -16,14 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  */
 
 // Hoisted so the (hoisted) vi.mock factories below can reference them.
-const { redisFake, logSysRedisFailOpen } = vi.hoisted(() => ({
-  redisFake: {
-    packed: {
-      get: vi.fn().mockResolvedValue(null), // cache miss → proceed to next()
-      set: vi.fn().mockResolvedValue(undefined),
-    },
-    eval: vi.fn().mockResolvedValue(1), // backs sAddWithExpireGe (the tag write)
-  },
+const { logSysRedisFailOpen } = vi.hoisted(() => ({
   logSysRedisFailOpen: vi.fn(),
 }));
 
@@ -36,7 +29,6 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 // Not exercised by cacheIt but imported at module top — stub to keep the import
 // graph light and side-effect-free.
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('~/server/services/user-preferences.service', () => ({
   getAllHiddenForUser: vi.fn().mockResolvedValue({
     hiddenImages: [],
@@ -48,15 +40,12 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen }));
 
-vi.mock('~/server/redis/client', () => ({
-  redis: redisFake,
-  REDIS_KEYS: {
-    TRPC: { BASE: 'packed:trpc' },
-    CACHES: { TAGGED_CACHE: 'caches:tagged-cache' },
-  },
-}));
-
 import { cacheIt } from '~/server/middleware.trpc';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const redisFake = redisMock.redis;
+redisMock.redis.packed.set.mockResolvedValue(undefined);
+redisMock.redis.eval.mockResolvedValue(1);
 
 type Input = { id: number };
 

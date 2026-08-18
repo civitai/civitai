@@ -34,13 +34,9 @@ const {
   mockGetUserById,
   mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
-  mockDbRead,
-  mockRedis,
-  mockSysRedis,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockCreateXGuardModerationRequest,
-  mockLogToAxiom,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -52,36 +48,11 @@ const {
   mockGetUserById: vi.fn(),
   mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
   mockGetSessionUser: vi.fn(),
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
-    blockUserSettings: { findUnique: vi.fn() },
-    modelMetric: { findFirst: vi.fn() },
-  },
-  mockRedis: {
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    incr: vi.fn(async () => 1),
-    incrBy: vi.fn(async () => 1),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-    exists: vi.fn(async () => 0),
-  },
-  mockSysRedis: {
-    get: vi.fn(async () => null),
-    incrBy: vi.fn(async () => 0),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-  },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsAppBlocksAuthorEnabled: vi.fn(
     async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
   ),
   mockCreateXGuardModerationRequest: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -110,15 +81,6 @@ vi.mock('~/server/services/user.service', () => ({ getUserById: mockGetUserById 
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    user: { findUnique: vi.fn() },
-  },
-}));
-
 const { completeKeys } = vi.hoisted(() => {
   const group = (explicit: Record<string, string>, name: string): Record<string, string> =>
     new Proxy(explicit, {
@@ -140,12 +102,6 @@ const { completeKeys } = vi.hoisted(() => {
     });
   return { completeKeys };
 });
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: completeKeys({ BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } }),
-  REDIS_SYS_KEYS: completeKeys({ BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } }),
-}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
@@ -163,11 +119,6 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, createXGuardModerationRequest: mockCreateXGuardModerationRequest };
 });
-vi.mock('~/server/logging/client', async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return { ...actual, logToAxiom: mockLogToAxiom };
-});
-
 // 🔴 A `'textOutput'` STEP IS INJECTED INTO THE REGISTRY LOOKUP so these cases
 // own their fixture instead of riding on whichever real entry happens to declare
 // the posture (`chat-completion` does today — this file predates it and asserted
@@ -199,6 +150,23 @@ import {
   TEXT_OUTPUT_WITHHELD_MESSAGE,
   __clearTextOutputVerdictCacheForTests,
 } from '~/server/services/blocks/steps/text-output-moderation';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.incr.mockImplementation(async () => 1);
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.decrBy.mockImplementation(async () => 0);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => -1);
+redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.expire.mockImplementation(async () => true);
+redisMock.sysRedis.ttl.mockImplementation(async () => -1);
+const mockDbRead = dbMock.dbRead;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const CHAT_TYPE = 'fixtureChat';
 const GENERATED_TEXT = 'the model wrote this exact sentence';

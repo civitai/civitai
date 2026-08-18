@@ -73,6 +73,7 @@ export async function getLeaderboards(input: GetLeaderboardsInput) {
       title: true,
       description: true,
       scoringDescription: true,
+      domain: true,
       public: isModerator ? true : undefined,
     },
     orderBy: {

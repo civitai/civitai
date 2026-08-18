@@ -38,22 +38,17 @@ const mocks = vi.hoisted(() => {
   return { findManyMock, deleteObjectCalls, deleteManyObjectsCalls };
 });
 
-// Refcount check inside deleteModelFileObject(s) hits dbWrite.modelFile.findMany.
-// Default: 0 referenced rows → all URLs are "safe to delete".
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    modelFile: {
-      findMany: mocks.findManyMock,
-    },
-  },
-  dbRead: {},
-}));
-
 // Capture deleteObject / deleteManyObjects calls so we can assert which
 // (bucket, key) tuples actually reach the S3 client.
+// 🔴 `importOriginal` does NOT cover the interop case, which is why this file needs the same
+// `default` key as the hand-listed factories: the spread copies the original's NAMED exports
+// and does not synthesise a `default`. Pre-bundling wraps this CJS dep for interop, so the
+// consumer resolves through `default`; without one it gets undefined, and the file collects
+// almost no tests instead of going red. This file is 66 of the six files' 106 tests, so its
+// count is worth asserting on its own rather than through the total.
 vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@aws-sdk/client-s3')>();
-  return {
+  const mocked = {
     ...actual,
     S3Client: class {
       send = vi.fn(
@@ -78,6 +73,7 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
       );
     },
   };
+  return { ...mocked, default: mocked };
 });
 
 import {
@@ -91,6 +87,10 @@ import {
   objectExists,
 } from '~/utils/s3-utils';
 import { env } from '~/env/server';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbWrite.modelFile.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.findManyMock as (...a: unknown[]) => unknown)(...args)
+);
 
 beforeEach(() => {
   mocks.deleteObjectCalls.length = 0;
