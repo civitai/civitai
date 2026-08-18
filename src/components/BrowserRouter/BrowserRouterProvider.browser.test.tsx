@@ -214,7 +214,9 @@ describe('BrowserRouterProvider after a hash-only navigation', () => {
       // The hash-only pop: `beforePopState` hands it to Next, which emits
       // `hashChangeComplete` and never `routeChangeComplete`.
       setUsingNextRouter(true);
-      expect(handlers.hashChangeComplete?.length ?? 0).toBeGreaterThan(0);
+      // No assertion on registration: if the listener is missing the loop is a
+      // no-op, the flag stays raised, and the behavioural assertion below is what
+      // reports it. Checking registration first would fail with a count instead.
       for (const handler of handlers.hashChangeComplete ?? []) handler();
 
       // What a routed dialog opening looks like: `browserRouter.push` dispatches
