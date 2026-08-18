@@ -197,6 +197,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type {
+  CollectionItemRejectionReason,
   DomainColor,
   ModelType,
   ReportReason,
@@ -8356,10 +8357,13 @@ export async function getImageGenerationData({ id }: { id: number }) {
 type ContestCollectionItem = {
   id: number;
   imageId: number;
+  addedById: number | null;
   status: string;
   tag: { id: number; name: string } | null;
   collection: { id: number; name: string; metadata: Prisma.JsonValue; mode: 'Contest' };
   scores: { userId: number; score: number }[];
+  rejectionReason: CollectionItemRejectionReason | null;
+  rejectionDetail: string | null;
 };
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
@@ -8371,7 +8375,10 @@ const contestCollectionItemsCache = createLruCache({
       SELECT
         ci.id,
         ci."imageId",
+        ci."addedById",
         ci.status,
+        ci."rejectionReason"::text as "rejectionReason",
+        ci."rejectionDetail",
         CASE WHEN t.id IS NOT NULL
           THEN jsonb_build_object('id', t.id, 'name', t.name)
           ELSE NULL
@@ -8395,7 +8402,8 @@ const contestCollectionItemsCache = createLruCache({
 export const getImageContestCollectionDetails = async ({
   id,
   userId,
-}: { userId?: number } & GetByIdInput) => {
+  isModerator,
+}: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
   const items = await contestCollectionItemsCache.fetch(id);
 
   // Fetch all permissions in one query instead of N queries
@@ -8405,14 +8413,27 @@ export const getImageContestCollectionDetails = async ({
     userId,
   });
 
-  return items.map((i) => ({
-    ...i,
-    permissions: allPermissions.find((p) => p.collectionId === i.collection.id),
-    collection: {
-      ...i.collection,
-      metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
-    },
-  }));
+  // `addedById` is destructured off rather than spread: it is only here to resolve the gate below,
+  // and it names who submitted an entry, which this public endpoint has never returned.
+  return items.map(({ addedById, ...i }) => {
+    const permissions = allPermissions.find((p) => p.collectionId === i.collection.id);
+    // This endpoint is public. The reason — and above all the reviewer's free text about
+    // someone else's entry — is only for the submitter, whoever manages the collection,
+    // and site moderators investigating reports about reviewer behaviour.
+    const canReadRejection =
+      (!!userId && userId === addedById) || !!permissions?.manage || !!isModerator;
+
+    return {
+      ...i,
+      rejectionReason: canReadRejection ? i.rejectionReason : null,
+      rejectionDetail: canReadRejection ? i.rejectionDetail : null,
+      permissions,
+      collection: {
+        ...i.collection,
+        metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
+      },
+    };
+  });
 };
 
 // this method should hopefully not be a lasting addition
