@@ -217,3 +217,69 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
     expect(details.reason).toBeUndefined();
   });
 });
+
+describe('updateCollectionItemsStatus notification scope', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPriorItem();
+  });
+
+  it('notifies the submitter on a non-contest review collection', async () => {
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      type: 'Image',
+      mode: null,
+      name: 'A plain review collection',
+      metadata: {},
+    });
+
+    await updateCollectionItemsStatus({
+      input: {
+        collectionId: COLLECTION_ID,
+        collectionItemIds: [ITEM_ID],
+        status: CollectionItemStatus.REJECTED,
+        rejectionReason: CollectionItemRejectionReason.WrongFormat,
+      },
+      userId: REVIEWER_ID,
+      isSystem: true,
+    });
+
+    expect(createNotificationMock).toHaveBeenCalledTimes(1);
+    const [{ type, details }] = createNotificationMock.mock.calls[0];
+    expect(type).toBe('collection-item-rejected');
+    expect(details.reason).toBe("It isn't in the format this collection accepts.");
+  });
+
+  it('still skips a reviewer reviewing their own submission', async () => {
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      type: 'Image',
+      mode: null,
+      name: 'A plain review collection',
+      metadata: {},
+    });
+    mockDbWrite.collectionItem.findMany.mockResolvedValue([
+      {
+        id: ITEM_ID,
+        addedById: REVIEWER_ID,
+        status: CollectionItemStatus.REVIEW,
+        imageId: 1234,
+        articleId: null,
+        modelId: null,
+        postId: null,
+      },
+    ]);
+
+    await updateCollectionItemsStatus({
+      input: {
+        collectionId: COLLECTION_ID,
+        collectionItemIds: [ITEM_ID],
+        status: CollectionItemStatus.REJECTED,
+      },
+      userId: REVIEWER_ID,
+      isSystem: true,
+    });
+
+    expect(createNotificationMock).not.toHaveBeenCalled();
+  });
+});

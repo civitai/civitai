@@ -2368,7 +2368,7 @@ export const updateCollectionItemsStatus = async ({
 
   // Capture prior state before the status write so we only notify on real transitions.
   const priorItems =
-    collection.mode === CollectionMode.Contest && isReviewOutcome && collectionItemIds.length > 0
+    isReviewOutcome && collectionItemIds.length > 0
       ? await dbWrite.collectionItem.findMany({
           where: { id: { in: collectionItemIds }, collectionId },
           select: {
