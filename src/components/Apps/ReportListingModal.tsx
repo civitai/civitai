@@ -160,7 +160,9 @@ export function ReportListingModal({
             label="Details (optional)"
             placeholder="Add any context that will help a moderator."
             value={details}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDetails(e.currentTarget.value)}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+              setDetails(e.currentTarget.value)
+            }
             maxLength={OFFSITE_REPORT_DETAILS_MAX}
             autosize
             minRows={3}

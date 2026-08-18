@@ -117,10 +117,7 @@ function childrenAreExpression(node: ts.JsxOpeningLikeElement): boolean {
 }
 
 /** Analyse ONE source text. Exported shape is what the fixtures below assert against. */
-function analyze(
-  fileName: string,
-  text: string
-): { mounts: MountSite[]; triggers: TriggerSite[] } {
+function analyze(fileName: string, text: string): { mounts: MountSite[]; triggers: TriggerSite[] } {
   const sf = parseTsx(fileName, text);
   const mounts: MountSite[] = [];
   const triggers: TriggerSite[] = [];

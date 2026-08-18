@@ -59,10 +59,7 @@ import {
 } from '~/components/Apps/ReportListingModal';
 import { ReviewListingModal, useCanReviewListing } from '~/components/Apps/ReviewListingButton';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
-import {
-  CATEGORY_ICONS,
-  FALLBACK_CATEGORY_ICON,
-} from '~/components/Apps/marketplaceCategoryIcons';
+import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';

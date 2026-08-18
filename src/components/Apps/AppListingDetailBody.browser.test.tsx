@@ -212,7 +212,12 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     installCount: 4213,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
-    kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true, liveUrl: 'https://my-app.civit.ai' },
+    kindData: {
+      kind: 'onsite',
+      appBlockId: 'blk-1',
+      hasPage: true,
+      liveUrl: 'https://my-app.civit.ai',
+    },
     ...over,
   };
 }
@@ -376,18 +381,24 @@ describe('AppListingDetailBody', () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
-    const item = dropdown.querySelector('[data-testid="apps-listing-review-action"]') as HTMLElement;
+    const item = dropdown.querySelector(
+      '[data-testid="apps-listing-review-action"]'
+    ) as HTMLElement;
     expect(item).not.toBeNull();
     await userEvent.click(item);
     // The modal is portalled to the body. Its own copy is the REAL component.
-    await expect.element(page.getByText('Would you recommend this app to others?')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Would you recommend this app to others?'))
+      .toBeInTheDocument();
   });
 
   test('🔴 the Report menu item opens the report modal', async () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
-    const item = dropdown.querySelector('[data-testid="apps-listing-report-action"]') as HTMLElement;
+    const item = dropdown.querySelector(
+      '[data-testid="apps-listing-report-action"]'
+    ) as HTMLElement;
     await userEvent.click(item);
     await expect.element(page.getByRole('button', { name: 'Submit report' })).toBeInTheDocument();
   });
@@ -517,7 +528,9 @@ describe('AppListingDetailBody', () => {
     await expect.element(within.getByText('My App')).toBeInTheDocument();
 
     const cols = Array.from(
-      container.querySelectorAll('[data-testid="apps-listing-main-col"], [data-testid="apps-listing-rail-col"]')
+      container.querySelectorAll(
+        '[data-testid="apps-listing-main-col"], [data-testid="apps-listing-rail-col"]'
+      )
     );
     expect(cols).toHaveLength(2);
     // 🔴 RAIL FIRST, MAIN SECOND — the same source order `ModelVersionDetails` uses,
@@ -547,7 +560,9 @@ describe('AppListingDetailBody', () => {
     expect(container.querySelectorAll('[data-testid="apps-listing-rail-col"]')).toHaveLength(1);
     // …and the rail's contents came with it, rather than being dropped on mobile.
     expect(container.querySelectorAll('[data-testid="apps-listing-action-card"]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-testid="apps-listing-details-accordion"]')).toHaveLength(1);
+    expect(
+      container.querySelectorAll('[data-testid="apps-listing-details-accordion"]')
+    ).toHaveLength(1);
   });
 
   test('🔴 the rail holds the action card, the creator card and the details accordion; the main column holds About', async () => {
@@ -719,7 +734,10 @@ describe('AppListingDetailBody', () => {
         testid === 'apps-listing-stat-chips'
           ? live.container.querySelectorAll('[data-listing-stat]').length
           : live.container.querySelectorAll(`[data-testid="${testid}"]`).length;
-      expect(liveCount, `positive control: ${what} must be findable in the live arm`).toBeGreaterThan(0);
+      expect(
+        liveCount,
+        `positive control: ${what} must be findable in the live arm`
+      ).toBeGreaterThan(0);
 
       // …and now the preview arm. `canOpenPage` stays TRUE so the ONLY thing
       // suppressing anything is `preview`.
@@ -748,10 +766,12 @@ describe('AppListingDetailBody', () => {
     const prev = await renderScoped(
       <AppListingDetailBody detail={base({ contentRating: 'PG' })} preview />
     );
-    await expect.element(prev.within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
-    const rows = Array.from(
-      prev.container.querySelectorAll('[data-listing-detail-row]')
-    ).map((r) => r.getAttribute('data-listing-detail-row'));
+    await expect
+      .element(prev.within.getByTestId('apps-listing-details-accordion'))
+      .toBeInTheDocument();
+    const rows = Array.from(prev.container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
+      r.getAttribute('data-listing-detail-row')
+    );
     // Control: the live arm has 6 rows including `reviews` (asserted above).
     expect(rows).toEqual(['kind', 'category', 'rating', 'installs', 'updated']);
   });
@@ -1087,8 +1107,9 @@ describe('AppListingDetailBody', () => {
     // Two related cards, not three — self was dropped.
     expect(container.querySelectorAll('[data-testid="apps-related-grid-col"]')).toHaveLength(2);
     // No related card links back to this very listing.
-    const hrefs = Array.from(container.querySelectorAll('[data-testid="apps-related-grid-col"]'))
-      .flatMap((col) => Array.from(col.querySelectorAll('a')).map((a) => a.getAttribute('href')));
+    const hrefs = Array.from(
+      container.querySelectorAll('[data-testid="apps-related-grid-col"]')
+    ).flatMap((col) => Array.from(col.querySelectorAll('a')).map((a) => a.getAttribute('href')));
     expect(hrefs).not.toContain('/apps/store-preview/my-app');
   });
 
@@ -1315,11 +1336,21 @@ describe('AppListingDetailBody — the public collaborator byline (anonymous vie
     );
     // The page itself rendered (so this zero is not "nothing rendered at all").
     await expect.element(within.getByText('My App')).toBeInTheDocument();
-    expect(container.querySelectorAll('[data-testid="apps-listing-collaborators"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-testid="apps-listing-collaborators"]')).toHaveLength(
+      0
+    );
   });
 
   test('the byline is rendered alongside — not instead of — the creator card', async () => {
-    mocks.creator = { id: 5, username: 'alice', image: null, rank: null, links: [], cosmetics: [], stats: null };
+    mocks.creator = {
+      id: 5,
+      username: 'alice',
+      image: null,
+      rank: null,
+      links: [],
+      cosmetics: [],
+      stats: null,
+    };
     const { container, within } = await renderScoped(
       <AppListingDetailBody
         detail={base({ collaborators: [{ id: 42, username: 'bob', image: null }] })}

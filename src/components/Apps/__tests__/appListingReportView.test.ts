@@ -67,15 +67,21 @@ describe('reportErrorMessage', () => {
 
   it('surfaces the server message for a BAD_REQUEST / NOT_FOUND', () => {
     expect(
-      reportErrorMessage({ data: { code: 'BAD_REQUEST' }, message: 'only an approved listing can be reported' })
+      reportErrorMessage({
+        data: { code: 'BAD_REQUEST' },
+        message: 'only an approved listing can be reported',
+      })
     ).toContain('approved listing');
-    expect(reportErrorMessage({ data: { code: 'NOT_FOUND' }, message: 'listing not found' })).toContain(
-      'not found'
-    );
+    expect(
+      reportErrorMessage({ data: { code: 'NOT_FOUND' }, message: 'listing not found' })
+    ).toContain('not found');
   });
 
   it('gives a generic fallback for an unknown / internal error (never a raw leak)', () => {
-    const msg = reportErrorMessage({ data: { code: 'INTERNAL_SERVER_ERROR' }, message: 'ECONNREFUSED' });
+    const msg = reportErrorMessage({
+      data: { code: 'INTERNAL_SERVER_ERROR' },
+      message: 'ECONNREFUSED',
+    });
     expect(msg).not.toContain('ECONNREFUSED');
     expect(msg.length).toBeGreaterThan(0);
   });
