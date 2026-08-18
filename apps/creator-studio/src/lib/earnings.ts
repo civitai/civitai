@@ -27,6 +27,11 @@ export const SOURCE_COLOR: Record<EarningsSource, string> = {
   cosmeticSale: '#f783ac',
 };
 
+// The buzz account types the trend series and the sales counts are restricted to. `currencyMeta` treats an
+// UNKNOWN currency as buzz, so filtering on that instead would count a newly-added account type on one side of
+// the /earnings sales line and not the other. Both sides read this list.
+export const SERIES_BUZZ_CURRENCIES = ['yellow', 'blue', 'green', 'club'] as const;
+
 // Currencies are the raw `toAccountType` values, never converted or merged (B8 / D1). `family` only drives visual
 // grouping/formatting (⚡ for buzz), never summing across families.
 export type CurrencyFamily = 'buzz' | 'cash' | 'bank';

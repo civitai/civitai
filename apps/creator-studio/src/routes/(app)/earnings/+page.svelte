@@ -17,6 +17,7 @@
     SOURCE_LABEL,
     SOURCE_COLOR,
     currencyMeta,
+    SERIES_BUZZ_CURRENCIES,
     currencySort,
     formatAmount,
     hasDisplayValue,
@@ -97,10 +98,15 @@
       .filter((x) => Math.floor(x.total) >= 1)
   );
 
-  // Sales counts (868ktk1k9). Buzz-only here to match the series, which the query already restricts to buzz.
+  // Sales counts (868ktk1k9). Both figures filter on SERIES_BUZZ_CURRENCIES so the period count and the per-day
+  // count cannot drift apart when a new account type ships.
   const salesInPeriod = $derived(
     (data.summary ?? [])
-      .filter((b) => b.source === 'accessSale' && currencyMeta(b.currency).family === 'buzz')
+      .filter(
+        (b) =>
+          b.source === 'accessSale' &&
+          (SERIES_BUZZ_CURRENCIES as readonly string[]).includes(b.currency)
+      )
       .reduce((n, b) => n + b.count, 0)
   );
   const salesOnLastDay = $derived(
