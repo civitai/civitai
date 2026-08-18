@@ -97,7 +97,7 @@ export function UserBuzz({
               className={clsx(classes.buzzLoader, gradient && classes.withGradient)}
             />
           ) : withAbbreviation ? (
-            abbreviateNumber(balance, { floor: true })
+            abbreviateNumber(balance, { floor: true, decimals: 1 })
           ) : (
             balance.toLocaleString()
           )}
