@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
+import { collectionTypeData } from '~/components/Collections/collection.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -146,7 +147,7 @@ function CollectionCardHeader({
         {withinImageGuard && <ImageGuard2.BlurToggle className={cardClasses.chip} radius="xl" />}
         <Badge className={clsx(cardClasses.infoChip, cardClasses.chip)} variant="light" radius="xl">
           <Text c="white" size="xs" tt="capitalize">
-            {data.type ? data.type + 's' : 'Mixed'}
+            {data.type ? `${collectionTypeData[data.type].label}s` : 'Mixed'}
           </Text>
         </Badge>
       </div>
