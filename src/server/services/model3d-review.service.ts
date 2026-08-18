@@ -115,7 +115,7 @@ export const upsertModel3DReview = async ({
   await throwIfBlockedByOwners({
     userId: user.id,
     ownerIds: [model3d.userId],
-    isModerator: false,
+    isModerator: !!user.isModerator,
   });
 
   // If a postId is provided, validate it actually exists + belongs to this user
