@@ -113,6 +113,16 @@ header — the same place the mockup puts it. *Message sounds* and *hide offensi
 there out of the thread-list tool menu, and **Mark all read** became a button in the rail header
 rather than a menu item, per the mockup's one-home-per-action rule.
 
+### Delete outranks the policy
+
+A cleared conversation re-requests when the other side writes back, **whatever
+the recipient's policy says** — a mutual included. Delete is a per-person,
+explicit act; the policy is a blanket default, and the specific signal wins.
+
+So "Mutuals only" means *auto-accept unless I deleted you*. That surprised us in
+testing, because two different mechanisms produce the same Requests entry, so
+the accept screen names which one applied.
+
 ### Retroactivity
 
 **Policy changes are not retroactive.** Existing threads stay in the inbox; the policy gates

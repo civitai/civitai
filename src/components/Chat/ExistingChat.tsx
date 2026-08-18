@@ -615,9 +615,11 @@ export function ExistingChat() {
               }"`}</Text>
             )}
             <Text align="center">
-              {myMember.status === ChatMemberStatus.Joined
-                ? 'Accept this request?'
-                : 'Join the chat?'}
+              {!myMember.filteredAt
+                ? 'Join the chat?'
+                : myMember.clearedAt && myMember.clearedAt < myMember.filteredAt
+                ? 'You deleted this conversation. Accept it again?'
+                : 'Accept this request?'}
             </Text>
             <Group p="sm" justify="center">
               <Button
