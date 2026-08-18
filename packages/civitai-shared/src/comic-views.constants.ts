@@ -3,8 +3,7 @@
  *
  * Comic views before this date do not exist as `views` rows — they are reconstructed from
  * `pageViews` paths by the comic view backfill (civitai-scripts, `backfill/comic-views.js`), which
- * writes straight into
- * `daily_views`. The reconstruction is close but not identical, and one difference is visible to
+ * writes straight into `daily_views`. The reconstruction is close but not identical, and one difference is visible to
  * anyone reading a chart:
  *
  *   Chapter reads are gated on `canRead`, so a paywalled early-access chapter a viewer could not
@@ -13,24 +12,30 @@
  *   date — permanently — and reads as the comic losing readers the day the feature shipped.
  *
  * Anything charting comic views should draw the span before this date differently and say why,
- * rather than presenting one continuous series. The backfill asserts its `--until` equals this
- * value, so the two cannot drift apart.
+ * rather than presenting one continuous series.
  *
- * Exclusive: this date is the first day of live tracking, and the last backfilled day is the one
- * before it.
+ * NOT exclusive — this day is MIXED, see below.
  *
- * It is OBSERVED, not chosen. The backfill (civitai-scripts, `backfill/comic-views.js`) refuses to
- * run until `default.views` actually holds a day of real comic views, then asserts that the first
- * such day equals this value and names the correct one if it does not — so this is a checked
- * contract rather than a date someone picked in advance.
- * A guessed date fails silently in both directions: a day early and live rows land inside the
- * backfilled window; a day late and that day gets neither backfill nor tracking. The boundary is
- * UTC midnight, which falls the previous evening in US timezones, so a hand-picked date is
- * ambiguous before a 20-30 minute deploy is even factored in.
+ * It is OBSERVED, not chosen. The backfill (civitai-scripts, `backfill/comic-views.js`) takes no
+ * date argument at all: it finds the first day whose beacon count clears a volume floor, reads
+ * `min(time)` of that day's beacons, and backfills up to that exact TIMESTAMP. A date boundary has
+ * no correct value, because tracking starts mid-day — stop at the cutover day and its pre-deploy
+ * views are written by nothing; stop at the next day and its post-deploy views are written twice.
+ * Both fail silently, so the boundary is derived and there is no value left to typo.
  *
- * Placeholder until the tracking code deploys; the backfill will tell you the real value.
+ * Verified 2026-08-17: tracking went live at 17:20:57 UTC and the backfill ran to that timestamp,
+ * so THIS DAY IS MIXED — reconstructed for 00:00-17:20, live beacons after. Every day before it is
+ * wholly reconstructed; every day after, wholly live. `daily_views` is date-granular and sums, so
+ * the day's total is correct even though its two halves were measured differently.
+ *
+ * 🔴 KNOWN OPEN BUG as of 2026-08-17: live tracking records only ~50% of what `pageViews` sees for
+ * comics (measured: project 0.48, chapter 0.54; articles and posts are at 1.06-1.08 in the same
+ * window, so it is comics-specific). The reconstructed span is therefore roughly 2x the live span,
+ * and a chart spanning this date shows a step DOWN that is the bug's signature, not an artifact of
+ * the backfill. Do not describe that step to creators as a drop in readership. It closes when the
+ * undercount is fixed, at which point the two spans line up.
  */
-export const COMIC_VIEW_TRACKING_CUTOVER = '2026-08-18';
+export const COMIC_VIEW_TRACKING_CUTOVER = '2026-08-17';
 
 /** Human-readable reason, for a tooltip or footnote on a chart that spans the cutover. */
 export const COMIC_VIEW_BACKFILL_NOTE =
