@@ -1,4 +1,4 @@
-import { Button, Group, Modal, Select, Stack, Text, Textarea } from '@mantine/core';
+import { Button, Group, Modal, Select, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -8,10 +8,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 
 export type RejectionSelection = {
   rejectionReason?: CollectionItemRejectionReason;
-  rejectionDetail?: string;
 };
-
-const MAX_DETAIL_LENGTH = 200;
 
 function RejectCollectionItemsModal({
   count,
@@ -22,16 +19,9 @@ function RejectCollectionItemsModal({
 }) {
   const dialog = useDialogContext();
   const [reason, setReason] = useState<CollectionItemRejectionReason | null>(null);
-  const [detail, setDetail] = useState('');
-
-  const isOther = reason === CollectionItemRejectionReason.Other;
-  const detailMissing = isOther && !detail.trim().length;
 
   const handleConfirm = () => {
-    onConfirm({
-      rejectionReason: reason ?? undefined,
-      rejectionDetail: isOther ? detail.trim() : undefined,
-    });
+    onConfirm({ rejectionReason: reason ?? undefined });
     dialog.onClose();
   };
 
@@ -59,22 +49,11 @@ function RejectCollectionItemsModal({
           value={reason}
           onChange={(value) => setReason((value as CollectionItemRejectionReason | null) ?? null)}
         />
-        {isOther && (
-          <Textarea
-            label="What should we tell them?"
-            placeholder="Keep it short — this goes straight to the submitter."
-            maxLength={MAX_DETAIL_LENGTH}
-            autosize
-            minRows={2}
-            value={detail}
-            onChange={(event) => setDetail(event.currentTarget.value)}
-          />
-        )}
         <Group justify="flex-end">
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
           </Button>
-          <Button color="red" onClick={handleConfirm} disabled={detailMissing}>
+          <Button color="red" onClick={handleConfirm}>
             Reject
           </Button>
         </Group>

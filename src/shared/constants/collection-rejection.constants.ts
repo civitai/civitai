@@ -10,16 +10,18 @@ export const COLLECTION_REJECTION_REASON_COPY: Record<CollectionItemRejectionRea
   [CollectionItemRejectionReason.Automated]: '',
 };
 
-// These two carry no fixed copy: what the submitter reads is whatever the reviewer
-// (or the AI reviewer) wrote in `rejectionDetail`.
+// These two carry no fixed copy: what the submitter reads is whatever the AI reviewer wrote
+// in `rejectionDetail`. Only in-process callers can supply it.
 export const DETAIL_BACKED_REASONS = new Set<CollectionItemRejectionReason>([
   CollectionItemRejectionReason.Other,
   CollectionItemRejectionReason.Automated,
 ]);
 
+// A reviewer cannot write free text, so a reason whose copy comes from free text is one a
+// reviewer cannot pick. Keeping the two sets tied means adding a reason can't get this wrong.
 export const SELECTABLE_REJECTION_REASONS = (
   Object.keys(COLLECTION_REJECTION_REASON_COPY) as CollectionItemRejectionReason[]
-).filter((reason) => reason !== CollectionItemRejectionReason.Automated);
+).filter((reason) => !DETAIL_BACKED_REASONS.has(reason));
 
 export function resolveRejectionCopy({
   reason,

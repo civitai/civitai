@@ -198,8 +198,9 @@ const ReviewCollection = () => {
 
       <Stack gap="sm" mb="lg">
         <Text c="dimmed">
-          You are reviewing items on the collection that are either pending review or have been
-          rejected. You can change the status of these to be accepted or rejected.
+          {isContestCollection
+            ? 'You are reviewing items on the collection that are either pending review or have been rejected. You can change the status of these to be accepted or rejected.'
+            : 'You are reviewing items waiting to join this collection. Accepting one adds it to the collection; rejecting it leaves it out. Either way it leaves this queue.'}
         </Text>
         {isContestCollection && collection.tags.length > 0 && (
           <CollectionCategorySelect
@@ -209,28 +210,32 @@ const ReviewCollection = () => {
           />
         )}
         <Group justify="space-between">
-          <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
-            <Group gap="xs">
-              <Chip value={CollectionItemStatus.REVIEW}>
-                <span>Review</span>
+          {isContestCollection && (
+            <>
+              <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
+                <Group gap="xs">
+                  <Chip value={CollectionItemStatus.REVIEW}>
+                    <span>Review</span>
+                  </Chip>
+                  <Chip value={CollectionItemStatus.REJECTED}>
+                    <span>Rejected</span>
+                  </Chip>
+                  <Chip value={CollectionItemStatus.ACCEPTED}>
+                    <span>Accepted</span>
+                  </Chip>
+                </Group>
+              </Chip.Group>
+              <Chip
+                checked={awaitingHumanReview}
+                onChange={() => {
+                  setAwaitingHumanReview((v) => !v);
+                  deselectAll();
+                }}
+              >
+                <span>Needs human review</span>
               </Chip>
-              <Chip value={CollectionItemStatus.REJECTED}>
-                <span>Rejected</span>
-              </Chip>
-              <Chip value={CollectionItemStatus.ACCEPTED}>
-                <span>Accepted</span>
-              </Chip>
-            </Group>
-          </Chip.Group>
-          <Chip
-            checked={awaitingHumanReview}
-            onChange={() => {
-              setAwaitingHumanReview((v) => !v);
-              deselectAll();
-            }}
-          >
-            <span>Needs human review</span>
-          </Chip>
+            </>
+          )}
 
           <SelectMenuV2
             label="Sort by"
@@ -502,7 +507,7 @@ function ModerationControls({
 
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
-      async onMutate({ collectionItemIds, status, rejectionReason, rejectionDetail }) {
+      async onMutate({ collectionItemIds, status, rejectionReason }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
 
         queryUtils.collection.getAllCollectionItems.setInfiniteData(
@@ -515,7 +520,7 @@ function ModerationControls({
                 if (collectionItemIds.includes(item.id)) {
                   item.status = status;
                   item.rejectionReason = rejectionReason ?? null;
-                  item.rejectionDetail = rejectionDetail ?? null;
+                  item.rejectionDetail = null;
                 }
               }
           })

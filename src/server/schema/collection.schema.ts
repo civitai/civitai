@@ -9,6 +9,7 @@ import {
 import { imageSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { SELECTABLE_REJECTION_REASONS } from '~/shared/constants/collection-rejection.constants';
 import {
   CollectionContributorPermission,
   CollectionItemRejectionReason,
@@ -278,18 +279,12 @@ export const updateCollectionItemsStatusInput = z
     collectionItemIds: z.array(z.number()),
     status: z.enum(CollectionItemStatus),
     rejectionReason: z.enum(CollectionItemRejectionReason).optional(),
-    rejectionDetail: z.string().trim().max(200).optional(),
   })
-  // `Automated` belongs to the AI review job, which builds its input in-process and
-  // never parses it through here.
-  .refine(({ rejectionReason }) => rejectionReason !== CollectionItemRejectionReason.Automated, {
-    message: 'That reason is reserved for automated review.',
-    path: ['rejectionReason'],
-  })
+  // Detail-backed reasons read their copy from `rejectionDetail`, which only in-process callers
+  // (the AI review job) can supply — so they are not reachable over the wire.
   .refine(
-    ({ rejectionReason, rejectionDetail }) =>
-      rejectionReason !== CollectionItemRejectionReason.Other || !!rejectionDetail?.length,
-    { message: 'Tell the submitter why.', path: ['rejectionDetail'] }
+    ({ rejectionReason }) => !rejectionReason || SELECTABLE_REJECTION_REASONS.includes(rejectionReason),
+    { message: 'That reason is reserved for automated review.', path: ['rejectionReason'] }
   );
 
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;

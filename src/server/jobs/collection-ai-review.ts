@@ -266,10 +266,10 @@ async function applyOutcomes({
           collectionItemIds: write.ids,
           status: write.status,
           rejectionReason: resolveAutomatedRejectionReason({ status: write.status }),
-          rejectionDetail: write.reason,
         },
         userId: SYSTEM_USER_ID,
         isSystem: true,
+        rejectionDetail: write.reason,
       });
     } catch (error) {
       logToAxiom({

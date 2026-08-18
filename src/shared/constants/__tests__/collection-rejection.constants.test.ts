@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   COLLECTION_REJECTION_REASON_COPY,
+  DETAIL_BACKED_REASONS,
   SELECTABLE_REJECTION_REASONS,
   resolveRejectionCopy,
 } from '~/shared/constants/collection-rejection.constants';
@@ -13,7 +14,7 @@ describe('collection rejection reasons', () => {
     );
   });
 
-  it("resolves Other to the reviewer's own words", () => {
+  it('resolves Other to whatever detail the row carries', () => {
     expect(
       resolveRejectionCopy({
         reason: CollectionItemRejectionReason.Other,
@@ -41,8 +42,11 @@ describe('collection rejection reasons', () => {
     expect(resolveRejectionCopy({})).toBeUndefined();
   });
 
-  it('never offers Automated to a human', () => {
-    expect(SELECTABLE_REJECTION_REASONS).not.toContain(CollectionItemRejectionReason.Automated);
+  // Reviewers cannot write free text, so the reasons that read their copy from it are exactly
+  // the ones a reviewer must not be offered.
+  it('offers no reason whose copy comes from free text', () => {
+    for (const reason of DETAIL_BACKED_REASONS)
+      expect(SELECTABLE_REJECTION_REASONS).not.toContain(reason);
     expect(SELECTABLE_REJECTION_REASONS).toContain(CollectionItemRejectionReason.OffTopic);
   });
 
@@ -52,5 +56,12 @@ describe('collection rejection reasons', () => {
     expect(Object.keys(COLLECTION_REJECTION_REASON_COPY).sort()).toEqual(
       Object.values(CollectionItemRejectionReason).sort()
     );
+  });
+
+  // The set check above only compares keys, so a new reason added with '' copy would pass it
+  // while rendering nothing. Anything a reviewer can pick has to resolve to a real sentence.
+  it('resolves every selectable reason to non-empty copy', () => {
+    for (const reason of SELECTABLE_REJECTION_REASONS)
+      expect(resolveRejectionCopy({ reason })).toBeTruthy();
   });
 });

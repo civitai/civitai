@@ -21,50 +21,25 @@ describe('updateCollectionItemsStatusInput', () => {
     expect(result.success).toBe(true);
   });
 
-  it('trims the free text', () => {
+  // A reviewer writes about someone else's entry, so free text is not reachable over the wire at
+  // all — not merely absent from the modal. A client that sends it has it dropped.
+  it('does not carry free text even when a client sends some', () => {
     const result = updateCollectionItemsStatusInput.safeParse({
       ...base,
-      rejectionReason: CollectionItemRejectionReason.Other,
-      rejectionDetail: '  crop the watermark  ',
+      rejectionReason: CollectionItemRejectionReason.Duplicate,
+      rejectionDetail: 'something a reviewer typed about another member',
     });
     expect(result.success).toBe(true);
-    if (result.success) expect(result.data.rejectionDetail).toBe('crop the watermark');
+    if (result.success) expect(result.data).not.toHaveProperty('rejectionDetail');
   });
 
-  it('refuses Other with no free text', () => {
-    const result = updateCollectionItemsStatusInput.safeParse({
-      ...base,
-      rejectionReason: CollectionItemRejectionReason.Other,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('refuses Other with only whitespace', () => {
-    const result = updateCollectionItemsStatusInput.safeParse({
-      ...base,
-      rejectionReason: CollectionItemRejectionReason.Other,
-      rejectionDetail: '     ',
-    });
-    expect(result.success).toBe(false);
-  });
-
-  // Automated is the AI reviewer's value. A client must never be able to make a
-  // human rejection look like the bot's.
-  it('refuses Automated from a client', () => {
-    const result = updateCollectionItemsStatusInput.safeParse({
-      ...base,
-      rejectionReason: CollectionItemRejectionReason.Automated,
-      rejectionDetail: 'pretending to be the bot',
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('refuses free text longer than 200 characters', () => {
-    const result = updateCollectionItemsStatusInput.safeParse({
-      ...base,
-      rejectionReason: CollectionItemRejectionReason.Other,
-      rejectionDetail: 'x'.repeat(201),
-    });
-    expect(result.success).toBe(false);
-  });
+  // Both detail-backed reasons render whatever sits in `rejectionDetail`. A client cannot supply
+  // that, so letting one through would persist a reason that displays nothing to the submitter.
+  it.each([CollectionItemRejectionReason.Other, CollectionItemRejectionReason.Automated])(
+    'refuses %s from a client',
+    (rejectionReason) => {
+      const result = updateCollectionItemsStatusInput.safeParse({ ...base, rejectionReason });
+      expect(result.success).toBe(false);
+    }
+  );
 });

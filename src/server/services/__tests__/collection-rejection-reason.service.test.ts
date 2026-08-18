@@ -91,17 +91,17 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
     });
   });
 
-  it('persists the free text for Other', async () => {
+  it('persists the free text the AI reviewer supplies for Other', async () => {
     await updateCollectionItemsStatus({
       input: {
         collectionId: COLLECTION_ID,
         collectionItemIds: [ITEM_ID],
         status: CollectionItemStatus.REJECTED,
         rejectionReason: CollectionItemRejectionReason.Other,
-        rejectionDetail: 'Crop out the watermark.',
       },
       userId: REVIEWER_ID,
       isSystem: true,
+      rejectionDetail: 'Crop out the watermark.',
     });
 
     expect(rejectionBindings()).toEqual({
@@ -110,8 +110,8 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
     });
   });
 
-  // Only Other and Automated read the detail back, so a direct API caller must not be able to
-  // park 200 characters on a row that no surface will ever render.
+  // Only the detail-backed reasons read the detail back, so pairing one with a canned reason must
+  // not park text on a row that no surface will ever render.
   it('drops a detail sent alongside a canned reason', async () => {
     await updateCollectionItemsStatus({
       input: {
@@ -119,10 +119,10 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
         collectionItemIds: [ITEM_ID],
         status: CollectionItemStatus.REJECTED,
         rejectionReason: CollectionItemRejectionReason.Quality,
-        rejectionDetail: 'nothing reads this back',
       },
       userId: REVIEWER_ID,
       isSystem: true,
+      rejectionDetail: 'nothing reads this back',
     });
 
     expect(rejectionBindings()).toEqual({
@@ -142,10 +142,10 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
         collectionItemIds: [ITEM_ID],
         status: CollectionItemStatus.ACCEPTED,
         rejectionReason: CollectionItemRejectionReason.Duplicate,
-        rejectionDetail: 'ignored on an acceptance',
       },
       userId: REVIEWER_ID,
       isSystem: true,
+      rejectionDetail: 'ignored on an acceptance',
     });
 
     expect(rejectionBindings()).toEqual({ reason: null, detail: null });
@@ -177,10 +177,10 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
         collectionItemIds: [ITEM_ID],
         status: CollectionItemStatus.REJECTED,
         rejectionReason: CollectionItemRejectionReason.Other,
-        rejectionDetail: 'Crop out the watermark.',
       },
       userId: REVIEWER_ID,
       isSystem: true,
+      rejectionDetail: 'Crop out the watermark.',
     });
 
     const [{ details }] = createNotificationMock.mock.calls[0];
@@ -212,10 +212,10 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
         collectionItemIds: [ITEM_ID],
         status: CollectionItemStatus.REJECTED,
         rejectionReason: CollectionItemRejectionReason.Automated,
-        rejectionDetail: 'This collection needs to stay PG-13.',
       },
       userId: REVIEWER_ID,
       isSystem: true,
+      rejectionDetail: 'This collection needs to stay PG-13.',
     });
 
     expect(rejectionBindings()).toEqual({
@@ -236,10 +236,10 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
         collectionItemIds: [ITEM_ID],
         status: CollectionItemStatus.REJECTED,
         rejectionReason: CollectionItemRejectionReason.Automated,
-        rejectionDetail: '',
       },
       userId: REVIEWER_ID,
       isSystem: true,
+      rejectionDetail: '',
     });
 
     expect(rejectionBindings()).toEqual({
@@ -305,10 +305,10 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
         collectionItemIds: [ITEM_ID],
         status: CollectionItemStatus.REJECTED,
         rejectionReason: CollectionItemRejectionReason.Other,
-        rejectionDetail: 'Actually, the watermark is fine — the crop is not.',
       },
       userId: REVIEWER_ID,
       isSystem: true,
+      rejectionDetail: 'Actually, the watermark is fine — the crop is not.',
     });
 
     expect(createNotificationMock).toHaveBeenCalledTimes(1);

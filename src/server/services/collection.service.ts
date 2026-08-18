@@ -2295,6 +2295,7 @@ export const updateCollectionItemsStatus = async ({
   userId,
   isModerator,
   isSystem,
+  rejectionDetail,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
@@ -2304,13 +2305,19 @@ export const updateCollectionItemsStatus = async ({
    * Never accept this from a tRPC input.
    */
   isSystem?: boolean;
+  /**
+   * Free text shown to the submitter, for the reasons that have no fixed copy. Deliberately not
+   * part of the wire schema: a reviewer writes about someone else's entry, so only the AI review
+   * job supplies this. Never accept it from a tRPC input.
+   */
+  rejectionDetail?: string;
 }) => {
-  const { collectionId, collectionItemIds, status, rejectionReason, rejectionDetail } = input;
+  const { collectionId, collectionItemIds, status, rejectionReason } = input;
 
   const isRejection = status === CollectionItemStatus.REJECTED;
   const persistedReason = isRejection ? rejectionReason ?? null : null;
-  // Only Other and Automated ever read the detail back, so anything else would leave 200
-  // characters on the row that no surface displays.
+  // Only the detail-backed reasons ever read the detail back, so anything else would leave text
+  // on the row that no surface displays.
   const persistedDetail =
     persistedReason && DETAIL_BACKED_REASONS.has(persistedReason)
       ? rejectionDetail?.trim() || null
