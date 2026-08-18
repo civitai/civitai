@@ -16,14 +16,18 @@ const same = (a: Box | null, b: Box) =>
 /**
  * Placed stickers on a post page image. Display only — no placing from here.
  *
- * Measured off the media element rather than stretched over the container, but
- * for a different reason than the feed card's: a post has no hover transform and
- * no `object-fit: cover`, so the container's own box is nearly right. Nearly —
- * the media is wrapped in a `RoutedDialogLink`, which renders an inline anchor,
- * and an inline box around an image carries the line-box descender gap. That
- * makes the container a few pixels taller than the artwork, which tilts every
- * vertical fraction by an amount that is invisible on a square image and wrong
- * on a tall one.
+ * Sized to the media element, not to the container. A placement is a fraction of
+ * the artwork's bounds, and the container's height is derived from the image's
+ * *stored* dimensions (`PostImages.tsx` sets `aspectRatio` from
+ * `image.width`/`image.height`) — a different source of truth from the file the
+ * CDN actually serves, and only the served file is what a fraction means.
+ *
+ * Measured rather than assumed, on `/posts/30077020` (a 1006x1520 image): the
+ * container and the media are the same box, 1100px both, with and without that
+ * `aspectRatio`. The `RoutedDialogLink` anchor computes to `display: inline`,
+ * but it contributes no descender gap, because Tailwind's preflight makes `img`
+ * a block. So this is not correcting a divergence that exists today; it is
+ * declining to depend on two sources agreeing.
  *
  * `artworkWidth` is left at `StickerPlacementOverlay`'s 512 rather than the
  * card's 256: a post image draws at up to `MAX_POST_IMAGES_WIDTH` (800), where a
@@ -47,9 +51,12 @@ export function PostStickerOverlay({ imageId }: { imageId: number }) {
     const node = ref.current;
     if (!node || !hasPlacements) return;
 
-    // The media is a sibling subtree: nesting the overlay inside the link would
-    // make it part of the link's click target.
-    const media = node.parentElement?.querySelector('img, video');
+    // The link immediately before this overlay, not the whole container: the
+    // overlay is a sibling of the link because nesting it inside would make it
+    // part of the link's click target, and searching the container instead
+    // would take the first `img`/`video` in document order — which is whatever
+    // the control group above the media happens to render.
+    const media = node.previousElementSibling?.querySelector('img, video');
     if (!media) return;
 
     const measure = () => {

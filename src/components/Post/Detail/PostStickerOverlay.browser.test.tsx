@@ -38,13 +38,26 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 
 /**
  * The post page's shape, reduced to the part that decides the geometry: a
- * positioned container whose only child is an INLINE anchor around the media.
- * The anchor is what makes the container taller than the image — a line box
- * reserves room for descenders under an inline image.
+ * positioned container, an anchor around the media, and the overlay as the
+ * anchor's next sibling — which is the relationship the component navigates.
+ *
+ * The container is taller than the media HERE because no stylesheet loads in
+ * this project, so `img` keeps its inline default and the line box reserves
+ * descender room. Production has Tailwind's preflight, where `img` is a block
+ * and the two boxes agree (measured on `/posts/30077020`). So the gap below is
+ * a property of this fixture, and it is what makes the sizing assertion able to
+ * tell measuring from not-measuring at all — not a claim about the real page.
  */
 function PostImageFixture() {
   return (
     <div data-testid="paper" style={{ position: 'relative', width: 400 }}>
+      {/* The control group the post page renders above the media, standing in
+          for anything image-bearing someone adds to it later. It comes first in
+          document order, so a container-wide search finds this 16px icon
+          instead of the artwork. */}
+      <div>
+        <img data-testid="chip-icon" src={LOADABLE_IMAGE_DATA_URI} alt="" width={16} height={16} />
+      </div>
       <a href="#">
         <img
           data-testid="media"
@@ -99,8 +112,8 @@ describe('PostStickerOverlay', () => {
     expect(box).not.toBeNull();
 
     // Control: without this the assertion below is vacuous, because measuring
-    // and not measuring produce the same number whenever the two boxes agree.
-    // This is the descender gap the measurement exists for.
+    // and not measuring produce the same number whenever the two boxes agree —
+    // which is what production does. It proves this fixture can tell them apart.
     expect(paper!.offsetHeight).toBeGreaterThan(media!.offsetHeight);
 
     await vi.waitFor(() => {
