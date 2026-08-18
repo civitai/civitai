@@ -510,9 +510,13 @@ function ModerationControls({
       async onMutate({ collectionItemIds, status, rejectionReason }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
 
+        // Snapshot for onError: the item is about to leave the queue, and without a rollback a
+        // failed write hides an entry that is still pending review.
+        const prevData = queryUtils.collection.getAllCollectionItems.getInfiniteData({ ...filters });
+
         // A decided item leaves the queue rather than flipping in place. Left visible it stays
         // selectable, and the next bulk action silently re-decides it the other way.
-        const stillMatchesFilter = statuses.includes(status);
+        const stillMatchesFilter = filters.statuses.includes(status);
 
         queryUtils.collection.getAllCollectionItems.setInfiniteData(
           { ...filters },
@@ -536,11 +540,18 @@ function ModerationControls({
             }
           })
         );
+
+        return { prevData };
       },
       onSuccess() {
         showSuccessNotification({ message: `The items have been reviewed` });
       },
-      onError(error) {
+      onError(error, _variables, context) {
+        if (context?.prevData)
+          queryUtils.collection.getAllCollectionItems.setInfiniteData(
+            { ...filters },
+            context.prevData
+          );
         showNotification({
           id: 'error',
           title: 'Error',

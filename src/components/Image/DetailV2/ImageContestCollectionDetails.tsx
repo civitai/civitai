@@ -331,6 +331,9 @@ function ReviewActions({
         // we cannot read here, and a decided item belongs in none of the pending ones — leaving it
         // visible keeps it selectable for a bulk action that would re-decide it.
         const queryKey = getQueryKey(trpc.collection.getAllCollectionItems);
+        // Snapshot every queue we are about to edit, so a failed write cannot leave an entry
+        // hidden from a reviewer while it is still pending.
+        const prevQueues = queryClient.getQueriesData({ queryKey, exact: false });
         queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
           produce(state, (old?: InfiniteData<CollectionGetAllItems>) => {
             if (!old?.pages?.length) return;
@@ -341,11 +344,14 @@ function ReviewActions({
               );
           })
         );
+
+        return { prevQueues };
       },
       onSuccess(_, { status }) {
         showSuccessNotification({ message: `The items have been ${status.toLowerCase()}` });
       },
-      onError(error) {
+      onError(error, _variables, context) {
+        for (const [key, data] of context?.prevQueues ?? []) queryClient.setQueryData(key, data);
         showErrorNotification({
           title: 'Failed to review items',
           error: new Error(error.message),
