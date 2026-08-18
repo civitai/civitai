@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import {
   FEEDBACK_AREAS,
+  FEEDBACK_FILTER_VALUE_MAX_LENGTH,
   FEEDBACK_IMAGE_ID_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
   FEEDBACK_MESSAGE_MAX_LENGTH,
@@ -26,8 +27,16 @@ const feedbackContextSchema = z.object({
   reportedSource: z.string().max(50).optional(),
   reportedPageSources: z.array(z.string().max(50)).max(500).optional(),
   pagesLoaded: z.number().int().min(0).max(10_000).optional(),
+  // The value bound is now the exported `FEEDBACK_FILTER_VALUE_MAX_LENGTH` rather than
+  // an inline literal: `/apps` reports its URL-backed free-text search term here, so a
+  // caller has to clip to this number and the two must not be able to drift. Same
+  // value (200), no widening — a `max()` REJECTS rather than truncates, so clipping is
+  // the caller's job either way.
   filters: z
-    .record(z.string().max(50), z.union([z.string().max(200), z.number(), z.boolean()]))
+    .record(
+      z.string().max(50),
+      z.union([z.string().max(FEEDBACK_FILTER_VALUE_MAX_LENGTH), z.number(), z.boolean()])
+    )
     .refine((val) => Object.keys(val).length <= 20, 'Too many filter keys')
     .optional(),
   /** Cloudflare image ids for files the user attached by hand. */

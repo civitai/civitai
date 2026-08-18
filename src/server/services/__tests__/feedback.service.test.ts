@@ -113,6 +113,34 @@ describe('createFeedback — extended context', () => {
     await createFeedback(args);
     expect(writtenContext()).toEqual({});
   });
+
+  /**
+   * THE SECOND AREA, END TO END through the boundary schema — the marketplace prompt's
+   * payload, parsed and then written.
+   *
+   * Same seam argument as the case above: the schema strips undeclared keys, so a
+   * context the page builds and the service happily forwards can still arrive at the
+   * column with the interesting half missing. Parsing first is what makes "the page
+   * sends it" and "the column stores it" meet, and `area` is asserted on the write
+   * because that value is what a triager filters by.
+   */
+  it('writes an apps-marketplace submission with the store view it was sent with', async () => {
+    const parsed = createFeedbackSchema.parse({
+      area: 'apps-marketplace',
+      message: 'the store showed no apps',
+      context: {
+        path: '/apps',
+        filters: { kind: 'offsite', category: 'generation', sort: 'newest', query: 'upscale' },
+      },
+    });
+    await createFeedback({ ...parsed, userId: 7 });
+
+    expect(dbMock.dbWrite.feedback.create.mock.calls[0][0].data.area).toBe('apps-marketplace');
+    expect(writtenContext()).toEqual({
+      path: '/apps',
+      filters: { kind: 'offsite', category: 'generation', sort: 'newest', query: 'upscale' },
+    });
+  });
 });
 
 /**
@@ -185,6 +213,67 @@ describe('isFeedbackAreaEnabled — the Flipt evaluation context', () => {
     });
 
     expect(evalCall()[2]?.isEarlyAdopter).toBe('false');
+  });
+
+  /**
+   * THE SECOND AREA. `feedbackAreaFlagKey` is a template literal, so a per-area flag
+   * key is never written down in the app — the only hand-written copy is the flag in
+   * flipt-state's `features.yaml`. If the service derived, say, the wrong slug, every
+   * evaluation would resolve an UNKNOWN flag, and an unknown flag reads false: the
+   * area would be off for everyone with nothing logged and no error raised.
+   *
+   * The literal on the right is the contract with that file, typed out rather than
+   * built from the area, so this fails if either side moves alone.
+   */
+  it('derives the apps-marketplace flag key, with the same context as any other area', async () => {
+    await isFeedbackAreaEnabled({
+      area: 'apps-marketplace',
+      user: sessionUser({ isEarlyAdopter: true, isModerator: true }),
+    });
+
+    const [flag, entityId, context] = evalCall();
+    expect(flag).toBe('feedback-area-apps-marketplace');
+    expect(entityId).toBe('7');
+    expect(context?.userId).toBe('7');
+    // The two properties the live rollout's segments constrain — `early-adopters`
+    // matches on isEarlyAdopter, `testers` on isModerator. Both are STRINGS; a
+    // boolean here fails the constraint as "nobody matches", not as an error.
+    expect(context?.isEarlyAdopter).toBe('true');
+    expect(context?.isModerator).toBe('true');
+  });
+
+  /**
+   * The `testers` arm of the apps-marketplace rollout, behaviourally. That segment is
+   * ANY_MATCH_TYPE over `isModerator = "true"` OR a userId allowlist, so a moderator
+   * who never opted into the early-adopter program is IN SCOPE — intended, and the
+   * half that the early-adopters stub above cannot see.
+   */
+  describe('against a stub that behaves like the testers segment', () => {
+    beforeEach(() => {
+      mocks.isFlipt.mockImplementation(
+        async (_flag: string, _entityId: string, context?: Record<string, string>) =>
+          context?.isModerator === 'true'
+      );
+    });
+
+    it('is ON for a moderator who is NOT an early adopter', async () => {
+      await expect(
+        isFeedbackAreaEnabled({
+          area: 'apps-marketplace',
+          user: sessionUser({ isModerator: true, isEarlyAdopter: false }),
+        })
+      ).resolves.toBe(true);
+    });
+
+    it('and OFF for a non-moderator', async () => {
+      await expect(
+        isFeedbackAreaEnabled({ area: 'apps-marketplace', user: sessionUser() })
+      ).resolves.toBe(false);
+    });
+
+    it('and OFF for an anonymous request', async () => {
+      await expect(isFeedbackAreaEnabled({ area: 'apps-marketplace' })).resolves.toBe(false);
+    });
   });
 
   it('evaluates an anonymous request with an anonymous context that carries no cohort property', async () => {
