@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
+import { VIOLATION_LABELS } from '$lib/violations';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { NotificationCategory } from '@civitai/notifications';
 import { dbRead } from './db';
@@ -264,6 +265,10 @@ export async function notifyImageTosViolation(image: {
   imageId: number;
   ownerId: number;
   postId: number | null;
+  /** The moderator's own wording for what was wrong. Omitted where they did not pick one — the main
+   *  app's processor keeps the unreasoned message for that case, and for every notification written
+   *  before this field existed. */
+  reason?: string;
 }): Promise<void> {
   try {
     await getNotifications().createNotification({
@@ -275,6 +280,7 @@ export async function notifyImageTosViolation(image: {
         modelName: image.postId ? `post #${image.postId}` : 'a post',
         entity: 'image',
         url: `/images/${image.imageId}`,
+        ...(image.reason ? { reason: image.reason } : {}),
       },
     });
   } catch {
@@ -331,7 +337,16 @@ export async function applyBlockSideEffects(
       violationType,
       violationDetails,
     }),
-    notifyImageTosViolation({ imageId, ownerId: img.userId, postId: img.postId }),
+    notifyImageTosViolation({
+      imageId,
+      ownerId: img.userId,
+      postId: img.postId,
+      // The chosen violation only — not the one `trackImageDeleteTos` infers for analytics. Telling
+      // someone their image broke a rule no moderator picked is worse than telling them nothing.
+      reason: violationType
+        ? VIOLATION_LABELS[violationType as keyof typeof VIOLATION_LABELS]
+        : undefined,
+    }),
     bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
     bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
   ]);
