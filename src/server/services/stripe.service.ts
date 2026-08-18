@@ -36,7 +36,12 @@ import {
 import { sleep } from '~/server/utils/concurrency-helpers';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
-import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
+import {
+  TransactionType,
+  buzzConstants,
+  deriveDomainBuzzType,
+} from '~/shared/constants/buzz.constants';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { userUpdateCounter } from '~/server/prom/client';
 
@@ -1253,10 +1258,12 @@ export const getPaymentIntent = async ({
   paymentMethodTypes,
   customerId,
   user,
+  domain,
   setupFuturePayment = true,
 }: Schema.PaymentIntentCreationSchema & {
   user: { id: number; email: string };
   customerId?: string;
+  domain: ColorDomain;
 }) => {
   // TODO: If a user doesn't exist, create one. Initially, this will be protected, but ideally, we should create the user on our end
   if (!customerId) {
@@ -1296,6 +1303,26 @@ export const getPaymentIntent = async ({
     sessionUserId: user.id,
   });
 
+  // The browser stamps `metadata.buzzType` and the webhook credits whatever colour it finds
+  // there, so a modified client could route a real-money purchase into a currency it didn't
+  // buy — including `blue`, the free one. Re-derive it here, the last point that still knows
+  // which domain the request came from, and overwrite the client's value.
+  const buzzType = deriveDomainBuzzType(domain);
+  if (metadata.buzzType && metadata.buzzType !== buzzType) {
+    logToAxiom(
+      {
+        name: 'buzz-purchase-currency',
+        type: 'warning',
+        message: 'overrode client-supplied buzzType with the domain-derived currency',
+        userId: user.id,
+        domain,
+        clientBuzzType: metadata.buzzType,
+        derivedBuzzType: buzzType,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
   const paymentIntent = await stripe.paymentIntents.create({
@@ -1308,7 +1335,7 @@ export const getPaymentIntent = async ({
           }
         : undefined,
     customer: customerId,
-    metadata: validatedMetadata as MetadataParam,
+    metadata: { ...(validatedMetadata as MetadataParam), buzzType },
     payment_method_types: setupFuturePayment
       ? paymentMethodTypes || undefined
       : futureUsageNotSupportedPaymentMethods,

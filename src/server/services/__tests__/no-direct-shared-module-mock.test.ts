@@ -116,10 +116,7 @@ describe('no-direct-shared-module-mock', () => {
     ).toEqual([]);
   });
 
-  it('keeps the PENDING count current, so the remaining scope is never understated', () => {
-    const { pending } = scan();
-    // Counted, not enforced — but the recorded count has to match reality, or the dashboard
-    // reports a finish line that does not exist.
-    expect(Object.keys(pending).length).toBe((readAllowlist().pendingFiles ?? []).length);
-  });
+  // PENDING is recorded by `gen-mock-allowlist.mjs`, deliberately not asserted: enforcing it
+  // failed the build of anyone adding a mock of a pending specifier, for a migration stopped on
+  // 2026-08-16 (#3975 closed). The tests above guard the CANONICAL specifiers and stay.
 });

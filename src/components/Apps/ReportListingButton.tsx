@@ -1,7 +1,7 @@
 import { Alert, Button, Modal, Radio, Stack, Text, Textarea } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconAlertTriangle, IconFlag } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   APP_LISTING_REPORT_REASON_OPTIONS,
@@ -30,19 +30,52 @@ import { trpc } from '~/utils/trpc';
  * `/apps/store-preview/<slug>` surface today — so reports are effectively mod-only
  * until the store widens. Hidden entirely for a signed-out viewer (the proc is
  * `protectedProcedure`).
+ *
+ * 🔴 SPLIT INTO GATE + MODAL + BUTTON for the same structural reason as
+ * `ReviewListingButton` — see that file's header. Short version: the listing detail's
+ * secondary actions moved into a `⋮` Menu, a Mantine `Menu.Dropdown` UNMOUNTS on
+ * close, and a modal rendered as a sibling of a `Menu.Item` trigger would therefore
+ * be destroyed by the very click meant to open it. The trigger goes inside the
+ * dropdown, the modal outside, so `opened` has to be the caller's state.
  */
 
-export function ReportListingButton({ appListingId }: { appListingId: string }) {
-  const currentUser = useCurrentUser();
-  const [opened, { open, close }] = useDisclosure(false);
+/**
+ * May THIS viewer report a listing? Signed-in only — `reportListing` is a
+ * `protectedProcedure`, so a signed-out viewer must never be offered the affordance.
+ *
+ * 🔴 Deliberately NOT owner-gated, unlike {@link useCanReviewListing}. Reporting your
+ * own listing is pointless but harmless; hiding it would be a new policy, and this
+ * change ports a layout, not the moderation rules.
+ */
+export function useCanReportListing(): boolean {
+  return !!useCurrentUser();
+}
+
+/**
+ * The report form modal. Renders NO trigger — the caller owns `opened`.
+ *
+ * `onReported` fires once the mutation succeeds, so a caller can mark its own trigger
+ * as spent (the standalone Button below disables itself and reads "Reported").
+ */
+export function ReportListingModal({
+  appListingId,
+  opened,
+  onClose,
+  onReported,
+}: {
+  appListingId: string;
+  opened: boolean;
+  onClose: () => void;
+  onReported?: () => void;
+}) {
   const [reason, setReason] = useState<AppListingReportReason | null>(null);
   const [details, setDetails] = useState('');
   const [inlineError, setInlineError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const close = onClose;
 
   const reportMutation = trpc.appListings.reportListing.useMutation({
     onSuccess: () => {
-      setDone(true);
+      onReported?.();
       setInlineError(null);
       showSuccessNotification({
         title: 'Report submitted',
@@ -55,14 +88,19 @@ export function ReportListingButton({ appListingId }: { appListingId: string }) 
     },
   });
 
-  // The report proc is protected — never offer it to a signed-out viewer.
-  if (!currentUser) return null;
-
   const reset = () => {
     setReason(null);
     setDetails('');
     setInlineError(null);
   };
+
+  // Clear the form on every OPEN. The standalone Button used to do this in its own
+  // click handler (`reset(); open();`); with the trigger now living outside this
+  // component, the reset has to key on the transition instead so BOTH triggers get it.
+  useEffect(() => {
+    if (opened) reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened]);
 
   const handleClose = () => {
     if (reportMutation.isPending) return;
@@ -85,20 +123,6 @@ export function ReportListingButton({ appListingId }: { appListingId: string }) 
 
   return (
     <>
-      <Button
-        variant="subtle"
-        color="gray"
-        size="xs"
-        leftSection={<IconFlag size={14} />}
-        onClick={() => {
-          reset();
-          open();
-        }}
-        disabled={done}
-      >
-        {done ? 'Reported' : 'Report'}
-      </Button>
-
       <Modal opened={opened} onClose={handleClose} title="Report this app" size="md" centered>
         <Stack gap="md">
           <Text size="sm" c="dimmed">
@@ -144,6 +168,42 @@ export function ReportListingButton({ appListingId }: { appListingId: string }) 
           </Button>
         </Stack>
       </Modal>
+    </>
+  );
+}
+
+/**
+ * The standalone report affordance: gate + a small Button + the modal.
+ *
+ * UNCHANGED public API and unchanged behaviour — composed from the two exports above
+ * rather than inlining them. `ReportListingButton.browser.test.tsx` is the guard.
+ */
+export function ReportListingButton({ appListingId }: { appListingId: string }) {
+  const canReport = useCanReportListing();
+  const [opened, { open, close }] = useDisclosure(false);
+  const [done, setDone] = useState(false);
+
+  // The report proc is protected — never offer it to a signed-out viewer.
+  if (!canReport) return null;
+
+  return (
+    <>
+      <Button
+        variant="subtle"
+        color="gray"
+        size="xs"
+        leftSection={<IconFlag size={14} />}
+        onClick={open}
+        disabled={done}
+      >
+        {done ? 'Reported' : 'Report'}
+      </Button>
+      <ReportListingModal
+        appListingId={appListingId}
+        opened={opened}
+        onClose={close}
+        onReported={() => setDone(true)}
+      />
     </>
   );
 }

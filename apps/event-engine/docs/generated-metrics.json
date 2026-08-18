@@ -2,7 +2,7 @@
   "metrics": {
     "handlers": 24,
     "handlersWithDebug": 19,
-    "metrics": 77
+    "metrics": 78
   },
   "entityTypes": {
     "Article": {
@@ -46,12 +46,18 @@
       "tippedCount": "buzzTipHandler"
     },
     "Image": {
+      "Buzz": "(not emitted by this app)",
       "Collection": "collectionItemHandler",
+      "Comment": "(not emitted by this app)",
       "Cry": "imageReactionHandler",
       "Dislike": "imageReactionHandler",
       "Heart": "imageReactionHandler",
       "Laugh": "imageReactionHandler",
       "Like": "imageReactionHandler",
+      "ReactionCry": "(not emitted by this app)",
+      "ReactionHeart": "(not emitted by this app)",
+      "ReactionLaugh": "(not emitted by this app)",
+      "ReactionLike": "(not emitted by this app)",
       "commentCount": "commentV2Handler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
@@ -59,7 +65,9 @@
     "Model": {
       "collectedCount": "collectionItemHandler",
       "commentCount": "commentHandler",
+      "downloadCount": "(not emitted by this app)",
       "earnedAmount": "updateCompensation",
+      "generationCount": "(not emitted by this app)",
       "imageCount": "imageResourceHandler",
       "ratingCount": "resourceReviewHandler",
       "thumbsDownCount": "resourceReviewHandler",
@@ -68,7 +76,9 @@
       "tippedCount": "buzzTipHandler"
     },
     "ModelVersion": {
+      "downloadCount": "(not emitted by this app)",
       "earnedAmount": "updateCompensation",
+      "generationCount": "(not emitted by this app)",
       "imageCount": "imageResourceHandler",
       "ratingCount": "resourceReviewHandler",
       "thumbsDownCount": "resourceReviewHandler",
@@ -93,6 +103,7 @@
     "User": {
       "articleCount": "articleHandler",
       "bountyCount": "bountyHandler",
+      "commentCount": "commentV2Handler",
       "followerCount": "userEngagementHandler",
       "followingCount": "userEngagementHandler",
       "hiddenCount": "userEngagementHandler",
@@ -168,7 +179,8 @@
       "Article.commentCount",
       "Bounty.commentCount",
       "Image.commentCount",
-      "Post.commentCount"
+      "Post.commentCount",
+      "User.commentCount"
     ],
     "ImageResourceNew": [
       "Model.imageCount",

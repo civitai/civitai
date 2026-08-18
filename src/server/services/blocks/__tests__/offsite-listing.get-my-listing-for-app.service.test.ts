@@ -6,8 +6,8 @@ import {
 } from '~/server/services/blocks/offsite-listing.service';
 
 /**
- * `getMyListingForApp` — the owner-gated `appBlockId` → `AppListing.id` resolver
- * for the on-site listing-media owner page. Covers the contract branches:
+ * `getMyListingForApp` — the owner-gated `appBlockId`-or-`slug` → `AppListing.id`
+ * resolver every listing-media surface is hosted on. Covers the contract branches:
  *   - owner happy-path → `{ appListingId, status, contentRating, hasPendingRevision,
  *     shadowId, editTargetId, editBlockedReason, assets }`
  *   - a listing owned by ANOTHER user → NOT_OWNED (router maps → FORBIDDEN)
@@ -447,23 +447,23 @@ describe('getMyListingForApp', () => {
   it.each([
     ['removed', 'this listing has been removed by a moderator and can no longer be edited'],
     ['rejected', 'this listing was rejected; submit a new listing instead of editing it'],
-  ])('🔴 a %s listing returns an inline editBlockedReason, not a blank page', async (
-    status,
-    expected
-  ) => {
-    wireFindUnique({
-      entry: { id: 'apl_onsite', userId: OWNER, status, contentRating: 'g', revisionOfId: null },
-      viewByListingId: { apl_onsite: editViewRow('apls_OWN') },
-    });
+  ])(
+    '🔴 a %s listing returns an inline editBlockedReason, not a blank page',
+    async (status, expected) => {
+      wireFindUnique({
+        entry: { id: 'apl_onsite', userId: OWNER, status, contentRating: 'g', revisionOfId: null },
+        viewByListingId: { apl_onsite: editViewRow('apls_OWN') },
+      });
 
-    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+      const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
 
-    expect(res.editBlockedReason).toBe(expected);
-    expect(res.status).toBe(status);
-    // It is a VERDICT, not a throw — the page still renders (alert + no editor), which
-    // is what the "don't collapse to NotFound" narrowing exists to preserve.
-    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
-  });
+      expect(res.editBlockedReason).toBe(expected);
+      expect(res.status).toBe(status);
+      // It is a VERDICT, not a throw — the page still renders (alert + no editor), which
+      // is what the "don't collapse to NotFound" narrowing exists to preserve.
+      expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    }
+  );
 
   it('🔴 an internal SHADOW resolved directly is not an editable page', async () => {
     wireFindUnique({
@@ -510,13 +510,41 @@ describe('getMyListingForApp', () => {
     expect(editViewReads(mockWrite)).toEqual(['apl_shadow']);
     expect(editViewReads(mockRead)).toEqual([]);
   });
-
 });
 
-// W13 draft-at-submit — a FIRST-version app has no AppBlock yet, so the owner-media
-// page reaches its pre-approval draft BY SLUG (`appBlockId IS NULL`). These lock the
-// slug fallback: the owner reaches their pending draft; ownership is still enforced.
-describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no AppBlock)', () => {
+/**
+ * A `where`-HONOURING stand-in for the slug fallback's `dbRead.appListing.findFirst`.
+ *
+ * 🔴 EVERY CASE BELOW IS A CLAIM ABOUT WHICH ROWS THE `where` CLAUSE ADMITS, so a mock
+ * that hands back a fixed row whatever the clause said would pass under ANY clause —
+ * including the narrow one this resolver used to carry. This evaluates the clause the
+ * service actually sent against a row set: an off-site row is admitted only because the
+ * service stopped asking for `kind: 'onsite'`, and a shadow is rejected only because it
+ * asks for `revisionOfId: null`.
+ */
+function wireSlugLookup(rows: Array<Record<string, unknown>>) {
+  mockRead.appListing.findFirst.mockImplementation(async (args: unknown) => {
+    const where = (args as { where?: Record<string, unknown> }).where ?? {};
+    const matches = (row: Record<string, unknown>) =>
+      Object.entries(where).every(([field, expected]) => {
+        // `{ not: … }` is the only Prisma filter object this clause has ever used
+        // (it is the narrowing offered in the issue thread), so support just that.
+        if (expected !== null && typeof expected === 'object' && 'not' in expected) {
+          return row[field] !== (expected as { not: unknown }).not;
+        }
+        return row[field] === expected;
+      });
+    return rows.find(matches) ?? null;
+  });
+}
+
+// The SLUG resolver. Two callers share it: the W13 pre-approval draft of a FIRST-version
+// on-site app (no AppBlock yet, so `appBlockId` cannot address it *yet*), and an OFF-SITE
+// listing, which in practice carries no AppBlock at all — civitai/civitai#3984. These
+// lock what the slug arm admits (any top-level listing, either kind, any status) and what
+// it refuses (a shadow revision), that `appBlockId` takes PRECEDENCE over the slug, and
+// that ownership is still enforced on the widened path.
+describe('getMyListingForApp — slug resolver (any top-level listing, either kind)', () => {
   it('resolves the pending draft BY SLUG when only a slug is given (no appBlockId lookup)', async () => {
     // 🔴 The pre-approval draft carries `appBlockId: null`, so it has no OauthClient in
     // its ownership chain and `AppListing.userId` IS its canonical owner — the resolver's
@@ -526,12 +554,15 @@ describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no A
       id: 'apl_draft',
       userId: OWNER,
       kind: 'onsite',
+      slug: 'my-app',
       appBlockId: null,
       revisionOfId: null,
       status: 'draft',
       contentRating: 'g',
     };
-    mockRead.appListing.findFirst.mockResolvedValue(draft);
+    // Predicate-honouring, so this also pins that the WIDENED clause is a SUPERSET —
+    // the pre-approval draft is still admitted by it.
+    wireSlugLookup([draft]);
     // A draft is NOT approved → no shadow revision; it is its own EFFECTIVE edit target,
     // so the edit-view assets are read straight off `apl_draft` (#3476 projection).
     wireFindUnique({
@@ -560,11 +591,11 @@ describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no A
         ([a]) => (a as { where?: { appBlockId?: string } })?.where?.appBlockId != null
       )
     ).toBe(false);
-    // Scoped to the EXACT pre-approval-draft shape (onsite / null appBlockId / draft).
+    // Scoped to a TOP-LEVEL listing by its globally-unique slug — no kind, appBlockId
+    // or status narrowing (civitai/civitai#3984). `revisionOfId: null` is the one
+    // remaining clause and it is load-bearing; see the shadow case below.
     expect(mockRead.appListing.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { slug: 'my-app', kind: 'onsite', appBlockId: null, status: 'draft' },
-      })
+      expect.objectContaining({ where: { slug: 'my-app', revisionOfId: null } })
     );
   });
 
@@ -591,6 +622,79 @@ describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no A
     expect(res.appListingId).toBe('apl_draft');
     expect(mockRead.appListing.findFirst).toHaveBeenCalledOnce();
     expect(editViewReads(mockRead)).toEqual(['apl_draft']);
+  });
+
+  /**
+   * 🔴 SELECTOR PRECEDENCE — the OTHER half of `if (!listing && slug)`, and the half
+   * nothing pinned. The test above proves the slug arm RUNS on a miss; this one proves it
+   * does NOT run on a hit. Both selectors are optional and independent, so a caller can
+   * hand over an `appBlockId` and a slug that name DIFFERENT listings, and which one wins
+   * is a contract, not an implementation detail.
+   *
+   * Measured before this test existed: mutating `if (!listing && slug)` → `if (slug)`
+   * SURVIVED the whole 44-test battery. The slug row simply overwrote the block row and
+   * every assertion still held, because no case supplied two selectors that disagreed.
+   *
+   * The two rows are pairwise distinct on THREE observable fields — id, contentRating,
+   * and which listing's edit view is read — so no single hardcoded value can satisfy the
+   * assertions, and both rows are owned by the SAME user so ownership cannot be what
+   * decides the outcome.
+   */
+  it('🔴 PRECEDENCE: `appBlockId` WINS over a slug naming a DIFFERENT listing', async () => {
+    const blockRow = {
+      id: 'apl_block',
+      userId: OWNER,
+      kind: 'onsite',
+      slug: 'block-app',
+      appBlockId: 'my-block',
+      revisionOfId: null,
+      status: 'approved',
+      contentRating: 'pg13',
+      appBlock: { app: { userId: OWNER } },
+    };
+    const slugRow = {
+      id: 'apl_other',
+      userId: OWNER,
+      kind: 'offsite',
+      slug: 'other-app',
+      appBlockId: null,
+      revisionOfId: null,
+      status: 'approved',
+      contentRating: 'g',
+    };
+    const byId: Record<string, unknown> = { apl_block: blockRow, apl_other: slugRow };
+    const views: Record<string, unknown> = {
+      apl_block: editViewRow('apls_block'),
+      apl_other: editViewRow('apls_other'),
+    };
+    const impl = async (args: unknown) => {
+      const a = args as {
+        select?: Record<string, unknown>;
+        where?: { id?: string; appBlockId?: string };
+      };
+      if (a.where?.appBlockId != null) return blockRow;
+      if ('icon' in (a.select ?? {})) return views[a.where?.id ?? ''] ?? null;
+      // Both listings resolve their OWNER, so a mutant that lands on the slug row is
+      // refused by the identity assertions below rather than by NOT_OWNED.
+      return byId[a.where?.id ?? ''] ?? null;
+    };
+    mockRead.appListing.findUnique.mockImplementation(impl);
+    mockWrite.appListing.findUnique.mockImplementation(impl);
+    wireSlugLookup([slugRow]);
+    withShadow(null);
+
+    const res = await getMyListingForApp({
+      appBlockId: 'my-block',
+      slug: 'other-app',
+      userId: OWNER,
+    });
+
+    expect(res.appListingId).toBe('apl_block');
+    expect(res.contentRating).toBe('pg13');
+    // 🔴 SHORT-CIRCUIT, not last-write-wins: the slug query is never even issued.
+    expect(mockRead.appListing.findFirst).not.toHaveBeenCalled();
+    // …and the assets projected are the BLOCK listing's, not the slug listing's.
+    expect(editViewReads(mockRead)).toEqual(['apl_block']);
   });
 
   it('a draft owned by ANOTHER user → NOT_OWNED (ownership still enforced on the slug path)', async () => {
@@ -623,5 +727,204 @@ describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no A
     const err = await getMyListingForApp({ slug: 'ghost', userId: OWNER }).catch((e) => e);
     expect(err).toBeInstanceOf(OffsiteRequestError);
     expect(err.code).toBe('NOT_FOUND');
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 civitai/civitai#3984 — the arm used to read
+  // `{ slug, kind: 'onsite', appBlockId: null, status: 'draft' }`, whose FIRST clause
+  // alone excludes every off-site listing: `kind: 'offsite'` is what it IS. And in
+  // practice an off-site listing carries no AppBlock either, so the other selector could
+  // not address it — every listing-media surface hosted on this proc was unreachable for
+  // non-web clients. Measured against civitai.com at civitai/cli@1b20b99
+  // (civitai/cli#422, #424): 4/4 off-site apps failed, 7/7 on-site passed, and `kind`
+  // predicted it exactly.
+  //
+  // 🟡 "off-site ⇒ no AppBlock" is EMPIRICAL, not structural, and this file does not
+  // depend on it: `appBlockId` is "set for EVERY backfilled row — on-site AND the #2821
+  // off-site rows … discriminate on `kind`, never on appBlockId nullness"
+  // (schema.full.prisma), and `mapAppBlockToListing` can mint `kind:'offsite'` with a
+  // non-null `appBlockId` — a shape measured at 0 rows in production on 2026-08-11
+  // (`appListingEditorTabs.ts`). The `kind` clause is what the widening had to drop;
+  // dropping the `appBlockId` clause covers the backfilled class too.
+  // -------------------------------------------------------------------------
+
+  /** An OFF-SITE listing with no AppBlock — the common shape; the slug is its handle. */
+  const offsiteRow = (overrides: Record<string, unknown> = {}) => ({
+    id: 'apl_offsite',
+    userId: OWNER,
+    kind: 'offsite',
+    slug: 'radio',
+    appBlockId: null,
+    revisionOfId: null,
+    status: 'approved',
+    contentRating: 'g',
+    ...overrides,
+  });
+
+  it('🔴 an OFF-SITE listing resolves BY SLUG — the kind clause is gone', async () => {
+    const offsite = offsiteRow();
+    wireSlugLookup([offsite]);
+    wireFindUnique({
+      entry: null,
+      owned: offsite,
+      viewByListingId: { apl_offsite: editViewRow('apls_offsite') },
+    });
+    // Approved parent, no shadow minted yet → edited in place, nothing written.
+    withShadow(null);
+
+    const res = await getMyListingForApp({ slug: 'radio', userId: OWNER });
+
+    expect(res).toMatchObject({
+      appListingId: 'apl_offsite',
+      status: 'approved',
+      editTargetId: 'apl_offsite',
+      editBlockedReason: null,
+      shadowId: null,
+    });
+    // The whole point of the proc: the caller now holds the AppListing.id every
+    // listing-media surface is keyed on, plus the assets the publish floor checks.
+    expect(res.assets.icon.imageId).toBe(137918008);
+    expect(res.assets.cover.imageId).toBe(137918011);
+    // It is a READ. Resolving an off-site listing must not mint anything.
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 an APPROVED ON-SITE listing resolves BY SLUG — the status clause is gone', async () => {
+    // An approved on-site app DOES carry an appBlockId; a client that only knows the
+    // slug still could not reach it, because the fallback demanded `status: 'draft'`
+    // AND `appBlockId: null`. Both are gone.
+    const approved = {
+      id: 'apl_live',
+      userId: OWNER,
+      kind: 'onsite',
+      slug: 'gen-matrix',
+      appBlockId: 'ab_live',
+      revisionOfId: null,
+      status: 'approved',
+      contentRating: 'pg13',
+      // The CANONICAL onsite owner is the block's app owner, not the denormalized
+      // column — wire it so the gate resolves through the path it uses in production.
+      appBlock: { app: { userId: OWNER } },
+    };
+    wireSlugLookup([approved]);
+    wireFindUnique({
+      entry: null,
+      owned: approved,
+      viewByListingId: { apl_live: editViewRow('apls_live') },
+    });
+    withShadow(null);
+
+    const res = await getMyListingForApp({ slug: 'gen-matrix', userId: OWNER });
+
+    expect(res).toMatchObject({
+      appListingId: 'apl_live',
+      status: 'approved',
+      editTargetId: 'apl_live',
+      editBlockedReason: null,
+    });
+    // Slug-only in, so the `appBlockId` findUnique arm was never entered.
+    expect(
+      mockRead.appListing.findUnique.mock.calls.some(
+        ([a]) => (a as { where?: { appBlockId?: string } })?.where?.appBlockId != null
+      )
+    ).toBe(false);
+  });
+
+  /**
+   * 🔴 "ANY STATUS" IS A BEHAVIOURAL CLAIM, so it gets behavioural cases. Before these,
+   * the widening was only SPELLED — the sole thing that noticed a status narrowing was
+   * the structural `toHaveBeenCalledWith` pin on the draft case, and no case actually
+   * admitted a TERMINAL listing by slug. Measured: adding `status: { not: 'removed' }`
+   * back to the `where` killed exactly that one structural assertion and nothing else,
+   * so the `describe` title's "any status" was an unbacked claim.
+   *
+   * The two terminal statuses are the ones with something to say: they resolve, and come
+   * back as a VERDICT (`editBlockedReason`) rather than a throw — the same
+   * "don't collapse to NotFound" contract the `appBlockId` arm already has, now reachable
+   * by slug. One row per status, so a narrowing on EITHER one is caught.
+   */
+  it.each([
+    ['removed', 'this listing has been removed by a moderator and can no longer be edited'],
+    ['rejected', 'this listing was rejected; submit a new listing instead of editing it'],
+  ])(
+    '🔴 a %s listing RESOLVES BY SLUG and returns its editBlockedReason (any status)',
+    async (status, expected) => {
+      const dead = offsiteRow({ id: 'apl_dead', slug: 'dead-app', status });
+      wireSlugLookup([dead]);
+      wireFindUnique({
+        entry: null,
+        owned: dead,
+        viewByListingId: { apl_dead: editViewRow('apls_dead') },
+      });
+
+      const res = await getMyListingForApp({ slug: 'dead-app', userId: OWNER });
+
+      // It RESOLVED — a status narrowing on the `where` would throw NOT_FOUND here.
+      expect(res.appListingId).toBe('apl_dead');
+      expect(res.status).toBe(status);
+      // …and it came back as a verdict the surface can render, not an error.
+      expect(res.editBlockedReason).toBe(expected);
+      // Still a READ: a terminal listing must not mint a shadow on the way out.
+      expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('🔴 a slug owned by ANOTHER user → NOT_OWNED, not NOT_FOUND (the gate, not the where)', async () => {
+    // The BEHAVIOUR DELTA of #3984, pinned deliberately. Before, a stranger's slug was
+    // filtered out by the `where` and reported NOT_FOUND; now the row resolves and the
+    // OWNER GATE refuses it — which is what makes the gate, rather than an incidental
+    // clause, the thing enforcing access. Wired on BOTH lookups so the refusal is
+    // attributable to ownership and not to the ownership resolve finding nothing.
+    const strangers = offsiteRow({ userId: OTHER });
+    wireSlugLookup([strangers]);
+    wireFindUnique({ entry: null, owned: strangers });
+
+    await expect(getMyListingForApp({ slug: 'radio', userId: OWNER })).rejects.toMatchObject({
+      name: 'OffsiteRequestError',
+      code: 'NOT_OWNED',
+    });
+    // Refused before anything else is read.
+    expect(mockRead.appListingPublishRequest.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a SHADOW revision’s synthetic `rev-` slug does NOT resolve → NOT_FOUND', async () => {
+    // `revisionOfId: null` is the one clause that had to STAY, and it is not
+    // decoration: a shadow is `kind: parent.kind`, `appBlockId` NULL, status `draft`
+    // (`beginListingRevision`). For an ON-SITE parent — the fixture below — that is
+    // exactly the old, apparently-narrower clause, so those shadows MATCHED it; a
+    // shadow of an OFF-SITE parent is `kind:'offsite'` and did not. Either way the old
+    // comment's "only ever sees a parent" held only because nobody knows a `rev-<ulid>`
+    // slug. Now it holds by construction, and this clause is the ONLY thing holding it.
+    const shadow = {
+      id: 'apl_shadow',
+      userId: OWNER,
+      kind: 'onsite',
+      slug: 'rev-01JABCDEF',
+      appBlockId: null,
+      revisionOfId: 'apl_parent',
+      status: 'draft',
+      contentRating: 'g',
+    };
+    wireSlugLookup([shadow]);
+    // 🔴 The edit view IS wired, and that is what makes this test discriminating. With
+    // it absent, a resolver that DID admit the shadow would still throw NOT_FOUND —
+    // from `loadListingEditView` missing its row, several steps later — and this case
+    // would pass under the very clause it exists to reject. Measured: it did exactly
+    // that on the first draft of this test. Wired, an admitted shadow RESOLVES and
+    // returns an `editBlockedReason` result, so the assertions below are the only
+    // thing standing between the two behaviours.
+    wireFindUnique({
+      entry: null,
+      owned: shadow,
+      viewByListingId: { apl_shadow: editViewRow('apls_shadow') },
+    });
+
+    const err = await getMyListingForApp({ slug: 'rev-01JABCDEF', userId: OWNER }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(OffsiteRequestError);
+    expect(err.code).toBe('NOT_FOUND');
+    // Refused by the RESOLVER, not by the owner gate and not by a later read: the
+    // caller owns this shadow, and the message names the unresolved slug.
+    expect(err.message).toBe('no listing found for app rev-01JABCDEF');
   });
 });

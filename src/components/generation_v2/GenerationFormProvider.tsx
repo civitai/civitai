@@ -55,6 +55,7 @@ import type { GenerationResource } from '~/shared/types/generation.types';
 import { type VersionGroup, getAllVersionIds } from '~/shared/data-graph/generation/common';
 import { decodeGenerationHandoff, GENERATION_HANDOFF_PARAM } from './utils/generation-url-handoff';
 import { setGenerationSnapshotCache } from './utils/generation-snapshot-cache';
+import { ExperimentalRulesSync } from './Experimental';
 
 // =============================================================================
 // Constants
@@ -492,13 +493,16 @@ function InnerProvider({
         if (isPolyGenRemix) {
           // 3D path: keep an incoming `txt2model3d` / `img2model3d` verbatim.
           // Tripo/Hunyuan3D are image-to-3D only; only PolyGen (Meshy) has a
-          // text branch, so consult `process` for it. Falls back to a sensible
-          // default so the user lands on the form even if both fields were lost.
+          // text branch, so consult `process` for it — `multiImageTo3D` is
+          // Meshy v7's multi-view operation and is equally image-driven. Falls
+          // back to a sensible default so the user lands on the form even if
+          // both fields were lost.
           resolvedWorkflow =
             incomingWorkflow === 'txt2model3d' || incomingWorkflow === 'img2model3d'
               ? incomingWorkflow
               : model3dEcosystem !== 'PolyGen' ||
-                paramsWithoutOutputSettings.process === 'imageTo3D'
+                paramsWithoutOutputSettings.process === 'imageTo3D' ||
+                paramsWithoutOutputSettings.process === 'multiImageTo3D'
               ? 'img2model3d'
               : 'txt2model3d';
         } else if (incomingWorkflow && workflowConfigByKey.has(incomingWorkflow)) {
@@ -943,6 +947,7 @@ export function GenerationFormProvider({
 }: GenerationFormProviderProps) {
   return (
     <InnerProvider defaultValues={defaultValues} debug={debug} skipStorage={skipStorage}>
+      <ExperimentalRulesSync />
       {children}
     </InnerProvider>
   );

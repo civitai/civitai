@@ -1,4 +1,4 @@
-import { IRedisClient, IClickhouseClient, IDbClient } from '../types/package-stubs';
+import { IRedisClient } from '../types/package-stubs';
 import { chunk, sleep } from '../utils/basic';
 
 const CACHE_TTL = 24 * 60 * 60; // 24 hours
@@ -23,12 +23,6 @@ export type CacheConfig<T extends object> = {
   cacheNotFound?: boolean; // Whether to cache "not found" results
   dontCacheFn?: (data: T) => boolean; // Skip caching for certain data
   staleWhileRevalidate?: boolean; // Use background revalidation (default true)
-};
-
-type CachedItem<T> = T & {
-  cachedAt?: Date;
-  notFound?: boolean;
-  debounce?: boolean;
 };
 
 /**

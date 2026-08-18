@@ -72,6 +72,30 @@ export const APPS_READABLE_PAGE_WIDTH = 1100;
 export const APPS_NARROW_TABLE_PAGE_WIDTH = 1400;
 
 /**
+ * The TWO-COLUMN DETAIL width — a detail page laid out as a main column plus a
+ * right rail, where BOTH halves have to be usable at once.
+ *
+ * `/apps/store-preview/[slug]` is the case this exists for, and it is a FOURTH class
+ * on purpose (the guard in `__tests__/appsPageWidths.test.ts` enumerates the class
+ * list as literals, so this could not be added silently — which is the point).
+ *
+ * 1320 is Mantine's `xl` container, which is what the MODEL DETAIL page uses
+ * (`<Container size="xl">` in `src/pages/models/[id]/[[...slug]].tsx`). The listing
+ * detail is a deliberate port of that page's layout — the same `ContainerGrid2` with
+ * the same `{ base: 12, sm: 7, md: 8 }` / `{ base: 12, sm: 5, md: 4 }` spans — so it
+ * takes the same width rather than a number of its own. Matching the source of the
+ * design language is the whole reason this class is not just "readable, but bigger".
+ *
+ * Why not the READABLE 1100 it used to be: at 1100 the `md` split gives a ~350px
+ * right rail, which is narrower than the creator card + action card want, and the
+ * page reads as a squeezed single column with a sliver beside it. Why not the WIDE
+ * 1920: the left column is prose (a `CustomMarkdown` description), and 8/12 of 1888
+ * is a ~1250px measure — the exact thing {@link APPS_READABLE_PAGE_WIDTH} exists to
+ * avoid. At 1320 the left column is ~845px and the rail ~420px.
+ */
+export const APPS_TWO_COLUMN_DETAIL_PAGE_WIDTH = 1320;
+
+/**
  * Container width per `/apps/*` route, keyed by the NEXT ROUTE PATHNAME (the
  * `src/pages` path, `[param]` segments included) so a reader can map an entry to
  * a file without guessing.
@@ -124,8 +148,18 @@ export const APPS_PAGE_WIDTHS = {
   // ── Readable: forms + detail ─────────────────────────────────────────────
   /** The submit wizard — a form, so measure beats space. */
   '/apps/submit': APPS_READABLE_PAGE_WIDTH,
-  /** The listing detail page. */
-  '/apps/store-preview/[slug]': APPS_READABLE_PAGE_WIDTH,
+  /**
+   * TWO-COLUMN DETAIL, not readable-single-column. It was 1100 while the body was one
+   * stacked column; it is now the model-detail-page layout (main column + right rail),
+   * so it takes that page's own width. See {@link APPS_TWO_COLUMN_DETAIL_PAGE_WIDTH}.
+   *
+   * 🔴 NOT part of the store's matched pair. The pair documented at the top of this file
+   * couples `APPS_PAGE_WIDTHS['/apps']` to `LISTING_GRID_SPAN` — verified: the only
+   * reader of that pair is `LISTING_STORE_CONTAINER_SIZE`, which indexes `'/apps'`, and
+   * nothing in `appListingGrid.ts` reads this route. Moving this number therefore cannot
+   * re-truncate a store card.
+   */
+  '/apps/store-preview/[slug]': APPS_TWO_COLUMN_DETAIL_PAGE_WIDTH,
   /**
    * The LEGACY block-keyed tabbed editor. Still RENDERING, not redirect-only: its
    * `getServerSideProps` 302s to `/apps/listing/<appListingId>/edit` only when the block

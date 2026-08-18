@@ -197,6 +197,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type {
+  CollectionItemRejectionReason,
   DomainColor,
   ModelType,
   ReportReason,
@@ -232,7 +233,11 @@ import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { queryBitdex } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
-import { compareBitdexResults, recordBitdexError } from '~/server/bitdex/compare';
+import {
+  compareBitdexResults,
+  recordBitdexError,
+  recordSortAtOnlyHolds,
+} from '~/server/bitdex/compare';
 
 // --- BitDex native filter helpers ---
 const _int = (v: number): Value => ({ Integer: v });
@@ -1460,6 +1465,7 @@ type GetAllImagesRaw = {
   hasPositivePrompt?: boolean;
   collectionItemNote?: string | null;
   collectionItemStatus?: CollectionItemStatus | null;
+  collectionItemAddedById?: number | null;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1942,12 +1948,13 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", note, status, "sortKey"
+          SELECT "imageId", note, status, "addedById", "sortKey"
           FROM (
             SELECT
               ci."imageId",
               ci.note,
               ci.status,
+              ci."addedById",
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -2207,7 +2214,9 @@ export const getAllImages = async (
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${Prisma.raw(
-        collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : ''
+        collectionId
+          ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus", ct."addedById" as "collectionItemAddedById"'
+          : ''
       )}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
@@ -2422,6 +2431,9 @@ export const getAllImages = async (
         // Model" chip on the feed-modal path. See the model3dId override below.
         model3dId?: number | null;
         collectionItemStatus?: CollectionItemStatus | null;
+        // Who put the item in the collection — the removal rule accepts them, so the card needs
+        // it to offer the action. Only present on a collection-filtered feed.
+        collectionItemAddedById?: number | null;
       }
     > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
       const judgeScore = parseJudgeScore(collectionItemNote ?? null);
@@ -2939,26 +2951,154 @@ export function redactSearchInputForLog<T extends Record<string, unknown>>(input
  * cacheable filters (no per-user clauses), so this rarely removes anything.
  * User's own excluded content is fetched in a separate second pass and merged.
  */
+/**
+ * Per-request tally, created by the caller and threaded through.
+ *
+ * NOT module-level. This process serves feed requests concurrently and every
+ * `await` in the page loop yields to another one, so a module-level counter
+ * would be reset and incremented by interleaving requests — request A logging
+ * request B's drops. A number whose value cannot be attributed to a request is
+ * not a measurement, and this counter exists precisely to attribute something.
+ */
+type PostFilterStats = {
+  /** Documents held back by the publication test, for any of its reasons. */
+  publicationHolds: number;
+  /**
+   * Distinct ids held back on `sortAt` alone — their own `publishedAt` was
+   * already past. Tracked separately because that is the half that can hide
+   * genuinely published content, and by ID because the same document can be
+   * tested twice (main pass, then the own-excluded merge).
+   */
+  sortAtOnlyIds: Set<number>;
+};
+
 function postFilterBitdexDocs(
   docs: ReturnType<typeof mapBitdexDoc>[],
   currentUserId: number | undefined,
   isModerator: boolean | undefined,
-  disablePoi: boolean | undefined
+  disablePoi: boolean | undefined,
+  /**
+   * The caller opted in to their own not-yet-published content. Without it, a
+   * document that is not yet published is filtered out for EVERYONE — including
+   * the owner and moderators — which is what the Meilisearch path has always
+   * done. See below.
+   *
+   * Only `scheduled` sets this for a non-moderator, because Meili's
+   * non-moderator branch honours only `scheduled` and ignores `notPublished`
+   * entirely. Accepting both here would make the two backends answer the same
+   * input differently, which surfaces as shadow-comparator divergence nobody can
+   * attribute.
+   */
+  wantsUnpublished: boolean,
+  stats: PostFilterStats
 ) {
-  // Moderators see everything — no post-filtering needed
-  if (isModerator) return docs;
+  const now = Date.now();
+
+  // Moderators are exempt from the content filters below, but not from the
+  // publication one: Meili's moderator branch is `publishedAtUnix <= now OR
+  // userId = me` by default, and only lifts that on an explicit
+  // `scheduled`/`notPublished` request. Returning everything here would put
+  // not-yet-published documents at the head of a moderator's ordinary feed —
+  // they sort first — on a request that did not ask for them.
+  //
+  if (isModerator) {
+    // DEFENSIVE ONLY — not reachable from the sole caller, which declines a
+    // moderator's `scheduled`/`notPublished` request outright (see
+    // `fetchBitdexPrimary`) precisely because BitDex answers a different question
+    // for both. Kept so this function is correct in isolation rather than only in
+    // the presence of that guard; do not read it as live behaviour.
+    if (wantsUnpublished) return docs;
+    return docs.filter(
+      (doc) =>
+        (currentUserId != null && doc.userId === currentUserId) ||
+        isPublicallyPublished(doc, now, stats)
+    );
+  }
 
   return docs.filter((doc) => {
     const isOwn = currentUserId != null && doc.userId === currentUserId;
-    if (isOwn) return true; // always show user's own content
+    // Own content stays exempt from the content filters below — but a creator's
+    // own not-yet-published work is held back like anyone else's unless they
+    // asked for it, matching Meili: "By default, strict published-only — owners
+    // no longer see their own scheduled/unpublished content pinned to feeds. The
+    // `scheduled` flag is opt-in." Without this the future `sortAt` puts their
+    // unpublished post above every live image on their own feed until it
+    // publishes.
+    if (isOwn) return wantsUnpublished || isPublicallyPublished(doc, now, stats);
 
     if (doc.availability === 'Private') return false;
     if (doc.blockedFor) return false;
     if (doc.acceptableMinor) return false;
     if (disablePoi && doc.poi) return false;
-    if (doc.publishedAtUnix == null) return false; // unpublished
-    return true;
+    return isPublicallyPublished(doc, now, stats);
   });
+}
+
+/**
+ * The whole publication test, in one place: published at all, and published
+ * *already*.
+ *
+ * Both halves are needed and they are separate failures. A NULL publish time is
+ * a draft that was never published; a future one is scheduled. Meili's
+ * post-filter tests both together (`!hit.publishedAtUnix || hit.publishedAtUnix
+ * > snappedNow`), and splitting them here is how the owner and moderator
+ * branches came to enforce only the second — a never-published document with a
+ * stale index flag would have been served to its owner, which is precisely the
+ * case this post-filter exists to catch.
+ */
+function isPublicallyPublished(
+  doc: Pick<ReturnType<typeof mapBitdexDoc>, 'id' | 'publishedAtUnix' | 'sortAtUnix'>,
+  now: number,
+  stats: PostFilterStats
+) {
+  if (doc.publishedAtUnix == null) {
+    stats.publicationHolds++;
+    return false; // never published
+  }
+  if (isScheduledForFuture(doc, now, stats)) {
+    stats.publicationHolds++;
+    return false; // published, but not yet
+  }
+  return true;
+}
+
+/**
+ * True when the document's publish time has not arrived yet.
+ *
+ * The publication decision on this path is carried by a single index flag, with
+ * no comparison against the current time. This restores the same time check the
+ * Meilisearch path has always applied (`publishedAtUnix > snappedNow`), so the
+ * post-filter no longer depends on that flag alone being right.
+ *
+ * BOTH timestamps are tested, and that is not belt-and-braces: a document can
+ * carry a future schedule on `sortAt` while `publishedAt` still holds an
+ * earlier value it was moved off, so a `publishedAt`-only test would let the
+ * rescheduled case through.
+ *
+ * Unsnapped `Date.now()` is deliberate. The Meili sites snap to the minute to
+ * keep filter strings cache-stable; a post-filter has no cache key, so snapping
+ * would only withhold just-published content for up to 60s and buy nothing.
+ */
+function isScheduledForFuture(
+  doc: Pick<ReturnType<typeof mapBitdexDoc>, 'id' | 'publishedAtUnix' | 'sortAtUnix'>,
+  now: number,
+  stats: PostFilterStats
+) {
+  if (doc.publishedAtUnix != null && doc.publishedAtUnix > now) return true;
+  const bySortAtOnly = doc.sortAtUnix != null && doc.sortAtUnix > now;
+
+  // Count the `sortAt`-only holds separately, because this half of the test can
+  // hide content that is genuinely published.
+  //
+  // `sortAt` is not PG's `sortAt` — the index recomputes it as
+  // `GREATEST(existedAt, publishedAt)`, and it is known to drift. A document
+  // whose stored `sortAt` is wrongly ahead of now is then invisible on the
+  // BitDex path while Meili, which tests `publishedAtUnix` alone, still serves
+  // it. Without this counter that surfaces only as unexplained shadow-comparator
+  // divergence with nothing to attribute it to — an absence, which is the one
+  // thing we have learned not to read as an answer.
+  if (bySortAtOnly) stats.sortAtOnlyIds.add(doc.id);
+  return bySortAtOnly;
 }
 
 /**
@@ -2966,9 +3106,45 @@ function postFilterBitdexDocs(
  * The main query is fully cacheable (no per-user filter clauses).
  * Returns null if BitDex can't serve the request.
  */
-async function fetchBitdexPrimary(input: ImageSearchInput) {
+async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boolean } = {}) {
+  // Two moderator queues BitDex cannot answer, declined so Meili does.
+  //
+  // `scheduled`: the query pushes `isPublished = true`, so the scheduled
+  // population is not in the result at all and what comes back is the ordinary
+  // published feed.
+  //
+  // `notPublished`: the query pushes `isPublished = false`, which per the
+  // own-excluded comment below "covers both scheduled and never-published (no
+  // separate signal)". Meili answers this with `publishedAtUnix NOT EXISTS` —
+  // never-published only. So BitDex returns a SUPERSET seeded with scheduled
+  // posts, and with the opt-in set the post-filter passes them through
+  // unnarrowed.
+  //
+  // In both cases the failure is the same and it is worse than not answering: a
+  // non-empty result SUPPRESSES the Meili fallback, so the moderator opens a
+  // queue and is shown a different population, with nothing signalling that the
+  // wrong question was answered. Declining is the honest containment; answering
+  // properly means changing what the query asks for, which is not this PR.
+  if (input.isModerator && (input.scheduled || input.notPublished)) return null;
+
   const limit = input.limit ?? 100;
+  // Opt-in to one's own not-yet-published content. Read once so the main
+  // post-filter and the own-excluded merge below cannot disagree about it.
+  //
+  // A non-moderator opts in with `scheduled` only. Meili's non-moderator branch
+  // honours `scheduled` and ignores `notPublished` entirely, so accepting both
+  // here would make the two backends answer the same input differently — and
+  // that divergence lands in the shadow comparator with nothing to attribute it
+  // to, which is the failure this PR adds a counter to avoid elsewhere.
+  const wantsUnpublished = input.isModerator
+    ? !!(input.scheduled || input.notPublished)
+    : !!input.scheduled;
   const MAX_PASSES = 3;
+  // Pages discarded wholesale by the post-filter do not count against
+  // MAX_PASSES, up to this many pages AND this much wall clock, whichever binds
+  // first. See the loop below for why both.
+  const MAX_EMPTIED_PAGES = 5;
+  const EMPTIED_PAGE_BUDGET_MS = 1500;
 
   // Decode BitDex keyset cursor from "offset|bdx:JSON" format
   let bitdexCursor: any = undefined;
@@ -3009,10 +3185,15 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
         ].map(_str)
       ),
     ];
-    // Own scheduled/unpublished content only surfaces when the caller opts in
-    // via `scheduled` or `notPublished`. BitDex `isPublished=false` covers both
-    // (no separate scheduled vs unpublished signal), so the gate is unified.
-    if (input.scheduled || input.notPublished) {
+    // Own scheduled/unpublished content only surfaces when the caller opts in.
+    // BitDex `isPublished=false` covers both scheduled and never-published (no
+    // separate signal), so the gate is unified.
+    //
+    // Reads the SAME `wantsUnpublished` the merge filter below uses. Asking for
+    // these documents on a flag combination the merge then discards is a wasted
+    // 500-document round trip on the feed hot path — and two gates that spell
+    // the same intent differently is how they drift apart.
+    if (wantsUnpublished) {
       ownExcludedClauses.push(_eq('isPublished', _bool(false)));
     }
     if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
@@ -3058,25 +3239,88 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
   const accumulated: ReturnType<typeof mapBitdexDoc>[] = [];
   let lastCursor: any = undefined;
 
-  for (let pass = 0; pass < MAX_PASSES && accumulated.length < limit; pass++) {
-    const result = await (pass === 0
+  let pass = 0;
+  let emptiedPages = 0;
+  let firstPage = true;
+  // Started AFTER the first fetch (below), so page latency does not consume the
+  // budget the allowance is meant to spend. On the feed hot path each pass is a
+  // full `includeDocs` round trip; clocking from before it means two slow passes
+  // exhaust 1.5s before a single skip is granted, and the anti-starvation
+  // allowance degrades to nothing under exactly the load where starvation bites.
+  let skipBudgetStartedAt = 0;
+  const stats: PostFilterStats = { publicationHolds: 0, sortAtOnlyIds: new Set<number>() };
+
+  while (pass < MAX_PASSES && accumulated.length < limit) {
+    const result = await (firstPage
       ? getImagesFromBitdexPreFilter(input, true, bitdexCursor)
       : getImagesFromBitdexPreFilter(input, true, lastCursor));
+    if (skipBudgetStartedAt === 0) skipBudgetStartedAt = Date.now();
+    firstPage = false;
 
     if (!result?.documents?.length) break;
 
     const docs = result.documents.map((doc) => mapBitdexDoc(doc));
+    const heldBefore = stats.publicationHolds;
     const filtered = postFilterBitdexDocs(
       docs,
       input.currentUserId,
       input.isModerator,
-      input.disablePoi
+      input.disablePoi,
+      wantsUnpublished,
+      stats
     );
     accumulated.push(...filtered);
     lastCursor = result.cursor;
 
     if (!result.cursor) break; // no more pages
+
+    // A page the PUBLICATION guard emptied is not a page of results, and
+    // charging it against the pass budget starves the request. The documents it
+    // holds back sort FIRST under the default `sortAt Desc` — a not-yet-arrived
+    // publish time is a high sort value — so they arrive contiguously at the
+    // head. Enough of them and every pass returns nothing, `data` is empty, and
+    // the caller falls through to Meili on a request BitDex could have served.
+    //
+    // The allowance is deliberately NOT granted to any empty page: an ordinary
+    // filter that happens to drop a whole page (a poi-heavy view under
+    // `disablePoi`, a private-heavy slice) has no reason to expect the next page
+    // to be different, and paying 5 extra `includeDocs` fetches on the feed hot
+    // path for it is a latency regression with nothing bought.
+    //
+    // Bounded twice — by pages and by wall clock — because the main query is
+    // cacheable per filter shape, so a head cluster is not one unlucky request
+    // paying for extra pages: every request in that window walks the same ones.
+    //
+    // MOST of the page, not merely one document of it and not strictly all.
+    //
+    // "One is enough" grants the allowance to a page where 49 docs were dropped
+    // by `poi`/`Private` and the 50th happened to be unpublished — an
+    // ordinary-filter page buying the extra fetches.
+    //
+    // "All of them" fails the other way, and less obviously: `Private`,
+    // `blockedFor`, `acceptableMinor` and `poi` are tested BEFORE the publication
+    // check, so those documents never reach it and never increment the count. A
+    // single private or blocked document sitting inside a scheduled head cluster
+    // would then deny the allowance and restore the starvation it exists to
+    // prevent — and scheduled-and-unlisted is not an exotic combination.
+    //
+    // A majority keeps the cluster case working while still refusing the
+    // ordinary-filter page.
+    const publicationHeldHere = stats.publicationHolds - heldBefore;
+    const emptiedByPublicationGuard =
+      filtered.length === 0 && publicationHeldHere * 2 >= docs.length && publicationHeldHere > 0;
+
+    if (
+      emptiedByPublicationGuard &&
+      emptiedPages < MAX_EMPTIED_PAGES &&
+      Date.now() - skipBudgetStartedAt < EMPTIED_PAGE_BUDGET_MS
+    )
+      emptiedPages++;
+    else pass++;
   }
+
+  // Logged after the merge below, not here, so the merge's own holds are
+  // included rather than bleeding into whichever request logs next.
 
   let data = accumulated;
 
@@ -3118,6 +3362,27 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     if (input.remixOfId) ownDocs = ownDocs.filter((d) => d.remixOfId === input.remixOfId);
     if (input.withMeta) ownDocs = ownDocs.filter((d) => d.hasMeta);
     if (input.fromPlatform) ownDocs = ownDocs.filter((d) => d.onSite);
+
+    // These documents never pass through postFilterBitdexDocs, so the
+    // publication rule has to be applied here too — and without it the owner
+    // half of that rule does nothing.
+    //
+    // This pass asks for `nsfwLevel=0 OR availability=Private OR blockedFor IN
+    // (…)`, and `nsfwLevel = 0` is the ordinary state of a freshly-uploaded,
+    // not-yet-scanned image. So a creator's just-scheduled upload matches this
+    // pass on the nsfw0 arm alone — with no `isPublished=false` clause needed —
+    // and lands here carrying a future `sortAt`, which sorts it to position 1 of
+    // their own feed. Exactly the symptom the publication rule is for, arriving
+    // by the one door that did not check.
+    // Moderators are exempt, because the main post-filter keeps `OR userId = me`
+    // for them. Without this a moderator's own unpublished image would be served
+    // when it arrived through the main pass and dropped when it arrived through
+    // this one — visibility decided by which door it came in by.
+    if (!wantsUnpublished && !input.isModerator) {
+      const mergeNow = Date.now();
+      ownDocs = ownDocs.filter((d) => isPublicallyPublished(d, mergeNow, stats));
+    }
+
     if (ownDocs.length) {
       data = [...data, ...ownDocs];
       const sort = input.sort;
@@ -3136,6 +3401,32 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     }
   }
 
+  // A counter, not just a log line: this is the number that has to be
+  // attributable and alertable, and a log is neither queryable nor rate-limited
+  // on a hot path. The log stays for the local/debug case.
+  //
+  // TWO counters, not one gated counter. This function also runs in shadow mode,
+  // where nothing reaches the user, and folding both into one series would make
+  // an alert threshold mean two different things depending on the flag state — a
+  // number that changes meaning without changing its name.
+  //
+  // But counting ONLY when serving is worse: shadow mode exists precisely to
+  // size a risk before taking it, so a shadow-blind counter reads a flat zero
+  // until a cohort is flipped, i.e. it can only measure the exposure after it is
+  // taken. Separate names give attribution without the silence.
+  //
+  // Both are unlabelled for the reason given in compare.ts: a labelled series is
+  // absent until its first observation, and an alert over an absent series
+  // renders as "No data".
+  //
+  // No log line. A counter is queryable and a log is not, and `sortAt` drift is
+  // stated to be broad when it happens — one line per feed request at feed QPS,
+  // unsampled, on the hot path, is a liability rather than an instrument.
+  //
+  // Counted by distinct document id: a document held back in the main pass can
+  // reappear in the own-excluded merge (which dedupes against `data`, from which
+  // it has already been removed), and counting it twice would overstate the very
+  // thing this is here to size.
   // Nothing to serve → return null so the caller falls back to Meilisearch.
   // Checked HERE, on the merged result, and not on `accumulated` alone: the
   // own-excluded second pass can be the only source of content on the page
@@ -3143,9 +3434,29 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
   // yet an empty result. Checking earlier would either discard that content or
   // — as it did before — make the fallback unreachable for any caller for whom
   // the second pass was issued at all, i.e. every signed-in first-page request.
-  if (!data.length) return null;
+  if (!data.length) {
+    // Recorded as `fallback`, NOT as `serving`. Meili answers this request and
+    // serves the very documents that were held, so nothing was hidden from the
+    // user — counting it under a name whose help text says "requests BitDex
+    // served" would make the alert fire loudest in the one case where the guard
+    // cost the user nothing.
+    recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, 'fallback');
+
+    // ⚠️ A cursored request does not fall back cleanly — the Meili path parses
+    // cursors as `offset|entryTimestamp` (:2594) and a `bdx:{…}` cursor fails
+    // both `isNumber` guards, so offset degrades to 0. An earlier revision of
+    // this PR ended the feed instead, and that was wrong: the paginated fallback
+    // is a DELIBERATE, pinned decision — see the invariant guard
+    // "authenticated + paginated (bdx cursor) + zero documents → falls back to
+    // Meili" in bitdex-empty-fallback.test.ts, whose comment says it is "pinned
+    // so the decision is explicit". Reversing it belongs in a change that owns
+    // that decision, not in this one. Raised separately.
+    return null;
+  }
 
   data = data.slice(0, limit);
+
+  recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, opts.serving ? 'serving' : 'shadow');
 
   const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
   console.log(
@@ -3199,7 +3510,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   if (bitdexMode === 'primary') {
     try {
       const result = await withSpan('image:bitdex:primary', { 'bitdex.mode': 'primary' }, () =>
-        fetchBitdexPrimary(input)
+        fetchBitdexPrimary(input, { serving: true })
       );
       if (result) return { ...result, source: 'bitdex' as const };
       console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
@@ -8046,10 +8357,13 @@ export async function getImageGenerationData({ id }: { id: number }) {
 type ContestCollectionItem = {
   id: number;
   imageId: number;
+  addedById: number | null;
   status: string;
   tag: { id: number; name: string } | null;
   collection: { id: number; name: string; metadata: Prisma.JsonValue; mode: 'Contest' };
   scores: { userId: number; score: number }[];
+  rejectionReason: CollectionItemRejectionReason | null;
+  rejectionDetail: string | null;
 };
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
@@ -8061,7 +8375,10 @@ const contestCollectionItemsCache = createLruCache({
       SELECT
         ci.id,
         ci."imageId",
+        ci."addedById",
         ci.status,
+        ci."rejectionReason"::text as "rejectionReason",
+        ci."rejectionDetail",
         CASE WHEN t.id IS NOT NULL
           THEN jsonb_build_object('id', t.id, 'name', t.name)
           ELSE NULL
@@ -8085,7 +8402,8 @@ const contestCollectionItemsCache = createLruCache({
 export const getImageContestCollectionDetails = async ({
   id,
   userId,
-}: { userId?: number } & GetByIdInput) => {
+  isModerator,
+}: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
   const items = await contestCollectionItemsCache.fetch(id);
 
   // Fetch all permissions in one query instead of N queries
@@ -8095,14 +8413,27 @@ export const getImageContestCollectionDetails = async ({
     userId,
   });
 
-  return items.map((i) => ({
-    ...i,
-    permissions: allPermissions.find((p) => p.collectionId === i.collection.id),
-    collection: {
-      ...i.collection,
-      metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
-    },
-  }));
+  // `addedById` is destructured off rather than spread: it is only here to resolve the gate below,
+  // and it names who submitted an entry, which this public endpoint has never returned.
+  return items.map(({ addedById, ...i }) => {
+    const permissions = allPermissions.find((p) => p.collectionId === i.collection.id);
+    // This endpoint is public. The reason — and above all the reviewer's free text about
+    // someone else's entry — is only for the submitter, whoever manages the collection,
+    // and site moderators investigating reports about reviewer behaviour.
+    const canReadRejection =
+      (!!userId && userId === addedById) || !!permissions?.manage || !!isModerator;
+
+    return {
+      ...i,
+      rejectionReason: canReadRejection ? i.rejectionReason : null,
+      rejectionDetail: canReadRejection ? i.rejectionDetail : null,
+      permissions,
+      collection: {
+        ...i.collection,
+        metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
+      },
+    };
+  });
 };
 
 // this method should hopefully not be a lasting addition

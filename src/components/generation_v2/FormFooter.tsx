@@ -100,6 +100,7 @@ import {
   SDCPP_SUPPORTED_ECOSYSTEMS,
 } from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   openCompatibilityConfirmModal,
@@ -635,9 +636,16 @@ function PriorityAlertSpace({
     );
   }
 
+  // Experimental warnings sit alongside the priority alert rather than inside the
+  // chain above, for the same reason QueueSnackbar does: the chain is exclusive
+  // and ordered by urgency of the moment, and its first branch (`missingFieldMessage`)
+  // fires whenever a required field is blank. Joining it would hide the warning
+  // for anyone who hasn't written a prompt yet — the moment it's most worth
+  // reading, since nothing has been invested in the selection yet.
   return (
     <>
       <QueueSnackbar right={snackbarRight} />
+      <ExperimentalWarnings />
       {priorityAlert}
     </>
   );
@@ -971,6 +979,29 @@ function BlueBuzzMatureReminder() {
         a membership
       </Text>
     </Text>
+  );
+}
+
+// =============================================================================
+// Experimental Warnings
+// =============================================================================
+
+/**
+ * The experimental warnings for the current selection, rendered in the footer's
+ * alert region above the submit row — the last thing read before Buzz is
+ * committed. Several can show at once (an ecosystem and a version can both be
+ * experimental), which is the other reason these stay out of the priority chain:
+ * it resolves to a single node.
+ */
+function ExperimentalWarnings() {
+  const graph = useGraph<GenerationGraphTypes>();
+
+  return (
+    <MultiController
+      graph={graph}
+      names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
+      render={({ values }) => <ExperimentalAlerts selection={values} />}
+    />
   );
 }
 

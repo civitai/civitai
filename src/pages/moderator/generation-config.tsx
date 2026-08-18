@@ -2,8 +2,8 @@
  * Moderator UI for generator-related runtime config (Redis-backed).
  *
  * All generation gating lives in the **Gate rules** section (the normalized
- * rules model). The self-hosted toggle is a separate card. `Experimental
- * ecosystems` is an alert flag, not a gate. Future generator config sections
+ * rules model), which also carries the non-gating `experimental` presentation.
+ * The self-hosted toggle is a separate card. Future generator config sections
  * should be added here rather than spawning new pages.
  *
  * The `testers` rule tier resolves via the `generation-testing` Flipt flag —
@@ -13,6 +13,7 @@
 import {
   ActionIcon,
   Alert,
+  Badge,
   Button,
   Card,
   Container,
@@ -78,98 +79,6 @@ function normalizeKeys(values: string[] | undefined): string[] {
   );
 }
 
-function ExperimentalEcosystemsSection() {
-  const queryUtils = trpc.useUtils();
-  const { data, isLoading } = trpc.generation.getEcosystemConfig.useQuery();
-
-  const [experimentalEcosystems, setExperimentalEcosystems] = useState<string[]>([]);
-  useEffect(() => {
-    if (!data) return;
-    setExperimentalEcosystems(data.experimentalEcosystems ?? []);
-  }, [data]);
-
-  // Plain ecosystem keys for the TagsInput; the dropdown is dressed up via
-  // `renderOption`. Free-form entries are accepted, so any key works.
-  const ecosystemSuggestions = useMemo(
-    () => [...ecosystems].sort((a, b) => a.sortOrder - b.sortOrder).map((e) => e.key),
-    []
-  );
-
-  const renderEcosystemOption = useCallback(({ option }: { option: { value: string } }) => {
-    const eco = ecosystemByKey.get(option.value);
-    if (!eco) return option.value;
-    return (
-      <span>
-        <Text span fw={500}>
-          {eco.displayName}
-        </Text>{' '}
-        <Text span c="dimmed" size="xs">
-          ({option.value})
-        </Text>
-      </span>
-    );
-  }, []);
-
-  const setMutation = trpc.generation.setEcosystemConfig.useMutation({
-    onSuccess: () => {
-      showSuccessNotification({
-        title: 'Saved',
-        message: 'Experimental ecosystems updated. Changes propagate as caches refresh.',
-      });
-      queryUtils.generation.getEcosystemConfig.invalidate();
-      queryUtils.generation.getGenerationConfig.invalidate();
-    },
-    onError: (err) =>
-      showErrorNotification({ title: 'Save failed', error: new Error(err.message) }),
-  });
-
-  if (isLoading) {
-    return (
-      <Group justify="center" py="xl">
-        <Loader />
-      </Group>
-    );
-  }
-
-  return (
-    <Stack gap="lg">
-      <Stack gap={4}>
-        <Title order={3}>Experimental ecosystems</Title>
-        <Text c="dimmed" size="sm">
-          Shows the &ldquo;experimental build&rdquo; alert in the generator UI. This is{' '}
-          <b>not a gate</b> — it doesn&apos;t restrict access. All gating now lives in{' '}
-          <b>Gate rules</b> below.
-        </Text>
-      </Stack>
-
-      <TagsInput
-        label="Experimental ecosystems"
-        description="Unioned with the static experimental flag baked into base-model records."
-        placeholder="Pick or type an ecosystem key…"
-        data={ecosystemSuggestions}
-        renderOption={renderEcosystemOption}
-        value={experimentalEcosystems}
-        onChange={setExperimentalEcosystems}
-        splitChars={[',', ' ']}
-        acceptValueOnBlur
-        clearable
-      />
-
-      <Group justify="flex-end">
-        <Button
-          leftSection={<IconDeviceFloppy size={16} />}
-          onClick={() =>
-            setMutation.mutate({ experimentalEcosystems: normalizeKeys(experimentalEcosystems) })
-          }
-          loading={setMutation.isPending}
-        >
-          Save experimental ecosystems
-        </Button>
-      </Group>
-    </Stack>
-  );
-}
-
 // =============================================================================
 // Gate rules (the normalized rules model)
 // =============================================================================
@@ -187,20 +96,72 @@ type RuleForm = {
   modelVersionIds: string[];
 };
 
-// Positive "available to" framing: the named tier keeps access, everyone else is
-// gated. "Available to testers, hidden" === the legacy "testers enabled, others
-// hidden by default".
-const AVAILABLE_TO_OPTIONS: { value: GateAvailableTo; label: string }[] = [
-  { value: 'moderators', label: 'Moderators only' },
-  { value: 'testers', label: 'Testers (generation-testing flag) + mods' },
-  { value: 'members', label: 'Members + mods' },
-  { value: 'nobody', label: 'Nobody (kill-switch — off for everyone, mods included)' },
+const PRESENTATION_BADGE: Record<GatePresentation, { label: string; color: string }> = {
+  hidden: { label: 'Hidden', color: 'red' },
+  disabled: { label: 'Disabled', color: 'orange' },
+  experimental: { label: 'Experimental', color: 'yellow' },
+};
+
+/**
+ * `(presentation, availableTo)` are orthogonal in storage, but as two dropdowns
+ * they read as half an inverted condition each — the mod has to compose "who
+ * keeps access" with "how it looks to everyone else" to answer "why is Flux
+ * gone". One list of whole outcomes says it outright.
+ *
+ * `experimental` is a single entry because it grants no access, so it has no
+ * exempt tier to vary (see `applicableRulesFor`).
+ */
+const RULE_KIND_OPTIONS = [
+  {
+    group: 'Hidden — removed from the picker entirely',
+    items: [
+      { value: 'hidden:nobody', label: 'Hidden from everyone, moderators included' },
+      { value: 'hidden:moderators', label: 'Hidden from everyone except moderators' },
+      { value: 'hidden:testers', label: 'Hidden from everyone except testers + mods' },
+      { value: 'hidden:members', label: 'Hidden from everyone except members + mods' },
+    ],
+  },
+  {
+    group: 'Disabled — still shown, greyed out as unavailable',
+    items: [
+      { value: 'disabled:nobody', label: 'Disabled for everyone, moderators included' },
+      { value: 'disabled:moderators', label: 'Disabled for everyone except moderators' },
+      { value: 'disabled:testers', label: 'Disabled for everyone except testers + mods' },
+      { value: 'disabled:members', label: 'Members only — greyed out with a Become-a-member CTA' },
+    ],
+  },
+  {
+    group: 'Experimental — not a gate',
+    items: [{ value: 'experimental', label: 'Experimental warning — usable, nothing blocked' }],
+  },
 ];
 
-const PRESENTATION_OPTIONS: { value: GatePresentation; label: string }[] = [
-  { value: 'disabled', label: 'Disabled — shown but greyed out' },
-  { value: 'hidden', label: 'Hidden — removed entirely' },
-];
+type RuleKindFields = Pick<RuleForm, 'presentation' | 'availableTo'>;
+
+const ruleKindValue = (rule: RuleKindFields) =>
+  rule.presentation === 'experimental'
+    ? 'experimental'
+    : `${rule.presentation}:${rule.availableTo}`;
+
+const parseRuleKind = (value: string): RuleKindFields => {
+  if (value === 'experimental') return { presentation: 'experimental', availableTo: 'nobody' };
+  const [presentation, availableTo] = value.split(':');
+  return {
+    presentation: presentation as GatePresentation,
+    availableTo: availableTo as GateAvailableTo,
+  };
+};
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+function targetSummary(rule: RuleForm): string {
+  const parts = [
+    rule.ecosystems.length && plural(rule.ecosystems.length, 'ecosystem'),
+    rule.workflows.length && plural(rule.workflows.length, 'workflow'),
+    rule.modelVersionIds.length && plural(rule.modelVersionIds.length, 'version'),
+  ].filter((p): p is string => !!p);
+  return parts.length ? parts.join(' · ') : 'No targets — this rule does nothing';
+}
 
 const newRuleId = () =>
   typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `rule-${Date.now()}`;
@@ -293,7 +254,9 @@ function GateRulesSection() {
       return {
         id: r.id,
         name: r.name.trim(),
-        availableTo: r.availableTo,
+        // Experimental has no exempt tier; pin it so a rule saved before that was
+        // true doesn't keep a stored value the UI no longer offers.
+        availableTo: r.presentation === 'experimental' ? 'nobody' : r.availableTo,
         presentation: r.presentation,
         message: r.message.trim() || undefined,
         ecosystems: normalizeKeys(r.ecosystems),
@@ -326,32 +289,37 @@ function GateRulesSection() {
       <Stack gap={4}>
         <Title order={3}>Gate rules</Title>
         <Text c="dimmed" size="sm">
-          The normalized gating model: each rule names <b>who keeps access</b> (available to) and{' '}
-          <b>how it appears to everyone else</b> (presentation), then attaches any mix of
-          ecosystems, workflows, and model version IDs. &ldquo;Available to testers, hidden&rdquo;
-          is the old &ldquo;testers enabled, others hidden&rdquo;. The most restrictive state wins
-          (hidden &gt; disabled &gt; members-only).
+          Each rule picks one <b>outcome</b> — what a gated user sees, and who is exempt from it —
+          then attaches any mix of ecosystems, workflows, and model version IDs. When several rules
+          hit one target the most restrictive wins (hidden &gt; disabled &gt; members-only).
         </Text>
         <Text c="dimmed" size="sm">
-          <b>Available to members + Disabled</b> renders as the members-only upsell (you can become
-          a member). Other tiers just grey out. The optional message is extra copy shown on top of
-          the standard badge/alert — it never replaces it.
+          <b>Experimental</b> is not a gate: it warns without blocking and applies to everyone. The
+          optional message is extra copy on top of the standard badge/alert for the two real gates,
+          and replaces the body copy of the experimental alert.
         </Text>
       </Stack>
 
       {rules.length === 0 && (
         <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
-          No gate rules yet. Add one to gate ecosystems / workflows / versions without touching the
-          legacy lists above.
+          No gate rules yet. Add one to hide, disable, or flag ecosystems / workflows / versions.
         </Alert>
       )}
 
       <Stack gap="md">
         {rules.map((rule) => {
-          const isUpsell = rule.presentation === 'disabled' && rule.availableTo === 'members';
+          const badge = PRESENTATION_BADGE[rule.presentation];
           return (
             <Card key={rule.id} withBorder padding="md">
               <Stack gap="sm">
+                <Group justify="space-between" wrap="nowrap">
+                  <Badge color={badge.color} variant="light">
+                    {badge.label}
+                  </Badge>
+                  <Text size="xs" c="dimmed">
+                    {targetSummary(rule)}
+                  </Text>
+                </Group>
                 <Group align="flex-end" wrap="nowrap">
                   <TextInput
                     label="Name"
@@ -370,34 +338,16 @@ function GateRulesSection() {
                     <IconTrash size={18} />
                   </ActionIcon>
                 </Group>
-                <Group grow align="flex-start">
-                  <Select
-                    label="Available to"
-                    data={AVAILABLE_TO_OPTIONS}
-                    value={rule.availableTo}
-                    onChange={(v) =>
-                      v && updateRule(rule.id, { availableTo: v as GateAvailableTo })
-                    }
-                    allowDeselect={false}
-                  />
-                  <Select
-                    label="Presentation"
-                    data={PRESENTATION_OPTIONS}
-                    value={rule.presentation}
-                    onChange={(v) =>
-                      v && updateRule(rule.id, { presentation: v as GatePresentation })
-                    }
-                    allowDeselect={false}
-                  />
-                </Group>
-                {isUpsell && (
-                  <Text size="xs" c="yellow.7">
-                    Resolves to the members-only upsell (Become-a-member CTA).
-                  </Text>
-                )}
+                <Select
+                  label="Rule"
+                  data={RULE_KIND_OPTIONS}
+                  value={ruleKindValue(rule)}
+                  onChange={(v) => v && updateRule(rule.id, parseRuleKind(v))}
+                  allowDeselect={false}
+                />
                 <Textarea
                   label="Message (optional)"
-                  description="Extra copy layered on the standard badge/alert for disabled & members-only."
+                  description="Extra copy layered on the standard badge/alert for disabled & members-only; replaces the body copy of the experimental alert."
                   placeholder="Leave blank to use the default copy."
                   autosize
                   minRows={1}
@@ -481,10 +431,6 @@ function GenerationConfigPage() {
           <Divider />
 
           <GateRulesSection />
-
-          <Divider />
-
-          <ExperimentalEcosystemsSection />
         </Stack>
       </Container>
     </>

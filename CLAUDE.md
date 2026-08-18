@@ -237,12 +237,20 @@ pnpm run release:major    # Major release (x.0.0)
 - **Redis / caching** — `redis/client.ts` (clients incl. sysRedis), `redis/caches.ts` (`createCachedObject` defs + TTLs, e.g. `imageMetaCache`, `tagIdsForImagesCache`), `utils/cache-helpers.ts`.
 - **Orchestrator (generation)** — `orchestrator/get-orchestrator-token.ts` (`getOrchestratorToken`), `services/orchestrator/orchestrator.service.ts`.
 - **Auth** — `auth/get-server-auth-session.ts`, `auth/session-verifier.ts` + `auth/session-cache.ts` + `auth/session-invalidation.ts`, `auth/token-claims.ts`, `auth/civ-cookie.ts`, `auth/oauth-bridge.ts`, `auth/route-guard.ts`, `auth/bearer-token.ts`. Shared logic lives in `packages/civitai-auth`; the hub itself is `apps/auth`.
-- **Jobs (cron)** — `jobs/job.ts` (runner) + individual jobs `jobs/*.ts` (e.g. `entity-moderation.ts`, `search-index-sync.ts`).
+- **Jobs (cron)** — `jobs/job.ts` (runner) + individual jobs `jobs/*.ts` (e.g. `entity-moderation.ts`, `search-index-sync.ts`). **Adding a job to the `jobs` array in `src/pages/api/webhooks/run-jobs/[[...run]].ts` IS the scheduling — see below.**
 - **Metrics / analytics** — `metrics/*.metrics.ts` (ClickHouse-backed entity metrics), `clickhouse/`.
 - **DB** — `db/db-helpers.ts` (raw pg-pool config: `connectionTimeoutMillis`, labeled pool gauges), Prisma client. **Schema is `packages/civitai-db-schema/prisma/schema.full.prisma`, and migrations are applied manually — see the Database rule above.**
 - **Telemetry** — `src/instrumentation.node.ts` (OTEL: Prisma/Redis/HTTP auto-instrumentation + custom `withSpan()` from `utils/otel-helpers.ts`), `schema/track.schema.ts` (ClickHouse action/event tags), `prom/client.ts`.
 - **Health** — `src/pages/api/health.ts` runs sub-checks concurrently, each raced at `HEALTHCHECK_TIMEOUT` and the whole set raced against an overall deadline, reporting partial results as checks settle. Checks can be suppressed or demoted to non-critical via the `HEALTHCHECK_DISABLED` env var and the Redis-backed `DISABLED_HEALTHCHECKS` / `NON_CRITICAL_HEALTHCHECKS` keys.
 - **Other server domains** — `games/` (new-order/ratings), `webhooks/`, `paddle/` + `coinbase/` (payments), `notifications/`, `signals/`, `rewards/`; S3 helpers at `src/utils/s3-utils.ts`.
+
+### How a scheduled job actually gets scheduled
+
+**Add it to the `jobs` array in `src/pages/api/webhooks/run-jobs/[[...run]].ts` and give `createJob` a real cron string. That is the whole registration.** A separate scheduler service reads the array — names and crons — from `src/pages/api/internal/get-jobs.ts` and registers a recurring trigger per entry, which then calls `run-jobs` back. So the cron string is load-bearing, not documentation.
+
+Nothing *inside this repo* reads `Job.cron`, which is what makes this easy to get wrong. Grepping for a consumer finds none, and the infra repo contains a handful of hand-written Kubernetes CronJobs that curl `run-jobs` directly and whose comments say registration in the array "does NOT schedule anything". Those are per-job exceptions, not the mechanism. Two independent agents reading only that evidence concluded, wrongly, that a new job would never run and that the fix was another CronJob — which would have created a second scheduling path for the same job.
+
+If a job genuinely needs a schedule the scheduler cannot express, say why in the job file, because the next reader has no way to tell that from an oversight.
 
 ## Component Standards
 
@@ -286,6 +294,17 @@ import styles from './Component.module.scss';
 - Use type imports when possible: `import type { ButtonProps } from '@mantine/core'`
 - Define Props interfaces for components
 - Use enums from `~/shared/utils/prisma/enums`
+
+#### 5. A `Popover` inside anything that clips needs `withinPortal`
+
+`src/providers/ThemeProvider.tsx` sets `Popover: { defaultProps: { withinPortal: false } }` for the
+whole app. So a `Popover` rendered inside a `Card`, an `overflow-hidden` wrapper or a scroll area
+draws **inside** that container and is clipped by it — the dropdown comes out truncated, at every
+call site, with nothing in the JSX pointing at the cause. Pass `withinPortal` explicitly there.
+
+Only `Popover` carries it — `HoverCard` has no theme entry at all and `Tooltip`'s sets `withArrow`
+alone. Several components pass `withinPortal` to those two anyway, so grepping for the prop does not
+tell you which call sites actually needed it.
 
 ### Coding Standards
 
@@ -549,6 +568,7 @@ Operational runbooks, security reviews, incident handoffs, and content-policy re
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](docs/features/monetization-rules.md) |
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](docs/features/entity-metrics.md) |
+| Feed Impressions | [docs/features/feed-impressions.md](docs/features/feed-impressions.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |

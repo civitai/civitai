@@ -79,9 +79,8 @@ export function abbreviateNumber(
   const suffixes = ['', 'k', 'm', 'b', 't'];
   let index = 0;
 
-  // Abbreviate on magnitude, then re-apply the sign — negative scores (e.g. a
-  // reportsAgainst-heavy user) are valid and must abbreviate like positives.
-  const sign = value < 0 ? '-' : '';
+  // Abbreviate on magnitude — negative scores (e.g. a reportsAgainst-heavy user)
+  // are valid and must abbreviate like positives.
   let magnitude = Math.abs(value);
 
   while (magnitude >= 1000 && index < suffixes.length - 1) {
@@ -89,12 +88,19 @@ export function abbreviateNumber(
     index++;
   }
 
+  let signed = value < 0 ? -magnitude : magnitude;
   if (floor) {
-    magnitude = Math.floor(magnitude);
+    // Floor at the requested precision, and from the undivided value: `magnitude`
+    // has already lost ticks to the `/= 1000` chain, so flooring it reads a whole
+    // tick low (1130 renders 1.12k at `decimals: 2`). Signed, so a negative
+    // balance never reads as less debt than it is.
+    const factor = Math.pow(10, decimals ?? 0);
+    signed = Math.floor((value * factor) / Math.pow(1000, index)) / factor;
   }
 
+  const sign = signed < 0 ? '-' : '';
   const formattedValue =
-    Math.round(magnitude * Math.pow(10, decimals ?? 0)) / Math.pow(10, decimals ?? 0);
+    Math.round(Math.abs(signed) * Math.pow(10, decimals ?? 0)) / Math.pow(10, decimals ?? 0);
 
   return `${sign}${formattedValue}${suffixes[index]}`;
 }

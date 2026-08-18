@@ -1299,11 +1299,16 @@ export const userByReferralCodeHandler = async ({ input }: { input: UserByReferr
 export const userRewardDetailsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     // TODO.Optimization: This will make multiple requests to redis, we could probably do it in one and make this faster. This will get slower as we add more Active rewards.
-    const rewardDetails = await Promise.all(
-      Object.values(rewards)
-        .filter((x) => x.visible)
-        .map((x) => x.getUserRewardDetails(ctx.user.id))
-    );
+    // `visible` is compile-time ("the kind of reward we advertise"); a null here
+    // is the runtime disable. Filtering `visible` first keeps an unadvertised
+    // reward off the config read entirely.
+    const rewardDetails = (
+      await Promise.all(
+        Object.values(rewards)
+          .filter((x) => x.visible)
+          .map((x) => x.getUserRewardDetails(ctx.user.id))
+      )
+    ).filter((x) => x !== null);
 
     // sort by `onDemand` first
     return orderBy(rewardDetails, ['onDemand', 'awardAmount'], ['desc', 'asc']);

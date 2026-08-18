@@ -22,6 +22,7 @@ import {
   STICKER_PLACEMENT_MIN_SCALE,
   stickerMaxScale,
 } from '~/shared/utils/sticker-placement';
+import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import { placementPriceCaption, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
@@ -69,15 +70,26 @@ export function PlacementSpaceSection() {
   const [mode, setMode] = useState<string>(DEFAULT_MODE);
   const [price, setPrice] = useState<number | ''>(DEFAULT_PRICE ?? '');
   const [maxScale, setMaxScale] = useState(STICKER_PLACEMENT_DEFAULT_MAX_SCALE);
+  // `null`, not the default value, and that distinction is the mechanism rather
+  // than a nicety: a stored number stops tracking the surface default when it
+  // moves. Seeding this to `1` and sending it on every commit wrote an explicit
+  // `1` the first time a creator touched anything else on this page, so within a
+  // few weeks of normal use raising the default would have reached nobody.
+  //
+  // It also cannot be recovered by diffing against the default, because "unset"
+  // and "deliberately set to 1" are the same number.
+  const [freeSlots, setFreeSlots] = useState<number | null>(null);
 
   useEffect(() => {
     if (!stored) {
       setMode(DEFAULT_MODE);
       setPrice(DEFAULT_PRICE ?? '');
+      setFreeSlots(null);
       return;
     }
     setMode(stored.mode);
     setPrice(stored.price ?? '');
+    setFreeSlots(stored.freeSlots);
     setMaxScale(stickerMaxScale(stored.settings as Record<string, unknown>));
   }, [stored]);
 
@@ -94,6 +106,7 @@ export function PlacementSpaceSection() {
       // page asserting a price the creator never chose — which the next commit
       // would then write into their row.
       setPrice(stored ? stored.price ?? '' : DEFAULT_PRICE ?? '');
+      setFreeSlots(stored?.freeSlots ?? null);
       showErrorNotification({ title: "Couldn't save that", error: new Error(error.message) });
     },
   });
@@ -107,6 +120,7 @@ export function PlacementSpaceSection() {
   if (spacesPending || spacesFailed) return null;
 
   const cap = range?.max ?? 0;
+  const freeSlotCap = range?.freeSlotCap ?? 0;
   const waiting = pending?.items.length ?? 0;
   // One page's worth is a floor, not a total. Badging it as an exact number
   // tells an owner with 200 waiting that they have 50, which is the same lie
@@ -118,9 +132,21 @@ export function PlacementSpaceSection() {
     range?.max ?? null
   );
 
-  const commit = (nextMode: string, nextPrice: number | '', nextMaxScale = maxScale) =>
+  const commit = (
+    nextMode: string,
+    nextPrice: number | '',
+    nextMaxScale = maxScale,
+    /**
+     * Sent ONLY when the free-slot control was the thing that moved. `undefined`
+     * leaves the stored value alone, which for a creator who has never touched
+     * it means leaving it NULL — and NULL is what tracks the surface default.
+     * Sending the on-screen number on every commit is what froze it.
+     */
+    nextFreeSlots?: number
+  ) =>
     save.mutate({
       settings: { maxScale: nextMaxScale },
+      freeSlots: nextFreeSlots,
       surface: 'sticker',
       entityType: 'user',
       // Keyed by the owner's own id; the service refuses any other, so this
@@ -238,6 +264,23 @@ export function PlacementSpaceSection() {
           of the size of the image
         </Text>
       </Stack>
+
+      {/* Hidden entirely at a cap of 0 rather than shown disabled: a control whose
+          every position means the same thing is asking a question with one
+          answer, and the cap moves on its own as a score or a membership does. */}
+      {freeSlotCap > 0 && mode !== 'off' && (
+        <PlacementFreeSlotSlider
+          surface="sticker"
+          cap={freeSlotCap}
+          value={freeSlots}
+          noun={['free sticker', 'free stickers']}
+          onChange={setFreeSlots}
+          onCommit={(value) => {
+            setFreeSlots(value);
+            commit(mode, price, maxScale, value);
+          }}
+        />
+      )}
 
       {/* The queue is otherwise unreachable: the notification links to the image,
           and nothing else in the app points at it. */}

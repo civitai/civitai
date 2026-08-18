@@ -7,6 +7,7 @@ import { dbRead } from '~/server/db/client';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
+import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import type {
   GetAppListingDetailInput,
   ListAllListingsForModerationInput,
@@ -223,7 +224,14 @@ export const listingHydrateSelect = {
   icon: { select: { url: true } },
   cover: { select: { url: true } },
   user: { select: { id: true, username: true, image: true } },
-  metric: { select: { thumbsUpCount: true, thumbsDownCount: true } },
+  // Projected into the DETAIL DTO only (the header's "Updated: <date>" meta line).
+  // Harmless extra column for the card projection, which doesn't surface it.
+  updatedAt: true,
+  // `installCount` feeds the detail header's install stat chip. It is the SAME
+  // column the public `popular` sort already orders every approved listing by
+  // (`lpad(COALESCE(m.install_count, 0)…)` below), so the ordering is public
+  // already — see the DTO field's allowlist justification.
+  metric: { select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true } },
   // `currentVersionDeployedAt` powers the DEPLOY-GATE on the detail read (an
   // onsite listing whose backing block has never successfully deployed is
   // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
@@ -413,6 +421,12 @@ export function projectListingDetail(
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
+    // ISO-8601, not a `Date` — this DTO also crosses the transformer-less public REST
+    // boundary. See the field's docstring on `ListingDetail`.
+    updatedAt: row.updatedAt.toISOString(),
+    // `COALESCE(install_count, 0)` in projection form: a listing with no metric row
+    // has had no installs, exactly as the ranking SQL reads it.
+    installCount: row.metric?.installCount ?? 0,
     screenshots: galleryScreenshots(row),
     kindData: detailKindData(row),
   };
@@ -552,18 +566,22 @@ export async function listAvailableListings(
 ): Promise<{ items: ListingCard[]; nextCursor?: string }> {
   const { kind, category, sort, cursor, limit } = input;
   const redCapable = opts.redCapable ?? false;
-  // Default `full` for callers that don't pass a scope (the router ALWAYS passes
-  // an explicit scope and NEVER calls this with `none` — it short-circuits an
-  // empty page at the proc). `full` → `TRUE` predicate → byte-identical WHERE.
-  const scope = opts.scope ?? 'full';
+  // 🔴 FAIL CLOSED on an absent / unrecognized scope (civitai#3983). This used to be
+  // `opts.scope ?? 'full'`, on the reasoning that every caller passes an explicit
+  // scope. Every caller does — and production still reached here with `undefined`,
+  // so the `??` fired and this function served the WHOLE approved catalog (on-site
+  // apps included) to anonymous callers of the public REST endpoint. A default is an
+  // authorization decision; the only safe one here is `none` → `FALSE` predicate →
+  // an empty page. `narrowStoreScope` is the single shared rule; see
+  // `~/shared/utils/store-visibility-scope`.
+  const scope = narrowStoreScope(opts.scope);
 
   const { cursorSortKey, cursorId, cursorMean } = decodeListingCursor(cursor);
 
   // Only `top-rated` needs the global mean. PIN it into the cursor across a
   // paging session (page 1 reads the 1h cache + encodes it; pages 2..N reuse
   // the pinned value, NOT a fresh read) so the sort key can't shift mid-scan.
-  const globalMean =
-    sort === 'top-rated' ? cursorMean ?? (await getGlobalRecommendMean()) : 0;
+  const globalMean = sort === 'top-rated' ? cursorMean ?? (await getGlobalRecommendMean()) : 0;
 
   const { expr: sortKeyExpr, descending } = listingSortKeyExpr(sort, globalMean);
   const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
@@ -620,9 +638,7 @@ export async function listAvailableListings(
     where: { id: { in: pageIds } },
     select: listingHydrateSelect,
   });
-  const byId = new Map(
-    hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r])
-  );
+  const byId = new Map(hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r]));
   const items = pageIds
     .map((id: string) => byId.get(id))
     .filter((r): r is HydratedListing => r != null)
@@ -642,8 +658,10 @@ export async function getListingDetail(
   opts: { redCapable?: boolean; scope?: StoreVisibilityScope } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
-  // Default `full` for callers that don't pass a scope (see listAvailableListings).
-  const scope = opts.scope ?? 'full';
+  // 🔴 FAIL CLOSED on an absent / unrecognized scope — see listAvailableListings
+  // (civitai#3983). Previously `opts.scope ?? 'full'`, which let an absent scope
+  // reach a listing's full detail through the public REST endpoint.
+  const scope = narrowStoreScope(opts.scope);
   // STORE-SCOPE `none` (default-closed): a caller with no store visibility gets
   // nothing — symmetric with the list path's `listingPublicVisibilityFilter('none')`
   // → FALSE. The v1 endpoints short-circuit `none` before calling this, but honor
@@ -822,7 +840,9 @@ export const moderationListingSelect = {
   },
 } satisfies Prisma.AppListingSelect;
 
-type HydratedModerationRow = Prisma.AppListingGetPayload<{ select: typeof moderationListingSelect }>;
+type HydratedModerationRow = Prisma.AppListingGetPayload<{
+  select: typeof moderationListingSelect;
+}>;
 
 /** Project a hydrated moderation row → the {@link ModerationListingRow} DTO. */
 export function projectModerationListing(row: HydratedModerationRow): ModerationListingRow {
@@ -868,9 +888,7 @@ export function projectModerationListing(row: HydratedModerationRow): Moderation
  * Pure, total. Returned as its own fragment so the caller composes it under `AND`
  * (this clause may itself be an `OR`, which would collide with the `search` `OR`).
  */
-export function moderationStatusWhere(
-  status: string | undefined
-): Prisma.AppListingWhereInput {
+export function moderationStatusWhere(status: string | undefined): Prisma.AppListingWhereInput {
   if (!status) return {};
   if (status === 'pending') {
     return {

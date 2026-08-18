@@ -2,6 +2,7 @@ import { Button, Group, Popover, Skeleton, Stack, Text } from '@mantine/core';
 import { IconMessage } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
+import { declineConsequence } from '~/components/Sticker/payout-copy';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -11,21 +12,37 @@ import { trpc } from '~/utils/trpc';
  * One component for the image and the queue, so the two cannot end up asking
  * different questions before taking someone's money.
  *
- * **Decline confirms; approve confirms only when there is a note.** Declining
- * keeps 30% of what the placer paid and cannot be undone. A plain approve takes
- * nothing from the placer they did not choose to spend, so it goes straight
- * through — but an approve that would publish someone's words is a second
- * decision, and it is the one the owner cannot see the subject of otherwise.
+ * **Decline confirms; approve confirms only when there is a note.** A decline
+ * cannot be undone, and what it costs depends on the placement — see
+ * `declineConsequence`, which is where that sentence lives now that a free row
+ * has no payment to keep a share of. No rate is named here: the shares are
+ * operator-tunable at runtime, so a number written down in a comment is a claim
+ * about money that stops being true with nothing failing.
+ *
+ * A plain approve takes nothing from the placer they did not choose to spend, so
+ * it goes straight through — but an approve that would publish someone's words is
+ * a second decision, and it is the one the owner cannot see the subject of
+ * otherwise.
  */
 export function StickerPlacementActions({
   placementIds,
   compact = false,
   hasComment = false,
+  free,
   stacked = false,
   onDone,
 }: {
   placementIds: number[];
   compact?: boolean;
+  /**
+   * Whether every placement in this set was placed free, which decides what the
+   * decline confirmation says a decline costs.
+   *
+   * `undefined` means a mixed selection rather than an unknown one — a bulk
+   * decline legitimately holds both kinds, and no single sentence about money is
+   * true of all of them. See `declineConsequence`.
+   */
+  free?: boolean;
   /**
    * Whether this carries a note. Only meaningful for a single placement — a bulk
    * action deliberately does not offer the choice, so a mixed selection cannot
@@ -131,8 +148,7 @@ export function StickerPlacementActions({
               {placementIds.length > 1
                 ? `Decline ${placementIds.length} placements?`
                 : 'Decline this placement?'}{' '}
-              The placer keeps most of what they paid, and a fee stays with you. This can&apos;t be
-              undone.
+              {declineConsequence(free)} This can&apos;t be undone.
             </Text>
             <Group gap="xs" justify="end">
               <Button size="compact-xs" variant="default" onClick={() => setConfirming(false)}>

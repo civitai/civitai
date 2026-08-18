@@ -17,8 +17,12 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { Meta } from '~/components/Meta/Meta';
+import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
+import { PlacementFreeFilter } from '~/components/Placement/PlacementFreeFilter';
+import { selectionAfterHidingFree, visibleQueueRows } from '~/components/Placement/free-filter';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
+import { placementAmountLine, selectionFree } from '~/components/Sticker/payout-copy';
 import { WithheldThumb } from '~/components/RemixGallery/SubmissionPair';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -49,17 +53,32 @@ export default function StickerPlacements() {
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
   const [selected, setSelected] = useState<number[]>([]);
+  const [showFree, setShowFree] = useState(true);
 
-  const rows = data?.pages.flatMap((page) => page.items) ?? [];
+  const loaded = data?.pages.flatMap((page) => page.items) ?? [];
+  const rows = visibleQueueRows(loaded, showFree);
   const cosmeticIds = rows.map((row) => row.data.cosmeticId);
   const { sticker } = useStickerCosmetics(cosmeticIds);
 
   const allSelected = rows.length > 0 && selected.length === rows.length;
 
+  // All free, all paid, or mixed. Derived beside `declineConsequence`, which is
+  // the only consumer and where the mixed branch is already covered.
+  const selectedFree = selectionFree(selected, rows);
+
   const toggle = (id: number) =>
     setSelected((current) =>
       current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
     );
+
+  // Hiding the free rows takes them out of the selection with them. Approve and
+  // Decline are irreversible and both say something about money, so a selection
+  // that outlives the rows it was made from would act on placements the owner
+  // can no longer see.
+  const changeShowFree = (next: boolean) => {
+    setShowFree(next);
+    if (!next) setSelected((current) => selectionAfterHidingFree(current, loaded));
+  };
 
   return (
     <>
@@ -73,25 +92,38 @@ export default function StickerPlacements() {
                 Only you and the placer can see these. Unanswered ones expire after 48 hours.
               </Text>
             </div>
-            {rows.length > 0 && (
-              <Checkbox
-                // Names what it selects. With the queue paged it reaches the
-                // rows on screen, and an owner who bulk-declined believing they
-                // had cleared 200 would find 150 still waiting.
-                label={hasNextPage ? 'Select all loaded' : 'Select all'}
-                checked={allSelected}
-                indeterminate={selected.length > 0 && !allSelected}
-                onChange={() => setSelected(allSelected ? [] : rows.map((row) => row.id))}
-                className="shrink-0"
-              />
-            )}
+            <Group gap="sm" wrap="nowrap" className="shrink-0">
+              {rows.length > 0 && (
+                <Checkbox
+                  // Names what it selects. With the queue paged it reaches the
+                  // rows on screen, and an owner who bulk-declined believing they
+                  // had cleared 200 would find 150 still waiting. With the free
+                  // ones hidden it reaches those on screen too, not the hidden
+                  // ones behind them.
+                  label={hasNextPage ? 'Select all loaded' : 'Select all'}
+                  checked={allSelected}
+                  indeterminate={selected.length > 0 && !allSelected}
+                  onChange={() => setSelected(allSelected ? [] : rows.map((row) => row.id))}
+                  className="shrink-0"
+                />
+              )}
+              {/* Only once there is something to hide. A control that changes
+                nothing still asks the owner to work out what it does. */}
+              {loaded.some((row) => row.free) && (
+                <PlacementFreeFilter show={showFree} onChange={changeShowFree} noun="placements" />
+              )}
+            </Group>
           </Group>
 
           {selected.length > 0 && (
             <Card withBorder p="xs">
               <Group justify="space-between">
                 <Text size="sm">{selected.length} selected</Text>
-                <StickerPlacementActions placementIds={selected} onDone={() => setSelected([])} />
+                <StickerPlacementActions
+                  placementIds={selected}
+                  free={selectedFree}
+                  onDone={() => setSelected([])}
+                />
               </Group>
             </Card>
           )}
@@ -107,15 +139,25 @@ export default function StickerPlacements() {
           {/* `&& !hasNextPage`: a page whose rows were all dropped returns
               nothing with a cursor still set, and "nothing waiting" over a
               queue that has more is the failure paging exists to end. */}
-          {!isLoading && !isError && !rows.length && !hasNextPage && (
+          {/* Both of these ask whether the QUEUE is empty, which is a different
+              question from whether anything is on screen — with the free ones
+              hidden, "nothing waiting" would be the owner's own filter talking
+              back to them as a fact about their images. */}
+          {!isLoading && !isError && !loaded.length && !hasNextPage && (
             <Alert>
               <Text size="sm">Nothing waiting. Placements you approve show up on your images.</Text>
             </Alert>
           )}
 
-          {!rows.length && hasNextPage && (
+          {!loaded.length && hasNextPage && (
             <Text size="sm" c="dimmed">
               Nothing on this page can be shown. There are more waiting.
+            </Text>
+          )}
+
+          {!!loaded.length && !rows.length && (
+            <Text size="sm" c="dimmed">
+              Everything waiting on you is a free placement, and free ones are hidden.
             </Text>
           )}
 
@@ -191,12 +233,13 @@ export default function StickerPlacements() {
                       <Text span fw={600}>
                         {row.placer?.username ?? 'Someone'}
                       </Text>{' '}
-                      paid{' '}
-                      <Text span fw={600}>
-                        {row.amount}
-                      </Text>{' '}
-                      Buzz
+                      {/* Both arms in `payout-copy`, not a ternary here: this
+                          is the only money statement on the card the Approve
+                          and Decline buttons sit under, and nothing under
+                          `src/pages` can be tested. */}
+                      {placementAmountLine(row.free, row.amount)}
                     </Text>
+                    {row.free && <PlacementFreeBadge noun="placement" />}
                     <Text size="xs" c="dimmed">
                       Placed {formatDate(row.createdAt)}
                       {row.expiresAt ? ` · expires ${formatDate(row.expiresAt)}` : ''}
@@ -225,6 +268,7 @@ export default function StickerPlacements() {
                   <StickerPlacementActions
                     placementIds={[row.id]}
                     hasComment={!!row.data.comment}
+                    free={row.free}
                     stacked
                     compact
                   />

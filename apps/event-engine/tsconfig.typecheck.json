@@ -1,0 +1,12 @@
+{
+  // The build tsconfig excludes tests so `tsc && tsc-alias` does not emit them into dist/.
+  // That left the suite typechecked by nothing — vitest transpiles without checking — so
+  // `typecheck` uses this instead, which is the same config with the tests put back.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

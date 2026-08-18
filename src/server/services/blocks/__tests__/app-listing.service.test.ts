@@ -94,6 +94,10 @@ function hydratedRow(over: Record<string, unknown> = {}) {
     cover: { url: 'cover-key' },
     user: { id: 7, username: 'dev', image: 'avatar-key' },
     metric: { thumbsUpCount: 9, thumbsDownCount: 1 },
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: {
       // DEPLOY-GATE: a deployed onsite block (non-null timestamp) so the detail
       // read returns its projection. The dedicated deploy-gate suite covers the
@@ -269,7 +273,10 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
   it('onsite card liveUrl is `https://<slug>.<APPS_DOMAIN>` for the seeded slug', () => {
     const row = hydratedRow({ slug: 'my-neat-app' });
     const card = projectListingCard(row as never);
-    expect(card.kindData).toMatchObject({ kind: 'onsite', liveUrl: 'https://my-neat-app.civit.ai' });
+    expect(card.kindData).toMatchObject({
+      kind: 'onsite',
+      liveUrl: 'https://my-neat-app.civit.ai',
+    });
   });
 
   it('PARITY GUARD: onsite card liveUrl === detail liveUrl for the same listing (anti-drift)', () => {
@@ -375,6 +382,12 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'description',
         'iconUrl',
         'id',
+        // 🔴 The two fields added for the store-detail header. Both are in the
+        // ALLOWLIST deliberately (see their docstrings on `ListingDetail`):
+        // `installCount` is the very column the public `popular` sort already orders
+        // every approved listing by, and `updatedAt` is the direct analogue of the
+        // model page's public `Updated: <date>` line.
+        'installCount',
         'kind',
         'kindData',
         'name',
@@ -384,12 +397,34 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'serialId',
         'slug',
         'tagline',
+        'updatedAt',
       ].sort()
     );
     expect(detail).not.toHaveProperty('status');
     expect(detail.description).toBe('# Cool app\n\nbody');
     // The integer surrogate is surfaced for the CommentsV2 thread key.
     expect(detail.serialId).toBe(101);
+    // 🔴 ISO-8601 STRING, not a Date. This DTO also crosses the transformer-less
+    // public REST boundary, where a Date would serialise inconsistently. Pinned as a
+    // literal so a "just pass the Date through" change fails here.
+    expect(detail.updatedAt).toBe('2026-03-04T05:06:07.000Z');
+    expect(typeof detail.updatedAt).toBe('string');
+    // `hydratedRow()`'s metric carries no installCount → the COALESCE-to-0 branch.
+    expect(detail.installCount).toBe(0);
+  });
+
+  it('installCount is read from the metric rollup, and 0 when there is no metric row', () => {
+    // Positive control FIRST: the field CAN carry a non-zero value, so the zero
+    // asserted below is a real zero and not a projection wired to a constant.
+    // 4213 is pairwise-distinct from every other count in this file and from the
+    // `0` the null branch returns.
+    const withInstalls = projectListingDetail(
+      hydratedRow({ metric: { thumbsUpCount: 9, thumbsDownCount: 1, installCount: 4213 } }) as never
+    );
+    expect(withInstalls.installCount).toBe(4213);
+
+    const noMetric = projectListingDetail(hydratedRow({ metric: null }) as never);
+    expect(noMetric.installCount).toBe(0);
   });
 
   it('onsite detail kindData carries appBlockId, hasPage + the computed liveUrl', () => {
@@ -546,7 +581,14 @@ describe('listAvailableListings — query building + pagination', () => {
     ]);
     // findMany returns the rows OUT OF ORDER — the service must re-apply the id order.
     mockDbRead.appListing.findMany.mockResolvedValueOnce([
-      hydratedRow({ id: 'apl_b', kind: 'offsite', appBlockId: null, appBlock: null, connectClientId: 'oc_1', slug: 'b-app' }),
+      hydratedRow({
+        id: 'apl_b',
+        kind: 'offsite',
+        appBlockId: null,
+        appBlock: null,
+        connectClientId: 'oc_1',
+        slug: 'b-app',
+      }),
       hydratedRow({ id: 'apl_a', kind: 'onsite', slug: 'a-app' }),
     ]);
     const { items } = await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 });
@@ -597,7 +639,11 @@ describe('listAvailableListings — query building + pagination', () => {
       hydratedRow({ id: 'apl_0' }),
       hydratedRow({ id: 'apl_1' }),
     ]);
-    const { nextCursor } = await listAvailableListings({ kind: 'all', sort: 'top-rated', limit: 2 });
+    const { nextCursor } = await listAvailableListings({
+      kind: 'all',
+      sort: 'top-rated',
+      limit: 2,
+    });
     const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
     expect(decoded).toBe(`000000790${SEP}apl_1${SEP}0.8`);
   });
@@ -713,7 +759,7 @@ describe('getListingDetail — approved-only + maturity gate', () => {
 
   it('returns the projected detail for an approved listing (by slug)', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
-    const detail = await getListingDetail({ slug: 'cool-app' });
+    const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail?.id).toBe('apl_1');
     // Looked up by slug.
     const where = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: unknown })
@@ -724,7 +770,7 @@ describe('getListingDetail — approved-only + maturity gate', () => {
 
   it('looks up by id when id is provided', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
-    await getListingDetail({ id: 'apl_1' });
+    await getListingDetail({ id: 'apl_1' }, { scope: 'full' });
     const where = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: unknown })
       ?.where;
     expect(where).toEqual({ id: 'apl_1', revisionOfId: null });
@@ -732,31 +778,37 @@ describe('getListingDetail — approved-only + maturity gate', () => {
 
   it('the WHERE excludes SHADOW revision drafts (revisionOfId: null) for BOTH selectors', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
-    await getListingDetail({ slug: 'cool-app' });
-    const bySlug = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: { revisionOfId?: unknown } })?.where;
+    await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
+    const bySlug = (
+      mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as {
+        where?: { revisionOfId?: unknown };
+      }
+    )?.where;
     expect(bySlug?.revisionOfId).toBeNull();
   });
 
   it('returns null for a missing listing', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce(null);
-    expect(await getListingDetail({ slug: 'nope' })).toBeNull();
+    expect(await getListingDetail({ slug: 'nope' }, { scope: 'full' })).toBeNull();
   });
 
   it('returns null (no query) when NEITHER slug nor id is provided (enumeration guard)', async () => {
     // The zod .refine guards the tRPC boundary, but the service is exported —
     // `findFirst({ slug: undefined })` would return an arbitrary approved row.
-    expect(await getListingDetail({} as never)).toBeNull();
+    expect(await getListingDetail({} as never, { scope: 'full' })).toBeNull();
     expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
   });
 
   it('returns null (no query) when BOTH slug and id are provided (ambiguous)', async () => {
-    expect(await getListingDetail({ slug: 'cool-app', id: 'apl_1' } as never)).toBeNull();
+    expect(
+      await getListingDetail({ slug: 'cool-app', id: 'apl_1' } as never, { scope: 'full' })
+    ).toBeNull();
     expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
   });
 
   it.each(['draft', 'pending', 'rejected'])('returns null for a %s listing', async (status) => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status });
-    expect(await getListingDetail({ slug: 'cool-app' })).toBeNull();
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).toBeNull();
   });
 
   it('hides a mature (x) listing off a non-red host', async () => {
@@ -764,7 +816,9 @@ describe('getListingDetail — approved-only + maturity gate', () => {
       ...hydratedRow({ contentRating: 'x' }),
       status: 'approved',
     });
-    expect(await getListingDetail({ slug: 'cool-app' }, { redCapable: false })).toBeNull();
+    expect(
+      await getListingDetail({ slug: 'cool-app' }, { redCapable: false, scope: 'full' })
+    ).toBeNull();
   });
 
   it('shows a mature (x) listing on a red-capable host', async () => {
@@ -772,7 +826,10 @@ describe('getListingDetail — approved-only + maturity gate', () => {
       ...hydratedRow({ contentRating: 'x' }),
       status: 'approved',
     });
-    const detail = await getListingDetail({ slug: 'cool-app' }, { redCapable: true });
+    const detail = await getListingDetail(
+      { slug: 'cool-app' },
+      { redCapable: true, scope: 'full' }
+    );
     expect(detail?.contentRating).toBe('x');
   });
 });

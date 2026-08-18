@@ -20,6 +20,7 @@ import { useAppContext } from '~/providers/AppProvider';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { getModelUrl } from '~/utils/string-helpers';
+import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 
 // =============================================================================
 // Types
@@ -228,6 +229,7 @@ export function ResourceItemContent({
                 Epoch {epochDetails.epochNumber}
               </Badge>
             )}
+            <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
             {isSfwOnly && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>

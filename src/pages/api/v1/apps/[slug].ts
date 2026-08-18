@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { getListingDetail } from '~/server/services/blocks/app-listing.service';
 import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
+import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { isHostForColor } from '~/server/utils/server-domain';
@@ -19,12 +20,13 @@ import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelo
  * when present and otherwise proceeds anonymous; an absent / invalid / expired
  * token is treated as anonymous, never a hard error.
  *
- * ## Visibility — per-user SCOPE, DEFAULT CLOSED
+ * ## Visibility — a PUBLIC catalog, by decision
  * Same gate as the list endpoint: `resolveStoreVisibilityScope({ user })` is
- * computed and passed EXPLICITLY to the listing service. A `none` scope (anon /
- * non-privileged, pre-launch default) yields 404 — a caller can never enumerate
- * a listing outside their scope, and the boundary AUTO-WIDENS with the same
- * marketplace flag the store UI keys on (no code change here).
+ * computed, run through `resolvePublicAppsCatalogScope` (a privileged caller keeps
+ * their own scope; everyone else gets the deliberate public grant, which an
+ * operator can withhold), and the result is passed EXPLICITLY to the listing
+ * service. A `none` scope — i.e. the grant withheld — yields 404, and a caller can
+ * never enumerate a listing outside whatever scope they end up with.
  *
  * ## 404 posture
  * A missing slug, a non-approved listing, an onsite listing under
@@ -81,11 +83,18 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     const limited = await enforceAppsCatalogRateLimit({ req, res, user, log: req.log });
     if (limited) return;
 
-    // DEFAULT-CLOSED scope gate — pass the resolved scope EXPLICITLY to the service.
-    const scope = await resolveStoreVisibilityScope({ user });
-    // See the sibling `index.ts` + store-scope.metrics: recorded so an ABSENT scope
-    // is distinguishable from a resolved one in production (civitai#3983).
-    recordStoreScopeApplied(scope, 'rest-detail');
+    // The caller's OWN scope — see the sibling `index.ts`. Typed `unknown`; never
+    // branched on until it has been through the public-catalog decision below.
+    const rawScope: unknown = await resolveStoreVisibilityScope({ user });
+    // See the sibling `index.ts` + store-scope.metrics: recorded BEFORE narrowing so
+    // an ABSENT scope is distinguishable from a resolved one in production (#3983).
+    recordStoreScopeApplied(rawScope as string | undefined, 'rest-detail');
+    // The PUBLIC-CATALOG decision — see the sibling `index.ts` and
+    // `~/server/services/blocks/public-apps-catalog`. Narrows first (#4041: an
+    // absent scope is never an entitlement — it used to slip past this negative
+    // test and meet `getListingDetail`'s `?? 'full'`), passes a privileged caller
+    // through verbatim, then applies the deliberate public grant.
+    const scope = await resolvePublicAppsCatalogScope(rawScope, 'rest-detail');
     if (scope === 'none') {
       return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));
     }

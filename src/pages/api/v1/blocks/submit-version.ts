@@ -4,7 +4,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
-import { submitVersionSchema } from '~/server/schema/blocks/publish-request.schema';
+import {
+  submitVersionParseErrorMessage,
+  submitVersionSchema,
+} from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -241,7 +244,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // with the MAX_BUNDLE_SIZE_BYTES pre-decode cap).
   const parsed = submitVersionSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ message: 'Invalid bundle payload' });
+    // Names the offending field when the failure is confined to the #4059
+    // provenance fields; still exactly 'Invalid bundle payload' for a bundle
+    // problem. This is the route the CLI actually posts to, so an unnamed
+    // rejection here is the one that costs an author a debugging session.
+    res.status(400).json({ message: submitVersionParseErrorMessage(parsed.error) });
     return;
   }
 
@@ -261,7 +268,14 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // publish logic is not forked; this route is only a second auth front-door.
   try {
     const { submitVersion } = await import('~/server/services/blocks/publish-request.service');
-    const result = await submitVersion({ bundleBuffer, submittedByUserId: user.id });
+    const result = await submitVersion({
+      bundleBuffer,
+      submittedByUserId: user.id,
+      // #4059 — pass the client's provenance CLAIM through untouched. Absent
+      // stays absent; the service must not invent a value.
+      sourceCommit: parsed.data.sourceCommit,
+      sourceDirty: parsed.data.sourceDirty,
+    });
     // The service returns a richer object; the CLI contract is the stable subset.
     // `status` is always 'pending' for a fresh submission (mod review queue).
     res.status(200).json({

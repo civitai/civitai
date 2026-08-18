@@ -145,6 +145,10 @@ function offsiteRow(over: Record<string, unknown> = {}) {
     cover: null,
     user: { id: OWNER, username: 'dev', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     screenshots: [],
     status: 'approved',
     ...over,

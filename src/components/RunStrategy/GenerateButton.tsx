@@ -12,6 +12,7 @@ export function GenerateButton({
   mode = 'replace',
   children,
   generationPrice,
+  listedPrice,
   onPurchase,
   onClick,
   epochNumber,
@@ -22,6 +23,11 @@ export function GenerateButton({
 }: Props) {
   const theme = useMantineTheme();
   const { trackAction } = useTrackEvent();
+  // `generationPrice` is what THIS viewer must pay and turns the button into a purchase action.
+  // `listedPrice` is what buyers pay, shown to the owner/mod who already has access — it must never
+  // reach onClickHandler, or a creator clicking Generate on their own model would be asked to buy it.
+  const shownPrice = generationPrice ?? listedPrice;
+  const isListedOnly = generationPrice == null && listedPrice != null;
 
   const opened = useGenerationPanelStore((state) => state.opened);
   const onClickHandler = (e?: React.MouseEvent<HTMLElement>) => {
@@ -79,7 +85,7 @@ export function GenerateButton({
       style: { cursor: 'pointer' },
     });
 
-  const purchaseIcon = (
+  const priceBadge = (
     <Badge
       radius="sm"
       size="sm"
@@ -97,10 +103,20 @@ export function GenerateButton({
       <Group gap={0} wrap="nowrap">
         <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={14} />{' '}
         <Text size="xs" fz={11} c="dark.9">
-          {abbreviateNumber(generationPrice ?? 0, { decimals: 0 })}
+          {abbreviateNumber(shownPrice ?? 0, { decimals: 0 })}
         </Text>
       </Group>
     </Badge>
+  );
+  const purchaseIcon = isListedOnly ? (
+    <Tooltip
+      label={`Buyers pay ${abbreviateNumber(listedPrice ?? 0, { decimals: 0 })} Buzz`}
+      withArrow
+    >
+      {priceBadge}
+    </Tooltip>
+  ) : (
+    priceBadge
   );
 
   const button = (
@@ -121,7 +137,7 @@ export function GenerateButton({
             }
       }
     >
-      {generationPrice && <>{purchaseIcon}</>}
+      {!!shownPrice && <>{purchaseIcon}</>}
       {iconOnly ? (
         <IconBrush size={24} />
       ) : (
@@ -149,6 +165,8 @@ type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
   mode?: 'toggle' | 'replace';
   children?: React.ReactElement;
   generationPrice?: number;
+  /** What buyers pay for generation. Informational only — never triggers the purchase flow. */
+  listedPrice?: number;
   onPurchase?: () => void;
   onClick?: () => void;
   epochNumber?: number;

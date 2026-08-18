@@ -311,9 +311,9 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     // 🔴 THE POINT OF THE CHANGE, and the only assertion in CI that sits at the proc
     // boundary this contract actually ships through. Without it, the zeroed buckets
     // above are byte-identical to a publisher who genuinely earned nothing — which is
-    // exactly the bug. The renderer guards live in the `component` project, which CI
-    // does not run at all, so do not delete this on the grounds that a panel test
-    // covers it.
+    // exactly the bug. The renderer guards live in the `component` project, which only
+    // the PR preview pipeline runs — report-only and not a required check — so do not
+    // delete this on the grounds that a panel test covers it.
     expect(result.unavailable).toBe('notEntitled');
   });
 

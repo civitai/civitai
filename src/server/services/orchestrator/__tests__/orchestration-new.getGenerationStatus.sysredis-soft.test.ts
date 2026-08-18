@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * deadline so a silent half-open rejects instead of parking ~11min while the
  * generation context is built.
  *
- * getGenerationEcosystemConfig + getGateRules are imported from generation.service
+ * resolveTestingAccess + getGateRules are imported from generation.service
  * and mocked here, so the ONLY withSysReadDeadline call is the local status read
  * under test. The SLOW test is fail-on-revert (hGet never settles).
  */
@@ -33,7 +33,7 @@ vi.mock('~/server/redis/client', () => {
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   getDbWithoutLagBatch: vi.fn(),
@@ -42,16 +42,16 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
 vi.mock('~/server/db/datapacketDb', () => ({ datapacketDbRead: {}, datapacketDbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/search-index', () => ({}));
-vi.mock('@civitai/db', () => ({ createLagTracker: vi.fn(() => ({})), loadDbEnv: vi.fn(() => ({})) }));
+vi.mock('@civitai/db', () => ({
+  createLagTracker: vi.fn(() => ({})),
+  loadDbEnv: vi.fn(() => ({})),
+}));
 
 // The two sibling readers buildGenerationContext composes — mock so the only
 // deadline-wrapped read is the local getGenerationStatus under test, and so the
 // heavy generation.service graph doesn't load.
 vi.mock('~/server/services/generation/generation.service', () => ({
-  getGenerationEcosystemConfig: vi.fn(async () => ({
-    experimentalEcosystems: [],
-    hasTestingAccess: false,
-  })),
+  resolveTestingAccess: vi.fn(async () => false),
   getGateRules: vi.fn(async () => []),
   getSelfHostedDisabledEcosystems: vi.fn(() => [] as string[]),
 }));

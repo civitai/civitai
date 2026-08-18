@@ -13,18 +13,21 @@
  * libvips block on first image-optimizer use and re-enables only six RASTER loaders; SVG is
  * not among them, so every `ImageResponse` in the process throws
  * `Input buffer contains unsupported image format` from then on. We carry upstream
- * vercel/next.js#96681 as `patches/next@16.3.0.patch` until we are on a Next that contains it.
+ * vercel/next.js#96681 as `patches/next@16.3.1.patch` until we are on a Next that contains it.
  *
  * The assertion is deliberately "the installed Next unblocks SVG", NOT "our patch file is on
- * disk" and NOT "we are on 16.3.0":
+ * disk" and NOT "we are on any particular version":
  *
  *   - reading `node_modules` rather than `patches/` is the whole point — a patch that exists
  *     but did not APPLY (unregistered key, failed hunk, a stale lockfile hash) is exactly the
  *     silent failure this catches, and a patch-file grep would sail through it;
  *   - staying version-agnostic means the guard does not have to be retired in the same commit
- *     that bumps Next. On >= 16.3.1 the entry is present upstream and this still passes; the
- *     patch itself is separately version-pinned, so the bump fails the install rather than
- *     silently carrying a stale patch.
+ *     that bumps Next. If a future Next ships the loader entry itself, this still passes with
+ *     the patch retired; the patch is separately version-pinned through
+ *     `pnpm.patchedDependencies`, so a bump fails the install rather than silently carrying a
+ *     stale patch. (Measured on the 16.3.0 -> 16.3.1 bump: the patch still applies, and the
+ *     installed 16.3.1 carries exactly ONE occurrence of the loader entry per copy — i.e. the
+ *     patch is what puts it there, upstream still does not.)
  *
  * BOTH BUILDS, SKIPPING WHAT IS ABSENT. Next ships this module twice — `dist/server/` (CJS)
  * and `dist/esm/server/`. A full `pnpm install` has both; the production standalone image has
@@ -112,7 +115,7 @@ function formatReport(report) {
 const FAILURE_EXPLANATION =
   `FAIL: the installed Next does not unblock the libvips SVG loader (${REQUIRED_LOADER}).\n` +
   'Every `next/og` ImageResponse — i.e. all of /api/og — will return 500 as soon as anything\n' +
-  'touches the image optimizer in that process. Check that `patches/next@16.3.0.patch` is\n' +
+  'touches the image optimizer in that process. Check that `patches/next@<version>.patch` is\n' +
   'still registered under `pnpm.patchedDependencies` in package.json and that\n' +
   '`pnpm install` applied it; this reads node_modules, so a patch file that exists but did\n' +
   'not apply fails here. See src/tests/api/og.image-optimizer-sharp.test.ts for the outage.';

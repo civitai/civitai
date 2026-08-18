@@ -165,6 +165,13 @@ const featureFlags = createFeatureFlags({
   // dark-flag precedent.) No client bundle change is required (the feed already
   // renders any-length image arrays), so this is a pure server behavior flag.
   getAllModelImagesSlim: { availability: [], fliptKey: 'get-all-model-images-slim' },
+  // Feed impression tracking. Ships dark: this is the only new telemetry stream
+  // on the site whose volume is set by scrolling rather than by clicking, so the
+  // rollout wants a dial that does not need a deploy to turn back down. Ramp the
+  // `feed-impressions` cohort while watching the impressions table's insert rate
+  // and part count; instant rollback = set the cohort to 0, which stops the
+  // browser observing at all rather than merely dropping rows server-side.
+  feedImpressions: { availability: [], fliptKey: 'feed-impressions' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -426,11 +433,15 @@ const featureFlags = createFeatureFlags({
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
   // Per-model 3D generator gates, layered UNDER `model3dGenerator` (which gates
-  // the whole 3D surface). Let Tripo & Hunyuan3D ship dark and roll out
-  // independently of Meshy (PolyGen) via Flipt. Off ⇒ the ecosystem is hidden
-  // from the img2model3d picker and rejected on submit (see ecosystem-graph.ts).
+  // the whole 3D surface), so each can ship dark and roll out independently via
+  // Flipt. Tripo & Hunyuan3D are whole ecosystems — off ⇒ hidden from the
+  // img2model3d picker and rejected on submit (see ecosystem-graph.ts).
+  // `meshyV7Generator` instead gates ONE version inside PolyGen: off ⇒ v7 is
+  // dropped from the version options, which both hides it and makes a submitted
+  // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
   tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
   hunyuan3dGenerator: { availability: ['mod'], fliptKey: 'hunyuan3d-generator' },
+  meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
   // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
   // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
   // is unaffected when this is off. Mod-only until the `grok-imagine-2` Flipt
@@ -535,6 +546,19 @@ const featureFlags = createFeatureFlags({
   // the route SSR resolver reads the same resolved flag) but staged `['mod']`
   // rather than `[]` because it's a re-host, not a brand-new dark capability.
   appReviewPage: { availability: ['mod'], fliptKey: 'app-review-page' },
+  // Metadata info button on image feed cards. `availability: []` hides it for
+  // EVERYONE, mods included — this is a probe measuring whether anyone misses
+  // it, and a cohort that still sees the button cannot report missing it.
+  // Turning it back on is the expected outcome if people complain, not a
+  // failure. Two things the person flipping it should know:
+  //   - The flag does NOT exist in flipt-state yet, so until someone creates it
+  //     there is no runtime lever at all and restoring the button means a code
+  //     change and a deploy.
+  //   - Enabling it restores the overflow it was hidden to fix (ClickUp
+  //     868krjmvv): on a featured-grid card whose four reaction counts all reach
+  //     four digits, the button wraps onto a second line. Pinned by
+  //     `ImageCard.browser.test.tsx`.
+  imageCardInfoButton: { availability: [], fliptKey: 'image-card-info-button' },
   // Early-adopter opt-in cohort. `availability: []` means static evaluation is false, so
   // when Flipt is UNREACHABLE (isFliptSync → null) nobody is in the cohort. NOT
   // `['user']`/`['public']`: those would fail OPEN during a Flipt outage, which defeats the

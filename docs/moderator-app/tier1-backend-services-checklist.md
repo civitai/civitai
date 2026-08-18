@@ -233,9 +233,7 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 ### `generation/generation.service.ts`  ·  used by: generation-config
 - ~~`getGenerationResources`~~ — **removed** along with the `/moderator/generation` page; the
   generation blacklist now lives on the `ModelVersion.flags` `GenerationDisabled` bit.
-- [ ] `getGenerationEcosystemConfig` — *Redis sysRedis + Flipt (`GENERATION_TESTING`)*
-- [ ] `setGenerationEcosystemConfig`
-- [ ] `getGateRules`
+- [ ] `getGateRules` — *Redis sysRedis; audience tiers resolve via `resolveTestingAccess` (Flipt `GENERATION_TESTING`)*
 - [ ] `setGateRules`
 
 ### User-restriction service  ·  used by: generation-restrictions, prompt-audit-test  ·  **NEW service (extract)**

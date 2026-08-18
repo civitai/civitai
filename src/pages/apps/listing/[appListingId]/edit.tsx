@@ -185,9 +185,12 @@ export default function AppListingEditPage() {
               </Tabs.Panel>
             ) : null}
 
-            {/* 🔴 `context.appBlockId` is non-null whenever this tab is in the set — the
-                media editor is hosted by the BLOCK-keyed `getMyListingForApp`, which is
-                exactly why `editorTabsFor` withholds the tab without one. */}
+            {/* 🔴 `context.appBlockId` is non-null whenever this tab is in the set — THIS
+                PANEL is block-keyed (it passes an `appBlockId` down), which is exactly why
+                `editorTabsFor` withholds the tab without one. Note the host resolver is
+                NOT the constraint any more: `getMyListingForApp` takes `appBlockId` OR
+                `slug` since civitai/civitai#3984. Re-keying this panel onto the slug is
+                civitai/civitai#3893. */}
             {tabs.includes('media') && context.appBlockId ? (
               <Tabs.Panel value="media" pt="md" data-testid="apps-edit-panel-media">
                 <ListingMediaEditor appBlockId={context.appBlockId} />

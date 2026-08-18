@@ -179,6 +179,21 @@ describe('setUserSetting — the merge statement', () => {
   // (`'$N'::jsonb`) still binds the value, so every values-based assertion above stays
   // green — but Postgres then casts the literal two-character text `$N` and rejects it.
   // That is the original defect in a new costume, so pin the emitted shape too.
+  // Every other case here writes `true`. Turning a toggle OFF sends `false`, which must be
+  // STORED as false, not treated as empty: `removeEmpty` dropping falsy would take the key out of
+  // the set half without putting it in the remove half, `patchUserSettings` would take its
+  // empty-patch early return, and the write would silently become a read — green mutation,
+  // optimistic UI showing the switch flipping, and the setting un-turn-off-able after a refresh.
+  it('stores an off toggle as false rather than treating it as empty', async () => {
+    await setUserSetting(USER_ID, { hideBlueBuzzInHeader: false });
+
+    expect(statements).toHaveLength(1);
+    const [merge] = statements;
+    expect(merge.values).toContainEqual(JSON.stringify({ hideBlueBuzzInHeader: false }));
+    // False means store false. Removal is the `undefined` branch, covered below.
+    expect(merge.text).not.toContain('::text[]');
+  });
+
   it('places the payload beside the jsonb cast as a bare placeholder', async () => {
     await setUserSetting(USER_ID, { allowAds: true });
 

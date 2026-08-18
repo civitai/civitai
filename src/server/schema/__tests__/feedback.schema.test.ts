@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createFeedbackSchema } from '~/server/schema/feedback.schema';
+import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/feedback.schema';
 import {
+  FEEDBACK_AREAS,
+  FEEDBACK_FILTER_VALUE_MAX_LENGTH,
   FEEDBACK_IMAGE_ID_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
   FEEDBACK_SESSION_ID_MAX_LENGTH,
+  feedbackAreaFlagKey,
 } from '~/shared/constants/feedback.constants';
 
 /**
@@ -167,5 +170,89 @@ describe('feedback schema — context bounds', () => {
     it('still rejects a message past 2000 characters', () => {
       expect(() => createFeedbackSchema.parse({ ...base, message: 'x'.repeat(2001) })).toThrow();
     });
+  });
+});
+
+/**
+ * The AREA enum is the boundary that decides whether a new feedback surface exists at
+ * all. `feedbackAreaSchema` is `z.enum(FEEDBACK_AREAS)`, so an area missing from that
+ * constant is not a stripped field — it is a REJECTED submission on both procedures,
+ * and the surface is dead in a way no amount of Flipt configuration can revive.
+ *
+ * Areas are plain strings (no Prisma enum, no migration), which is exactly why this
+ * needs a test: nothing else in the stack would notice the omission until a user's
+ * report bounced.
+ */
+describe('feedback areas', () => {
+  const areas = ['bitdex-image-feed', 'apps-marketplace'];
+
+  // Both halves hand-typed. Reading the expectation out of FEEDBACK_AREAS would make
+  // this test follow any future edit instead of pinning the set.
+  it('are exactly the two declared surfaces', () => {
+    expect([...FEEDBACK_AREAS]).toEqual(areas);
+  });
+
+  it.each(areas)('accepts %s on the submit schema', (area) => {
+    const parsed = createFeedbackSchema.parse({ area, message: 'something looked wrong' });
+    expect(parsed.area).toBe(area);
+  });
+
+  it.each(areas)('accepts %s on the getArea schema', (area) => {
+    expect(getFeedbackAreaSchema.parse({ area }).area).toBe(area);
+  });
+
+  it('rejects an area that is not declared', () => {
+    expect(() =>
+      createFeedbackSchema.parse({ area: 'apps-markteplace', message: 'typo in the slug' })
+    ).toThrow();
+    expect(() => getFeedbackAreaSchema.parse({ area: 'models-feed' })).toThrow();
+  });
+
+  /**
+   * The flag key is DERIVED from the slug, so it is never written down anywhere in the
+   * app — but it IS written down by hand in flipt-state's `features.yaml`. These two
+   * literals are that contract. A mismatch fails as "the area is off for everybody",
+   * silently, because an unknown flag resolves false.
+   */
+  it('derive their Flipt flag keys from the slug', () => {
+    expect(feedbackAreaFlagKey('bitdex-image-feed')).toBe('feedback-area-bitdex-image-feed');
+    expect(feedbackAreaFlagKey('apps-marketplace')).toBe('feedback-area-apps-marketplace');
+  });
+});
+
+/**
+ * `context.filters` — the generic per-view bag, and the one place `/apps` reports
+ * user-typed text (its search box). The bound is exported so a caller can clip to it;
+ * these pin that the exported number IS the enforced one.
+ */
+describe('feedback schema — filter value bounds', () => {
+  const parseFilters = (filters: Record<string, unknown>) =>
+    createFeedbackSchema.parse({
+      area: 'apps-marketplace' as const,
+      message: 'the store looked wrong',
+      context: { filters },
+    });
+
+  it('is a 200-character ceiling per value', () => {
+    expect(FEEDBACK_FILTER_VALUE_MAX_LENGTH).toBe(200);
+  });
+
+  it('carries the marketplace view through instead of stripping it', () => {
+    const parsed = parseFilters({ kind: 'offsite', category: 'generation', sort: 'newest' });
+    expect(parsed.context?.filters).toEqual({
+      kind: 'offsite',
+      category: 'generation',
+      sort: 'newest',
+    });
+  });
+
+  it('accepts a value of exactly 200 characters', () => {
+    const parsed = parseFilters({ query: 'q'.repeat(200) });
+    expect(parsed.context?.filters?.query).toHaveLength(200);
+  });
+
+  // REJECTS, does not truncate — the reason the caller has to clip.
+  it('rejects a value of 201 characters rather than clipping it', () => {
+    expect(() => parseFilters({ query: 'q'.repeat(201) })).toThrow();
   });
 });

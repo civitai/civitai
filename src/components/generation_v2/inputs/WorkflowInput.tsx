@@ -39,6 +39,7 @@ import {
   type GateItemState,
 } from '~/shared/data-graph/generation/gates';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 
 // =============================================================================
 // Types
@@ -223,6 +224,14 @@ function WorkflowMenuItem({
             <Text size="sm" fw={isSelected ? 600 : 400}>
               {workflow.label}
             </Text>
+            {/* Gate targets are keyed by graphKey; an alias resolves to its parent. */}
+            <ExperimentalFlask
+              target={{
+                kind: 'workflow',
+                key: workflowOptionById.get(workflow.id)?.graphKey ?? workflow.id,
+              }}
+              size={16}
+            />
             {workflow.isNew && (
               <Badge size="xs" color="green" variant="filled" radius="sm">
                 New

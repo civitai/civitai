@@ -25,7 +25,10 @@ import {
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
-import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
+import {
+  getBlockCheckOwnerIdsForModelComment,
+  throwIfBlockedByOwners,
+} from '~/server/services/block-check.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -113,20 +116,18 @@ export const upsertCommentHandler = async ({
     const { ownerId, locked } = ctx;
     const { modelId } = input;
 
-    if (!input.id) {
-      const parentAuthorId = input.parentId
-        ? (
-            await dbRead.comment.findUnique({
-              where: { id: input.parentId },
-              select: { userId: true },
-            })
-          )?.userId
-        : undefined;
-      await throwIfBlockedByOwners({
-        userId: ctx.user.id,
-        ownerIds: [ownerId, parentAuthorId],
-      });
-    }
+    // `ownerId` is the comment's author (the caller on a create), never the model's owner, so it
+    // can't stand in for the block target. Edits are checked too: a comment written before a block
+    // is otherwise editable into anything afterwards.
+    await throwIfBlockedByOwners({
+      userId: ctx.user.id,
+      ownerIds: await getBlockCheckOwnerIdsForModelComment({
+        commentId: input.id,
+        modelId: input.modelId,
+        parentId: input.parentId,
+      }),
+      isModerator: ctx.user.isModerator,
+    });
 
     // Get model and at least 2 version to confirm access.
     // If model has 1 version, check access to that version. Otherwise, ignore.

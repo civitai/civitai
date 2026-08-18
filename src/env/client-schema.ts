@@ -8,7 +8,6 @@ import { isProd } from './other';
  * To expose them to the client, prefix them with `NEXT_PUBLIC_`.
  */
 export const clientSchema = z.object({
-  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().default(''),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string().default(''),
   NEXT_PUBLIC_CIVITAI_LINK: isProd ? z.url() : z.url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
@@ -26,7 +25,14 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_GPTT_UUID_GREEN: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: z.stringbool().default(true),
-  NEXT_PUBLIC_LOG_TRPC: z.stringbool().default(false),
+  // An empty value reads as unset rather than as a parse error: the read below named
+  // the wrong variable until #4035, so a config carrying a valueless key had been
+  // inert and would otherwise start throwing out of `~/env/client`. Anything else
+  // unparseable still throws, as it does for every other stringbool here.
+  NEXT_PUBLIC_LOG_TRPC: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.stringbool().default(false)
+  ),
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string().optional(),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.url().optional(),
@@ -75,7 +81,6 @@ export const clientSchema = z.object({
  * @type {{ [k in keyof z.infer<typeof clientSchema>]: z.infer<typeof clientSchema>[k] | undefined }}
  */
 export const clientEnv = {
-  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: process.env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION,
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
@@ -93,7 +98,7 @@ export const clientEnv = {
   NEXT_PUBLIC_GPTT_UUID_GREEN: process.env.NEXT_PUBLIC_GPTT_UUID_GREEN,
   NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL ?? process.env.NEXTAUTH_URL,
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: process.env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES,
-  NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRP,
+  NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC,
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
   NEXT_PUBLIC_CHOPPED_ENDPOINT: process.env.NEXT_PUBLIC_CHOPPED_ENDPOINT,

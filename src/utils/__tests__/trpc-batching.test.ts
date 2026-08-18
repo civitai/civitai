@@ -7,10 +7,15 @@ import {
   CACHEABLE_PROCEDURES,
   isLargeQuery,
   isTooLargeToBatch,
+  NEVER_BATCH_PROCEDURES,
   queryRetry,
   setTrpcBatchingEnabled,
   shouldBatch,
 } from '~/utils/trpc';
+import {
+  OBSERVED_MAX_FIRST_PARTY_BATCH_WIDTH,
+  TRPC_MAX_BATCH_SIZE,
+} from '~/shared/constants/trpc.constants';
 
 /**
  * Unit coverage for the tRPC batching split decision (`shouldBatch`) that the
@@ -275,13 +280,132 @@ describe('batch-size gate is distinct from the non-batch GET→POST gate (#1)', 
  * durable: add a new `edgeCacheIt` procedure without excluding it from batching and THIS
  * test fails — the batch link can't silently start de-caching authed feed queries.
  */
+/**
+ * Remove comments from TypeScript source, preserving newlines (so line-oriented parsing
+ * downstream is unaffected) and string/template contents (so a `//` inside a URL literal can't
+ * swallow the rest of the line).
+ *
+ * 🔴 This is the fix for a latent COUPLING bug, not a tidy-up. The derivation below used a bare
+ * `block.includes('edgeCacheIt(')` substring test, which also matched COMMENTED-OUT code —
+ * `image.getGenerationData`'s `edgeCacheIt` is commented out, so it was being derived as
+ * "cacheable" purely because the words were still in the file. With a batch-size cap in place
+ * that stops being harmless: anyone who later made this guard comment-aware would drop
+ * `image.getGenerationData` off the never-batch list, and the client would silently start
+ * batching a per-image query at feed width. Fixing that bug must not be able to open this one,
+ * so the procedure is now pinned separately via `NEVER_BATCH_PROCEDURES` for an independent
+ * reason (see its doc comment) and asserted below.
+ */
+export function stripTsComments(src: string): string {
+  type Mode = 'code' | 'line' | 'block' | 'single' | 'double' | 'template';
+  let mode: Mode = 'code';
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const c2 = src[i + 1];
+    if (mode === 'code') {
+      if (c === '/' && c2 === '/') {
+        mode = 'line';
+        i += 2;
+        continue;
+      }
+      if (c === '/' && c2 === '*') {
+        mode = 'block';
+        i += 2;
+        continue;
+      }
+      if (c === "'") mode = 'single';
+      else if (c === '"') mode = 'double';
+      else if (c === '`') mode = 'template';
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (mode === 'line') {
+      // Keep the newline so line numbering / indent-based block splitting is preserved.
+      if (c === '\n') {
+        mode = 'code';
+        out += c;
+      }
+      i += 1;
+      continue;
+    }
+    if (mode === 'block') {
+      if (c === '*' && c2 === '/') {
+        mode = 'code';
+        i += 2;
+        continue;
+      }
+      if (c === '\n') out += c;
+      i += 1;
+      continue;
+    }
+    // Inside a string/template: copy through, honouring escapes so `\'` doesn't close it.
+    if (c === '\\') {
+      out += c + (c2 ?? '');
+      i += 2;
+      continue;
+    }
+    if (
+      (mode === 'single' && c === "'") ||
+      (mode === 'double' && c === '"') ||
+      (mode === 'template' && c === '`')
+    ) {
+      mode = 'code';
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
+describe('stripTsComments (drift-guard instrument)', () => {
+  // NEGATIVE CONTROL: the guard must NOT see a commented-out call...
+  it('does not report edgeCacheIt( from a line comment', () => {
+    const block = [
+      '  getGenerationData: publicProcedure',
+      '    // TODO: Add edgeCacheIt back after fixing the cache invalidation.',
+      '    // .use(',
+      '    //   edgeCacheIt({ ttl: CacheTTL.day })',
+      '    // )',
+      '    .query(({ input }) => getImageGenerationData(input)),',
+    ].join('\n');
+    expect(block.includes('edgeCacheIt(')).toBe(true); // the OLD substring test was fooled
+    expect(stripTsComments(block).includes('edgeCacheIt(')).toBe(false);
+  });
+
+  it('does not report edgeCacheIt( from a block comment', () => {
+    const block = '  x: publicProcedure\n    /* .use(edgeCacheIt({ ttl: 1 })) */\n    .query(f),';
+    expect(stripTsComments(block).includes('edgeCacheIt(')).toBe(false);
+  });
+
+  // ...POSITIVE CONTROL: and it must still see a real one, or the whole derivation is vacuous
+  // and every "in sync" assertion below passes by finding nothing.
+  it('still reports a real edgeCacheIt( call', () => {
+    const block = '  getAll: publicProcedure\n    .use(edgeCacheIt({ ttl: CacheTTL.hour }))\n';
+    expect(stripTsComments(block).includes('edgeCacheIt(')).toBe(true);
+  });
+
+  it('preserves line count so indent-based block splitting is unaffected', () => {
+    const src = 'a\n// c\n/* b\n b */\nd\n';
+    expect(stripTsComments(src).split('\n').length).toBe(src.split('\n').length);
+  });
+
+  it('does not treat // inside a string literal as a comment', () => {
+    const src = `const u = 'https://x.example/y'; edgeCacheIt({});`;
+    expect(stripTsComments(src).includes('edgeCacheIt(')).toBe(true);
+  });
+});
+
 describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)', () => {
   const routersDir = join(process.cwd(), 'src/server/routers');
 
   // Map `<basename>.router.ts` -> tRPC key prefix from the appRouter registration:
   //   `key: lazy(() => import('.../x.router').then((m) => m.xRouter))`
   const buildFileToKey = (): Record<string, string> => {
-    const index = readFileSync(join(routersDir, 'index.ts'), 'utf8');
+    // Comment-aware for the same reason as the `edgeCacheIt(` scan: a commented-out `lazy()`
+    // registration is not a registered router, and must not mint a key.
+    const index = stripTsComments(readFileSync(join(routersDir, 'index.ts'), 'utf8'));
     const map: Record<string, string> = {};
     const re = /(\w+):\s*lazy\(\(\)\s*=>\s*import\(['"]([^'"]+)['"]\)/g;
     let m: RegExpExecArray | null;
@@ -314,7 +438,9 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
 
     for (const file of readdirSync(routersDir)) {
       if (!file.endsWith('.router.ts')) continue;
-      const content = readFileSync(join(routersDir, file), 'utf8');
+      // Comment-aware: a commented-out `edgeCacheIt(` is NOT an applied middleware. See
+      // `stripTsComments` above for why this correction is coupled to NEVER_BATCH_PROCEDURES.
+      const content = stripTsComments(readFileSync(join(routersDir, file), 'utf8'));
       if (!content.includes('edgeCacheIt(')) continue;
       const key = fileToKey[file];
       if (!key) {
@@ -342,6 +468,89 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
     const stale = listed.filter((p) => !derived.has(p));
     expect({ notListed, stale }).toEqual({ notListed: [], stale: [] });
     expect(listed).toEqual(expected);
+  });
+
+  /**
+   * The other half of the decoupling. `image.getGenerationData` used to appear in the derived
+   * set ONLY because the substring test matched its commented-out `edgeCacheIt`. Now that the
+   * derivation is comment-aware it correctly does not — so this asserts both facts at once:
+   * the guard no longer counts commented-out code, AND the procedure is still excluded from
+   * batching, by an independent mechanism that the derivation cannot reach.
+   */
+  it.each([
+    ['image.router.ts', 'image', 'getGenerationData'],
+    ['event.router.ts', 'event', 'getData'],
+  ])('does not derive %s#%s (its edgeCacheIt is commented out)', (file, key, procedure) => {
+    const raw = readFileSync(join(routersDir, file), 'utf8');
+    const block = procedureBlocks(stripTsComments(raw)).find((b) => b.name === procedure);
+
+    expect(buildFileToKey()[file]).toBe(key); // guard is looking at the right router
+    expect(block).toBeDefined();
+    // Raw source still contains the words somewhere — this is exactly what the OLD substring
+    // guard tripped on, and why both procedures looked derived when neither is.
+    expect(raw.includes('edgeCacheIt(')).toBe(true);
+    expect(block!.block.includes('edgeCacheIt(')).toBe(false);
+    expect(CACHEABLE_PROCEDURES.has(`${key}.${procedure}`)).toBe(false);
+  });
+
+  it('derives a procedure whose edgeCacheIt is REAL, in the same file', () => {
+    // Positive control for the pair above: the comment-aware strip must not have simply stopped
+    // detecting `edgeCacheIt` in `event.router.ts` altogether, which would make that assertion
+    // pass for the wrong reason.
+    expect(CACHEABLE_PROCEDURES.has('event.getTeamScores')).toBe(true);
+    expect(CACHEABLE_PROCEDURES.has('image.getResources')).toBe(true);
+  });
+});
+
+describe('NEVER_BATCH_PROCEDURES (independent of the edge-cache derivation)', () => {
+  beforeEach(() => {
+    setTrpcBatchingEnabled(true);
+    setWindowAuthed(true);
+  });
+  afterEach(() => {
+    setTrpcBatchingEnabled(false);
+    clearWindow();
+  });
+
+  it('pins both pending-cacheable procedures to the never-batch set', () => {
+    expect([...NEVER_BATCH_PROCEDURES].sort()).toEqual([
+      'event.getData',
+      'image.getGenerationData',
+    ]);
+  });
+
+  it.each([...NEVER_BATCH_PROCEDURES])(
+    'keeps %s unbatched even with every other condition satisfied',
+    (path) => {
+      // Same op shape that DOES batch, differing only in path — so a failure here can only be
+      // attributable to the never-batch set, not to some other condition failing.
+      expect(shouldBatch(op({ path: 'model.getInfinite' }))).toBe(true);
+      expect(shouldBatch(op({ path }))).toBe(false);
+    }
+  );
+
+  it('does not overlap CACHEABLE_PROCEDURES (one reason per procedure)', () => {
+    const overlap = [...NEVER_BATCH_PROCEDURES].filter((p) => CACHEABLE_PROCEDURES.has(p));
+    expect(overlap).toEqual([]);
+  });
+});
+
+describe('batch-size cap constants', () => {
+  /**
+   * Pins the widest batch first-party traffic has been measured to emit BELOW the cap. Tightening
+   * `TRPC_MAX_BATCH_SIZE` under real traffic then fails here rather than in production. If a
+   * wider first-party batch is genuinely measured, update
+   * `OBSERVED_MAX_FIRST_PARTY_BATCH_WIDTH` — and re-check the cap while doing it.
+   */
+  it('leaves headroom over the widest observed first-party batch', () => {
+    expect(OBSERVED_MAX_FIRST_PARTY_BATCH_WIDTH).toBeLessThan(TRPC_MAX_BATCH_SIZE);
+    // Not merely "below" — a cap one call above real traffic would clip on any new fan-out.
+    expect(TRPC_MAX_BATCH_SIZE).toBeGreaterThanOrEqual(2 * OBSERVED_MAX_FIRST_PARTY_BATCH_WIDTH);
+  });
+
+  it('is a positive integer (a non-integer or 0 would reject every batch)', () => {
+    expect(Number.isInteger(TRPC_MAX_BATCH_SIZE)).toBe(true);
+    expect(TRPC_MAX_BATCH_SIZE).toBeGreaterThan(0);
   });
 });
 

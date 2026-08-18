@@ -35,7 +35,7 @@
  * 🔴 WHY THE COLLECTOR IS PER-REQUEST. It is attached to the fresh `externalCtx`
  * object literal `buildGenerationContext` constructs on every call. It must
  * NEVER be hung off anything reachable from that function's awaited inputs
- * (`getGenerationStatus`, `getGenerationEcosystemConfig`, `getGateRules`) — those
+ * (`getGenerationStatus`, `resolveTestingAccess`, `getGateRules`) — those
  * read process/redis-level caches, and a mutable array behind one of them would
  * accumulate substitutions ACROSS USERS and then report one user's requested
  * model id to another.

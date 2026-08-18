@@ -40,7 +40,7 @@ import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import { resourceSchema, type ResourceData } from '~/shared/data-graph/generation/common';
 import {
   getGateRules,
-  getGenerationEcosystemConfig,
+  resolveTestingAccess,
   getResourceData,
   getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
@@ -299,9 +299,9 @@ export async function buildGenerationContext(
   user: { id?: number; isModerator?: boolean } | undefined,
   surface: GenerationSurface
 ): Promise<GenerationContextResult> {
-  const [status, ecosystemConfig, gateRules] = await Promise.all([
+  const [status, hasTestingAccess, gateRules] = await Promise.all([
     getGenerationStatus(),
-    getGenerationEcosystemConfig(user ?? {}),
+    resolveTestingAccess(user ?? {}),
     getGateRules(),
   ]);
   const limits = status.limits[userTier];
@@ -333,11 +333,11 @@ export async function buildGenerationContext(
       gateRules: applicableRulesFor(gateRules, {
         isModerator: !!user?.isModerator,
         isMember: userTier !== 'free',
-        hasTestingAccess: ecosystemConfig.hasTestingAccess,
+        hasTestingAccess,
       }),
       // 🔴 PER-REQUEST, and attached to THIS freshly-built object literal only
-      // (issue #3520). `status` / `ecosystemConfig` / `gateRules` above are
-      // awaited from process- and redis-level CACHES; hanging a mutable
+      // (issue #3520). `status` / `gateRules` above are awaited from process-
+      // and redis-level CACHES; hanging a mutable
       // collector off anything reachable through them would accumulate
       // substitutions across users and leak one caller's requested model id into
       // another caller's snapshot. This function returns a brand-new object on

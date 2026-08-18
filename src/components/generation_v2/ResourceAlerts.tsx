@@ -4,17 +4,17 @@
  * Displays alerts related to selected resources including:
  * - Unstable resources (high failure rate)
  * - Content restricted resources (minor/SFW flagged)
- * - Experimental ecosystem alerts (based on ecosystem config)
  * - Ready state alerts (resources need to be downloaded)
+ *
+ * Experimental state is not here — it lives in `Experimental.tsx`, marked by a
+ * flask at each level a rule can target and warned about above the submit row.
  */
 
 import { Alert, List, Text } from '@mantine/core';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { ecosystemByKey, isEcosystemExperimental } from '~/shared/constants/basemodel.constants';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
 import { useWhatIfContext } from './WhatIfProvider';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 // =============================================================================
 // Types
@@ -142,48 +142,6 @@ export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
         </Alert>
       )}
     </div>
-  );
-}
-
-// =============================================================================
-// Experimental Model Alert
-// =============================================================================
-
-interface ExperimentalModelAlertProps {
-  /** The ecosystem key (e.g., 'Qwen', 'SD3') */
-  ecosystem?: string;
-}
-
-/**
- * Displays an alert when the selected ecosystem has experimental base models.
- * Should be used inside a Controller for 'baseModel'.
- *
- * Sources unioned: the static `isEcosystemExperimental` check (derived from
- * base-model `experimental` flags) plus `experimentalEcosystems` from the
- * Redis-backed `generation:ecosystem-config` — operators flip the latter to
- * mark an ecosystem experimental without a code change.
- */
-export function ExperimentalModelAlert({ ecosystem }: ExperimentalModelAlertProps) {
-  const { experimentalEcosystems = [] } = useGenerationConfig();
-  const isExperimental = ecosystem
-    ? isEcosystemExperimental(ecosystem) || experimentalEcosystems.includes(ecosystem)
-    : false;
-
-  if (!isExperimental || !ecosystem) {
-    return null;
-  }
-
-  // Get ecosystem display name for the message
-  const ecoRecord = ecosystemByKey.get(ecosystem);
-  const displayName = ecoRecord?.displayName ?? ecosystem;
-
-  return (
-    <DismissibleAlert color="yellow" title="Experimental Build" radius="md" id={ecosystem}>
-      <Text size="xs">
-        {displayName} support is currently in an experimental phase. Some features may not work as
-        expected. Please report any issues you encounter.
-      </Text>
-    </DismissibleAlert>
   );
 }
 

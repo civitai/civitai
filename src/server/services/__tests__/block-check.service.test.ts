@@ -18,6 +18,7 @@ vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser }));
 
 import {
   getBlockCheckOwnerIds,
+  getBlockCheckOwnerIdsForModelComment,
   throwIfBlockedByEntityOwner,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
@@ -56,9 +57,26 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     ]);
   });
 
-  it('resolves the legacy comment (commentOld) author', async () => {
-    mockDb.comment.findUnique.mockResolvedValueOnce({ userId: OWNER });
-    expect(await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: 1 })).toEqual([OWNER]);
+  // Author AND the model owner, matching the `comment` branch below. Author alone left the
+  // reaction path (the only `commentOld` consumer) open under a blocker's model.
+  it('resolves the legacy comment (commentOld) author and the model owner', async () => {
+    const COMMENT_AUTHOR = 55;
+    mockDb.comment.findUnique.mockResolvedValueOnce({ userId: COMMENT_AUTHOR, modelId: 3 });
+    mockDb.model.findUnique.mockResolvedValueOnce({ userId: OWNER });
+
+    expect(await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: 1 })).toEqual([
+      COMMENT_AUTHOR,
+      OWNER,
+    ]);
+    expect(mockDb.model.findUnique).toHaveBeenCalledWith({
+      where: { id: 3 },
+      select: { userId: true },
+    });
+  });
+
+  it('resolves nothing for a legacy comment that no longer exists', async () => {
+    mockDb.comment.findUnique.mockResolvedValueOnce(null);
+    expect(await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: 1 })).toEqual([]);
   });
 
   it('reply target (comment): resolves BOTH parent author and root content owner', async () => {
@@ -97,6 +115,35 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     expect(owners).toEqual(expect.arrayContaining([PARENT_AUTHOR, OWNER]));
   });
 
+  // A reply resolves its root owner from columns selected off `Thread`. Both halves
+  // matter: the column has to be SELECTED and the owner branch has to exist. The
+  // select assertion is the half a mocked db can't catch by return value alone.
+  it('resolves the root owner for a reply in an appListing thread', async () => {
+    const PARENT_AUTHOR = 55;
+    mockDb.commentV2.findUnique.mockResolvedValueOnce({
+      userId: PARENT_AUTHOR,
+      thread: { rootThreadId: null, appListingId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
+
+    const owners = await getBlockCheckOwnerIds({ entityType: 'comment', entityId: 1 });
+    expect(owners).toEqual(expect.arrayContaining([PARENT_AUTHOR, OWNER]));
+  });
+
+  it('selects every owner-bearing thread column when resolving a reply root', async () => {
+    mockDb.commentV2.findUnique.mockResolvedValueOnce({
+      userId: 55,
+      thread: { rootThreadId: 999 },
+    });
+    mockDb.thread.findUnique.mockResolvedValueOnce({ rootThreadId: null });
+
+    await getBlockCheckOwnerIds({ entityType: 'comment', entityId: 1 });
+
+    const select = mockDb.thread.findUnique.mock.calls[0]?.[0]?.select ?? {};
+    for (const column of ['challengeId', 'appListingId'])
+      expect(select).toHaveProperty(column, true);
+  });
+
   it('resolves the model3d owner', async () => {
     mockDb.model3D.findUnique.mockResolvedValueOnce({ userId: OWNER });
     expect(await getBlockCheckOwnerIds({ entityType: 'model3d', entityId: 1 })).toEqual([OWNER]);
@@ -116,14 +163,108 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     ]);
   });
 
-  it('returns [] for unowned/unknown entity types (no false blocks)', async () => {
-    expect(await getBlockCheckOwnerIds({ entityType: 'appListing', entityId: 1 })).toEqual([]);
+  it('resolves the appListing owner by its integer surrogate, not its ULID', async () => {
+    mockDb.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'appListing', entityId: 42 })).toEqual([
+      OWNER,
+    ]);
+    expect(mockDb.appListing.findUnique).toHaveBeenCalledWith({
+      where: { serialId: 42 },
+      select: { userId: true },
+    });
+  });
+
+  it('resolves the challenge creator', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({ createdById: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'challenge', entityId: 1 })).toEqual([OWNER]);
+  });
+
+  it('returns [] for a system challenge with no creator', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({ createdById: null });
     expect(await getBlockCheckOwnerIds({ entityType: 'challenge', entityId: 1 })).toEqual([]);
   });
 
   it('returns [] when the entity does not exist', async () => {
     mockDb.image.findUnique.mockResolvedValueOnce(null);
     expect(await getBlockCheckOwnerIds({ entityType: 'image', entityId: 1 })).toEqual([]);
+  });
+});
+
+describe('getBlockCheckOwnerIdsForModelComment — legacy model comments', () => {
+  const PARENT_AUTHOR = 55;
+  const OTHER_OWNER = 200;
+  const STORED_MODEL = 1;
+  const REQUEST_MODEL = 2;
+  const PARENT_ID = 9;
+
+  // Keyed on the id asked for rather than on call order: the resolver reads models and comments
+  // through the shared switch, so a `…Once` queue here would be consumed by whichever lookup ran
+  // first and the assertion would pass on an empty answer.
+  const owners = ({
+    models = {},
+    comments = {},
+  }: {
+    models?: Record<number, number>;
+    comments?: Record<number, { userId: number; modelId: number }>;
+  }) => {
+    mockDb.model.findUnique.mockImplementation(async (args: unknown) => {
+      const id = (args as { where: { id: number } }).where.id;
+      return models[id] ? { userId: models[id] } : null;
+    });
+    mockDb.comment.findUnique.mockImplementation(async (args: unknown) => {
+      const id = (args as { where: { id: number } }).where.id;
+      return comments[id] ?? null;
+    });
+  };
+
+  it('resolves the model owner for a new top-level comment', async () => {
+    owners({ models: { [REQUEST_MODEL]: OWNER } });
+    expect(await getBlockCheckOwnerIdsForModelComment({ modelId: REQUEST_MODEL })).toEqual([OWNER]);
+  });
+
+  it('resolves the parent author as well as the model owner for a reply', async () => {
+    owners({
+      models: { [REQUEST_MODEL]: OWNER },
+      comments: { [PARENT_ID]: { userId: PARENT_AUTHOR, modelId: REQUEST_MODEL } },
+    });
+    expect(
+      await getBlockCheckOwnerIdsForModelComment({ modelId: REQUEST_MODEL, parentId: PARENT_ID })
+    ).toEqual([OWNER, PARENT_AUTHOR]);
+  });
+
+  it('resolves an edit target from the stored comment, not only the request', async () => {
+    // Stored on a model owned by OTHER_OWNER; the request re-homes it onto one owned by OWNER.
+    owners({
+      models: { [STORED_MODEL]: OTHER_OWNER, [REQUEST_MODEL]: OWNER },
+      comments: { 5: { userId: 42, modelId: STORED_MODEL } },
+    });
+
+    expect(
+      await getBlockCheckOwnerIdsForModelComment({ commentId: 5, modelId: REQUEST_MODEL })
+    ).toEqual([OWNER, OTHER_OWNER]);
+    expect(mockDb.comment.findUnique).toHaveBeenCalledWith({
+      where: { id: 5 },
+      select: { modelId: true, parentId: true },
+    });
+  });
+
+  it('resolves the stored parent author on an edit', async () => {
+    owners({
+      models: { [STORED_MODEL]: OWNER },
+      comments: {
+        5: { userId: 42, modelId: STORED_MODEL, parentId: PARENT_ID } as never,
+        [PARENT_ID]: { userId: PARENT_AUTHOR, modelId: STORED_MODEL },
+      },
+    });
+
+    expect(
+      await getBlockCheckOwnerIdsForModelComment({ commentId: 5, modelId: STORED_MODEL })
+    ).toEqual([OWNER, PARENT_AUTHOR]);
+  });
+
+  it('returns [] when nothing resolves', async () => {
+    owners({});
+    expect(await getBlockCheckOwnerIdsForModelComment({ commentId: 5 })).toEqual([]);
   });
 });
 
@@ -134,6 +275,33 @@ describe('throwIfBlockedByEntityOwner — enforcement', () => {
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'image', entityId: 1 })
     ).rejects.toThrow();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+  });
+
+  // `commentOld` has one consumer, `toggleReaction` (reaction.service.ts) — the legacy comment
+  // surface has no reaction of its own. Widening the arm to the model owner therefore changes
+  // reaction behaviour: reacting to somebody else's comment under a blocker's model now refuses.
+  it('refuses a reaction on a legacy comment when the MODEL owner blocks, not just the author', async () => {
+    const COMMENT_AUTHOR = 55;
+    mockDb.comment.findUnique.mockResolvedValue({ userId: COMMENT_AUTHOR, modelId: 3 });
+    mockDb.model.findUnique.mockResolvedValue({ userId: OWNER });
+    amIBlockedByUser.mockImplementation(
+      async (args) => (args as { targetUserId: number }).targetUserId === OWNER
+    );
+
+    await expect(
+      throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'commentOld', entityId: 1 })
+    ).rejects.toThrow();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+  });
+
+  it('allows that reaction when neither the author nor the model owner blocks', async () => {
+    mockDb.comment.findUnique.mockResolvedValue({ userId: 55, modelId: 3 });
+    mockDb.model.findUnique.mockResolvedValue({ userId: OWNER });
+
+    await expect(
+      throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'commentOld', entityId: 1 })
+    ).resolves.toBeUndefined();
     expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
   });
 

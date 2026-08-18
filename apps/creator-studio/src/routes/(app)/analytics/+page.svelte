@@ -224,10 +224,17 @@
     {/each}
   </section>
   {#if data.allTime}
-    <p class="mb-6 text-xs text-dark-3">
-      All-time on your images: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong>
-      reactions ·
-      <strong class="text-dark-1">{num(data.allTime.comments)}</strong> comments
+    <!-- The two halves have different scopes, so the sentence names each one. Reactions are all-content (that is
+         what `reactions_owner_scores` aggregates, and it keeps this in agreement with the profile); comments are
+         images only, replies included, and the creator's own comments deliberately excluded — for some creators
+         those were 71% of the raw total, on a page about their audience. The sentence spends its words on scope
+         and nothing else: scope is what was wrong here, twice, and a creator has no prior about replies to
+         violate. `text-sm`, not `text-xs text-dark-3` — the most-qualified line on the page shouldn't also be
+         the faintest. -->
+    <p class="mb-6 text-sm text-dark-2">
+      All-time: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong>
+      reactions across your content ·
+      <strong class="text-dark-1">{num(data.allTime.comments)}</strong> comments on your images
     </p>
   {/if}
 

@@ -67,14 +67,6 @@ import {
   SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
-import type {
-  GenerationEcosystemConfig,
-  GenerationEcosystemContext,
-} from '~/server/schema/generation.schema';
-import {
-  DEFAULT_GENERATION_ECOSYSTEM_CONFIG,
-  generationEcosystemConfigSchema,
-} from '~/server/schema/generation.schema';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   getBaseModelEngine,
@@ -702,43 +694,10 @@ export async function getUnstableResources() {
 }
 
 /**
- * Loads the operator-set ecosystem config (now just `experimentalEcosystems` —
- * an alert flag, not a gate) from Redis and resolves the `generation-testing`
- * Flipt flag for the given user in parallel. `hasTestingAccess` is still needed
- * to resolve the `testers` tier of the gate rules.
- *
- * Mods are always treated as having testing access. Pass an empty user
- * object for unauthenticated/anonymous calls — `hasTestingAccess` will be
- * `false`.
+ * Whether the user passes the `generation-testing` Flipt flag — the `testers`
+ * tier of the gate rules. Mods always do; anonymous callers never do.
  */
-export async function getGenerationEcosystemConfig(
-  user: { id?: number; isModerator?: boolean } = {}
-): Promise<GenerationEcosystemContext> {
-  const [cached, hasTestingAccess] = await Promise.all([
-    // Wall-clock deadline: runs in getGenerationConfig's Promise.all on every
-    // gen submit — a silent sysRedis half-open would park the whole submit.
-    withSysReadDeadline(
-      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
-    )
-      .then((data) => (data ? fromJson<Partial<GenerationEcosystemConfig>>(data) : null))
-      .catch((err) => {
-        // fallback to default if redis fails (DOWN or SLOW/deadline)
-        logSysRedisFailOpen('read-degraded', 'getGenerationEcosystemConfig', err);
-        return null;
-      }),
-    resolveTestingAccess(user),
-  ]);
-
-  // Parse fills any missing fields with their schema defaults; on a corrupt
-  // value fall back to the default (fail-open).
-  const parsed = generationEcosystemConfigSchema.safeParse(cached ?? {});
-  return {
-    ...(parsed.success ? parsed.data : DEFAULT_GENERATION_ECOSYSTEM_CONFIG),
-    hasTestingAccess,
-  };
-}
-
-async function resolveTestingAccess(user: {
+export async function resolveTestingAccess(user: {
   id?: number;
   isModerator?: boolean;
 }): Promise<boolean> {
@@ -749,25 +708,13 @@ async function resolveTestingAccess(user: {
   });
 }
 
-/**
- * Persists the operator-set ecosystem gating config to Redis. Used by the
- * moderator UI at `/moderator/generation-config`. The shape matches
- * `GenerationEcosystemConfig`; arrays are written as-is, no merging with
- * the previous value, so the form is the single source of truth for what
- * gets stored.
- */
-export async function setGenerationEcosystemConfig(input: GenerationEcosystemConfig) {
-  await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config', toJson(input));
-  return input;
-}
-
 const gateRulesArraySchema = z.array(gateRuleSchema);
 
 /**
  * The operator-authored gate rules (the normalized "rules" model). Stored as a
- * single JSON array under `generation:gate-rules`; starts empty and coexists
- * with the legacy `generation:ecosystem-config` lists + self-hosted toggle.
- * Fail-open to `[]` so a bad/missing value never blocks generation.
+ * single JSON array under `generation:gate-rules`; the only gating store, though
+ * it coexists with the self-hosted toggle. Fail-open to `[]` so a bad/missing
+ * value never blocks generation.
  */
 export async function getGateRules(): Promise<GateRule[]> {
   // Wall-clock deadline: getGateRules runs in getGenerationConfig's
@@ -793,12 +740,6 @@ export async function setGateRules(rules: GateRule[]): Promise<GateRule[]> {
 
 export type GenerationConfig = {
   unstableResources: number[];
-  /**
-   * Ecosystem keys that should display the "experimental build" alert in
-   * the generator UI. Surfaced to the client so `ExperimentalModelAlert`
-   * can union this list with the static `isEcosystemExperimental` check.
-   */
-  experimentalEcosystems: string[];
   /**
    * Self-hosted ecosystem keys disabled FOR THIS USER, resolved against the
    * `selfHostedMode` toggle + the user's membership/mod status. Shown-but-disabled
@@ -845,16 +786,16 @@ export function getSelfHostedDisabledEcosystems({
 
 /**
  * Composed config returned to clients in a single round-trip. Bundles unstable
- * resources (set by the `resource-gen-availability` cron), the experimental-
- * ecosystem alert list, the self-hosted toggle state, and the user's applicable
- * gate rules — everything the generator UI needs in one query.
+ * resources (set by the `resource-gen-availability` cron), the self-hosted
+ * toggle state, and the user's applicable gate rules — everything the generator
+ * UI needs in one query.
  */
 export async function getGenerationConfig(
   user: { id?: number; isModerator?: boolean; tier?: string } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, ecosystemConfig, status, gateRules] = await Promise.all([
+  const [unstableResources, hasTestingAccess, status, gateRules] = await Promise.all([
     getUnstableResources(),
-    getGenerationEcosystemConfig(user),
+    resolveTestingAccess(user),
     getGenerationStatus(),
     getGateRules(),
   ]);
@@ -862,7 +803,6 @@ export async function getGenerationConfig(
   const isMember = (user.tier ?? 'free') !== 'free';
   return {
     unstableResources,
-    experimentalEcosystems: ecosystemConfig.experimentalEcosystems,
     selfHostedMode,
     selfHostedDisabledEcosystems: getSelfHostedDisabledEcosystems({
       selfHostedMode,
@@ -872,7 +812,7 @@ export async function getGenerationConfig(
     gateRules: applicableRulesFor(gateRules, {
       isModerator: !!user.isModerator,
       isMember,
-      hasTestingAccess: ecosystemConfig.hasTestingAccess,
+      hasTestingAccess,
     }),
   };
 }

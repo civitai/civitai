@@ -135,6 +135,33 @@ describe('removeCollectionItem authorization', () => {
     });
   });
 
+  // The save modal offers Remove on the strength of "you added this", so refusing it here left a
+  // Contributor with a button that 401s.
+  it('allows whoever added the row to remove it', async () => {
+    arrangeCollection({
+      write: 'Review',
+      item: { id: ITEM_ROW_ID, addedById: OUTSIDER_ID, note: null },
+    });
+
+    await expect(remove({ userId: OUTSIDER_ID })).resolves.toBeTruthy();
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [ITEM_ROW_ID] } },
+    });
+  });
+
+  // Removal takes every row for the entity, so holding one of them is not authorization over the
+  // rest — otherwise adding a duplicate would be enough to delete someone else's entry.
+  it('rejects a submitter when another row for the same entity is not theirs', async () => {
+    arrangeCollection({ write: 'Review' });
+    mockDbWrite.$queryRaw.mockResolvedValue([
+      { id: ITEM_ROW_ID, addedById: OUTSIDER_ID, note: null },
+      { id: ITEM_ROW_ID + 1, addedById: COLLECTION_OWNER_ID, note: null },
+    ]);
+
+    await expect(remove({ userId: OUTSIDER_ID })).rejects.toThrow(/permission/i);
+    expect(mockDbWrite.collectionItem.deleteMany).not.toHaveBeenCalled();
+  });
+
   it('allows the collection owner to remove any entry', async () => {
     arrangeCollection({ write: 'Review' });
 

@@ -1,4 +1,4 @@
-import { Button, Tooltip } from '@mantine/core';
+import { Button, Text, Tooltip } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
@@ -73,6 +73,24 @@ export function StickerPlacementBar({
   // Approved plus the viewer's own pending, which is what the toggle reveals.
   const total = count + pending;
 
+  /**
+   * How much of this creator's free capacity is still open.
+   *
+   * ⚠️ `freeSlotsRemaining === 0` covers two different facts and only
+   * `freeSlots` tells them apart: the resolver short-circuits the reservation
+   * count when there is no capacity, so zero is both "this creator takes no free
+   * placements" and "their slots are all currently held". The first has nothing
+   * to say and the second does, because a slot comes back on a decline.
+   *
+   * Both numbers ride on the space query this bar already makes, so the count
+   * costs nothing extra. It is a display number and stale by construction — the
+   * claim re-counts under a lock — which is why the button offers rather than
+   * promises.
+   */
+  const freeSlots = space?.freeSlots ?? 0;
+  const freeRemaining = space?.freeSlotsRemaining ?? 0;
+  const showsFree = canPlace && freeSlots > 0;
+
   // The invitation needs a zero that is KNOWN to be zero. `total` is fed by two
   // separate queries and a failure of either reads as empty, so an image with
   // stickers would otherwise show the invitation — and a press there opens a
@@ -128,14 +146,35 @@ export function StickerPlacementBar({
         )}
 
         {canPlace && (
-          <Tooltip label={`Place a sticker · ${space?.price} Buzz`} withArrow>
+          <Tooltip
+            /**
+             * 🔴 The price, always — never "free".
+             *
+             * `freeRemaining` is the CREATOR's capacity and says nothing about
+             * this viewer: somebody who has spent today's allowance, or already
+             * free-placed on this image, would be promised free and then pay a
+             * number they were never shown. Only the standing query answers that,
+             * and this bar deliberately does not make it — it renders per feed
+             * card, so it would be one request per card.
+             *
+             * So the bar states the fact it has (the count beside this, which is
+             * about the creator) and makes no claim about the offer. The offer is
+             * made in the tray, where the standing is known.
+             */
+            label={`Place a sticker · ${space?.price} Buzz`}
+            withArrow
+          >
             <Button
               size="compact-sm"
               radius="xl"
               variant="light"
               color="yellow"
               onClick={() => openTray(imageId)}
-              aria-label="Place a sticker"
+              aria-label={
+                showsFree
+                  ? `Place a sticker · ${freeRemaining} of ${freeSlots} free`
+                  : 'Place a sticker'
+              }
               // A plus rather than a second sticker glyph: beside a count of
               // stickers it reads as "add one" without a word, which is what
               // keeps the fused control narrow enough to belong in this row.
@@ -143,9 +182,26 @@ export function StickerPlacementBar({
               // Last, and merged over whatever the row's styling set: at zero
               // the plus is half the invitation, so it has to carry the same
               // tint the chip does or the pair reads as two unrelated controls.
-              style={{ ...buttonStyling?.('BuzzTip')?.style, ...(inviting ? inviteStyle : null) }}
+              //
+              // A free slot borrows the same tint for the same reason it exists:
+              // it is the row's own "there is something for you here" language,
+              // and inventing a second one for the free tier would make the two
+              // states compete rather than agree.
+              style={{
+                ...buttonStyling?.('BuzzTip')?.style,
+                ...(inviting || freeRemaining > 0 ? inviteStyle : null),
+              }}
             >
               <IconPlus size={16} stroke={2.5} />
+              {/* One number. Rendered even at zero remaining, because a full
+                  space is a thing worth knowing — a slot comes back on a
+                  decline — while a creator who takes no free placements has
+                  nothing to say and gets no label at all. */}
+              {showsFree && (
+                <Text size="xs" fw={600} className="ml-1">
+                  {freeRemaining} of {freeSlots} free
+                </Text>
+              )}
             </Button>
           </Tooltip>
         )}
