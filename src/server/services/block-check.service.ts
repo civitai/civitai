@@ -332,11 +332,8 @@ export async function getBlockCheckOwnerIds({
       });
       if (!r) return [];
       const ids = new Set<number>([r.userId]);
-      const model = await dbRead.model.findUnique({
-        where: { id: r.modelId },
-        select: { userId: true },
-      });
-      if (model) ids.add(model.userId);
+      for (const owner of await getBlockCheckOwnerIds({ entityType: 'model', entityId: r.modelId }))
+        ids.add(owner);
       return [...ids];
     }
     case 'model3d': {

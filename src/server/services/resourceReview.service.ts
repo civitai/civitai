@@ -340,7 +340,6 @@ async function throwIfBlockedByModelOwners({
   isModerator?: boolean;
   modelIds: Array<number | null | undefined>;
 }) {
-  if (isModerator) return;
   const ids = [...new Set(modelIds.filter((x): x is number => !!x))];
   const ownerIds = (
     await Promise.all(
