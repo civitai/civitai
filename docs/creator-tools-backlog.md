@@ -80,6 +80,18 @@ they are a decision or a verification, not a known way in.
       represents a submitted model, so a model whose first image is rated above the collection's
       limit is rejected on presentation grounds even when it has qualifying images. This is the
       direct cause of otherwise-valid SFW event submissions being turned away.
+- [ ] **Let a model present as SFW while its gallery may carry mature content.** A creator
+      building on a base model whose licence restricts mature use wants to publish and promote the
+      model as SFW — SFW name, SFW cover, SFW official images — without that presentation being
+      contradicted by what the community later posts to its gallery. Two capabilities are missing: a
+      deliberate SFW badge that states how the model is presented rather than being inferred from
+      its images, and the ability to suppress mature images in the gallery of a model published
+      under a licence that forbids them. The second is only needed for models carrying a provider
+      badge, so scope it to those rather than building a general gallery control.
+  - [ ] Answer the creator-facing question first, separately from any of the above: whether
+        publishing a mature derivative of a licence-restricted base model puts the creator's own
+        account at risk. It is a policy answer, it needs no code, and it is currently blocking
+        creators from starting the work.
 
 ## P3 — model management friction
 
@@ -112,7 +124,12 @@ they are a decision or a verification, not a known way in.
       (yellow) balance.
 - [ ] **Add a models-sold-today counter.** Creators track daily sales manually. A running count for
       the current day, visible without opening analytics, covers the need.
-- [ ] **Add video categories to the leaderboards.** Video creators have no leaderboard to place on.
+- [ ] **Add video leaderboards, and all-time leaderboards.** Video creators have no leaderboard to
+      place on at all. Requested shape: a video board split SFW / mature over the trailing 30 days,
+      and an equivalent split for video *model* creators — splitting further by individual model was
+      judged too granular. Separately, every leaderboard today covers a trailing 30 days and there is
+      no all-time board of any kind, so creators with a long back catalogue have nowhere that
+      reflects it. The all-time request is independent of video and can ship on its own.
 
 ## P4 — discoverability and reach
 
