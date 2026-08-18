@@ -14,7 +14,6 @@ import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
-import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { parseCollectionImageMeta } from '~/server/search-index/collection-image-meta';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -169,7 +168,7 @@ const transformData = async ({
       const collectionImage = image
         ? {
             ...image,
-            meta: parseCollectionImageMeta(image.meta as ImageMetaProps),
+            meta: parseCollectionImageMeta(image.meta),
             tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
           }
         : null;
@@ -179,7 +178,7 @@ const transformData = async ({
         .filter(isDefined)
         .map((i) => ({
           ...i,
-          meta: parseCollectionImageMeta(i.meta as ImageMetaProps),
+          meta: parseCollectionImageMeta(i.meta),
           tags: tags.filter((t) => t.imageId === i.id).map((t) => ({ id: t.tagId })),
         }));
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;

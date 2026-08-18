@@ -1,4 +1,3 @@
-import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 
 /**
@@ -17,7 +16,7 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
  */
 const collectionImageMetaSchema = imageGenerationSchema.pick({ prompt: true }).partial();
 
-export const parseCollectionImageMeta = (meta: ImageMetaProps) => {
+export const parseCollectionImageMeta = (meta: unknown): { prompt?: string } => {
   const parsed = collectionImageMetaSchema.safeParse(meta);
   return parsed?.success ? parsed.data : {};
 };

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseCollectionImageMeta } from '~/server/search-index/collection-image-meta';
 
 /**
@@ -37,7 +36,7 @@ const richMeta = {
   civitaiResources: [{ type: 'lora', modelVersionId: 99, weight: 0.8 }],
   additionalResources: [{ name: 'x', type: 'lora', strength: 1, air: 'urn:air:x' }],
   comfy: '{"nodes":[]}',
-} as unknown as ImageMetaProps;
+};
 
 describe('parseCollectionImageMeta', () => {
   it('ships prompt and drops every other generation field', () => {
@@ -60,7 +59,7 @@ describe('parseCollectionImageMeta', () => {
     );
 
     const fieldNames = flattenFieldNames(
-      parseCollectionImageMeta({ prompt: 'x', hashes, effects } as unknown as ImageMetaProps)
+      parseCollectionImageMeta({ prompt: 'x', hashes, effects })
     );
 
     expect(fieldNames.length).toBeLessThanOrEqual(SHIPPED_KEYS.length);
@@ -68,10 +67,8 @@ describe('parseCollectionImageMeta', () => {
   });
 
   it('returns an empty object for missing or malformed meta', () => {
-    expect(parseCollectionImageMeta(null as unknown as ImageMetaProps)).toEqual({});
-    expect(parseCollectionImageMeta('not an object' as unknown as ImageMetaProps)).toEqual({});
-    expect(
-      flattenFieldNames(parseCollectionImageMeta({ hashes: { a: 'b' } } as unknown as ImageMetaProps))
-    ).toEqual([]);
+    expect(parseCollectionImageMeta(null)).toEqual({});
+    expect(parseCollectionImageMeta('not an object')).toEqual({});
+    expect(flattenFieldNames(parseCollectionImageMeta({ hashes: { a: 'b' } }))).toEqual([]);
   });
 });
