@@ -182,7 +182,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 import { isPaidAccessActive } from '@civitai/buzz';
-import { isWithinEarlyAccessRefundWindow } from '~/server/utils/early-access-helpers';
+import { isWithinPaidAccessRefundWindow } from '~/server/utils/early-access-helpers';
 import {
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
@@ -2786,21 +2786,23 @@ export type ModelEarlyAccessRefundRequirement = {
   /** What reversing these purchases debits from each of the owner's accounts, keyed by account. */
   totalsByAccount: Partial<Record<BuzzSpendType, number>>;
   /**
-   * Versions that would have blocked before the refund window closed on them. Carried so the
-   * unpublish dialog can say those buyers keep their purchase rather than going silent.
+   * Distinct buyers whose purchase is too old to refund. Carried so the unpublish dialog can say
+   * what happens to them rather than going silent.
    */
-  exemptVersionCount: number;
+  exemptBuyerCount: number;
 };
 
 // Early access is sold per model VERSION, so the refund set is computed version-by-version and each
 // purchase keeps its modelVersionId; this only aggregates because unpublishing acts on the whole
 // model (the owner has no per-version unpublish — that menu item is moderator-only).
 //
-// Refundable = a buzz-purchased EntityAccess grant on a version whose PaidAccess gate is still
-// active (permanent, or a timed window that hasn't lapsed) AND that published recently enough to
-// still be inside the refund window. Lapsed-window buyers already got what they paid for, so they
-// don't block. Gate/grant rows are read fresh from the primary (dbWrite), not the cache/replica —
-// this guard protects buyers' money.
+// Refundable = a buzz-purchased EntityAccess grant, bought within the refund window, on a version
+// whose PaidAccess gate is still active (permanent, or a timed window that hasn't lapsed).
+// Lapsed-window buyers already got what they paid for, so they don't block.
+//
+// The window is measured per PURCHASE, not per version: a permanent gate never expires, so anything
+// keyed off the version would owe its buyers a refund forever. Gate/grant rows are read fresh from
+// the primary (dbWrite), not the cache/replica — this guard protects buyers' money.
 export const getModelEarlyAccessRefundRequirement = async ({
   id,
 }: GetByIdInput): Promise<ModelEarlyAccessRefundRequirement> => {
@@ -2809,11 +2811,11 @@ export const getModelEarlyAccessRefundRequirement = async ({
     buyerCount: 0,
     totalBuzz: 0,
     totalsByAccount: {},
-    exemptVersionCount: 0,
+    exemptBuyerCount: 0,
   };
   const versions = await dbWrite.modelVersion.findMany({
     where: { modelId: id },
-    select: { id: true, meta: true, publishedAt: true },
+    select: { id: true, meta: true },
   });
   const flagged = versions.filter(
     (v) => (v.meta as ModelVersionMeta | null)?.hadEarlyAccessPurchase
@@ -2825,34 +2827,46 @@ export const getModelEarlyAccessRefundRequirement = async ({
     select: { entityId: true, endsAt: true },
   });
   const now = new Date();
-  const activeGateVersionIds = new Set(
-    gates.filter((gate) => isPaidAccessActive(gate, now)).map((gate) => gate.entityId)
-  );
-  const gated = flagged.filter((v) => activeGateVersionIds.has(v.id));
-  const owed = gated.filter((v) => isWithinEarlyAccessRefundWindow(v.publishedAt, now));
-  const exemptVersionCount = gated.length - owed.length;
-  if (owed.length === 0) return { ...empty, exemptVersionCount };
+  const activeGateVersionIds = gates
+    .filter((gate) => isPaidAccessActive(gate, now))
+    .map((gate) => gate.entityId);
+  if (activeGateVersionIds.length === 0) return empty;
 
   const accessRows = await dbWrite.entityAccess.findMany({
     where: {
       accessToType: 'ModelVersion',
-      accessToId: { in: owed.map((v) => v.id) },
+      accessToId: { in: activeGateVersionIds },
       accessorType: 'User',
     },
-    select: { accessToId: true, accessorId: true, meta: true },
+    select: { accessToId: true, accessorId: true, meta: true, addedAt: true },
   });
 
   // Only rows carrying a purchase transaction id count — owner-granted access has nothing to refund.
-  const purchases = accessRows
+  const allPurchases = accessRows
     .map((row) => {
       const rowMeta = (row.meta ?? {}) as Record<string, unknown>;
       const buzzTransactionIds = ['download-buzzTransactionId', 'generation-buzzTransactionId']
         .map((key) => rowMeta[key])
         .filter((value): value is string => typeof value === 'string' && value.length > 0);
-      return { modelVersionId: row.accessToId, buyerId: row.accessorId, buzzTransactionIds };
+      return {
+        modelVersionId: row.accessToId,
+        buyerId: row.accessorId,
+        buzzTransactionIds,
+        addedAt: row.addedAt,
+      };
     })
     .filter((purchase) => purchase.buzzTransactionIds.length > 0);
-  if (purchases.length === 0) return { ...empty, exemptVersionCount };
+
+  const refundable = allPurchases.filter((purchase) =>
+    isWithinPaidAccessRefundWindow(purchase.addedAt, now)
+  );
+  const exemptBuyerCount = new Set(
+    allPurchases
+      .filter((purchase) => !isWithinPaidAccessRefundWindow(purchase.addedAt, now))
+      .map((purchase) => purchase.buyerId)
+  ).size;
+  const purchases = refundable.map(({ addedAt: _addedAt, ...purchase }) => purchase);
+  if (purchases.length === 0) return { ...empty, exemptBuyerCount };
 
   // Refund amounts come from the ledger, not current terms — prices can change after purchase.
   const limit = pLimit(5);
@@ -2875,7 +2889,7 @@ export const getModelEarlyAccessRefundRequirement = async ({
     buyerCount: new Set(purchases.map((purchase) => purchase.buyerId)).size,
     totalBuzz: Object.values(totalsByAccount).reduce((sum, amount) => sum + amount, 0),
     totalsByAccount,
-    exemptVersionCount,
+    exemptBuyerCount,
   };
 };
 
