@@ -38,7 +38,7 @@ const same = (a: Box | null, b: Box) =>
  * positioned link, the overlay is a sibling of that link. Hence the walk rather
  * than a subtraction of two `offsetLeft`s.
  */
-const offsetWithin = (el: HTMLElement, stop: Element | null) => {
+export const offsetWithin = (el: HTMLElement, stop: Element | null) => {
   let x = 0;
   let y = 0;
   let current: HTMLElement | null = el;
