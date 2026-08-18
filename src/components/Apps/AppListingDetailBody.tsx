@@ -135,8 +135,9 @@ import type {
  * not, and must not become, an embedded runtime.
  *
  * Structurally pinned in the node `unit` project
- * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), because
- * CI does not run the browser `component` suite.
+ * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), because the
+ * browser `component` suite runs only in the PR preview pipeline — report-only, and not a
+ * required check — so a guard pinned only there is not reliably exercised.
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in the
  * pure view-model (`safeExternalHref`) + rendered with rel="noopener noreferrer"
@@ -294,8 +295,10 @@ function HeroCover({
  * 🔴 THE WIRING IS NOT — do not read the line above as licence to skip the browser
  * tier. That this component hands the view-model the REAL `preview` value, rather than
  * a literal or an inverted one, is pinned ONLY in `AppListingDetailBody.browser.test.tsx`,
- * which CI does not run. Mutating the call site to `{ preview: false }` leaves the whole
- * node suite green. Rule and wiring are separate claims; only the first one is gated.
+ * which runs solely as `preview / component-tests` in the PR preview pipeline — report-only,
+ * not a required check, and not reported at all when the preview build fails. Mutating the
+ * call site to `{ preview: false }` leaves the whole node suite green. Rule and wiring are
+ * separate claims; only the first one is gated.
  *
  * 🔴 The hover MESSAGE is likewise decided there and passed through UNCONDITIONALLY.
  * `StatHoverCard` renders `message` INSTEAD of `value`, so a ternary that supplied the
