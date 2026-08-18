@@ -92,17 +92,18 @@ counts.
 
 ## Sizing
 
-### ✅ MEASURED at 1% on live traffic, 2026-08-17 — use these numbers
+### ✅ MEASURED at 100% on live traffic, 2026-08-18 — use these numbers
 
-The estimate below it was **5x too high**. Real figures, from ~30 minutes at a 1%
-cohort (6,140 rows, 97 sessions, six consecutive projections between 64M and 69M):
+The estimate below it was **5x too high**. These are from **full traffic**, measured
+directly rather than scaled from a sample: 401,787 rows in a 10-minute window at
+**669.6 rows/sec**.
 
 | | estimated | **measured** |
 | --- | --- | --- |
-| rows/day at 100% | ~320M | **~64M** |
+| rows/day at 100% | ~320M | **~58M** |
 | vs the `views` insert rate | ~10x | **~2x** |
-| raw storage/day | ~2.3 GiB | **~0.3 GiB** |
-| 30-day steady state | ~70 GB | **~9 GB** |
+| raw storage/day | ~2.3 GiB | **~0.35 GiB** (6.3 B/row) |
+| 30-day steady state | ~70 GB | **~10 GB** |
 | entities per session | 50–150 assumed | **~60 — the one part that was right** |
 
 **Why the estimate was high, and it is the same mistake twice.** It credited
@@ -132,6 +133,35 @@ Also confirmed live, and it was the biggest pre-launch unknown: **`content-visib
 does NOT hide cards from the observer.** `/models` is the top surface and
 `ModelsInfinite` renders through `MasonryColumnsVirtual`, the exact path that was
 feared would produce silent zeros.
+
+### Creator attribution: verified on live data, 2026-08-18
+
+The `impressions_daily_by_owner_mv` refresh ran at 04:00 against real rows for the
+first time — the model-ownership `argMinIf` aggregate and the id-restricted
+`images_created` dedupe had never been exercised before this.
+
+| | attributed |
+| --- | --- |
+| Image | **99.9%** (42,459 of 42,517) |
+| Model | **98.6%** (35,972 of 36,488) |
+
+Clean refresh, no exception, 6,031 image creators and 5,446 model creators. The
+1-2% shortfall is the designed behaviour, not loss: entities whose owner cannot be
+resolved are dropped by `HAVING ownerId != 0` rather than attributed to nobody.
+**Check this percentage, not just that the refresh succeeded** — a join that
+silently drops rows still reports success.
+
+### Cost on ClickHouse, measured
+
+Two replicas at 8 vCPU / 32 GiB each. At full traffic, impression inserts were
+**3.8 CPU-seconds out of 5,069** across a 15-minute window — under **0.1%** of
+ClickHouse's CPU work, with peak insert memory of ~1 MiB. Memory sat at 8.2 / 7.5
+GiB of 32.
+
+The reason it is that cheap is the batching, not the volume: **14,483 insert
+queries** carried ~400k rows. Without the client-side array batching and
+`async_insert` this would have been ~670 inserts/sec, and *that* is the version
+that would have hurt — part count, never row count, is the binding constraint.
 
 ### The original estimate, kept for the reasoning
 
