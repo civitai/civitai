@@ -1,6 +1,7 @@
 import { getClickhouse } from '$lib/server/clickhouse';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
+import { BUZZ_CURRENCIES } from '$lib/earnings';
 import type { EarningsSource } from '$lib/earnings';
 
 // Earnings by source — A1 **Part 1**. Creators are paid through `default.buzzTransactions`, which is already keyed
@@ -21,7 +22,9 @@ export type EarningsBucket = {
 };
 // The trend series is per-source, buzz-only (the chart is a buzz trend; cash lives in the panel). One line per
 // source with toggle chips (E4). Currency detail stays in the by-source×currency summary/table.
-export type EarningsPoint = { date: string; source: EarningsSource; total: number };
+// `accessSale`'s `count` is the only sales count the product has — a sale is not a table, just an
+// `externalTransactionId` prefix.
+export type EarningsPoint = { date: string; source: EarningsSource; total: number; count: number };
 
 // Access sales carry one of two id prefixes: `permanent-access-` for a permanent paid-access sale,
 // `early-access-` for a timed window. Rows written before the split are all `early-access-`, whichever
@@ -35,6 +38,8 @@ const RECEIVING_TYPES = `(type IN ('tip','compensation','licenseFee','27','sell'
 // exclusive-next-day so it's inclusive of the whole `to` day.
 const whereClause = (uid: number, from: string, to: string) =>
   `toAccountId = ${uid} AND date >= toDate('${from}') AND date < toDate('${to}') + 1 AND ${RECEIVING_TYPES}`;
+
+const CURRENCY_LIST = BUZZ_CURRENCIES.map((c) => `'${c}'`).join(',');
 
 const SOURCE_EXPR = `multiIf(type = 'tip', 'tip', type = 'compensation', 'compensation', type IN ('licenseFee','27'), 'licenseFee', type = 'sell', 'cosmeticSale', 'accessSale')`;
 
@@ -82,14 +87,20 @@ async function fetchSeries({
     date: string;
     source: EarningsSource;
     total: number | string;
+    count: number | string;
   }>(
-    `SELECT toDate(date) AS date, ${SOURCE_EXPR} AS source, sum(amount) AS total
+    `SELECT toDate(date) AS date, ${SOURCE_EXPR} AS source, sum(amount) AS total, count() AS count
      FROM default.buzzTransactions
-     WHERE ${whereClause(uid, from, to)} AND toAccountType IN ('yellow','blue','green','club')
+     WHERE ${whereClause(uid, from, to)} AND toAccountType IN (${CURRENCY_LIST})
      GROUP BY date, source
      ORDER BY date`
   );
-  return rows.map((r) => ({ date: String(r.date), source: r.source, total: Number(r.total) }));
+  return rows.map((r) => ({
+    date: String(r.date),
+    source: r.source,
+    total: Number(r.total),
+    count: Number(r.count),
+  }));
 }
 
 // By-source × currency totals over the range — the /earnings source cards and the dashboard headline.
@@ -101,7 +112,9 @@ export const getEarningsSummary = createCache({
 
 // Per-source buzz totals over time — the /earnings trend chart.
 export const getEarningsSeries = createCache({
-  name: 'earnings:series',
+  // Keys derive from the args, not the payload, so a stored value outlives a change to the returned shape. Bump
+  // the suffix whenever that shape or the numbers change.
+  name: 'earnings:series:v2',
   fetch: fetchSeries,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
@@ -122,7 +135,7 @@ async function fetchMonthly({ userId }: { userId: number }): Promise<MonthlyEarn
      FROM default.buzzTransactions
      WHERE toAccountId = ${uid}
        AND date >= toStartOfMonth(today() - INTERVAL 11 MONTH)
-       AND toAccountType IN ('yellow','blue','green','club')
+       AND toAccountType IN (${CURRENCY_LIST})
        AND ${RECEIVING_TYPES}
      GROUP BY month, currency
      ORDER BY month DESC`
