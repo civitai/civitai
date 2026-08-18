@@ -125,6 +125,11 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => mocks.state.features,
+  // Required by `useFeatureNotice` for `audience`. None of the notices
+  // characterized here declares one, so this changes nothing about what they
+  // render — but omitting an export a consumer imports fails the file at
+  // COLLECTION, which reads as "no tests" rather than as a failure.
+  useOptionalFeatureFlags: () => mocks.state.features,
   useFeatureFlagsReady: () => mocks.state.flagsReady,
 }));
 

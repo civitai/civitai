@@ -1,7 +1,8 @@
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { FeatureNotice } from '~/components/Alerts/notice-registry';
-import { isNoticeDismissed } from '~/components/Alerts/notice-registry';
+import { isNoticeAudienceMatched, isNoticeDismissed } from '~/components/Alerts/notice-registry';
+import { useFeatureFlagsReady, useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export type UseFeatureNoticeResult = {
   /** The notice's id is present in the user's stored `dismissedAlerts`. */
@@ -17,6 +18,16 @@ export type UseFeatureNoticeResult = {
   hasSettings: boolean;
   /** The settings query is in flight. Weaker than `!hasSettings` — see below. */
   isLoading: boolean;
+  /**
+   * This user is in the notice's `audience`.
+   *
+   * Always `true` for a notice that declares no audience, so an untargeted
+   * notice is unaffected by targeting existing. For a targeted one it is the
+   * per-user answer to the flag the notice names, and it fails closed while the
+   * flag overlay is unresolved — AND it into the render condition exactly like
+   * `hasSettings`.
+   */
+  isInAudience: boolean;
   /** Persist a dismissal, optimistically. */
   dismiss: () => void;
   /** Undo a dismissal, optimistically. Only meaningful where UI offers it. */
@@ -44,10 +55,17 @@ export type UseFeatureNoticeResult = {
  * means showing it to someone who already dismissed it. Prefer `hasSettings`
  * for anything a user can dismiss.
  *
- * Deliberately NOT owned here: WHEN a notice should be shown. Visibility is
- * per-site (a feature flag, a balance, a mount context) and folding it in would
- * mean every site paying for every other site's conditions. Sites compose
- * `hasSettings && !isDismissed && <their own condition>`.
+ * Still NOT owned here: WHEN a notice should be shown. Visibility is per-site (a
+ * balance, a mount context, a layout state) and folding it in would mean every
+ * site paying for every other site's conditions. Sites compose
+ * `hasSettings && !isDismissed && isInAudience && <their own condition>`.
+ *
+ * The ONE condition that did move in is `audience`, and the distinction is
+ * worth keeping straight: a per-site condition describes the moment, while an
+ * audience describes the NOTICE — it is the same answer at every site that
+ * shows it, so leaving it to the sites means N chances to get it wrong and no
+ * way to enumerate who is being told what. It is declared in the registry and
+ * applied here; `isInAudience` is the result.
  *
  * @param notice  A registry entry, never a bare string — that is what keeps the
  *                persisted id set enumerable and collision-checkable.
@@ -60,6 +78,13 @@ export function useFeatureNotice(
 ): UseFeatureNoticeResult {
   const currentUser = useCurrentUser();
   const queryEnabled = enabled && !!currentUser;
+
+  // 🔴 The per-user overlay, NOT a keyed flag evaluation. This is the only read
+  // that carries the caller's own session, and therefore the only one on which a
+  // segment-scoped flag can match at all — an evaluation with no context answers
+  // "not in the segment" for every user, uniformly and silently.
+  const featureFlags = useOptionalFeatureFlags();
+  const flagsReady = useFeatureFlagsReady();
 
   const { data: settings, isLoading } = trpc.user.getSettings.useQuery(undefined, {
     enabled: queryEnabled,
@@ -94,6 +119,7 @@ export function useFeatureNotice(
     isDismissed: isNoticeDismissed(settings?.dismissedAlerts, notice),
     hasSettings: !!settings,
     isLoading,
+    isInAudience: isNoticeAudienceMatched(notice, featureFlags, flagsReady),
     // `dismiss` omits the flag and `restore` sends `false`, matching the wire
     // payloads these call sites have always sent.
     dismiss: () => mutation.mutate({ alertId: notice.id }),

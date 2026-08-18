@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'vitest';
+import type { FeatureNotice } from '~/components/Alerts/notice-registry';
 import {
   FEATURE_NOTICES,
   FEATURE_NOTICE_IDS,
+  isNoticeAudienceMatched,
   isNoticeDismissed,
 } from '~/components/Alerts/notice-registry';
 
@@ -121,5 +123,100 @@ describe('isNoticeDismissed', () => {
       isNoticeDismissed(['crypto-onramp-guidance'], FEATURE_NOTICES.cryptoOnrampGuidance)
     ).toBe(true);
     expect(isNoticeDismissed(['crypto-onramp-guidance'], FEATURE_NOTICES.navTidy)).toBe(false);
+  });
+});
+
+// =============================================================================
+// AUDIENCE TARGETING — the returned-value half.
+//
+// This is the gate itself, as a pure function, so the blocking `unit` project
+// can execute it. The hook that consumes it is covered by
+// `useFeatureNotice.audience.test.ts` (also `unit`, via happy-dom), and the
+// rendered component by `notice-callsite.browser.test.tsx` (project
+// `component`, which CI does NOT run). All three assert behaviour; none of them
+// asserts that the field exists.
+//
+// Fixtures name flags that are NOT `remixGallery`, the only audience the
+// registry currently declares — a fixture that could only ever produce the
+// production value cannot catch a mutant that hardcodes the production value.
+// The two targeted fixtures name DIFFERENT flags and are given DIFFERENT
+// answers, so "reads its own audience" is separable from "some flag was on".
+// =============================================================================
+
+describe('isNoticeAudienceMatched', () => {
+  const targetedAlpha: FeatureNotice = {
+    id: 'fixture-audience-alpha',
+    audience: { feature: 'imageCardInfoButton' },
+  };
+  const targetedBeta: FeatureNotice = {
+    id: 'fixture-audience-beta',
+    audience: { feature: 'appReviewPage' },
+  };
+  const untargeted: FeatureNotice = { id: 'fixture-audience-gamma' };
+
+  /** Alpha's flag on, beta's off — one map, two opposite answers. */
+  const flags = { imageCardInfoButton: true, appReviewPage: false };
+
+  describe('a notice with no audience', () => {
+    // 🔴 INVARIANT guards: they pin that the eight untargeted notices are
+    // unaffected by targeting existing. They pass with the audience branch
+    // deleted, by design, so they are not the mutation evidence.
+    test('matches even when every flag is off', () => {
+      expect(isNoticeAudienceMatched(untargeted, { imageCardInfoButton: false }, true)).toBe(true);
+    });
+
+    test('matches before the flag overlay is ready', () => {
+      expect(isNoticeAudienceMatched(untargeted, flags, false)).toBe(true);
+    });
+
+    test('matches with no flags at all', () => {
+      expect(isNoticeAudienceMatched(untargeted, null, true)).toBe(true);
+      expect(isNoticeAudienceMatched(untargeted, undefined, true)).toBe(true);
+    });
+  });
+
+  describe('a notice with an audience', () => {
+    test('matches a user its own flag is on for', () => {
+      expect(isNoticeAudienceMatched(targetedAlpha, flags, true)).toBe(true);
+    });
+
+    test('does NOT match a user its own flag is off for', () => {
+      expect(isNoticeAudienceMatched(targetedBeta, flags, true)).toBe(false);
+    });
+
+    test('reads ITS OWN flag, not whichever flag happens to be on', () => {
+      // Same map, same readiness, opposite results. A body that ignored
+      // `audience.feature` could not produce both.
+      expect(isNoticeAudienceMatched(targetedAlpha, flags, true)).toBe(true);
+      expect(isNoticeAudienceMatched(targetedBeta, flags, true)).toBe(false);
+      // …and swapping the answers swaps the results, so neither is a constant.
+      const swapped = { imageCardInfoButton: false, appReviewPage: true };
+      expect(isNoticeAudienceMatched(targetedAlpha, swapped, true)).toBe(false);
+      expect(isNoticeAudienceMatched(targetedBeta, swapped, true)).toBe(true);
+    });
+
+    test('a flag missing from the overlay is not membership', () => {
+      // Absent is not the same as false, and must not read as "in".
+      expect(isNoticeAudienceMatched(targetedAlpha, {}, true)).toBe(false);
+    });
+
+    test('fails closed before the per-user overlay resolves', () => {
+      // The map here says the user IS in the audience; readiness is what
+      // withholds it. Announcing against the anonymous snapshot and retracting
+      // is the flash this exists to avoid.
+      expect(isNoticeAudienceMatched(targetedAlpha, flags, false)).toBe(false);
+    });
+
+    test('fails closed with no flags at all', () => {
+      expect(isNoticeAudienceMatched(targetedAlpha, null, true)).toBe(false);
+      expect(isNoticeAudienceMatched(targetedAlpha, undefined, true)).toBe(false);
+    });
+
+    test('a non-boolean-true value is not membership', () => {
+      // The overlay is `Record<key, boolean>`, but it is assembled server-side
+      // and merged with an SSR snapshot; a truthy non-`true` must not pass.
+      const dirty = { imageCardInfoButton: 'yes' } as unknown as Record<string, boolean>;
+      expect(isNoticeAudienceMatched(targetedAlpha, dirty, true)).toBe(false);
+    });
   });
 });
