@@ -267,6 +267,30 @@ describe('POST /api/blocks/submit-version', () => {
     expect(arg.sourceDirty).toBeUndefined();
   });
 
+  // 🔴 JSON `null` = UNKNOWN and must NOT 400 — pinned at the ROUTE as well as
+  // at the schema, so the two surfaces cannot disagree in isolation.
+  it('JSON null on both provenance fields is a 200 (UNKNOWN), reaching the service as undefined', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sourceCommit: null, sourceDirty: null } }), res);
+    expect(res._status).toBe(200);
+    expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
+    const arg = mockSubmitVersion.mock.calls[0][0];
+    // undefined, NOT null — undefined is what makes Prisma omit the column.
+    expect(arg.sourceCommit).toBeUndefined();
+    expect(arg.sourceDirty).toBeUndefined();
+    expect(arg.sourceCommit).not.toBeNull();
+    expect(arg.sourceDirty).not.toBeNull();
+  });
+
+  it('JSON null on ONE field does not take a valid SIBLING down with it', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sourceCommit: SHA, sourceDirty: null } }), res);
+    expect(res._status).toBe(200);
+    const arg = mockSubmitVersion.mock.calls[0][0];
+    expect(arg.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    expect(arg.sourceDirty).toBeUndefined();
+  });
+
   it('400s a malformed sourceCommit with a message NAMING the field, and never submits', async () => {
     const res = makeRes();
     await invoke(makeReq({ body: { bundleBase64, sourceCommit: 'not-a-sha' } }), res);

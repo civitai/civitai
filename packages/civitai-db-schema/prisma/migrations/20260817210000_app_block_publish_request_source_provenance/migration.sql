@@ -54,21 +54,39 @@
 -- ------------------------------------------------------------------
 -- ⚠️ ORDERING: APPLY THIS BEFORE DEPLOYING THE APP THAT WRITES IT.
 -- ------------------------------------------------------------------
--- Both columns are nullable with no default, so the mixed-pod window is safe in
--- BOTH directions:
+-- Both columns are nullable with no default, so once they EXIST the mixed-pod
+-- window is safe in both directions. Apply this first and there is no window at
+-- all. Deploy first and the READ path is what breaks, immediately and for
+-- everyone:
 --
---   writer │ columns  │ outcome
---   ───────┼──────────┼──────────────────────────────────────────────
---   old    │ present  │ safe — INSERT omits them, both land NULL
---   new    │ present  │ safe — the claim is stored
---   new    │ MISSING  │ ✗ the INSERT names a column the table lacks
---   old    │ MISSING  │ today's behaviour
+--   code │ columns  │ outcome
+--   ─────┼──────────┼────────────────────────────────────────────────────────
+--   old  │ present  │ safe — the SELECT never names them; INSERT omits them
+--   new  │ present  │ safe — the claim is read and stored
+--   old  │ MISSING  │ today's behaviour
+--   new  │ MISSING  │ ✗✗ TOTAL READ OUTAGE, then a conditional write failure
 --
--- Only the third row breaks, and only if the deploy lands first. Note the
--- failure is not confined to the write: Prisma enumerates every scalar in the
--- model when a query gives no `select`, so with the code deployed and the
--- columns missing, such a query raises P2022. Same precedent as
--- 20260731120000_app_block_spend_tier_and_cap_override.
+-- 🔴 THE READ IS THE FIRST AND WORST CASUALTY, NOT THE WRITE.
+-- `src/pages/api/v1/blocks/submissions.ts` adds BOTH columns to its `SELECT`
+-- constant, which serves BOTH the `findFirst` and the `findMany`. That is
+-- UNCONDITIONAL: it does not depend on what any client sends, on whether any row
+-- has provenance, or on anyone using the feature. Against a table without the
+-- columns it is a 100% failure of `GET /api/v1/blocks/submissions` — every
+-- author, every CLI poll, every request — with Prisma P2022. The CLI's status
+-- and poll commands go down wholesale.
+--
+-- The write failure is real but SECONDARY and CONDITIONAL: Prisma omits an
+-- `undefined` field entirely, so a client that sends no provenance (i.e. every
+-- pre-#4059 client, and the whole world on day one) produces exactly today's
+-- INSERT and succeeds. Only a submit that actually CARRIES provenance names a
+-- column the table lacks. The schema deliberately normalises a JSON `null` to
+-- `undefined` for this reason — see `submitVersionSchema` — so "unknown" does
+-- not widen this into an unconditional write failure too.
+--
+-- Same precedent as 20260731120000_app_block_spend_tier_and_cap_override; the
+-- generic form of the read hazard is that Prisma enumerates every scalar in the
+-- model when a query gives no `select` at all, so even queries that never
+-- mention these columns raise P2022 once the model knows about them.
 --
 -- ⚠️ NEVER DROP THESE COLUMNS ON A ROLLBACK. Old Prisma clients emit explicit
 -- column lists, so extra columns are inert to them — leaving them costs nothing,

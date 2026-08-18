@@ -483,6 +483,40 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect(callArg.sourceDirty).toBeUndefined();
   });
 
+  // 🔴 JSON `null` = UNKNOWN, and it MUST NOT 400. Asserted at the ROUTE and not
+  // only at the schema: the schema test exercises one surface, and "verified in
+  // isolation" is how a seam defect survives. This is the surface an actual CLI
+  // hits, and a 400 here rejects the WHOLE SUBMIT over an advisory field.
+  it('JSON null on both provenance fields is a 200 (UNKNOWN), reaching the service as undefined', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, sourceCommit: null, sourceDirty: null },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion).toHaveBeenCalledOnce();
+    const callArg = mockSubmitVersion.mock.calls[0][0];
+    // undefined, NOT null — undefined is what makes Prisma omit the column.
+    expect(callArg.sourceCommit).toBeUndefined();
+    expect(callArg.sourceDirty).toBeUndefined();
+    expect(callArg.sourceCommit).not.toBeNull();
+    expect(callArg.sourceDirty).not.toBeNull();
+  });
+
+  it('JSON null on ONE field does not take a valid SIBLING down with it', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, sourceCommit: SHA, sourceDirty: null },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const callArg = mockSubmitVersion.mock.calls[0][0];
+    expect(callArg.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    expect(callArg.sourceDirty).toBeUndefined();
+  });
+
   it('400s a malformed sourceCommit with a message NAMING the field, and never submits', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     const { req, res } = createMocks({

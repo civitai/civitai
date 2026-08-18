@@ -62,6 +62,36 @@ export const submitVersionSchema = z.object({
   // gate — an author whose tooling predates it, or who builds outside a git
   // checkout, still ships.
   //
+  // ── WIRE CONTRACT ──────────────────────────────────────────────────────────
+  // These are the THREE answers a client can give, and only three:
+  //
+  //   omit the key entirely         → UNKNOWN
+  //   send the key as JSON `null`   → UNKNOWN  (the same answer, spelled twice)
+  //   send a value                  → the claim
+  //
+  // and for `sourceDirty` the value half is itself two DIFFERENT answers:
+  //   `false` = the client asserted the tree was CLEAN
+  //   `true`  = the client asserted the tree was DIRTY
+  // `false` is a claim, not an absence. Never collapse it into UNKNOWN, and
+  // never `?? false` an UNKNOWN into it — the tri-state is the feature.
+  //
+  // 🔴 `.nullish()`, NOT `.optional()`. `.optional()` accepts `undefined` only,
+  // and JSON has no `undefined` — so a client encoding UNKNOWN the natural way,
+  // as `{"sourceDirty": null}`, had its WHOLE SUBMIT rejected with a 400, and
+  // for `sourceCommit` that 400 read "must be a 40-character lowercase hex git
+  // commit sha", which is wrong about what happened. That is precisely the
+  // submit gate this field is forbidden to be. Measured against zod 4.0.17.
+  //
+  // The `?? undefined` normalisation is load-bearing, not tidying: it is what
+  // keeps a `null` off the Prisma `create` data. Prisma OMITS an `undefined`
+  // field from the INSERT but emits an explicit `NULL` for a `null` one — the
+  // resulting ROW is identical either way, but the SQL is not, and an explicit
+  // NULL would make EVERY provenance-less submit name the new columns, turning
+  // the migration-ordering hazard (see the migration header) from conditional
+  // into unconditional. `SubmitVersionParams` types both as `?: T` and never
+  // `| null`, so the seam cannot quietly drift back.
+  // ───────────────────────────────────────────────────────────────────────────
+  //
   // 🔴 UNTRUSTED CLIENT CLAIM. The server validates the SHAPE and stores the
   // value; it CANNOT confirm the uploaded bundle was actually built from this
   // commit, and a client is free to send a sha it never built from. Nothing
@@ -83,12 +113,16 @@ export const submitVersionSchema = z.object({
   sourceCommit: z
     .string()
     .regex(/^[0-9a-f]{40}$/)
-    .optional(),
+    .nullish()
+    .transform((v) => v ?? undefined),
   // Whether the client's work tree had uncommitted changes at build time.
   // Tri-state at rest: absent/null = UNKNOWN, false = the client asserted CLEAN,
   // true = the client asserted DIRTY. `false` and `null` are DIFFERENT answers
   // and stay distinguishable end to end — do not `?? false` this anywhere.
-  sourceDirty: z.boolean().optional(),
+  sourceDirty: z
+    .boolean()
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export type SubmitVersionInput = z.infer<typeof submitVersionSchema>;

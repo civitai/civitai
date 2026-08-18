@@ -71,6 +71,98 @@ describe('submitVersionSchema — #4059 provenance (accept)', () => {
   });
 });
 
+/**
+ * 🔴 JSON NULL IS THE WIRE ENCODING OF "UNKNOWN", AND IT MUST NOT 400.
+ *
+ * `.optional()` accepts `undefined` only, and JSON has no `undefined` — so a
+ * client whose own model holds these as nullable, encoding UNKNOWN the natural
+ * way as `{"sourceDirty": null}`, had its WHOLE SUBMIT rejected with a 400. For
+ * `sourceCommit` the message even read "must be a 40-character lowercase hex git
+ * commit sha", which is wrong about what happened. Provenance is never allowed
+ * to be a submit gate; this file is where that is pinned.
+ *
+ * Each case asserts BOTH halves: the parse succeeds, AND the value that comes
+ * out is `undefined` (not `null`), because `undefined` is what makes Prisma OMIT
+ * the column from the INSERT rather than emit an explicit NULL.
+ */
+describe('submitVersionSchema — #4059 provenance (JSON null === UNKNOWN)', () => {
+  it('ACCEPTS sourceCommit: null and normalises it to undefined', () => {
+    const parsed = parse({ sourceCommit: null });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.sourceCommit).toBeUndefined();
+    // Explicitly NOT null: a null reaching Prisma names the column in the INSERT.
+    expect(parsed.data.sourceCommit).not.toBeNull();
+  });
+
+  it('ACCEPTS sourceDirty: null and normalises it to undefined', () => {
+    const parsed = parse({ sourceDirty: null });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.sourceDirty).toBeUndefined();
+    expect(parsed.data.sourceDirty).not.toBeNull();
+    // 🔴 null is UNKNOWN, never the `false` claim. If this ever reads `false`,
+    // "nobody looked" has been turned into "someone looked and it was clean".
+    expect(parsed.data.sourceDirty).not.toBe(false);
+  });
+
+  it('ACCEPTS BOTH null (the shape a nullable-model client sends when it knows nothing)', () => {
+    const parsed = parse({ sourceCommit: null, sourceDirty: null });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.sourceCommit).toBeUndefined();
+    expect(parsed.data.sourceDirty).toBeUndefined();
+    // The bundle is untouched — the submit proceeds exactly as before.
+    expect(parsed.data.bundleBase64).toBe(BUNDLE);
+  });
+
+  it('ACCEPTS sourceCommit: null beside a REAL sourceDirty (mixed known/unknown)', () => {
+    const parsed = parse({ sourceCommit: null, sourceDirty: true });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.sourceCommit).toBeUndefined();
+    // The sibling that WAS supplied survives intact — null on one field must not
+    // take the other down with it.
+    expect(parsed.data.sourceDirty).toBe(true);
+  });
+
+  it('ACCEPTS sourceDirty: null beside a REAL sourceCommit (mixed known/unknown)', () => {
+    const parsed = parse({ sourceCommit: VALID_SHA, sourceDirty: null });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    expect(parsed.data.sourceDirty).toBeUndefined();
+  });
+
+  it('the sourceDirty TRI-STATE survives: null→undefined, false→false, true→true', () => {
+    // 🔴 Each row asserts `.success` FIRST. Reading `.data?.sourceDirty` alone
+    // would pass vacuously on a REJECT (`data` is undefined there, so the
+    // `toBeUndefined()` row succeeds for the wrong reason) — measured: that is
+    // exactly how an earlier draft of this test stayed green against the
+    // pre-fix `.optional()` schema while the other six went red.
+    const cases: Array<[unknown, boolean | undefined]> = [
+      [null, undefined],
+      [false, false],
+      [true, true],
+    ];
+    for (const [wire, expected] of cases) {
+      const parsed = parse({ sourceDirty: wire });
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) continue;
+      expect(parsed.data.sourceDirty).toBe(expected);
+    }
+  });
+
+  it('a null does NOT produce a 400 message (the gate this closes)', () => {
+    const parsed = parse({ sourceCommit: null, sourceDirty: null });
+    // Nothing to render: there is no error. The pre-fix behaviour produced
+    // 'Invalid submit payload: sourceCommit must be a 40-character lowercase hex
+    // git commit sha', which named a malformation that had not occurred.
+    expect(parsed.success).toBe(true);
+    expect(parsed.error).toBeUndefined();
+  });
+});
+
 describe('submitVersionSchema — #4059 provenance (reject)', () => {
   it('REJECTS a 39-hex sourceCommit (too short)', () => {
     const parsed = parse({ sourceCommit: '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f' });
