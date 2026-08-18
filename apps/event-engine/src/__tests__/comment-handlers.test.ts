@@ -221,6 +221,29 @@ test('every commentable Thread column is resolved through the root thread', asyn
   // And the root thread has to be joined on rootThreadId — joined on anything else, every COALESCE
   // above resolves against the reply's own empty columns.
   expect(sql).toContain('LEFT JOIN "Thread" r ON r.id = t."rootThreadId"');
+
+  // The owner expressions are asserted separately from the column names because a surface can be
+  // joined and still resolve nobody: drop `al.user_id` from the owner COALESCE and every FK name
+  // above is still present, the join is still there, and app listings silently stop counting.
+  for (const owner of [
+    'p."userId"',
+    'i."userId"',
+    'a."userId"',
+    'b."userId"',
+    'rev."userId"',
+    'be."userId"',
+    'ch."createdById"',
+    'cp."userId"',
+    'clp."createdById"',
+    'm3d."userId"',
+    'm3dr."userId"',
+    'mdl."userId"',
+    'q."userId"',
+    'ans."userId"',
+    'al.user_id',
+  ]) {
+    expect(sql).toContain(owner);
+  }
 });
 
 test('a model comment counts for the model and its creator', async () => {

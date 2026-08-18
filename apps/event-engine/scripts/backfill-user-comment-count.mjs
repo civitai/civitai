@@ -8,26 +8,40 @@
  *   - Post / Image / Article / Bounty  -> event-engine v1.9.13 (#4002)
  *   - every other surface              -> the release carrying #4067
  * Backfilling both to one boundary either double-counts the first group or loses everything the
- * second group received between the run and its own release. Both boundaries are required.
+ * second group received between the run and its own release.
  *
  * Totals are read from daily aggregates, not from the event stream: entityMetricDaily_today_v2_mv
- * only ever looks at `createdAt >= today() - 1`, so historically-dated rows written into
- * entityMetricEvents_month would be invisible to every total. The backfill therefore writes day
- * totals into entityMetricDailyAgg_history_v2 and marks each entity dirty so the additive
- * refresher recomputes it.
+ * and entityMetricDailySeal_v2_mv both filter `createdAt >= today() - 1`, so historically-dated
+ * rows written into entityMetricEvents_month would be invisible to every total. The backfill
+ * therefore writes day totals into entityMetricDailyAgg_history_v2 and marks each entity dirty so
+ * entityMetricTotal_v3_refresher_additive recomputes it.
  *
  * That table is a ReplacingMergeTree versioned by `sealedAt`, keyed
- * (entityType, entityId, metricType, day) — a written row REPLACES that day rather than adding to
- * it. Days that already carry live events are therefore reported, not written.
+ * (entityType, entityId, metricType, day), and history rows carry NO surface dimension. A written
+ * row REPLACES that day for that user rather than adding to it. Every day from the first live
+ * event onward already holds sealed live totals for the four old surfaces, so writing a
+ * new-surface-only total over it would destroy both halves. All such days are excluded here and
+ * need an explicit merge (backfill total + sealed total, written with a fresh sealedAt).
+ *
+ * This is only readable while ('User','commentCount') is registered `additive` in
+ * entityMetricKind, which the script asserts before writing. Flip that row and the presence-based
+ * refresher recomputes the total from entityMetricUserState_v3 — which holds only live events —
+ * and silently overwrites every backfilled total with a much smaller number.
+ *
+ * Known and accepted divergences from the live path, both small: a comment created before the
+ * cutover and deleted during the run is subtracted twice; and two comments from the same commenter
+ * to the same owner in the same second collapse to one live (ReplacingMergeTree key) but count as
+ * two here.
  *
  * Usage:
  *   node scripts/backfill-user-comment-count.mjs --new-cutover 2026-08-18T12:00:00Z
  *   node scripts/backfill-user-comment-count.mjs --new-cutover ... --execute
  *
  * Options:
- *   --new-cutover <iso>  When the release carrying #4067 went live. Required.
+ *   --new-cutover <iso>  When the release carrying #4067 went live. Required, must be in the past.
  *   --execute            Actually write. Default is a dry run that writes nothing.
- *   --limit <n>          Only write the first n day rows (smoke test).
+ *   --limit <n>          Write only the first n day rows. Smoke test only: it marks those owners
+ *                        dirty too, so their live totals go WRONG until a full run lands.
  */
 
 import { createClient } from '@clickhouse/client';
@@ -59,9 +73,13 @@ const EXECUTE = args.includes('--execute');
 const LIMIT = args.includes('--limit') ? Number(args[args.indexOf('--limit') + 1]) : null;
 const NEW_CUTOVER = args.includes('--new-cutover') ? args[args.indexOf('--new-cutover') + 1] : null;
 
-// The four surfaces already emitting since #4002. Their boundary is read from ClickHouse rather
-// than hardcoded: comments after the first live event are already counted, and the run is only
-// safe if that is the real first event rather than the one a ticket recorded.
+// Rows per dirty-flag batch, and the pause between batches. The additive refresher reprocesses a
+// rolling 10 minute window every minute, so 104k rows enqueued at one instant are re-read on ten
+// consecutive refreshes of a job that normally finishes in seconds — enough to delay every other
+// additive metric platform-wide against a 10 minute staleness alert.
+const DIRTY_CHUNK = 5000;
+const DIRTY_PAUSE_MS = 30000;
+
 const OLD_SURFACES = new Set(['post', 'image', 'article', 'bounty']);
 
 const SURFACES = [
@@ -88,18 +106,28 @@ const SURFACES = [
   },
 ];
 
+// `createdAt` is `timestamp without time zone` holding UTC. node-pg serialises a JS Date with the
+// HOST's offset and Postgres then drops that offset, so binding a Date silently moves the boundary
+// by the host's timezone — measured at 847 comments through a 6 hour shift, each of them skipped by
+// the backfill and never emitted by the forward path. Bind the wall-clock UTC string instead.
+const asUtcTimestamp = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
+
+// `day` comes back as a string from `to_char`: a DATE would be parsed into a LOCAL-midnight Date,
+// and `toISOString()` on that shifts the day on any UTC+ host. A day shifted onto today or
+// yesterday is dropped from every total, because entityMetricDailyAgg_v2_prev reads history only
+// for `day < today() - 1`.
 function commentV2Sql(surface) {
   return `
     SELECT owner AS "ownerId", day, count(*)::int AS total
     FROM (
       SELECT ${surface.owner} AS owner,
-             (c."createdAt" AT TIME ZONE 'UTC')::date AS day,
+             to_char(c."createdAt", 'YYYY-MM-DD') AS day,
              c."userId" AS commenter
       FROM "CommentV2" c
       JOIN "Thread" t ON t.id = c."threadId"
       LEFT JOIN "Thread" r ON r.id = t."rootThreadId"
       JOIN ${surface.table} e ON ${surface.idCol ?? 'e.id'} = COALESCE(r."${surface.fk}", t."${surface.fk}")
-      WHERE c."createdAt" < $1
+      WHERE c."createdAt" < $1::timestamp AND c."userId" <> ALL($2::int[])
     ) s
     WHERE owner IS NOT NULL AND owner <> commenter
     GROUP BY 1, 2`;
@@ -107,12 +135,26 @@ function commentV2Sql(surface) {
 
 const LEGACY_MODEL_SQL = `
   SELECT m."userId" AS "ownerId",
-         (c."createdAt" AT TIME ZONE 'UTC')::date AS day,
+         to_char(c."createdAt", 'YYYY-MM-DD') AS day,
          count(*)::int AS total
   FROM "Comment" c
   JOIN "Model" m ON m.id = c."modelId"
-  WHERE c."createdAt" < $1 AND m."userId" <> c."userId"
+  WHERE c."createdAt" < $1::timestamp
+    AND c."userId" <> ALL($2::int[])
+    AND m."userId" <> c."userId"
   GROUP BY 1, 2`;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function daysBetween(fromDay, toDay) {
+  const days = [];
+  for (let d = new Date(`${fromDay}T00:00:00Z`); ; d.setUTCDate(d.getUTCDate() + 1)) {
+    const day = d.toISOString().slice(0, 10);
+    days.push(day);
+    if (day >= toDay) break;
+  }
+  return days;
+}
 
 async function main() {
   if (!NEW_CUTOVER) {
@@ -126,9 +168,21 @@ async function main() {
     console.error(`Error: --new-cutover "${NEW_CUTOVER}" is not a date`);
     process.exit(1);
   }
+  if (newCutover > new Date()) {
+    console.error(`Error: --new-cutover ${newCutover.toISOString()} is in the future. Run this`);
+    console.error('AFTER the release: comments created between the boundary and the real release');
+    console.error('are counted by neither path.');
+    process.exit(1);
+  }
 
-  // The app is configured with a single credentialed CLICKHOUSE_URL; the query skill splits it into
-  // host/username/password. Either is accepted so this runs both in a pod and from a workstation.
+  const replicaUrl = process.env.DATABASE_REPLICA_URL ?? pgEnv.DATABASE_REPLICA_URL;
+  if (!replicaUrl) {
+    console.error('Error: DATABASE_REPLICA_URL is required. This is 16 sequential full scans of');
+    console.error('CommentV2 driving ~34M index probes; it does not belong on the primary, so');
+    console.error('there is deliberately no fallback to DATABASE_URL.');
+    process.exit(1);
+  }
+
   const chUrl = process.env.CLICKHOUSE_URL ?? chEnv.CLICKHOUSE_URL;
   const ch = createClient(
     chUrl
@@ -145,16 +199,23 @@ async function main() {
         }
   );
 
-  const firstEventRows = await (
-    await ch.query({
-      query: `SELECT min(createdAt) AS firstEvent, count() AS events
-              FROM default.entityMetricEvents_month
-              WHERE entityType = 'User' AND metricType = 'commentCount'`,
-      format: 'JSONEachRow',
-    })
-  ).json();
-  const hasEvents = Number(firstEventRows[0]?.events ?? 0) > 0;
-  const firstEvent = hasEvents ? new Date(`${firstEventRows[0].firstEvent}Z`) : null;
+  const query = async (sql) => (await ch.query({ query: sql, format: 'JSONEachRow' })).json();
+
+  const kind = await query(`SELECT kind FROM default.entityMetricKind FINAL
+                            WHERE entityType = 'User' AND metricType = 'commentCount'`);
+  if (kind[0]?.kind !== 'additive') {
+    console.error(`Error: entityMetricKind for User/commentCount is "${kind[0]?.kind ?? 'missing'}",`);
+    console.error('not "additive". Day totals are only readable through the additive refresher;');
+    console.error('under any other kind the total is recomputed from live events alone and every');
+    console.error('backfilled value is silently replaced by a much smaller one.');
+    process.exit(1);
+  }
+
+  const firstEventRows = await query(`SELECT min(createdAt) AS firstEvent, count() AS events
+                                      FROM default.entityMetricEvents_month
+                                      WHERE entityType = 'User' AND metricType = 'commentCount'`);
+  const firstEvent =
+    Number(firstEventRows[0]?.events ?? 0) > 0 ? new Date(`${firstEventRows[0].firstEvent}Z`) : null;
 
   if (!firstEvent) {
     console.error('Error: no User.commentCount events in ClickHouse. The forward path is not live,');
@@ -167,17 +228,17 @@ async function main() {
     process.exit(1);
   }
 
+  const excluded = await query(`SELECT userId FROM default.metricExcludedUsers FINAL
+                                WHERE active = 1`);
+  const excludedIds = excluded.map((row) => Number(row.userId));
+
   console.log(`ClickHouse first User.commentCount event: ${firstEvent.toISOString()}`);
   console.log(`  boundary for post/image/article/bounty: ${firstEvent.toISOString()}`);
   console.log(`  boundary for every other surface:       ${newCutover.toISOString()}`);
+  console.log(`  excluded commenters (metricExcludedUsers): ${excludedIds.length}`);
   console.log(EXECUTE ? '\nMODE: EXECUTE, this will write.\n' : '\nMODE: dry run, nothing is written.\n');
 
-  const pool = new pg.Pool({
-    connectionString:
-      process.env.DATABASE_REPLICA_URL ?? pgEnv.DATABASE_REPLICA_URL ?? pgEnv.DATABASE_URL,
-    connectionTimeoutMillis: 30000,
-    max: 4,
-  });
+  const pool = new pg.Pool({ connectionString: replicaUrl, connectionTimeoutMillis: 30000, max: 4 });
 
   const byOwner = new Map();
   let grandTotal = 0;
@@ -199,15 +260,18 @@ async function main() {
   for (const surface of SURFACES) {
     const boundary = OLD_SURFACES.has(surface.key) ? firstEvent : newCutover;
     const started = Date.now();
-    const { rows } = await pool.query(commentV2Sql(surface), [boundary]);
-    for (const row of rows) add(row.ownerId, row.day.toISOString().slice(0, 10), row.total);
+    const { rows } = await pool.query(commentV2Sql(surface), [
+      asUtcTimestamp(boundary),
+      excludedIds,
+    ]);
+    for (const row of rows) add(row.ownerId, row.day, row.total);
     report(surface.key, rows, started);
   }
 
   {
     const started = Date.now();
-    const { rows } = await pool.query(LEGACY_MODEL_SQL, [newCutover]);
-    for (const row of rows) add(row.ownerId, row.day.toISOString().slice(0, 10), row.total);
+    const { rows } = await pool.query(LEGACY_MODEL_SQL, [asUtcTimestamp(newCutover), excludedIds]);
+    for (const row of rows) add(row.ownerId, row.day, row.total);
     report('model (legacy)', rows, started);
   }
 
@@ -228,21 +292,23 @@ async function main() {
 
   console.log(`\n${grandTotal} comments across ${byOwner.size} owners -> ${rowsToWrite.length} day rows`);
 
-  // A day that also carries live events would be REPLACED rather than added to, so the overlap is
-  // reported rather than written. It is small by construction (the boundary day of each group) and
-  // wrong to guess at.
-  const boundaryDays = new Set([
-    firstEvent.toISOString().slice(0, 10),
-    newCutover.toISOString().slice(0, 10),
-  ]);
-  const overlap = rowsToWrite.filter((row) => boundaryDays.has(row.day));
-  const safeRows = rowsToWrite.filter((row) => !boundaryDays.has(row.day));
-  if (overlap.length) {
-    const overlapTotal = overlap.reduce((sum, row) => sum + row.total, 0);
+  // Every day from the first live event onward already carries sealed totals for the four old
+  // surfaces, and a history row has no surface dimension — so writing a new-surface-only total over
+  // one of those days destroys the live half AND the old-surface half in a single stroke. It is not
+  // just the two endpoint days: the whole span between them is live for four surfaces and
+  // backfilled for twelve, and it grows by a day for every day the release slips.
+  const mergeDays = new Set(
+    daysBetween(firstEvent.toISOString().slice(0, 10), newCutover.toISOString().slice(0, 10))
+  );
+  const needsMerge = rowsToWrite.filter((row) => mergeDays.has(row.day));
+  const safeRows = rowsToWrite.filter((row) => !mergeDays.has(row.day));
+  if (needsMerge.length) {
+    const mergeTotal = needsMerge.reduce((sum, row) => sum + row.total, 0);
     console.log(
-      `\n${overlap.length} rows fall on a boundary day (${[...boundaryDays].join(', ')}) holding ` +
-        `${overlapTotal} comments. Those days already carry live totals, so writing them would ` +
-        `replace the live value. Excluded here; they need an explicit merge.`
+      `\n${needsMerge.length} rows fall on a day that already holds live totals ` +
+        `(${[...mergeDays].join(', ')}), carrying ${mergeTotal} comments. Writing them would ` +
+        `REPLACE the sealed live value rather than add to it, so they are excluded. They need an ` +
+        `explicit merge: backfill total + existing sealed total, written with a fresh sealedAt.`
     );
   }
 
@@ -256,7 +322,7 @@ async function main() {
   if (!EXECUTE) {
     console.log(`\nDry run complete. ${safeRows.length} rows would be written to`);
     console.log('entityMetricDailyAgg_history_v2, then one entityMetricDirty_v3 row per owner');
-    console.log(`(${byOwner.size}) so the additive refresher recomputes each total.`);
+    console.log(`(${byOwner.size}) in chunks of ${DIRTY_CHUNK} every ${DIRTY_PAUSE_MS / 1000}s.`);
     console.log('\nSample:');
     for (const row of safeRows.slice(0, 5)) console.log(' ', JSON.stringify(row));
     await ch.close();
@@ -279,14 +345,15 @@ async function main() {
     entityId,
     metricType: 'commentCount',
   }));
-  for (let i = 0; i < dirty.length; i += BATCH) {
+  for (let i = 0; i < dirty.length; i += DIRTY_CHUNK) {
+    if (i > 0) await sleep(DIRTY_PAUSE_MS);
     await ch.insert({
       table: 'entityMetricDirty_v3',
-      values: dirty.slice(i, i + BATCH),
+      values: dirty.slice(i, i + DIRTY_CHUNK),
       format: 'JSONEachRow',
     });
+    console.log(`marked ${Math.min(i + DIRTY_CHUNK, dirty.length)}/${dirty.length} owners dirty`);
   }
-  console.log(`marked ${dirty.length} owners dirty`);
 
   await ch.close();
 }
