@@ -97,9 +97,7 @@
       .filter((x) => Math.floor(x.total) >= 1)
   );
 
-  // Sales counts (868ktk1k9). Access sales are the one source with a meaningful unit count, and no other surface in
-  // the product exposes one — creators were polling their own transaction ledger to reconstruct it. Buzz rows only,
-  // so the period figure and the per-day figure are drawn from the same population.
+  // Sales counts (868ktk1k9). Buzz-only here to match the series, which the query already restricts to buzz.
   const salesInPeriod = $derived(
     (data.summary ?? [])
       .filter((b) => b.source === 'accessSale' && currencyMeta(b.currency).family === 'buzz')
@@ -346,12 +344,6 @@
     {#each sourceTotals as st (st.source)}
       <StatCard label={SOURCE_LABEL[st.source]}>
         <p class="mt-1 text-xl font-semibold text-white"><CurrencyDisplay amount={st.total} /></p>
-        {#if st.source === 'accessSale' && salesInPeriod > 0}
-          <p class="mt-1 text-xs text-dark-2">
-            {salesInPeriod.toLocaleString()} sale{salesInPeriod === 1 ? '' : 's'} · {salesOnLastDay.toLocaleString()}
-            on {formatDay(data.through)}
-          </p>
-        {/if}
         <div class="mt-1">
           <DeltaChip
             current={st.total}
@@ -359,6 +351,14 @@
             label="vs {data.compare.label}"
           />
         </div>
+        {#if st.source === 'accessSale' && salesInPeriod > 0}
+          <p class="mt-1 text-xs text-dark-2">
+            {salesInPeriod.toLocaleString()} sale{salesInPeriod === 1
+              ? ''
+              : 's'}{#if salesOnLastDay > 0}
+              · {salesOnLastDay.toLocaleString()} on {formatDay(data.through)}{/if}
+          </p>
+        {/if}
       </StatCard>
     {/each}
   </section>

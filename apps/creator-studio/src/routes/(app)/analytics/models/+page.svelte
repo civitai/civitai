@@ -336,27 +336,32 @@
               {#if m.modelId}
                 <a
                   href="/analytics/models/{m.modelId}"
-                  class="group flex items-center gap-1 font-medium text-blue-4 hover:text-blue-3"
+                  class="group flex items-start gap-1 font-medium text-blue-4 hover:text-blue-3"
                   title={rowLabel(m)}
                 >
-                  <span
-                    class="min-w-0 truncate underline decoration-blue-4/40 underline-offset-2 group-hover:decoration-blue-3"
-                  >
-                    {m.modelName ?? 'Model ' + m.modelId}
+                  <span class="min-w-0 flex-1">
+                    <span
+                      class="block truncate underline decoration-blue-4/40 underline-offset-2 group-hover:decoration-blue-3"
+                    >
+                      {m.modelName ?? 'Model ' + m.modelId}
+                    </span>
+                    {#if m.versionName}
+                      <span class="block truncate text-sm font-normal text-dark-2"
+                        >{m.versionName}</span
+                      >
+                    {/if}
                   </span>
-                  <IconChevronRight size={14} class="shrink-0" />
+                  <IconChevronRight size={14} class="mt-1 shrink-0" />
                 </a>
               {:else}
                 <div class="truncate text-dark-2" title={rowLabel(m)}>
                   Version {m.modelVersionId}
                 </div>
+                {#if m.versionName}
+                  <div class="truncate text-sm text-dark-2">{m.versionName}</div>
+                {/if}
               {/if}
-              {#if m.versionName}
-                <!-- Own line: on one truncating line with the model name, the version was always the
-                     half that got cut — and it is what tells two rows of the same model apart. -->
-                <div class="truncate text-dark-2" title={m.versionName}>{m.versionName}</div>
-              {/if}
-              <div class="truncate text-xs text-dark-3">
+              <div class="truncate text-xs text-dark-2">
                 {m.modelType ?? '—'}{#if grouping.value === 'model' && m.modelId != null}
                   {@const n = versionCounts.get(m.modelId) ?? 1}
                   · {n} version{n === 1 ? '' : 's'}

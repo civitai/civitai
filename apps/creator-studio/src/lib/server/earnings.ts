@@ -21,8 +21,8 @@ export type EarningsBucket = {
 };
 // The trend series is per-source, buzz-only (the chart is a buzz trend; cash lives in the panel). One line per
 // source with toggle chips (E4). Currency detail stays in the by-source×currency summary/table.
-// `count` is the number of transactions behind `total` — for `accessSale` that is the per-day sales count, the
-// only place the product carries one (a sale is not a table, just an `externalTransactionId` prefix).
+// `accessSale`'s `count` is the only sales count the product has — a sale is not a table, just an
+// `externalTransactionId` prefix.
 export type EarningsPoint = { date: string; source: EarningsSource; total: number; count: number };
 
 // Access sales carry one of two id prefixes: `permanent-access-` for a permanent paid-access sale,
@@ -80,6 +80,8 @@ async function fetchSeries({
   to: string;
 }): Promise<EarningsPoint[]> {
   const uid = Number(userId);
+  // Widening the currency list below changes `count` too: /earnings prints this per-day count beside a period
+  // count it filters to buzz in the component, so the two would stop agreeing.
   const rows = await getClickhouse().$query<{
     date: string;
     source: EarningsSource;
@@ -110,7 +112,7 @@ export const getEarningsSummary = createCache({
 // Per-source buzz totals over time — the /earnings trend chart.
 export const getEarningsSeries = createCache({
   // Keys derive from the args, not the payload, so a stored value outlives a change to the returned shape. Bump
-  // the suffix whenever that shape or the numbers change — v2 added `count`.
+  // the suffix whenever that shape or the numbers change.
   name: 'earnings:series:v2',
   fetch: fetchSeries,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
