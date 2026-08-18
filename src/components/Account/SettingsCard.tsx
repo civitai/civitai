@@ -193,7 +193,7 @@ export function SettingsCard() {
         {flags.buzz && (
           <>
             <Divider label="Buzz Preferences" mb={-12} />
-            <HeaderEarnedBuzzToggle />
+            <HideBlueBuzzToggle />
           </>
         )}
 
@@ -263,18 +263,18 @@ function StickerMotionToggle() {
   );
 }
 
-function HeaderEarnedBuzzToggle() {
-  const { headerEarnedBuzzOnly } = useCurrentUserSettings();
+function HideBlueBuzzToggle() {
+  const { hideBlueBuzzInHeader } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
 
   return (
     <Switch
-      name="headerEarnedBuzzOnly"
-      label="Show only earned Buzz in the header"
-      description="The header adds your Blue and earned Buzz together. Turn this on to show just the earned balance, the kind you can withdraw. The account menu lists both either way."
-      checked={headerEarnedBuzzOnly ?? false}
+      name="hideBlueBuzzInHeader"
+      label="Hide Blue Buzz in the header"
+      description="The header adds your Blue Buzz into one balance with the rest. Turn this on to leave it out and show only the rest. Your Blue Buzz is still yours to spend, and the account menu lists both either way."
+      checked={hideBlueBuzzInHeader ?? false}
       disabled={isPending}
-      onChange={(e) => mutate({ headerEarnedBuzzOnly: e.target.checked })}
+      onChange={(e) => mutate({ hideBlueBuzzInHeader: e.target.checked })}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );

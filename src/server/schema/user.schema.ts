@@ -292,10 +292,11 @@ export const userSettingsSchema = z.object({
   // Opt-in: horizontal drag on multi-image gallery post cards. Off by default —
   // the feed mounts hundreds of cards and each one costs an embla engine.
   swipeGalleryCards: z.boolean().optional(),
-  // Creator opt-in: show only earned (yellow, or green on the red domain) buzz in the header
-  // badge, instead of blue and earned added together. Blue is granted and non-transferable, so a
-  // creator watching their own earnings is reading one of the two numbers, not the sum.
-  headerEarnedBuzzOnly: z.boolean().optional(),
+  // Opt-in: leave blue buzz out of the header badge, which otherwise adds blue and the domain's
+  // main type into one number. Blue is granted and non-transferable, so a creator watching what
+  // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
+  // green are `purchasable`, so the remaining balance still mixes earned and bought.
+  hideBlueBuzzInHeader: z.boolean().optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.
@@ -366,7 +367,7 @@ export const setUserSettingsInput = z.object({
   isEarlyAdopter: z.boolean().optional(),
   swipeGalleryCards: z.boolean().optional(),
   disableStickerMotion: z.boolean().optional(),
-  headerEarnedBuzzOnly: z.boolean().optional(),
+  hideBlueBuzzInHeader: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
   hideModelBuzz: z.boolean().optional(),
   hideModelDownloads: z.boolean().optional(),
