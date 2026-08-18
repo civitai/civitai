@@ -215,7 +215,11 @@ async function main() {
                                       FROM default.entityMetricEvents_month
                                       WHERE entityType = 'User' AND metricType = 'commentCount'`);
   const firstEvent =
-    Number(firstEventRows[0]?.events ?? 0) > 0 ? new Date(`${firstEventRows[0].firstEvent}Z`) : null;
+    Number(firstEventRows[0]?.events ?? 0) > 0
+      ? // ClickHouse returns `YYYY-MM-DD HH:MM:SS` with no zone. Parsed as-is that is a LOCAL time,
+        // which would move the boundary by the host's offset — the same bug as binding a Date.
+        new Date(`${firstEventRows[0].firstEvent.replace(' ', 'T')}Z`)
+      : null;
 
   if (!firstEvent) {
     console.error('Error: no User.commentCount events in ClickHouse. The forward path is not live,');
