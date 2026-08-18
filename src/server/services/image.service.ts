@@ -8110,13 +8110,15 @@ export const getImageContestCollectionDetails = async ({
     userId,
   });
 
-  return items.map((i) => {
+  // `addedById` is destructured off rather than spread: it is only here to resolve the gate below,
+  // and it names who submitted an entry, which this public endpoint has never returned.
+  return items.map(({ addedById, ...i }) => {
     const permissions = allPermissions.find((p) => p.collectionId === i.collection.id);
     // This endpoint is public. The reason — and above all the reviewer's free text about
     // someone else's entry — is only for the submitter, whoever manages the collection,
     // and site moderators investigating reports about reviewer behaviour.
     const canReadRejection =
-      (!!userId && userId === i.addedById) || !!permissions?.manage || !!isModerator;
+      (!!userId && userId === addedById) || !!permissions?.manage || !!isModerator;
 
     return {
       ...i,

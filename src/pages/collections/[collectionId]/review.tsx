@@ -502,7 +502,7 @@ function ModerationControls({
 
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
-      async onMutate({ collectionItemIds, status }) {
+      async onMutate({ collectionItemIds, status, rejectionReason, rejectionDetail }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
 
         queryUtils.collection.getAllCollectionItems.setInfiniteData(
@@ -514,6 +514,8 @@ function ModerationControls({
               for (const item of page.collectionItems) {
                 if (collectionItemIds.includes(item.id)) {
                   item.status = status;
+                  item.rejectionReason = rejectionReason ?? null;
+                  item.rejectionDetail = rejectionDetail ?? null;
                 }
               }
           })

@@ -2277,12 +2277,8 @@ export const setCollectionAiReview = async ({
   });
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  // updateCollectionItemsStatus only notifies on Contest collections, so anywhere else the job
-  // would reject people silently — and the beggars cron deletes rejected rows within the hour.
   if (aiReview.enabled && collection.mode !== CollectionMode.Contest)
-    throw throwBadRequestError(
-      'AI review can only be enabled on Contest collections; submitters would not be notified of a rejection.'
-    );
+    throw throwBadRequestError('AI review can only be enabled on Contest collections.');
 
   const key = collectionAiReviewKey(collectionId);
   await dbWrite.keyValue.upsert({

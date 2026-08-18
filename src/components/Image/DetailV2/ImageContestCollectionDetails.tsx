@@ -324,7 +324,7 @@ function ReviewActions({
 
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
-      async onMutate({ collectionItemIds, status }) {
+      async onMutate({ collectionItemIds, status, rejectionReason, rejectionDetail }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
 
         const queryKey = getQueryKey(trpc.collection.getAllCollectionItems);
@@ -336,6 +336,8 @@ function ReviewActions({
               for (const item of page.collectionItems) {
                 if (collectionItemIds.includes(item.id)) {
                   item.status = status;
+                  item.rejectionReason = rejectionReason ?? null;
+                  item.rejectionDetail = rejectionDetail ?? null;
                 }
               }
           })
