@@ -237,6 +237,19 @@ describe('🔴 buildListingStatChips — the `preview` posture', () => {
 describe('🔴 AppListingDetailBody delegates the chip decision (invariant guard)', () => {
   const SOURCE = new URL('../AppListingDetailBody.tsx', import.meta.url).pathname;
 
+  /**
+   * A real dependency on the view-model — `from '~/components/Apps/appListingStatChips'`,
+   * a dynamic `import(...)`, a `require(...)`, or a side-effect `import '...'`.
+   *
+   * 🔴 Deliberately NOT a substring test, for the same reason `rating-label.test.ts`'s
+   * ledger is not: `/buildListingStatChips/` is satisfied by a COMMENT naming the
+   * function, or by any unrelated identifier containing it. A file that had stopped
+   * importing the module — and gone back to deciding the chips itself — would still
+   * match, so the guard would pass on precisely the change it exists to block.
+   */
+  const IMPORT_FORM =
+    /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(['"`])~\/components\/Apps\/appListingStatChips\1/;
+
   it('the source imports the view-model and passes `message` through unconditionally', async () => {
     const fs = await import('fs');
     const raw = fs.readFileSync(SOURCE, 'utf8');
@@ -245,10 +258,19 @@ describe('🔴 AppListingDetailBody delegates the chip decision (invariant guard
     // assertions below are zeros from regexes wired to nothing.
     expect(
       "import { buildListingStatChips } from '~/components/Apps/appListingStatChips';"
-    ).toMatch(/buildListingStatChips/);
+    ).toMatch(IMPORT_FORM);
     expect('message={x == null ? y : undefined}').toMatch(/message=\{[^}]*\?/);
 
-    expect(raw).toMatch(/buildListingStatChips/);
+    // NEGATIVE control — a bare mention must NOT count as a dependency. This is the
+    // exact input the old substring matcher accepted.
+    expect('// the rule lives in buildListingStatChips, see that module').not.toMatch(IMPORT_FORM);
+
+    expect(
+      raw,
+      'AppListingDetailBody.tsx no longer imports appListingStatChips. If the chip ' +
+        'decision moved back into the component, the hover-message and preview-posture ' +
+        'rules are no longer covered by the node project at all.'
+    ).toMatch(IMPORT_FORM);
     // No CONDITIONAL message expression anywhere in the file. `message={chip.message}`
     // passes; `message={cond ? a : undefined}` does not.
     expect(

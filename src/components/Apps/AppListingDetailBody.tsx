@@ -288,9 +288,14 @@ function HeroCover({
  * 🔴 OMITTED ENTIRELY IN `preview` — see the posture note on the body. Both numbers are
  * review/usage aggregates that a shadow listing structurally does not have. That
  * omission is DECIDED IN `buildListingStatChips`, not here: this component renders
- * whatever list it is given and renders nothing for an empty one, so the posture rule
- * is covered by the blocking node project rather than only by the browser suite CI
- * does not run.
+ * whatever list it is given and renders nothing for an empty one, so the posture RULE
+ * is covered by the blocking node project.
+ *
+ * 🔴 THE WIRING IS NOT — do not read the line above as licence to skip the browser
+ * tier. That this component hands the view-model the REAL `preview` value, rather than
+ * a literal or an inverted one, is pinned ONLY in `AppListingDetailBody.browser.test.tsx`,
+ * which CI does not run. Mutating the call site to `{ preview: false }` leaves the whole
+ * node suite green. Rule and wiring are separate claims; only the first one is gated.
  *
  * 🔴 The hover MESSAGE is likewise decided there and passed through UNCONDITIONALLY.
  * `StatHoverCard` renders `message` INSTEAD of `value`, so a ternary that supplied the

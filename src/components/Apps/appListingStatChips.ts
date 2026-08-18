@@ -34,8 +34,13 @@
  * UNAPPROVED shadow listing, which structurally has no reviews and no installs — its
  * rollup is 0/0 because nobody could have reviewed it, not because nobody did. Both
  * chips are therefore omitted, and that omission is decided HERE (the component just
- * renders the list, and renders nothing for an empty one) so the rule is covered by
+ * renders the list, and renders nothing for an empty one) so the RULE is covered by
  * the suite CI actually runs.
+ *
+ * 🔴 The component's WIRING is a SEPARATE, UNGATED claim. That `StatChips` hands this
+ * function the real `preview` value is pinned only in the browser tier, which CI does
+ * not run — mutating that call site leaves every node test green. Covering the rule
+ * here does not cover the hand-off to it.
  */
 
 import { getRecommendLabel } from '~/components/Apps/appListingCardView';
