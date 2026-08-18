@@ -14,6 +14,23 @@
 -- and a cancelled build leaves an INVALID index behind that will not be used and
 -- must be dropped before retrying —
 --   SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;
+--
+-- IF NOT EXISTS matches on the NAME, so if that invalid index is still there this
+-- statement reports success and creates nothing. Drop it first (DROP INDEX
+-- CONCURRENTLY); a clean re-run is the only way this file is idempotent. The
+-- planner ignores an invalid index while every write still maintains it, so the
+-- state costs writes and buys nothing.
+--
+-- Measured on this table 2026-08-14: a concurrent build takes ~33s, and the
+-- postgres-query skill defaults to a 30s timeout. So applying this through that
+-- skill without an explicit --timeout is cancelled BY ARITHMETIC, not by bad luck,
+-- and lands in exactly the state above on the first attempt. Pass a timeout well
+-- above 33s.
+--
+-- Verify against the PRIMARY, not a replica, and by the flag rather than by the
+-- exit code -- a sibling migration having been applied is not evidence this one
+-- was:
+--   SELECT indisvalid FROM pg_index WHERE indexrelid = '"Placement_resolvedAt_approved_idx"'::regclass;
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "Placement_resolvedAt_approved_idx"
   ON "Placement" ("resolvedAt")
   WHERE "targetType" = 'image' AND status = 'approved';
