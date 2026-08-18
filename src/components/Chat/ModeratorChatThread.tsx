@@ -14,7 +14,6 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { IconAlertTriangle, IconPencil, IconTrash } from '@tabler/icons-react';
 import React, { useState } from 'react';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -155,26 +154,28 @@ export function ModeratorChatThread({
                           hidden from {hiddenFrom.join(', ')}
                         </Badge>
                       )}
-                      <Group gap={4} ml="auto" wrap="nowrap">
-                        <LegacyActionIcon
-                          size="sm"
-                          variant="subtle"
+                      <Group gap={6} ml="auto" wrap="nowrap">
+                        <Button
+                          size="compact-xs"
+                          variant="light"
+                          leftSection={<IconPencil size={12} />}
                           aria-label="Edit message"
                           disabled={msg.userId === -1 || !!msg.deletedAt}
                           onClick={() => setEditing({ id: msg.id, content: msg.content })}
                         >
-                          <IconPencil size={14} />
-                        </LegacyActionIcon>
-                        <LegacyActionIcon
-                          size="sm"
-                          variant="subtle"
+                          Edit
+                        </Button>
+                        <Button
+                          size="compact-xs"
+                          variant="light"
                           color="red"
+                          leftSection={<IconTrash size={12} />}
                           aria-label="Delete message"
                           disabled={!!msg.deletedAt || isDeleting}
                           onClick={() => confirmDelete(msg.id)}
                         >
-                          <IconTrash size={14} />
-                        </LegacyActionIcon>
+                          Delete
+                        </Button>
                       </Group>
                     </Group>
                     {editing?.id === msg.id ? (
