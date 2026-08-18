@@ -8054,6 +8054,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
 type ContestCollectionItem = {
   id: number;
   imageId: number;
+  addedById: number | null;
   status: string;
   tag: { id: number; name: string } | null;
   collection: { id: number; name: string; metadata: Prisma.JsonValue; mode: 'Contest' };
@@ -8071,6 +8072,7 @@ const contestCollectionItemsCache = createLruCache({
       SELECT
         ci.id,
         ci."imageId",
+        ci."addedById",
         ci.status,
         ci."rejectionReason"::text as "rejectionReason",
         ci."rejectionDetail",
@@ -8107,14 +8109,23 @@ export const getImageContestCollectionDetails = async ({
     userId,
   });
 
-  return items.map((i) => ({
-    ...i,
-    permissions: allPermissions.find((p) => p.collectionId === i.collection.id),
-    collection: {
-      ...i.collection,
-      metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
-    },
-  }));
+  return items.map((i) => {
+    const permissions = allPermissions.find((p) => p.collectionId === i.collection.id);
+    // This endpoint is public. The reason — and above all the reviewer's free text about
+    // someone else's entry — is only for the submitter and whoever manages the collection.
+    const canReadRejection = (!!userId && userId === i.addedById) || !!permissions?.manage;
+
+    return {
+      ...i,
+      rejectionReason: canReadRejection ? i.rejectionReason : null,
+      rejectionDetail: canReadRejection ? i.rejectionDetail : null,
+      permissions,
+      collection: {
+        ...i.collection,
+        metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
+      },
+    };
+  });
 };
 
 // this method should hopefully not be a lasting addition
