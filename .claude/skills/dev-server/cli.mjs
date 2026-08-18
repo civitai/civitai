@@ -450,6 +450,14 @@ async function cmdTestWait(id) {
     }
 
     if (isTerminalStatus(run.status)) {
+      // Both waiters say this, in the same place, for the same reason: a truncated log that does
+      // not announce itself is read as a whole one. See `warnIfLogsDropped` in test-unit-run.mjs.
+      if (run.logsDropped) {
+        console.error(
+          `WARNING: this log is INCOMPLETE — the queue dropped the oldest ${run.logsDropped} of ` +
+            `${run.logIndex} output lines. Do not read the text above as the whole run.`
+        );
+      }
       console.log(`Run ${id} ${run.status}${run.error ? ` (${run.error})` : ''}`);
       process.exit(exitCodeFor(run));
     }
