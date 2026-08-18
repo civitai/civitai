@@ -242,8 +242,55 @@ jobs:
         run: pnpm run typecheck
 
   unit:
-    name: Unit tests
+    name: Unit tests (fork PRs / non-main base)
     runs-on: ubuntu-latest
+    # 🔴 NARROWED, not retired. The `if:` below is BYTE-IDENTICAL to the one on
+    # `typecheck` above, deliberately: same two disjuncts, same complement of what
+    # the in-cluster Tekton side covers. The Tekton PR preview pipeline runs
+    # `pnpm run test:unit:run` and posts the verdict as the `preview / unit-tests`
+    # commit status, so where that runs, this job is a second execution of the
+    # same command on the same tree — paying its own checkout and its own
+    # `pnpm install --frozen-lockfile`, which the Tekton copy does not (it reuses
+    # the node_modules an earlier task in the same workspace already installed).
+    #
+    # The two disjuncts:
+    #
+    #   fork PR — the preview pipeline requires repo-write author association, so
+    #     a fork PR gets none of its five suites. This job is the only unit run a
+    #     fork PR can get. ⚠️ DORMANT IN PRACTICE, for a reason unrelated to this
+    #     expression: GitHub holds fork-originated workflow runs at
+    #     `action_required` until a maintainer approves them. Enumerated (not
+    #     sampled) 2026-08-18 across all 337 PRs created since the `typecheck`
+    #     narrowing: exactly two are fork-headed, #3763 and #3920, and all six of
+    #     their workflow runs sit at `action_required`. Keep the arm; it is where
+    #     fork coverage lands the moment a maintainer approves. Do not cite it as
+    #     active fork protection.
+    #
+    #   base != main — the Tekton side only polls PRs targeting `main`. This
+    #     workflow's `on:` accepts `main` and `release`, so this disjunct means
+    #     "base is `release`" — a shape the Tekton side never sees.
+    #
+    # 🔴 PRECONDITION — MEASURED, AND NOT MET AS OF 2026-08-18. This narrowing is
+    # sound only while the Tekton side actually runs these suites on ordinary
+    # internal PRs. It does not. All five preview suites are gated on an
+    # authorization task that requires repo-write association AND (an auto-deploy
+    # author OR the `preview` label). Measured over the 40 most recently merged
+    # internal PRs targeting `main`: 11 carried `preview / unit-tests`, and all 11
+    # were from the single auto-deploy author — 0 of the 24 PRs by the other three
+    # authors got any Tekton unit/packages/apps run. Discriminating control:
+    # `tekton / typecheck`, posted by a DIFFERENT and ungated pipeline, was
+    # present on 38 of the same 40, so the absence is a gate and not status
+    # retention. Positive control: #4080, from a non-auto-deploy author, carries
+    # the `preview` label and got all five suites.
+    #
+    # That asymmetry is exactly why `typecheck` could be narrowed and these three
+    # cannot be yet, on otherwise identical reasoning. Enabling this `if:` before
+    # the Tekton suites run unconditionally removes the ONLY unit / packages / apps
+    # CI from the majority of internal PRs. The prerequisite is to host the suites
+    # in the always-on pipeline; until that lands, do not enable this gate.
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository
+      || github.event.pull_request.base.ref != 'main'
     # ~8,000 tests that until now only ran on whoever remembered to run them.
     # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
     # on purpose: they need Chromium, which this job does not install. That is
@@ -286,8 +333,19 @@ jobs:
         run: pnpm run test:unit:run
 
   packages:
-    name: Package unit tests
+    name: Package unit tests (fork PRs / non-main base)
     runs-on: ubuntu-latest
+    # 🔴 NARROWED, not retired — same `if:`, same two disjuncts and the SAME UNMET
+    # PRECONDITION as the `unit` job above. Read that comment before touching this
+    # one; it is not repeated here. The Tekton counterpart is `preview /
+    # packages-tests`, and it is a command-for-command mirror of this job: it runs
+    # `assert-next-svg-patch-applied.mjs`, then the identical
+    # `pnpm run test:packages:run`, then the same `assert-workspace-suites-ran.mjs`
+    # ledger assertion. So all three steps below are duplicated, not just the
+    # suite — and all three are behind the same unmet precondition.
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository
+      || github.event.pull_request.base.ref != 'main'
     # The nine `packages/*` suites — 616 tests that, until this job existed, NO CI job ran.
     # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
     # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
@@ -358,8 +416,17 @@ jobs:
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
   apps:
-    name: App unit tests
+    name: App unit tests (fork PRs / non-main base)
     runs-on: ubuntu-latest
+    # 🔴 NARROWED, not retired — same `if:`, same two disjuncts and the SAME UNMET
+    # PRECONDITION as the `unit` job above. Read that comment before touching this
+    # one; it is not repeated here. The Tekton counterpart is `preview /
+    # apps-tests`, a command-for-command mirror of this job: the identical
+    # `pnpm run test:apps:run` followed by the same `assert-workspace-suites-ran.mjs`
+    # ledger assertion.
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository
+      || github.event.pull_request.base.ref != 'main'
     # The `apps/*` suites — the same gap as `packages` above, in the sibling directory, and
     # missed when that one was closed: the root config registered `packages/*/vitest.config.*`
     # as projects and nothing for `apps/*`, so 369 tests across five apps had never once run
