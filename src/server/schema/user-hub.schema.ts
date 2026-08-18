@@ -9,9 +9,12 @@ export const hubLimits = {
   aliasLength: 60,
 } as const;
 
-// Engagement sorts are excluded until the collection path can honour them: a hub
-// with a collection source silently degrades to id-ordering there.
-export const hubSortSchema = z.enum([ImageSort.Newest, ImageSort.Oldest]);
+export const hubSortSchema = z.enum([
+  ImageSort.Newest,
+  ImageSort.Oldest,
+  ImageSort.MostReactions,
+  ImageSort.MostComments,
+]);
 
 export const userHubSourceSchema = z.object({
   id: z.number().optional(),
