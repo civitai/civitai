@@ -17,7 +17,7 @@
     SOURCE_LABEL,
     SOURCE_COLOR,
     currencyMeta,
-    SERIES_BUZZ_CURRENCIES,
+    isBuzzCurrency,
     currencySort,
     formatAmount,
     hasDisplayValue,
@@ -92,21 +92,16 @@
       .map((s) => ({
         source: s,
         total: (data.summary ?? [])
-          .filter((b) => b.source === s && currencyMeta(b.currency).family === 'buzz')
+          .filter((b) => b.source === s && isBuzzCurrency(b.currency))
           .reduce((acc, b) => acc + b.total, 0),
       }))
       .filter((x) => Math.floor(x.total) >= 1)
   );
 
-  // Sales counts (868ktk1k9). Both figures filter on SERIES_BUZZ_CURRENCIES so the period count and the per-day
-  // count cannot drift apart when a new account type ships.
+  // Sales counts (868ktk1k9).
   const salesInPeriod = $derived(
     (data.summary ?? [])
-      .filter(
-        (b) =>
-          b.source === 'accessSale' &&
-          (SERIES_BUZZ_CURRENCIES as readonly string[]).includes(b.currency)
-      )
+      .filter((b) => b.source === 'accessSale' && isBuzzCurrency(b.currency))
       .reduce((n, b) => n + b.count, 0)
   );
   const salesOnLastDay = $derived(
@@ -362,7 +357,8 @@
             {salesInPeriod.toLocaleString()} sale{salesInPeriod === 1
               ? ''
               : 's'}{#if salesOnLastDay > 0}
-              · {salesOnLastDay.toLocaleString()} on {formatDay(data.through)}{/if}
+              · {salesOnLastDay.toLocaleString()}
+              {data.throughIsToday ? 'today' : `on ${formatDay(data.through)}`}{/if}
           </p>
         {/if}
       </StatCard>

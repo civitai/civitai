@@ -1,7 +1,7 @@
 import { getClickhouse } from '$lib/server/clickhouse';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
-import { SERIES_BUZZ_CURRENCIES } from '$lib/earnings';
+import { BUZZ_CURRENCIES } from '$lib/earnings';
 import type { EarningsSource } from '$lib/earnings';
 
 // Earnings by source — A1 **Part 1**. Creators are paid through `default.buzzTransactions`, which is already keyed
@@ -39,7 +39,7 @@ const RECEIVING_TYPES = `(type IN ('tip','compensation','licenseFee','27','sell'
 const whereClause = (uid: number, from: string, to: string) =>
   `toAccountId = ${uid} AND date >= toDate('${from}') AND date < toDate('${to}') + 1 AND ${RECEIVING_TYPES}`;
 
-const CURRENCY_LIST = SERIES_BUZZ_CURRENCIES.map((c) => `'${c}'`).join(',');
+const CURRENCY_LIST = BUZZ_CURRENCIES.map((c) => `'${c}'`).join(',');
 
 const SOURCE_EXPR = `multiIf(type = 'tip', 'tip', type = 'compensation', 'compensation', type IN ('licenseFee','27'), 'licenseFee', type = 'sell', 'cosmeticSale', 'accessSale')`;
 
@@ -135,7 +135,7 @@ async function fetchMonthly({ userId }: { userId: number }): Promise<MonthlyEarn
      FROM default.buzzTransactions
      WHERE toAccountId = ${uid}
        AND date >= toStartOfMonth(today() - INTERVAL 11 MONTH)
-       AND toAccountType IN ('yellow','blue','green','club')
+       AND toAccountType IN (${CURRENCY_LIST})
        AND ${RECEIVING_TYPES}
      GROUP BY month, currency
      ORDER BY month DESC`

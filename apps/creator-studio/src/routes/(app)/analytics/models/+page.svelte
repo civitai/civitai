@@ -358,7 +358,9 @@
                   Version {m.modelVersionId}
                 </div>
                 {#if m.versionName}
-                  <div class="truncate text-sm text-dark-2">{m.versionName}</div>
+                  <div class="truncate text-sm text-dark-2" title={m.versionName}>
+                    {m.versionName}
+                  </div>
                 {/if}
               {/if}
               <div class="truncate text-xs text-dark-2">
