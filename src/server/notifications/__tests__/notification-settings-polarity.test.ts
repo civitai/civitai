@@ -27,6 +27,18 @@ const queryFor = async (type: string) => {
 };
 
 const OPT_OUT_CLAUSE = 'NOT EXISTS (SELECT 1 FROM "UserNotificationSettings"';
+
+/**
+ * Types that render a toggle and ignore it, left as they are.
+ *
+ * `cosmetic-shop-item-sold` is a pre-existing defect this guard found, not one
+ * introduced with it: it draws a checkbox under System and its query never reads
+ * the settings table, so the switch has never done anything. Left alone because
+ * fixing it silences an earnings notification for whoever already tried to mute
+ * it, which is a product decision on someone else's surface rather than part of
+ * the placement work that added this check.
+ */
+const KNOWN_INERT = ['cosmetic-shop-item-sold'];
 /** A LEFT JOIN would satisfy a bare `JOIN` substring test while restricting nothing. */
 const DERIVES_RECIPIENTS = /(?<!LEFT )(?<!LEFT OUTER )JOIN "UserNotificationSettings"/;
 
@@ -58,6 +70,44 @@ describe('notification settings polarity', () => {
         );
       }
     }
+  });
+
+  /**
+   * The test above branches on the query MENTIONING the table, so a processor
+   * that omits the clause entirely matches neither arm and passes vacuously.
+   * That is how `remix-gallery-resolved` shipped unmuteable: it rendered a
+   * checkbox, saved the row, and kept sending, because nothing on this path
+   * filters recipients centrally — `createNotificationsBulk` does no settings
+   * lookup at all, unlike the event path's `create.ts`.
+   *
+   * Scoped to types that RENDER a toggle. A processor with `toggleable: false`
+   * is entitled to ignore the table; one that draws a checkbox is not.
+   */
+  it('a rendered toggle is never inert', async () => {
+    const inert: string[] = [];
+    for (const type of notificationTypes) {
+      const query = await queryFor(type);
+      // No query means the event path, where create.ts applies the filter.
+      if (!query) continue;
+      if (!query.includes(OPT_OUT_CLAUSE)) inert.push(type);
+    }
+
+    // Joined rather than compared as an array: vitest truncates a long array in
+    // the failure line, and the whole value of this guard is naming every type
+    // that is inert rather than the first one or two.
+    //
+    // Pinned to the exact known set rather than allowed to grow, so this fails
+    // in both directions — a new inert type appears, or a listed one is fixed
+    // and must be struck off here.
+    expect(inert.join(', ')).toBe(KNOWN_INERT.join(', '));
+  });
+
+  it('that check is capable of failing', () => {
+    // Guards the loop above from passing because the predicate is unsatisfiable
+    // — the shape it must reject, which is what the real defect looked like.
+    const clauseless = `SELECT 'x' "key", u.id "userId" FROM "User" u`;
+
+    expect(clauseless.includes(OPT_OUT_CLAUSE)).toBe(false);
   });
 
   it('actually reaches the async processors', async () => {
