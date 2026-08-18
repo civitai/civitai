@@ -26,8 +26,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * 🔴 WHY THIS FILE IS HERE AND NOT NEXT TO THE HANDLER. Every `.ts`/`.tsx` under
  * `src/pages/**` is enumerated by Next as a route — `isPageFile` is a bare
  * extension test with no test-file exclusion — so a suite co-located in
- * `src/pages/api/mod/retool/__tests__/` becomes the API route
- * `/api/mod/retool/__tests__/comment.client-ip.test`, and `next build` then
+ * `src/pages/api/mod/comment/__tests__/` becomes the API route
+ * `/api/mod/comment/__tests__/...`, and `next build` then
  * asserts it satisfies `ApiRouteConfig`, which requires a `default` export. It has
  * none, so the PRODUCTION BUILD fails while every correctness gate stays green
  * (see the guard in `src/__tests__/pages/no-test-files-in-pages-tree.test.ts` for
@@ -41,6 +41,9 @@ const { mockGetSession, mockRetoolAudit } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
+// The wrapper falls through to the session when no bearer token is present; this test sends one, but
+// the module is imported either way and must be mockable.
+vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
     retoolAudit = mockRetoolAudit;
@@ -69,7 +72,7 @@ vi.mock('~/server/services/commentsv2.service', () => ({
   })),
 }));
 
-import handler from '~/pages/api/mod/retool/comment';
+import handler from '~/pages/api/mod/comment/remove-as-tos';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockRedis = redisMock.sysRedis;
@@ -84,7 +87,7 @@ function createMocks(headers: Record<string, string | string[]>, remoteAddress?:
   const req = {
     method: 'POST',
     headers: { authorization: 'Bearer tok', ...headers },
-    body: { action: 'removeAsTos', commentIds: [1] },
+    body: { commentIds: [1] },
     query: {},
     socket: { remoteAddress },
   } as unknown as Parameters<typeof handler>[0];
@@ -135,7 +138,7 @@ beforeEach(() => {
   setTos.mockResolvedValue({ count: 1, notified: 0, rewardedReports: 0 });
 });
 
-describe('retool removeAsTos: the address recorded in the audit trail', () => {
+describe('comment.removeAsTos: the address recorded in the audit trail', () => {
   describe('harness self-checks', () => {
     it('POSITIVE CONTROL: the handler actually reaches the service', async () => {
       // Without this, every assertion below is indistinguishable from a harness
