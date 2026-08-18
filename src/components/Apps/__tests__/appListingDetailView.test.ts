@@ -415,9 +415,10 @@ describe('getDetailPrimaryAction — off-site', () => {
  *
  * `AppListingDetailBody`'s docstring states this in 🔴 terms, and the ONLY other
  * check on it is an absence assertion in `AppListingDetailBody.browser.test.tsx`
- * — which lives in the browser `component` project, **which CI does not run**
- * (see this file's header and `recentAppsRail.test.ts`). Without the check
- * below, re-adding `<iframe src={liveUrl}>` would pass every gate that runs.
+ * — which lives in the browser `component` project, **run only by the PR preview
+ * pipeline, report-only and not a required check** (see this file's header and
+ * `recentAppsRail.test.ts`). Without the check below, re-adding
+ * `<iframe src={liveUrl}>` would pass every gate that actually blocks.
  *
  * This replaces the equivalent gate that lived in the now-deleted
  * `appListingPreview.test.ts` — that one pinned the frame's hardening
