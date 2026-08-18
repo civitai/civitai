@@ -139,9 +139,19 @@ const HOUR = 60 * 60 * 1000;
 const future = () => new Date(Date.now() + HOUR);
 const past = () => new Date(Date.now() - HOUR);
 
+// Either side of the 30-day purchase window.
+const WINDOW_DAYS = 30;
+const boughtLongAgo = () => new Date(Date.now() - (WINDOW_DAYS + 1) * 24 * HOUR);
+const boughtRecently = () => new Date(Date.now() - (WINDOW_DAYS - 1) * 24 * HOUR);
+
 type VersionRow = { id: number; meta: Record<string, unknown> | null };
 type GateRow = { entityId: number; endsAt: Date | null };
-type AccessRow = { accessToId: number; accessorId: number; meta: Record<string, unknown> | null };
+type AccessRow = {
+  accessToId: number;
+  accessorId: number;
+  meta: Record<string, unknown> | null;
+  addedAt: Date | null;
+};
 
 function setupRefundData({
   versions = [{ id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } }] as VersionRow[],
@@ -151,6 +161,7 @@ function setupRefundData({
       accessToId: VERSION_ID,
       accessorId: BUYER_ID,
       meta: { 'download-buzzTransactionId': 'tx-1' },
+      addedAt: boughtRecently(),
     },
   ] as AccessRow[],
   amounts = { 'tx-1': 300 } as Record<string, number>,
@@ -190,7 +201,13 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0, totalsByAccount: {} });
+    expect(result).toEqual({
+      purchases: [],
+      buyerCount: 0,
+      totalBuzz: 0,
+      totalsByAccount: {},
+      exemptBuyerCount: 0,
+    });
     expect(mockDbWrite.paidAccess.findMany).not.toHaveBeenCalled();
   });
 
@@ -199,15 +216,21 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0, totalsByAccount: {} });
+    expect(result).toEqual({
+      purchases: [],
+      buyerCount: 0,
+      totalBuzz: 0,
+      totalsByAccount: {},
+      exemptBuyerCount: 0,
+    });
     expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
   });
 
   it('only looks at grants on versions whose gate is still active', async () => {
     setupRefundData({
       versions: [
-        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
-        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
+        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
+        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
       ],
       gates: [
         { entityId: VERSION_ID, endsAt: future() },
@@ -230,8 +253,8 @@ describe('getModelEarlyAccessRefundRequirement', () => {
   it('skips grants with no purchase transaction and sums both download and generation purchases', async () => {
     setupRefundData({
       versions: [
-        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
-        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
+        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
+        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
       ],
       gates: [
         { entityId: VERSION_ID, endsAt: null },
@@ -247,6 +270,7 @@ describe('getModelEarlyAccessRefundRequirement', () => {
             'download-buzzTransactionId': 'tx-1',
             'generation-buzzTransactionId': 'tx-2',
           },
+          addedAt: boughtRecently(),
         },
         // Same buyer on a second version — one buyer, two purchases.
         {
@@ -284,11 +308,13 @@ describe('getModelEarlyAccessRefundRequirement', () => {
             'download-buzzTransactionId': 'tx-1',
             'generation-buzzTransactionId': 'tx-2',
           },
+          addedAt: boughtRecently(),
         },
         {
           accessToId: VERSION_ID,
           accessorId: OTHER_BUYER_ID,
           meta: { 'download-buzzTransactionId': 'tx-3' },
+          addedAt: boughtRecently(),
         },
       ],
       amounts: { 'tx-1': 300, 'tx-2': 200, 'tx-3': 25 },
@@ -301,6 +327,106 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     expect(result.totalsByAccount).toEqual({ blue: 300, yellow: 225 });
     expect(result.totalBuzz).toBe(525);
+  });
+
+  it('drops purchases made longer ago than the window and counts those buyers as exempt', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toEqual([]);
+    expect(result.totalBuzz).toBe(0);
+    expect(result.exemptBuyerCount).toBe(1);
+    // Nothing is priced for an exempt buyer — the ledger is never asked.
+    expect(mockGetMultiAccountTransactionsByPrefix).not.toHaveBeenCalled();
+  });
+
+  it('refunds the recent buyer and exempts the old one on the same version', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: boughtRecently(),
+        },
+        {
+          accessToId: VERSION_ID,
+          accessorId: OTHER_BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-2' },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+      amounts: { 'tx-1': 300, 'tx-2': 900 },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toEqual([
+      { modelVersionId: VERSION_ID, buyerId: BUYER_ID, buzzTransactionIds: ['tx-1'] },
+    ]);
+    expect(result.buyerCount).toBe(1);
+    expect(result.exemptBuyerCount).toBe(1);
+    // The exempt buyer's 900 must not reach the total the owner is asked to pay.
+    expect(result.totalBuzz).toBe(300);
+  });
+
+  it('counts a buyer once when several of their purchases have aged out', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: boughtLongAgo(),
+        },
+        {
+          accessToId: OTHER_VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-2' },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+      versions: [
+        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
+        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
+      ],
+      gates: [
+        { entityId: VERSION_ID, endsAt: null },
+        { entityId: OTHER_VERSION_ID, endsAt: null },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.exemptBuyerCount).toBe(1);
+  });
+
+  it('keeps owing a refund on a purchase with no recorded date', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: null,
+        },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toHaveLength(1);
+    expect(result.exemptBuyerCount).toBe(0);
   });
 });
 
@@ -326,6 +452,7 @@ describe('unpublishModelById — early access refund gate', () => {
             'download-buzzTransactionId': 'tx-1',
             'generation-buzzTransactionId': 'tx-2',
           },
+          addedAt: boughtRecently(),
         },
       ],
       amounts: { 'tx-1': 300, 'tx-2': 200 },
@@ -393,6 +520,7 @@ describe('unpublishModelById — early access refund gate', () => {
             'download-buzzTransactionId': 'tx-1',
             'generation-buzzTransactionId': 'tx-2',
           },
+          addedAt: boughtRecently(),
         },
       ],
       amounts: { 'tx-1': 300, 'tx-2': 500 },
@@ -406,6 +534,26 @@ describe('unpublishModelById — early access refund gate', () => {
     ).rejects.toThrowError(/requires 500 blue Buzz but the account only has 0/);
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('unpublishes without consent or refunds once every buyer has aged out', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+    });
+    setupUnpublishWrites();
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+    expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.entityAccess.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.model.update).toHaveBeenCalled();
   });
 
   it('does not gate or refund on a moderator unpublish', async () => {

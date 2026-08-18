@@ -1,4 +1,5 @@
 import type { UseFeatureFlagsReturn } from '~/providers/FeatureFlagsProvider';
+import dayjs from '~/shared/utils/dayjs';
 import { constants, EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 import type { UserMeta } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -82,4 +83,27 @@ export function getMaxEarlyAccessModels({
   return earlyAccessUnlockedDays.length > 0
     ? earlyAccessUnlockedDays[earlyAccessUnlockedDays.length - 1]
     : 0;
+}
+
+/**
+ * A buyer can be refunded for this long after they pay. Past it, unpublishing owes them nothing —
+ * so a version nobody has bought in this long carries no refund obligation at all.
+ */
+export const PAID_ACCESS_REFUND_WINDOW_DAYS = 30;
+
+/**
+ * The instant a purchase made at `purchasedAt` stops being refundable.
+ *
+ * UTC rather than `increaseDate`, which adds CALENDAR days in local time: a window spanning a DST
+ * change then runs 719 or 721 hours instead of 720, so the same purchase would fall in or out of
+ * the window depending on the server's zone.
+ */
+export function paidAccessRefundWindowEnd(purchasedAt: Date) {
+  return dayjs.utc(purchasedAt).add(PAID_ACCESS_REFUND_WINDOW_DAYS, 'day').toDate();
+}
+
+/** Whether unpublishing still owes this purchase a refund. */
+export function isWithinPaidAccessRefundWindow(purchasedAt: Date | null, now = new Date()) {
+  if (!purchasedAt) return true;
+  return now < paidAccessRefundWindowEnd(purchasedAt);
 }
