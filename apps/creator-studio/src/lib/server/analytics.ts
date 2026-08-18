@@ -159,14 +159,14 @@ export const getTopMedia = createCache({
 }).get;
 
 export const getComics = createCache({
-  name: 'analytics:comics:v2',
+  name: 'analytics:comics:v3',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchComics(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getModel3ds = createCache({
-  name: 'analytics:model3d:v1',
+  name: 'analytics:model3d:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchModel3ds(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -406,16 +406,13 @@ const impressionArms = () =>
     .join(', ');
 
 // Impressions land in their own table rather than `daily_views`, so this cannot reuse `viewTrackingLive`.
-const impressionTrackingLive = createCache({
-  name: 'analytics:impressions-live:v1',
-  fetch: async (): Promise<boolean> => {
-    const rows = await getClickhouse().$query<{ one: number }>(
-      `SELECT 1 AS one FROM impressions_daily_by_owner WHERE entityType IN (${impressionArms()}) LIMIT 1`
-    );
-    return rows.length > 0;
-  },
-  ttlSeconds: 3600,
-}).get;
+// Deliberately uncached — see the note on viewTrackingLive.
+async function impressionTrackingLive(): Promise<boolean> {
+  const rows = await getClickhouse().$query<{ one: number }>(
+    `SELECT 1 AS one FROM impressions_daily_by_owner WHERE entityType IN (${impressionArms()}) LIMIT 1`
+  );
+  return rows.length > 0;
+}
 
 function netReactionsDailySql(uid: number, from: string, to: string): string {
   return `SELECT toDate(time) AS date, ${netReactions} AS value FROM reactions WHERE ownerId = ${uid} AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY date`;
@@ -460,7 +457,7 @@ async function fetchContentAnalytics(
 
   const [impressions, impressionsTracking] = await Promise.all([
     series(impressionsDailySql(uid, from, to)),
-    impressionTrackingLive({}),
+    impressionTrackingLive(),
   ]);
 
   const sum = (s: TimePoint[]) => s.reduce((acc, p) => acc + p.value, 0);
@@ -697,18 +694,19 @@ async function fetchImageViewDetail(
 
 // Has ANY row of this entity type ever been written, platform-wide? Answers "not collecting yet" as distinct
 // from "you have none". `LIMIT 1` short-circuits, and `entityType` leads the primary key on `daily_views`, so
-// this is a prefix seek rather than a scan. Cheap enough to run per panel load; the answer flips once and
-// never flips back, which is why it caches for an hour rather than with the range.
-const viewTrackingLive = createCache({
-  name: 'analytics:tracking-live:v1',
-  fetch: async ({ entityType }: { entityType: string }): Promise<boolean> => {
-    const rows = await getClickhouse().$query<{ one: number }>(
-      `SELECT 1 AS one FROM daily_views WHERE entityType = '${entityType}' LIMIT 1`
-    );
-    return rows.length > 0;
-  },
-  ttlSeconds: 3600,
-}).get;
+// this is a prefix seek rather than a scan — a few ms, so it runs per panel load.
+//
+// 🔴 Deliberately NOT cached, and the reason is the asymmetry. This answer starts false and flips true once,
+// forever. Caching it means caching a `false` — and a cached `false` outlives the event it is wrong about, so
+// the surface keeps saying "not collecting yet" for the whole TTL after data lands. That is exactly what
+// happened with a 1h TTL: impressions were live and attributed, and the tile stayed hidden. A stale `true`
+// would be harmless; a stale `false` hides a working feature and looks identical to the real pre-launch state.
+export async function viewTrackingLive(entityType: string): Promise<boolean> {
+  const rows = await getClickhouse().$query<{ one: number }>(
+    `SELECT 1 AS one FROM daily_views WHERE entityType = '${entityType}' LIMIT 1`
+  );
+  return rows.length > 0;
+}
 
 // A creator's 3D models, ranked by views over the range. 539 rows platform-wide, so ownership resolves from
 // Postgres and the id list goes straight into a literal `IN` — no rollup, and today is included.
@@ -731,7 +729,7 @@ async function fetchModel3ds(userId: number, from: string, to: string): Promise<
     ])
     .execute();
 
-  const tracking = await viewTrackingLive({ entityType: VIEW_ENTITY.model3d });
+  const tracking = await viewTrackingLive(VIEW_ENTITY.model3d);
   if (!rows.length) return { models: [], tracking };
 
   const viewRows = await getClickhouse().$query<{ id: number | string; views: number | string }>(
@@ -809,7 +807,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     ORDER BY count(DISTINCT r."userId") DESC, p.id DESC
   `.execute(dbRead);
 
-  const tracking = await viewTrackingLive({ entityType: VIEW_ENTITY.comicProject });
+  const tracking = await viewTrackingLive(VIEW_ENTITY.comicProject);
   const projectIds = result.rows.map((r) => Number(r.projectId));
   if (!projectIds.length) return { comics: [], tracking };
 

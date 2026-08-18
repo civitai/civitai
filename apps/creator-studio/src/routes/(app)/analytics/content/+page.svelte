@@ -200,9 +200,7 @@
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {#each shown3d as m (m.model3dId)}
         <a
-          href="https://civitai.{m.nsfwLevel > 3 ? 'red' : 'com'}/3d-models/{m.model3dId}"
-          target="_blank"
-          rel="noreferrer"
+          href="/analytics/content/model3d/{m.model3dId}"
           class="group flex gap-3 overflow-hidden rounded-lg border border-dark-4 bg-dark-7 p-2"
         >
           <div class="size-16 shrink-0 overflow-hidden rounded bg-dark-6">
@@ -241,9 +239,7 @@
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {#each shownComics as c (c.projectId)}
         <a
-          href="https://civitai.{c.nsfwLevel > 3 ? 'red' : 'com'}/comics/{c.projectId}"
-          target="_blank"
-          rel="noreferrer"
+          href="/analytics/content/comic/{c.projectId}"
           class="group flex gap-3 overflow-hidden rounded-lg border border-dark-4 bg-dark-7 p-2"
         >
           <div class="size-16 shrink-0 overflow-hidden rounded bg-dark-6">
