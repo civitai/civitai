@@ -111,6 +111,86 @@ describe('buildAppsStoreFeedbackContext', () => {
     });
 
     /**
+     * 🔴 THE SURROGATE CASE. Every fixture above is ASCII, and a fixture that cannot
+     * contain a surrogate pair cannot observe a surrogate bug — which is exactly why
+     * this shipped.
+     *
+     * `slice` cuts on UTF-16 CODE UNITS, not characters. An astral-plane character
+     * (any emoji) is a pair of units, so a clip point that lands between them leaves
+     * a LONE HIGH SURROGATE as the last unit. That string is a legal JS value and
+     * passes `z.string().max()` untouched, so the schema round-trip below cannot see
+     * it either — it breaks one layer further down, where the context is written to
+     * the `Feedback.context` JSON column: `JSON.stringify` emits a bare `\ud83d`
+     * escape, which Postgres rejects (`Unicode low surrogate must follow a high
+     * surrogate`) and Prisma's serde layer rejects before that. So the clip added to
+     * keep a long search term from failing the submission ends up failing the
+     * submission itself, on the one surface that exists to accept reports.
+     *
+     * Asserted as a STATE (`isWellFormed`, plus a real UTF-8 encode round-trip)
+     * rather than by looking for an escape sequence in the output: a well-formed
+     * string is the property the downstream write actually needs, and a lone
+     * surrogate is the only way to lose it.
+     */
+    const EMOJI = '\u{1F600}'; // U+1F600, two UTF-16 units: \uD83D \uDE00
+
+    /** Encoding to UTF-8 and back is lossless iff the string has no lone surrogate. */
+    const survivesUtf8 = (value: string) =>
+      new TextDecoder().decode(new TextEncoder().encode(value)) === value;
+
+    it('does not leave a lone surrogate when the bound falls inside an emoji', () => {
+      // 199 ASCII + one emoji = 201 units, so unit 200 is the emoji's HIGH surrogate.
+      const query = 'q'.repeat(FEEDBACK_FILTER_VALUE_MAX_LENGTH - 1) + EMOJI;
+      expect(query).toHaveLength(FEEDBACK_FILTER_VALUE_MAX_LENGTH + 1);
+
+      const context = buildAppsStoreFeedbackContext({ path: '/apps', filters: filters({ query }) });
+      const clipped = context?.filters?.query as string;
+
+      expect(clipped.isWellFormed()).toBe(true);
+      expect(survivesUtf8(clipped)).toBe(true);
+      // Exactly the orphaned unit is dropped — the whole pair, and nothing more.
+      expect(clipped).toHaveLength(FEEDBACK_FILTER_VALUE_MAX_LENGTH - 1);
+      expect(clipped).toBe('q'.repeat(FEEDBACK_FILTER_VALUE_MAX_LENGTH - 1));
+      expect(throughSchema(context)?.filters?.query).toBe(clipped);
+    });
+
+    it('does not leave a lone surrogate for a term that is mostly emoji', () => {
+      // One ASCII char shifts every pair onto an odd offset, so the clip at 200 lands
+      // mid-pair. (A term of ONLY emoji does not break at this bound: 200 is even, so
+      // the cut falls exactly on a pair boundary — which is why the fixture is mixed.)
+      const query = 'q' + EMOJI.repeat(150);
+      const context = buildAppsStoreFeedbackContext({ path: '/apps', filters: filters({ query }) });
+      const clipped = context?.filters?.query as string;
+
+      expect(clipped.isWellFormed()).toBe(true);
+      expect(survivesUtf8(clipped)).toBe(true);
+      expect(clipped).toHaveLength(FEEDBACK_FILTER_VALUE_MAX_LENGTH - 1);
+      expect(clipped.endsWith(EMOJI)).toBe(true);
+      expect(throughSchema(context)?.filters?.query).toBe(clipped);
+    });
+
+    /**
+     * The control for the two above: when the clip point does NOT fall inside a pair,
+     * nothing extra may be trimmed. Without it, a guard that simply dropped the last
+     * unit of every clipped term would pass both cases above.
+     */
+    it('trims nothing extra when the bound falls on a character boundary', () => {
+      const query = 'q'.repeat(FEEDBACK_FILTER_VALUE_MAX_LENGTH) + EMOJI;
+      const context = buildAppsStoreFeedbackContext({ path: '/apps', filters: filters({ query }) });
+
+      expect(context?.filters?.query).toBe('q'.repeat(FEEDBACK_FILTER_VALUE_MAX_LENGTH));
+      expect(context?.filters?.query).toHaveLength(FEEDBACK_FILTER_VALUE_MAX_LENGTH);
+    });
+
+    /** And an emoji comfortably inside the bound is not touched at all. */
+    it('leaves an emoji inside the bound intact', () => {
+      const query = `upscale ${EMOJI}`;
+      const context = buildAppsStoreFeedbackContext({ path: '/apps', filters: filters({ query }) });
+
+      expect(context?.filters?.query).toBe(query);
+      expect(throughSchema(context)?.filters?.query).toBe(query);
+    });
+
+    /**
      * The control for the two cases above: an UNCLIPPED value of the same shape is
      * genuinely rejected. Without this, "does not throw" would be indistinguishable
      * from a schema that has no bound at all.

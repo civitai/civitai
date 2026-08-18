@@ -23,6 +23,27 @@ import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.co
  * Everything else is a closed set (`kind`, `sort`) or a known enum member
  * (`category`), so none of them can exceed the bound.
  */
+
+/**
+ * Clip `value` to the schema bound WITHOUT splitting a surrogate pair.
+ *
+ * 🔴 `slice` cuts on UTF-16 code units, not characters, and the bound is a unit count.
+ * An astral-plane character (any emoji) occupies two units, so a clip point that falls
+ * between them leaves a LONE HIGH SURROGATE as the final unit. That value is a legal JS
+ * string and passes `z.string().max()` untouched — nothing on the request path notices.
+ * It breaks at the write: `Feedback.context` is a JSON column, `JSON.stringify` emits a
+ * bare `\ud83d` escape, and both Prisma's serde layer and Postgres reject it
+ * (`Unicode low surrogate must follow a high surrogate`). So the clip that exists to stop
+ * a long search term from failing the submission would itself fail the submission — the
+ * same class of break, on the same surface, for a term with an emoji near the bound.
+ *
+ * A high surrogate that survives the slice as the LAST unit is necessarily unpaired: its
+ * low surrogate could only have followed it, and the slice removed everything after.
+ * Dropping it is therefore the whole fix, and it cannot touch a well-formed clip.
+ */
+const clipFilterValue = (value: string) =>
+  value.slice(0, FEEDBACK_FILTER_VALUE_MAX_LENGTH).replace(/[\uD800-\uDBFF]$/, '');
+
 export function buildAppsStoreFeedbackContext({
   filters,
   path,
@@ -43,7 +64,7 @@ export function buildAppsStoreFeedbackContext({
       // is a different claim from "the viewer had no category selected".
       category: filters.category ?? 'none',
       sort: filters.sort,
-      query: filters.query.slice(0, FEEDBACK_FILTER_VALUE_MAX_LENGTH),
+      query: clipFilterValue(filters.query),
     },
   };
 }
