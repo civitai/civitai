@@ -16,7 +16,7 @@ import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { parseCollectionImageMeta } from '~/server/search-index/collection-image-meta';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
@@ -92,7 +92,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 type ImageProps = {
   type: MediaType;
   id: number;
-  createdAt: Date;
   name: string | null;
   url: string;
   hash: string | null;
@@ -100,9 +99,6 @@ type ImageProps = {
   width: number | null;
   nsfwLevel: number;
   postId: number | null;
-  index: number | null;
-  scannedAt: Date | null;
-  mimeType: string | null;
   meta: Prisma.JsonObject | null;
   userId: number;
 } | null;
@@ -149,11 +145,6 @@ type CollectionImageRaw = {
   src: string | null;
 };
 
-const parseImageMeta = (meta: ImageMetaProps) => {
-  const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
-  return parsed?.success ? parsed.data : {};
-};
-
 const WHERE = [
   Prisma.sql`c."userId" != -1`,
   Prisma.sql`c.read = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"`,
@@ -178,7 +169,7 @@ const transformData = async ({
       const collectionImage = image
         ? {
             ...image,
-            meta: parseImageMeta(image.meta as ImageMetaProps),
+            meta: parseCollectionImageMeta(image.meta as ImageMetaProps),
             tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
           }
         : null;
@@ -188,7 +179,7 @@ const transformData = async ({
         .filter(isDefined)
         .map((i) => ({
           ...i,
-          meta: parseImageMeta(i.meta as ImageMetaProps),
+          meta: parseCollectionImageMeta(i.meta as ImageMetaProps),
           tags: tags.filter((t) => t.imageId === i.id).map((t) => ({ id: t.tagId })),
         }));
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
@@ -253,7 +244,6 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
     const imageSql = Prisma.sql`
     jsonb_build_object(
         'id', i."id",
-        'index', i."index",
         'postId', i."postId",
         'name', i."name",
         'url', i."url",
@@ -261,12 +251,9 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
         'width', i."width",
         'height', i."height",
         'hash', i."hash",
-        'createdAt', i."createdAt",
-        'mimeType', i."mimeType",
-        'scannedAt', i."scannedAt",
         'type', i."type",
         'userId', i."userId",
-        'meta', i."meta"
+        'meta', jsonb_strip_nulls(jsonb_build_object('prompt', i."meta"->'prompt'))
       ) image
   `;
 

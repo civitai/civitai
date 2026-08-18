@@ -250,7 +250,7 @@ export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs
 }
 
 type Props = {
-  data: Omit<CollectionGetInfinite[number], 'image'> & {
+  data: Omit<CollectionGetInfinite[number], 'image' | 'images'> & {
     metrics?: {
       itemCount: number;
       contributorCount: number;
