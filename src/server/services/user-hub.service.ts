@@ -1,8 +1,14 @@
 import { dbRead, dbWrite } from '~/server/db/client';
-import type { SetUserHubOrderInput, UpsertUserHubInput } from '~/server/schema/user-hub.schema';
+import type {
+  SetUserHubOrderInput,
+  UpsertUserHubInput,
+  UserHubSourceInput,
+} from '~/server/schema/user-hub.schema';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { CollectionReadConfiguration, UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 
 const hubSelect = {
   id: true,
@@ -44,6 +50,8 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
     if (duplicate.has(key)) throw throwBadRequestError('A source was added twice');
     duplicate.add(key);
   }
+
+  await assertHubSourcesUsable({ sources, userId });
 
   if (!id) {
     const count = await dbRead.userHub.count({ where: { userId } });
@@ -139,4 +147,49 @@ export function hubSourcesAreEmpty(sources: ResolvedHubSources) {
   return (
     !sources.userIds.length && !sources.modelVersionIds.length && !sources.collectionIds.length
   );
+}
+
+// Collection sources are served by the indexed `collectionIds` field, which only
+// carries ACCEPTED membership of non-private collections. A collection the index
+// cannot represent must be refused at add time rather than silently contributing
+// nothing to the feed.
+async function assertHubSourcesUsable({
+  sources,
+  userId,
+}: {
+  sources: UserHubSourceInput[];
+  userId: number;
+}) {
+  const collectionIds = sources
+    .filter((s) => s.type === UserHubSourceType.Collection)
+    .map((s) => s.targetId);
+  if (!collectionIds.length) return;
+
+  const collections = await dbRead.collection.findMany({
+    where: { id: { in: collectionIds } },
+    select: { id: true, name: true, read: true, metadata: true },
+  });
+
+  const permissions = await getUserCollectionPermissionsByIds({ ids: collectionIds, userId });
+
+  for (const id of collectionIds) {
+    const collection = collections.find((c) => c.id === id);
+    if (!collection || !permissions[id]?.read)
+      throw throwNotFoundError(`Collection ${id} not found`);
+
+    if (collection.read === CollectionReadConfiguration.Private)
+      throw throwBadRequestError(
+        `"${collection.name}" is private and cannot be used as a hub source.`
+      );
+
+    // A forced browsing level is applied by the collection page's own provider and
+    // has no server-side enforcement, so it cannot survive being mixed into a hub.
+    // Refusing the source is the honest option; enforcing it server-side is a
+    // separate piece of work that would fix the gap everywhere.
+    const metadata = collection.metadata as CollectionMetadataSchema | null;
+    if (metadata?.forcedBrowsingLevel)
+      throw throwBadRequestError(
+        `"${collection.name}" limits the content ratings it shows, which a hub cannot honour. It cannot be used as a hub source.`
+      );
+  }
 }
