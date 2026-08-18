@@ -18,19 +18,16 @@ export const commentHandler = createEventHandler<CommentRecord>({
   processor: async ({ operation, record, actions, pg }) => {
     const value = operation === 'create' ? 1 : -1;
 
-    // Update model metric
     const modelMetric = actions.forMetric('Model', record.modelId).as(record.userId);
     modelMetric.add('commentCount', value);
 
-    // Model comments are the largest single surface (1.17M), and they never reach CommentsV2, so
-    // the owner has to be resolved here or User.commentCount stays a minority of the real total.
+    // Model comments never reach CommentsV2, so this lookup is the only path to their owner.
     const model = await pg.queryOne<{ userId: number | null }>(
       `SELECT "userId" FROM "Model" WHERE id = $1`,
       [record.modelId]
     );
 
-    // Self-authored comments excluded, matching commentV2Handler — a creator replying under their
-    // own model is not engagement received.
+    // Self-authored excluded, matching commentV2Handler.
     if (model?.userId && model.userId !== record.userId) {
       actions.forMetric('User', model.userId).as(record.userId).add('commentCount', value);
     }

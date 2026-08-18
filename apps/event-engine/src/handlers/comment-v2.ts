@@ -26,9 +26,7 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
     // over the whole image space, which is why Creator Studio reads Postgres for this today.
     //
     // A Thread carries exactly one entity FK, so the owner COALESCE has at most one non-null input
-    // and its argument order carries no meaning. Owner column names are not uniform — Challenge and
-    // ClubPost record `createdById`, app_listings is snake_cased, and a comic thread points at the
-    // chapter's project rather than at an owner directly.
+    // and its argument order carries no meaning.
     const thread = await pg.queryOne<{
       postId: number | null;
       imageId: number | null;
@@ -78,9 +76,8 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
       actions.forMetric('User', thread.ownerId).as(record.userId).add('commentCount', value);
     }
 
-    // Entity metrics stay at the four surfaces that already have a registered
-    // (entityType, metricType) row in default.entityMetricKind. An unregistered pair falls into the
-    // presence path and would silently count distinct commenters instead of comments.
+    // Entity metrics stay at the four surfaces with a registered (entityType, metricType) row in
+    // default.entityMetricKind — an unregistered pair silently counts distinct commenters instead.
     if (thread.postId) {
       const postMetric = actions.forMetric('Post', thread.postId).as(record.userId);
       postMetric.add('commentCount', value);
