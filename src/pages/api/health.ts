@@ -242,6 +242,11 @@ const STATIC_NON_CRITICAL_CHECKS: readonly CheckKey[] = ['sysRedis'];
 // metric, which is the signal an operator needs during the incident.
 const STARTUP_ONLY_CRITICAL_CHECKS: readonly CheckKey[] = ['write', 'pgWrite'];
 
+// Runtime list of every check, exported so a test can DERIVE its coverage from the real set
+// rather than mirroring it by hand. A hand-written mirror silently omits any check added
+// later — the new check simply gets no case, and nothing goes red to say so.
+export const ALL_CHECK_KEYS = Object.keys(checkFns) as CheckKey[];
+
 /**
  * Which readiness contract the caller wants.
  *

@@ -706,16 +706,22 @@ export async function investigateModeration(userId: number): Promise<string> {
 
 // ─── TOOL: check_site_status ──────────────────────────────────────────
 
+// Every per-check field is OPTIONAL, deliberately. /api/health seeds its results map from
+// the ACTIVE checks only, so a check disabled via HEALTHCHECK_DISABLED (or the runtime
+// sysRedis disable list) has its key omitted from the response entirely — it does not come
+// back `false`. Declaring these as `boolean` made the type lie about the wire format, and a
+// declaration is not a guard: the absent key arrived as `undefined`, which is falsy, so a
+// deliberately-disabled dependency read as a FAILING one.
 type HealthResponse = {
   healthy: boolean;
-  write: boolean;
-  read: boolean;
-  pgWrite: boolean;
-  pgRead: boolean;
-  searchMetrics: boolean;
-  redis: boolean;
-  sysRedis: boolean;
-  clickhouse: boolean;
+  write?: boolean;
+  read?: boolean;
+  pgWrite?: boolean;
+  pgRead?: boolean;
+  searchMetrics?: boolean;
+  redis?: boolean;
+  sysRedis?: boolean;
+  clickhouse?: boolean;
 };
 
 type IncidentRow = {
@@ -757,7 +763,7 @@ export async function checkSiteStatus(): Promise<string> {
   if ('error' in healthResult) {
     lines.push(`Overall: UNKNOWN (${healthResult.error})`);
   } else {
-    const checks: [string, boolean][] = [
+    const checks: [string, boolean | undefined][] = [
       ['Database (read)', healthResult.read],
       ['Database (write)', healthResult.write],
       ['PG (read)', healthResult.pgRead],
@@ -767,22 +773,33 @@ export async function checkSiteStatus(): Promise<string> {
       ['Search/Metrics', healthResult.searchMetrics],
       ['ClickHouse', healthResult.clickhouse],
     ];
+
     // Summarise from the PER-CHECK results, not from `healthy`.
     //
-    // `healthy` is scoped to POD READINESS, and deliberately does not flip for a soft
-    // dependency — sysRedis, and now the DB write checks, which must not shed a serving pod
-    // from the load balancer when a shared primary stalls. Reading it here would print
+    // `healthy` is scoped to POD READINESS and deliberately does not flip for a soft
+    // dependency — sysRedis, and the DB write checks, which must not shed a serving pod from
+    // the load balancer when a shared primary stalls. Reading it here printed
     // "Overall: HEALTHY" during a write outage while "Database (write): FAILING" sat three
     // lines below, and this text is fed to an LLM that drafts customer replies.
     //
-    // So `healthy` is treated as necessary but not sufficient: any failing individual check
-    // makes this DEGRADED, whatever readiness thinks.
-    const allChecksOk = checks.every(([, ok]) => ok);
-    lines.push(`Overall: ${healthResult.healthy && allChecksOk ? 'HEALTHY' : 'DEGRADED'}`);
+    // Three states, not two: a check can be OK, FAILING, or absent because it was DISABLED.
+    // Folding absent into FAILING is what a plain truthiness test does, and it would report a
+    // permanent false DEGRADED whenever an operator disables a dependency on purpose — which
+    // HEALTHCHECK_DISABLED exists to let them do. Only checks that actually RAN count toward
+    // the verdict.
+    //
+    // `healthy` is kept as a necessary condition even though it is currently unreachable-false
+    // here (the route answers 500 when it is false, so this function takes its error branch
+    // first). It is not decoration: it is the conjunct that keeps this correct if /api/health
+    // ever stops signalling failure through the status code — which is the direction it has
+    // been moving.
+    const ranChecks = checks.filter(([, ok]) => ok !== undefined);
+    const allRanChecksOk = ranChecks.every(([, ok]) => ok);
+    lines.push(`Overall: ${healthResult.healthy && allRanChecksOk ? 'HEALTHY' : 'DEGRADED'}`);
     lines.push('');
     lines.push('--- Service Health ---');
     for (const [name, ok] of checks) {
-      lines.push(`  ${name}: ${ok ? 'OK' : 'FAILING'}`);
+      lines.push(`  ${name}: ${ok === undefined ? 'SKIPPED (disabled)' : ok ? 'OK' : 'FAILING'}`);
     }
   }
 

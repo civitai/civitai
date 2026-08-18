@@ -104,7 +104,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
 
-import { runHealthChecks, softCheckKeysForMode } from '~/pages/api/health';
+import { ALL_CHECK_KEYS, runHealthChecks, softCheckKeysForMode } from '~/pages/api/health';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // A never-aborted signal so runHealthChecks runs the full check set.
@@ -204,9 +204,12 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
 
       const runPromise = runHealthChecks(liveSignal());
 
-      // Advance past the per-check timeout (1000ms) and the overall deadline
-      // (2000ms). advanceTimersByTimeAsync also flushes the microtasks between
-      // timers, so the fast critical checks settle and the check phase resolves.
+      // Advance past the per-check timeout (1000ms). advanceTimersByTimeAsync also flushes
+      // the microtasks between timers, so the fast critical checks settle and the check phase
+      // resolves. Note the 2000ms overall deadline does NOT fire in this case — the per-check
+      // race resolves the parked ping first — so this exercises the per-check timeout path,
+      // not the deadline-fill branch. Advancing well past both keeps the case robust to a
+      // HEALTHCHECK_TIMEOUT change; it does not mean the deadline fired.
       await vi.advanceTimersByTimeAsync(2500);
 
       const { healthy, results } = await runPromise;
@@ -214,7 +217,9 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
       // Parked sysRedis did NOT shed readiness.
       expect(healthy).toBe(true);
       // Observability preserved: the timed-out ping is recorded as a failure.
-      expect(results.sysRedis).toBeFalsy();
+      // `toBe(false)` not `toBeFalsy()`: a timed-out check resolves to literal false, so
+      // toBeFalsy would also accept the key never having been written at all.
+      expect(results.sysRedis).toBe(false);
       // A genuinely-critical dep resolved fine (only sysRedis was slow).
       expect(results.write).toBe(true);
       expect(results.read).toBe(true);
@@ -485,4 +490,20 @@ describe('softCheckKeysForMode — the exact soft set per mode', () => {
       expect(softCheckKeysForMode('startup')).not.toContain(key);
     }
   );
+
+  // DERIVED from the real check set, not mirrored: the two lists above are hand-written, so a
+  // check added to `checkFns` later would simply get no case and nothing would go red. This
+  // partitions the ACTUAL keys and fails when the set grows, forcing a deliberate decision
+  // about the new check rather than defaulting it into "critical, untested".
+  it('every check is accounted for — no check is silently unclassified', () => {
+    const soft = new Set(softCheckKeysForMode('readiness'));
+    const critical = ALL_CHECK_KEYS.filter((k) => !soft.has(k));
+    expect([...soft].sort()).toEqual(['pgWrite', 'sysRedis', 'write'].sort());
+    expect(critical.sort()).toEqual(
+      ['clickhouse', 'pgRead', 'read', 'redis', 'searchMetrics'].sort()
+    );
+    // If this count moves, a check was added or removed: classify it above and give it a
+    // behavioural case, then update these lists.
+    expect(ALL_CHECK_KEYS).toHaveLength(8);
+  });
 });

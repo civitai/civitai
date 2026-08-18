@@ -175,11 +175,12 @@ describe('/api/health vs /api/ready — write-check criticality is wired per rou
     const withoutParam = await callRoute(healthHandler);
     expect(withParam.status).toBe(200);
     expect(withParam.body.healthy).toBe(true);
-    // Identical, not merely both-passing: pin the pair.
-    expect([withParam.status, withParam.body.healthy]).toEqual([
-      withoutParam.status,
-      withoutParam.body.healthy,
-    ]);
+    // Compare the WHOLE response, not a couple of fields — "same answer" should mean it.
+    // `podname` and `version` are dropped because they are environment, not health: podname
+    // falls back to a random int per call.
+    const comparable = ({ podname: _p, version: _v, ...rest }: Record<string, unknown>) => rest;
+    expect(comparable(withParam.body)).toEqual(comparable(withoutParam.body));
+    expect(withParam.status).toBe(withoutParam.status);
   });
 
   // A read failure must shed on BOTH routes — the change did not over-broaden at the route
