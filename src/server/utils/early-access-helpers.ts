@@ -83,3 +83,36 @@ export function getMaxEarlyAccessModels({
     ? earlyAccessUnlockedDays[earlyAccessUnlockedDays.length - 1]
     : 0;
 }
+
+/** How long after a version publishes its early access buyers still block an unpublish. */
+export const EARLY_ACCESS_REFUND_WINDOW_MONTHS = 3;
+
+/**
+ * Deliberately UTC rather than `increaseDate`, which adds months in local time: three months spans a
+ * DST change in most zones, so the same publish time yields a boundary an hour apart depending on
+ * where the process runs. Short months clamp (Nov 30 lands on Feb 28), and the time of day is
+ * carried through untouched so the boundary stays a timestamp.
+ */
+function earlyAccessRefundWindowEnd(publishedAt: Date) {
+  const end = new Date(publishedAt.getTime());
+  const dayOfMonth = end.getUTCDate();
+  end.setUTCDate(1);
+  end.setUTCMonth(end.getUTCMonth() + EARLY_ACCESS_REFUND_WINDOW_MONTHS);
+  const daysInEndMonth = new Date(
+    Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  end.setUTCDate(Math.min(dayOfMonth, daysInEndMonth));
+  return end;
+}
+
+/**
+ * Early access runs for at most 30 days (`EARLY_ACCESS_CONFIG.timeframeValues`), so a version this
+ * far past publish has no early access left to take away and unpublishing owes its buyers nothing.
+ *
+ * A version with no `publishedAt` counts as inside the window: it has no clock to measure from, and
+ * the refund obligation is the safe side of that.
+ */
+export function isWithinEarlyAccessRefundWindow(publishedAt: Date | null, now = new Date()) {
+  if (!publishedAt) return true;
+  return now < earlyAccessRefundWindowEnd(publishedAt);
+}

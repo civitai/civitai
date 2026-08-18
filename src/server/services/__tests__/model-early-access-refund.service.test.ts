@@ -139,12 +139,19 @@ const HOUR = 60 * 60 * 1000;
 const future = () => new Date(Date.now() + HOUR);
 const past = () => new Date(Date.now() - HOUR);
 
-type VersionRow = { id: number; meta: Record<string, unknown> | null };
+// Far enough past the refund window that a version carrying it owes its buyers nothing, and far
+// enough from a month boundary that the calendar arithmetic can't land on a clamped short month.
+const WINDOW_MONTHS = 3;
+const beforeWindow = () => new Date(Date.now() - (WINDOW_MONTHS * 31 + 1) * 24 * HOUR);
+
+type VersionRow = { id: number; meta: Record<string, unknown> | null; publishedAt?: Date | null };
 type GateRow = { entityId: number; endsAt: Date | null };
 type AccessRow = { accessToId: number; accessorId: number; meta: Record<string, unknown> | null };
 
 function setupRefundData({
-  versions = [{ id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } }] as VersionRow[],
+  versions = [
+    { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
+  ] as VersionRow[],
   gates = [{ entityId: VERSION_ID, endsAt: null }] as GateRow[],
   accessRows = [
     {
@@ -190,7 +197,13 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0, totalsByAccount: {} });
+    expect(result).toEqual({
+      purchases: [],
+      buyerCount: 0,
+      totalBuzz: 0,
+      totalsByAccount: {},
+      exemptVersionCount: 0,
+    });
     expect(mockDbWrite.paidAccess.findMany).not.toHaveBeenCalled();
   });
 
@@ -199,7 +212,13 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0, totalsByAccount: {} });
+    expect(result).toEqual({
+      purchases: [],
+      buyerCount: 0,
+      totalBuzz: 0,
+      totalsByAccount: {},
+      exemptVersionCount: 0,
+    });
     expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
   });
 
@@ -301,6 +320,104 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     expect(result.totalsByAccount).toEqual({ blue: 300, yellow: 225 });
     expect(result.totalBuzz).toBe(525);
+  });
+
+  it('stops requiring a refund once the version published longer ago than the window', async () => {
+    setupRefundData({
+      versions: [
+        {
+          id: VERSION_ID,
+          meta: { hadEarlyAccessPurchase: true },
+          publishedAt: beforeWindow(),
+        },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toEqual([]);
+    expect(result.totalBuzz).toBe(0);
+    expect(result.exemptVersionCount).toBe(1);
+    // The grants are never read: an exempt version owes nothing, so there is nothing to price.
+    expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
+  });
+
+  it('still requires a refund on the last day inside the window', async () => {
+    const justInside = new Date(Date.now() - (WINDOW_MONTHS * 28 - 1) * 24 * HOUR);
+    setupRefundData({
+      versions: [
+        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: justInside },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toEqual([
+      { modelVersionId: VERSION_ID, buyerId: BUYER_ID, buzzTransactionIds: ['tx-1'] },
+    ]);
+    expect(result.exemptVersionCount).toBe(0);
+  });
+
+  it('keeps owing a refund on a version that never published', async () => {
+    setupRefundData({
+      versions: [{ id: VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: null }],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toHaveLength(1);
+    expect(result.exemptVersionCount).toBe(0);
+  });
+
+  it('refunds only the recent version when an old one sits beside it', async () => {
+    setupRefundData({
+      versions: [
+        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
+        {
+          id: OTHER_VERSION_ID,
+          meta: { hadEarlyAccessPurchase: true },
+          publishedAt: beforeWindow(),
+        },
+      ],
+      gates: [
+        { entityId: VERSION_ID, endsAt: null },
+        { entityId: OTHER_VERSION_ID, endsAt: null },
+      ],
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+        },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(mockDbWrite.entityAccess.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ accessToId: { in: [VERSION_ID] } }),
+      })
+    );
+    expect(result.buyerCount).toBe(1);
+    expect(result.exemptVersionCount).toBe(1);
+  });
+
+  it('does not count a lapsed-gate version as exempted by the window', async () => {
+    setupRefundData({
+      versions: [
+        {
+          id: VERSION_ID,
+          meta: { hadEarlyAccessPurchase: true },
+          publishedAt: beforeWindow(),
+        },
+      ],
+      gates: [{ entityId: VERSION_ID, endsAt: past() }],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.exemptVersionCount).toBe(0);
   });
 });
 
@@ -406,6 +523,25 @@ describe('unpublishModelById — early access refund gate', () => {
     ).rejects.toThrowError(/requires 500 blue Buzz but the account only has 0/);
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('unpublishes without consent or refunds once the window has closed on every version', async () => {
+    setupRefundData({
+      versions: [
+        {
+          id: VERSION_ID,
+          meta: { hadEarlyAccessPurchase: true },
+          publishedAt: beforeWindow(),
+        },
+      ],
+    });
+    setupUnpublishWrites();
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+    expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.entityAccess.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.model.update).toHaveBeenCalled();
   });
 
   it('does not gate or refund on a moderator unpublish', async () => {

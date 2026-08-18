@@ -182,6 +182,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 import { isPaidAccessActive } from '@civitai/buzz';
+import { isWithinEarlyAccessRefundWindow } from '~/server/utils/early-access-helpers';
 import {
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
@@ -2784,6 +2785,11 @@ export type ModelEarlyAccessRefundRequirement = {
   totalBuzz: number;
   /** What reversing these purchases debits from each of the owner's accounts, keyed by account. */
   totalsByAccount: Partial<Record<BuzzSpendType, number>>;
+  /**
+   * Versions that would have blocked before the refund window closed on them. Carried so the
+   * unpublish dialog can say those buyers keep their purchase rather than going silent.
+   */
+  exemptVersionCount: number;
 };
 
 // Early access is sold per model VERSION, so the refund set is computed version-by-version and each
@@ -2791,9 +2797,10 @@ export type ModelEarlyAccessRefundRequirement = {
 // model (the owner has no per-version unpublish — that menu item is moderator-only).
 //
 // Refundable = a buzz-purchased EntityAccess grant on a version whose PaidAccess gate is still
-// active (permanent, or a timed window that hasn't lapsed). Lapsed-window buyers already got what
-// they paid for, so they don't block. Gate/grant rows are read fresh from the primary (dbWrite),
-// not the cache/replica — this guard protects buyers' money.
+// active (permanent, or a timed window that hasn't lapsed) AND that published recently enough to
+// still be inside the refund window. Lapsed-window buyers already got what they paid for, so they
+// don't block. Gate/grant rows are read fresh from the primary (dbWrite), not the cache/replica —
+// this guard protects buyers' money.
 export const getModelEarlyAccessRefundRequirement = async ({
   id,
 }: GetByIdInput): Promise<ModelEarlyAccessRefundRequirement> => {
@@ -2802,10 +2809,11 @@ export const getModelEarlyAccessRefundRequirement = async ({
     buyerCount: 0,
     totalBuzz: 0,
     totalsByAccount: {},
+    exemptVersionCount: 0,
   };
   const versions = await dbWrite.modelVersion.findMany({
     where: { modelId: id },
-    select: { id: true, meta: true },
+    select: { id: true, meta: true, publishedAt: true },
   });
   const flagged = versions.filter(
     (v) => (v.meta as ModelVersionMeta | null)?.hadEarlyAccessPurchase
@@ -2817,15 +2825,18 @@ export const getModelEarlyAccessRefundRequirement = async ({
     select: { entityId: true, endsAt: true },
   });
   const now = new Date();
-  const activeGateVersionIds = gates
-    .filter((gate) => isPaidAccessActive(gate, now))
-    .map((gate) => gate.entityId);
-  if (activeGateVersionIds.length === 0) return empty;
+  const activeGateVersionIds = new Set(
+    gates.filter((gate) => isPaidAccessActive(gate, now)).map((gate) => gate.entityId)
+  );
+  const gated = flagged.filter((v) => activeGateVersionIds.has(v.id));
+  const owed = gated.filter((v) => isWithinEarlyAccessRefundWindow(v.publishedAt, now));
+  const exemptVersionCount = gated.length - owed.length;
+  if (owed.length === 0) return { ...empty, exemptVersionCount };
 
   const accessRows = await dbWrite.entityAccess.findMany({
     where: {
       accessToType: 'ModelVersion',
-      accessToId: { in: activeGateVersionIds },
+      accessToId: { in: owed.map((v) => v.id) },
       accessorType: 'User',
     },
     select: { accessToId: true, accessorId: true, meta: true },
@@ -2841,7 +2852,7 @@ export const getModelEarlyAccessRefundRequirement = async ({
       return { modelVersionId: row.accessToId, buyerId: row.accessorId, buzzTransactionIds };
     })
     .filter((purchase) => purchase.buzzTransactionIds.length > 0);
-  if (purchases.length === 0) return empty;
+  if (purchases.length === 0) return { ...empty, exemptVersionCount };
 
   // Refund amounts come from the ledger, not current terms — prices can change after purchase.
   const limit = pLimit(5);
@@ -2864,6 +2875,7 @@ export const getModelEarlyAccessRefundRequirement = async ({
     buyerCount: new Set(purchases.map((purchase) => purchase.buyerId)).size,
     totalBuzz: Object.values(totalsByAccount).reduce((sum, amount) => sum + amount, 0),
     totalsByAccount,
+    exemptVersionCount,
   };
 };
 

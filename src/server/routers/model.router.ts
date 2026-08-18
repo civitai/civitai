@@ -223,10 +223,9 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .query(async ({ input }) => {
-      const { purchases, buyerCount, totalBuzz } = await getModelEarlyAccessRefundRequirement(
-        input
-      );
-      return { purchaseCount: purchases.length, buyerCount, totalBuzz };
+      const { purchases, buyerCount, totalBuzz, exemptVersionCount } =
+        await getModelEarlyAccessRefundRequirement(input);
+      return { purchaseCount: purchases.length, buyerCount, totalBuzz, exemptVersionCount };
     }),
   // TODO - TEMP HACK for reporting modal
   getModelReportDetails: publicProcedure
