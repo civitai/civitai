@@ -69,7 +69,7 @@ type Captured = { status: number; body: Record<string, unknown> };
 
 // Minimal NextApiResponse stand-in: records status+json and supports the
 // res.on('close') / res.off('close') abort wiring both handlers use.
-function callRoute(handler: unknown): Promise<Captured> {
+function callRoute(handler: unknown, query: Record<string, string> = {}): Promise<Captured> {
   const captured: Captured = { status: 0, body: {} };
   const res = {
     status(code: number) {
@@ -88,7 +88,7 @@ function callRoute(handler: unknown): Promise<Captured> {
     },
   };
   const fn = handler as (req: unknown, res: unknown) => Promise<unknown>;
-  return Promise.resolve(fn({ query: {} }, res)).then(() => captured);
+  return Promise.resolve(fn({ query }, res)).then(() => captured);
 }
 
 // Break a dependency for one test. Named so each case reads as the state it creates rather
@@ -156,6 +156,30 @@ describe('/api/health vs /api/ready — write-check criticality is wired per rou
     const health = await callRoute(healthHandler);
     const ready = await callRoute(readyHandler);
     expect([health.status, ready.status]).toEqual([200, 503]);
+  });
+
+  // 🔴 `?startup=true` must stay INERT on this route.
+  //
+  // Every readiness probe URL in the deployment manifests carries `&startup=true`, and the
+  // handler does not read `req.query` at all — so the parameter does nothing today. That makes
+  // it a footgun: a future reader who "finishes the wiring" by mapping it to
+  // `mode: 'startup'` would instantly convert every readiness probe to fail-closed and
+  // re-arm the whole-fleet shed this change exists to prevent.
+  //
+  // A comment cannot stop that; this can. The route must answer identically with and without
+  // the parameter, so wiring it up turns this red instead of turning up in production.
+  it('?startup=true is INERT on /api/health — same answer with and without it', async () => {
+    breakPrismaWrite();
+    breakPgWrite();
+    const withParam = await callRoute(healthHandler, { startup: 'true', token: 'x' });
+    const withoutParam = await callRoute(healthHandler);
+    expect(withParam.status).toBe(200);
+    expect(withParam.body.healthy).toBe(true);
+    // Identical, not merely both-passing: pin the pair.
+    expect([withParam.status, withParam.body.healthy]).toEqual([
+      withoutParam.status,
+      withoutParam.body.healthy,
+    ]);
   });
 
   // A read failure must shed on BOTH routes — the change did not over-broaden at the route
