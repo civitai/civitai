@@ -393,16 +393,24 @@ function modelViewsDailySql(ids: number[], from: string, to: string): string {
 //
 // Only the Image and Model arms are populated. Everything else is tracked per-entity but has no ownership
 // source in ClickHouse, so it is *absent* rather than zero — do not add arms here speculatively.
+// Sums every populated arm, because the tile says "Feed impressions" and not "image impressions". Filtering to
+// Image alone showed roughly half the real number under a label claiming all of it — measured over the first 25
+// minutes of the 1% ramp, `daily_impressions` held Image 1,456 against Model 1,159.
 function impressionsDailySql(uid: number, from: string, to: string): string {
-  return `SELECT createdDate AS date, sum(impressions) AS value FROM impressions_daily_by_owner WHERE ownerId = ${uid} AND entityType = '${IMPRESSION_ENTITY.image}' AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
+  return `SELECT createdDate AS date, sum(impressions) AS value FROM impressions_daily_by_owner WHERE ownerId = ${uid} AND entityType IN (${impressionArms()}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
 }
+
+const impressionArms = () =>
+  Object.values(IMPRESSION_ENTITY)
+    .map((e) => `'${e}'`)
+    .join(', ');
 
 // Impressions land in their own table rather than `daily_views`, so this cannot reuse `viewTrackingLive`.
 const impressionTrackingLive = createCache({
   name: 'analytics:impressions-live:v1',
   fetch: async (): Promise<boolean> => {
     const rows = await getClickhouse().$query<{ one: number }>(
-      `SELECT 1 AS one FROM impressions_daily_by_owner WHERE entityType = '${IMPRESSION_ENTITY.image}' LIMIT 1`
+      `SELECT 1 AS one FROM impressions_daily_by_owner WHERE entityType IN (${impressionArms()}) LIMIT 1`
     );
     return rows.length > 0;
   },
