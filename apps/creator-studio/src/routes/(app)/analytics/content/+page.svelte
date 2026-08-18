@@ -332,12 +332,10 @@
                 {num(a.views)}
               </span>
               <span title="Reactions {periodLabel}">♥ {num(a.reactions)}</span>
-              {#if a.impressions > 0}
-                <span class="flex items-center gap-1" title="Feed impressions {periodLabel}">
-                  <IconLayoutGrid size={13} />
-                  {num(a.impressions)}
-                </span>
-              {/if}
+              <span class="flex items-center gap-1" title="Feed impressions {periodLabel}">
+                <IconLayoutGrid size={13} />
+                {num(a.impressions)}
+              </span>
             </p>
             {#if a.publishedAt}
               <p class="text-xs text-dark-3">Published {a.publishedAt.slice(0, 10)}</p>
