@@ -1,7 +1,22 @@
-import { Alert, Badge, Center, Code, Group, Loader, Modal, Stack, Text } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
-import React from 'react';
+import {
+  Alert,
+  Badge,
+  Button,
+  Center,
+  Code,
+  Group,
+  Loader,
+  Modal,
+  Stack,
+  Text,
+  Textarea,
+} from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import { IconAlertTriangle, IconPencil, IconTrash } from '@tabler/icons-react';
+import React, { useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { formatDate } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -16,10 +31,49 @@ export function ModeratorChatThread({
   chatId: number | null;
   onClose: () => void;
 }) {
+  const queryUtils = trpc.useUtils();
+  // The message being redacted, and the draft replacing it.
+  const [editing, setEditing] = useState<{ id: number; content: string } | null>(null);
+
   const { data, isLoading, isError, error } = trpc.chat.getModeratorChat.useQuery(
     { chatId: chatId as number },
     { enabled: !!chatId }
   );
+
+  const onActionError = (title: string) => (err: { message: string }) =>
+    showErrorNotification({ title, error: new Error(err.message), autoClose: false });
+
+  // Refetch rather than patch: this view shows state the participants cannot,
+  // so it has to reflect the row, not a guess about it.
+  const refresh = () => queryUtils.chat.getModeratorChat.invalidate({ chatId: chatId as number });
+
+  const { mutate: deleteMessage, isPending: isDeleting } = trpc.chat.deleteMessage.useMutation({
+    onSuccess: refresh,
+    onError: onActionError('Failed to delete message.'),
+  });
+
+  const { mutate: editMessage, isPending: isEditing } =
+    trpc.chat.moderatorUpdateMessage.useMutation({
+      onSuccess: () => {
+        setEditing(null);
+        refresh();
+      },
+      onError: onActionError('Failed to edit message.'),
+    });
+
+  const confirmDelete = (messageId: number) =>
+    openConfirmModal({
+      title: 'Delete this message?',
+      children: (
+        <Text size="sm">
+          It disappears for both participants. The row and its content stay in the audit log.
+        </Text>
+      ),
+      centered: true,
+      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => deleteMessage({ messageId }),
+    });
 
   const nameFor = (userId: number) =>
     userId === -1
@@ -101,10 +155,63 @@ export function ModeratorChatThread({
                           hidden from {hiddenFrom.join(', ')}
                         </Badge>
                       )}
+                      <Group gap={4} ml="auto" wrap="nowrap">
+                        <LegacyActionIcon
+                          size="sm"
+                          variant="subtle"
+                          aria-label="Edit message"
+                          disabled={msg.userId === -1 || !!msg.deletedAt}
+                          onClick={() => setEditing({ id: msg.id, content: msg.content })}
+                        >
+                          <IconPencil size={14} />
+                        </LegacyActionIcon>
+                        <LegacyActionIcon
+                          size="sm"
+                          variant="subtle"
+                          color="red"
+                          aria-label="Delete message"
+                          disabled={!!msg.deletedAt || isDeleting}
+                          onClick={() => confirmDelete(msg.id)}
+                        >
+                          <IconTrash size={14} />
+                        </LegacyActionIcon>
+                      </Group>
                     </Group>
-                    <Code block className="mt-1 whitespace-pre-wrap text-xs">
-                      {msg.content}
-                    </Code>
+                    {editing?.id === msg.id ? (
+                      <Stack gap={6} mt={6}>
+                        <Textarea
+                          autosize
+                          minRows={2}
+                          value={editing.content}
+                          onChange={(e) =>
+                            setEditing({ id: msg.id, content: e.currentTarget.value })
+                          }
+                        />
+                        <Group gap="xs">
+                          <Button
+                            size="compact-xs"
+                            loading={isEditing}
+                            disabled={!editing.content.trim().length}
+                            onClick={() =>
+                              editMessage({ messageId: msg.id, content: editing.content })
+                            }
+                          >
+                            Save redaction
+                          </Button>
+                          <Button
+                            size="compact-xs"
+                            variant="default"
+                            onClick={() => setEditing(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </Group>
+                      </Stack>
+                    ) : (
+                      <Code block className="mt-1 whitespace-pre-wrap text-xs">
+                        {msg.content}
+                      </Code>
+                    )}
                   </div>
                 );
               })}

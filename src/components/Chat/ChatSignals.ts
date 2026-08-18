@@ -145,6 +145,46 @@ export const useChatMessageDeletedSignal = () => {
   useSignalConnection(SignalMessages.ChatMessageDeleted, onUpdate);
 };
 
+/**
+ * A moderator edit rewrites content in place, so both participants keep
+ * rendering the original until this patches their cache.
+ */
+export const useChatMessageUpdatedSignal = () => {
+  const queryUtils = trpc.useUtils();
+
+  const onUpdate = useCallback(
+    ({
+      messageId,
+      chatId,
+      content,
+      editedAt,
+    }: {
+      messageId: number;
+      chatId: number;
+      content: string;
+      editedAt: string;
+    }) => {
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId },
+        produce((old) => {
+          if (!old) return old;
+          for (const page of old.pages) {
+            const msg = page.items.find((m) => m.id === messageId);
+            if (msg) {
+              msg.content = content;
+              msg.editedAt = new Date(editedAt);
+            }
+          }
+        })
+      );
+      queryUtils.chat.getAllByUser.invalidate();
+    },
+    [queryUtils]
+  );
+
+  useSignalConnection(SignalMessages.ChatMessageUpdated, onUpdate);
+};
+
 export const useChatNewRoomSignal = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();

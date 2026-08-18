@@ -22,6 +22,11 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
+import {
+  throwOnBlockedLinkDomain,
+  throwOnBlockedMessagePattern,
+} from '~/server/services/blocklist.service';
+import { stripStickerTokens } from '~/shared/utils/sticker-token';
 import type { GetChatAuditInput, GetModeratorChatInput } from '~/server/schema/chat-audit.schema';
 import { clickhouse } from '~/server/clickhouse/client';
 import {
@@ -847,13 +852,18 @@ export const createMessageHandler = async ({
 };
 
 /**
- * Update a message
+ * Edit a message as a moderator.
  *
- * Currently unrouted (see chat.router.ts). Before reviving it, port the guards
- * `createMessage` applies to new content: blocklist/profanity scanning and sticker
- * ownership resolution. This writes `content` through unchecked.
+ * Redaction, not authorship: the point is to strip a link or a slur out of a
+ * thread without destroying the context a report is being judged on. The
+ * original content goes to the audit log before it is overwritten, so the edit
+ * is reconstructible.
+ *
+ * Content passes the same blocklist scans `createMessage` applies — the previous
+ * incarnation of this handler wrote `content` through unchecked, which is why it
+ * was never routed.
  */
-export const updateMessageHandler = async ({
+export const moderatorUpdateMessageHandler = async ({
   input,
   ctx,
 }: {
@@ -861,26 +871,67 @@ export const updateMessageHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { id: userId } = ctx.user;
-    const { messageId, ...rest } = input;
+    const { messageId, content } = input;
 
-    const existingMessage = await dbWrite.chatMessage.findFirst({
+    const existing = await dbWrite.chatMessage.findFirst({
       where: { id: messageId },
-      select: {
-        userId: true,
-      },
+      select: { id: true, chatId: true, userId: true, content: true, deletedAt: true },
     });
 
-    if (!existingMessage || existingMessage.userId !== userId) {
-      throw throwBadRequestError(`Could not find message with id: (${messageId})`);
+    if (!existing) throw throwNotFoundError(`No message found for ID (${messageId})`);
+    if (existing.userId === -1) {
+      throw throwBadRequestError('System messages cannot be edited');
     }
 
-    // TODO signal
+    const trimmed = content.trim();
+    if (!trimmed.length) throw throwBadRequestError('Message cannot be empty');
 
-    return await dbWrite.chatMessage.update({
-      where: { id: input.messageId },
-      data: { ...rest, editedAt: new Date() },
+    // Sticker tokens are stripped, not split around, so `fu:sticker:1:ck` still
+    // reads as one word to the scanner.
+    const scannable = stripStickerTokens(trimmed);
+    await throwOnBlockedLinkDomain(scannable);
+    await throwOnBlockedMessagePattern(scannable);
+
+    const editedAt = new Date();
+    await dbWrite.chatMessage.update({
+      where: { id: existing.id },
+      data: { content: trimmed, editedAt },
     });
+
+    const before = truncateAuditValue(existing.content);
+    const after = truncateAuditValue(trimmed);
+    await ctx.track
+      .chatAudit({
+        type: 'edit',
+        chatId: existing.chatId,
+        messageId: existing.id,
+        actorId: ctx.user.id,
+        subjectId: existing.userId,
+        actorRole: 'moderator',
+        oldValue: before.value,
+        newValue: after.value,
+        truncated: before.truncated || after.truncated,
+      })
+      .catch(() => undefined);
+
+    // Both participants are still rendering the old text until told otherwise.
+    withSignals(() =>
+      fetch(
+        `${env.SIGNALS_ENDPOINT}/groups/chat:${existing.chatId}/signals/${SignalMessages.ChatMessageUpdated}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messageId: existing.id,
+            chatId: existing.chatId,
+            content: trimmed,
+            editedAt,
+          }),
+        }
+      )
+    ).catch(() => undefined);
+
+    return { messageId: existing.id, chatId: existing.chatId, content: trimmed };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

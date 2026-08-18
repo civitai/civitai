@@ -5,6 +5,7 @@ import { useCryptoDepositSignal } from '~/components/Signals/CryptoDepositSignal
 import { useReferralSignals } from '~/components/Referrals/ReferralSignals';
 import {
   useChatMessageDeletedSignal,
+  useChatMessageUpdatedSignal,
   useChatNewMessageSignal,
   useChatNewRoomSignal,
 } from '~/components/Chat/ChatSignals';
@@ -41,6 +42,7 @@ export function SignalsRegistrar() {
   useChatNewMessageSignal();
   useChatNewRoomSignal();
   useChatMessageDeletedSignal();
+  useChatMessageUpdatedSignal();
 
   useMetricSignalsListener();
 
