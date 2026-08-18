@@ -3,6 +3,7 @@ import {
   createChatHandler,
   createMessageHandler,
   deleteMessageHandler,
+  getChatAuditHandler,
   getChatsForUserHandler,
   getInfiniteMessagesHandler,
   getMessageByIdHandler,
@@ -26,7 +27,8 @@ import {
   modifyUserInput,
   userSettingsChat,
 } from '~/server/schema/chat.schema';
-import { guardedProcedure, protectedProcedure, router } from '~/server/trpc';
+import { getChatAuditInput } from '~/server/schema/chat-audit.schema';
+import { guardedProcedure, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // nb: muted users can perform read actions but no communication actions (except responding to mod chat)
@@ -83,6 +85,10 @@ export const chatRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(isTypingInput)
     .mutation(isTypingHandler),
+  getAudit: moderatorProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getChatAuditInput)
+    .query(getChatAuditHandler),
   getUnreadCount: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getUnreadMessagesForUserHandler),

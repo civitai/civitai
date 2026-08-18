@@ -6,7 +6,8 @@ export const CHAT_AUDIT_FLAG = 'chat-audit-log';
  * in the product; without a record of the act, a `ChatReport` filed afterwards
  * points at a thread nobody can reconstruct.
  */
-export type ChatAuditEventType = 'edit' | 'delete' | 'clear';
+export const chatAuditEventTypes = ['edit', 'delete', 'clear'] as const;
+export type ChatAuditEventType = (typeof chatAuditEventTypes)[number];
 
 export type ChatAuditRow = {
   type: ChatAuditEventType;

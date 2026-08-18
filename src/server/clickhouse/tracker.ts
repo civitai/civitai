@@ -817,7 +817,11 @@ export class Tracker {
   // app can deploy before the table exists.
   public async chatAudit(row: ChatAuditRow) {
     if (!(await isFlipt(CHAT_AUDIT_FLAG))) return;
-    return this.track('chatAuditEvents', row, { skipActorMeta: true });
+    // trackMany, not track: it inserts into ClickHouse directly, where `track`
+    // POSTs to a tracker-service route that would have to be registered
+    // separately. Same choice `entityChanges` makes, so DDL is the only
+    // dependency.
+    return this.trackMany('chatAuditEvents', [row], { skipActorMeta: true });
   }
 
   // One row per sticker PLACEMENT, matching the consumption rule — a comment

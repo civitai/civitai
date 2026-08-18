@@ -22,6 +22,8 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
+import type { GetChatAuditInput } from '~/server/schema/chat-audit.schema';
+import { clickhouse } from '~/server/clickhouse/client';
 import {
   chatReferenceMessageSelect,
   latestChat,
@@ -41,6 +43,19 @@ import {
 import { ChatMemberStatus, ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
+
+export type ChatAuditEventRow = {
+  createdAt: string;
+  type: string;
+  chatId: number;
+  messageId: number;
+  actorId: number;
+  subjectId: number;
+  actorRole: string;
+  oldValue: string;
+  newValue: string;
+  truncated: number;
+};
 
 /**
  * The redesign is staged to moderators, and these two actions destroy a user's
@@ -940,6 +955,44 @@ export const deleteMessageHandler = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+};
+
+/**
+ * Read the chat moderation audit (moderators only).
+ *
+ * A delete or a clear removes content from the product but not from the record;
+ * this is the surface that makes a ChatReport reviewable afterwards. Returns
+ * empty rather than throwing when ClickHouse is absent — every dev and preview
+ * environment is in that state, and a mod page that errors there reads as broken
+ * rather than unconfigured.
+ */
+export const getChatAuditHandler = async ({ input }: { input: GetChatAuditInput }) => {
+  if (!clickhouse) return { items: [], nextCursor: null };
+
+  const { chatId, actorId, type, limit, cursor } = input;
+
+  // Every fragment below is built from zod-validated values — ints, a date, and
+  // an enum — so nothing user-controlled reaches the query as a raw string.
+  const conditions: string[] = [];
+  if (chatId) conditions.push(`chatId = ${chatId}`);
+  if (actorId) conditions.push(`actorId = ${actorId}`);
+  if (type) conditions.push(`type = '${type}'`);
+  if (cursor) conditions.push(`createdAt < parseDateTimeBestEffort('${cursor.toISOString()}')`);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const items = await clickhouse.$query<ChatAuditEventRow>(`
+    SELECT createdAt, type, chatId, messageId, actorId, subjectId, actorRole,
+           oldValue, newValue, truncated
+    FROM chatAuditEvents
+    ${where}
+    ORDER BY createdAt DESC
+    LIMIT ${limit}
+  `);
+
+  return {
+    items,
+    nextCursor: items.length === limit ? items[items.length - 1].createdAt : null,
+  };
 };
 
 /**
