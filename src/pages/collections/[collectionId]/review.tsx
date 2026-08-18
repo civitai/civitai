@@ -10,6 +10,7 @@ import {
   Tabs,
   Text,
   Title,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import type { TooltipProps } from '@mantine/core';
@@ -35,6 +36,8 @@ import {
   openRejectCollectionItemsModal,
   type RejectionSelection,
 } from '~/components/Collections/components/RejectCollectionItemsModal';
+import { resolveRejectionCopy } from '~/shared/constants/collection-rejection.constants';
+import { getDisplayName } from '~/utils/string-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CollectionItemStatus, CollectionMode, CollectionType } from '~/shared/utils/prisma/enums';
@@ -372,6 +375,22 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                   {collectionItem.status}
                 </Badge>
               )}
+              {collectionItem.status === CollectionItemStatus.REJECTED &&
+                collectionItem.rejectionReason && (
+                  <Tooltip
+                    label={resolveRejectionCopy({
+                      reason: collectionItem.rejectionReason,
+                      detail: collectionItem.rejectionDetail,
+                    })}
+                    withinPortal
+                    multiline
+                    w={260}
+                  >
+                    <Badge variant="light" color="red" h={26} radius="xl">
+                      {getDisplayName(collectionItem.rejectionReason)}
+                    </Badge>
+                  </Tooltip>
+                )}
               {image?.type === 'video' && image.metadata && 'duration' in image.metadata && (
                 <DurationBadge duration={image.metadata.duration ?? 0} h={26} radius="xl" />
               )}
