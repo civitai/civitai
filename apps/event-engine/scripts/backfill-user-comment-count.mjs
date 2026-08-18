@@ -40,8 +40,13 @@
  * Options:
  *   --new-cutover <iso>  When the release carrying #4067 went live. Required, must be in the past.
  *   --execute            Actually write. Default is a dry run that writes nothing.
+ *   --no-dirty           Write history, flag nothing. History rows are invisible to every total
+ *                        until their entity is dirtied, so this is a full-scale, fully reversible
+ *                        rehearsal: verify sampled owners against Postgres, then run --dirty-only.
+ *   --dirty-only         Flag the owners, write no history. The second half of that pair.
  *   --limit <n>          Write only the first n day rows. Smoke test only: it marks those owners
- *                        dirty too, so their live totals go WRONG until a full run lands.
+ *                        dirty too, so their live totals go WRONG until a full run lands. Prefer
+ *                        --no-dirty, which is wrong for nobody.
  */
 
 import { createClient } from '@clickhouse/client';
@@ -70,15 +75,19 @@ const pgEnv = loadEnvFile(resolve(__dirname, '../.claude/skills/postgres-query/.
 
 const args = process.argv.slice(2);
 const EXECUTE = args.includes('--execute');
+const NO_DIRTY = args.includes('--no-dirty');
+const DIRTY_ONLY = args.includes('--dirty-only');
 const LIMIT = args.includes('--limit') ? Number(args[args.indexOf('--limit') + 1]) : null;
 const NEW_CUTOVER = args.includes('--new-cutover') ? args[args.indexOf('--new-cutover') + 1] : null;
 
-// Rows per dirty-flag batch, and the pause between batches. The additive refresher reprocesses a
-// rolling 10 minute window every minute, so 104k rows enqueued at one instant are re-read on ten
-// consecutive refreshes of a job that normally finishes in seconds — enough to delay every other
-// additive metric platform-wide against a 10 minute staleness alert.
-const DIRTY_CHUNK = 5000;
-const DIRTY_PAUSE_MS = 30000;
+// Rows per dirty-flag batch, and the pause between batches. The refresher's window is a ROLLING ten
+// minutes, so every row sits in it for ten minutes whenever it arrives and the total re-reads are
+// the same either way — chunking caps the OCCUPANCY, and only if the rate stays under
+// target/10min. At 2,500/min the extra occupancy tops out around 25k, roughly one baseline against
+// the platform's normal 2,500-3,000/min. Faster than that (5,000 per 30s parks ~100k in the window)
+// is the un-chunked flood arriving ten minutes late. ~42 minutes for 104k owners.
+const DIRTY_CHUNK = 2500;
+const DIRTY_PAUSE_MS = 60000;
 
 const OLD_SURFACES = new Set(['post', 'image', 'article', 'bounty']);
 
@@ -211,6 +220,15 @@ async function main() {
     process.exit(1);
   }
 
+  if (EXECUTE) {
+    // Writes nothing, but fails now rather than after ~20 minutes of Postgres scans if the
+    // credential turns out to be read-only.
+    await ch.command({
+      query: `INSERT INTO default.entityMetricDailyAgg_history_v2
+              SELECT * FROM default.entityMetricDailyAgg_history_v2 WHERE 0`,
+    });
+  }
+
   const firstEventRows = await query(`SELECT min(createdAt) AS firstEvent, count() AS events
                                       FROM default.entityMetricEvents_month
                                       WHERE entityType = 'User' AND metricType = 'commentCount'`);
@@ -335,13 +353,23 @@ async function main() {
 
   const limited = LIMIT ? safeRows.slice(0, LIMIT) : safeRows;
   const BATCH = 50000;
-  for (let i = 0; i < limited.length; i += BATCH) {
-    await ch.insert({
-      table: 'entityMetricDailyAgg_history_v2',
-      values: limited.slice(i, i + BATCH),
-      format: 'JSONEachRow',
-    });
-    console.log(`wrote ${Math.min(i + BATCH, limited.length)}/${limited.length} day rows`);
+  if (DIRTY_ONLY) {
+    console.log('--dirty-only: skipping the history write');
+  } else {
+    for (let i = 0; i < limited.length; i += BATCH) {
+      await ch.insert({
+        table: 'entityMetricDailyAgg_history_v2',
+        values: limited.slice(i, i + BATCH),
+        format: 'JSONEachRow',
+      });
+      console.log(`wrote ${Math.min(i + BATCH, limited.length)}/${limited.length} day rows`);
+    }
+  }
+
+  if (NO_DIRTY) {
+    console.log('--no-dirty: history written, nothing flagged. No total moves until --dirty-only.');
+    await ch.close();
+    return;
   }
 
   const dirty = [...new Set(limited.map((row) => row.entityId))].map((entityId) => ({
