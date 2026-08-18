@@ -17,6 +17,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // these SAME references at call time, so mutating a method here (per test)
 // changes what the corresponding check returns without re-importing.
 const mocks = vi.hoisted(() => ({
+  // Prom handles are captured (not thrown away) so the tests can assert that a
+  // check made NON-CRITICAL still EMITS — the observability half of the contract.
+  // registerCounter is called once per check at module init, keyed by metric name
+  // (`healthcheck_<lowercased check>`), so the map is populated on import.
+  promCounters: {} as Record<string, { inc: ReturnType<typeof vi.fn> }>,
+  attemptsCounter: { inc: vi.fn() },
+  durationHistogram: { observe: vi.fn() },
   sysRedis: {
     isReady: true,
     ping: vi.fn(async () => 'PONG'),
@@ -55,7 +62,8 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: mocks.dbWrite,
 }));
 
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, 
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbReadLong: {},
   pgDbRead: mocks.pgDbRead,
   pgDbWrite: mocks.pgDbWrite,
 }));
@@ -67,9 +75,9 @@ vi.mock('~/server/meilisearch/client', () => ({
 }));
 
 vi.mock('~/server/prom/client', () => ({
-  registerCounter: () => ({ inc: vi.fn() }),
-  registerCounterWithLabels: () => ({ inc: vi.fn() }),
-  registerHistogram: () => ({ observe: vi.fn() }),
+  registerCounter: ({ name }: { name: string }) => (mocks.promCounters[name] ??= { inc: vi.fn() }),
+  registerCounterWithLabels: () => mocks.attemptsCounter,
+  registerHistogram: () => mocks.durationHistogram,
 }));
 
 vi.mock('~/server/redis/client', () => ({
@@ -149,12 +157,17 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
     expect(results.sysRedis).toBe(true);
   });
 
+  // Repointed from dbWrite to dbRead: `write` is no longer critical on the default
+  // (readiness) path, so a dbWrite failure can no longer demonstrate "sysRedis
+  // never rescues a real failure". dbRead is still critical in both modes, so it
+  // tests the original property. The dbWrite-specific behaviour it used to cover
+  // is now pinned deliberately, in both directions, in the DB-write describe below.
   it('critical failing AND sysRedis failing → healthy false (sysRedis never rescues a real failure)', async () => {
-    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    mocks.dbRead.$transaction.mockRejectedValue(new Error('db read down'));
     mocks.sysRedis.ping.mockImplementation(async () => 'NOPE');
     const { healthy, results } = await runHealthChecks(liveSignal());
     expect(healthy).toBe(false);
-    expect(results.write).toBe(false);
+    expect(results.read).toBe(false);
     expect(results.sysRedis).toBe(false);
   });
 
@@ -200,5 +213,217 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The DB write checks (`write` = Prisma dbWrite, `pgWrite` = pg pool) are a
+// SHARED dependency, so a stall on the write primary fails them on every replica
+// inside one probe window and empties the load balancer. They are therefore
+// soft for steady-state readiness (/api/health) and hard for startup
+// (/api/ready) — see STARTUP_ONLY_CRITICAL_CHECKS in health.ts.
+//
+// Every case below states which direction it pins: NON-SHEDDING (the regression
+// the incident produced), FAIL-CLOSED (startup must not regress), or
+// NOT-OVER-BROADENED (checks that must still shed).
+// ---------------------------------------------------------------------------
+describe('runHealthChecks — DB write soft dependency (steady-state readiness)', () => {
+  it('baseline: all deps healthy → healthy true, both write checks true', async () => {
+    const { healthy, results } = await runHealthChecks(liveSignal());
+    expect(healthy).toBe(true);
+    expect(results.write).toBe(true);
+    expect(results.pgWrite).toBe(true);
+  });
+
+  // NON-SHEDDING. The Prisma write check is what failed in the incident.
+  it('dbWrite throws → still healthy, write recorded false', async () => {
+    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    const { healthy, results } = await runHealthChecks(liveSignal());
+    expect(healthy).toBe(true);
+    expect(results.write).toBe(false);
+  });
+
+  // NON-SHEDDING. pgWrite is a SEPARATE client over a separate pool; it must be
+  // soft on its own, or it re-arms the fleet shed by itself.
+  it('pgWrite throws → still healthy, pgWrite recorded false', async () => {
+    mocks.pgDbWrite.query.mockRejectedValue(new Error('pg write down'));
+    const { healthy, results } = await runHealthChecks(liveSignal());
+    expect(healthy).toBe(true);
+    expect(results.pgWrite).toBe(false);
+  });
+
+  // NON-SHEDDING, and the actual incident shape: both write checks fail together
+  // because they share one primary. Listing only one of them would leave this red.
+  it('BOTH write checks fail together → still healthy, both recorded false', async () => {
+    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    mocks.pgDbWrite.query.mockRejectedValue(new Error('pg write down'));
+    const { healthy, results } = await runHealthChecks(liveSignal());
+    expect(healthy).toBe(true);
+    expect(results.write).toBe(false);
+    expect(results.pgWrite).toBe(false);
+    // Reads were unaffected in the incident and must be unaffected here.
+    expect(results.read).toBe(true);
+    expect(results.pgRead).toBe(true);
+  });
+
+  // NON-SHEDDING, explicit mode. Proves the parameter is honoured rather than
+  // the default happening to be lenient for some other reason.
+  it("mode 'readiness' passed explicitly → same non-shedding result as the default", async () => {
+    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    const { healthy } = await runHealthChecks(liveSignal(), { mode: 'readiness' });
+    expect(healthy).toBe(true);
+  });
+
+  // NON-SHEDDING, and the load-bearing shape: the production failure was a
+  // connection-pool ACQUISITION hang, not a fast throw — Prisma parked until it
+  // gave up. statement_timeout does not bound acquisition, so the only ceiling is
+  // the per-check runCheckWithTimeout race. A fast-throw test alone would not
+  // cover the path the incident actually took.
+  it('dbWrite PARKS (acquisition hang) → still healthy within deadline, write falsy', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.dbWrite.$transaction.mockImplementation(() => new Promise(() => {}));
+      const runPromise = runHealthChecks(liveSignal());
+      // Past the per-check timeout (1000ms) and the overall deadline (2000ms).
+      await vi.advanceTimersByTimeAsync(2500);
+      const { healthy, results } = await runPromise;
+      expect(healthy).toBe(true);
+      expect(results.write).toBeFalsy();
+      // Only the write check was slow; the critical ones resolved fine.
+      expect(results.read).toBe(true);
+      expect(results.pgRead).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // NOT-OVER-BROADENED: `write` being soft must never rescue a genuinely
+  // critical failure that happens at the same time.
+  it('write soft + read failing → healthy false (softness never rescues a critical check)', async () => {
+    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    mocks.dbRead.$transaction.mockRejectedValue(new Error('db read down'));
+    const { healthy, results } = await runHealthChecks(liveSignal());
+    expect(healthy).toBe(false);
+    expect(results.write).toBe(false);
+    expect(results.read).toBe(false);
+  });
+
+  // NOT-OVER-BROADENED, one case per still-critical check. A pod that cannot read
+  // is useless and SHOULD leave the pool.
+  it.each([
+    // Thunks are annotated `(): void` deliberately: a bare arrow returning
+    // `mockRejectedValue(...)` returns the mock itself, which makes its return type
+    // reference the mock's own type and trips TS7024 (circular implicit any).
+    [
+      'read',
+      (): void => void mocks.dbRead.$transaction.mockRejectedValue(new Error('db read down')),
+    ],
+    ['pgRead', (): void => void mocks.pgDbRead.query.mockRejectedValue(new Error('pg read down'))],
+    ['redis', (): void => void (mocks.redis.isReady = false)],
+  ] as const)('%s stays critical on the readiness path → healthy false', async (key, breakIt) => {
+    breakIt();
+    const { healthy, results } = await runHealthChecks(liveSignal());
+    expect(healthy).toBe(false);
+    expect(results[key]).toBe(false);
+  });
+
+  // OBSERVABILITY: the check must still RUN and still EMIT after it stops gating
+  // readiness — the operator's only signal during the incident. Asserts the check
+  // was actually invoked (not disabled), its per-check counter and the labelled
+  // attempts counter fired, the duration histogram observed it, and the `overall`
+  // counter did NOT fire (nothing was shed).
+  it('a non-critical write failure still runs the check and emits its metrics', async () => {
+    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    const { healthy, results } = await runHealthChecks(liveSignal());
+
+    expect(healthy).toBe(true);
+    expect(results.write).toBe(false);
+    // Still RUNNING (this is what HEALTHCHECK_DISABLED would have broken).
+    expect(mocks.dbWrite.$transaction).toHaveBeenCalled();
+    // Per-check failure counter.
+    expect(mocks.promCounters['healthcheck_write'].inc).toHaveBeenCalled();
+    // Labelled attempt outcome.
+    expect(mocks.attemptsCounter.inc).toHaveBeenCalledWith({ name: 'write', result: 'failure' });
+    // Duration observed.
+    expect(mocks.durationHistogram.observe).toHaveBeenCalledWith(
+      { name: 'write' },
+      expect.any(Number)
+    );
+    // The overall counter is the "readiness was shed" signal — it must NOT fire.
+    expect(mocks.promCounters['healthcheck_overall'].inc).not.toHaveBeenCalled();
+  });
+
+  it('a healthy run does not increment the write failure counter (positive control)', async () => {
+    const { healthy } = await runHealthChecks(liveSignal());
+    expect(healthy).toBe(true);
+    expect(mocks.promCounters['healthcheck_write'].inc).not.toHaveBeenCalled();
+    expect(mocks.attemptsCounter.inc).toHaveBeenCalledWith({ name: 'write', result: 'success' });
+  });
+});
+
+describe("runHealthChecks — mode 'startup' still fails CLOSED on the DB", () => {
+  // Baseline first, so the fail-closed cases below cannot pass vacuously.
+  it('baseline: all deps healthy in startup mode → healthy true', async () => {
+    const { healthy } = await runHealthChecks(liveSignal(), { mode: 'startup' });
+    expect(healthy).toBe(true);
+  });
+
+  // FAIL-CLOSED: a pod that has never reached the DB must not enter the pool.
+  it.each([
+    [
+      'write',
+      (): void => void mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down')),
+    ],
+    [
+      'pgWrite',
+      (): void => void mocks.pgDbWrite.query.mockRejectedValue(new Error('pg write down')),
+    ],
+  ] as const)('%s failing in startup mode → healthy false', async (key, breakIt) => {
+    breakIt();
+    const { healthy, results } = await runHealthChecks(liveSignal(), { mode: 'startup' });
+    expect(healthy).toBe(false);
+    expect(results[key]).toBe(false);
+  });
+
+  it('BOTH write checks failing in startup mode → healthy false', async () => {
+    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    mocks.pgDbWrite.query.mockRejectedValue(new Error('pg write down'));
+    const { healthy } = await runHealthChecks(liveSignal(), { mode: 'startup' });
+    expect(healthy).toBe(false);
+  });
+
+  // FAIL-CLOSED on the acquisition-hang shape too, not just a fast throw: a pod
+  // whose first DB contact hangs must not be declared started.
+  it('dbWrite PARKS in startup mode → healthy false', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.dbWrite.$transaction.mockImplementation(() => new Promise(() => {}));
+      const runPromise = runHealthChecks(liveSignal(), { mode: 'startup' });
+      await vi.advanceTimersByTimeAsync(2500);
+      const { healthy, results } = await runPromise;
+      expect(healthy).toBe(false);
+      expect(results.write).toBeFalsy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // NOT-OVER-BROADENED in the other direction: startup mode must not make
+  // sysRedis critical again. Its softness is independent of this change.
+  it('sysRedis failing in startup mode → still healthy (sysRedis stays soft in BOTH modes)', async () => {
+    mocks.sysRedis.ping.mockImplementation(async () => 'NOPE');
+    const { healthy, results } = await runHealthChecks(liveSignal(), { mode: 'startup' });
+    expect(healthy).toBe(true);
+    expect(results.sysRedis).toBe(false);
+  });
+
+  // The two modes must actually DISAGREE on the same input — the one assertion
+  // that cannot pass if the mode parameter is ignored in either direction.
+  it('the SAME dbWrite failure yields healthy true on readiness and false on startup', async () => {
+    mocks.dbWrite.$transaction.mockRejectedValue(new Error('db write down'));
+    const readiness = await runHealthChecks(liveSignal(), { mode: 'readiness' });
+    const startup = await runHealthChecks(liveSignal(), { mode: 'startup' });
+    expect(readiness.healthy).toBe(true);
+    expect(startup.healthy).toBe(false);
   });
 });
