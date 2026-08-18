@@ -176,3 +176,82 @@ describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
     }
   });
 });
+
+// After a hash-only back navigation, routed dialogs stopped opening (ClickUp
+// 868kta76n). `beforePopState` raises `usingNextRouter` for every pop it hands
+// to Next, and the flag was lowered only in the `routeChangeComplete` handler —
+// but Next's hash-only branch emits `hashChangeComplete` and returns, so the
+// flag stayed raised and the `locationchange` handler dropped every update after
+// it. Measured on a dev server: after `router.push('/images#probe')` and back, a
+// feed card changed the URL to `/images/139360504` and no dialog appeared;
+// without the pop the same click opened it every time.
+describe('BrowserRouterProvider after a hash-only navigation', () => {
+  test('keeps publishing location changes, so routed dialogs still open', async () => {
+    const originalState = window.history.state;
+    const on = vi.mocked(Router.events.on);
+    const passThrough = on.getMockImplementation();
+    const handlers: Record<string, Array<() => void>> = {};
+    on.mockImplementation(((event: string, fn: () => void) => {
+      (handlers[event] ??= []).push(fn);
+      return passThrough?.(event as never, fn as never);
+    }) as typeof Router.events.on);
+
+    try {
+      renderWithProviders(
+        <BrowserRouterProvider>
+          <AsPathProbe />
+        </BrowserRouterProvider>
+      );
+
+      setUsingNextRouter(false);
+      const liveness = { as: '/images', url: '/images', state: {} };
+      window.history.replaceState(liveness, '');
+      await vi.waitFor(() => {
+        window.dispatchEvent(new PopStateEvent('popstate', { state: liveness }));
+        expect(probeText()).toBe('/images');
+      });
+
+      // The hash-only pop: `beforePopState` hands it to Next, which emits
+      // `hashChangeComplete` and never `routeChangeComplete`.
+      setUsingNextRouter(true);
+
+      // Negative control for the raise itself: while the flag is up, an update
+      // must NOT land. Without this the test passes even if the gate it is about
+      // were deleted, because it only ever asserts that an update arrives.
+      const dropped = { as: '/images/999', url: '/images/999', state: {} };
+      window.history.replaceState(dropped, '');
+      window.dispatchEvent(new CustomEvent('locationchange', { detail: [dropped] }));
+      // Give React a chance to commit before asserting the absence, or the probe
+      // reads the pre-dispatch DOM and the assertion cannot fail. (Measured: a
+      // synchronous read passed with the gate deleted.)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(probeText()).toBe('/images');
+
+      // No assertion on registration: if the listener is missing the loop is a
+      // no-op, the flag stays raised, and the behavioural assertion below is what
+      // reports it. Checking registration first would fail with a count instead.
+      for (const handler of handlers.hashChangeComplete ?? []) handler();
+
+      // What a routed dialog opening looks like: `browserRouter.push` dispatches
+      // `locationchange`, and the provider must still publish it.
+      const opened = {
+        as: '/images/139360504',
+        url: '/images?dialog=imageDetail&imageId=139360504',
+        state: {},
+      };
+      window.history.replaceState(opened, '');
+      window.dispatchEvent(new CustomEvent('locationchange', { detail: [opened] }));
+
+      await vi.waitFor(() => {
+        expect(probeText()).toBe('/images/139360504');
+      });
+      // The regression: the flag was still raised, this update was dropped, and
+      // asPath stayed at '/images' with no dialog on screen.
+      expect(imageIdText()).toBe('139360504');
+    } finally {
+      setUsingNextRouter(false);
+      on.mockImplementation(passThrough ?? (() => undefined));
+      window.history.replaceState(originalState, '');
+    }
+  });
+});

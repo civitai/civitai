@@ -89,10 +89,30 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
       setUsingNextRouter(false);
     };
 
+    // A hash-only navigation ends at `hashChangeComplete` and never reaches
+    // `routeChangeComplete`, so without this the flag stays raised and every
+    // later `locationchange` is dropped — routed dialogs stop opening.
+    //
+    // This list is NOT every way a navigation can end, and the two it leaves out
+    // are deliberate. `routeChangeError` also fires for the navigation being
+    // CANCELLED by the next one (router.js:872), so lowering there would release
+    // the flag while Next is mid-render of the newer route. And a route change
+    // this app aborts by throwing from `routeChangeStart` (RoutedDialogProvider)
+    // exits before any terminal event at all. Both leave the flag raised, which
+    // is the old behaviour, not a new fault.
+    //
+    // The listener also fires for hash navigations other than the pop that raised
+    // the flag — an in-page anchor clicked while a pop is still in flight lowers
+    // it early. Narrow, and still better than staying wedged, but it is the same
+    // ownership-by-boolean weakness rather than an exception to it.
+    const releaseNextRouter = () => setUsingNextRouter(false);
+
     router.events.on('routeChangeComplete', handleRouteChangeComplete);
+    router.events.on('hashChangeComplete', releaseNextRouter);
 
     return () => {
       router.events.off('routeChangeComplete', handleRouteChangeComplete);
+      router.events.off('hashChangeComplete', releaseNextRouter);
     };
   }, []); //eslint-disable-line
 
