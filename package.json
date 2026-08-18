@@ -108,7 +108,8 @@
     "madge:orphans": "madge --orphans --image ./public/orphans-graph.svg --ts-config ./tsconfig.json --extensions ts,tsx src/",
     "depcheck": "depcheck",
     "generate-types": "typed-scss-modules src",
-    "ts-script": "NODE_ENV=development tsx"
+    "ts-script": "NODE_ENV=development tsx",
+    "generate:moderator-endpoints": "node scripts/generate-moderator-endpoint-catalog.mjs"
   },
   "prisma": {
     "schema": "packages/civitai-db-schema/prisma/schema.prisma",
