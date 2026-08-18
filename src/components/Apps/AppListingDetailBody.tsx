@@ -1,4 +1,5 @@
 import {
+  Accordion,
   Alert,
   Anchor,
   Avatar,
@@ -9,21 +10,26 @@ import {
   Divider,
   Group,
   Image,
+  Menu,
   SimpleGrid,
   Stack,
   Text,
-  ThemeIcon,
   Title,
 } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import {
   IconApps,
   IconArrowLeft,
+  IconDotsVertical,
+  IconDownload,
+  IconFlag,
   IconInfoCircle,
   IconPencil,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
@@ -31,7 +37,8 @@ import {
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
-import { getRecommendLabel } from '~/components/Apps/appListingCardView';
+import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
 import {
   canOwnerEditListing,
   type DetailActionMode,
@@ -45,82 +52,110 @@ import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
-import { ReportListingButton } from '~/components/Apps/ReportListingButton';
-import { ReviewListingButton } from '~/components/Apps/ReviewListingButton';
+import { ReportListingModal, useCanReportListing } from '~/components/Apps/ReportListingButton';
+import { ReviewListingModal, useCanReviewListing } from '~/components/Apps/ReviewListingButton';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
 import {
   CATEGORY_ICONS,
   FALLBACK_CATEGORY_ICON,
 } from '~/components/Apps/marketplaceCategoryIcons';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
+import { formatDate } from '~/utils/date-helpers';
+import detailClasses from '~/components/Model/ModelVersions/ModelVersionDetails.module.scss';
 import type {
   ListingDetail,
   ListingGalleryScreenshot,
 } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * App Store Listings (W13) — P2c unified listing DETAIL body (over BOTH kinds).
+ * App Store Listings (W13) — the unified listing DETAIL body (over BOTH kinds).
  *
- * Renders one `ListingDetail` (from `appListings.getAppDetail`): a hero cover +
- * app icon + name + tagline + creator chip + kind badge + Steam-style recommend
- * breakdown + a screenshot gallery + a `CustomMarkdown` description + the
- * kind-aware primary action (`getDetailPrimaryAction`). Mirrors the visual
- * language of the per-app detail it supersedes (the now-retired
- * `/apps/[appBlockId]`) and of `AppDetailsModal` — same screenshot-grid +
- * description + external-link discipline — so listings feel native.
+ * Renders one `ListingDetail` (from `appListings.getAppDetail`) in the MODEL DETAIL
+ * PAGE's layout, deliberately: a full-bleed hero, then a header block (icon + name +
+ * tagline + collaborator byline + interactive stat chips + a `⋮` overflow menu + an
+ * `Updated: <date> │ <category>` meta line), then a two-column `ContainerGrid2` — main
+ * content left (screenshots, `About` under a `ContentClamp`), a stack of `Card
+ * withBorder` rails right (the primary action, the `SmartCreatorCard`, a "Details"
+ * accordion) — then the full-width discovery rail, reviews and discussion.
  *
- * DARK / parallel-run: rendered by the mod-only `/apps/store-preview/<slug>`
- * surface AND, in read-only `preview` mode (see props), by the moderator
- * listing-media review as a store preview of an unapproved shadow listing.
+ * 🔴 THE LAYOUT IS A PORT, NOT AN INVENTION. The grid spans (`{base:12, sm:7, md:8}`
+ * / `{base:12, sm:5, md:4}` with `order={{sm:…}}`), the `Card.Section withBorder
+ * inheritPadding` rail headers, the `.detailsPanel`/`.detailRow`/`.detailLabel`
+ * classes (imported from `ModelVersionDetails.module.scss` rather than re-declared),
+ * the `IconBadge` + `StatHoverCard` stat chips, the `Updated:` + `Divider` + category
+ * `Badge` meta line and the `Title order={2}` discussion heading all come from
+ * `src/pages/models/[id]/[[...slug]].tsx` + `ModelVersionDetails.tsx`. Keep them in
+ * step with those files; where this page differs it is because a listing has no
+ * equivalent (there are NO TAGS on a listing — do not invent a tag row).
  *
- * 🔴 This body is now the DESTINATION of the retired `/apps/[appBlockId]` route
- * (#3493 redirects it here for any app with an approved listing), so nothing in
- * this file may link back to `/apps/<appBlockId>` — that is a redirect loop onto
- * the page the viewer is already reading. See `getDetailPrimaryAction`'s
- * model-slot branch. `AppDetailsModal` + the default `/apps` are byte-unchanged.
+ * The page container widened with it: `/apps/store-preview/[slug]` moved from
+ * `APPS_READABLE_PAGE_WIDTH` (1100, a single readable column) to
+ * `APPS_TWO_COLUMN_DETAIL_PAGE_WIDTH` (1320 = Mantine `xl`, the model page's own
+ * container). See `appsPageWidths.ts` for why that is a fourth width class.
  *
- * ⚠️ KNOWN GAP (tracked by #3493, deliberately NOT closed here): this body has
- * no INSTALL surface, so a model-slot app — one that installs into a slot rather
- * than opening a page — has nowhere on the store detail to install from. Vacuous
- * today (every approved on-site listing declares a page).
+ * DARK / parallel-run: rendered by the mod-only `/apps/store-preview/<slug>` surface
+ * AND, in read-only `preview` mode (see props), by the moderator listing-media review
+ * as a store preview of an unapproved shadow listing.
  *
- * 🔴 THERE IS NO IN-PAGE LIVE PREVIEW HERE, AND ONE MUST NOT BE RE-ADDED AS A
- * BARE `<iframe src={liveUrl}>`. This body used to mount exactly that (inherited
- * verbatim from the retired `/apps/[appBlockId]` page, whose own docstring
- * already named the defect). A block at `<slug>.civit.ai` does not boot from its
- * URL alone — it waits for a host to post `BLOCK_INIT` over the block bridge.
- * Nothing posted it to that frame, so the frame only ever painted the block's
- * pre-init LIGHT-theme shell (`#FEFEFE`) inside a dark listing page. Neither
- * escape hatch fires from inside a frame either: the build-recipe edge redirect
- * keys on `Sec-Fetch-Dest: document` (an iframe sends `iframe`) and the SDK
- * `<BlockGate>` landing keys on `window.self === window.top` (false in a frame).
- * A future preview here needs a real host bridge — the moderator review surface
- * (`ReviewBlockPreviewHost`) is the working reference — not another raw iframe.
- * To run an on-site app from this page the viewer takes the kind-aware primary
- * action (`getDetailPrimaryAction`): today that is `Open` → `/apps/run/<slug>`
- * for every viewer who can reach this page — see the flag note on
- * `appListingDetailView`. The hero banner is a SECOND affordance for that same
- * action and nothing more: a plain `<a href>` to the identical route (see
- * `HeroCover`). It is not, and must not become, an embedded runtime.
+ * 🔴 This body is the DESTINATION of the retired `/apps/[appBlockId]` route (#3493
+ * redirects it here for any app with an approved listing), so nothing in this file may
+ * link back to `/apps/<appBlockId>` — that is a redirect loop onto the page the viewer
+ * is already reading. See `getDetailPrimaryAction`'s model-slot branch. Pinned as a
+ * source gate in `__tests__/appListingDetailView.test.ts`. `AppDetailsModal` + the
+ * default `/apps` grid are byte-unchanged by this change.
+ *
+ * ⚠️ KNOWN GAP (tracked by #3493, deliberately NOT closed here): this body has no
+ * INSTALL surface, so a model-slot app — one that installs into a slot rather than
+ * opening a page — has nowhere on the store detail to install from. Vacuous today
+ * (every approved on-site listing declares a page).
+ *
+ * 🔴 THERE IS NO IN-PAGE LIVE PREVIEW HERE, AND ONE MUST NOT BE RE-ADDED AS A BARE
+ * `<iframe src={liveUrl}>`. This body used to mount exactly that (inherited verbatim
+ * from the retired `/apps/[appBlockId]` page, whose own docstring already named the
+ * defect). A block at `<slug>.civit.ai` does not boot from its URL alone — it waits
+ * for a host to post `BLOCK_INIT` over the block bridge. Nothing posted it to that
+ * frame, so the frame only ever painted the block's pre-init LIGHT-theme shell
+ * (`#FEFEFE`) inside a dark listing page. Neither escape hatch fires from inside a
+ * frame either: the build-recipe edge redirect keys on `Sec-Fetch-Dest: document` (an
+ * iframe sends `iframe`) and the SDK `<BlockGate>` landing keys on
+ * `window.self === window.top` (false in a frame). A future preview here needs a real
+ * host bridge — the moderator review surface (`ReviewBlockPreviewHost`) is the working
+ * reference — not another raw frame. To run an on-site app from this page the viewer
+ * takes the kind-aware primary action (`getDetailPrimaryAction`): today that is `Open`
+ * → `/apps/run/<slug>` for every viewer who can reach this page — see the flag note on
+ * `appListingDetailView`. The hero banner is a SECOND affordance for that same action
+ * and nothing more: a plain `<a href>` to the identical route (see `HeroCover`). It is
+ * not, and must not become, an embedded runtime.
  *
  * Structurally pinned in the node `unit` project
- * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"),
- * because CI does not run the browser `component` suite.
+ * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), because
+ * CI does not run the browser `component` suite.
  *
- * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in
- * the pure view-model (`safeExternalHref`) + rendered with rel="noopener
- * noreferrer" target="_blank"; the markdown description goes through the shared
- * `CustomMarkdown` (react-markdown, no `dangerouslySetInnerHTML`).
+ * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in the
+ * pure view-model (`safeExternalHref`) + rendered with rel="noopener noreferrer"
+ * target="_blank"; the markdown description goes through the shared `CustomMarkdown`
+ * (react-markdown, no `dangerouslySetInnerHTML`). 🔴 `ContentClamp` wraps that markdown
+ * — it does NOT replace it. Do not swap in `RenderHtml` to get a nicer clamp: the
+ * markdown path is the XSS posture, not a formatting preference.
  *
- * Reuse tradeoffs (flagged in the PR, consistent with P2b):
- *   - Creator: `UserAvatarSimple` wants a rich `ProfileImage` + cosmetics object;
- *     the public DTO carries only a bare `{id,username,image}` string, so we
- *     render the same lightweight avatar chip the P2b card uses.
- *   - Cover: `AspectRatioImageCard` (cosmetic frames / per-image blur) needs a
- *     full `Image` object; the allowlist DTO projects only a `coverUrl` string,
- *     so we render a plain cover with the category-glyph placeholder fallback
- *     (same as the card). Feeding those would be a P2a schema addition.
+ * Reuse tradeoff still live (flagged in the PR, consistent with P2b):
+ *   - Cover: `AspectRatioImageCard` (cosmetic frames / per-image blur) needs a full
+ *     `Image` object; the allowlist DTO projects only a `coverUrl` string, so we render
+ *     a plain cover with the category-glyph placeholder fallback (same as the card).
+ *     Feeding it would be a P2a schema addition.
+ *
+ * (The creator tradeoff that used to sit here — "`UserAvatarSimple` wants a rich
+ * `ProfileImage` + cosmetics object, so we render a lightweight chip" — is GONE, and
+ * so is the chip. `CreatorCardSimple` needs only `{ id }` and fetches the rest itself
+ * through the PUBLIC `user.getCreator` procedure, which this anon-reachable page may
+ * call; the DTO has always carried `creator.id`.)
  */
 
 function categoryIcon(category: string): Icon {
@@ -241,9 +276,69 @@ function HeroCover({
 }
 
 /**
+ * Header STAT CHIPS — the model page's `IconBadge` + `StatHoverCard` row, over the two
+ * public aggregates a listing has: recommendations and installs.
+ *
+ * 🔴 Each chip carries `data-listing-stat="<key>"` AND an `aria-label`. The attribute
+ * is what the a11y test asserts on: a chip's visible text is a bare number, which any
+ * other feature on the page could also spell, so a text-shaped assertion would not be
+ * about these elements at all. The label is the accessible NAME the number alone
+ * cannot supply.
+ *
+ * 🔴 OMITTED ENTIRELY IN `preview` — see the posture note on the body. Both numbers are
+ * review/usage aggregates that a shadow listing structurally does not have. That
+ * omission is DECIDED IN `buildListingStatChips`, not here: this component renders
+ * whatever list it is given and renders nothing for an empty one, so the posture RULE
+ * is covered by the blocking node project.
+ *
+ * 🔴 THE WIRING IS NOT — do not read the line above as licence to skip the browser
+ * tier. That this component hands the view-model the REAL `preview` value, rather than
+ * a literal or an inverted one, is pinned ONLY in `AppListingDetailBody.browser.test.tsx`,
+ * which CI does not run. Mutating the call site to `{ preview: false }` leaves the whole
+ * node suite green. Rule and wiring are separate claims; only the first one is gated.
+ *
+ * 🔴 The hover MESSAGE is likewise decided there and passed through UNCONDITIONALLY.
+ * `StatHoverCard` renders `message` INSTEAD of `value`, so a ternary that supplied the
+ * message only when there were no reviews made the percentage unreachable on every
+ * listing that had one. Do not reintroduce a condition here — see that module's header.
+ */
+function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolean }) {
+  const chips = buildListingStatChips(detail, { preview });
+  if (chips.length === 0) return null;
+
+  const glyph: Record<ListingStatChip['key'], ReactNode> = {
+    recommend: <IconThumbUp size={18} />,
+    installs: <IconDownload size={18} />,
+  };
+
+  return (
+    <Group gap={4} wrap="wrap">
+      {chips.map((chip) => (
+        <StatHoverCard key={chip.key} label={chip.label} value={chip.value} message={chip.message}>
+          <div>
+            <IconBadge
+              radius="sm"
+              size="lg"
+              icon={glyph[chip.key]}
+              data-listing-stat={chip.key}
+              aria-label={chip.ariaLabel}
+            >
+              <Text size="sm">{chip.value.toLocaleString()}</Text>
+            </IconBadge>
+          </div>
+        </StatHoverCard>
+      ))}
+    </Group>
+  );
+}
+
+/**
  * "by {creator}" chip — the public creator projection ({id,username,image}).
- * Links to the creator profile. (UserAvatarSimple reuse tradeoff — see the file
- * docstring.)
+ *
+ * 🔴 RETAINED ONLY FOR THE `preview` POSTURE. The live page shows the creator in the
+ * right rail's `SmartCreatorCard`; the moderator review preview omits that rail (it is
+ * a live tRPC surface over a user who is not the subject of the review), so the shadow
+ * preview would otherwise lose the submitter's identity entirely. One chip, one place.
  */
 function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
   if (!creator || !creator.username) return null;
@@ -279,7 +374,15 @@ function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
  * than rendering a broken `<img>`. Plain `<img>` (mirrors AppDetailsModal / the
  * live detail): the URL is a CDN edge URL, not a configured Next/Image domain.
  */
-function ScreenshotTile({ shot, name, index }: { shot: ListingGalleryScreenshot; name: string; index: number }) {
+function ScreenshotTile({
+  shot,
+  name,
+  index,
+}: {
+  shot: ListingGalleryScreenshot;
+  name: string;
+  index: number;
+}) {
   const [broken, setBroken] = useState(false);
   if (broken) return null;
   return (
@@ -303,21 +406,24 @@ function ScreenshotTile({ shot, name, index }: { shot: ListingGalleryScreenshot;
 
 /** Screenshot gallery — reuses AppDetailsModal's SimpleGrid pattern. Empty/broken
  *  URLs are skipped; the whole section is hidden when nothing remains. */
-function ScreenshotGallery({ screenshots, name }: { screenshots: ListingGalleryScreenshot[]; name: string }) {
+function ScreenshotGallery({
+  screenshots,
+  name,
+}: {
+  screenshots: ListingGalleryScreenshot[];
+  name: string;
+}) {
   const shots = screenshots.filter((s) => !!s.url);
   if (shots.length === 0) return null;
   return (
-    <>
-      <Divider />
-      <Stack gap="xs">
-        <Title order={4}>Screenshots</Title>
-        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-          {shots.map((shot, i) => (
-            <ScreenshotTile key={`${shot.url}-${i}`} shot={shot} name={name} index={i} />
-          ))}
-        </SimpleGrid>
-      </Stack>
-    </>
+    <Stack gap="xs">
+      <Title order={4}>Screenshots</Title>
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+        {shots.map((shot, i) => (
+          <ScreenshotTile key={`${shot.url}-${i}`} shot={shot} name={name} index={i} />
+        ))}
+      </SimpleGrid>
+    </Stack>
   );
 }
 
@@ -343,7 +449,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   if (action.mode === 'open' && action.href) {
     const GlyphIcon = glyphFor('open');
     return (
-      <Button component={Link} href={action.href} leftSection={<GlyphIcon size={16} />}>
+      <Button component={Link} href={action.href} leftSection={<GlyphIcon size={16} />} fullWidth>
         {action.label}
       </Button>
     );
@@ -352,7 +458,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   if (action.mode === 'visit' && action.href) {
     const GlyphIcon = glyphFor('visit');
     return (
-      <Stack gap={4} align="flex-end">
+      <Stack gap={4}>
         <Button
           component="a"
           href={action.href}
@@ -360,6 +466,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
           rel="noopener noreferrer"
           leftSection={<GlyphIcon size={16} />}
           data-testid="apps-listing-open-live"
+          fullWidth
           // Reached by an OFF-SITE listing ("Visit") and by an on-site PAGE app
           // whose viewer can't open the in-host route ("Open live" — the
           // raw-origin escape hatch, see `getDetailPrimaryAction`). Either way,
@@ -371,7 +478,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
           {action.label}
         </Button>
         {action.note && (
-          <Text size="xs" c="dimmed" ta="right" maw={260}>
+          <Text size="xs" c="dimmed">
             {action.note}
           </Text>
         )}
@@ -392,7 +499,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
     const GlyphIcon = glyphFor('connect');
     return (
       <Stack gap={4}>
-        <Button variant="default" leftSection={<GlyphIcon size={16} />} disabled>
+        <Button variant="default" leftSection={<GlyphIcon size={16} />} disabled fullWidth>
           {action.label}
         </Button>
         {action.note && (
@@ -418,7 +525,13 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   return (
     <Stack gap={4}>
       {action.href ? (
-        <Button component={Link} href={action.href} variant="default" leftSection={<GlyphIcon size={16} />}>
+        <Button
+          component={Link}
+          href={action.href}
+          variant="default"
+          leftSection={<GlyphIcon size={16} />}
+          fullWidth
+        >
           {action.label}
         </Button>
       ) : (
@@ -436,19 +549,81 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   );
 }
 
+/**
+ * The "Details" accordion in the right rail — the model page's version-details panel,
+ * over the listing's scalars. Rows come from the PURE `buildListingDetailRows`, so the
+ * order / omission / preview rules are pinned in the blocking node project rather than
+ * here (see `appListingDetailRows.ts`).
+ *
+ * The `.detailsPanel` / `.detailRow` / `.detailLabel` classes are IMPORTED from
+ * `ModelVersionDetails.module.scss`, not copied: two copies of a border colour is
+ * exactly how two surfaces stop matching.
+ */
+function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boolean }) {
+  const rows = buildListingDetailRows(detail, { preview, formatDate: (iso) => formatDate(iso) });
+  return (
+    <Accordion
+      variant="contained"
+      defaultValue="listing-details"
+      data-testid="apps-listing-details-accordion"
+      styles={{ content: { padding: 0 } }}
+    >
+      <Accordion.Item value="listing-details">
+        <Accordion.Control>Details</Accordion.Control>
+        <Accordion.Panel p={0}>
+          <Stack gap={0} className={detailClasses.detailsPanel}>
+            {rows.map((row) => (
+              <div
+                key={row.key}
+                className={detailClasses.detailRow}
+                data-listing-detail-row={row.key}
+              >
+                <Text className={detailClasses.detailLabel}>{row.label}</Text>
+                <Text size="sm" c={row.color} tt={row.key === 'reviews' ? 'capitalize' : undefined}>
+                  {row.value}
+                </Text>
+              </div>
+            ))}
+          </Stack>
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
+  );
+}
+
 export interface AppListingDetailBodyProps {
   detail: ListingDetail;
   /** Whether the viewer can launch an in-host page app (the `appBlocksPages` flag). */
   canOpenPage?: boolean;
   /**
    * READ-ONLY preview posture. When set, render ONLY the presentational parts —
-   * hero cover, icon, name, tagline, creator chip, content-rating badge, screenshot
-   * gallery, description markdown — and OMIT every LIVE/interactive surface: the
-   * comments + recommend reviews, the report / review / primary-action / owner-edit
-   * buttons, and the recommend roll-up. Used by the moderator listing-media review
-   * to render an unapproved SHADOW listing as a store preview WITHOUT loading its
-   * comments/reviews (which don't exist yet) or exposing user actions on an
-   * un-approved listing. When NOT set, behaviour is byte-identical to before.
+   * hero cover, icon, name, tagline, creator chip, content-rating in the Details
+   * rail, screenshot gallery, description markdown — and OMIT every LIVE/interactive
+   * or AGGREGATE surface. The full omission ledger, each item a deliberate decision:
+   *
+   *   - the comments thread + the recommend reviews list (a shadow listing has no
+   *     Thread and no review rows; querying them would 404 / N+1),
+   *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
+   *     shadow listing structurally does not have — zeros there would read as facts
+   *     about the app rather than about the posture),
+   *   - the `⋮` overflow MENU and everything in it (owner edit, review, report) —
+   *     every item is a live action on an UN-APPROVED listing,
+   *   - the right-rail ACTION CARD (primary action) and the clickable hero, for the
+   *     same reason,
+   *   - the `SmartCreatorCard` (a live tRPC surface; the read-only `CreatorChip`
+   *     stands in so the submitter is still identified),
+   *   - the header META LINE (`Updated:` + category), whose date is the publish
+   *     request's submission time rather than a listing's `updated_at`,
+   *   - the Details rail's REVIEWS row (same reason as the chips),
+   *   - the related-listings rail and the back-to-store link.
+   *
+   * The Details ACCORDION itself is KEPT: kind / category / rating / installs /
+   * updated are exactly the scalars a moderator is reviewing, and the reviews row is
+   * dropped inside the pure row builder.
+   *
+   * Used by the moderator listing-media review to render an unapproved SHADOW listing
+   * as a store preview. Every omission above has its own test, each paired with a
+   * positive control from the non-preview arm.
    */
   preview?: boolean;
 }
@@ -459,8 +634,6 @@ export function AppListingDetailBody({
   preview = false,
 }: AppListingDetailBodyProps) {
   const currentUser = useCurrentUser();
-  const recommendLabel = getRecommendLabel(detail.recommend, detail.reviewCount);
-  const hasRecommend = detail.recommend.recommendPct != null;
 
   // Owner "Edit" deep-link (Item 2) — owner + editable status (approved-only read
   // path carries no status → editable); the href builder returns null when there
@@ -468,6 +641,17 @@ export function AppListingDetailBody({
   const isOwner = !!currentUser?.id && currentUser.id === detail.creator?.id;
   const editHref = getOwnerEditHref(detail.kindData, detail.id);
   const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
+
+  // 🔴 The review / report modals are owned HERE, not by their trigger. A Mantine
+  // `Menu.Dropdown` is unmounted when the menu closes, so a modal rendered as a
+  // sibling of its `Menu.Item` would be destroyed by the click that opens it. The
+  // gates are the SAME predicates the standalone buttons use (`useCanReviewListing`
+  // / `useCanReportListing`), imported rather than re-derived, so the menu cannot
+  // disagree with them about who may act.
+  const canReview = useCanReviewListing({ ownerUserId: detail.creator?.id ?? null });
+  const canReport = useCanReportListing();
+  const [reviewOpened, reviewModal] = useDisclosure(false);
+  const [reportOpened, reportModal] = useDisclosure(false);
 
   // Hero click-to-launch — the banner is an affordance for the SAME destination
   // as the primary CTA, derived FROM that CTA (`getDetailPrimaryAction`) rather
@@ -492,6 +676,8 @@ export function AppListingDetailBody({
       ? primaryAction.href
       : null;
 
+  const showMenu = !preview && (showEdit || canReview || canReport);
+
   return (
     <Stack gap="lg">
       {/* Back-to-store nav is a live-surface affordance — omitted in preview. */}
@@ -512,149 +698,244 @@ export function AppListingDetailBody({
         launchHref={heroLaunchHref}
       />
 
-      {/* Header: icon + name + tagline + creator + content-rating badge + action. */}
-      <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <Group gap="md" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
-          <Avatar
-            src={detail.iconUrl ?? undefined}
-            alt=""
-            radius="md"
-            size={64}
-            data-listing-icon-placeholder={detail.iconUrl == null ? '' : undefined}
-            styles={{
-              placeholder: {
-                background: listingPlaceholderGradient({
-                  slug: detail.slug,
-                  category: detail.category,
-                  surface: 'icon',
-                }),
-                color: 'var(--mantine-color-white)',
-                fontWeight: 700,
-              },
-            }}
-          >
-            {appInitial(detail.name, detail.slug)}
-          </Avatar>
-          <Stack gap={6} style={{ minWidth: 0 }}>
-            <Title order={2} className="line-clamp-2">
-              {detail.name}
-            </Title>
-            {detail.tagline && (
-              <Text c="dimmed" size="sm" className="line-clamp-2">
-                {detail.tagline}
-              </Text>
-            )}
-            <CreatorChip creator={detail.creator} />
-            {/* 🔴 The PUBLIC collaborator byline. `detail.collaborators` has ALREADY been
-                filtered server-side to ACCEPTED **and** `displayed` seats and projected
-                to `{id, username, image}` — this renders it verbatim and applies no
-                policy of its own (see ListingCollaboratorByline's header). Until now
-                nothing consumed the field, so every accepted collaborator who had opted
-                IN to the byline was invisible on the surface the opt-in is about. */}
-            <ListingCollaboratorByline collaborators={detail.collaborators} />
-            {detail.contentRating && (
-              <Group gap="xs" mt={2}>
-                <Badge variant="light" color="gray" size="sm">
-                  {detail.contentRating}
-                </Badge>
-              </Group>
-            )}
-          </Stack>
-        </Group>
-        {/* Action column (primary action + owner edit + review/report) — every
-            item here is a LIVE interactive affordance, so the whole column is
-            omitted in read-only preview. */}
-        {!preview && (
-        <Box style={{ flexShrink: 0 }}>
-          <Stack gap="xs" align="flex-end">
-            <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
-            {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
-                owner + editable status (mod-removed listings hide it). Routes by
-                kind (manifest editor for on-site, submit editor for off-site). */}
-            {showEdit && editHref && (
-              <Button
-                component={Link}
-                href={editHref}
-                variant="default"
-                leftSection={<IconPencil size={16} />}
-                data-testid="apps-listing-owner-edit"
-              >
-                Edit
-              </Button>
-            )}
-            {/* Review affordance (thumbs/recommend) — hidden for the owner + signed-out
-                viewers; the write proc is protected + flag-gated + self-review-blocked
-                server-side. Feeds the recommend metric below SYNCHRONOUSLY. */}
-            <ReviewListingButton appListingId={detail.id} ownerUserId={detail.creator?.id ?? null} />
-            {/* Report affordance — dark behind the mod-only store surface; the
-                proc is protected + rate-limited + reporter-bound server-side. */}
-            <ReportListingButton appListingId={detail.id} />
-          </Stack>
-        </Box>
-        )}
-      </Group>
-
-      {/* Recommend rollup + recent reviews are review AGGREGATES — omitted in
-          preview (a shadow listing has none, and we must not query them). */}
-      {!preview && (
-        <>
-          {/* Recommend rollup — Steam-style "N% recommend (M)" or "No reviews yet". */}
-          <Group gap="md" wrap="wrap">
-            <Group gap={6} wrap="nowrap">
-              <IconThumbUp size={16} className={hasRecommend ? 'text-green-500' : 'text-gray-500'} />
-              <Text size="sm" fw={500}>
-                {recommendLabel}
-              </Text>
-            </Group>
-            {hasRecommend && (
-              <Text size="xs" c="dimmed">
-                {detail.recommend.recommendedCount.toLocaleString()} recommend ·{' '}
-                {detail.recommend.notRecommendedCount.toLocaleString()} don&apos;t
-              </Text>
-            )}
+      {/* HEADER — the model page's title block: identity + stats on the left, the
+          overflow menu on the right, the meta line underneath. */}
+      <Stack gap={4}>
+        <Group justify="space-between" align="flex-start" wrap="nowrap">
+          <Group gap="md" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
+            <Avatar
+              src={detail.iconUrl ?? undefined}
+              alt=""
+              radius="md"
+              size={64}
+              data-listing-icon-placeholder={detail.iconUrl == null ? '' : undefined}
+              styles={{
+                placeholder: {
+                  background: listingPlaceholderGradient({
+                    slug: detail.slug,
+                    category: detail.category,
+                    surface: 'icon',
+                  }),
+                  color: 'var(--mantine-color-white)',
+                  fontWeight: 700,
+                },
+              }}
+            >
+              {appInitial(detail.name, detail.slug)}
+            </Avatar>
+            <Stack gap={6} style={{ minWidth: 0 }}>
+              <Title order={2} className="line-clamp-2">
+                {detail.name}
+              </Title>
+              {detail.tagline && (
+                <Text c="dimmed" size="sm" className="line-clamp-2">
+                  {detail.tagline}
+                </Text>
+              )}
+              {/* 🔴 The PUBLIC collaborator byline. `detail.collaborators` has ALREADY been
+                  filtered server-side to ACCEPTED **and** `displayed` seats and projected
+                  to `{id, username, image}` — this renders it verbatim and applies no
+                  policy of its own (see ListingCollaboratorByline's header). */}
+              <ListingCollaboratorByline collaborators={detail.collaborators} />
+              {/* The creator identity lives in the right rail's CreatorCard on the live
+                  page; in preview that rail is omitted, so the lightweight chip stands
+                  in rather than leaving a moderator with no submitter at all. */}
+              {preview && <CreatorChip creator={detail.creator} />}
+              <StatChips detail={detail} preview={preview} />
+            </Stack>
           </Group>
 
-          {/* Recent reviews — thumbs/recommend list (mod-filtered, escaped plain text). */}
-          <AppListingReviews appListingId={detail.id} />
-        </>
-      )}
+          {/* Overflow menu — the secondary actions, collapsed. Replaces the stacked
+              full-width button column; the PRIMARY action stays a real button in the
+              right-rail action card, never buried in here. */}
+          {showMenu && (
+            <Box style={{ flexShrink: 0 }}>
+              <Menu
+                position="bottom-end"
+                transitionProps={{ transition: 'pop-top-right' }}
+                withinPortal
+              >
+                <Menu.Target>
+                  <LegacyActionIcon
+                    variant="light"
+                    aria-label="App options"
+                    data-testid="apps-listing-actions-menu"
+                  >
+                    <IconDotsVertical size={20} />
+                  </LegacyActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {/* Owner-only "Edit" deep-link, gated by owner + editable status
+                      (mod-removed listings hide it). Routes by kind (manifest editor
+                      for on-site, submit editor for off-site). */}
+                  {showEdit && editHref && (
+                    <Menu.Item
+                      component={Link}
+                      href={editHref}
+                      leftSection={<IconPencil size={14} stroke={1.5} />}
+                      data-testid="apps-listing-owner-edit"
+                    >
+                      Edit
+                    </Menu.Item>
+                  )}
+                  {/* Review affordance (thumbs/recommend) — hidden for the owner + signed-out
+                      viewers by `useCanReviewListing`; the write proc is protected +
+                      flag-gated + self-review-blocked server-side. */}
+                  {canReview && (
+                    <Menu.Item
+                      leftSection={<IconThumbUp size={14} stroke={1.5} />}
+                      onClick={reviewModal.open}
+                      data-testid="apps-listing-review-action"
+                    >
+                      Leave a review
+                    </Menu.Item>
+                  )}
+                  {/* Report affordance — dark behind the mod-only store surface; the
+                      proc is protected + rate-limited + reporter-bound server-side. */}
+                  {canReport && (
+                    <Menu.Item
+                      color="red"
+                      leftSection={<IconFlag size={14} stroke={1.5} />}
+                      onClick={reportModal.open}
+                      data-testid="apps-listing-report-action"
+                    >
+                      Report
+                    </Menu.Item>
+                  )}
+                </Menu.Dropdown>
+              </Menu>
+            </Box>
+          )}
+        </Group>
 
-      <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
-
-      {/* Description — shared CustomMarkdown (no dangerouslySetInnerHTML). */}
-      {detail.description && (
-        <>
-          <Divider />
-          <Stack gap="xs">
-            <Title order={4}>About</Title>
-            <div className="markdown-content">
-              <CustomMarkdown>{detail.description}</CustomMarkdown>
-            </div>
-          </Stack>
-        </>
-      )}
-
-      {/* Off-site external destination disclosure (mirrors the live detail). */}
-      {detail.kindData.kind === 'offsite' &&
-        detail.kindData.subKind === 'external-link' &&
-        detail.kindData.externalUrl && (
-          <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />}>
-            This app runs entirely off-platform — no Civitai install, account access, or
-            permissions.
-          </Alert>
+        {/* META LINE — `Updated: <date>` │ category, exactly as the model page renders
+            it. 🔴 There is NO TAG ROW: a listing has no tags, and inventing one from
+            the category would duplicate the badge beside it. */}
+        {!preview && (
+          <Group gap={4} data-testid="apps-listing-meta">
+            <Text size="xs" c="dimmed">
+              Updated: {formatDate(detail.updatedAt)}
+            </Text>
+            {detail.category && (
+              <>
+                <Divider orientation="vertical" />
+                {/* Plain badge, NOT a link. The model page links its category to
+                    `/tag/<name>`; the store has no category-filtered ROUTE — `/apps`
+                    holds its category filter in client state, not in the URL — so a
+                    link here would either 404 or land on an unfiltered grid. */}
+                <Badge size="sm" color="blue" data-testid="apps-listing-category">
+                  {detail.category}
+                </Badge>
+              </>
+            )}
+          </Group>
         )}
+      </Stack>
+
+      {/* TWO COLUMNS — spans, source order and `order={{sm}}` all copied from
+          `ModelVersionDetails`, including the part that looks backwards: the RAIL is
+          FIRST in the DOM and carries `order={{sm:2}}`, which moves it to the right on
+          a wide container. Below the `sm` CONTAINER breakpoint the order props stop
+          applying and the base span of 12 stacks the two, so the rail lands ABOVE the
+          content on a phone — the primary action, creator and details before the
+          screenshots and prose. That is the model page's own mobile behaviour (its
+          Download card stacks first the same way), and it is deliberate here for the
+          same reason: on a small screen the way IN should not be below a gallery.
+          🔴 Do not "fix" the source order to put the main column first — that silently
+          changes the mobile stack. Pinned in `AppListingDetailBody.browser.test.tsx`. */}
+      <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
+        <ContainerGrid2.Col
+          span={{ base: 12, sm: 5, md: 4 }}
+          order={{ sm: 2 }}
+          data-testid="apps-listing-rail-col"
+        >
+          <Stack gap="md">
+            {/* Action card — the primary CTA, in the rail, as a real button. */}
+            {!preview && (
+              <Card withBorder data-testid="apps-listing-action-card">
+                <Card.Section withBorder inheritPadding py="xs" px="sm">
+                  <Text size="sm" fw={600}>
+                    Get this app
+                  </Text>
+                </Card.Section>
+                <Card.Section inheritPadding py="sm" px="sm">
+                  <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+                </Card.Section>
+              </Card>
+            )}
+
+            {/* Creator card. `{ id }` is all it needs — `CreatorCardSimple` fetches the
+                rest through the PUBLIC `user.getCreator` procedure (verified public:
+                `user.router.ts`), which matters because this page is anon-reachable by
+                design. Tips are OFF: buzz tipping is keyed on an entity type the buzz
+                service knows, and `AppListing` is not one of them. */}
+            {!preview && detail.creator && (
+              <Box data-testid="apps-listing-creator-card">
+                <SmartCreatorCard user={{ id: detail.creator.id }} tipsEnabled={false} />
+              </Box>
+            )}
+
+            <DetailsPanel detail={detail} preview={preview} />
+          </Stack>
+        </ContainerGrid2.Col>
+
+        <ContainerGrid2.Col
+          span={{ base: 12, sm: 7, md: 8 }}
+          order={{ sm: 1 }}
+          data-testid="apps-listing-main-col"
+        >
+          <Stack gap="lg">
+            <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
+
+            {/* Description — shared CustomMarkdown (no dangerouslySetInnerHTML), under
+                the model page's `ContentClamp maxHeight={460}`. */}
+            {detail.description && (
+              <Stack gap="xs">
+                <Title order={4}>About</Title>
+                <ContentClamp maxHeight={460}>
+                  <div className="markdown-content">
+                    <CustomMarkdown>{detail.description}</CustomMarkdown>
+                  </div>
+                </ContentClamp>
+              </Stack>
+            )}
+
+            {/* Off-site external destination disclosure (mirrors the live detail). */}
+            {detail.kindData.kind === 'offsite' &&
+              detail.kindData.subKind === 'external-link' &&
+              detail.kindData.externalUrl && (
+                <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />}>
+                  This app runs entirely off-platform — no Civitai install, account access, or
+                  permissions.
+                </Alert>
+              )}
+          </Stack>
+        </ContainerGrid2.Col>
+      </ContainerGrid2>
 
       {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link.
-          Placed AFTER the description/disclosure but BEFORE the comments: the
-          comment thread is unbounded, so a rail below it would be buried behind
-          an arbitrary amount of scrolling for the viewers most likely to want
-          it (the ones who read the listing and didn't convert). Omitted in
-          read-only preview — it is a live, tRPC-backed surface. */}
+          Placed AFTER the two-column body but BEFORE the reviews/comments: those
+          threads are unbounded, so a rail below them would be buried behind an
+          arbitrary amount of scrolling for the viewers most likely to want it (the
+          ones who read the listing and didn't convert). Omitted in read-only preview —
+          it is a live, tRPC-backed surface. */}
       {!preview && (
         <>
           <Divider />
           <RelatedListings listingId={detail.id} category={detail.category} />
         </>
+      )}
+
+      {/* Recent reviews — thumbs/recommend list (mod-filtered, escaped plain text).
+          Full-width below the grid, with the model page's `Title order={2}` section
+          heading. Omitted in preview: a shadow listing has no review rows and we must
+          not query them. */}
+      {!preview && (
+        <Stack gap="md">
+          <Divider />
+          <Title order={2}>Reviews</Title>
+          <AppListingReviews appListingId={detail.id} />
+        </Stack>
       )}
 
       {/* CommentsV2 discussion — reuses the shared comment + moderation stack keyed
@@ -664,6 +945,34 @@ export function AppListingDetailBody({
           preview (a shadow listing has no thread; loading it would 404/N+1). */}
       {!preview && (
         <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
+      )}
+
+      {/* The two action modals, mounted OUTSIDE the menu — see the note where their
+          state is declared. Each is gated by the same predicate as its menu item, so
+          an ineligible viewer mounts neither the trigger nor the form.
+          🔴 THE `!preview` CLAUSE ON THESE TWO IS DEFENCE-IN-DEPTH, AND IS THE ONLY
+          `preview` GUARD IN THIS FILE THAT NO TEST CAN KILL — measured, not assumed:
+          deleting it leaves the mutation battery fully green, because a Mantine `Modal`
+          with `opened={false}` renders NO DOM at all and its `getMyReview` query is
+          `enabled: false`, so a mounted-but-closed modal is unobservable from the
+          rendered output and issues no request. Removing the clause would therefore be
+          inert TODAY. It stays because "mount no live-action component against an
+          unapproved shadow listing" is the posture, and the day either modal grows a
+          mount effect the clause is what stops it firing. Do not delete it on the
+          grounds that nothing goes red. */}
+      {!preview && canReview && (
+        <ReviewListingModal
+          appListingId={detail.id}
+          opened={reviewOpened}
+          onClose={reviewModal.close}
+        />
+      )}
+      {!preview && canReport && (
+        <ReportListingModal
+          appListingId={detail.id}
+          opened={reportOpened}
+          onClose={reportModal.close}
+        />
       )}
     </Stack>
   );

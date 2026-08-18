@@ -7,6 +7,7 @@ import {
   APPS_PAGE_WIDTHS,
   APPS_READABLE_PAGE_WIDTH,
   APPS_REDIRECT_ONLY_PAGES,
+  APPS_TWO_COLUMN_DETAIL_PAGE_WIDTH,
   APPS_WIDE_PAGE_WIDTH,
 } from '~/components/Apps/appsPageWidths';
 import { LISTING_GRID_SPAN, LISTING_STORE_CONTAINER_SIZE } from '~/components/Apps/appListingGrid';
@@ -47,13 +48,36 @@ describe('APPS_PAGE_WIDTHS — the decided value per route', () => {
     expect(APPS_PAGE_WIDTHS['/apps/my-submissions']).toBe(1920);
   });
 
-  test('the form/detail surfaces are all the READABLE width (1100)', () => {
+  test('the form surfaces are all the READABLE width (1100)', () => {
     expect(APPS_READABLE_PAGE_WIDTH).toBe(1100);
     expect(APPS_PAGE_WIDTHS['/apps/submit']).toBe(1100);
-    expect(APPS_PAGE_WIDTHS['/apps/store-preview/[slug]']).toBe(1100);
     expect(APPS_PAGE_WIDTHS['/apps/[appBlockId]/edit']).toBe(1100);
     expect(APPS_PAGE_WIDTHS['/apps/[appBlockId]/revenue']).toBe(1100);
     expect(APPS_PAGE_WIDTHS['/apps/get-started']).toBe(1100);
+  });
+
+  test('the listing DETAIL is the two-column width (1320 — Mantine xl, the model page)', () => {
+    // The detail body is a port of the model detail page's layout (main column +
+    // right rail via ContainerGrid2), so it takes that page's own container size
+    // rather than a bespoke number. Literal, not derived from the module's constant.
+    expect(APPS_TWO_COLUMN_DETAIL_PAGE_WIDTH).toBe(1320);
+    expect(APPS_PAGE_WIDTHS['/apps/store-preview/[slug]']).toBe(1320);
+    // 🔴 It is NOT the readable width any more, and NOT the wide one. Pinned in both
+    // directions so a later "tidy-up" that folds the detail back into either class
+    // fails here rather than silently squeezing the rail (1100) or putting the
+    // markdown description on a ~1250px measure (1920).
+    expect(APPS_PAGE_WIDTHS['/apps/store-preview/[slug]']).not.toBe(APPS_READABLE_PAGE_WIDTH);
+    expect(APPS_PAGE_WIDTHS['/apps/store-preview/[slug]']).not.toBe(APPS_WIDE_PAGE_WIDTH);
+  });
+
+  test('🔴 the detail width is NOT half of the store grid pair', () => {
+    // The pair documented in the module header couples `/apps` to LISTING_GRID_SPAN.
+    // Widening the DETAIL route must not move the store container, or the grid's
+    // card-width arithmetic (asserted below) silently changes.
+    expect(LISTING_STORE_CONTAINER_SIZE).toBe(APPS_PAGE_WIDTHS['/apps']);
+    expect(LISTING_STORE_CONTAINER_SIZE).not.toBe(
+      APPS_PAGE_WIDTHS['/apps/store-preview/[slug]']
+    );
   });
 
   test('the RETIRED /apps/[appBlockId] is redirect-only, not a width', () => {
@@ -66,22 +90,31 @@ describe('APPS_PAGE_WIDTHS — the decided value per route', () => {
     expect(APPS_REDIRECT_ONLY_PAGES).toContain('/apps/[appBlockId]');
   });
 
-  test('every width is one of the THREE decided values — no fourth hand-picked number', () => {
+  test('every width is one of the FOUR decided values — no fifth hand-picked number', () => {
     // The whole point of the module is that there are a few CLASSES of apps page,
     // not eleven bespoke widths. A new page must join a class (or the class list
     // must grow deliberately, failing here first — which is exactly what happened
-    // when `/apps/review` needed the narrow-table class).
+    // when `/apps/review` needed the narrow-table class, and again when the listing
+    // detail became a two-column layout).
     for (const [route, width] of Object.entries(APPS_PAGE_WIDTHS)) {
       expect(
-        [APPS_WIDE_PAGE_WIDTH, APPS_NARROW_TABLE_PAGE_WIDTH, APPS_READABLE_PAGE_WIDTH],
+        [
+          APPS_WIDE_PAGE_WIDTH,
+          APPS_NARROW_TABLE_PAGE_WIDTH,
+          APPS_READABLE_PAGE_WIDTH,
+          APPS_TWO_COLUMN_DETAIL_PAGE_WIDTH,
+        ],
         `${route}`
       ).toContain(width);
     }
     // Pin the class list itself, as literals. Without this the check above is
-    // satisfied by ANY set of constants, including a fourth one added silently.
-    expect([APPS_WIDE_PAGE_WIDTH, APPS_NARROW_TABLE_PAGE_WIDTH, APPS_READABLE_PAGE_WIDTH]).toEqual([
-      1920, 1400, 1100,
-    ]);
+    // satisfied by ANY set of constants, including a fifth one added silently.
+    expect([
+      APPS_WIDE_PAGE_WIDTH,
+      APPS_NARROW_TABLE_PAGE_WIDTH,
+      APPS_READABLE_PAGE_WIDTH,
+      APPS_TWO_COLUMN_DETAIL_PAGE_WIDTH,
+    ]).toEqual([1920, 1400, 1100, 1320]);
   });
 
   test('a route is classified exactly once (no overlap between the three lists)', () => {

@@ -249,6 +249,35 @@ export type ListingDetail = {
   collaborators: ListingCreatorChip[];
   recommend: ListingRecommendRollup;
   reviewCount: number;
+  /**
+   * Last time the listing row itself changed (`app_listings.updated_at`), as an ISO-8601
+   * string.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. Non-sensitive, and the direct analogue of the model
+   * detail page's `Updated: <date>` meta line (`Model.updatedAt`, rendered publicly for
+   * every model). It reveals only that an approved, publicly-listed app was edited — the
+   * same fact the store's `newest` sort already exposes for `created_at`. It carries no
+   * information about WHO edited it or WHAT changed.
+   *
+   * A STRING, not a `Date`: this DTO is also served by the public REST
+   * `GET /api/v1/apps/...` path, which has no tRPC transformer, so a JSON-safe scalar is
+   * the only shape both transports agree on.
+   */
+  updatedAt: string;
+  /**
+   * Install count from the `AppListingMetric` rollup (`install_count`).
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. Already publicly OBSERVABLE, not merely public: the
+   * store's `popular` sort is `install_count DESC` (see `listAppListingsSchema`), so the
+   * full ordering of every approved listing by this number is already derivable from the
+   * public list endpoint. Surfacing the number itself adds precision, not a new fact. It
+   * is an aggregate over the whole install base — it identifies no user. Direct analogue
+   * of the model page's public download-count stat chip.
+   *
+   * `0` when the metric row is absent (a listing nobody has installed yet), matching how
+   * the ranking SQL reads it (`COALESCE(m.install_count, 0)`).
+   */
+  installCount: number;
   /** Ordered gallery — screenshots whose backing Image still exists (null-image rows dropped). */
   screenshots: ListingGalleryScreenshot[];
   kindData: ListingDetailKindData;

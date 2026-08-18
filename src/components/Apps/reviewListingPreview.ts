@@ -130,6 +130,17 @@ export function buildListingDetailPreview(
     // accepted-and-displayed set to read yet. An empty array is the honest answer, not
     // a placeholder.
     collaborators: [],
+    // The row is a PUBLISH REQUEST, not a live listing, so there is no
+    // `app_listings.updated_at` to read. The submission time is the honest nearest
+    // fact, and it is unobserved in practice: this shape is only ever handed to
+    // `AppListingDetailBody` in `preview` mode, which omits the whole header meta
+    // line (see that component's preview posture). Normalised to the same ISO string
+    // the real projection emits, so both producers of a `ListingDetail` agree on the
+    // field's TYPE as well as its presence.
+    updatedAt: new Date(row.submittedAt).toISOString(),
+    // An unapproved listing has never been installable. Same reasoning as the
+    // `EMPTY_RECOMMEND` rollup above: zero is the fact, not a placeholder.
+    installCount: 0,
     screenshots: images?.screenshots ?? [],
     kindData: detailKindData(row),
   };

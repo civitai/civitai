@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -122,6 +123,11 @@ const LISTING_PREVIEW = {
     creator: { id: 7, username: 'dev-user', image: null },
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    // The two fields the store-detail header + Details rail read. Present here because
+    // the real `projectListingDetail` always supplies them; the fixture is a stand-in
+    // for that projection and must not be thinner than it.
+    installCount: 0,
+    updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [{ url: 'https://cdn.example/shot-1.png', caption: 'shot one' }],
     kindData: { kind: 'onsite' as const, appBlockId: 'blk_1', hasPage: false, liveUrl: '' },
   },
@@ -132,7 +138,15 @@ const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock). A hand-written factory silently breaks the day the
+// module graph reaches an export it omits — measured: once the listing detail
+// began importing `SmartCreatorCard` (→ ChatUserButton → useChatEnabled), a
+// factory listing only `useFeatureFlags` made this whole FILE fail to import with
+// `does not provide an export named 'useFeatureFlagsReady'`, reported as 0 tests
+// collected rather than as a failure.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAgenticReview: true }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
