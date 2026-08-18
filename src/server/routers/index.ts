@@ -58,6 +58,7 @@ export const appRouter = router({
   track: lazy(() => import('./track.router').then((m) => m.trackRouter)),
   training: lazy(() => import('./training.router').then((m) => m.trainingRouter)),
   user: lazy(() => import('./user.router').then((m) => m.userRouter)),
+  userHub: lazy(() => import('./user-hub.router').then((m) => m.userHubRouter)),
   userRestriction: lazy(() =>
     import('~/server/routers/user-restriction.router').then((m) => m.userRestrictionRouter)
   ),

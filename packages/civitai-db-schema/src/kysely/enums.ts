@@ -956,3 +956,10 @@ export const OutboxEntity = {
   ModelVersion: 'ModelVersion',
 } as const;
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
+export const UserHubSourceType = {
+  User: 'User',
+  Model: 'Model',
+  ModelVersion: 'ModelVersion',
+  Collection: 'Collection',
+} as const;
+export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];
