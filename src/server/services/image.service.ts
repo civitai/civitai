@@ -8449,13 +8449,7 @@ export async function getImagesByUserIdForModeration(userId: number) {
   });
 }
 
-export function addBlockedImage({
-  hash,
-  reason,
-}: {
-  hash: bigint | number;
-  reason: BlockImageReason;
-}) {
+export function addBlockedImage({ hash, reason }: { hash: bigint; reason: BlockImageReason }) {
   return clickhouse?.insert({
     table: 'blocked_images',
     values: [{ hash: toClickhouseInt64(hash), reason }],
@@ -8466,7 +8460,7 @@ export function addBlockedImage({
 export function bulkAddBlockedImages({
   data,
 }: {
-  data: { hash: bigint | number; reason: BlockImageReason }[];
+  data: { hash: bigint; reason: BlockImageReason }[];
 }) {
   if (data.length === 0) return;
 
@@ -8482,7 +8476,7 @@ export function bulkAddBlockedImages({
   });
 }
 
-export async function bulkRemoveBlockedImages(hashes: Array<bigint | number>) {
+export async function bulkRemoveBlockedImages(hashes: bigint[]) {
   if (hashes.length === 0 || !clickhouse) return;
   const blocked = await clickhouse.$query<{ hash: string; reason: string }>`
     SELECT toString(hash) AS hash, reason
