@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => ({
     hGet: vi.fn(async () => '[]'),
   },
   redis: { isReady: true },
+  clickhouse: { ping: vi.fn(async () => ({ success: true })) },
+  metricsSearchClient: { isHealthy: vi.fn(async () => true) },
   dbRead: { $transaction: vi.fn(async () => 1) },
   dbWrite: { $transaction: vi.fn(async () => 1) },
   pgDbRead: { query: vi.fn(async () => ({})) },
@@ -55,7 +57,11 @@ vi.mock('~/env/server', () => ({
   },
 }));
 
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
+// clickhouse and meili are mocked as WORKING clients, not as `null`. Both check fns
+// early-return `true` when their client is null, so a null fixture makes them structurally
+// unbreakable — and a check that cannot fail cannot detect being moved into the non-critical
+// set. That blind spot let two set-widening mutants survive a fully green suite.
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mocks.clickhouse }));
 
 vi.mock('~/server/db/client', () => ({
   dbRead: mocks.dbRead,
@@ -69,7 +75,7 @@ vi.mock('~/server/db/pgDb', () => ({
 }));
 
 vi.mock('~/server/meilisearch/client', () => ({
-  metricsSearchClient: null,
+  metricsSearchClient: mocks.metricsSearchClient,
   withMeiliHealthProbe: (fn: () => Promise<boolean>) => fn(),
   MeiliCallTimeoutError: class MeiliCallTimeoutError extends Error {},
 }));
@@ -98,7 +104,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
 
-import { runHealthChecks } from '~/pages/api/health';
+import { runHealthChecks, softCheckKeysForMode } from '~/pages/api/health';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // A never-aborted signal so runHealthChecks runs the full check set.
@@ -114,6 +120,8 @@ beforeEach(() => {
   mocks.dbWrite.$transaction.mockImplementation(async () => 1);
   mocks.pgDbRead.query.mockImplementation(async () => ({}));
   mocks.pgDbWrite.query.mockImplementation(async () => ({}));
+  mocks.clickhouse.ping.mockImplementation(async () => ({ success: true }));
+  mocks.metricsSearchClient.isHealthy.mockImplementation(async () => true);
 });
 
 describe('runHealthChecks — sysRedis soft dependency', () => {
@@ -284,11 +292,18 @@ describe('runHealthChecks — DB write soft dependency (steady-state readiness)'
     try {
       mocks.dbWrite.$transaction.mockImplementation(() => new Promise(() => {}));
       const runPromise = runHealthChecks(liveSignal());
-      // Past the per-check timeout (1000ms) and the overall deadline (2000ms).
+      // Past the per-check timeout (1000ms). The per-check race resolves the parked
+      // transaction there, so the run completes BEFORE the 2000ms overall deadline — this
+      // exercises the per-check timeout path, not the deadline-fill branch. Advancing well
+      // past both keeps the case robust if HEALTHCHECK_TIMEOUT changes; it does not mean the
+      // deadline fires. (The deadline-fill branch is unexercised for the write checks; noted
+      // rather than papered over.)
       await vi.advanceTimersByTimeAsync(2500);
       const { healthy, results } = await runPromise;
       expect(healthy).toBe(true);
-      expect(results.write).toBeFalsy();
+      // `toBe(false)` not `toBeFalsy()`: a timed-out check resolves to literal false, and
+      // toBeFalsy would also accept `undefined` — i.e. the key never being written at all.
+      expect(results.write).toBe(false);
       // Only the write check was slow; the critical ones resolved fine.
       expect(results.read).toBe(true);
       expect(results.pgRead).toBe(true);
@@ -308,8 +323,10 @@ describe('runHealthChecks — DB write soft dependency (steady-state readiness)'
     expect(results.read).toBe(false);
   });
 
-  // NOT-OVER-BROADENED, one case per still-critical check. A pod that cannot read
-  // is useless and SHOULD leave the pool.
+  // NOT-OVER-BROADENED, one case per still-critical check. EVERY such check gets a case,
+  // not a sample: clickhouse and searchMetrics were omitted at first, and because they were
+  // mocked as null they could not fail, so moving either into the soft set survived the
+  // whole suite. That was measured, not theoretical.
   it.each([
     // Thunks are annotated `(): void` deliberately: a bare arrow returning
     // `mockRejectedValue(...)` returns the mock itself, which makes its return type
@@ -320,6 +337,11 @@ describe('runHealthChecks — DB write soft dependency (steady-state readiness)'
     ],
     ['pgRead', (): void => void mocks.pgDbRead.query.mockRejectedValue(new Error('pg read down'))],
     ['redis', (): void => void (mocks.redis.isReady = false)],
+    ['clickhouse', (): void => void mocks.clickhouse.ping.mockResolvedValue({ success: false })],
+    [
+      'searchMetrics',
+      (): void => void mocks.metricsSearchClient.isHealthy.mockResolvedValue(false),
+    ],
   ] as const)('%s stays critical on the readiness path → healthy false', async (key, breakIt) => {
     breakIt();
     const { healthy, results } = await runHealthChecks(liveSignal());
@@ -402,7 +424,7 @@ describe("runHealthChecks — mode 'startup' still fails CLOSED on the DB", () =
       await vi.advanceTimersByTimeAsync(2500);
       const { healthy, results } = await runPromise;
       expect(healthy).toBe(false);
-      expect(results.write).toBeFalsy();
+      expect(results.write).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -426,4 +448,41 @@ describe("runHealthChecks — mode 'startup' still fails CLOSED on the DB", () =
     expect(readiness.healthy).toBe(true);
     expect(startup.healthy).toBe(false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// STRUCTURAL LEDGER over the soft sets.
+//
+// Everything above is behavioural, and behaviour cannot see the whole hazard: a check whose
+// fixture is unbreakable can be moved into the soft set without a single test going red. Two
+// mutants — `clickhouse` and `searchMetrics` added to STARTUP_ONLY_CRITICAL_CHECKS — survived
+// the full suite for exactly that reason, and the fix for the fixtures does not generalise to
+// a check added LATER with a null-client default of its own.
+//
+// So this pins the resolved sets EXACTLY, and fails when either grows OR shrinks. It is a
+// deliberate second belt: a structural assertion type-checks past a wrong behaviour and a
+// behavioural one misses an unreachable fixture, so neither alone is sufficient.
+//
+// If you are here because this test failed: you changed which dependencies can shed a serving
+// pod from the load balancer. That is the fleet-wide-outage lever. Update the expectation only
+// with the behavioural case to match.
+// ---------------------------------------------------------------------------
+describe('softCheckKeysForMode — the exact soft set per mode', () => {
+  it('readiness mode: sysRedis plus BOTH write checks, and nothing else', () => {
+    expect([...softCheckKeysForMode('readiness')].sort()).toEqual(
+      ['pgWrite', 'sysRedis', 'write'].sort()
+    );
+  });
+
+  it('startup mode: sysRedis ONLY — the write checks stay critical at boot', () => {
+    expect([...softCheckKeysForMode('startup')].sort()).toEqual(['sysRedis']);
+  });
+
+  it.each(['read', 'pgRead', 'redis', 'clickhouse', 'searchMetrics'] as const)(
+    '%s is soft in NEITHER mode',
+    (key) => {
+      expect(softCheckKeysForMode('readiness')).not.toContain(key);
+      expect(softCheckKeysForMode('startup')).not.toContain(key);
+    }
+  );
 });

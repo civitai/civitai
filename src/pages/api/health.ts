@@ -256,10 +256,15 @@ export type HealthCheckMode = 'startup' | 'readiness';
 /**
  * The set whose failure must NOT flip `healthy`, for a given mode.
  *
- * Kept as a named function rather than inlined at the comparison so the mode
- * semantics are testable and stated once.
+ * EXPORTED so a test can pin the resolved SET, not only the behaviour. A behavioural case
+ * cannot see a check being ADDED to the soft set when the harness is structurally unable to
+ * make that check fail: `clickhouse` and `searchMetrics` early-return `true` for a null
+ * client, so a test that mocks either as null stays green while the check silently becomes
+ * non-critical. Two such set-widening mutants survived the entire suite before this was
+ * pinned. A membership assertion catches any widening or narrowing, for every check —
+ * including ones no fixture in the file can break.
  */
-function softCheckKeysForMode(mode: HealthCheckMode): readonly CheckKey[] {
+export function softCheckKeysForMode(mode: HealthCheckMode): readonly CheckKey[] {
   return mode === 'startup'
     ? STATIC_NON_CRITICAL_CHECKS
     : [...STATIC_NON_CRITICAL_CHECKS, ...STARTUP_ONLY_CRITICAL_CHECKS];

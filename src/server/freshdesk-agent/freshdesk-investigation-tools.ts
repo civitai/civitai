@@ -757,9 +757,6 @@ export async function checkSiteStatus(): Promise<string> {
   if ('error' in healthResult) {
     lines.push(`Overall: UNKNOWN (${healthResult.error})`);
   } else {
-    lines.push(`Overall: ${healthResult.healthy ? 'HEALTHY' : 'DEGRADED'}`);
-    lines.push('');
-    lines.push('--- Service Health ---');
     const checks: [string, boolean][] = [
       ['Database (read)', healthResult.read],
       ['Database (write)', healthResult.write],
@@ -770,6 +767,20 @@ export async function checkSiteStatus(): Promise<string> {
       ['Search/Metrics', healthResult.searchMetrics],
       ['ClickHouse', healthResult.clickhouse],
     ];
+    // Summarise from the PER-CHECK results, not from `healthy`.
+    //
+    // `healthy` is scoped to POD READINESS, and deliberately does not flip for a soft
+    // dependency — sysRedis, and now the DB write checks, which must not shed a serving pod
+    // from the load balancer when a shared primary stalls. Reading it here would print
+    // "Overall: HEALTHY" during a write outage while "Database (write): FAILING" sat three
+    // lines below, and this text is fed to an LLM that drafts customer replies.
+    //
+    // So `healthy` is treated as necessary but not sufficient: any failing individual check
+    // makes this DEGRADED, whatever readiness thinks.
+    const allChecksOk = checks.every(([, ok]) => ok);
+    lines.push(`Overall: ${healthResult.healthy && allChecksOk ? 'HEALTHY' : 'DEGRADED'}`);
+    lines.push('');
+    lines.push('--- Service Health ---');
     for (const [name, ok] of checks) {
       lines.push(`  ${name}: ${ok ? 'OK' : 'FAILING'}`);
     }
