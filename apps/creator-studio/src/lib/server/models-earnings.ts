@@ -518,8 +518,15 @@ async function fetchModelPerformance({
         (a, b) => currencyMeta(a.currency).order - currencyMeta(b.currency).order
       );
 
+  // Impressions count as activity in their own right: a model can be shown thousands of times in the feed
+  // without a single download or generation, and dropping those rows makes the impressions column unable to
+  // answer the one question it exists for.
   const active = [...byId.values()].filter(
-    (m) => m.generations > 0 || m.downloads > 0 || m.currencies.some((c) => c.total > 0)
+    (m) =>
+      m.generations > 0 ||
+      m.downloads > 0 ||
+      m.impressions > 0 ||
+      m.currencies.some((c) => c.total > 0)
   );
   // Rank by usage first (this is a performance view), then earnings — so a popular free model still surfaces.
   active.sort(

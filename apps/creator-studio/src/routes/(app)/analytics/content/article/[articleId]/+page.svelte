@@ -5,6 +5,7 @@
     createSyncedCrosshair,
   } from '@civitai/ui/components/ui/chart/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { civitaiUrl } from '$lib/model-url';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
@@ -21,9 +22,7 @@
   const mmdd = (d: string) => (d.length >= 10 ? d.slice(5, 10) : d);
 
   const article = $derived(data.article);
-  const civitaiUrl = $derived(
-    `https://civitai.${article.nsfwLevel > 3 ? 'red' : 'com'}/articles/${article.articleId}`
-  );
+  const publicUrl = $derived(civitaiUrl(`articles/${article.articleId}`, article));
 
   const peak = $derived(
     article.series.reduce((best, p) => (p.value > best.value ? p : best), { date: '', value: 0 })
@@ -108,7 +107,7 @@
   <h2 class="flex items-center gap-2 text-xl font-semibold text-white">
     {article.title}
     <a
-      href={civitaiUrl}
+      href={publicUrl}
       target="_blank"
       rel="noreferrer"
       class="shrink-0 text-dark-3 hover:text-white"
@@ -160,12 +159,10 @@
       <p class="text-xs text-dark-2">Reactions</p>
       <p class="mt-1 text-xl font-semibold text-white">{num(article.reactionTotal)}</p>
     </div>
-    {#if article.impressionTotal > 0}
-      <div class="cs-panel p-3">
-        <p class="text-xs text-dark-2">Feed impressions</p>
-        <p class="mt-1 text-xl font-semibold text-white">{num(article.impressionTotal)}</p>
-      </div>
-    {/if}
+    <div class="cs-panel p-3">
+      <p class="text-xs text-dark-2">Feed impressions</p>
+      <p class="mt-1 text-xl font-semibold text-white">{num(article.impressionTotal)}</p>
+    </div>
   </div>
 </div>
 
@@ -196,12 +193,16 @@
   {/if}
 </div>
 
-{#if article.impressionTotal > 0}
-  <div class="mt-4 cs-panel p-4">
-    <p class="mb-3 text-sm font-medium text-white">
-      Feed impressions over time
-      <span class="text-xs text-dark-3">· {num(article.impressionTotal)}</span>
-    </p>
+<div class="mt-4 cs-panel p-4">
+  <p class="mb-3 text-sm font-medium text-white">
+    Feed impressions over time
+    <span class="text-xs text-dark-3">· {num(article.impressionTotal)}</span>
+  </p>
+  {#if article.impressionTotal === 0}
+    <div class="flex h-48 items-center justify-center text-center text-sm text-dark-3">
+      No feed impressions {periodLabel}.
+    </div>
+  {:else}
     <div class="h-48">
       {#key chartType.value}
         <Chart
@@ -213,8 +214,8 @@
         />
       {/key}
     </div>
-  </div>
-{/if}
+  {/if}
+</div>
 
 <div class="mt-4 cs-panel p-4">
   <p class="mb-3 text-sm font-medium text-white">

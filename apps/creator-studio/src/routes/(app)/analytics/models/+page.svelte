@@ -12,7 +12,8 @@
   import { page } from '$app/state';
   import { tableSortState } from '$lib/state/table-sort.svelte';
   import { formatRange } from '$lib/date-range';
-  import { IMPRESSIONS_SINCE } from '$lib/impressions';
+  import { impressionsComparable } from '$lib/impressions';
+  import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
   import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import {
     BANKABLE_CURRENCIES,
@@ -29,9 +30,7 @@
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
-  // Impressions start on a known date with nothing before it, so a comparison month ending earlier compares
-  // against absence — the chip would read +100% on every row for a metric that did not exist yet.
-  const impressionsComparable = $derived(data.compare.to >= IMPRESSIONS_SINCE);
+  const impressionsDeltaOk = $derived(impressionsComparable(data.compare.from));
   const perPage = $derived(analyticsPageSize.value);
 
   type Row = NonNullable<PageData['modelPerformance']>[number];
@@ -67,6 +66,8 @@
   const CASH_SORT_PREFIX = 'cash:';
 
   const grouping = modelGroupingState(() => data.grouping);
+  // Impressions are a MODEL-level number, so they only have a cell to live in when versions are rolled up.
+  const showImpressions = $derived(grouping.value === 'model');
 
   // The name cell truncates, so its tooltip has to carry the whole label the row shows — including the
   // version, which is the only thing distinguishing two rows of the same model in version grouping.
@@ -209,7 +210,9 @@
       : key === 'downloads'
         ? m.downloads
         : key === 'impressions'
-          ? m.impressions
+          ? showImpressions
+            ? m.impressions
+            : m.generations
           : key.startsWith(CHANNEL_SORT_PREFIX)
             ? channelTotal(m, key.slice(CHANNEL_SORT_PREFIX.length) as (typeof CHANNELS)[number])
             : key.startsWith(CASH_SORT_PREFIX)
@@ -226,6 +229,10 @@
 </script>
 
 <AnalyticsHeader range={data.range} compare={data.compare} />
+
+{#if showImpressions}
+  <ImpressionsNotice />
+{/if}
 
 {#if data.modelPerformance && data.modelPerformance.length > 0}
   <div class="cs-panel p-4">
@@ -317,13 +324,15 @@
       <Table.Header>
         <Table.Row>
           <Table.Head>{grouping.value === 'model' ? 'Model' : 'Model · version'}</Table.Head>
-          <Table.Head class="p-0">
-            {@render sortButton(
-              'impressions',
-              'Impressions',
-              'Times this model appeared in a feed. Counted against the model, so it has no per-version number.'
-            )}
-          </Table.Head>
+          {#if showImpressions}
+            <Table.Head class="p-0">
+              {@render sortButton(
+                'impressions',
+                'Impressions',
+                'Times this model appeared in a feed, counted against the model rather than any one version.'
+              )}
+            </Table.Head>
+          {/if}
           <Table.Head class="p-0">
             {@render sortButton('generations', 'Generations', 'Generations using this model')}
           </Table.Head>
@@ -387,24 +396,18 @@
                 {/if}
               </div>
             </Table.Cell>
-            <Table.Cell class="align-top text-right">
-              <!-- Version rows show an em dash: impressions exist per model only, and repeating the model's
-                   number on each version would read as each version earning it. -->
-              {#if grouping.value !== 'model'}
-                <div class="tabular-nums text-dark-4" title="Counted per model, not per version">
-                  —
-                </div>
-              {:else}
+            {#if showImpressions}
+              <Table.Cell class="align-top text-right">
                 <div class="tabular-nums {m.impressions ? 'text-white' : 'text-dark-4'}">
                   {m.impressions ? num(m.impressions) : '—'}
                 </div>
-                {#if m.impressions && impressionsComparable}
+                {#if m.impressions && impressionsDeltaOk}
                   <div class="mt-0.5">
                     <DeltaChip current={m.impressions} previous={m.prevImpressions} />
                   </div>
                 {/if}
-              {/if}
-            </Table.Cell>
+              </Table.Cell>
+            {/if}
             <Table.Cell class="align-top text-right">
               <div class="tabular-nums {m.generations ? 'text-white' : 'text-dark-4'}">
                 {m.generations ? num(m.generations) : '—'}

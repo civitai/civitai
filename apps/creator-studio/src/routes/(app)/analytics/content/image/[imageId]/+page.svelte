@@ -5,6 +5,7 @@
     createSyncedCrosshair,
   } from '@civitai/ui/components/ui/chart/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { civitaiUrl } from '$lib/model-url';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
@@ -23,9 +24,7 @@
   const mmdd = (d: string) => (d.length >= 10 ? d.slice(5, 10) : d);
 
   const image = $derived(data.image);
-  const civitaiUrl = $derived(
-    `https://civitai.${image.nsfwLevel > 3 ? 'red' : 'com'}/images/${image.imageId}`
-  );
+  const publicUrl = $derived(civitaiUrl(`images/${image.imageId}`, image));
 
   const peak = $derived(
     image.series.reduce((best, p) => (p.value > best.value ? p : best), { date: '', value: 0 })
@@ -139,7 +138,7 @@
   <h2 class="flex items-center gap-2 text-xl font-semibold text-white">
     {image.type === 'video' ? 'Video' : 'Image'} #{image.imageId}
     <a
-      href={civitaiUrl}
+      href={publicUrl}
       target="_blank"
       rel="noreferrer"
       class="text-dark-3 hover:text-white"

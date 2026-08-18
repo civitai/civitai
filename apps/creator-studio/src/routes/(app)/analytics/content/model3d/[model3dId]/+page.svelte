@@ -1,23 +1,20 @@
 <script lang="ts">
   import { Chart, chartColor } from '@civitai/ui/components/ui/chart/index.js';
+  import { civitaiUrl } from '$lib/model-url';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import { chartType } from '$lib/stores/chart-type';
-  import { formatRange } from '$lib/date-range';
   import { IconArrowLeft, IconExternalLink } from '@tabler/icons-svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
-  const periodLabel = $derived(`for ${formatRange(data.range)}`);
   const mmdd = (d: string) => (d.length >= 10 ? d.slice(5, 10) : d);
 
   const model = $derived(data.detail);
-  const civitaiUrl = $derived(
-    `https://civitai.${model.nsfwLevel > 3 ? 'red' : 'com'}/3d-models/${model.model3dId}`
-  );
+  const publicUrl = $derived(civitaiUrl(`3d-models/${model.model3dId}`, model));
 
   const peak = $derived(
     model.series.reduce((best, p) => (p.value > best.value ? p : best), { date: '', value: 0 })
@@ -65,7 +62,7 @@
   <h2 class="flex items-center gap-2 text-xl font-semibold text-white">
     {model.name}
     <a
-      href={civitaiUrl}
+      href={publicUrl}
       target="_blank"
       rel="noreferrer"
       class="shrink-0 text-dark-3 hover:text-white"

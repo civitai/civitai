@@ -6,7 +6,9 @@
   import { page as pageState } from '$app/state';
   import { goto } from '$app/navigation';
   import { formatRange } from '$lib/date-range';
+  import { civitaiUrl } from '$lib/model-url';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
+  import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
   import {
     IconEye,
     IconExternalLink,
@@ -14,12 +16,18 @@
     IconHeart,
     IconBook,
   } from '@tabler/icons-svelte';
-  import { formatImpressionsSince, formatImpressionsFull } from '$lib/impressions';
   import type { TopImage } from '$lib/server/analytics';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
+  // The tile overlay holds three metrics inside a square that is ~90px wide on mobile; at full precision the
+  // row overflows and, being justify-end, the clipped one is impressions.
+  const compactFmt = new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  });
+  const compact = (n: number) => compactFmt.format(n);
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
 
   // Add a content type here (label + its data array key + singular noun) to give it a tab.
@@ -40,6 +48,9 @@
     const p = new URLSearchParams(pageState.url.searchParams);
     if (key === 'images') p.delete('tab');
     else p.set('tab', key);
+    // Comics have no impressions to rank by, so carrying that sort across would leave the control with
+    // nothing selected while the list quietly fell back to reads.
+    if (key === 'comics' && p.get('sort') === 'impressions') p.delete('sort');
     p.delete('page');
     const qs = p.toString();
     goto(qs ? `${pageState.url.pathname}?${qs}` : pageState.url.pathname, {
@@ -144,20 +155,6 @@
 
 <AnalyticsHeader range={data.range} compare={data.compare} showCompare={false} />
 
-{#if !isComics && !is3d}
-  <div
-    class="mb-4 flex items-start gap-2 rounded-lg border border-dark-4 bg-dark-7 px-3 py-2 text-xs text-dark-2"
-  >
-    <IconLayoutGrid size={15} class="mt-px shrink-0 text-white" />
-    <p>
-      <strong class="font-medium text-white">Feed impressions are new.</strong> We started counting
-      on
-      {formatImpressionsSince()} and reached every visitor on {formatImpressionsFull()}, so there is
-      nothing before those dates and totals will look low until a full month has been counted.
-    </p>
-  </div>
-{/if}
-
 <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
   <ToggleGroup
     type="single"
@@ -199,6 +196,10 @@
   {/if}
 </div>
 
+{#if !isComics && !is3d}
+  <ImpressionsNotice />
+{/if}
+
 {#if unavailable}
   <div class="placeholder">
     {active.label} are temporarily unavailable — please try again shortly.
@@ -234,7 +235,7 @@
           ? 'impressions'
           : 'reactions'}
       <span class="text-xs text-dark-3">
-        {periodLabel}{isMedia && sort === 'views' ? ' · within your 100 most-reacted' : ''}
+        {periodLabel}{isMedia && sort !== 'reactions' ? ' · within your 100 most-reacted' : ''}
       </span>
     {/if}
   </p>
@@ -267,7 +268,7 @@
                 <IconEye size={13} />
                 {num(m.views)} views {periodLabel}
               {:else}
-                <span class="text-dark-3">View tracking starts soon</span>
+                <span class="text-dark-2">View tracking starts soon</span>
               {/if}
             </p>
             {#if !m.published}
@@ -301,7 +302,7 @@
           </div>
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm font-medium text-white" title={c.name}>
-              <span class="text-dark-3">#{(curPage - 1) * pageSize + i + 1}</span>
+              <span class="text-dark-2">#{(curPage - 1) * pageSize + i + 1}</span>
               {c.name}
             </p>
             <p class="mt-1 flex items-center gap-2 text-xs text-dark-2">
@@ -356,7 +357,7 @@
           </div>
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm font-medium text-white" title={a.title}>
-              <span class="text-dark-3">#{(curPage - 1) * pageSize + i + 1}</span>
+              <span class="text-dark-2">#{(curPage - 1) * pageSize + i + 1}</span>
               {a.title}
             </p>
             <p class="mt-1 flex items-center gap-2 text-xs text-dark-2">
@@ -384,7 +385,7 @@
     <div class="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-5">
       {#each shown as m, i (m.imageId)}
         <!-- The tile now opens this image's view history rather than leaving the Studio; the corner icon keeps
-           the old escape hatch to the public page (mature — nsfwLevel > 3 — lives on civitai.red). -->
+           the old escape hatch to the public page; mature content lives on civitai.red. -->
         <div
           class="group relative aspect-square overflow-hidden rounded-lg border border-dark-4 bg-dark-7"
         >
@@ -404,24 +405,24 @@
               >
             </div>
             <div
-              class="absolute inset-x-0 bottom-0 flex justify-end gap-2 bg-linear-to-t from-black/70 to-transparent px-2 py-1.5"
+              class="absolute inset-x-0 bottom-0 flex flex-wrap justify-end gap-x-2 bg-linear-to-t from-black/70 to-transparent px-2 py-1.5"
             >
               <span class="text-xs font-semibold text-white" title="Feed impressions {periodLabel}">
                 <IconLayoutGrid size={12} class="inline align-[-2px]" />
-                {num(m.impressions)}
+                {compact(m.impressions)}
               </span>
               <span class="text-xs font-semibold text-white" title="Views {periodLabel}">
                 <IconEye size={12} class="inline align-[-2px]" />
-                {num(m.views)}
+                {compact(m.views)}
               </span>
               <span class="text-xs font-semibold text-white" title="Reactions {periodLabel}">
                 <IconHeart size={12} class="inline align-[-2px]" />
-                {num(m.reactions)}
+                {compact(m.reactions)}
               </span>
             </div>
           </a>
           <a
-            href="https://civitai.{m.nsfwLevel > 3 ? 'red' : 'com'}/images/{m.imageId}"
+            href={civitaiUrl(`images/${m.imageId}`, m)}
             target="_blank"
             rel="noreferrer"
             aria-label="View {active.singular} #{m.imageId} on Civitai"

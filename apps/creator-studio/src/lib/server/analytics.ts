@@ -5,6 +5,7 @@ import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
 import { VIEW_ENTITY, IMPRESSION_ENTITY } from '$lib/server/view-entities';
+import type { ViewEntity, ImpressionEntity } from '$lib/server/view-entities';
 
 export type { AudienceBucket, ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
 
@@ -626,7 +627,7 @@ function entityImpressionsSql(entityType: string, id: number, from: string, to: 
 }
 
 async function fetchImpressionsByEntity(
-  entityType: string,
+  entityType: ViewEntity | ImpressionEntity,
   ids: number[],
   from: string,
   to: string
