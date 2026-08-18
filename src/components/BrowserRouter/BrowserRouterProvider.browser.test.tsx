@@ -176,3 +176,67 @@ describe('BrowserRouterProvider back navigation onto a dynamic route', () => {
     }
   });
 });
+
+// After a hash-only back navigation, routed dialogs stopped opening (ClickUp
+// 868kta76n). `beforePopState` raises `usingNextRouter` for every pop it hands
+// to Next, and the flag was lowered only in the `routeChangeComplete` handler —
+// but Next's hash-only branch emits `hashChangeComplete` and returns, so the
+// flag stayed raised and the `locationchange` handler dropped every update after
+// it. Measured on a dev server: after `router.push('/images#probe')` and back, a
+// feed card changed the URL to `/images/139360504` and no dialog appeared;
+// without the pop the same click opened it every time.
+describe('BrowserRouterProvider after a hash-only navigation', () => {
+  test('keeps publishing location changes, so routed dialogs still open', async () => {
+    const originalState = window.history.state;
+    const on = vi.mocked(Router.events.on);
+    const passThrough = on.getMockImplementation();
+    const handlers: Record<string, Array<() => void>> = {};
+    on.mockImplementation(((event: string, fn: () => void) => {
+      (handlers[event] ??= []).push(fn);
+      return passThrough?.(event as never, fn as never);
+    }) as typeof Router.events.on);
+
+    try {
+      renderWithProviders(
+        <BrowserRouterProvider>
+          <AsPathProbe />
+        </BrowserRouterProvider>
+      );
+
+      setUsingNextRouter(false);
+      const liveness = { as: '/images', url: '/images', state: {} };
+      window.history.replaceState(liveness, '');
+      await vi.waitFor(() => {
+        window.dispatchEvent(new PopStateEvent('popstate', { state: liveness }));
+        expect(probeText()).toBe('/images');
+      });
+
+      // The hash-only pop: `beforePopState` hands it to Next, which emits
+      // `hashChangeComplete` and never `routeChangeComplete`.
+      setUsingNextRouter(true);
+      expect(handlers.hashChangeComplete?.length ?? 0).toBeGreaterThan(0);
+      for (const handler of handlers.hashChangeComplete ?? []) handler();
+
+      // What a routed dialog opening looks like: `browserRouter.push` dispatches
+      // `locationchange`, and the provider must still publish it.
+      const opened = {
+        as: '/images/139360504',
+        url: '/images?dialog=imageDetail&imageId=139360504',
+        state: {},
+      };
+      window.history.replaceState(opened, '');
+      window.dispatchEvent(new CustomEvent('locationchange', { detail: [opened] }));
+
+      await vi.waitFor(() => {
+        expect(probeText()).toBe('/images/139360504');
+      });
+      // The regression: the flag was still raised, this update was dropped, and
+      // asPath stayed at '/images' with no dialog on screen.
+      expect(imageIdText()).toBe('139360504');
+    } finally {
+      setUsingNextRouter(false);
+      on.mockImplementation(passThrough ?? (() => undefined));
+      window.history.replaceState(originalState, '');
+    }
+  });
+});

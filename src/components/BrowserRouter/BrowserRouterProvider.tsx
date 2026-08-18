@@ -89,10 +89,20 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
       setUsingNextRouter(false);
     };
 
+    // A navigation Next takes does not always end in `routeChangeComplete`: a
+    // hash-only pop returns after `hashChangeComplete`, and a cancelled or failed
+    // one ends in `routeChangeError`. Either way the flag has to come back down,
+    // or every later `locationchange` is dropped and routed dialogs stop opening.
+    const releaseNextRouter = () => setUsingNextRouter(false);
+
     router.events.on('routeChangeComplete', handleRouteChangeComplete);
+    router.events.on('hashChangeComplete', releaseNextRouter);
+    router.events.on('routeChangeError', releaseNextRouter);
 
     return () => {
       router.events.off('routeChangeComplete', handleRouteChangeComplete);
+      router.events.off('hashChangeComplete', releaseNextRouter);
+      router.events.off('routeChangeError', releaseNextRouter);
     };
   }, []); //eslint-disable-line
 
