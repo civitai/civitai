@@ -1,41 +1,44 @@
 /**
- * The day comic view tracking went live.
+ * Where comic view history changes measurement.
  *
- * Comic views before this date do not exist as `views` rows — they are reconstructed from
+ * Comic views before this point do not exist as `views` rows — they are reconstructed from
  * `pageViews` paths by the comic view backfill (civitai-scripts, `backfill/comic-views.js`), which
- * writes straight into `daily_views`. The reconstruction is close but not identical, and one difference is visible to
- * anyone reading a chart:
+ * writes straight into `daily_views`.
  *
- *   Chapter reads are gated on `canRead`, so a paywalled early-access chapter a viewer could not
- *   open is not a read. `pageViews` cannot see that gate, so backfilled chapter counts include
- *   those locked hits. For a comic that sells early access, the chapter series STEPS DOWN on this
- *   date — permanently — and reads as the comic losing readers the day the feature shipped.
- *
- * Anything charting comic views should draw the span before this date differently and say why,
- * rather than presenting one continuous series.
- *
- * NOT exclusive — this day is MIXED, see below.
- *
- * It is OBSERVED, not chosen. The backfill (civitai-scripts, `backfill/comic-views.js`) takes no
- * date argument at all: it finds the first day whose beacon count clears a volume floor, reads
- * `min(time)` of that day's beacons, and backfills up to that exact TIMESTAMP. A date boundary has
- * no correct value, because tracking starts mid-day — stop at the cutover day and its pre-deploy
- * views are written by nothing; stop at the next day and its post-deploy views are written twice.
- * Both fail silently, so the boundary is derived and there is no value left to typo.
- *
- * Verified 2026-08-17: tracking went live at 17:20:57 UTC and the backfill ran to that timestamp,
- * so THIS DAY IS MIXED — reconstructed for 00:00-17:20, live beacons after. Every day before it is
- * wholly reconstructed; every day after, wholly live. `daily_views` is date-granular and sums, so
- * the day's total is correct even though its two halves were measured differently.
- *
- * 🔴 KNOWN OPEN BUG as of 2026-08-17: live tracking records only ~50% of what `pageViews` sees for
- * comics (measured: project 0.48, chapter 0.54; articles and posts are at 1.06-1.08 in the same
- * window, so it is comics-specific). The reconstructed span is therefore roughly 2x the live span,
- * and a chart spanning this date shows a step DOWN that is the bug's signature, not an artifact of
- * the backfill. Do not describe that step to creators as a drop in readership. It closes when the
- * undercount is fixed, at which point the two spans line up.
+ * The boundary is a TIMESTAMP, not a date, and that is not a detail. Tracking went live mid-day, so
+ * the backfill ran to the exact moment of the first beacon and no date can express it: treat
+ * 2026-08-17 as reconstructed and 17 hours of live data are mislabelled; treat it as live and the
+ * same 17 hours of reconstructed data are. `daily_views` is date-granular and sums, so that day's
+ * TOTAL is correct — but its provenance is mixed, and a chart that colours by provenance has to say
+ * so rather than pick a side.
  */
-export const COMIC_VIEW_TRACKING_CUTOVER = '2026-08-17';
+export const COMIC_VIEW_TRACKING_CUTOVER = '2026-08-17T17:20:57Z';
+
+/**
+ * The one day that is partly both: reconstructed 00:00-17:20:57 UTC, live beacons after. Every day
+ * before it is wholly reconstructed; every day after, wholly live.
+ */
+export const COMIC_VIEW_MIXED_DAY = '2026-08-17';
+
+/**
+ * The window where live tracking was live but undercounting, and which nothing back-fills.
+ *
+ * Comic view tracking shipped on 2026-08-17 recording only ~50% of what `pageViews` saw — its
+ * `TrackView` sat behind a slow query, so the effective threshold for a view was ~5-6s and 47% of
+ * comic visits are shorter (measured: project 0.48, chapter 0.54, against 1.06-1.08 for articles
+ * and posts in the same window). Fixed in PR #4066.
+ *
+ * 🔴 So a chart spanning this period has TWO steps, not one: down at the cutover, and back up when
+ * the fix deployed, with an undercounted trough between them. The trough is permanent — the
+ * backfill stops at the cutover and does not cover it. Do not describe either step to creators as
+ * a change in readership.
+ *
+ * Set the end to the #4066 deploy date once it ships; null means the fix is not out yet.
+ */
+export const COMIC_VIEW_UNDERCOUNT_WINDOW: { start: string; end: string | null } = {
+  start: '2026-08-17T17:20:57Z',
+  end: null,
+};
 
 /** Human-readable reason, for a tooltip or footnote on a chart that spans the cutover. */
 export const COMIC_VIEW_BACKFILL_NOTE =
