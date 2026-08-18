@@ -385,12 +385,17 @@ const ImageCollection = ({
     </ImageContextMenuProvider>
   );
 };
+// Contest rotation randomises the sort on each render to spread entry visibility. Oldest is
+// held out of that pool deliberately: it is the only ascending sort, so a roll landing on it
+// pins the earliest submissions to the top of every contest feed for that render.
+const contestPostSorts = Object.values(PostSort).filter((sort) => sort !== PostSort.Oldest);
+
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
-    ? getRandom(Object.values(PostSort))
+    ? getRandom(contestPostSorts)
     : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection

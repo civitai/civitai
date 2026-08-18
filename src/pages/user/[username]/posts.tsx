@@ -38,6 +38,8 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const draftSorts = [PostSort.Newest, PostSort.Oldest];
+
 function UserPostsPage() {
   const currentUser = useCurrentUser();
   const {
@@ -57,7 +59,9 @@ function UserPostsPage() {
   );
   const viewingDraft = section === 'draft';
   const effectiveScheduled = viewingDraft ? query.scheduled ?? true : query.scheduled;
-  const sort = viewingDraft ? PostSort.Newest : querySort;
+  // Reaction/comment/collected counts are meaningless on unpublished drafts, and those
+  // sorts filter on `count > 0` server-side, so a draft feed under them comes back empty.
+  const sort = viewingDraft && !draftSorts.includes(querySort) ? PostSort.Newest : querySort;
 
   if (!query.username) return <NotFound />;
 
@@ -80,7 +84,10 @@ function UserPostsPage() {
                     replace({
                       section: section as 'published' | 'draft',
                       scheduled: undefined,
-                      sort: section === 'draft' ? PostSort.Newest : undefined,
+                      sort:
+                        section === 'draft' && draftSorts.includes(querySort)
+                          ? querySort
+                          : undefined,
                     });
                   }}
                 />
@@ -91,7 +98,9 @@ function UserPostsPage() {
                   value={sort}
                   onChange={(x) => replace({ sort: x as PostSort })}
                   options={
-                    viewingDraft ? [{ label: PostSort.Newest, value: PostSort.Newest }] : undefined
+                    viewingDraft
+                      ? draftSorts.map((value) => ({ label: value, value }))
+                      : undefined
                   }
                 />
                 <PostFiltersDropdown

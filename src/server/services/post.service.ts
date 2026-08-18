@@ -4,7 +4,7 @@ import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { env } from '~/env/server';
-import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getDbWithoutLag,
@@ -32,6 +32,11 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import {
+  buildPostCursorClause,
+  encodePostCursor,
+  getPostSortClauses,
+} from '~/server/services/post-sort';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
   getCollectionById,
@@ -354,62 +359,14 @@ export const getPostsInfinite = async ({
   }
 
   // sorting - always include id as tiebreaker for stable pagination
-  // draftOnly mixes drafts (publishedAt IS NULL) with scheduled (publishedAt > NOW()).
-  // Offsetting drafts by +100 years on the sort key keeps them ahead of any
-  // scheduled post (DESC) while preserving createdAt order among themselves;
-  // scheduled posts continue to sort by their publishedAt within that partition.
-  let orderBy = draftOnly
-    ? `COALESCE(p."publishedAt", p."createdAt" + interval '100 years') DESC, p.id DESC`
-    : 'p."publishedAt" DESC, p.id DESC';
-  let primarySortProp = draftOnly
-    ? `COALESCE(p."publishedAt", p."createdAt" + interval '100 years')`
-    : 'p."publishedAt"';
-  let isDateSort = true;
+  const { orderBy, primarySortProp, isDateSort, ascending, filter } = getPostSortClauses({
+    sort,
+    draftOnly,
+  });
+  if (filter) AND.push(filter);
 
-  if (sort === PostSort.MostComments) {
-    orderBy = `p."commentCount" DESC, p.id DESC`;
-    primarySortProp = 'p."commentCount"';
-    isDateSort = false;
-    AND.push(Prisma.sql`p."commentCount" > 0`);
-  } else if (sort === PostSort.MostReactions) {
-    orderBy = `p."reactionCount" DESC, p.id DESC`;
-    primarySortProp = 'p."reactionCount"';
-    isDateSort = false;
-    AND.push(Prisma.sql`p."reactionCount" > 0`);
-  } else if (sort === PostSort.MostCollected) {
-    orderBy = `p."collectedCount" DESC, p.id DESC`;
-    primarySortProp = 'p."collectedCount"';
-    isDateSort = false;
-    AND.push(Prisma.sql`p."collectedCount" > 0`);
-  }
-
-  // cursor - supports composite cursor format "value|id" for keyset pagination
-  if (cursor) {
-    let primaryValue: Date | number;
-    let cursorId: number | null = null;
-
-    // Parse composite cursor (format: "value|id") or legacy single value
-    if (typeof cursor === 'string' && cursor.includes('|')) {
-      const [valueStr, idStr] = cursor.split('|');
-      primaryValue = isDateSort ? new Date(valueStr) : Number(valueStr);
-      cursorId = Number(idStr);
-    } else {
-      // Legacy single-value cursor (backward compatibility)
-      primaryValue = isDateSort ? new Date(cursor) : Number(cursor);
-    }
-
-    if (cursorId !== null) {
-      // Composite cursor: row-comparison form lets postgres push the predicate
-      // into Index Cond on (primarySortProp DESC, id DESC) indexes. Equivalent
-      // to (primary < cursor) OR (primary = cursor AND id <= cursor_id).
-      AND.push(
-        Prisma.sql`(${Prisma.raw(primarySortProp)}, p.id) <= (${primaryValue}, ${cursorId})`
-      );
-    } else {
-      // Legacy single cursor
-      AND.push(Prisma.sql`${Prisma.raw(primarySortProp)} < ${primaryValue}`);
-    }
-  }
+  const cursorClause = buildPostCursorClause({ cursor, primarySortProp, isDateSort, ascending });
+  if (cursorClause) AND.push(cursorClause);
 
   const postsRawQuery = Prisma.sql`
     SELECT
@@ -447,14 +404,7 @@ export const getPostsInfinite = async ({
   let nextCursor: string | undefined;
   if (postsRaw.length > limit) {
     const nextItem = postsRaw.pop();
-    if (nextItem?.cursorId !== null && nextItem?.cursorId !== undefined) {
-      // Return composite cursor format: "value|id"
-      const cursorValue =
-        nextItem.cursorId instanceof Date
-          ? nextItem.cursorId.toISOString()
-          : String(nextItem.cursorId);
-      nextCursor = `${cursorValue}|${nextItem.id}`;
-    }
+    if (nextItem) nextCursor = encodePostCursor(nextItem);
   }
 
   // Filter to published model versions:
