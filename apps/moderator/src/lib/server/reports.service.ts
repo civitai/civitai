@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
+import { REPORT_ENTITIES, reportEntity } from './report-entities';
 import { rewardReportReporters } from './rewards';
 import {
   DEFAULT_REPORT_REASONS,
@@ -11,24 +12,6 @@ import {
   type ReportEntity,
   type ReportReason,
 } from '$lib/reports';
-
-const reportEntityJoin: Record<ReportEntity, { table: string; fk: string }> = {
-  model: { table: 'ModelReport', fk: 'modelId' },
-  comment: { table: 'CommentReport', fk: 'commentId' },
-  commentV2: { table: 'CommentV2Report', fk: 'commentV2Id' },
-  image: { table: 'ImageReport', fk: 'imageId' },
-  resourceReview: { table: 'ResourceReviewReport', fk: 'resourceReviewId' },
-  article: { table: 'ArticleReport', fk: 'articleId' },
-  post: { table: 'PostReport', fk: 'postId' },
-  reportedUser: { table: 'UserReport', fk: 'userId' },
-  collection: { table: 'CollectionReport', fk: 'collectionId' },
-  bounty: { table: 'BountyReport', fk: 'bountyId' },
-  bountyEntry: { table: 'BountyEntryReport', fk: 'bountyEntryId' },
-  chat: { table: 'ChatReport', fk: 'chatId' },
-  comicProject: { table: 'ComicProjectReport', fk: 'comicProjectId' },
-  model3d: { table: 'Model3DReport', fk: 'model3dId' },
-  model3dReview: { table: 'Model3DReviewReport', fk: 'model3dReviewId' },
-};
 
 export type ModeratorReportRow = {
   id: number;
@@ -126,15 +109,15 @@ export async function getReports({
   page: number;
   limit: number;
 }> {
-  const join = reportEntityJoin[type];
+  const join = reportEntity(type);
   const offset = (page - 1) * limit;
 
   // The join table/column is dynamic, so these two use raw `sql`; the rest of the query stays typed.
   const entityExists = sql<boolean>`exists (select 1 from ${sql.table(
-    join.table
+    join.reportTable
   )} er where er."reportId" = "Report"."id")`;
   const entityId = sql<number | null>`(select er.${sql.ref(join.fk)} from ${sql.table(
-    join.table
+    join.reportTable
   )} er where er."reportId" = "Report"."id" limit 1)`;
 
   let base = dbRead
@@ -196,9 +179,9 @@ export async function getReportHistory(
   type: ReportEntity,
   limit = 300
 ): Promise<{ items: ReportHistoryRow[]; truncated: boolean }> {
-  const join = reportEntityJoin[type];
+  const join = reportEntity(type);
   const entityId = sql<number | null>`(select er.${sql.ref(join.fk)} from ${sql.table(
-    join.table
+    join.reportTable
   )} er where er."reportId" = "Report"."id" limit 1)`;
 
   const rows = (await dbRead
@@ -210,7 +193,7 @@ export async function getReportHistory(
     .select(entityId.as('entityId'))
     .where(
       sql<boolean>`exists (select 1 from ${sql.table(
-        join.table
+        join.reportTable
       )} er where er."reportId" = "Report"."id")`
     )
     .where('Report.statusSetAt', 'is not', null)
@@ -231,9 +214,9 @@ export async function getReportCounts(): Promise<Record<string, number>> {
   // One pass over Report (rides Report_open_reason_id_idx), then each report table joins the result —
   // per-branch joins back to Report seq-scanned it once per entity type.
   const open = sql`select "id" from "Report" where "status" in (${statuses}) and "reason" in (${reasons})`;
-  const branches = Object.entries(reportEntityJoin).map(
-    ([type, join]) => sql`select ${sql.lit(type)} as type, count(*)::int as count
-      from ${sql.table(join.table)} er
+  const branches = REPORT_ENTITIES.map(
+    ({ type, reportTable }) => sql`select ${sql.lit(type)} as type, count(*)::int as count
+      from ${sql.table(reportTable)} er
       join open_reports o on o."id" = er."reportId"`
   );
   const { rows } = await sql<{
@@ -351,8 +334,8 @@ async function fetchMostReported(limit: number): Promise<MostReportedRow[]> {
   // pending report of the week, not the twenty kept.
   const reportCount = sql<number>`coalesce(array_length(t."alsoReportedBy", 1), 0) + 1`;
   const entityId = (type: ReportEntity) => {
-    const join = reportEntityJoin[type];
-    return sql<number | null>`(SELECT er.${sql.ref(join.fk)} FROM ${sql.table(join.table)} er
+    const join = reportEntity(type);
+    return sql<number | null>`(SELECT er.${sql.ref(join.fk)} FROM ${sql.table(join.reportTable)} er
                 WHERE er."reportId" = top.id LIMIT 1)`;
   };
 

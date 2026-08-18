@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
-import { REPORT_SOURCES } from './report-sources';
+import { OWNED_REPORT_ENTITIES } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { getModeratorContact, type ModeratorContact } from './user-signals.service';
 
@@ -409,7 +409,9 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
       sql<string | null>`(SELECT i.type::text FROM "Image" i WHERE i.id = u."profilePictureId")`.as(
         'profilePictureType'
       ),
-      sql<number | null>`(SELECT i."nsfwLevel" FROM "Image" i WHERE i.id = u."profilePictureId")`.as(
+      sql<
+        number | null
+      >`(SELECT i."nsfwLevel" FROM "Image" i WHERE i.id = u."profilePictureId")`.as(
         'profilePictureNsfwLevel'
       ),
     ])
@@ -634,14 +636,12 @@ export async function getReportsFiled(userId: number): Promise<ReportsFiled> {
 // Content OF THIS USER that others reported. Counts distinct pieces of content, not report rows —
 // Retool counted rows, so ten reports on one image read as ten. "How much of their content drew
 // complaints" is the question a moderator is actually asking.
-// Shared with the report ROWS in user-reports.service.ts — see report-sources.ts.
-const REPORTED_SOURCES = REPORT_SOURCES;
 
 export type ReportedContent = { label: string; count: number };
 
 export async function getReportedContent(userId: number): Promise<ReportedContent[]> {
   return Promise.all(
-    REPORTED_SOURCES.map(async ([label, table, reportTable, fk]) => {
+    OWNED_REPORT_ENTITIES.map(async ({ label, table, reportTable, fk, ownerColumn }) => {
       const r = await dbRead
         .selectFrom(table as 'Image')
         .innerJoin(
@@ -655,7 +655,7 @@ export async function getReportedContent(userId: number): Promise<ReportedConten
             .distinct()
             .as('count')
         )
-        .where(`${table}.userId` as 'Image.userId', '=', userId)
+        .where(`${table}.${ownerColumn}` as 'Image.userId', '=', userId)
         .executeTakeFirst();
       return { label, count: Number(r?.count ?? 0) };
     })

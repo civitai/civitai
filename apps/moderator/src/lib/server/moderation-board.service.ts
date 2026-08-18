@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getModeratorDb } from './moderator-db';
-import { REPORT_SOURCES, CHAT_REPORT_SOURCE } from './report-sources';
+import { REPORT_ENTITIES } from './report-entities';
 
 // Retool's Moderation Status board — the parts that are NOT counts.
 //
@@ -14,21 +14,12 @@ import { REPORT_SOURCES, CHAT_REPORT_SOURCE } from './report-sources';
 export type QueueActivity = { type: string; at: Date; moderator: string | null };
 
 export async function getRecentQueueActivity(): Promise<Map<string, QueueActivity>> {
-  // `REPORT_SOURCES` is a user's own CONTENT, so it has no `UserReport` arm — but Retool's version had
-  // a `users` one, and `/reports/user` is a live queue with its own badge. Without it the card silently
-  // omits the queue a moderator is most likely to be working.
-  const sources = [
-    ...REPORT_SOURCES,
-    CHAT_REPORT_SOURCE,
-    ['User', 'User', 'UserReport', 'userId'] as const,
-  ];
-
   // The join table is dynamic, so this is a raw `sql` tag rather than a builder join — the table name
-  // comes from REPORT_SOURCES, never from a request. `!= 'Pending'` rather than `= 'Actioned'`:
+  // comes from `REPORT_ENTITIES`, never from a request. `!= 'Pending'` rather than `= 'Actioned'`:
   // unactioning is also working the queue, and Retool counted it. `statusSetAt` is null on rows that
   // predate the column.
   const rows = await Promise.all(
-    sources.map(async ([label, , reportTable]) => {
+    REPORT_ENTITIES.map(async ({ label, reportTable }) => {
       const { rows: found } = await sql<{ statusSetAt: Date; username: string | null }>`
         SELECT r."statusSetAt", u."username"
         FROM "Report" r

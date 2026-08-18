@@ -2,7 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 // Shared with user-lookup.service.ts's counts — two copies meant adding an entity type to the counts
 // and not the rows, so the section states a count it cannot show rows for.
-import { CHAT_REPORT_SOURCE, REPORT_SOURCES } from './report-sources';
+import { OWNED_REPORT_ENTITIES, REPORT_ENTITIES } from './report-entities';
 
 // Everything behind `/api/user-reports` — the ROWS behind the Reports section, where the page load
 // carries only counts. Retool showed status, the reason, who set the status and a link to the content;
@@ -81,8 +81,8 @@ export async function getReportsReceived(
   { limit = 200, statuses }: ReportQueryOptions = {}
 ): Promise<UserReportRow[]> {
   const byStatus = !!statuses?.length;
-  const perType = await Promise.all([
-    ...REPORT_SOURCES.map(async ([label, table, reportTable, fk]) => {
+  const perType = await Promise.all(
+    OWNED_REPORT_ENTITIES.map(async ({ label, table, reportTable, fk, ownerColumn }) => {
       const rows = await dbRead
         .selectFrom('Report as r')
         .innerJoin(`${reportTable} as rr` as 'ImageReport as rr', 'rr.reportId', 'r.id')
@@ -90,29 +90,14 @@ export async function getReportsReceived(
         .leftJoin('User as reporter', 'reporter.id', 'r.userId')
         .leftJoin('User as mod', 'mod.id', 'r.statusSetBy')
         .select([...REPORT_COLUMNS, sql<number>`rr.${sql.ref(fk)}`.as('entityId')])
-        .where('e.userId', '=', userId)
+        .where(`e.${ownerColumn}` as 'e.userId', '=', userId)
         .$if(byStatus, (qb) => qb.where(sql<boolean>`r."status"::text = any(${statuses})`))
         .orderBy('r.createdAt', 'desc')
         .limit(limit)
         .execute();
       return rows.map((r) => toRow(r as Record<string, unknown>, label));
-    }),
-    (async () => {
-      const rows = await dbRead
-        .selectFrom('Report as r')
-        .innerJoin('ChatReport as rr', 'rr.reportId', 'r.id')
-        .innerJoin('Chat as e', 'e.id', 'rr.chatId')
-        .leftJoin('User as reporter', 'reporter.id', 'r.userId')
-        .leftJoin('User as mod', 'mod.id', 'r.statusSetBy')
-        .select([...REPORT_COLUMNS, 'rr.chatId as entityId'])
-        .where('e.ownerId', '=', userId)
-        .$if(byStatus, (qb) => qb.where(sql<boolean>`r."status"::text = any(${statuses})`))
-        .orderBy('r.createdAt', 'desc')
-        .limit(limit)
-        .execute();
-      return rows.map((r) => toRow(r as Record<string, unknown>, 'Chat'));
-    })(),
-  ]);
+    })
+  );
 
   return newestFirst(perType.flat(), limit);
 }
@@ -124,26 +109,24 @@ export async function getReportsSubmitted(
   { limit = 200, statuses }: ReportQueryOptions = {}
 ): Promise<UserReportRow[]> {
   const perType = await Promise.all(
-    // Reports against an ACCOUNT are the commonest kind a user files. Omitting `UserReport` here made
+    // Every type, an ACCOUNT included — that is the commonest kind a user files, and omitting it made
     // the section's own total count rows it then refused to show.
-    [...REPORT_SOURCES, CHAT_REPORT_SOURCE, ['User', 'User', 'UserReport', 'userId'] as const].map(
-      async ([label, , reportTable, fk]) => {
-        const rows = await dbRead
-          .selectFrom('Report as r')
-          .innerJoin(`${reportTable} as rr` as 'ImageReport as rr', 'rr.reportId', 'r.id')
-          .leftJoin('User as reporter', 'reporter.id', 'r.userId')
-          .leftJoin('User as mod', 'mod.id', 'r.statusSetBy')
-          .select([...REPORT_COLUMNS, sql<number>`rr.${sql.ref(fk)}`.as('entityId')])
-          .where('r.userId', '=', userId)
-          .$if(!!statuses?.length, (qb) =>
-            qb.where(sql<boolean>`r."status"::text = any(${statuses})`)
-          )
-          .orderBy('r.createdAt', 'desc')
-          .limit(limit)
-          .execute();
-        return rows.map((r) => toRow(r as Record<string, unknown>, label));
-      }
-    )
+    REPORT_ENTITIES.map(async ({ label, reportTable, fk }) => {
+      const rows = await dbRead
+        .selectFrom('Report as r')
+        .innerJoin(`${reportTable} as rr` as 'ImageReport as rr', 'rr.reportId', 'r.id')
+        .leftJoin('User as reporter', 'reporter.id', 'r.userId')
+        .leftJoin('User as mod', 'mod.id', 'r.statusSetBy')
+        .select([...REPORT_COLUMNS, sql<number>`rr.${sql.ref(fk)}`.as('entityId')])
+        .where('r.userId', '=', userId)
+        .$if(!!statuses?.length, (qb) =>
+          qb.where(sql<boolean>`r."status"::text = any(${statuses})`)
+        )
+        .orderBy('r.createdAt', 'desc')
+        .limit(limit)
+        .execute();
+      return rows.map((r) => toRow(r as Record<string, unknown>, label));
+    })
   );
 
   return newestFirst(perType.flat(), limit);
