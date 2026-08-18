@@ -21,7 +21,9 @@ export type EarningsBucket = {
 };
 // The trend series is per-source, buzz-only (the chart is a buzz trend; cash lives in the panel). One line per
 // source with toggle chips (E4). Currency detail stays in the by-source×currency summary/table.
-export type EarningsPoint = { date: string; source: EarningsSource; total: number };
+// `count` is the number of transactions behind `total` — for `accessSale` that is the per-day sales count, the
+// only place the product carries one (a sale is not a table, just an `externalTransactionId` prefix).
+export type EarningsPoint = { date: string; source: EarningsSource; total: number; count: number };
 
 // Access sales carry one of two id prefixes: `permanent-access-` for a permanent paid-access sale,
 // `early-access-` for a timed window. Rows written before the split are all `early-access-`, whichever
@@ -82,14 +84,20 @@ async function fetchSeries({
     date: string;
     source: EarningsSource;
     total: number | string;
+    count: number | string;
   }>(
-    `SELECT toDate(date) AS date, ${SOURCE_EXPR} AS source, sum(amount) AS total
+    `SELECT toDate(date) AS date, ${SOURCE_EXPR} AS source, sum(amount) AS total, count() AS count
      FROM default.buzzTransactions
      WHERE ${whereClause(uid, from, to)} AND toAccountType IN ('yellow','blue','green','club')
      GROUP BY date, source
      ORDER BY date`
   );
-  return rows.map((r) => ({ date: String(r.date), source: r.source, total: Number(r.total) }));
+  return rows.map((r) => ({
+    date: String(r.date),
+    source: r.source,
+    total: Number(r.total),
+    count: Number(r.count),
+  }));
 }
 
 // By-source × currency totals over the range — the /earnings source cards and the dashboard headline.
@@ -101,7 +109,9 @@ export const getEarningsSummary = createCache({
 
 // Per-source buzz totals over time — the /earnings trend chart.
 export const getEarningsSeries = createCache({
-  name: 'earnings:series',
+  // Keys derive from the args, not the payload, so a stored value outlives a change to the returned shape. Bump
+  // the suffix whenever that shape or the numbers change — v2 added `count`.
+  name: 'earnings:series:v2',
   fetch: fetchSeries,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;

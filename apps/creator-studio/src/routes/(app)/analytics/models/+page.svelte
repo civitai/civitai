@@ -342,20 +342,19 @@
                   <span
                     class="min-w-0 truncate underline decoration-blue-4/40 underline-offset-2 group-hover:decoration-blue-3"
                   >
-                    {m.modelName ?? 'Model ' + m.modelId}{#if m.versionName}<span
-                        class="text-dark-3"
-                      >
-                        · {m.versionName}</span
-                      >{/if}
+                    {m.modelName ?? 'Model ' + m.modelId}
                   </span>
                   <IconChevronRight size={14} class="shrink-0" />
                 </a>
               {:else}
                 <div class="truncate text-dark-2" title={rowLabel(m)}>
-                  Version {m.modelVersionId}{#if m.versionName}<span class="text-dark-3">
-                      · {m.versionName}</span
-                    >{/if}
+                  Version {m.modelVersionId}
                 </div>
+              {/if}
+              {#if m.versionName}
+                <!-- Own line: on one truncating line with the model name, the version was always the
+                     half that got cut — and it is what tells two rows of the same model apart. -->
+                <div class="truncate text-dark-2" title={m.versionName}>{m.versionName}</div>
               {/if}
               <div class="truncate text-xs text-dark-3">
                 {m.modelType ?? '—'}{#if grouping.value === 'model' && m.modelId != null}

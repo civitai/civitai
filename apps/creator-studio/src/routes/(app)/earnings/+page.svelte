@@ -97,6 +97,26 @@
       .filter((x) => Math.floor(x.total) >= 1)
   );
 
+  // Sales counts (868ktk1k9). Access sales are the one source with a meaningful unit count, and no other surface in
+  // the product exposes one — creators were polling their own transaction ledger to reconstruct it. Buzz rows only,
+  // so the period figure and the per-day figure are drawn from the same population.
+  const salesInPeriod = $derived(
+    (data.summary ?? [])
+      .filter((b) => b.source === 'accessSale' && currencyMeta(b.currency).family === 'buzz')
+      .reduce((n, b) => n + b.count, 0)
+  );
+  const salesOnLastDay = $derived(
+    (data.series ?? [])
+      .filter((p) => p.source === 'accessSale' && p.date === data.through)
+      .reduce((n, p) => n + p.count, 0)
+  );
+  const dayFmt = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+  const formatDay = (iso: string) => dayFmt.format(Date.parse(`${iso}T00:00:00Z`));
+
   // Authoritative Creator Program cash — the buzz-account balance from the service (matches the Buzz dashboard),
   // NOT a ClickHouse period sum. `formatAmount` renders these cash values in USD.
   const cash = $derived(data.cash);
@@ -326,6 +346,12 @@
     {#each sourceTotals as st (st.source)}
       <StatCard label={SOURCE_LABEL[st.source]}>
         <p class="mt-1 text-xl font-semibold text-white"><CurrencyDisplay amount={st.total} /></p>
+        {#if st.source === 'accessSale' && salesInPeriod > 0}
+          <p class="mt-1 text-xs text-dark-2">
+            {salesInPeriod.toLocaleString()} sale{salesInPeriod === 1 ? '' : 's'} · {salesOnLastDay.toLocaleString()}
+            on {formatDay(data.through)}
+          </p>
+        {/if}
         <div class="mt-1">
           <DeltaChip
             current={st.total}
