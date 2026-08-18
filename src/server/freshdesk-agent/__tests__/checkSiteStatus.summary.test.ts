@@ -89,11 +89,12 @@ describe('checkSiteStatus — the Overall line', () => {
     expect(overallLine(await checkSiteStatus())).toBe('Overall: DEGRADED');
   });
 
-  // A DISABLED check must not read as a failing one. /api/health omits a disabled check's key
-  // from the response entirely, so the value arrives as `undefined` — and folding that into
-  // the verdict reports a permanent false DEGRADED for a dependency an operator turned off on
-  // purpose. Three states, not two.
-  it('a check DISABLED (key absent) → still Overall: HEALTHY, rendered as SKIPPED', async () => {
+  // An ABSENT key must not read as a failing check. /api/health omits a check's key from the
+  // response when it did not run, so the value arrives as `undefined` — and folding that into
+  // the verdict reports a permanent false DEGRADED. Disabling a dependency on purpose is the
+  // likeliest reason for absence, which is why this case is written around it, but the report
+  // must not claim that cause and neither should this title. Three states, not two.
+  it('a check whose key is ABSENT → still Overall: HEALTHY, rendered as NOT REPORTED', async () => {
     const { clickhouse: _omitted, ...withoutClickhouse } = ALL_OK;
     stubHealth(withoutClickhouse);
     const report = await checkSiteStatus();

@@ -508,10 +508,22 @@ describe('softCheckKeysForMode — the exact soft set per mode', () => {
     expect(critical.sort()).toEqual(
       ['clickhouse', 'pgRead', 'read', 'redis', 'searchMetrics'].sort()
     );
-    // No length assertion here: the two equalities above are derived from the same
-    // ALL_CHECK_KEYS, so any add/remove/rename trips one of them FIRST and a `toHaveLength`
-    // could never be the failing assertion. A guard whose killing mutation always dies to a
-    // different guard is not coverage, so it is not counted as such.
+    // No length assertion here — but NOT for the reason first written down, which was false in
+    // the load-bearing direction and is corrected here rather than quietly deleted.
+    //
+    // The original claim was "the two equalities above trip first on any add/remove/rename".
+    // Measured, that is wrong for a SOFT key: `ALL_CHECK_KEYS.filter(k => k !== 'write')` — a
+    // runtime-only removal that produces no type error — leaves BOTH equalities green, because
+    // `soft` comes from the hardcoded `softCheckKeysForMode` and `critical` is unchanged when
+    // the removed key was already soft. For write/pgWrite/sysRedis, `toHaveLength` was the only
+    // assertion here that could have failed.
+    //
+    // The actual division of labour, which is what a future reader needs:
+    //   - a TYPED change (a check added to/removed from `checkFns`) dies at the `satisfies` and
+    //     at `Record<CheckKey, string>` — compile errors, before any test runs;
+    //   - a RUNTIME-ONLY drift dies at the cross-module seam test below, and ONLY there. That
+    //     mutant was run: it fails exactly one test, the seam one.
+    // So the seam test is not redundant with this one. Do not delete it as such.
   });
 
   // CROSS-MODULE SEAM. The support-agent status report labels these checks, and its label set
