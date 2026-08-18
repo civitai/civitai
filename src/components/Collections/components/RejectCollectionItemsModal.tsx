@@ -36,7 +36,15 @@ function RejectCollectionItemsModal({
   };
 
   return (
-    <Modal {...dialog} title={<Text className="font-semibold">Reject {count} entries</Text>} centered>
+    <Modal
+      {...dialog}
+      title={
+        <Text className="font-semibold">
+          Reject {count} {count === 1 ? 'entry' : 'entries'}
+        </Text>
+      }
+      centered
+    >
       <Stack>
         <Select
           label="Reason"

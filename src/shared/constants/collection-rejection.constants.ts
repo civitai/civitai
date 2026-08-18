@@ -12,7 +12,7 @@ export const COLLECTION_REJECTION_REASON_COPY: Record<CollectionItemRejectionRea
 
 // These two carry no fixed copy: what the submitter reads is whatever the reviewer
 // (or the AI reviewer) wrote in `rejectionDetail`.
-const DETAIL_BACKED_REASONS = new Set<string>([
+export const DETAIL_BACKED_REASONS = new Set<CollectionItemRejectionReason>([
   CollectionItemRejectionReason.Other,
   CollectionItemRejectionReason.Automated,
 ]);

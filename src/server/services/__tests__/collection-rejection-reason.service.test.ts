@@ -8,11 +8,13 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 
 const mockDbWrite = dbMock.dbWrite;
+const mockDbRead = dbMock.dbRead;
 
 const COLLECTION_ID = 10;
 const ITEM_ID = 77;
 const REVIEWER_ID = 5;
 const SUBMITTER_ID = 42;
+const COLLECTION_OWNER_ID = 900;
 
 // The service is imported dynamically, after the mock above is registered.
 // Do NOT add a direct mock of the db client module — `dbMock` is registered globally in
@@ -105,6 +107,27 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
     expect(rejectionBindings()).toEqual({
       reason: CollectionItemRejectionReason.Other,
       detail: 'Crop out the watermark.',
+    });
+  });
+
+  // Only Other and Automated read the detail back, so a direct API caller must not be able to
+  // park 200 characters on a row that no surface will ever render.
+  it('drops a detail sent alongside a canned reason', async () => {
+    await updateCollectionItemsStatus({
+      input: {
+        collectionId: COLLECTION_ID,
+        collectionItemIds: [ITEM_ID],
+        status: CollectionItemStatus.REJECTED,
+        rejectionReason: CollectionItemRejectionReason.Quality,
+        rejectionDetail: 'nothing reads this back',
+      },
+      userId: REVIEWER_ID,
+      isSystem: true,
+    });
+
+    expect(rejectionBindings()).toEqual({
+      reason: CollectionItemRejectionReason.Quality,
+      detail: null,
     });
   });
 
@@ -291,6 +314,86 @@ describe('updateCollectionItemsStatus rejection reasons', () => {
     expect(createNotificationMock).toHaveBeenCalledTimes(1);
     const [{ details }] = createNotificationMock.mock.calls[0];
     expect(details.reason).toBe('Actually, the watermark is fine — the crop is not.');
+  });
+});
+
+// Every case above passes `isSystem: true`, which short-circuits the permission check the AI job
+// is the only caller of. A real reviewer goes through `getUserCollectionPermissionsById` instead —
+// its `dbRead.$queryRaw` row is what this block mocks, following
+// challenge-collection-permissions.service.test.ts.
+describe('updateCollectionItemsStatus human reviewer path', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockContestCollection();
+    mockPriorItem();
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        id: COLLECTION_ID,
+        read: 'Public',
+        write: 'Review',
+        userId: COLLECTION_OWNER_ID,
+        type: 'Image',
+        mode: 'Contest',
+        collaborationDisabledAt: null,
+        contributorPermissions: ['MANAGE'],
+        hasAcceptedSeat: true,
+      },
+    ]);
+  });
+
+  it('persists the reason for a judge who holds a MANAGE contributor row', async () => {
+    await updateCollectionItemsStatus({
+      input: {
+        collectionId: COLLECTION_ID,
+        collectionItemIds: [ITEM_ID],
+        status: CollectionItemStatus.REJECTED,
+        rejectionReason: CollectionItemRejectionReason.RulesViolation,
+      },
+      userId: REVIEWER_ID,
+      isSystem: false,
+    });
+
+    // Pins that the permission branch was actually entered — an accidental `isSystem: true`
+    // would leave this at zero and pass on the bindings alone.
+    expect(mockDbRead.$queryRaw).toHaveBeenCalled();
+    expect(rejectionBindings()).toEqual({
+      reason: CollectionItemRejectionReason.RulesViolation,
+      detail: null,
+    });
+    const [{ details }] = createNotificationMock.mock.calls[0];
+    expect(details.reason).toBe("It violates this collection's rules.");
+  });
+
+  it('rejects a reviewer whose contributor row cannot manage', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        id: COLLECTION_ID,
+        read: 'Public',
+        write: 'Review',
+        userId: COLLECTION_OWNER_ID,
+        type: 'Image',
+        mode: 'Contest',
+        collaborationDisabledAt: null,
+        contributorPermissions: ['VIEW', 'ADD_REVIEW'],
+        hasAcceptedSeat: true,
+      },
+    ]);
+
+    await expect(
+      updateCollectionItemsStatus({
+        input: {
+          collectionId: COLLECTION_ID,
+          collectionItemIds: [ITEM_ID],
+          status: CollectionItemStatus.REJECTED,
+          rejectionReason: CollectionItemRejectionReason.RulesViolation,
+        },
+        userId: REVIEWER_ID,
+        isSystem: false,
+      })
+    ).rejects.toThrow(/permission/i);
+
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(createNotificationMock).not.toHaveBeenCalled();
   });
 });
 

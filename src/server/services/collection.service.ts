@@ -77,7 +77,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { resolveRejectionCopy } from '~/shared/constants/collection-rejection.constants';
+import {
+  DETAIL_BACKED_REASONS,
+  resolveRejectionCopy,
+} from '~/shared/constants/collection-rejection.constants';
 import type { CollectionItemRejectionReason, MediaType } from '~/shared/utils/prisma/enums';
 import {
   ChallengeSource,
@@ -2310,7 +2313,12 @@ export const updateCollectionItemsStatus = async ({
 
   const isRejection = status === CollectionItemStatus.REJECTED;
   const persistedReason = isRejection ? rejectionReason ?? null : null;
-  const persistedDetail = isRejection ? rejectionDetail?.trim() || null : null;
+  // Only Other and Automated ever read the detail back, so anything else would leave 200
+  // characters on the row that no surface displays.
+  const persistedDetail =
+    persistedReason && DETAIL_BACKED_REASONS.has(persistedReason)
+      ? rejectionDetail?.trim() || null
+      : null;
   const reason = resolveRejectionCopy({ reason: persistedReason, detail: persistedDetail });
 
   // Check if collection actually exists before anything

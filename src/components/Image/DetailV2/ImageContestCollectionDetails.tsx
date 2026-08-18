@@ -75,6 +75,10 @@ export const ImageContestCollectionDetails = ({
           const inReview = item.status === CollectionItemStatus.REVIEW;
           const collectionSupportsScoring = item?.collection?.metadata?.judgesCanScoreEntries;
           const isCollectionJudge = item?.permissions?.manage || isModerator;
+          const rejectionCopy = resolveRejectionCopy({
+            reason: item.rejectionReason,
+            detail: item.rejectionDetail,
+          });
           const handleScoreUpdated = ({
             collectionItemId,
             score,
@@ -229,11 +233,8 @@ export const ImageContestCollectionDetails = ({
                 {item.status === CollectionItemStatus.REJECTED && (
                   <Text>
                     Your submission to the {item.collection.name} contest has been rejected and will
-                    not be visible in the contest collection.{' '}
-                    {resolveRejectionCopy({
-                      reason: item.rejectionReason,
-                      detail: item.rejectionDetail,
-                    })}
+                    not be visible in the contest collection.
+                    {rejectionCopy ? ` ${rejectionCopy}` : ''}
                   </Text>
                 )}
 
