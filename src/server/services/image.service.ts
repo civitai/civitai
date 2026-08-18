@@ -8099,7 +8099,8 @@ const contestCollectionItemsCache = createLruCache({
 export const getImageContestCollectionDetails = async ({
   id,
   userId,
-}: { userId?: number } & GetByIdInput) => {
+  isModerator,
+}: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
   const items = await contestCollectionItemsCache.fetch(id);
 
   // Fetch all permissions in one query instead of N queries
@@ -8112,8 +8113,10 @@ export const getImageContestCollectionDetails = async ({
   return items.map((i) => {
     const permissions = allPermissions.find((p) => p.collectionId === i.collection.id);
     // This endpoint is public. The reason — and above all the reviewer's free text about
-    // someone else's entry — is only for the submitter and whoever manages the collection.
-    const canReadRejection = (!!userId && userId === i.addedById) || !!permissions?.manage;
+    // someone else's entry — is only for the submitter, whoever manages the collection,
+    // and site moderators investigating reports about reviewer behaviour.
+    const canReadRejection =
+      (!!userId && userId === i.addedById) || !!permissions?.manage || !!isModerator;
 
     return {
       ...i,

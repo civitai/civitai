@@ -95,13 +95,15 @@ function mockQueries({ imageId, addedById }: { imageId: number; addedById: numbe
 async function read({
   userId,
   addedById = SUBMITTER_ID,
+  isModerator,
 }: {
   userId?: number;
   addedById?: number | null;
+  isModerator?: boolean;
 }) {
   const imageId = nextImageId++;
   mockQueries({ imageId, addedById });
-  const [item] = await getImageContestCollectionDetails({ id: imageId, userId });
+  const [item] = await getImageContestCollectionDetails({ id: imageId, userId, isModerator });
   return item;
 }
 
@@ -144,6 +146,14 @@ describe('getImageContestCollectionDetails rejection visibility', () => {
     const item = await read({ userId: COLLECTION_OWNER_ID });
 
     expect(item.permissions?.manage).toBe(true);
+    expect(item.rejectionReason).toBe(CollectionItemRejectionReason.Other);
+    expect(item.rejectionDetail).toBe(DETAIL);
+  });
+
+  it('shows them to a site moderator who is neither submitter nor manager', async () => {
+    const item = await read({ userId: STRANGER_ID, isModerator: true });
+
+    expect(item.permissions?.manage).not.toBe(true);
     expect(item.rejectionReason).toBe(CollectionItemRejectionReason.Other);
     expect(item.rejectionDetail).toBe(DETAIL);
   });
