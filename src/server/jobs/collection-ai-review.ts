@@ -204,6 +204,18 @@ async function classifyItem({
   return { collectionItemId: item.collectionItemId, action, message };
 }
 
+// Keyed on the status alone: an AI rejection with no message is still an AI rejection, and gating
+// on the message instead silently persisted no reason at all.
+export function resolveAutomatedRejectionReason({
+  status,
+}: {
+  status: CollectionItemStatus;
+}): CollectionItemRejectionReason | undefined {
+  return status === CollectionItemStatus.REJECTED
+    ? CollectionItemRejectionReason.Automated
+    : undefined;
+}
+
 // Stamps before writing status: a status write can throw, and an unstamped item is reselected and
 // re-billed on the next run.
 async function applyOutcomes({
@@ -253,10 +265,7 @@ async function applyOutcomes({
           collectionId,
           collectionItemIds: write.ids,
           status: write.status,
-          rejectionReason:
-            write.status === CollectionItemStatus.REJECTED
-              ? CollectionItemRejectionReason.Automated
-              : undefined,
+          rejectionReason: resolveAutomatedRejectionReason({ status: write.status }),
           rejectionDetail: write.reason,
         },
         userId: SYSTEM_USER_ID,
