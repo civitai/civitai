@@ -270,6 +270,8 @@ test('a model comment counts for the model and its creator', async () => {
 
   expectAdds(adds, [entity('Model', 9, 42, 1), user(555, 42, 1)]);
   expect(calls[0].params).toEqual([9]);
+  // One round trip per event, on the highest-volume comment surface.
+  expect(calls).toHaveLength(1);
 });
 
 test('deleting a model comment backs out both counts', async () => {
@@ -286,6 +288,29 @@ test('deleting a model comment backs out both counts', async () => {
   } as never);
 
   expectAdds(adds, [entity('Model', 9, 42, -1), user(555, 42, -1)]);
+});
+
+test.each([
+  ['commentV2Handler', commentV2Handler, { userId: 42, threadId: 1 }],
+  ['commentHandler', commentHandler, { userId: 42, modelId: 9 }],
+])('%s emits nothing when the owner lookup fails', async (_name, handler, record) => {
+  const { adds, actions } = recorder();
+  const pg = {
+    queryOne: async () => {
+      throw new Error('connection terminated');
+    },
+  };
+
+  // Both halves matter and neither is visible with a resolving fake. The throw has to propagate or
+  // the Kafka offset commits over a message whose metrics were never queued; and nothing may be
+  // emitted before it, because the batcher and Redis dedupe a replayed metric but
+  // `metricSignals.sendDelta` does not — an emit above the await double-fires the live delta on
+  // every retry. Moving an emit back above the query is otherwise invisible: with a resolving fake
+  // both orderings produce identical output.
+  await expect(
+    handler.process({ operation: 'create', record, actions, pg } as never)
+  ).rejects.toThrow('connection terminated');
+  expect(adds).toEqual([]);
 });
 
 test('a creator commenting on their own model counts for the model but not for themselves', async () => {
