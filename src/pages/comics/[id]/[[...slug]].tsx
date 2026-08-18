@@ -123,24 +123,10 @@ function PublicComicReader() {
     { id: projectId },
     { enabled: !isNaN(projectId) && projectId > 0 }
   );
-  // Emitted from HERE, above the loading gate, rather than from inside ComicOverview. The project
-  // id comes from the URL, so nothing about a project view needs `getPublicProjectForReader` — and
-  // that query pulls every chapter, panel and image, so waiting on it put the effective threshold
-  // for a view at ~5-6s. 47% of comic visits are shorter than that, and measured against pageViews
-  // roughly half of all comic views were being lost. Articles and posts sit at parity because they
-  // render TrackView off server-side props with no data gate.
-  //
-  // 🔴 It is mounted ONCE, outside the branches, on purpose. Rendering it in both the loading
-  // branch and the loaded branch remounts it when the query resolves — and a remount resets
-  // TrackView's `observedEntityId` ref, so a slow query would fire the beacon TWICE while a fast
-  // one fired once. That turns an undercount into a load-dependent overcount, which is worse:
-  // wrong in a way that varies with the viewer's connection.
-  //
-  // The cost of firing before the query is that a view now also counts a load of a project that
-  // turns out not to exist (2 unresolvable ids across 6 months of pageViews), or one blocked on the
-  // green domain — which is UNMEASURED, and on green every NSFW comic is blocked. Note this also
-  // moves toward, not away from, the baseline the fix is validated against: pageViews counts those
-  // same loads, so including them makes the two sources more comparable, not less.
+  // Above the loading gate on purpose: the project id is in the URL, so a project view never
+  // needed getPublicProjectForReader — and waiting on it put the threshold for a view at ~5-6s.
+  // Mounted ONCE, outside the branches: a remount resets TrackView's ref, so rendering it per
+  // branch would fire twice on slow connections and once on fast ones.
   const trackProjectView = chapterDbPos == null && projectId > 0;
 
   let body: React.ReactNode;
@@ -1111,12 +1097,8 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
           entityId={activeChapter.id}
           entityType="ComicChapter"
           type="ComicChapterView"
-          // Short, not zero. The query wait proves intent for the FIRST chapter render only —
-          // chapter-to-chapter navigation is a shallow router.replace against already-loaded
-          // data, so there is no second wait and nothing else filtering it. Prev/Next is bound to
-          // the arrow keys, so at 0ms a reader holding ArrowRight through a 20-chapter comic
-          // books 20 reads in three seconds. 250ms kills held-key skimming and is noise against
-          // the ~5-6s this fix removes.
+          // Not 0: chapter-to-chapter is a shallow replace over loaded data with no wait in
+          // front of it, and Prev/Next is on the arrow keys, so 0 counts held-key skimming.
           delayMs={250}
         />
       )}

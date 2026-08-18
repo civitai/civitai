@@ -29,15 +29,9 @@ function sendView(input: AddViewSchema) {
 }
 
 /**
- * `delayMs` is the intent filter: a page the viewer bounced off within the window is not a view.
- * The 1s default is right when the component mounts with the page. It is too long when the
- * component is gated behind a slow query — that wait already filters bounces, and charging another
- * second on top pushed the effective threshold to ~5-6s on the comic reader and silently lost ~50%
- * of its views. Lower it at that call site rather than for everyone.
- *
- * ⚠️ Lower, not zero. The query wait only filters the FIRST render; an entityId change within an
- * already-mounted component (a shallow route change over data that is already loaded) has no wait
- * in front of it at all, so 0 counts every keypress of a held arrow key as a view.
+ * `delayMs` is the intent filter. Lower it where the component is already gated behind a slow
+ * query, which filters bounces on its own — but never to 0, because that gate only covers the
+ * first render, not a later entityId change within the same mount.
  */
 export function TrackView({
   type,
