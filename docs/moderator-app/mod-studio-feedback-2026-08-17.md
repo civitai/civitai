@@ -79,10 +79,26 @@ now it has a second caller, the ingestion-error predicate shared between its que
 dashboard's four hand-copied service types derived via `Jsonified`, and both new components moved beside
 the route that owns them (they hardcode `?/setRating`, so they were page-local by construction).
 
-**Not done, and why:** `reportEntityJoin` and `REPORT_SOURCES` remain two maps of one fact — the next
-report type still has to be added to both, which is the same failure one level up from the bug fixed
-above. Splitting `images/[slug]/+page.svelte` (600 lines, three queues' markup) is likewise a refactor of
-code this round only touched.
+Both items this section first listed as "not done" were then done:
+
+- [x] **`reportEntityJoin` and `REPORT_SOURCES` are one map** (`report-entities.ts`), carrying table, fk,
+      owning table, owner column and label per type. Two hand-spliced arms fall out of it: Chat in
+      `getReportsReceived` (it existed only because Chat owns by `ownerId`, now a column on the row) and
+      User in `getReportsSubmitted` and the board (the type whose `ownerColumn` is null). Two visible
+      consequences, both deliberate: User Lookup's reported-content labels now agree with every other
+      report surface, and reported **chats** appear in those counts — they were absent only because the
+      old list could not express `ownerId`.
+- [x] **`images/[slug]/+page.svelte` split** into `QueueHeader`, `QueueSelectionBar`, `ReviewActions`,
+      `AppealActions` and `VerdictBadge`; 621 lines to 380. The page keeps the four `data.kind` branches,
+      whose card bodies depend on that narrowing. No behaviour change.
+
+Still open, and a product call rather than a defect: **Downleveled has no badge.** The ClickHouse log
+only grows, but "downleveled and not yet ruled on" IS derivable — join `Image` and exclude
+`nsfwLevelLocked`. It needs a decision on the predicate, not new infrastructure.
+
+Also open: **queue-level granularity in "Recently worked"**. The options are to leave it at kind-of-work,
+to have this app write a richer row to the moderator database it already owns, or to add a column to the
+shared `ModActivity` (main-app coordination plus a migration).
 
 ## Round 2026-08-18 (second batch) — the board and the links
 
@@ -144,8 +160,11 @@ second window. Closed together, since they are the same missing control set.
       event. The plumbing already accepted `violationType`/`violationDetails` and nothing passed them, so
       every removal from these queues was filed as whatever the queue implied. The chosen violation is
       also what the appeal queue shows the next reviewer as the reason for removal.
-      - [ ] The user-facing notification still says only "removed due to a Terms of Service violation".
-            Putting the reason in it is a main-app change to `systemNotifications` and a deploy.
+      - [x] The user-facing notification now carries the reason too. `details.reason` is optional at
+            every layer and the processor keeps the old wording without it, so the backlog is unaffected.
+            Only the moderator's own choice is sent — the inferred fallback stays in analytics.
+            **Needs the main-app deploy this handover is already blocked on**; until then the spoke
+            sends a field the processor ignores, which is harmless.
 - [x] **Selecting several images and pressing Accept on one accepted only that one.** The bulk bar
       existed; it was findable only after selecting something, and the per-card buttons stayed live
       underneath. A selected card now loses its own verdict buttons and says where they went, the bulk
