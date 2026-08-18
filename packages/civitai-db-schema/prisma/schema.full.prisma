@@ -5268,6 +5268,8 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+
+  @@index([chatId, id])
 }
 
 model BuildGuide {

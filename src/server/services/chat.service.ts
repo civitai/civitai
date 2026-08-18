@@ -9,7 +9,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
 import { DEFAULT_CHAT_SETTINGS, resolveDmPolicy } from '~/server/schema/chat.schema';
-import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
+import {
+  chatReferenceMessageSelect,
+  latestChat,
+  singleChatSelect,
+} from '~/server/selectors/chat.selector';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
@@ -149,19 +153,32 @@ export const upsertChat = async ({
     // here without stamping `filteredAt` let anyone who had ever messaged you
     // walk back into your inbox, which made the policy a one-time check rather
     // than a standing one.
+    // Only ever mark a membership that is still open. Writing `status` here as
+    // well would let a sender undo a kick, an ignore or a leave, and would demote
+    // an accepted thread the recipient never left — the opposite of the promise
+    // that a policy change is not retroactive. `filteredAt` alone is what the
+    // rail buckets on.
     const toFilter = existing.chatMembers.filter(
-      (cm) => filteredIds.has(cm.userId) && !cm.filteredAt
+      (cm) => filteredIds.has(cm.userId) && !cm.filteredAt && cm.status === ChatMemberStatus.Invited
     );
     if (toFilter.length) {
       const filteredAt = new Date();
       await dbWrite.chatMember.updateMany({
         where: { id: { in: toFilter.map((cm) => cm.id) } },
-        data: { filteredAt, status: ChatMemberStatus.Invited },
+        data: { filteredAt },
       });
-      for (const cm of toFilter) {
-        cm.filteredAt = filteredAt;
-        cm.status = ChatMemberStatus.Invited;
-      }
+      for (const cm of toFilter) cm.filteredAt = filteredAt;
+    }
+
+    // The preview rides along on `latestChat` unfiltered. Re-opening a chat the
+    // caller cleared would hand back a message from before their watermark —
+    // the one path that broke the clean slate.
+    const callerClearedAt = existing.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
+    if (callerClearedAt) {
+      return {
+        ...existing,
+        messages: existing.messages.filter((msg) => msg.createdAt > callerClearedAt),
+      };
     }
     return existing;
   }
@@ -355,8 +372,12 @@ export const createMessage = async ({
   }
 
   if (referenceMessageId) {
+    // Scoped to THIS chat. Existence alone let a caller quote any message id in
+    // the database, and the reply's stored reference is now joined and returned
+    // to them — so an unscoped check hands back the content of other people's
+    // conversations.
     const existingReference = await dbWrite.chatMessage.count({
-      where: { id: referenceMessageId },
+      where: { id: referenceMessageId, chatId, deletedAt: null },
     });
     if (existingReference === 0) {
       throw throwBadRequestError(`Reference message does not exist: (${referenceMessageId})`);
@@ -406,19 +427,38 @@ export const createMessage = async ({
   // so it re-enters the request flow regardless of their policy — the delete is
   // the stronger signal. Only the first: once they accept, later messages land
   // normally.
-  if (userId !== -1) {
+  if (userId !== -1 && !isModerator) {
     const clearedMembers = chat.chatMembers.filter(
-      (cm) => cm.userId !== userId && !!cm.clearedAt && !cm.filteredAt
+      (cm) =>
+        cm.userId !== userId &&
+        !!cm.clearedAt &&
+        !cm.filteredAt &&
+        // Never reopen a membership the user closed: re-arming a Left, Kicked or
+        // Ignored member would undo their own decision — or an owner's kick.
+        (cm.status === ChatMemberStatus.Joined || cm.status === ChatMemberStatus.Invited)
     );
     for (const member of clearedMembers) {
-      const since = await dbWrite.chatMessage.count({
-        where: { chatId, createdAt: { gt: member.clearedAt as Date }, deletedAt: null },
+      // findFirst, not count: this asks whether anything exists, and the answer
+      // is permanently "yes" once they accept — `clearedAt` is never unset, so a
+      // count would re-scan the whole conversation on every send forever.
+      // Scoped to real messages: an embed or a "X left" system row landing after
+      // the clear would otherwise consume the first-message slot and let the next
+      // real approach skip Requests entirely.
+      const since = await dbWrite.chatMessage.findFirst({
+        where: {
+          chatId,
+          createdAt: { gt: member.clearedAt as Date },
+          deletedAt: null,
+          userId: { not: -1 },
+          contentType: { not: ChatMessageType.Embed },
+        },
+        select: { id: true },
       });
-      if (since > 0) continue;
+      if (since) continue;
 
       await dbWrite.chatMember.update({
         where: { id: member.id },
-        data: { filteredAt: new Date(), status: ChatMemberStatus.Invited },
+        data: { filteredAt: new Date() },
       });
     }
   }
@@ -427,11 +467,7 @@ export const createMessage = async ({
     data: { chatId, contentType, content, referenceMessageId, userId },
     // Same shape as a `getInfiniteMessages` item, so the optimistic push and the
     // signal payload both carry the quote a reply needs to render immediately.
-    include: {
-      referenceMessage: {
-        select: { id: true, userId: true, content: true, contentType: true },
-      },
-    },
+    include: { referenceMessage: { select: chatReferenceMessageSelect } },
   });
 
   withSignals(() =>
@@ -498,11 +534,7 @@ export const createMessage = async ({
                   userId: -1,
                   referenceMessageId: resp.id,
                 },
-                include: {
-                  referenceMessage: {
-                    select: { id: true, userId: true, content: true, contentType: true },
-                  },
-                },
+                include: { referenceMessage: { select: chatReferenceMessageSelect } },
               });
 
               withSignals(() =>

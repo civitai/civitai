@@ -32,7 +32,13 @@ export const useChatNewMessageSignal = () => {
       // A chat absent from the list is one this user deleted — the message that
       // just arrived is the first past their watermark, so refetch to bring it
       // back rather than dropping the signal.
-      if (chats && !thisChat) queryUtils.chat.getAllByUser.invalidate();
+      if (chats && !thisChat) {
+        // The server may have re-armed this member into Requests, in which case
+        // its unread count is 0 — refetch rather than incrementing below.
+        queryUtils.chat.getAllByUser.invalidate();
+        queryUtils.chat.getUnreadCount.invalidate();
+        return;
+      }
 
       const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser.id);
       const notify = shouldNotifyForMessage({
@@ -148,6 +154,15 @@ export const useChatNewRoomSignal = () => {
   const onUpdate = useCallback(
     (updated: ChatCreateChat) => {
       if (!currentUser || !features.chat || updated.ownerId === currentUser.id) return;
+
+      // A filtered request is deliberately absent from the server's unread count.
+      // Incrementing it here anyway put it back in the header badge and rang the
+      // sound — the exact thing the filter exists to prevent.
+      const myMember = updated.chatMembers?.find((cm) => cm.userId === currentUser.id);
+      if (myMember?.filteredAt) {
+        queryUtils.chat.getAllByUser.invalidate();
+        return;
+      }
 
       queryUtils.chat.getAllByUser.setData(undefined, (old) => {
         if (!old) return [updated];

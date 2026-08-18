@@ -13,8 +13,16 @@ export type ChatAuditRow = {
   chatId: number;
   /** Absent for `clear`, which acts on the conversation rather than a message. */
   messageId?: number;
-  /** The member whose view changed — for `clear`, the only member affected. */
-  userId: number;
+  /**
+   * Who performed the act. Named `actorId` rather than `userId` because the
+   * Tracker spreads its own actor fields into the row — a `userId` key silently
+   * overwrote them.
+   */
+  actorId: number;
+  /** Whose content it was. Differs from `actorId` on a moderator delete. */
+  subjectId: number;
+  /** `owner` when acting on your own, `moderator` otherwise. */
+  actorRole: 'owner' | 'moderator';
   /** Empty for `clear`; for `edit` these carry the content either side of it. */
   oldValue: string;
   newValue: string;

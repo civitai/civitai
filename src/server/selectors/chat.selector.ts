@@ -44,6 +44,22 @@ export const singleChatSelect = Prisma.validator<Prisma.ChatSelect>()({
   },
 });
 
+/**
+ * The quoted message carried alongside a reply. `chatId` and `deletedAt` ride
+ * along so the read path can drop a reference that does not belong to the chat
+ * being read, or that has since been deleted — a stored `referenceMessageId` is
+ * only as trustworthy as the check that was in force when it was written.
+ */
+export const chatReferenceMessageSelect = Prisma.validator<Prisma.ChatMessageSelect>()({
+  id: true,
+  userId: true,
+  content: true,
+  contentType: true,
+  chatId: true,
+  deletedAt: true,
+  createdAt: true,
+});
+
 export const latestChat = Prisma.validator<Prisma.ChatSelect>()({
   messages: {
     orderBy: { createdAt: Prisma.SortOrder.desc },

@@ -53,6 +53,9 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
 
           if (isDefined(req.status)) {
             tMember.status = data.status;
+            // Accepting clears the request mark server-side; dropping it here left
+            // the conversation stuck in the Requests tab.
+            tMember.filteredAt = data.filteredAt;
           }
           if (isDefined(req.isMuted)) {
             tMember.isMuted = data.isMuted;

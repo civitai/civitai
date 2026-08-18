@@ -22,7 +22,11 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
-import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
+import {
+  chatReferenceMessageSelect,
+  latestChat,
+  singleChatSelect,
+} from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
@@ -34,9 +38,37 @@ import {
   throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
+import { ChatMemberStatus, ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
+
+/**
+ * The redesign is staged to moderators, and these two actions destroy a user's
+ * view of their own history. Gating them in the client render branch alone left
+ * them callable over the API by anyone, ahead of the review the staging exists
+ * to buy.
+ */
+function assertChatRedesign(ctx: ProtectedContext) {
+  if (!ctx.features.chatRedesign) throw throwAuthorizationError('This feature is not available');
+}
+
+/**
+ * Per-member state that belongs to that member alone. Shipping another user's
+ * copy tells a sender whether their message was filtered — an oracle on the
+ * recipient's DM policy — and tells them the recipient deleted the thread.
+ */
+const scopeMemberPrivacy =
+  (userId: number) =>
+  <T extends { userId: number; filteredAt: Date | null; clearedAt: Date | null }>(member: T): T =>
+    member.userId === userId
+      ? member
+      : {
+          ...member,
+          filteredAt: null,
+          clearedAt: null,
+          notifyLevel: ChatNotifyLevel.All,
+          pinnedAt: null,
+        };
 
 /**
  * Get user chat settings
@@ -112,11 +144,12 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
     // member, so the preview is trimmed here instead.
     return chats
       .map((chat) => {
-        const clearedAt = chat.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
-        if (!clearedAt) return chat;
+        const scoped = { ...chat, chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)) };
+        const clearedAt = scoped.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
+        if (!clearedAt) return scoped;
 
-        const messages = chat.messages.filter((msg) => msg.createdAt > clearedAt);
-        return messages.length ? { ...chat, messages } : null;
+        const messages = scoped.messages.filter((msg) => msg.createdAt > clearedAt);
+        return messages.length ? { ...scoped, messages } : null;
       })
       .filter(isDefined);
   } catch (error) {
@@ -147,7 +180,8 @@ export const getUnreadMessagesForUserHandler = async ({
                           (msg.id > memb."lastViewedMessageId" or
                            memb."lastViewedMessageId" is null
                             ) and
-                          (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt")
+                          (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt") and
+                          msg."deletedAt" is null
       where memb."userId" = ${userId}
         and memb.status = 'Joined'
         and memb."notifyLevel" <> 'None'
@@ -419,6 +453,18 @@ export const modifyUserHandler = async ({
       // Accepting is what ends a request; leaving the mark set would strand the
       // conversation in Requests forever.
       filteredAt: status === ChatMemberStatus.Joined ? null : undefined,
+      // The two mute columns are written by different surfaces — the previous
+      // chat still writes `isMuted`, the new one writes `notifyLevel`, and both
+      // server readers moved to `notifyLevel`. Deriving each from the other is
+      // what stops a mute from silently doing nothing (or, worse, an unmute
+      // leaving the conversation permanently silent).
+      notifyLevel:
+        rest.isMuted === undefined
+          ? undefined
+          : rest.isMuted
+          ? ChatNotifyLevel.None
+          : ChatNotifyLevel.All,
+      isMuted: rest.notifyLevel === undefined ? undefined : rest.notifyLevel === 'None',
     };
 
     const resp = await dbWrite.chatMember.update({
@@ -479,7 +525,9 @@ export const clearChatHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const { id: userId, bannedAt } = ctx.user;
+    if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
+    assertChatRedesign(ctx);
     const { chatId } = input;
 
     const member = await dbWrite.chatMember.findFirst({
@@ -510,7 +558,9 @@ export const clearChatHandler = async ({
       .chatAudit({
         type: 'clear',
         chatId,
-        userId,
+        actorId: userId,
+        subjectId: userId,
+        actorRole: 'owner',
         oldValue: '',
         newValue: '',
         truncated: 0,
@@ -565,7 +615,9 @@ export const markChatReadHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const { id: userId, bannedAt } = ctx.user;
+    if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
+    assertChatRedesign(ctx);
     const { chatId } = input;
 
     const member = await dbWrite.chatMember.findFirst({
@@ -655,12 +707,23 @@ export const getInfiniteMessagesHandler = async ({
       orderBy: [{ id: input.sortDirection }],
       // Reply quotes ride along. Resolving them client-side cost one
       // getMessageById per quoted message, and a page holds up to `limit` of them.
-      include: {
-        referenceMessage: {
-          select: { id: true, userId: true, content: true, contentType: true },
-        },
-      },
+      include: { referenceMessage: { select: chatReferenceMessageSelect } },
     });
+
+    // A stored `referenceMessageId` is only as trustworthy as the check in force
+    // when it was written, and a quote must not resurrect what the reader is not
+    // entitled to: another chat's message, a deleted one, or anything behind
+    // their own clear watermark.
+    const visibleItems = items.map((item) =>
+      item.referenceMessage &&
+      (item.referenceMessage.chatId !== input.chatId ||
+        !!item.referenceMessage.deletedAt ||
+        (!!thisMember?.clearedAt && item.referenceMessage.createdAt <= thisMember.clearedAt))
+        ? { ...item, referenceMessage: null }
+        : item
+    );
+    items.length = 0;
+    items.push(...visibleItems);
 
     let nextCursor: number | undefined;
 
@@ -697,7 +760,7 @@ export const getMessageByIdHandler = async ({
     const { id: userId } = ctx.user;
 
     const msg = await dbWrite.chatMessage.findFirst({
-      where: { id: input.messageId },
+      where: { id: input.messageId, deletedAt: null },
       select: {
         content: true,
         contentType: true,
@@ -821,7 +884,9 @@ export const deleteMessageHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { id: userId, isModerator } = ctx.user;
+    const { id: userId, isModerator, bannedAt } = ctx.user;
+    if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
+    assertChatRedesign(ctx);
 
     const existing = await dbWrite.chatMessage.findFirst({
       where: { id: input.messageId },
@@ -845,7 +910,9 @@ export const deleteMessageHandler = async ({
         type: 'delete',
         chatId: existing.chatId,
         messageId: existing.id,
-        userId,
+        actorId: userId,
+        subjectId: existing.userId,
+        actorRole: existing.userId === userId ? 'owner' : 'moderator',
         oldValue: value,
         newValue: '',
         truncated,

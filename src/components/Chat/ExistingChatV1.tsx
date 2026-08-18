@@ -118,6 +118,7 @@ export function ExistingChatV1() {
   const colorScheme = useComputedColorScheme('dark');
 
   const lastReadRef = useRef<HTMLDivElement>(null);
+  const anchorPageCount = useRef(0);
   const [typingStatus, setTypingStatus] = useState<TypingStatus>({});
   const [typingText, setTypingText] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
@@ -126,12 +127,11 @@ export function ExistingChatV1() {
   // TODO there is a bug here. upon rejoining, you won't get a signal for the messages in the timespan between leaving and rejoining
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage, isError, error } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
+      // Must stay input-identical to the V2 query: the tRPC query key includes
+      // the input, and every cache writer (signals, send, share) targets
+      // `{ chatId }`. Adding a field here silently orphans this surface's cache.
       {
         chatId: existingChatId!,
-        // This surface predates the scroll anchoring that made paging usable, so
-        // it keeps the old single-page behaviour rather than jumping to the
-        // newest message every time older ones load.
-        limit: 1000,
       },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -278,19 +278,37 @@ export function ExistingChatV1() {
     });
   };
 
+  // Captured before the fetch, because afterwards the DOM has already grown.
+  // This surface used to avoid paging entirely by asking for 1,000 messages, but
+  // that changed the query key and orphaned its cache, so it pages like V2 now
+  // and needs the same anchoring.
+  const olderPageAnchor = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const pageCount = data?.pages.length ?? 0;
+
+  const loadOlderMessages = useCallback(() => {
+    const el = lastReadRef.current;
+    if (el) olderPageAnchor.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop };
+    return fetchNextPage();
+  }, [fetchNextPage]);
+
   useEffect(() => {
-    // - on a new message or initial load, scroll to the bottom. on load more, don't scroll
+    olderPageAnchor.current = null;
+  }, [existingChatId]);
 
-    if (!messagesChronological.length) return;
+  useEffect(() => {
+    const el = lastReadRef.current;
+    if (!el || !messagesChronological.length) return;
 
-    // if (data.pages.length !== oldPagesLength.current) return;
-    //
-    // oldPagesLength.current = data.pages.length;
-
-    lastReadRef.current?.scrollTo(
-      0,
-      lastReadRef.current?.scrollHeight - lastReadRef.current?.clientHeight
-    );
+    const anchor = olderPageAnchor.current;
+    // Only consume the anchor when a page actually arrived; a message landing
+    // mid-fetch would otherwise eat it and the real prepend would jump.
+    if (anchor && pageCount > anchorPageCount.current) {
+      el.scrollTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
+      olderPageAnchor.current = null;
+      anchorPageCount.current = pageCount;
+    } else if (!anchor) {
+      el.scrollTop = el.scrollHeight - el.clientHeight;
+    }
 
     if (!myMember) return;
     const newestMessageId = messagesChronological[messagesChronological.length - 1].id;
@@ -299,7 +317,7 @@ export function ExistingChatV1() {
       chatMemberId: myMember.id,
       lastViewedMessageId: newestMessageId,
     }).catch();
-  }, [messagesChronological, changeLastViewed, myMember]);
+  }, [messagesChronological, pageCount, changeLastViewed, myMember]);
 
   useEffect(() => {
     setTypingStatus({});
@@ -475,7 +493,10 @@ export function ExistingChatV1() {
             ) : messagesChronological.length > 0 ? (
               <Stack style={{ overflowWrap: 'break-word' }} gap={12}>
                 {hasNextPage && (
-                  <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
+                  <InViewLoader
+                    loadFn={loadOlderMessages}
+                    loadCondition={!isRefetching && hasNextPage}
+                  >
                     <Center p="xl" style={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>

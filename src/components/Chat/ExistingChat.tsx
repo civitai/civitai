@@ -226,6 +226,9 @@ export function ExistingChat() {
           if (!tMember) return old;
 
           tMember.status = data.status;
+          // Accepting clears the request mark server-side; dropping it here left
+          // the conversation stuck in the Requests tab.
+          tMember.filteredAt = data.filteredAt;
 
           // don't think we need this on the FE
           // if (data.status === ChatMemberStatus.Joined) tMember.joinedAt = data.joinedAt;
@@ -297,6 +300,7 @@ export function ExistingChat() {
   // Captured the moment an older page starts loading, so the prepend can be
   // anchored. Reading it after the fact is too late — the DOM has already grown.
   const olderPageAnchor = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const anchorPageCount = useRef(0);
 
   const loadOlderMessages = useCallback(() => {
     const el = lastReadRef.current;
@@ -313,16 +317,20 @@ export function ExistingChat() {
     if (!el || !messagesChronological.length) return;
 
     const anchor = olderPageAnchor.current;
-    if (anchor) {
-      // Older messages prepend, growing the list above the viewport. Jumping to
-      // the bottom here is what made paging unusable and forced the 1,000-message
-      // default page; hold the reader where they were instead.
+    const pageCount = data?.pages.length ?? 0;
+    // Older messages prepend, growing the list above the viewport. Jumping to
+    // the bottom there is what made paging unusable and forced the 1,000-message
+    // default page. The page-count check matters: a message arriving while the
+    // fetch is in flight would otherwise consume the anchor, leaving the real
+    // prepend to take the jump-to-bottom branch.
+    if (anchor && pageCount > anchorPageCount.current) {
       el.scrollTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
       olderPageAnchor.current = null;
-    } else {
+      anchorPageCount.current = pageCount;
+    } else if (!anchor) {
       el.scrollTop = el.scrollHeight - el.clientHeight;
     }
-  }, [messagesChronological]);
+  }, [messagesChronological, data?.pages.length]);
 
   useEffect(() => {
     if (!messagesChronological.length || !myMember) return;

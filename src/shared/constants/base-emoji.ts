@@ -83,13 +83,40 @@ export const BASE_EMOJI_BY_SLUG = new Map(BASE_EMOJI.map((e) => [e.slug, e]));
  */
 export const EMOJI_JUMBO_LIMIT = 6;
 
-const EMOJI_ONLY = /^[\p{Extended_Pictographic}\p{Emoji_Component}️‍\s]+$/u;
-const EMOJI_MATCH = /\p{Extended_Pictographic}/gu;
+/**
+ * Counted by grapheme, not code point. `\p{Emoji_Component}` includes ASCII
+ * digits, `#` and `*`, so a code-point test treats "🔥 100" as emoji-only and
+ * renders an ordinary message at jumbo size; it also splits one ZWJ family into
+ * four and misses flags and keycaps entirely.
+ */
+const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
+const REGIONAL_INDICATOR = /^[\u{1F1E6}-\u{1F1FF}]{2}$/u;
+const KEYCAP = /\u{20E3}/u;
+
+const segmenter =
+  typeof Intl !== 'undefined' && 'Segmenter' in Intl
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : undefined;
+
+function isEmojiGrapheme(grapheme: string) {
+  return PICTOGRAPHIC.test(grapheme) || REGIONAL_INDICATOR.test(grapheme) || KEYCAP.test(grapheme);
+}
 
 export function emojiOnlyCount(text: string): number {
   const trimmed = text.trim();
-  if (!trimmed || !EMOJI_ONLY.test(trimmed)) return 0;
-  return (trimmed.match(EMOJI_MATCH) ?? []).length;
+  if (!trimmed) return 0;
+
+  // Without Intl.Segmenter there is no safe grapheme split, and guessing here is
+  // what produced the false positives — treat it as not-emoji-only.
+  if (!segmenter) return 0;
+
+  let count = 0;
+  for (const { segment } of segmenter.segment(trimmed)) {
+    if (!segment.trim()) continue;
+    if (!isEmojiGrapheme(segment)) return 0;
+    count++;
+  }
+  return count;
 }
 
 /** Whether a run of text is nothing but a small number of emoji. */
