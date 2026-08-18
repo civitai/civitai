@@ -91,16 +91,16 @@ RUN node scripts/check-server-graph-singletons.mjs
 # when it cannot observe its input. Adding a gate is one entry in
 # `scripts/compiled-branch-watchlist.mjs`.
 #
-# 🔴 `--warn-only` because THIS BUILD CURRENTLY VIOLATES IT. The bundler defect behind
-# civitai#3983 is not fixed — `main` and `release` carry byte-identical source for that
-# function and both emit it truncated — so a hard gate here would fail every production
-# build immediately. It reports loudly and exits 0 instead. `--warn-only` does NOT
-# downgrade exit 2, so a gate that cannot see its own input still fails the build.
-#
-# REMOVE `--warn-only` as part of fixing the underlying defect. That flip is the
-# definition of done for civitai#3983, and it is the only thing that turns this from a log
-# line back into a gate.
-RUN node scripts/assert-compiled-branches.mjs --warn-only
+# HARD as of the Next 16.3.1 bump. It shipped `--warn-only` for exactly one build, because
+# 16.3.0's Turbopack value analyzer modelled a bare `return someAsyncFn()` tail call as
+# `Promise<Promise<T>>` — always truthy — so an awaiting caller was analysed as always-true
+# and every statement after the resulting conditional was eliminated as dead code
+# (vercel/next.js#96601, backported as #96675, shipped in 16.3.1). With 16.3.0 pinned the
+# gate genuinely failed every production build, and a permanently-red gate is worse than no
+# gate. With 16.3.1 pinned the build satisfies it, so the downgrade is removed in the same
+# commit as the bump: the gate's strictness now tracks the toolchain, and a revert of the
+# bump turns this red instead of silently passing.
+RUN node scripts/assert-compiled-branches.mjs
 
 # Bundle-size budget (report-only during the soak). Next 16 (Turbopack) emits
 # opaque hashed chunks and removed per-route build stats, so scripts/bundle-budget.mjs
