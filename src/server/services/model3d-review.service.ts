@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -107,6 +108,15 @@ export const upsertModel3DReview = async ({
   ) {
     throw throwBadRequestError('Cannot review a 3D model that has not been published.');
   }
+
+  // A review is content on someone else's model, so the owner's block applies here as it does on
+  // comments and resource reviews. Edits included — a review written before a block would otherwise
+  // stay editable into anything afterwards; re-homing is already refused below.
+  await throwIfBlockedByOwners({
+    userId: user.id,
+    ownerIds: [model3d.userId],
+    isModerator: !!user.isModerator,
+  });
 
   // If a postId is provided, validate it actually exists + belongs to this user
   // (or a mod). Post.model3dReviewId is @unique, so we have to be careful to
