@@ -311,18 +311,27 @@ export const getInfiniteImagesHandler = async ({
 
   // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
   // can only run when the index can serve the query.
-  const bitdexMode = requiresDbPath
-    ? null
-    : await getFliptVariant(
-        FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-        user?.id?.toString() || 'anonymous',
-        buildFliptContext(user)
-      );
+  //
+  // Hubs skip BitDex: its clause builder is a parallel reimplementation that does
+  // not implement the hub OR-group, and a missing filter there is not an error —
+  // the user would silently receive the global feed as their hub.
+  const bitdexMode =
+    requiresDbPath || input.hubId
+      ? null
+      : await getFliptVariant(
+          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+          user?.id?.toString() || 'anonymous',
+          buildFliptContext(user)
+        );
   const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
 
   // Use getAllImagesIndex when BitDex is active or the index can serve the query;
   // otherwise use getAllImages (DB).
-  const useIndex = useBitdex || (features.imageIndexFeed && !requiresDbPath);
+  // A hub is only expressible on the index — its collection sources are served by
+  // the indexed `collectionIds` field, which the raw-SQL path has no equivalent
+  // for. Routing one to the DB would drop the filter rather than fail, so hubs
+  // pin the index path regardless of the feature flag.
+  const useIndex = !!input.hubId || useBitdex || (features.imageIndexFeed && !requiresDbPath);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();

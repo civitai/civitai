@@ -2,6 +2,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { SetUserHubOrderInput, UpsertUserHubInput } from '~/server/schema/user-hub.schema';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 const hubSelect = {
   id: true,
@@ -87,5 +88,55 @@ export async function setUserHubOrder({ ids, userId }: SetUserHubOrderInput & { 
 
   await dbWrite.$transaction(
     ids.map((id, index) => dbWrite.userHub.update({ where: { id }, data: { index } }))
+  );
+}
+
+export type ResolvedHubSources = {
+  userIds: number[];
+  modelVersionIds: number[];
+  collectionIds: number[];
+};
+
+// Resolves a hub to the id sets its feed filter is built from. Returns null when
+// the hub does not exist or is not the viewer's — callers must treat that as
+// "return nothing", never as "no filter", the same way `newCreators` does with an
+// unpopulated board.
+export async function resolveHubSources({
+  hubId,
+  userId,
+}: {
+  hubId: number;
+  userId?: number;
+}): Promise<ResolvedHubSources | null> {
+  if (!userId) return null;
+  const hub = await dbRead.userHub.findFirst({
+    where: { id: hubId, userId },
+    select: { sources: { where: { enabled: true }, select: { type: true, targetId: true } } },
+  });
+  if (!hub) return null;
+
+  const byType = (type: UserHubSourceType) =>
+    hub.sources.filter((s) => s.type === type).map((s) => s.targetId);
+
+  const modelIds = byType(UserHubSourceType.Model);
+  const versionsOfModels = modelIds.length
+    ? await dbRead.modelVersion.findMany({
+        where: { modelId: { in: modelIds } },
+        select: { id: true },
+      })
+    : [];
+
+  return {
+    userIds: byType(UserHubSourceType.User),
+    modelVersionIds: [
+      ...new Set([...byType(UserHubSourceType.ModelVersion), ...versionsOfModels.map((v) => v.id)]),
+    ],
+    collectionIds: byType(UserHubSourceType.Collection),
+  };
+}
+
+export function hubSourcesAreEmpty(sources: ResolvedHubSources) {
+  return (
+    !sources.userIds.length && !sources.modelVersionIds.length && !sources.collectionIds.length
   );
 }

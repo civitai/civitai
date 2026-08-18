@@ -361,6 +361,10 @@ export const getInfiniteImagesSchema = baseQuerySchema
     types: z.array(z.enum(MediaType)).optional(),
     userId: z.number().optional(),
     username: usernameSchema.optional(),
+    // Serve a user-composed hub. The source ids are resolved server-side from
+    // this id — the client never sends them. An arbitrary client-supplied OR
+    // group would be an unbounded-cost query anyone could post.
+    hubId: z.number().optional(),
     // Restrict the feed to creators currently on the "new & upcoming" board. The
     // board id is resolved server-side from this flag plus the request domain —
     // the client never supplies a user list.

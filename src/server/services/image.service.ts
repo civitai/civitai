@@ -1541,6 +1541,13 @@ export const getAllImages = async (
     userId?: number;
   }
 ) => {
+  // Fail loud rather than serve unfiltered. This path has no way to express a
+  // hub — collection membership lives on the search index, not in a column here —
+  // so a hubId arriving means the dispatcher routed wrongly. Returning results
+  // would hand the caller the global feed labelled as their hub.
+  if (input.hubId)
+    throw new Error('getAllImages cannot serve a hub; hub queries must use the index path');
+
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
     username: input.user?.username,
@@ -3785,6 +3792,42 @@ export async function getImagesFromFeedSearch(
   }
 }
 
+import type { ResolvedHubSources } from '~/server/services/user-hub.service';
+import { resolveHubSources } from '~/server/services/user-hub.service';
+
+// The OR-group a hub's sources become. Mirrors the single-`modelVersionId`
+// branch below, including its two gates: a hub must honour hideAutoResources /
+// hideManualResources or it silently ignores two filters the user set.
+//
+// Returns null when the hub resolved to nothing. Callers must return an empty
+// page for null — never fall through unfiltered, which would serve the global
+// feed to someone who asked for their hub.
+function buildHubFilter(
+  sources: ResolvedHubSources,
+  {
+    hideAutoResources,
+    hideManualResources,
+  }: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
+): string | null {
+  const arms: string[] = [];
+  if (sources.userIds.length)
+    arms.push(makeMeiliImageSearchFilter('userId', `IN [${sources.userIds.join(',')}]`));
+  if (sources.modelVersionIds.length) {
+    const ids = sources.modelVersionIds.join(',');
+    arms.push(makeMeiliImageSearchFilter('postedToId', `IN [${ids}]`));
+    if (!hideAutoResources) arms.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${ids}]`));
+    if (!hideManualResources)
+      arms.push(makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${ids}]`));
+  }
+  if (sources.collectionIds.length)
+    arms.push(
+      makeMeiliImageSearchFilter('collectionIds', `IN [${sources.collectionIds.join(',')}]`)
+    );
+
+  if (!arms.length) return null;
+  return `(${arms.join(' OR ')})`;
+}
+
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
@@ -3830,6 +3873,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     newCreators,
+    hubId,
     domain,
     // TODO check the unused stuff in here
   } = input;
@@ -3927,6 +3971,13 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
+  }
+
+  if (hubId) {
+    const sources = await resolveHubSources({ hubId, userId: currentUserId });
+    const hubFilter = sources && buildHubFilter(sources, input);
+    if (!hubFilter) return { data: [], nextCursor: undefined };
+    filters.push(hubFilter);
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -4569,6 +4620,13 @@ export async function getImagesFromBitdexPreFilter(
     filters.push(_in('userId', newCreatorIds.map(_int)));
   }
 
+  // This builder is a parallel reimplementation of the Meili one and does not
+  // implement hubs. Returning null falls through to Meili, which does — the
+  // alternative is a BitDex-primary user silently getting the global feed while
+  // believing it is their hub. The controller also sets skipBitdex for hubs; this
+  // is the backstop for any caller that does not.
+  if (input.hubId) return null;
+
   // --- NSFW Browsing Level ---
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
   else browsingLevel = onlySelectableLevels(browsingLevel);
@@ -4739,6 +4797,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     blockedFor,
     // TODO check the unused stuff in here
     newCreators,
+    hubId,
     domain,
   } = input;
   let { browsingLevel, userId } = input;
@@ -4820,6 +4879,13 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
+  }
+
+  if (hubId) {
+    const sources = await resolveHubSources({ hubId, userId: currentUserId });
+    const hubFilter = sources && buildHubFilter(sources, input);
+    if (!hubFilter) return { data: [], nextCursor: undefined };
+    filters.push(hubFilter);
   }
 
   // nb: commenting this out while we try checking existence in the db
