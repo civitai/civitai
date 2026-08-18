@@ -28,7 +28,15 @@ function buildConnectionString(): string {
   return url.toString();
 }
 
-const pool = new Pool({ connectionString: buildConnectionString() });
+// Explicit pool sizing, matching what `@civitai/db`'s createKyselyClients applies for the apps that
+// use the shared factory. `connectionTimeoutMillis` is the important one: pg defaults it to 0, i.e.
+// "wait forever", so an exhausted pool silently queues every caller instead of failing fast.
+const pool = new Pool({
+  connectionString: buildConnectionString(),
+  max: 20,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+});
 
 export const db = new Kysely<DB>({
   dialect: new PostgresDialect({ pool }),

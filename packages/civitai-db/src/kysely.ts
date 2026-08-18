@@ -115,14 +115,28 @@ export function createKyselyClients<DB>(
     ? forceSslNoVerify(replicaConnectionString)
     : replicaConnectionString;
 
+  // Pool sizing defaults for the connection-string path. Callers that pass only a connection string
+  // otherwise inherit pg's own defaults, and one of those is actively harmful: pg's
+  // `connectionTimeoutMillis` is 0, meaning "wait forever" — once the pool is exhausted, every
+  // further caller queues indefinitely with no error, so a pool problem surfaces as an unbounded
+  // hang rather than a fast, visible failure. A finite timeout turns it into a real error we can
+  // see and retry. `max`/`idleTimeoutMillis` match the sibling `createPool` factory's profile.
+  // Caller-supplied values win — `poolConfig` is spread last.
+  const config: PoolConfig = {
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    ...poolConfig,
+  };
+
   const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
-  const primary = make(pool ?? new Pool(poolConfig));
+  const primary = make(pool ?? new Pool(config));
   if (singleClient) return { db: primary };
 
   const dbRead =
     readPool || replicaString
-      ? make(readPool ?? new Pool({ ...poolConfig, connectionString: replicaString }))
+      ? make(readPool ?? new Pool({ ...config, connectionString: replicaString }))
       : primary;
   return { dbRead, dbWrite: primary };
 }
