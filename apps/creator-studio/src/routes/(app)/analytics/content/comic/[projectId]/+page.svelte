@@ -93,7 +93,7 @@
     </a>
   </h2>
   <p class="text-sm text-dark-3">
-    Overview views and chapter reads {periodLabel}.{comic.published ? '' : ' Not published.'}
+    Overview views and chapter reads{comic.published ? '' : ' · not published'}
   </p>
 </div>
 
@@ -112,14 +112,14 @@
 
   <div class="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
     <div class="cs-panel p-3">
-      <p class="text-xs text-dark-2">Views {periodLabel}</p>
+      <p class="text-xs text-dark-2">Views</p>
       <div class="mt-1 flex items-baseline gap-2">
         <p class="text-xl font-semibold text-white">{num(comic.total)}</p>
         <DeltaChip current={comic.total} previous={comic.prevTotal} />
       </div>
     </div>
     <div class="cs-panel p-3">
-      <p class="text-xs text-dark-2">Chapter reads {periodLabel}</p>
+      <p class="text-xs text-dark-2">Chapter reads</p>
       <p class="mt-1 text-xl font-semibold text-white">{num(comic.readTotal)}</p>
     </div>
     <div class="cs-panel p-3">

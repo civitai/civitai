@@ -118,9 +118,7 @@
     </a>
   </h2>
   <p class="text-sm text-dark-3">
-    Views {periodLabel}.{article.publishedAt
-      ? ` Published ${article.publishedAt.slice(0, 10)}.`
-      : ' Not published.'}
+    {article.publishedAt ? `Published ${article.publishedAt.slice(0, 10)}` : 'Not published'}
   </p>
 </div>
 
@@ -139,7 +137,7 @@
 
   <div class="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-5">
     <div class="cs-panel p-3">
-      <p class="text-xs text-dark-2">Views {periodLabel}</p>
+      <p class="text-xs text-dark-2">Views</p>
       <div class="mt-1 flex items-baseline gap-2">
         <p class="text-xl font-semibold text-white">{num(article.total)}</p>
         <DeltaChip current={article.total} previous={article.prevTotal} />
@@ -159,12 +157,12 @@
       {/if}
     </div>
     <div class="cs-panel p-3">
-      <p class="text-xs text-dark-2">Reactions {periodLabel}</p>
+      <p class="text-xs text-dark-2">Reactions</p>
       <p class="mt-1 text-xl font-semibold text-white">{num(article.reactionTotal)}</p>
     </div>
     {#if article.impressionTotal > 0}
       <div class="cs-panel p-3">
-        <p class="text-xs text-dark-2">Feed impressions {periodLabel}</p>
+        <p class="text-xs text-dark-2">Feed impressions</p>
         <p class="mt-1 text-xl font-semibold text-white">{num(article.impressionTotal)}</p>
       </div>
     {/if}
@@ -202,7 +200,7 @@
   <div class="mt-4 cs-panel p-4">
     <p class="mb-3 text-sm font-medium text-white">
       Feed impressions over time
-      <span class="text-xs text-dark-3">· {num(article.impressionTotal)} {periodLabel}</span>
+      <span class="text-xs text-dark-3">· {num(article.impressionTotal)}</span>
     </p>
     <div class="h-48">
       {#key chartType.value}
@@ -221,7 +219,7 @@
 <div class="mt-4 cs-panel p-4">
   <p class="mb-3 text-sm font-medium text-white">
     Reactions over time
-    <span class="text-xs text-dark-3">· {num(article.reactionTotal)} {periodLabel}</span>
+    <span class="text-xs text-dark-3">· {num(article.reactionTotal)}</span>
   </p>
   {#if article.reactionTotal === 0}
     <div class="flex h-48 items-center justify-center text-center text-sm text-dark-3">

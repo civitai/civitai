@@ -15,7 +15,6 @@
     IconArticle,
     IconEye,
     IconUser,
-    IconLayoutGrid,
     IconBox,
   } from '@tabler/icons-svelte';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
@@ -102,20 +101,6 @@
             icon: IconEye,
             color: '#ffa94d',
           },
-          // Impressions are omitted entirely until the pipeline is live, rather than shown as 0 — a real zero
-          // beside a real number reads as a broken feature, and an empty chart already means both "not
-          // collecting yet" and "mistyped entity type".
-          ...(data.impressionsTracking
-            ? [
-                {
-                  label: 'Feed impressions',
-                  value: data.analytics.totals.impressions,
-                  prev: data.analyticsPrev?.totals.impressions ?? null,
-                  icon: IconLayoutGrid,
-                  color: '#f59f00',
-                },
-              ]
-            : []),
           {
             label: 'Model views',
             value: data.analytics.totals.modelViews,
@@ -208,16 +193,6 @@
             prev: data.analyticsPrev?.articleViews,
             color: 6,
           },
-          ...(data.impressionsTracking
-            ? [
-                {
-                  title: 'Feed impressions',
-                  series: data.analytics.impressions,
-                  prev: data.analyticsPrev?.impressions,
-                  color: 7,
-                },
-              ]
-            : []),
         ]
       : []
   );

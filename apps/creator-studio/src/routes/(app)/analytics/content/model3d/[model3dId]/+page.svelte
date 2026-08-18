@@ -75,7 +75,7 @@
     </a>
   </h2>
   <p class="text-sm text-dark-3">
-    Detail-page views {periodLabel}.{model.published ? '' : ' Not published.'}
+    Detail-page views{model.published ? '' : ' · not published'}
   </p>
 </div>
 
@@ -94,7 +94,7 @@
 
   <div class="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3">
     <div class="cs-panel p-3">
-      <p class="text-xs text-dark-2">Views {periodLabel}</p>
+      <p class="text-xs text-dark-2">Views</p>
       <div class="mt-1 flex items-baseline gap-2">
         <p class="text-xl font-semibold text-white">{num(model.total)}</p>
         <DeltaChip current={model.total} previous={model.prevTotal} />

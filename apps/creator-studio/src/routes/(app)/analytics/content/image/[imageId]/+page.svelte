@@ -100,19 +100,15 @@
     };
   }
 
-  // Impressions only appear when the entity actually carries them — an empty panel would claim the number is
-  // zero, when for a type with no impression arm it is simply absent.
+  // Images and videos are both tracked for impressions, so 0 here is a real zero and stays on screen — the
+  // absent case is an entity TYPE with no impression arm, which never reaches this page.
   const engagementCharts = $derived([
-    ...(image.impressionTotal > 0
-      ? [
-          {
-            title: 'Feed impressions',
-            total: image.impressionTotal,
-            series: image.impressionSeries,
-            color: 7,
-          },
-        ]
-      : []),
+    {
+      title: 'Feed impressions',
+      total: image.impressionTotal,
+      series: image.impressionSeries,
+      color: 7,
+    },
     {
       title: 'Reactions',
       total: image.reactionTotal,
@@ -152,7 +148,6 @@
       <IconExternalLink size={16} />
     </a>
   </h2>
-  <p class="text-sm text-dark-3">Views {periodLabel}.</p>
 </div>
 
 <div class="mb-4 flex flex-wrap gap-4">
@@ -168,7 +163,7 @@
 
   <div class="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
     <div class="cs-panel p-3">
-      <p class="text-xs text-dark-2">Views {periodLabel}</p>
+      <p class="text-xs text-dark-2">Views</p>
       <div class="mt-1 flex items-baseline gap-2">
         <p class="text-xl font-semibold text-white">{num(image.total)}</p>
         <DeltaChip current={image.total} previous={image.prevTotal} />
@@ -188,19 +183,17 @@
       {/if}
     </div>
     <div class="cs-panel p-3">
-      <p class="text-xs text-dark-2">Reactions {periodLabel}</p>
+      <p class="text-xs text-dark-2">Reactions</p>
       <p class="mt-1 text-xl font-semibold text-white">{num(image.reactionTotal)}</p>
     </div>
     <div class="cs-panel p-3">
-      <p class="text-xs text-dark-2">Comments {periodLabel}</p>
+      <p class="text-xs text-dark-2">Comments</p>
       <p class="mt-1 text-xl font-semibold text-white">{num(image.commentTotal)}</p>
     </div>
-    {#if image.impressionTotal > 0}
-      <div class="cs-panel p-3">
-        <p class="text-xs text-dark-2">Feed impressions {periodLabel}</p>
-        <p class="mt-1 text-xl font-semibold text-white">{num(image.impressionTotal)}</p>
-      </div>
-    {/if}
+    <div class="cs-panel p-3">
+      <p class="text-xs text-dark-2">Feed impressions</p>
+      <p class="mt-1 text-xl font-semibold text-white">{num(image.impressionTotal)}</p>
+    </div>
   </div>
 </div>
 
@@ -236,7 +229,7 @@
     <div class="cs-panel p-4">
       <p class="mb-3 text-sm font-medium text-white">
         {c.title} over time
-        <span class="text-xs text-dark-3">· {num(c.total)} {periodLabel}</span>
+        <span class="text-xs text-dark-3">· {num(c.total)}</span>
       </p>
       {#if c.total === 0}
         <div class="flex h-48 items-center justify-center text-center text-sm text-dark-3">
