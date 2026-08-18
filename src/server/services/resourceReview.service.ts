@@ -13,7 +13,10 @@ import {
 } from '~/server/selectors/resourceReview.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
+import {
+  getBlockCheckOwnerIds,
+  throwIfBlockedByOwners,
+} from '~/server/services/block-check.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   BlockedByUsers,
@@ -318,6 +321,33 @@ const createResourceReviewNotification = async ({
   }).catch();
 };
 
+const storedReviewModelId = async (id: number) =>
+  (await dbRead.resourceReview.findUnique({ where: { id }, select: { modelId: true } }))?.modelId;
+
+/**
+ * A review is content on someone else's model, so the model's owner is the block target. Resolved
+ * through the shared owner map and refused in one call, the way the comment paths do it — a
+ * throw-per-id loop would skip the self-and-duplicate handling that lives in `throwIfBlockedByOwners`.
+ */
+async function throwIfBlockedByModelOwners({
+  userId,
+  isModerator,
+  modelIds,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  modelIds: Array<number | null | undefined>;
+}) {
+  if (isModerator) return;
+  const ids = [...new Set(modelIds.filter((x): x is number => !!x))];
+  const ownerIds = (
+    await Promise.all(
+      ids.map((entityId) => getBlockCheckOwnerIds({ entityType: 'model', entityId }))
+    )
+  ).flat();
+  await throwIfBlockedByOwners({ userId, ownerIds, isModerator });
+}
+
 export const upsertResourceReview = async ({
   userId,
   isModerator,
@@ -327,21 +357,11 @@ export const upsertResourceReview = async ({
   // Edits too, not just creates — a review written before a block would otherwise stay editable
   // into anything afterwards. An edit writes `modelId` through from the request while being scoped
   // by review id, so the review's stored model is checked alongside the one the request names.
-  const storedModelId = data.id
-    ? (
-        await dbRead.resourceReview.findUnique({
-          where: { id: data.id },
-          select: { modelId: true },
-        })
-      )?.modelId
-    : undefined;
-  for (const modelId of new Set([data.modelId, storedModelId].filter((x): x is number => !!x)))
-    await throwIfBlockedByEntityOwner({
-      userId,
-      entityType: 'model',
-      entityId: modelId,
-      isModerator,
-    });
+  await throwIfBlockedByModelOwners({
+    userId,
+    isModerator,
+    modelIds: [data.modelId, data.id ? await storedReviewModelId(data.id) : undefined],
+  });
 
   if (!data.id) {
     const ret = await dbWrite.resourceReview
@@ -431,9 +451,15 @@ export async function deleteResourceReviews({ ids }: { ids: number[] }) {
   return { count: result.count };
 }
 
-export const createResourceReview = async (
-  data: CreateResourceReviewInput & { userId: number }
-) => {
+export const createResourceReview = async ({
+  isModerator,
+  ...data
+}: CreateResourceReviewInput & { userId: number; isModerator?: boolean }) => {
+  await throwIfBlockedByModelOwners({
+    userId: data.userId,
+    isModerator,
+    modelIds: [data.modelId],
+  });
   const ret = await dbWrite.resourceReview
     .create({ data, select: resourceReviewSimpleSelect })
     .catch(async (err) => {
@@ -458,7 +484,18 @@ export const createResourceReview = async (
   return ret;
 };
 
-export const updateResourceReview = async ({ id, ...data }: UpdateResourceReviewInput) => {
+export const updateResourceReview = async ({
+  id,
+  userId,
+  isModerator,
+  ...data
+}: UpdateResourceReviewInput & { userId: number; isModerator?: boolean }) => {
+  // The request carries no modelId, so the review's stored model is the only target.
+  await throwIfBlockedByModelOwners({
+    userId,
+    isModerator,
+    modelIds: [await storedReviewModelId(id)],
+  });
   const ret = await dbWrite.resourceReview.update({
     where: { id },
     data,

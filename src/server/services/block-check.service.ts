@@ -239,21 +239,15 @@ export async function getBlockCheckOwnerIdsForModelComment({
     }
   }
 
+  // Resolved through the switch rather than by reading the rows here, so a rule added to either
+  // entity type (a deleted model, a transferred owner) reaches this path too. At most two ids each.
   const ids = new Set<number>();
-  if (modelIds.size) {
-    const models = await dbRead.model.findMany({
-      where: { id: { in: [...modelIds] } },
-      select: { userId: true },
-    });
-    for (const model of models) ids.add(model.userId);
-  }
-  if (parentIds.size) {
-    const parents = await dbRead.comment.findMany({
-      where: { id: { in: [...parentIds] } },
-      select: { userId: true },
-    });
-    for (const parent of parents) ids.add(parent.userId);
-  }
+  for (const id of modelIds)
+    for (const owner of await getBlockCheckOwnerIds({ entityType: 'model', entityId: id }))
+      ids.add(owner);
+  for (const id of parentIds)
+    for (const owner of await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: id }))
+      ids.add(owner);
   return [...ids];
 }
 
@@ -329,11 +323,21 @@ export async function getBlockCheckOwnerIds({
       return r?.userId ? [r.userId] : [];
     }
     case 'commentOld': {
+      // Author AND the owner of the model the comment hangs off, mirroring `comment` above. The
+      // author alone still let a blocked user interact under a blocker's model, as long as the
+      // comment they aimed at belonged to somebody else.
       const r = await dbRead.comment.findUnique({
         where: { id: entityId },
+        select: { userId: true, modelId: true },
+      });
+      if (!r) return [];
+      const ids = new Set<number>([r.userId]);
+      const model = await dbRead.model.findUnique({
+        where: { id: r.modelId },
         select: { userId: true },
       });
-      return r ? [r.userId] : [];
+      if (model) ids.add(model.userId);
+      return [...ids];
     }
     case 'model3d': {
       const r = await dbRead.model3D.findUnique({

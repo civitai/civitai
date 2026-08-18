@@ -49,15 +49,37 @@ import { upsertCommentHandler } from '../comment.controller';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const mockDb = dbMock.dbRead;
-const MODEL_OWNER = 100;
+const REQUEST_MODEL_OWNER = 100;
+const STORED_MODEL_OWNER = 101;
 const PARENT_AUTHOR = 55;
 const COMMENTER = 7;
-const MODEL_ID = 10;
+const REQUEST_MODEL = 10;
+const STORED_MODEL = 11;
+const PARENT_ID = 9;
+const COMMENT_ID = 5;
 
-// The model lookup the handler makes for version access — distinct from the `findMany` the block
-// resolver uses, so neither can stand in for the other.
-function modelHasOneVersion() {
-  mockDb.model.findUnique.mockResolvedValue({ id: MODEL_ID, modelVersions: [{ id: 1 }] });
+/**
+ * Keyed on the id asked for, not on call order. The handler's own version-access lookup and the
+ * guard's owner lookup are both `model.findUnique` on the same table, so a `…Once` queue would be
+ * consumed by whichever ran first and the guard would silently resolve nobody.
+ */
+function arrange({ storedComment = false }: { storedComment?: boolean } = {}) {
+  const modelOwners: Record<number, number> = {
+    [REQUEST_MODEL]: REQUEST_MODEL_OWNER,
+    [STORED_MODEL]: STORED_MODEL_OWNER,
+  };
+  mockDb.model.findUnique.mockImplementation(async (args: unknown) => {
+    const id = (args as { where: { id: number } }).where.id;
+    return modelOwners[id] ? { id, userId: modelOwners[id], modelVersions: [{ id: 1 }] } : null;
+  });
+  mockDb.comment.findUnique.mockImplementation(async (args: unknown) => {
+    const id = (args as { where: { id: number } }).where.id;
+    if (id === PARENT_ID) return { userId: PARENT_AUTHOR, modelId: REQUEST_MODEL };
+    // The comment being edited lives on a DIFFERENT model than the request names, so an assertion
+    // about the stored owner cannot be satisfied by the requested one.
+    if (id === COMMENT_ID && storedComment) return { modelId: STORED_MODEL, parentId: null };
+    return null;
+  });
 }
 
 function ctx({ isModerator = false }: { isModerator?: boolean } = {}) {
@@ -70,26 +92,30 @@ function ctx({ isModerator = false }: { isModerator?: boolean } = {}) {
 }
 
 const baseInput = {
-  modelId: MODEL_ID,
+  modelId: REQUEST_MODEL,
   content: '<p>hello</p>',
 } as Parameters<typeof upsertCommentHandler>[0]['input'];
+
+const blockedBy = (...userIds: number[]) =>
+  amIBlockedByUser.mockImplementation(async (args) =>
+    userIds.includes((args as { targetUserId: number }).targetUserId)
+  );
 
 beforeEach(() => {
   vi.clearAllMocks();
   amIBlockedByUser.mockResolvedValue(false);
   mockHasEntityAccess.mockResolvedValue([{ hasAccess: true }]);
-  modelHasOneVersion();
-  mockDb.model.findMany.mockResolvedValue([{ userId: MODEL_OWNER }]);
+  arrange();
 });
 
 describe('upsertCommentHandler — block enforcement', () => {
   it('throws and never writes when the commenter is blocked by the model owner', async () => {
-    amIBlockedByUser.mockResolvedValue(true);
+    blockedBy(REQUEST_MODEL_OWNER);
 
     await expect(upsertCommentHandler({ ctx: ctx(), input: baseInput })).rejects.toThrow();
     expect(amIBlockedByUser).toHaveBeenCalledWith({
       userId: COMMENTER,
-      targetUserId: MODEL_OWNER,
+      targetUserId: REQUEST_MODEL_OWNER,
     });
     expect(mockCreateOrUpdateComment).not.toHaveBeenCalled();
   });
@@ -100,29 +126,38 @@ describe('upsertCommentHandler — block enforcement', () => {
     // The control for the negative case above: same setup, block flag flipped, write happens.
     expect(amIBlockedByUser).toHaveBeenCalledWith({
       userId: COMMENTER,
-      targetUserId: MODEL_OWNER,
+      targetUserId: REQUEST_MODEL_OWNER,
     });
     expect(mockCreateOrUpdateComment).toHaveBeenCalledTimes(1);
   });
 
   it('throws and never writes when a blocked user edits a comment written before the block', async () => {
-    mockDb.comment.findUnique.mockResolvedValue({ modelId: MODEL_ID, parentId: null });
-    amIBlockedByUser.mockResolvedValue(true);
+    // Only the model the comment is STORED on blocks, so this fails if the edit trusts the request.
+    arrange({ storedComment: true });
+    blockedBy(STORED_MODEL_OWNER);
 
     await expect(
-      upsertCommentHandler({ ctx: ctx(), input: { ...baseInput, id: 5 } })
+      upsertCommentHandler({ ctx: ctx(), input: { ...baseInput, id: COMMENT_ID } })
     ).rejects.toThrow();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: COMMENTER,
+      targetUserId: STORED_MODEL_OWNER,
+    });
     expect(mockCreateOrUpdateComment).not.toHaveBeenCalled();
   });
 
+  it('lets a non-blocked author edit', async () => {
+    arrange({ storedComment: true });
+
+    await upsertCommentHandler({ ctx: ctx(), input: { ...baseInput, id: COMMENT_ID } });
+    expect(mockCreateOrUpdateComment).toHaveBeenCalledTimes(1);
+  });
+
   it('checks the parent author on a reply, not only the model owner', async () => {
-    mockDb.comment.findMany.mockResolvedValue([{ userId: PARENT_AUTHOR }]);
-    amIBlockedByUser.mockImplementation(
-      async (args) => (args as { targetUserId: number }).targetUserId === PARENT_AUTHOR
-    );
+    blockedBy(PARENT_AUTHOR);
 
     await expect(
-      upsertCommentHandler({ ctx: ctx(), input: { ...baseInput, parentId: 9 } })
+      upsertCommentHandler({ ctx: ctx(), input: { ...baseInput, parentId: PARENT_ID } })
     ).rejects.toThrow();
     expect(amIBlockedByUser).toHaveBeenCalledWith({
       userId: COMMENTER,
@@ -132,7 +167,7 @@ describe('upsertCommentHandler — block enforcement', () => {
   });
 
   it('exempts moderators', async () => {
-    amIBlockedByUser.mockResolvedValue(true);
+    blockedBy(REQUEST_MODEL_OWNER);
 
     await upsertCommentHandler({ ctx: ctx({ isModerator: true }), input: baseInput });
     expect(amIBlockedByUser).not.toHaveBeenCalled();

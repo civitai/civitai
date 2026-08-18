@@ -60,6 +60,7 @@ vi.mock('~/server/services/user.service', () => ({
 
 import {
   createResourceReview,
+  updateResourceReview,
   upsertResourceReview,
 } from '~/server/services/resourceReview.service';
 
@@ -127,45 +128,123 @@ describe('upsertResourceReview (create branch) — idempotent on P2002 race', ()
 });
 
 /**
- * A review written before a block stayed editable afterwards: the guard ran on create only, and an
- * edit writes `modelId` through from the request while being scoped by review id — so it could also
- * be re-homed onto a model whose owner had blocked the author.
+ * Blocking on the review write paths. `upsertResourceReview` guarded creates only, so a review
+ * written before a block stayed editable afterwards — and the two procedures the review UI actually
+ * calls, `create` and `update`, had no check at all.
  */
-describe('upsertResourceReview (edit branch) — block enforcement', () => {
-  const OWNER = 1;
-  const OTHER_OWNER = 2;
+describe('resource review writes — block enforcement', () => {
+  const STORED_OWNER = 1;
+  const REQUEST_OWNER = 2;
   const AUTHOR = 42;
+  const STORED_MODEL = 11;
+  const REQUEST_MODEL = 10;
 
-  it('throws and never updates when the author is blocked by the stored model owner', async () => {
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: 10 });
-    amIBlockedByUser.mockResolvedValue(true);
+  // Keyed on the model asked for, so an assertion about the stored model cannot be satisfied by a
+  // lookup of the requested one.
+  const owners = (byModelId: Record<number, number>) =>
+    mockDb.model.findUnique.mockImplementation(async (args: unknown) => {
+      const id = (args as { where: { id: number } }).where.id;
+      return byModelId[id] ? { userId: byModelId[id] } : null;
+    });
 
-    await expect(upsertResourceReview({ ...baseInput, id: 7, userId: AUTHOR })).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: OWNER });
+  const blockedBy = (...userIds: number[]) =>
+    amIBlockedByUser.mockImplementation(async (args) =>
+      userIds.includes((args as { targetUserId: number }).targetUserId)
+    );
+
+  beforeEach(() => {
+    owners({ [REQUEST_MODEL]: REQUEST_OWNER, [STORED_MODEL]: STORED_OWNER });
+  });
+
+  it('refuses an upsert edit when the review is stored on a model whose owner blocks', async () => {
+    // Only the STORED model's owner blocks — this passes if the edit trusts the request's modelId.
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    blockedBy(STORED_OWNER);
+
+    await expect(
+      upsertResourceReview({ ...baseInput, id: 7, modelId: REQUEST_MODEL, userId: AUTHOR })
+    ).rejects.toThrow();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: STORED_OWNER });
     expect(mockDb.resourceReview.update).not.toHaveBeenCalled();
   });
 
-  it('updates when the author is not blocked', async () => {
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: 10 });
+  it('refuses an upsert edit re-homing onto a model whose owner blocks', async () => {
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    blockedBy(REQUEST_OWNER);
+
+    await expect(
+      upsertResourceReview({ ...baseInput, id: 7, modelId: REQUEST_MODEL, userId: AUTHOR })
+    ).rejects.toThrow();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: REQUEST_OWNER });
+    expect(mockDb.resourceReview.update).not.toHaveBeenCalled();
+  });
+
+  it('lets a non-blocked author edit', async () => {
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
     mockDb.resourceReview.update.mockResolvedValueOnce({ id: 7, modelId: 10, modelVersionId: 20 });
 
-    await upsertResourceReview({ ...baseInput, id: 7, userId: AUTHOR });
+    await upsertResourceReview({ ...baseInput, id: 7, modelId: REQUEST_MODEL, userId: AUTHOR });
 
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: STORED_OWNER });
     expect(mockDb.resourceReview.update).toHaveBeenCalledTimes(1);
   });
 
-  it('checks the model the edit points at, not only the one it is stored on', async () => {
-    // Stored on model 11 (owner 1, no block); the request re-homes it onto model 10 (owner 2).
-    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: 11 });
-    mockDb.model.findUnique.mockImplementation(async (args: unknown) => ({
-      userId: (args as { where: { id: number } }).where.id === 10 ? OTHER_OWNER : OWNER,
-    }));
-    amIBlockedByUser.mockImplementation(
-      async (args) => (args as { targetUserId: number }).targetUserId === OTHER_OWNER
-    );
+  // `resourceReview.create` / `.update` are the procedures the review UI calls; `upsert` is only
+  // reached from the edit-review modal. Guarding upsert alone left the ordinary path open.
+  it('refuses a create on a model whose owner blocks', async () => {
+    blockedBy(REQUEST_OWNER);
 
-    await expect(upsertResourceReview({ ...baseInput, id: 7, userId: AUTHOR })).rejects.toThrow();
+    await expect(
+      createResourceReview({ ...baseInput, modelId: REQUEST_MODEL, userId: AUTHOR })
+    ).rejects.toThrow();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: REQUEST_OWNER });
+    expect(mockDb.resourceReview.create).not.toHaveBeenCalled();
+  });
+
+  it('allows a create when nobody blocks', async () => {
+    await createResourceReview({ ...baseInput, modelId: REQUEST_MODEL, userId: AUTHOR });
+    expect(mockDb.resourceReview.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an update, resolving the model from the stored review', async () => {
+    // `update` carries no modelId at all, so the stored review is the only place the target can
+    // come from.
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    blockedBy(STORED_OWNER);
+
+    await expect(
+      updateResourceReview({ id: 7, rating: 5, details: null, userId: AUTHOR })
+    ).rejects.toThrow();
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: AUTHOR, targetUserId: STORED_OWNER });
     expect(mockDb.resourceReview.update).not.toHaveBeenCalled();
+  });
+
+  it('allows an update when nobody blocks', async () => {
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDb.resourceReview.update.mockResolvedValueOnce({ id: 7, modelId: 11, modelVersionId: 20 });
+
+    await updateResourceReview({ id: 7, rating: 5, details: null, userId: AUTHOR });
+    expect(mockDb.resourceReview.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('exempts moderators on every branch', async () => {
+    mockDb.resourceReview.findUnique.mockResolvedValue({ modelId: STORED_MODEL });
+    mockDb.resourceReview.update.mockResolvedValue({ id: 7, modelId: 11, modelVersionId: 20 });
+    blockedBy(STORED_OWNER, REQUEST_OWNER);
+
+    await updateResourceReview({
+      id: 7,
+      rating: 5,
+      details: null,
+      userId: AUTHOR,
+      isModerator: true,
+    });
+    await createResourceReview({
+      ...baseInput,
+      modelId: REQUEST_MODEL,
+      userId: AUTHOR,
+      isModerator: true,
+    });
+    expect(amIBlockedByUser).not.toHaveBeenCalled();
   });
 });

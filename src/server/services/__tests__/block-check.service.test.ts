@@ -57,9 +57,26 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     ]);
   });
 
-  it('resolves the legacy comment (commentOld) author', async () => {
-    mockDb.comment.findUnique.mockResolvedValueOnce({ userId: OWNER });
-    expect(await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: 1 })).toEqual([OWNER]);
+  // Author AND the model owner, matching the `comment` branch below. Author alone left the
+  // reaction path (the only `commentOld` consumer) open under a blocker's model.
+  it('resolves the legacy comment (commentOld) author and the model owner', async () => {
+    const COMMENT_AUTHOR = 55;
+    mockDb.comment.findUnique.mockResolvedValue({ userId: COMMENT_AUTHOR, modelId: 3 });
+    mockDb.model.findUnique.mockResolvedValue({ userId: OWNER });
+
+    expect(await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: 1 })).toEqual([
+      COMMENT_AUTHOR,
+      OWNER,
+    ]);
+    expect(mockDb.model.findUnique).toHaveBeenCalledWith({
+      where: { id: 3 },
+      select: { userId: true },
+    });
+  });
+
+  it('resolves nothing for a legacy comment that no longer exists', async () => {
+    mockDb.comment.findUnique.mockResolvedValue(null);
+    expect(await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: 1 })).toEqual([]);
   });
 
   it('reply target (comment): resolves BOTH parent author and root content owner', async () => {
@@ -176,61 +193,77 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
 describe('getBlockCheckOwnerIdsForModelComment — legacy model comments', () => {
   const PARENT_AUTHOR = 55;
   const OTHER_OWNER = 200;
+  const STORED_MODEL = 1;
+  const REQUEST_MODEL = 2;
+  const PARENT_ID = 9;
+
+  // Keyed on the id asked for rather than on call order: the resolver reads models and comments
+  // through the shared switch, so a `…Once` queue here would be consumed by whichever lookup ran
+  // first and the assertion would pass on an empty answer.
+  const owners = ({
+    models = {},
+    comments = {},
+  }: {
+    models?: Record<number, number>;
+    comments?: Record<number, { userId: number; modelId: number }>;
+  }) => {
+    mockDb.model.findUnique.mockImplementation(async (args: unknown) => {
+      const id = (args as { where: { id: number } }).where.id;
+      return models[id] ? { userId: models[id] } : null;
+    });
+    mockDb.comment.findUnique.mockImplementation(async (args: unknown) => {
+      const id = (args as { where: { id: number } }).where.id;
+      return comments[id] ?? null;
+    });
+  };
 
   it('resolves the model owner for a new top-level comment', async () => {
-    mockDb.model.findMany.mockResolvedValueOnce([{ userId: OWNER }]);
-    expect(await getBlockCheckOwnerIdsForModelComment({ modelId: 1 })).toEqual([OWNER]);
-    expect(mockDb.model.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [1] } },
-      select: { userId: true },
-    });
+    owners({ models: { [REQUEST_MODEL]: OWNER } });
+    expect(await getBlockCheckOwnerIdsForModelComment({ modelId: REQUEST_MODEL })).toEqual([OWNER]);
   });
 
   it('resolves the parent author as well as the model owner for a reply', async () => {
-    mockDb.model.findMany.mockResolvedValueOnce([{ userId: OWNER }]);
-    mockDb.comment.findMany.mockResolvedValueOnce([{ userId: PARENT_AUTHOR }]);
-    expect(await getBlockCheckOwnerIdsForModelComment({ modelId: 1, parentId: 9 })).toEqual([
-      OWNER,
-      PARENT_AUTHOR,
-    ]);
+    owners({
+      models: { [REQUEST_MODEL]: OWNER },
+      comments: { [PARENT_ID]: { userId: PARENT_AUTHOR, modelId: REQUEST_MODEL } },
+    });
+    expect(
+      await getBlockCheckOwnerIdsForModelComment({ modelId: REQUEST_MODEL, parentId: PARENT_ID })
+    ).toEqual([OWNER, PARENT_AUTHOR]);
   });
 
   it('resolves an edit target from the stored comment, not only the request', async () => {
-    // The stored comment lives on model 1; the request re-homes it onto model 2.
-    mockDb.comment.findUnique.mockResolvedValueOnce({ modelId: 1, parentId: null });
-    mockDb.model.findMany.mockResolvedValueOnce([{ userId: OTHER_OWNER }, { userId: OWNER }]);
+    // Stored on a model owned by OTHER_OWNER; the request re-homes it onto one owned by OWNER.
+    owners({
+      models: { [STORED_MODEL]: OTHER_OWNER, [REQUEST_MODEL]: OWNER },
+      comments: { 5: { userId: 42, modelId: STORED_MODEL } },
+    });
 
-    expect(await getBlockCheckOwnerIdsForModelComment({ commentId: 5, modelId: 2 })).toEqual([
-      OTHER_OWNER,
-      OWNER,
-    ]);
+    expect(
+      await getBlockCheckOwnerIdsForModelComment({ commentId: 5, modelId: REQUEST_MODEL })
+    ).toEqual([OWNER, OTHER_OWNER]);
     expect(mockDb.comment.findUnique).toHaveBeenCalledWith({
       where: { id: 5 },
       select: { modelId: true, parentId: true },
     });
-    // Both ends of the move are looked up — dropping either would let a re-home escape the block.
-    expect(mockDb.model.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [2, 1] } },
-      select: { userId: true },
-    });
   });
 
   it('resolves the stored parent author on an edit', async () => {
-    mockDb.comment.findUnique.mockResolvedValueOnce({ modelId: 1, parentId: 9 });
-    mockDb.model.findMany.mockResolvedValueOnce([{ userId: OWNER }]);
-    mockDb.comment.findMany.mockResolvedValueOnce([{ userId: PARENT_AUTHOR }]);
-
-    expect(await getBlockCheckOwnerIdsForModelComment({ commentId: 5, modelId: 1 })).toEqual([
-      OWNER,
-      PARENT_AUTHOR,
-    ]);
-    expect(mockDb.comment.findMany).toHaveBeenCalledWith({
-      where: { id: { in: [9] } },
-      select: { userId: true },
+    owners({
+      models: { [STORED_MODEL]: OWNER },
+      comments: {
+        5: { userId: 42, modelId: STORED_MODEL, parentId: PARENT_ID } as never,
+        [PARENT_ID]: { userId: PARENT_AUTHOR, modelId: STORED_MODEL },
+      },
     });
+
+    expect(
+      await getBlockCheckOwnerIdsForModelComment({ commentId: 5, modelId: STORED_MODEL })
+    ).toEqual([OWNER, PARENT_AUTHOR]);
   });
 
   it('returns [] when nothing resolves', async () => {
+    owners({});
     expect(await getBlockCheckOwnerIdsForModelComment({ commentId: 5 })).toEqual([]);
   });
 });
