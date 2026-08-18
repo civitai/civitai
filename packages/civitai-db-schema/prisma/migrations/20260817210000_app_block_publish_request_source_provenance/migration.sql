@@ -64,29 +64,47 @@
 --   old  │ present  │ safe — the SELECT never names them; INSERT omits them
 --   new  │ present  │ safe — the claim is read and stored
 --   old  │ MISSING  │ today's behaviour
---   new  │ MISSING  │ ✗✗ TOTAL READ OUTAGE, then a conditional write failure
+--   new  │ MISSING  │ ✗✗ TOTAL OUTAGE OF BOTH READ **AND** WRITE
 --
--- 🔴 THE READ IS THE FIRST AND WORST CASUALTY, NOT THE WRITE.
--- `src/pages/api/v1/blocks/submissions.ts` adds BOTH columns to its `SELECT`
--- constant, which serves BOTH the `findFirst` and the `findMany`. That is
--- UNCONDITIONAL: it does not depend on what any client sends, on whether any row
--- has provenance, or on anyone using the feature. Against a table without the
--- columns it is a 100% failure of `GET /api/v1/blocks/submissions` — every
--- author, every CLI poll, every request — with Prisma P2022. The CLI's status
--- and poll commands go down wholesale.
+-- 🔴 BOTH PATHS FAIL, BOTH UNCONDITIONALLY. An earlier revision of this comment
+-- called the write "SECONDARY and CONDITIONAL — only a submit that actually
+-- CARRIES provenance names a column the table lacks". **That was wrong**, and it
+-- was wrong in the reassuring direction. It is corrected here rather than
+-- deleted, because "day one is safe for everyone who sends nothing" is exactly
+-- the belief that gets a deploy scheduled ahead of an apply.
 --
--- The write failure is real but SECONDARY and CONDITIONAL: Prisma omits an
--- `undefined` field entirely, so a client that sends no provenance (i.e. every
--- pre-#4059 client, and the whole world on day one) produces exactly today's
--- INSERT and succeeds. Only a submit that actually CARRIES provenance names a
--- column the table lacks. The schema deliberately normalises a JSON `null` to
--- `undefined` for this reason — see `submitVersionSchema` — so "unknown" does
--- not widen this into an unconditional write failure too.
+-- READ — `src/pages/api/v1/blocks/submissions.ts` adds BOTH columns to its
+-- `SELECT` constant, which serves BOTH the `findFirst` and the `findMany`. It
+-- does not depend on what any client sends, on whether any row has provenance,
+-- or on anyone using the feature: a 100% failure of
+-- `GET /api/v1/blocks/submissions` with Prisma P2022. The CLI's status and poll
+-- commands go down wholesale.
+--
+-- WRITE — equally unconditional, by a DIFFERENT mechanism. It is true that
+-- Prisma omits an `undefined` field from the INSERT column list, so the *data*
+-- a no-provenance client sends is unchanged. That is not what breaks. The
+-- `create` at `publish-request.service.ts:1249` passes **no `select`**, so
+-- Prisma reads the row back — `INSERT … RETURNING <every scalar in the model>` —
+-- and the model now knows about both columns. So EVERY submit raises P2022,
+-- including from a client that has never heard of provenance. `submitVersion`
+-- is the only writer on that path, and both front doors funnel through it.
+--
+-- This is the SAME generic hazard stated below, applied to the write; the
+-- earlier text asserted the general rule and then exempted the write from it.
+-- MEASURED, not reasoned: with the code deployed to a preview whose dev-clone DB
+-- lacked the columns, `preview / smoke-tests` failed with exactly 1 failure —
+-- `tests/preview-apps-publish.spec.ts`, the only smoke spec that submits — on
+-- two successive commits, while a control PR passed 65/65 in the same window.
+-- The SQL below was then applied to that dev clone (columns confirmed present,
+-- nullable, no default; a re-apply is a clean no-op). Whether that clears the
+-- smoke run is being confirmed on the commit carrying this correction — do not
+-- read this paragraph as reporting a green.
 --
 -- Same precedent as 20260731120000_app_block_spend_tier_and_cap_override; the
--- generic form of the read hazard is that Prisma enumerates every scalar in the
+-- generic form of the hazard is that Prisma enumerates every scalar in the
 -- model when a query gives no `select` at all, so even queries that never
--- mention these columns raise P2022 once the model knows about them.
+-- mention these columns raise P2022 once the model knows about them. That
+-- applies to a `create` reading its row back exactly as it does to a SELECT.
 --
 -- ⚠️ NEVER DROP THESE COLUMNS ON A ROLLBACK. Old Prisma clients emit explicit
 -- column lists, so extra columns are inert to them — leaving them costs nothing,
