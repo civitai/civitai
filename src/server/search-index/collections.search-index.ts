@@ -142,17 +142,24 @@ const WHERE = [
   Prisma.sql`c."availability" != 'Unsearchable'::"Availability"`,
 ];
 
+/**
+ * What `pullData` hands `transformData`. Declared so `pullData` can be annotated with
+ * it: an early `return []` for an empty batch type-checks against an inferred return
+ * type, then destructures to `collections === undefined` and throws in `transformData`.
+ */
+type CollectionPullData = {
+  collections: CollectionForSearchIndex[];
+  itemImages: CollectionImageRaw[];
+  tags: { imageId: number; tagId: number }[];
+  profilePictures: ProfileImage[];
+};
+
 const transformData = async ({
   collections,
   itemImages,
   tags,
   profilePictures,
-}: {
-  collections: CollectionForSearchIndex[];
-  itemImages: CollectionImageRaw[];
-  tags: { imageId: number; tagId: number }[];
-  profilePictures: ProfileImage[];
-}) => {
+}: CollectionPullData) => {
   const records = collections
     .map(({ cosmetics, user, image, ...collection }) => {
       const collectionImage = image
@@ -218,7 +225,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch, step) => {
+  pullData: async ({ db, logger }, batch, step): Promise<CollectionPullData> => {
     logger(`PullData :: Pulling data for batch: ${batch}`);
     const where = [
       ...WHERE,
@@ -314,7 +321,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
     // Avoids hitting the DB without data.
     if (collections.length === 0) {
       logger(`PullData :: no collections found in batch`);
-      return [];
+      return { collections: [], itemImages: [], tags: [], profilePictures: [] };
     }
 
     const collectionsNeedingImages = collections.filter((c) => !c.image).map((c) => c.id);
