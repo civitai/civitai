@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -59,11 +60,16 @@ export function RemixGallerySettings() {
   const [mode, setMode] = useState<string>(PLACEMENT_SURFACES.remixGallery.defaultMode);
   const [price, setPrice] = useState<number | ''>('');
   const [contentRule, setContentRule] = useState<RemixGalleryContentRule>('atOrBelow');
+  // `null`, not the default value: a stored number stops tracking the surface
+  // default when it moves, and "unset" and "deliberately set to 1" are the same
+  // number, so this cannot be recovered by diffing against the default later.
+  const [freeSlots, setFreeSlots] = useState<number | null>(null);
 
   useEffect(() => {
     if (!stored) return;
     setMode(stored.mode);
     setPrice(stored.price ?? '');
+    setFreeSlots(stored.freeSlots);
     setContentRule(remixGalleryContentRule(stored.settings as Record<string, unknown>));
   }, [stored]);
 
@@ -76,6 +82,7 @@ export function RemixGallerySettings() {
   if (!enabled || !currentUser) return null;
 
   const cap = range?.max ?? 0;
+  const freeSlotCap = range?.freeSlotCap ?? 0;
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
   // Waiting on the owner, and waiting on someone else. Only the first is a
   // to-do, which is why it is the one badged in yellow.
@@ -93,10 +100,17 @@ export function RemixGallerySettings() {
   const commit = (
     nextMode: string,
     nextPrice: number | '',
-    nextRule: RemixGalleryContentRule = contentRule
+    nextRule: RemixGalleryContentRule = contentRule,
+    /**
+     * Sent ONLY when the free-slot control was the thing that moved. `undefined`
+     * leaves the stored value alone, and for a creator who has never touched it
+     * that means leaving it NULL — which is what tracks the surface default.
+     */
+    nextFreeSlots?: number
   ) =>
     save.mutate({
       settings: { contentRule: nextRule },
+      freeSlots: nextFreeSlots,
       surface: 'remixGallery',
       entityType: 'user',
       entityId: currentUser.id,
@@ -207,6 +221,23 @@ export function RemixGallerySettings() {
           ]}
         />
       </Stack>
+
+      {/* Hidden at a cap of 0 rather than shown disabled — every position would
+          mean the same thing — and hidden with the gallery closed, where there is
+          nothing to hold a slot on. */}
+      {freeSlotCap > 0 && mode !== 'off' && (
+        <PlacementFreeSlotSlider
+          surface="remixGallery"
+          cap={freeSlotCap}
+          value={freeSlots}
+          noun={['free submission', 'free submissions']}
+          onChange={setFreeSlots}
+          onCommit={(value) => {
+            setFreeSlots(value);
+            commit(mode, price, contentRule, value);
+          }}
+        />
+      )}
 
       {/* Two directions, two buttons. A gallery owner both receives submissions
           and makes them, and the counts need somewhere to live — a link with an

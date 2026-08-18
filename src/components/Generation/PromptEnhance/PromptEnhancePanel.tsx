@@ -3,6 +3,7 @@ import { IconHistory, IconSparkles } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
 import { EnhanceTab } from './EnhanceTab';
+import type { PromptEnhanceImage } from './promptEnhanceStore';
 import { HistoryTab, type RemixData } from './HistoryTab';
 
 type PromptEnhancePanelProps = {
@@ -15,6 +16,7 @@ type PromptEnhancePanelProps = {
    * LLM is instructed to preserve every `#category` reference verbatim.
    */
   snippetTargets?: Record<string, SnippetReferenceValue[]>;
+  images?: PromptEnhanceImage[];
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
   onBack?: () => void;
 };
@@ -25,6 +27,7 @@ export function PromptEnhancePanel({
   ecosystem,
   triggerWords,
   snippetTargets,
+  images,
   onApply,
   onBack,
 }: PromptEnhancePanelProps) {
@@ -69,6 +72,7 @@ export function PromptEnhancePanel({
           ecosystem={ecosystem}
           triggerWords={triggerWords}
           snippetTargets={snippetTargets}
+          images={images}
           onApply={onApply}
           onBack={onBack}
         />

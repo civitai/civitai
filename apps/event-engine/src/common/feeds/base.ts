@@ -208,8 +208,8 @@ export function createFeed<
      */
     async delete(ids: number[]): Promise<void> {
       await this.configure(); // Ensure index is configured for write operations
-      const task = await this.index!.deleteDocuments(ids);
       // Task is queued, we don't wait for completion
+      await this.index!.deleteDocuments(ids);
     }
 
     /**

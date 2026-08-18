@@ -1046,6 +1046,7 @@ export function GenerationForm() {
                                 negativePrompt?: string;
                                 resources?: ResourcesNodeValue;
                                 snippets?: SnippetsNodeValue;
+                                images?: { url: string; width?: number; height?: number }[];
                               };
                               triggerPromptEnhance(
                                 {
@@ -1054,6 +1055,7 @@ export function GenerationForm() {
                                   ecosystem: snap.ecosystem ?? '',
                                   resources: snap.resources,
                                   snippetTargets: snap.snippets?.targets,
+                                  images: snap.images,
                                 },
                                 (wf) =>
                                   graph.set({
@@ -2604,6 +2606,7 @@ function PromptEnhancePanelWrapper({
       ecosystem={data.ecosystem}
       triggerWords={data.triggerWords}
       snippetTargets={data.snippetTargets}
+      images={data.images}
       onBack={onBack}
       onApply={(enhancedPrompt, enhancedNegativePrompt) => {
         graph.set({ prompt: enhancedPrompt } as Parameters<typeof graph.set>[0]);

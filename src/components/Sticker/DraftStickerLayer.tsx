@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Gesture } from '~/components/Sticker/draft-gesture';
 import { rotate } from '~/components/Sticker/draft-gesture';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
-import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
+import { freeOfferFor } from '~/components/Sticker/free-offer';
+import {
+  useFreePlacementStanding,
+  useImagePlacementSpace,
+} from '~/components/Sticker/placement.util';
 import { useOwnedSticker, useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
@@ -53,6 +57,12 @@ export function DraftStickerLayer() {
   // refuse. The refusal is still on the server — this only means nobody has to
   // discover it by being told no after a drag.
   const maxScale = stickerMaxScale(space?.settings);
+
+  // Resolved once for the layer, for the same reason the treatment is: one query
+  // answering a question about the image and the viewer, where a subscription
+  // per sticker would be N observers refetching through an arrangement.
+  const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
+  const freeOffer = freeOfferFor(space, standing);
 
   const gesture = useRef<Gesture | null>(null);
   // Held in a ref because the pointer listener is bound once; re-binding it when
@@ -229,6 +239,7 @@ export function DraftStickerLayer() {
             selected={draft.id === selectedDraftId}
             dressed={dressed}
             price={space?.price ?? 0}
+            freeOffer={freeOffer}
             ownerShare={space?.ownerShare}
             ownerUsername={space?.ownerUsername}
             onGesture={onGesture}

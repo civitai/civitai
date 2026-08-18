@@ -6,8 +6,10 @@ import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placem
 import {
   clampApprovalShares,
   clampDeclineFeeRate,
+  PLACEMENT_FREE_SLOT_CAP_TIERS,
   PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
+  placementFreeSlotCap,
   placementPriceCap,
 } from '~/shared/utils/placement';
 
@@ -34,6 +36,8 @@ const placementConfigSchema = z.object({
   priceCapTiers: z.array(priceCapTierSchema).min(1).optional(),
   /** Per-surface override, so stickers and galleries can be priced apart later. */
   priceCapTiersBySurface: z.record(z.string(), z.array(priceCapTierSchema).min(1)).optional(),
+  freeSlotTiers: z.array(priceCapTierSchema).min(1).optional(),
+  freeSlotTiersBySurface: z.record(z.string(), z.array(priceCapTierSchema).min(1)).optional(),
   approvalShares: z
     .record(
       z.string(),
@@ -46,6 +50,8 @@ export type PlacementConfig = {
   declineFeeRate: (surface: PlacementSurface) => number;
   expiryHours: (surface: PlacementSurface) => number;
   priceCapTiers: (surface: PlacementSurface) => PlacementPriceTier[];
+  /** Same table shape and same resolver as the price caps — see the constant. */
+  freeSlotTiers: (surface: PlacementSurface) => PlacementPriceTier[];
   /** The only producer of the approved-placement shares. Nothing may pass its own. */
   approvalShares: (surface: PlacementSurface) => { seller: number; platform: number };
 };
@@ -79,7 +85,15 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
     expiryHours: (surface) =>
       clampExpiryHours(stored.expiryHours?.[surface], PLACEMENT_SURFACES[surface].expiryHours),
     priceCapTiers: (surface) =>
-      usablePriceCapTiers(stored.priceCapTiersBySurface?.[surface] ?? stored.priceCapTiers),
+      usableCapTiers(
+        stored.priceCapTiersBySurface?.[surface] ?? stored.priceCapTiers,
+        PLACEMENT_PRICE_CAP_TIERS
+      ),
+    freeSlotTiers: (surface) =>
+      usableCapTiers(
+        stored.freeSlotTiersBySurface?.[surface] ?? stored.freeSlotTiers,
+        PLACEMENT_FREE_SLOT_CAP_TIERS
+      ),
     approvalShares: (surface) =>
       clampApprovalShares(stored.approvalShares?.[surface] ?? {}, {
         seller: PLACEMENT_SURFACES[surface].defaultSellerShare,
@@ -91,14 +105,24 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
 export type PlacementPriceRange = {
   min: number;
   max: number;
+  /**
+   * The most free placements this creator may accept on one space.
+   *
+   * Carried here rather than on its own query because it is decided by the same
+   * two facts — creator score and membership tier — and both are one round trip
+   * each. A second endpoint would double that cost to answer with the same
+   * numbers, and would be free to disagree about them.
+   */
+  freeSlotCap: number;
   score: number;
   tier: 'free' | MembershipTier;
 };
 
 /**
- * The single authority on what a creator may charge. D and E must not each
- * reimplement the score-and-tier scaling, and nothing may persist the result —
- * the cap moves the moment a membership lapses or a score is recomputed.
+ * The single authority on what a creator may charge, and on how much free
+ * capacity they may offer. D and E must not each reimplement the score-and-tier
+ * scaling, and nothing may persist the result — the caps move the moment a
+ * membership lapses or a score is recomputed.
  */
 export async function placementPriceRange(
   userId: number,
@@ -127,6 +151,7 @@ export async function placementPriceRange(
   return {
     min: PLACEMENT_SURFACES[surface].serverMinPrice,
     max: placementPriceCap(score, tier, config.priceCapTiers(surface)),
+    freeSlotCap: placementFreeSlotCap(score, tier, config.freeSlotTiers(surface)),
     score,
     tier,
   };
@@ -150,8 +175,8 @@ const clampExpiryHours = (hours: number | undefined, fallback: number) => {
  * it a cap of 0, i.e. a space nobody can be charged for. It fails toward free
  * rather than toward overcharging, but silently, and the schema can't see it.
  */
-const usablePriceCapTiers = (tiers: PlacementPriceTier[] | undefined) =>
-  tiers?.some((tier) => tier.minScore === 0) ? tiers : PLACEMENT_PRICE_CAP_TIERS;
+const usableCapTiers = (tiers: PlacementPriceTier[] | undefined, fallback: PlacementPriceTier[]) =>
+  tiers?.some((tier) => tier.minScore === 0) ? tiers : fallback;
 
 const MEMBERSHIP_TIERS: MembershipTier[] = ['bronze', 'silver', 'gold'];
 

@@ -97,6 +97,35 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     expect(owners).toEqual(expect.arrayContaining([PARENT_AUTHOR, OWNER]));
   });
 
+  // A reply resolves its root owner from columns selected off `Thread`. Both halves
+  // matter: the column has to be SELECTED and the owner branch has to exist. The
+  // select assertion is the half a mocked db can't catch by return value alone.
+  it('resolves the root owner for a reply in an appListing thread', async () => {
+    const PARENT_AUTHOR = 55;
+    mockDb.commentV2.findUnique.mockResolvedValueOnce({
+      userId: PARENT_AUTHOR,
+      thread: { rootThreadId: null, appListingId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
+
+    const owners = await getBlockCheckOwnerIds({ entityType: 'comment', entityId: 1 });
+    expect(owners).toEqual(expect.arrayContaining([PARENT_AUTHOR, OWNER]));
+  });
+
+  it('selects every owner-bearing thread column when resolving a reply root', async () => {
+    mockDb.commentV2.findUnique.mockResolvedValueOnce({
+      userId: 55,
+      thread: { rootThreadId: 999 },
+    });
+    mockDb.thread.findUnique.mockResolvedValueOnce({ rootThreadId: null });
+
+    await getBlockCheckOwnerIds({ entityType: 'comment', entityId: 1 });
+
+    const select = mockDb.thread.findUnique.mock.calls[0]?.[0]?.select ?? {};
+    for (const column of ['challengeId', 'appListingId'])
+      expect(select).toHaveProperty(column, true);
+  });
+
   it('resolves the model3d owner', async () => {
     mockDb.model3D.findUnique.mockResolvedValueOnce({ userId: OWNER });
     expect(await getBlockCheckOwnerIds({ entityType: 'model3d', entityId: 1 })).toEqual([OWNER]);
@@ -116,8 +145,24 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     ]);
   });
 
-  it('returns [] for unowned/unknown entity types (no false blocks)', async () => {
-    expect(await getBlockCheckOwnerIds({ entityType: 'appListing', entityId: 1 })).toEqual([]);
+  it('resolves the appListing owner by its integer surrogate, not its ULID', async () => {
+    mockDb.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'appListing', entityId: 42 })).toEqual([
+      OWNER,
+    ]);
+    expect(mockDb.appListing.findUnique).toHaveBeenCalledWith({
+      where: { serialId: 42 },
+      select: { userId: true },
+    });
+  });
+
+  it('resolves the challenge creator', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({ createdById: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'challenge', entityId: 1 })).toEqual([OWNER]);
+  });
+
+  it('returns [] for a system challenge with no creator', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({ createdById: null });
     expect(await getBlockCheckOwnerIds({ entityType: 'challenge', entityId: 1 })).toEqual([]);
   });
 

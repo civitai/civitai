@@ -5313,6 +5313,7 @@ export interface PlacementSpace {
   entityId: number;
   mode: string;
   price: number | null;
+  freeSlots: number | null;
   settings: JsonValue;
   createdAt: Date;
   updatedAt: Date;
@@ -5331,6 +5332,7 @@ export interface Placement {
   status: string;
   removedBy: string | null;
   amount: number;
+  free: boolean;
   spendType: string | null;
   sellerId: number | null;
   seller?: User | null;

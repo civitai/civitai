@@ -29,6 +29,16 @@ const queryState = {
   countsError: false,
   placementsLoading: false,
   pending: [] as { imageId: number; isPending: boolean }[],
+  /**
+   * The creator's free capacity, and how much of it is left.
+   *
+   * Both, because `freeSlotsRemaining: 0` means two different things — "takes no
+   * free stickers" and "all slots currently held" — and the bar's copy has to
+   * tell them apart. A fixture carrying only the remainder could not express the
+   * difference, so the tests would agree with either behaviour.
+   */
+  freeSlots: 0,
+  freeSlotsRemaining: 0,
 };
 
 // Spread the real module: a hand-listed mock couples this test to the whole
@@ -48,7 +58,13 @@ vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
     };
   },
   useImagePlacementSpace: () => ({
-    space: { mode: 'open', price: 100, ownerId: 999 },
+    space: {
+      mode: 'open',
+      price: 100,
+      ownerId: 999,
+      freeSlots: queryState.freeSlots,
+      freeSlotsRemaining: queryState.freeSlotsRemaining,
+    },
     isLoading: false,
   }),
 }));
@@ -166,5 +182,126 @@ describe('StickerPlacementBar', () => {
     // nothing to act on, so the argument is the thing worth pinning.
     expect(placementsEnabled.length).toBeGreaterThan(0);
     expect(placementsEnabled.every((enabled) => enabled === true)).toBe(true);
+  });
+});
+
+/**
+ * The one number the sticker button carries.
+ *
+ * Every state here is absorbing — nothing on a timer, nothing the component
+ * tears down — so these assert after a settled render rather than awaiting a
+ * state that could leave.
+ */
+describe('StickerPlacementBar — free slots', () => {
+  const settled = {
+    counts: {},
+    countsLoading: false,
+    countsError: false,
+    placementsLoading: false,
+    pending: [],
+  };
+
+  const placeButton = () => page.getByRole('button', { name: /^Place a sticker/ });
+  // By exact name, because the comparison below renders twice in one test and
+  // both buttons stay mounted — a pattern locator resolves to two elements there
+  // and fails on strict mode rather than on the property being tested.
+  const backgroundOf = async (name: string) =>
+    getComputedStyle(await page.getByRole('button', { name }).element()).backgroundColor;
+
+  test('carries the remaining count out of the creator capacity', async () => {
+    Object.assign(queryState, settled, { freeSlots: 4, freeSlotsRemaining: 2 });
+    await renderBar();
+
+    await expect.element(page.getByText('2 of 4 free')).toBeInTheDocument();
+    // On the accessible name too. A number only a sighted user can read is not
+    // the button carrying it.
+    expect(
+      page.getByRole('button', { name: 'Place a sticker · 2 of 4 free' }).elements()
+    ).toHaveLength(1);
+  });
+
+  /**
+   * The ambiguity that needed two numbers to resolve. A creator whose slots are
+   * all held still has something to say, because a slot comes back the moment
+   * one is declined — so this state reads `0 of 4`, not silence.
+   */
+  test('says nothing about free stickers when the creator takes none', async () => {
+    Object.assign(queryState, settled, { freeSlots: 0, freeSlotsRemaining: 0 });
+    await renderBar();
+
+    expect(page.getByText(/free$/).elements()).toHaveLength(0);
+    // `exact`, because the default is a substring match — so the bare name also
+    // matched "Place a sticker · 0 of 0 free" and the assertion survived the
+    // mutation `showsFree = canPlace`, which is the one it exists to catch.
+    expect(
+      page.getByRole('button', { name: 'Place a sticker', exact: true }).elements()
+    ).toHaveLength(1);
+  });
+
+  test('still reports the capacity when every slot is currently held', async () => {
+    Object.assign(queryState, settled, { freeSlots: 4, freeSlotsRemaining: 0 });
+    await renderBar();
+
+    await expect.element(page.getByText('0 of 4 free')).toBeInTheDocument();
+  });
+
+  /**
+   * The shiny treatment, asserted as a difference rather than as a colour: what
+   * has to be true is that a slot being available looks unlike one that is not.
+   * Pinning the exact rgba would fail on a theme change that kept the behaviour.
+   */
+  test('draws the button differently when a slot is available', async () => {
+    // A stickered image, deliberately. On an empty one the button already wears
+    // this tint as half of the "place the first one" invitation, so both renders
+    // would come back identical and the test would pass for the wrong reason —
+    // or fail, as it did, on a cause that has nothing to do with free slots.
+    const stickered = { ...settled, counts: { [IMAGE_ID]: 3 } };
+
+    Object.assign(queryState, stickered, { freeSlots: 4, freeSlotsRemaining: 1 });
+    await renderBar();
+    const available = await backgroundOf('Place a sticker · 1 of 4 free');
+
+    Object.assign(queryState, stickered, { freeSlots: 4, freeSlotsRemaining: 0 });
+    await renderBar();
+    const taken = await backgroundOf('Place a sticker · 0 of 4 free');
+
+    expect(available).not.toBe(taken);
+  });
+
+  /**
+   * 🔴 The bar must never promise free, and the count is why it is tempting to.
+   *
+   * `freeSlotsRemaining` is the CREATOR's capacity. It says nothing about this
+   * viewer — somebody who spent today's allowance, or already free-placed on this
+   * image, has no free option at all — and only the standing query answers that,
+   * which this bar deliberately does not make because it renders per feed card.
+   * So a "free" label here is read by the people it is false for, who then open
+   * the tray and pay a number they were never shown.
+   *
+   * Asserted across both capacity states, because the defect only appeared in one
+   * of them: a test pinned to the empty case passes while the promise is made.
+   */
+  test.each([
+    ['slots remaining', 2],
+    ['slots all taken', 0],
+  ])('quotes the price and never promises free — %s', async (_name, remaining) => {
+    Object.assign(queryState, settled, { freeSlots: 4, freeSlotsRemaining: remaining });
+    await renderBar();
+
+    await placeButton().hover();
+    await expect.element(page.getByText('Place a sticker · 100 Buzz')).toBeInTheDocument();
+    expect(page.getByText(/·\s*free/).elements()).toHaveLength(0);
+  });
+
+  /**
+   * The count itself stays, and this is the line between the two: a number about
+   * the creator's capacity is a fact the bar has, and a claim about what THIS
+   * viewer will be charged is not.
+   */
+  test('still states the creator capacity it does know', async () => {
+    Object.assign(queryState, settled, { freeSlots: 4, freeSlotsRemaining: 2 });
+    await renderBar();
+
+    await expect.element(page.getByText('2 of 4 free')).toBeInTheDocument();
   });
 });
