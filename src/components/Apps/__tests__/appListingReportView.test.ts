@@ -5,6 +5,7 @@ import {
   getReportReasonLabel,
   isReportReason,
   reportErrorMessage,
+  reportTriggerState,
 } from '~/components/Apps/appListingReportView';
 import { APP_LISTING_REPORT_REASONS } from '~/server/schema/blocks/offsite-moderation.schema';
 
@@ -82,5 +83,32 @@ describe('reportErrorMessage', () => {
   it('handles a null/undefined error', () => {
     expect(reportErrorMessage(null).length).toBeGreaterThan(0);
     expect(reportErrorMessage(undefined).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The "already reported" trigger rule. 🔴 THIS IS AN INVARIANT GUARD, NOT A REGRESSION
+ * TEST: the shipped defect was never that this mapping was wrong, it was that the LIVE
+ * `⋮` menu item never learned the report had landed (the rule lived in a
+ * `ReportListingButton` nothing rendered). The regression cover for that is
+ * `__tests__/appListingReportCallSites.test.ts` (wiring, blocking) plus the
+ * report-through-the-menu case in `AppListingDetailBody.browser.test.tsx`
+ * (behaviour, report-only). What this pins is that the rule keeps exactly one
+ * definition and both halves move together.
+ */
+describe('reportTriggerState', () => {
+  it('offers the report before one has been made', () => {
+    expect(reportTriggerState(false)).toEqual({ label: 'Report', disabled: false });
+  });
+
+  it('goes SPENT once reported — disabled AND relabelled, not one or the other', () => {
+    expect(reportTriggerState(true)).toEqual({ label: 'Reported', disabled: true });
+  });
+
+  it('never leaves an enabled trigger reading "Reported" (the pair cannot drift)', () => {
+    for (const reported of [false, true]) {
+      const { label, disabled } = reportTriggerState(reported);
+      expect(disabled).toBe(label === 'Reported');
+    }
   });
 });

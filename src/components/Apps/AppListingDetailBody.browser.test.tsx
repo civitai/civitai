@@ -106,8 +106,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       upsertReview: {
         useMutation: () => ({ mutate: mocks.upsertMutate, isPending: false }),
       },
+      // 🔴 This one INVOKES the caller's `onSuccess`, unlike its siblings. The thing
+      // under test below is what the detail page does AFTER a report lands (its menu
+      // item has to go spent), and a `mutate` that never resolves can never show it.
       reportListing: {
-        useMutation: () => ({ mutate: mocks.reportMutate, isPending: false }),
+        useMutation: (opts?: { onSuccess?: () => void }) => ({
+          mutate: (input: unknown) => {
+            mocks.reportMutate(input);
+            opts?.onSuccess?.();
+          },
+          isPending: false,
+        }),
       },
     },
     // The SmartCreatorCard's own fetch. 🔴 VERIFIED PUBLIC: `user.getCreator` is a
@@ -381,6 +390,55 @@ describe('AppListingDetailBody', () => {
     const item = dropdown.querySelector('[data-testid="apps-listing-report-action"]') as HTMLElement;
     await userEvent.click(item);
     await expect.element(page.getByRole('button', { name: 'Submit report' })).toBeInTheDocument();
+  });
+
+  test('🔴 REGRESSION: after a successful report the menu item is DISABLED and reads "Reported"', async () => {
+    // The shipped defect: the modal's `onReported` callback existed and was wired
+    // only in a standalone `ReportListingButton` that nothing rendered, while THIS —
+    // the live path — mounted the modal without it. The item stayed clickable, so a
+    // second report hit the server's one-open-report-per-reporter CONFLICT and the
+    // user got an ERROR where they expected a confirmation.
+    //
+    // 🔴 Asserted on the STATE, never on the word: `disabled` + Mantine's
+    // `data-disabled` on the item itself. "Reported" as text is checked too, but it
+    // is the weakest half of the claim — any feature can spell a word.
+    mocks.currentUser = { id: 999, username: 'bob' };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+
+    const item = () =>
+      document.querySelector(
+        '[data-testid="apps-listing-report-action"]'
+      ) as HTMLButtonElement | null;
+
+    // POSITIVE CONTROL, from the same element: it is LIVE before the report, so the
+    // disabled state below is about the report and not about how the item renders.
+    await openMenu(within);
+    const before = item() as HTMLButtonElement;
+    expect(before).not.toBeNull();
+    expect(before.disabled).toBe(false);
+    expect(before.getAttribute('data-disabled')).toBeNull();
+    expect(before.textContent).toContain('Report');
+    expect(before.textContent).not.toContain('Reported');
+
+    await userEvent.click(before);
+    await page.getByRole('radio', { name: 'Spam' }).click();
+    await page.getByRole('button', { name: 'Submit report' }).click();
+    expect(mocks.reportMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.reportMutate.mock.calls[0][0]).toMatchObject({
+      appListingId: 'l1',
+      reason: 'spam',
+    });
+
+    // Re-open the menu (the dropdown UNMOUNTS on close, so this is a fresh element).
+    await openMenu(within);
+    await vi.waitFor(() => {
+      const spent = item();
+      expect(spent).not.toBeNull();
+      expect((spent as HTMLButtonElement).disabled).toBe(true);
+    });
+    const spent = item() as HTMLButtonElement;
+    expect(spent.getAttribute('data-disabled')).toBe('true');
+    expect(spent.textContent).toContain('Reported');
   });
 
   // ── Header stat chips ──────────────────────────────────────────────────────

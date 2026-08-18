@@ -7,6 +7,7 @@ import {
   APP_LISTING_REPORT_REASON_OPTIONS,
   isReportReason,
   reportErrorMessage,
+  reportTriggerState,
 } from '~/components/Apps/appListingReportView';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -19,9 +20,10 @@ import { trpc } from '~/utils/trpc';
 /**
  * App Store Listings (W13) — P3b USER REPORT affordance for an off-site listing.
  *
- * A small "Report" button that opens a modal with a reason picker (the 6 schema
- * reasons, human-labelled via the pure `appListingReportView` helper) + an
- * optional details textarea → `trpc.appListings.reportListing`. The reporter is
+ * A "Report" trigger (today the `⋮` menu item on the listing detail page) opens a
+ * modal with a reason picker (the 6 schema reasons, human-labelled via the pure
+ * `appListingReportView` helper) + an optional details textarea →
+ * `trpc.appListings.reportListing`. The reporter is
  * bound server-side to the authenticated caller (IDOR-safe); the DB partial-unique
  * dedups a duplicate open report, surfaced inline as a friendly "already reported"
  * message (mapped by `reportErrorMessage`).
@@ -31,12 +33,23 @@ import { trpc } from '~/utils/trpc';
  * until the store widens. Hidden entirely for a signed-out viewer (the proc is
  * `protectedProcedure`).
  *
- * 🔴 SPLIT INTO GATE + MODAL + BUTTON for the same structural reason as
+ * 🔴 SPLIT INTO GATE + STATE HOOK + MODAL for the same structural reason as
  * `ReviewListingButton` — see that file's header. Short version: the listing detail's
  * secondary actions moved into a `⋮` Menu, a Mantine `Menu.Dropdown` UNMOUNTS on
  * close, and a modal rendered as a sibling of a `Menu.Item` trigger would therefore
  * be destroyed by the very click meant to open it. The trigger goes inside the
  * dropdown, the modal outside, so `opened` has to be the caller's state.
+ *
+ * 🔴 WHICH IS EXACTLY HOW THE "ALREADY REPORTED" GUARD WENT MISSING. This file used
+ * to ALSO export a self-contained `ReportListingButton` that owned a local
+ * `done` flag, disabled its own trigger and read "Reported" once the mutation
+ * succeeded. Nothing ever rendered it — the live detail page mounted the modal
+ * itself and never passed `onReported` — so the guard sat in dead code while the
+ * real `⋮` menu item stayed live, and a second report attempt hit the server's
+ * one-open-report-per-reporter CONFLICT and surfaced an ERROR instead of the
+ * "Reported" state. The button is gone; the state it owned now lives in
+ * {@link useReportListingAffordance}, which hands the caller BOTH halves as
+ * pre-wired prop bags so a trigger cannot be mounted without its `onReported`.
  */
 
 /**
@@ -54,8 +67,9 @@ export function useCanReportListing(): boolean {
 /**
  * The report form modal. Renders NO trigger — the caller owns `opened`.
  *
- * `onReported` fires once the mutation succeeds, so a caller can mark its own trigger
- * as spent (the standalone Button below disables itself and reads "Reported").
+ * `onReported` fires once the mutation succeeds, so the caller can mark its own trigger
+ * as spent. Callers get that wiring from {@link useReportListingAffordance} rather than
+ * assembling it by hand — see its comment for why the prop bags exist.
  */
 export function ReportListingModal({
   appListingId,
@@ -94,9 +108,9 @@ export function ReportListingModal({
     setInlineError(null);
   };
 
-  // Clear the form on every OPEN. The standalone Button used to do this in its own
-  // click handler (`reset(); open();`); with the trigger now living outside this
-  // component, the reset has to key on the transition instead so BOTH triggers get it.
+  // Clear the form on every OPEN. The retired standalone button used to do this in its
+  // own click handler (`reset(); open();`); with the trigger living outside this
+  // component, the reset keys on the transition instead so every trigger gets it.
   useEffect(() => {
     if (opened) reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -172,38 +186,42 @@ export function ReportListingModal({
   );
 }
 
+export type ReportListingAffordance = {
+  /** Trigger copy — "Report", or "Reported" once this viewer has reported. */
+  label: string;
+  /** Has this viewer already reported the listing IN THIS SESSION? */
+  reported: boolean;
+  /** Spread onto the trigger (a `Menu.Item`, a `Button`, …). */
+  triggerProps: { disabled: boolean; onClick: () => void };
+  /** Spread onto {@link ReportListingModal}. Carries the `onReported` wiring. */
+  modalProps: { opened: boolean; onClose: () => void; onReported: () => void };
+};
+
 /**
- * The standalone report affordance: gate + a small Button + the modal.
+ * The report affordance's STATE, owned in one place: disclosure + the spent flag.
  *
- * UNCHANGED public API and unchanged behaviour — composed from the two exports above
- * rather than inlining them. `ReportListingButton.browser.test.tsx` is the guard.
+ * 🔴 THE POINT OF THE PROP BAGS is that they cannot be half-wired. The server allows
+ * one open report per reporter, so a second attempt is a CONFLICT — a friendly error,
+ * but an error, where the user expects a confirmation. The only way to keep that off
+ * the screen is for the trigger that opened the modal to go disabled when the modal
+ * reports success, and the two live in different subtrees (see the header: the
+ * trigger is inside a `Menu.Dropdown` that unmounts, the modal is outside it). A
+ * caller that spreads `triggerProps` and `modalProps` gets that link for free; a
+ * caller that hand-rolls either half is what shipped the bug. `disabled` / `label`
+ * come from the pure {@link reportTriggerState} so the rule has exactly one
+ * definition, and it is pinned in the blocking node `unit` project
+ * (`__tests__/appListingReportView.test.ts` for the rule,
+ * `__tests__/appListingReportCallSites.test.ts` for the wiring).
  */
-export function ReportListingButton({ appListingId }: { appListingId: string }) {
-  const canReport = useCanReportListing();
+export function useReportListingAffordance(): ReportListingAffordance {
   const [opened, { open, close }] = useDisclosure(false);
-  const [done, setDone] = useState(false);
+  const [reported, setReported] = useState(false);
+  const { label, disabled } = reportTriggerState(reported);
 
-  // The report proc is protected — never offer it to a signed-out viewer.
-  if (!canReport) return null;
-
-  return (
-    <>
-      <Button
-        variant="subtle"
-        color="gray"
-        size="xs"
-        leftSection={<IconFlag size={14} />}
-        onClick={open}
-        disabled={done}
-      >
-        {done ? 'Reported' : 'Report'}
-      </Button>
-      <ReportListingModal
-        appListingId={appListingId}
-        opened={opened}
-        onClose={close}
-        onReported={() => setDone(true)}
-      />
-    </>
-  );
+  return {
+    label,
+    reported,
+    triggerProps: { disabled, onClick: open },
+    modalProps: { opened, onClose: close, onReported: () => setReported(true) },
+  };
 }

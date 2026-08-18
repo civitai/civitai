@@ -52,7 +52,11 @@ import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
-import { ReportListingModal, useCanReportListing } from '~/components/Apps/ReportListingButton';
+import {
+  ReportListingModal,
+  useCanReportListing,
+  useReportListingAffordance,
+} from '~/components/Apps/ReportListingModal';
 import { ReviewListingModal, useCanReviewListing } from '~/components/Apps/ReviewListingButton';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
 import {
@@ -648,13 +652,22 @@ export function AppListingDetailBody({
   // 🔴 The review / report modals are owned HERE, not by their trigger. A Mantine
   // `Menu.Dropdown` is unmounted when the menu closes, so a modal rendered as a
   // sibling of its `Menu.Item` would be destroyed by the click that opens it. The
-  // gates are the SAME predicates the standalone buttons use (`useCanReviewListing`
-  // / `useCanReportListing`), imported rather than re-derived, so the menu cannot
+  // gates are the SAME predicates each affordance defines (`useCanReviewListing` /
+  // `useCanReportListing`), imported rather than re-derived, so the menu cannot
   // disagree with them about who may act.
+  //
+  // 🔴 The report affordance's STATE comes from `useReportListingAffordance` rather
+  // than a bare `useDisclosure` here, and that is the fix for a shipped defect: the
+  // server allows one open report per reporter, so once a report lands the trigger
+  // has to go spent ("Reported", disabled) or the next click returns a CONFLICT the
+  // user reads as a failure. That rule used to live in a standalone `ReportListingButton`
+  // nothing rendered, while this — the live path — mounted the modal with no
+  // `onReported` and kept its menu item live. Spread BOTH bags; do not hand-roll
+  // either half.
   const canReview = useCanReviewListing({ ownerUserId: detail.creator?.id ?? null });
   const canReport = useCanReportListing();
+  const report = useReportListingAffordance();
   const [reviewOpened, reviewModal] = useDisclosure(false);
-  const [reportOpened, reportModal] = useDisclosure(false);
 
   // Hero click-to-launch — the banner is an affordance for the SAME destination
   // as the primary CTA, derived FROM that CTA (`getDetailPrimaryAction`) rather
@@ -794,15 +807,19 @@ export function AppListingDetailBody({
                     </Menu.Item>
                   )}
                   {/* Report affordance — dark behind the mod-only store surface; the
-                      proc is protected + rate-limited + reporter-bound server-side. */}
+                      proc is protected + rate-limited + reporter-bound server-side.
+                      🔴 `triggerProps` carries BOTH the click and the spent `disabled`
+                      state; the modal below carries its `onReported` counterpart. The
+                      pair is what stops a second report from returning the server's
+                      one-open-report-per-reporter CONFLICT as an error toast. */}
                   {canReport && (
                     <Menu.Item
                       color="red"
                       leftSection={<IconFlag size={14} stroke={1.5} />}
-                      onClick={reportModal.open}
+                      {...report.triggerProps}
                       data-testid="apps-listing-report-action"
                     >
-                      Report
+                      {report.label}
                     </Menu.Item>
                   )}
                 </Menu.Dropdown>
@@ -971,11 +988,7 @@ export function AppListingDetailBody({
         />
       )}
       {!preview && canReport && (
-        <ReportListingModal
-          appListingId={detail.id}
-          opened={reportOpened}
-          onClose={reportModal.close}
-        />
+        <ReportListingModal appListingId={detail.id} {...report.modalProps} />
       )}
     </Stack>
   );
