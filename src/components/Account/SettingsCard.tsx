@@ -190,6 +190,13 @@ export function SettingsCard() {
           </>
         )}
 
+        {flags.buzz && (
+          <>
+            <Divider label="Buzz Preferences" mb={-12} />
+            <HeaderEarnedBuzzToggle />
+          </>
+        )}
+
         <Divider label="Features" />
         <EarlyAdopterToggle />
         {normalizedToggleableFeatures.length > 0 && (
@@ -251,6 +258,23 @@ function StickerMotionToggle() {
       checked={!(disableStickerMotion ?? false)}
       disabled={isPending}
       onChange={(e) => mutate({ disableStickerMotion: !e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+function HeaderEarnedBuzzToggle() {
+  const { headerEarnedBuzzOnly } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="headerEarnedBuzzOnly"
+      label="Show only earned Buzz in the header"
+      description="The header adds your Blue and earned Buzz together. Turn this on to show just the earned balance, the kind you can withdraw. The account menu lists both either way."
+      checked={headerEarnedBuzzOnly ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ headerEarnedBuzzOnly: e.target.checked })}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );
