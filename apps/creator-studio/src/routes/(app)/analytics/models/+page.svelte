@@ -12,6 +12,7 @@
   import { page } from '$app/state';
   import { tableSortState } from '$lib/state/table-sort.svelte';
   import { formatRange } from '$lib/date-range';
+  import { IMPRESSIONS_SINCE } from '$lib/impressions';
   import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import {
     BANKABLE_CURRENCIES,
@@ -28,6 +29,9 @@
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
+  // Impressions start on a known date with nothing before it, so a comparison month ending earlier compares
+  // against absence — the chip would read +100% on every row for a metric that did not exist yet.
+  const impressionsComparable = $derived(data.compare.to >= IMPRESSIONS_SINCE);
   const perPage = $derived(analyticsPageSize.value);
 
   type Row = NonNullable<PageData['modelPerformance']>[number];
@@ -105,6 +109,10 @@
       }
       existing.generations += v.generations;
       existing.prevGenerations += v.prevGenerations;
+      // Impressions are already the model's total on every version row — summing would multiply it by the
+      // version count.
+      existing.impressions = v.impressions;
+      existing.prevImpressions = v.prevImpressions;
       existing.downloads += v.downloads;
       existing.prevDownloads += v.prevDownloads;
       existing.buzzTotal += v.buzzTotal;
@@ -200,11 +208,13 @@
       ? m.generations
       : key === 'downloads'
         ? m.downloads
-        : key.startsWith(CHANNEL_SORT_PREFIX)
-          ? channelTotal(m, key.slice(CHANNEL_SORT_PREFIX.length) as (typeof CHANNELS)[number])
-          : key.startsWith(CASH_SORT_PREFIX)
-            ? cashCell(m, key.slice(CASH_SORT_PREFIX.length))
-            : m.generations;
+        : key === 'impressions'
+          ? m.impressions
+          : key.startsWith(CHANNEL_SORT_PREFIX)
+            ? channelTotal(m, key.slice(CHANNEL_SORT_PREFIX.length) as (typeof CHANNELS)[number])
+            : key.startsWith(CASH_SORT_PREFIX)
+              ? cashCell(m, key.slice(CASH_SORT_PREFIX.length))
+              : m.generations;
   const sorted = $derived.by(() => {
     const list = [...rows];
     const dir = sortDir === 'desc' ? -1 : 1;
@@ -308,6 +318,13 @@
         <Table.Row>
           <Table.Head>{grouping.value === 'model' ? 'Model' : 'Model · version'}</Table.Head>
           <Table.Head class="p-0">
+            {@render sortButton(
+              'impressions',
+              'Impressions',
+              'Times this model appeared in a feed. Counted against the model, so it has no per-version number.'
+            )}
+          </Table.Head>
+          <Table.Head class="p-0">
             {@render sortButton('generations', 'Generations', 'Generations using this model')}
           </Table.Head>
           <Table.Head class="p-0">
@@ -363,6 +380,24 @@
                   · {n} version{n === 1 ? '' : 's'}
                 {/if}
               </div>
+            </Table.Cell>
+            <Table.Cell class="align-top text-right">
+              <!-- Version rows show an em dash: impressions exist per model only, and repeating the model's
+                   number on each version would read as each version earning it. -->
+              {#if grouping.value !== 'model'}
+                <div class="tabular-nums text-dark-4" title="Counted per model, not per version">
+                  —
+                </div>
+              {:else}
+                <div class="tabular-nums {m.impressions ? 'text-white' : 'text-dark-4'}">
+                  {m.impressions ? num(m.impressions) : '—'}
+                </div>
+                {#if m.impressions && impressionsComparable}
+                  <div class="mt-0.5">
+                    <DeltaChip current={m.impressions} previous={m.prevImpressions} />
+                  </div>
+                {/if}
+              {/if}
             </Table.Cell>
             <Table.Cell class="align-top text-right">
               <div class="tabular-nums {m.generations ? 'text-white' : 'text-dark-4'}">

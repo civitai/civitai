@@ -14,7 +14,7 @@
     IconHeart,
     IconBook,
   } from '@tabler/icons-svelte';
-  import { formatImpressionsSince } from '$lib/impressions';
+  import { formatImpressionsSince, formatImpressionsFull } from '$lib/impressions';
   import type { TopImage } from '$lib/server/analytics';
   import type { PageData } from './$types';
 
@@ -151,8 +151,9 @@
     <IconLayoutGrid size={15} class="mt-px shrink-0 text-white" />
     <p>
       <strong class="font-medium text-white">Feed impressions are new.</strong> We started counting
-      them on {formatImpressionsSince()}, so anything before that date has none and totals will look
-      low until a full month has been counted.
+      on
+      {formatImpressionsSince()} and reached every visitor on {formatImpressionsFull()}, so there is
+      nothing before those dates and totals will look low until a full month has been counted.
     </p>
   </div>
 {/if}
