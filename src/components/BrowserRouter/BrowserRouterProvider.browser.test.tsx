@@ -214,6 +214,19 @@ describe('BrowserRouterProvider after a hash-only navigation', () => {
       // The hash-only pop: `beforePopState` hands it to Next, which emits
       // `hashChangeComplete` and never `routeChangeComplete`.
       setUsingNextRouter(true);
+
+      // Negative control for the raise itself: while the flag is up, an update
+      // must NOT land. Without this the test passes even if the gate it is about
+      // were deleted, because it only ever asserts that an update arrives.
+      const dropped = { as: '/images/999', url: '/images/999', state: {} };
+      window.history.replaceState(dropped, '');
+      window.dispatchEvent(new CustomEvent('locationchange', { detail: [dropped] }));
+      // Give React a chance to commit before asserting the absence, or the probe
+      // reads the pre-dispatch DOM and the assertion cannot fail. (Measured: a
+      // synchronous read passed with the gate deleted.)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(probeText()).toBe('/images');
+
       // No assertion on registration: if the listener is missing the loop is a
       // no-op, the flag stays raised, and the behavioural assertion below is what
       // reports it. Checking registration first would fail with a count instead.

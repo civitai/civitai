@@ -100,6 +100,11 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
     // this app aborts by throwing from `routeChangeStart` (RoutedDialogProvider)
     // exits before any terminal event at all. Both leave the flag raised, which
     // is the old behaviour, not a new fault.
+    //
+    // The listener also fires for hash navigations other than the pop that raised
+    // the flag — an in-page anchor clicked while a pop is still in flight lowers
+    // it early. Narrow, and still better than staying wedged, but it is the same
+    // ownership-by-boolean weakness rather than an exception to it.
     const releaseNextRouter = () => setUsingNextRouter(false);
 
     router.events.on('routeChangeComplete', handleRouteChangeComplete);
