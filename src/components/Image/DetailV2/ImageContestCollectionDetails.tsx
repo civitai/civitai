@@ -232,8 +232,9 @@ export const ImageContestCollectionDetails = ({
                 )}
                 {item.status === CollectionItemStatus.REJECTED && (
                   <Text>
-                    Your submission to the {item.collection.name} contest has been rejected and will
-                    not be visible in the contest collection.
+                    {isOwner ? 'Your submission' : "This user's submission"} to the{' '}
+                    {item.collection.name} contest has been rejected and will not be visible in the
+                    contest collection.
                     {rejectionCopy ? ` ${rejectionCopy}` : ''}
                   </Text>
                 )}
