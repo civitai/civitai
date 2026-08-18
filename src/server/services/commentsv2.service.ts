@@ -11,7 +11,11 @@ import type {
   GetCommentsInfiniteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
+import {
+  getBlockCheckOwnerIdsForComment,
+  throwIfBlockedByEntityOwner,
+  throwIfBlockedByOwners,
+} from '~/server/services/block-check.service';
 import type { NsfwLevel } from '~/server/common/enums';
 import { ThreadSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
@@ -262,7 +266,17 @@ export const upsertComment = async ({
   track?: Parameters<typeof recordStickerUsage>[0]['track'];
 }) => {
   await throwOnBlockedLinkDomain(data.content);
-  if (!data.id) await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
+  // Edits too, not just creates — a comment written before the block would otherwise stay editable
+  // into anything afterwards. An edit resolves its target from the stored comment rather than from
+  // `entityType`/`entityId`: those are client-supplied and never checked against the comment being
+  // edited, so trusting them here would let the caller pick which block gets enforced.
+  if (data.id)
+    await throwIfBlockedByOwners({
+      userId,
+      ownerIds: await getBlockCheckOwnerIdsForComment(data.id),
+      isModerator,
+    });
+  else await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
   // only check for threads on comment create
   let thread = await dbWrite.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,

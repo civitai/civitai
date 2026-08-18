@@ -1,6 +1,9 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+} from '~/server/notifications/base.notifications';
 
 const articleViewMilestones = [100, 500, 1000, 10000, 50000, 100000, 500000, 1000000] as const;
 const articleLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
@@ -150,6 +153,7 @@ export const articleNotifications = createNotificationProcessor({
         JOIN "User" u ON u.id = a."userId"
         JOIN "UserEngagement" ue ON ue."targetUserId" = a."userId" AND a."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
         WHERE a."publishedAt" > '${lastSent}'
+          AND ${notBlockedBetween('ue."userId"', 'a."userId"')}
       )
       SELECT
         CONCAT('new-article-from-following:', details->>'articleId') "key",
