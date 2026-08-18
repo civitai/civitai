@@ -45,7 +45,9 @@ const noEntity = {
 function expectAdds(adds: Add[], expected: Add[]) {
   // Order between the entity emit and the owner emit is incidental, so it is not asserted — a
   // refactor that reorders them is not a regression. The length is, otherwise arrayContaining
-  // would pass on a handler that emitted extra metrics.
+  // would pass on a handler that emitted extra metrics. Note the pair only holds while `expected`
+  // has no duplicate members: two identical Adds would both be satisfied by one, leaving the
+  // length as the sole check.
   expect(adds).toHaveLength(expected.length);
   expect(adds).toEqual(expect.arrayContaining(expected));
 }
@@ -173,9 +175,18 @@ test('the owner is looked up by thread, not by commenter', async () => {
   // Binding the wrong record field resolves a real row for the wrong entity, which is invisible in
   // the emissions above — every metric still looks well-formed, just attributed to a stranger.
   expect(calls[0].params).toEqual([1234]);
+  // One round trip per event, on a Kafka-rate path.
+  expect(calls).toHaveLength(1);
 });
 
-test('every commentable Thread column is resolved through the root thread', async () => {
+// A tripwire for accidental deletion, and nothing more. It checks that the query still MENTIONS
+// every surface; it cannot check that the query resolves one. An adversarial pass walked straight
+// through it while leaving every string below intact — deleting `i."userId"` from the owner
+// COALESCE and adding `AND i."userId" IS NOT NULL` to the Image join stops every image comment
+// counting toward its creator and this test still passes, as do `AND false` on a join, restricting
+// to non-reply threads, and `LIMIT 0`. Adding more substrings cannot close that: the mutation works
+// by keeping the substring. Only executing the query against a seeded database would.
+test('the owner query still mentions every commentable surface', async () => {
   const { actions } = recorder();
   const { pg, calls } = pgReturning({ ...noEntity, ownerId: 1 });
 
