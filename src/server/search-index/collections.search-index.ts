@@ -8,14 +8,16 @@ import type {
   CollectionWriteConfiguration,
   CosmeticSource,
   CosmeticType,
-  MediaType,
 } from '~/shared/utils/prisma/enums';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
-import { parseCollectionImageMeta } from '~/server/search-index/collection-image-meta';
+import {
+  collectionIndexImageSql,
+  type CollectionIndexImage,
+} from '~/server/search-index/collection-index-image';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
@@ -88,19 +90,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-type ImageProps = {
-  type: MediaType;
-  id: number;
-  name: string | null;
-  url: string;
-  hash: string | null;
-  height: number | null;
-  width: number | null;
-  nsfwLevel: number;
-  postId: number | null;
-  meta: Prisma.JsonObject | null;
-  userId: number;
-} | null;
+type ImageProps = CollectionIndexImage | null;
 
 type CollectionForSearchIndex = {
   id: number;
@@ -168,7 +158,6 @@ const transformData = async ({
       const collectionImage = image
         ? {
             ...image,
-            meta: parseCollectionImageMeta(image.meta),
             tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
           }
         : null;
@@ -178,7 +167,6 @@ const transformData = async ({
         .filter(isDefined)
         .map((i) => ({
           ...i,
-          meta: parseCollectionImageMeta(i.meta),
           tags: tags.filter((t) => t.imageId === i.id).map((t) => ({ id: t.tagId })),
         }));
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
@@ -240,22 +228,6 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
         : undefined,
     ].filter(isDefined);
 
-    const imageSql = Prisma.sql`
-    jsonb_build_object(
-        'id', i."id",
-        'postId', i."postId",
-        'name', i."name",
-        'url', i."url",
-        'nsfwLevel', i."nsfwLevel",
-        'width', i."width",
-        'height', i."height",
-        'hash', i."hash",
-        'type', i."type",
-        'userId', i."userId",
-        'meta', jsonb_strip_nulls(jsonb_build_object('prompt', i."meta"->'prompt'))
-      ) image
-  `;
-
     // When metrics are ready use this one :D
     const collections = await db.$queryRaw<CollectionForSearchIndex[]>`
     WITH target AS MATERIALIZED (
@@ -311,7 +283,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
     ), images AS MATERIALIZED (
       SELECT
         i.id,
-        ${imageSql}
+        ${collectionIndexImageSql}
       FROM "Image" i
       WHERE i.id IN (SELECT "imageId" FROM target)
         AND i."ingestion" = 'Scanned'
@@ -366,7 +338,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
       ), imageItemImage AS MATERIALIZED (
         SELECT
           i.id,
-          ${imageSql}
+          ${collectionIndexImageSql}
         FROM "Image" i
         WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
           AND i."ingestion" = 'Scanned'
@@ -375,7 +347,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
         SELECT * FROM (
             SELECT
               i."postId" id,
-              ${imageSql},
+              ${collectionIndexImageSql},
               ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
             FROM "Image" i
             WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
@@ -387,7 +359,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
         SELECT * FROM (
             SELECT
               m.id,
-              ${imageSql},
+              ${collectionIndexImageSql},
               ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
             FROM "Image" i
             JOIN "Post" p ON p.id = i."postId"

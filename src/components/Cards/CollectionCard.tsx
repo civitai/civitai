@@ -2,7 +2,6 @@ import { ActionIcon, Badge, Text } from '@mantine/core';
 import { memo } from 'react';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { truncate } from 'lodash-es';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
@@ -10,9 +9,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
-import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
-import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { SimpleUser } from '~/server/selectors/user.selector';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import type { CollectionGetInfinite } from '~/types/router';
@@ -31,7 +29,8 @@ type ImageProps = {
   url: string;
   type: MediaType;
   name?: string | null;
-  meta?: ImageMetaProps | null;
+  poi?: boolean;
+  minor?: boolean;
 };
 
 export const CollectionCard = memo(function CollectionCard({ data }: Props) {
@@ -191,11 +190,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
                   transcode={image.type === MediaType.video}
                   className={cardClasses.image}
                   name={image.name ?? image.id.toString()}
-                  alt={
-                    image.meta
-                      ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                      : image.name ?? undefined
-                  }
+                  alt={image.name ?? undefined}
                   placeholder="empty"
                   loading="lazy"
                   width={DEFAULT_EDGE_IMAGE_WIDTH}
