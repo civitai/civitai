@@ -197,6 +197,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type {
+  CollectionItemRejectionReason,
   DomainColor,
   ModelType,
   ReportReason,
@@ -8057,6 +8058,8 @@ type ContestCollectionItem = {
   tag: { id: number; name: string } | null;
   collection: { id: number; name: string; metadata: Prisma.JsonValue; mode: 'Contest' };
   scores: { userId: number; score: number }[];
+  rejectionReason: CollectionItemRejectionReason | null;
+  rejectionDetail: string | null;
 };
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
@@ -8069,6 +8072,8 @@ const contestCollectionItemsCache = createLruCache({
         ci.id,
         ci."imageId",
         ci.status,
+        ci."rejectionReason"::text as "rejectionReason",
+        ci."rejectionDetail",
         CASE WHEN t.id IS NOT NULL
           THEN jsonb_build_object('id', t.id, 'name', t.name)
           ELSE NULL

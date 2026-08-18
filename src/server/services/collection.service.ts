@@ -78,7 +78,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { resolveRejectionCopy } from '~/shared/constants/collection-rejection.constants';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import type { CollectionItemRejectionReason, MediaType } from '~/shared/utils/prisma/enums';
 import {
   ChallengeSource,
   CollectionContributorPermission,
@@ -1524,6 +1524,8 @@ export type CollectionItemExpanded = {
   status?: CollectionItemStatus;
   createdAt: Date | null;
   scores?: { userId: number; score: number }[] | null;
+  rejectionReason?: CollectionItemRejectionReason | null;
+  rejectionDetail?: string | null;
 } & (ModelCollectionItem | PostCollectionItem | ImageCollectionItem | ArticleCollectionItem);
 
 // Helper to parse cursor for collection items
@@ -1626,6 +1628,8 @@ export const getCollectionItemsByCollectionId = async ({
     createdAt: Date | null;
     scores?: { userId: number; score: number }[];
     sortKey?: number;
+    rejectionReason?: CollectionItemRejectionReason | null;
+    rejectionDetail?: string | null;
   }[];
   let currentSeed: number | undefined;
 
@@ -1747,6 +1751,8 @@ export const getCollectionItemsByCollectionId = async ({
         articleId: number | null;
         status: CollectionItemStatus | null;
         createdAt: Date | null;
+        rejectionReason: CollectionItemRejectionReason | null;
+        rejectionDetail: string | null;
       }[]
     >`
       SELECT
@@ -1756,6 +1762,11 @@ export const getCollectionItemsByCollectionId = async ({
         ci."imageId",
         ci."articleId",
         ${forReview ? Prisma.sql`ci."status"::text as status,` : Prisma.sql``}
+        ${
+          forReview
+            ? Prisma.sql`ci."rejectionReason"::text as "rejectionReason", ci."rejectionDetail",`
+            : Prisma.sql``
+        }
         ci."createdAt"
       FROM "CollectionItem" ci
       ${
