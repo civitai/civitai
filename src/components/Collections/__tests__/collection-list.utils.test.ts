@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
 import {
   buildCollectionSections,
   getMembership,
@@ -22,6 +23,31 @@ describe('getMembership', () => {
 
   it('falls back to following when permissions have not loaded yet', () => {
     expect(getMembership({ isOwner: false }, undefined)).toBe('following');
+  });
+
+  // Bookmark collections are owned, so ownership alone must not decide the section.
+  it('classifies an owned bookmark collection as bookmarks, not owned', () => {
+    expect(getMembership({ isOwner: true, mode: CollectionMode.Bookmark }, undefined)).toBe(
+      'bookmarks'
+    );
+  });
+
+  it('leaves an owned collection in another mode under owned', () => {
+    expect(getMembership({ isOwner: true, mode: CollectionMode.Contest }, undefined)).toBe('owned');
+  });
+
+  it('leaves an owned collection with no mode under owned', () => {
+    expect(getMembership({ isOwner: true, mode: null }, undefined)).toBe('owned');
+  });
+
+  // The bookmark section holds the user's own bookmark collections. Someone else's is theirs.
+  it('classifies a non-owned bookmark collection by permissions', () => {
+    expect(getMembership({ isOwner: false, mode: CollectionMode.Bookmark }, undefined)).toBe(
+      'following'
+    );
+    expect(
+      getMembership({ isOwner: false, mode: CollectionMode.Bookmark }, { isCollaborator: true })
+    ).toBe('shared');
   });
 });
 
@@ -68,8 +94,9 @@ describe('buildCollectionSections', () => {
     ]);
   });
 
-  it('always emits all three sections so none can be filtered away', () => {
+  it('always emits every section, in order, so none can be filtered away', () => {
     expect(buildCollectionSections([], new Map()).map((s) => s.key)).toEqual([
+      'bookmarks',
       'owned',
       'shared',
       'following',
@@ -97,6 +124,55 @@ describe('buildCollectionSections', () => {
     );
     const sections = buildCollectionSections(sorted, new Map());
     expect(sections.find((s) => s.key === 'following')?.rows.map((r) => r.id)).toEqual([5, 4]);
+  });
+});
+
+describe('buildCollectionSections bookmarks', () => {
+  const made = { id: 1, isOwner: true };
+  const likedModels = { id: 2, isOwner: true, mode: CollectionMode.Bookmark };
+  const bookmarkedArticles = { id: 3, isOwner: true, mode: CollectionMode.Bookmark };
+  const someoneElses = { id: 4, isOwner: false, mode: CollectionMode.Bookmark };
+  const rows = [made, likedModels, bookmarkedArticles, someoneElses];
+
+  // Reporting the section a row landed in — rather than a section's contents — names the bucket a
+  // regression put it in, so a bookmark row falling back into `owned` reads as exactly that.
+  const sectionOf = (
+    sections: ReturnType<typeof buildCollectionSections>,
+    id: number
+  ): string | undefined => sections.find((s) => s.rows.some((r) => r.id === id))?.key;
+
+  it('files every owned bookmark collection under bookmarks', () => {
+    const sections = buildCollectionSections(rows, new Map());
+    expect(sectionOf(sections, likedModels.id)).toBe('bookmarks');
+    expect(sectionOf(sections, bookmarkedArticles.id)).toBe('bookmarks');
+  });
+
+  it('leaves the collections the user made in owned', () => {
+    const sections = buildCollectionSections(rows, new Map());
+    expect(sectionOf(sections, made.id)).toBe('owned');
+    expect(sections.find((s) => s.key === 'owned')?.rows.map((r) => r.id)).toEqual([made.id]);
+  });
+
+  it("keeps someone else's bookmark collection out of the bookmarks section", () => {
+    const sections = buildCollectionSections(rows, new Map());
+    expect(sectionOf(sections, someoneElses.id)).toBe('following');
+  });
+
+  it('still places each row in exactly one section', () => {
+    const sections = buildCollectionSections(rows, new Map());
+    expect(sections.flatMap((s) => s.rows.map((r) => r.id)).sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it('preserves the incoming order inside the bookmarks section', () => {
+    const sorted = sortCollections(
+      [
+        { id: 2, isOwner: true, mode: CollectionMode.Bookmark, name: 'Liked Models' },
+        { id: 3, isOwner: true, mode: CollectionMode.Bookmark, name: 'Bookmarked Articles' },
+      ],
+      'name-asc'
+    );
+    const sections = buildCollectionSections(sorted, new Map());
+    expect(sections.find((s) => s.key === 'bookmarks')?.rows.map((r) => r.id)).toEqual([3, 2]);
   });
 });
 
