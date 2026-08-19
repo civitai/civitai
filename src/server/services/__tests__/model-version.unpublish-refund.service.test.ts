@@ -328,16 +328,26 @@ describe('unpublishModelVersionById — refund gate', () => {
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
-  it('owes nothing once a timed gate has lapsed, however recent the purchase', async () => {
-    // Every other fixture here uses a permanent gate. The lapsed-window case is the reason the
-    // refund window is measured per PURCHASE rather than per version, and it was otherwise
-    // exercised only in the model-level suite.
+  it('still owes the refund when the gate row has been cleared', async () => {
+    // The hole this closes: an editor save that omits `paidAccess` deletes the gate row, and the
+    // requirement used to return empty without one. Two saves and the obligation vanished.
+    seedPurchase({ gates: [] });
+
+    await expect(unpublishModelVersionById({ id: VERSION_ID, user: owner })).rejects.toThrowError(
+      /without refunding buyers/
+    );
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('still owes the refund when a timed window has lapsed but the purchase is recent', async () => {
     seedPurchase({ gates: [{ entityId: VERSION_ID, endsAt: new Date(Date.now() - HOUR) }] });
 
-    await unpublishModelVersionById({ id: VERSION_ID, user: owner });
+    await expect(unpublishModelVersionById({ id: VERSION_ID, user: owner })).rejects.toThrowError(
+      /without refunding buyers/
+    );
 
-    expect(mockTx.modelVersion.update).toHaveBeenCalled();
-    expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
   });
 
   it('aborts the take-down mid-refund, keeping the count honest and the paid buyer revoked', async () => {
@@ -387,7 +397,7 @@ describe('unpublishModelVersionById — refund gate', () => {
     expect(mockTx.modelVersion.update).toHaveBeenCalled();
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
     // A moderator take-down must not even price the refund — that read is the owner's gate.
-    expect(dbMock.dbWrite.paidAccess.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.entityAccess.findMany).not.toHaveBeenCalled();
   });
 
   // Scoping lives in a SQL `where` that the db mock does not implement, so no fixture here can
@@ -396,10 +406,8 @@ describe('unpublishModelVersionById — refund gate', () => {
   // path asks about, so that is what these assert. The behavioural half — a sibling's buyers never
   // entering the refund — is only provable against a real database.
   //
-  // The first two assertions carry the claim. The third (`entityAccess.findMany`) cannot fail while
-  // the fixture holds one version: its `in` array is `activeGateVersionIds`, so dropping the
-  // active-gate filter still prints `[VERSION_ID]`. Kept because it becomes load-bearing the moment
-  // a second version enters the fixture — do not count it as coverage today.
+  // Both assertions now carry weight: with the gate read gone, `entityAccess.findMany`'s `in` array
+  // is the flagged-version set itself, so a scope mistake shows up there directly.
   it('asks about this version alone, so a sibling can never enter the gate lookup', async () => {
     seedPurchase();
 
@@ -410,10 +418,6 @@ describe('unpublishModelVersionById — refund gate', () => {
     expect(dbMock.dbWrite.modelVersion.findMany).toHaveBeenCalledWith({
       where: { id: VERSION_ID },
       select: { id: true, meta: true },
-    });
-    expect(dbMock.dbWrite.paidAccess.findMany).toHaveBeenCalledWith({
-      where: { entityType: 'ModelVersion', entityId: { in: [VERSION_ID] } },
-      select: { entityId: true, endsAt: true },
     });
     expect(dbMock.dbWrite.entityAccess.findMany).toHaveBeenCalledWith(
       expect.objectContaining({

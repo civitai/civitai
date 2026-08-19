@@ -1,5 +1,4 @@
 import pLimit from 'p-limit';
-import { isPaidAccessActive } from '@civitai/buzz';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -57,13 +56,22 @@ export type ModelEarlyAccessRefundRequirement = {
 // purchase keeps its modelVersionId. Unpublishing a whole model aggregates every version's set;
 // unpublishing one version passes only that version — same obligation, narrower scope.
 //
-// Refundable = a buzz-purchased EntityAccess grant, bought within the refund window, on a version
-// whose PaidAccess gate is still active (permanent, or a timed window that hasn't lapsed).
-// Lapsed-window buyers already got what they paid for, so they don't block.
+// Refundable = a buzz-purchased EntityAccess grant bought within the refund window. That is the whole
+// predicate, and it deliberately does NOT ask whether the version is still gated.
+//
+// 🔴 It used to. Requiring an active PaidAccess row put the switch in the obligated party's hands:
+// an ordinary editor save that omits `paidAccess` deletes the gate row
+// (writePaidAccessForModelVersion → deleteMany), so two saves cleared the obligation and the
+// take-down refunded nobody. Whether someone paid in the last 30 days is a fact about the purchase;
+// the gate's current state is not, and the creator can change it.
+//
+// Consequence, deliberate: a buyer whose timed early-access window has since lapsed is now refunded
+// if they bought inside the window. They paid within 30 days and the thing they paid for is being
+// taken away — the lapsed window bought them days of access, not the removal.
 //
 // The window is measured per PURCHASE, not per version: a permanent gate never expires, so anything
-// keyed off the version would owe its buyers a refund forever. Gate/grant rows are read fresh from
-// the primary (dbWrite), not the cache/replica — this guard protects buyers' money.
+// keyed off the version would owe its buyers a refund forever. Grant rows are read fresh from the
+// primary (dbWrite), not the cache/replica — this guard protects buyers' money.
 const getEarlyAccessRefundRequirementForVersions = async (
   versions: { id: number; meta: Prisma.JsonValue }[]
 ): Promise<ModelEarlyAccessRefundRequirement> => {
@@ -79,20 +87,11 @@ const getEarlyAccessRefundRequirementForVersions = async (
   );
   if (flagged.length === 0) return empty;
 
-  const gates = await dbWrite.paidAccess.findMany({
-    where: { entityType: 'ModelVersion', entityId: { in: flagged.map((v) => v.id) } },
-    select: { entityId: true, endsAt: true },
-  });
   const now = new Date();
-  const activeGateVersionIds = gates
-    .filter((gate) => isPaidAccessActive(gate, now))
-    .map((gate) => gate.entityId);
-  if (activeGateVersionIds.length === 0) return empty;
-
   const accessRows = await dbWrite.entityAccess.findMany({
     where: {
       accessToType: 'ModelVersion',
-      accessToId: { in: activeGateVersionIds },
+      accessToId: { in: flagged.map((v) => v.id) },
       accessorType: 'User',
     },
     select: { accessToId: true, accessorId: true, meta: true, addedAt: true },

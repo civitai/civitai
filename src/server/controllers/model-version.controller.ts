@@ -33,7 +33,11 @@ import type {
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import type { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
+import type {
+  DeclineReviewSchema,
+  ModelMeta,
+  UnpublishModelSchema,
+} from '~/server/schema/model.schema';
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getStaticContent } from '~/server/services/content.service';
@@ -57,7 +61,11 @@ import {
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
-import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
+import {
+  getModel,
+  queueModelEarlyAccessReindex,
+  unpublishModelById,
+} from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
   handleLogError,
@@ -754,6 +762,29 @@ export const unpublishModelVersionHandler = async ({
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     const meta = (version.meta as ModelVersionMeta | null) || {};
+
+    // Taking down the last published version leaves the model published with nothing under it — a
+    // state the model page, the listings and search all have to render and nobody chose. So the
+    // model comes down with it. Delegating rather than doing both in turn is what keeps it whole:
+    // unpublishModelById already unpublishes every published version, and it runs the model-scoped
+    // refund gate, so a refusal happens before anything moves instead of leaving the version down
+    // and the model up. Lives here because model.service imports model-version.service.
+    const publishedSiblings = await dbRead.modelVersion.count({
+      where: { modelId: version.modelId, status: ModelStatus.Published, id: { not: id } },
+    });
+    if (publishedSiblings === 0) {
+      const model = await getModel({ id: version.modelId, select: { meta: true } });
+      await unpublishModelById({
+        ...input,
+        id: version.modelId,
+        meta: (model?.meta as ModelMeta | null) ?? undefined,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      await dataForModelsCache.refresh(version.modelId);
+      return getVersionById({ id, select: { id: true, status: true, modelId: true } });
+    }
+
     const updatedVersion = await unpublishModelVersionById({ ...input, meta, user: ctx.user });
 
     // Send event in background
