@@ -17,10 +17,14 @@
  *
  * Submits with forceRescan so a model already scanned during the shadow phase gets a
  * fresh verdict instead of the cached one, which would never re-enter applyResult.
+ *
+ * A non-dry run is logged to Axiom (`model-text-moderation`) before responding, so a
+ * gateway timeout on a long batch still leaves a record of what committed.
  */
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   buildModelModerationText,
   MODEL_MODERATION_ENTITY_TYPE,
@@ -82,7 +86,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       const content = buildModelModerationText(model);
       if (!content) return;
       try {
-        await submitTextModeration({
+        // No throw on a failed submit — createXGuardModerationRequest normalizes both
+        // controlled (4xx/5xx) and uncontrolled (network/DNS) failures into a logged,
+        // EM-recorded return with no `id`. Count from the return value, not the catch.
+        const result = await submitTextModeration({
           entityType: MODEL_MODERATION_ENTITY_TYPE,
           entityId: model.id,
           content,
@@ -91,7 +98,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           recordForReview: true,
           forceRescan: true,
         });
-        submitted++;
+        if (result?.id) submitted++;
+        else failed++;
       } catch {
         failed++;
       }
@@ -99,13 +107,24 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     5
   );
 
-  return res.status(200).json({
-    dryRun: false,
+  const counts = {
     selected: candidates.length,
     eligible: eligible.length,
     skippedLocked: candidates.length - eligible.length,
     submitted,
     failed,
     nextCursor,
-  });
+  };
+
+  // Logged here, before responding, so an HTTP timeout on a long batch cannot lose the
+  // record of what already committed — same reasoning as minor-hash-sweep's summary log.
+  await logToAxiom({
+    type: 'info',
+    name: 'model-text-moderation',
+    message: 'backfill batch complete',
+    cursor: cursor ?? null,
+    ...counts,
+  }).catch(() => null);
+
+  return res.status(200).json({ dryRun: false, ...counts });
 });
