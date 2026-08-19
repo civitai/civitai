@@ -68,10 +68,10 @@
     ondrop={onDrop}
   >
     {#if cover}
-      <img src={cover.previewUrl} alt="" class="h-28 w-auto rounded-lg" />
+      <img src={cover.previewUrl} alt="" class="size-28 rounded-lg object-cover" />
       <span class="text-sm text-dark-2">Drop another image, or click to replace.</span>
     {:else if existingUrl}
-      <EdgeImage src={existingUrl} width={220} alt="" class="h-28 w-auto rounded-lg" />
+      <EdgeImage src={existingUrl} width={220} alt="" class="size-28 rounded-lg object-cover" />
       <span class="text-sm text-dark-2">Drop a new image, or click to replace this one.</span>
     {:else}
       <IconPhotoPlus size={28} class="text-dark-2" />

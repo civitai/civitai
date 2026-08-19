@@ -85,9 +85,13 @@ export function AnnouncementCard({
       {overlay}
 
       {cover && (
+        // Square, and `self-start` so the row's default stretch cannot pull it taller than
+        // it is wide: creators are told to upload 1:1 and that has to be what they get, on a
+        // three-line card and a thirty-line one alike.
+        //
         // Hidden only when the card itself is under 20rem — this is a container query, so
         // it tracks the card's width, not the viewport's.
-        <div className="relative min-h-40 w-40 shrink-0 @max-xs:hidden">
+        <div className="relative size-40 shrink-0 self-start @max-xs:hidden">
           {cover.kind === 'key' ? (
             <EdgeMedia
               src={cover.src}

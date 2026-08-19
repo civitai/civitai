@@ -3,18 +3,28 @@
 -- with ON_ERROR_STOP, as that file's header instructs:
 --   psql -v ON_ERROR_STOP=1 -f migration.sql
 --
--- Both statements are idempotent, matching the sibling migration, whose header promises the
--- operator that re-running the pair always resumes. That promise has to hold here or it is a
--- trap: these are two separate statements in a file that opens no transaction, so statement 1
--- landing and statement 2 not is a reachable state, and an unguarded re-run would insert
--- 25,655 duplicates and show every affected creator the same card twice.
+-- 🔴 THIS FILE IS A ONE-SHOT, NOT A SYNC. Re-running it is safe and inserts nothing. It does
+-- NOT "resume" in the sense the sibling migration's header uses for its own DDL: the gate
+-- asks "did this statement ever run", not "which rows are missing". So a second run a week
+-- later, to pick up banners written since, inserts 0 and prints INSERT 0 0 with no signal
+-- that anything was skipped. Catching those up is a hand-written statement, not a re-run.
 --
--- Each statement is gated on its own marker in metadata rather than on the rows it would
--- write. An INSERT is atomic, so the marker's presence means that statement completed; and a
--- marker no creator can author is the only discriminator that survives creators authoring
--- their own profileOnly announcements between the two runs. Matching row-for-row on content
--- instead is both slower (a correlated scan per profile, which times out on prod-sized data)
--- and wrong once someone edits a migrated announcement.
+-- Unguarded it would have been worse in the other direction: two statements with a re-run
+-- inserting 25,655 duplicates, every affected creator seeing the same card twice. Each
+-- statement is gated on its own marker in metadata rather than on the rows it would write,
+-- because a marker no creator can author is the only discriminator that survives creators
+-- authoring their own profileOnly announcements. Matching row-for-row on content instead is
+-- both slower (a correlated scan per profile, which times out on prod-sized data) and wrong
+-- once someone edits a migrated announcement.
+--
+-- 🔴 ONE SESSION AT A TIME, and the advisory lock below is what enforces it. The gate is an
+-- InitPlan evaluated against the snapshot taken at statement start, so two psql sessions that
+-- both begin before either commits would both see no marker and both insert the full set —
+-- and no unique constraint exists to catch it. Statement 1 is 25k inserts and takes a while;
+-- an operator who reads "re-running is safe" and decides the session is wedged is exactly how
+-- the second session gets opened. The lock makes that second session wait instead, after
+-- which its gate sees the marker and it inserts nothing. Do not remove it, and do not split
+-- the file back out of its transaction.
 --
 -- No creator path can write or preserve this marker: upsertCreatorAnnouncementSchema takes no
 -- metadata field at all, and creator-announcement.service.ts rebuilds metadata from scratch
@@ -71,6 +81,13 @@
 -- applied at render so the row is complete on its own and a moderator reading the table
 -- sees what a follower sees; a creator editing the announcement simply overwrites it.
 
+BEGIN;
+
+-- 1095630849 is ANNOUNCEMENT_LOCK_CLASS (0x414e0001) from creator-announcement.service.ts,
+-- written in decimal because hex integer literals need Postgres 16. The app locks
+-- (class, userId) with a real user id, so (class, 0) cannot collide with a creator saving.
+SELECT pg_advisory_xact_lock(1095630849::int, 0::int);
+
 INSERT INTO "Announcement" ("userId", "title", "content", "color", "domain", "startsAt", "profileOnly", "disabled", "metadata", "createdAt", "updatedAt")
 SELECT
   p."userId",
@@ -122,6 +139,8 @@ WHERE p."sfwMessage" IS NOT NULL
   AND NOT EXISTS (
     SELECT 1 FROM "Announcement" a WHERE a.metadata->>'migrated' = 'sfwMessage'
   );
+
+COMMIT;
 
 -- The columns are NOT dropped here. They stay until the carousel has been observed
 -- working in production: ProfileHeader suppresses the banner once a creator has a live
