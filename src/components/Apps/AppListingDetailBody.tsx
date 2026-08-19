@@ -52,13 +52,14 @@ import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
-import { ReportListingModal, useCanReportListing } from '~/components/Apps/ReportListingButton';
+import {
+  ReportListingModal,
+  useCanReportListing,
+  useReportListingAffordance,
+} from '~/components/Apps/ReportListingModal';
 import { ReviewListingModal, useCanReviewListing } from '~/components/Apps/ReviewListingButton';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
-import {
-  CATEGORY_ICONS,
-  FALLBACK_CATEGORY_ICON,
-} from '~/components/Apps/marketplaceCategoryIcons';
+import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
@@ -135,8 +136,9 @@ import type {
  * not, and must not become, an embedded runtime.
  *
  * Structurally pinned in the node `unit` project
- * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), because
- * CI does not run the browser `component` suite.
+ * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), because the
+ * browser `component` suite runs only in the PR preview pipeline — report-only, and not a
+ * required check — so a guard pinned only there is not reliably exercised.
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in the
  * pure view-model (`safeExternalHref`) + rendered with rel="noopener noreferrer"
@@ -294,8 +296,10 @@ function HeroCover({
  * 🔴 THE WIRING IS NOT — do not read the line above as licence to skip the browser
  * tier. That this component hands the view-model the REAL `preview` value, rather than
  * a literal or an inverted one, is pinned ONLY in `AppListingDetailBody.browser.test.tsx`,
- * which CI does not run. Mutating the call site to `{ preview: false }` leaves the whole
- * node suite green. Rule and wiring are separate claims; only the first one is gated.
+ * which runs solely as `preview / component-tests` in the PR preview pipeline — report-only,
+ * not a required check, and not reported at all when the preview build fails. Mutating the
+ * call site to `{ preview: false }` leaves the whole node suite green. Rule and wiring are
+ * separate claims; only the first one is gated.
  *
  * 🔴 The hover MESSAGE is likewise decided there and passed through UNCONDITIONALLY.
  * `StatHoverCard` renders `message` INSTEAD of `value`, so a ternary that supplied the
@@ -430,6 +434,11 @@ function ScreenshotGallery({
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
+  // The recents store is ACCOUNT-scoped (#4048): every write carries the id of
+  // the viewer who made it, so a later account in the same browser profile does
+  // not inherit this one's history. Read here rather than passed down as a prop
+  // — this is the component that owns the recording click.
+  const recentsOwnerId = useCurrentUser()?.id ?? null;
 
   // 🔴 Resolve the glyph INSIDE each branch, from the mode that branch has
   // already established — never once up front from `action.mode`. `href` is
@@ -473,7 +482,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
           // following this link IS the moment the app is opened, and it leaves
           // the SPA — so it is the only chance to record the open. A detail-page
           // VIEW never records.
-          onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail))}
+          onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail), recentsOwnerId)}
         >
           {action.label}
         </Button>
@@ -614,12 +623,15 @@ export interface AppListingDetailBodyProps {
    *     stands in so the submitter is still identified),
    *   - the header META LINE (`Updated:` + category), whose date is the publish
    *     request's submission time rather than a listing's `updated_at`,
-   *   - the Details rail's REVIEWS row (same reason as the chips),
+   *   - the Details rail's REVIEWS, INSTALLS and UPDATED rows — the first two for the
+   *     same reason as the chips (aggregates a shadow listing structurally cannot
+   *     have), the third for the same reason as the meta line above. All three
+   *     omissions are decided inside the pure row builder, not here.
    *   - the related-listings rail and the back-to-store link.
    *
-   * The Details ACCORDION itself is KEPT: kind / category / rating / installs /
-   * updated are exactly the scalars a moderator is reviewing, and the reviews row is
-   * dropped inside the pure row builder.
+   * The Details ACCORDION itself is KEPT: kind / category / rating are exactly the
+   * scalars a moderator is reviewing, and they are the ones the posture can state
+   * honestly.
    *
    * Used by the moderator listing-media review to render an unapproved SHADOW listing
    * as a store preview. Every omission above has its own test, each paired with a
@@ -645,13 +657,22 @@ export function AppListingDetailBody({
   // 🔴 The review / report modals are owned HERE, not by their trigger. A Mantine
   // `Menu.Dropdown` is unmounted when the menu closes, so a modal rendered as a
   // sibling of its `Menu.Item` would be destroyed by the click that opens it. The
-  // gates are the SAME predicates the standalone buttons use (`useCanReviewListing`
-  // / `useCanReportListing`), imported rather than re-derived, so the menu cannot
+  // gates are the SAME predicates each affordance defines (`useCanReviewListing` /
+  // `useCanReportListing`), imported rather than re-derived, so the menu cannot
   // disagree with them about who may act.
+  //
+  // 🔴 The report affordance's STATE comes from `useReportListingAffordance` rather
+  // than a bare `useDisclosure` here, and that is the fix for a shipped defect: the
+  // server allows one open report per reporter, so once a report lands the trigger
+  // has to go spent ("Reported", disabled) or the next click returns a CONFLICT the
+  // user reads as a failure. That rule used to live in a standalone `ReportListingButton`
+  // nothing rendered, while this — the live path — mounted the modal with no
+  // `onReported` and kept its menu item live. Spread BOTH bags; do not hand-roll
+  // either half.
   const canReview = useCanReviewListing({ ownerUserId: detail.creator?.id ?? null });
   const canReport = useCanReportListing();
+  const report = useReportListingAffordance();
   const [reviewOpened, reviewModal] = useDisclosure(false);
-  const [reportOpened, reportModal] = useDisclosure(false);
 
   // Hero click-to-launch — the banner is an affordance for the SAME destination
   // as the primary CTA, derived FROM that CTA (`getDetailPrimaryAction`) rather
@@ -791,15 +812,19 @@ export function AppListingDetailBody({
                     </Menu.Item>
                   )}
                   {/* Report affordance — dark behind the mod-only store surface; the
-                      proc is protected + rate-limited + reporter-bound server-side. */}
+                      proc is protected + rate-limited + reporter-bound server-side.
+                      🔴 `triggerProps` carries BOTH the click and the spent `disabled`
+                      state; the modal below carries its `onReported` counterpart. The
+                      pair is what stops a second report from returning the server's
+                      one-open-report-per-reporter CONFLICT as an error toast. */}
                   {canReport && (
                     <Menu.Item
                       color="red"
                       leftSection={<IconFlag size={14} stroke={1.5} />}
-                      onClick={reportModal.open}
+                      {...report.triggerProps}
                       data-testid="apps-listing-report-action"
                     >
-                      Report
+                      {report.label}
                     </Menu.Item>
                   )}
                 </Menu.Dropdown>
@@ -968,11 +993,7 @@ export function AppListingDetailBody({
         />
       )}
       {!preview && canReport && (
-        <ReportListingModal
-          appListingId={detail.id}
-          opened={reportOpened}
-          onClose={reportModal.close}
-        />
+        <ReportListingModal appListingId={detail.id} {...report.modalProps} />
       )}
     </Stack>
   );

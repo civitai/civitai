@@ -7,8 +7,8 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  * The listing detail's "Details" accordion ROW MODEL (blocking `unit` project).
  *
  * The browser `component` project is not run by CI and loads no CSS, so nothing there
- * can be the gate for which rows exist, in what order, or whether the `preview`
- * posture drops the reviews row. That decision is pure, so it is pinned here.
+ * can be the gate for which rows exist, in what order, or which rows the `preview`
+ * posture drops. That decision is pure, so it is pinned here.
  *
  * `formatDate` is INJECTED throughout — a fixed marker rather than the real dayjs
  * formatter — so these assertions are about ORDER and OMISSION and cannot go red on a
@@ -230,16 +230,93 @@ describe('buildListingDetailRows — the reviews row', () => {
 });
 
 describe('🔴 buildListingDetailRows — the `preview` posture', () => {
-  it('POSITIVE CONTROL: the reviews row IS present in the live posture', () => {
-    // Same fixture, `preview` unset. Without this the omission below is a zero from a
-    // builder that might never emit the row at all.
-    expect(keys(buildListingDetailRows(detail(), { formatDate: fmt }))).toContain('reviews');
+  it('POSITIVE CONTROL: reviews, installs and updated ARE present in the live posture', () => {
+    // Same fixture, `preview` unset. Without this the omissions below are zeros from a
+    // builder that might never emit those rows at all.
+    const live = keys(buildListingDetailRows(detail(), { formatDate: fmt }));
+    expect(live).toContain('reviews');
+    expect(live).toContain('installs');
+    expect(live).toContain('updated');
   });
 
-  it('preview OMITS the reviews row (a shadow listing has none) and keeps the rest', () => {
+  it('preview OMITS reviews / installs / updated and keeps exactly the honest rows', () => {
     const rows = keys(buildListingDetailRows(detail(), { preview: true, formatDate: fmt }));
     expect(rows).not.toContain('reviews');
-    expect(rows).toEqual(['kind', 'category', 'rating', 'installs', 'updated']);
+    expect(rows).not.toContain('installs');
+    expect(rows).not.toContain('updated');
+    expect(rows).toEqual(['kind', 'category', 'rating']);
+  });
+
+  /**
+   * 🔴 INSTALLS — asserted on the ROW, not on a word.
+   *
+   * `buildListingStatChips` already returns NO chips in preview, with a docstring
+   * saying the reason is that a zero would read as a measured fact about an app nobody
+   * could yet have installed. The rail then rendered `Installs: 0` anyway. The rule is
+   * one rule; this pins that the rail obeys it too.
+   *
+   * The assertion is the ABSENCE OF THE ROW OBJECT plus the absence of any row whose
+   * rendered value is the zero string — not "the DOM does not contain '0'", which any
+   * other number on the page can spell.
+   */
+  it('🔴 preview renders NO installs row — not even the zero one', () => {
+    const zeroed = detail({ installCount: 0 });
+    // Control: with `preview` unset the zero really does render, so the omission below
+    // is about the posture and not about a builder that drops zeros generally.
+    const live = buildListingDetailRows(zeroed, { formatDate: fmt });
+    expect(live.find((r) => r.key === 'installs')).toMatchObject({
+      label: 'Installs',
+      value: '0',
+    });
+
+    const rows = buildListingDetailRows(zeroed, { preview: true, formatDate: fmt });
+    expect(rows.find((r) => r.key === 'installs')).toBeUndefined();
+    // …and no OTHER row smuggles the count in under a different key.
+    expect(rows.map((r) => r.value)).not.toContain('0');
+    expect(rows.map((r) => r.label)).not.toContain('Installs');
+  });
+
+  /**
+   * 🔴 UPDATED — the mislabelled-submission-date row.
+   *
+   * In preview the `updatedAt` a `ListingDetail` carries is not necessarily
+   * `app_listings.updated_at`: `buildListingDetailPreview` has no such field and
+   * substitutes the publish request's SUBMISSION time. The row rendered it as
+   * "Updated: <submission date>". `AppListingDetailBody` already omits its header meta
+   * line in preview for exactly this reason; the rail now agrees.
+   *
+   * Asserted on the row's rendered VALUE — the formatted date string is pinned absent,
+   * so a row that came back under a different key or label would still fail.
+   */
+  it('🔴 preview renders NO updated row, so no date reaches the screen under that label', () => {
+    // Control: the live posture DOES render the formatted date.
+    const live = buildListingDetailRows(detail(), { formatDate: fmt });
+    expect(live.find((r) => r.key === 'updated')).toMatchObject({
+      label: 'Updated',
+      value: `formatted:${FIXED_DATE}`,
+    });
+
+    const rows = buildListingDetailRows(detail(), { preview: true, formatDate: fmt });
+    expect(rows.find((r) => r.key === 'updated')).toBeUndefined();
+    expect(rows.map((r) => r.value)).not.toContain(`formatted:${FIXED_DATE}`);
+    expect(rows.map((r) => r.label)).not.toContain('Updated');
+  });
+
+  it('🔴 preview never calls the date formatter at all', () => {
+    // Stronger than "no row": if the formatter is never invoked, no formatted date can
+    // exist to be rendered by any future row. A spy, not a string search.
+    const calls: string[] = [];
+    const spy = (iso: string) => {
+      calls.push(iso);
+      return `formatted:${iso}`;
+    };
+    // Positive control first — the spy DOES fire in the live posture.
+    buildListingDetailRows(detail(), { formatDate: spy });
+    expect(calls).toEqual([FIXED_DATE]);
+
+    calls.length = 0;
+    buildListingDetailRows(detail(), { preview: true, formatDate: spy });
+    expect(calls).toEqual([]);
   });
 
   it('preview: false is byte-identical to omitting the flag', () => {

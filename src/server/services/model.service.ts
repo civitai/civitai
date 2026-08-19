@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
-import pLimit from 'p-limit';
 import dayjs from '~/shared/utils/dayjs';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
@@ -110,14 +109,6 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
-import {
-  getMultiAccountTransactionsByPrefix,
-  getUserBuzzAccountByAccountTypes,
-  refundMultiAccountTransaction,
-} from '~/server/services/buzz.service';
-import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
-import { BuzzTypes } from '~/shared/constants/buzz.constants';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -147,7 +138,6 @@ import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
-  throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
@@ -2773,170 +2763,16 @@ export const publishModelById = async ({
   return model;
 };
 
-export type ModelEarlyAccessRefundRequirement = {
-  purchases: {
-    modelVersionId: number;
-    buyerId: number;
-    buzzTransactionIds: string[];
-  }[];
-  buyerCount: number;
-  totalBuzz: number;
-  /** What reversing these purchases debits from each of the owner's accounts, keyed by account. */
-  totalsByAccount: Partial<Record<BuzzSpendType, number>>;
-};
+import {
+  getModelEarlyAccessRefundRequirement,
+  refundModelEarlyAccessPurchases,
+} from '~/server/services/model-early-access-refund.service';
 
-// Early access is sold per model VERSION, so the refund set is computed version-by-version and each
-// purchase keeps its modelVersionId; this only aggregates because unpublishing acts on the whole
-// model (the owner has no per-version unpublish — that menu item is moderator-only).
-//
-// Refundable = a buzz-purchased EntityAccess grant on a version whose PaidAccess gate is still
-// active (permanent, or a timed window that hasn't lapsed). Lapsed-window buyers already got what
-// they paid for, so they don't block. Gate/grant rows are read fresh from the primary (dbWrite),
-// not the cache/replica — this guard protects buyers' money.
-export const getModelEarlyAccessRefundRequirement = async ({
-  id,
-}: GetByIdInput): Promise<ModelEarlyAccessRefundRequirement> => {
-  const empty: ModelEarlyAccessRefundRequirement = {
-    purchases: [],
-    buyerCount: 0,
-    totalBuzz: 0,
-    totalsByAccount: {},
-  };
-  const versions = await dbWrite.modelVersion.findMany({
-    where: { modelId: id },
-    select: { id: true, meta: true },
-  });
-  const flagged = versions.filter(
-    (v) => (v.meta as ModelVersionMeta | null)?.hadEarlyAccessPurchase
-  );
-  if (flagged.length === 0) return empty;
-
-  const gates = await dbWrite.paidAccess.findMany({
-    where: { entityType: 'ModelVersion', entityId: { in: flagged.map((v) => v.id) } },
-    select: { entityId: true, endsAt: true },
-  });
-  const now = new Date();
-  const activeGateVersionIds = gates
-    .filter((gate) => isPaidAccessActive(gate, now))
-    .map((gate) => gate.entityId);
-  if (activeGateVersionIds.length === 0) return empty;
-
-  const accessRows = await dbWrite.entityAccess.findMany({
-    where: {
-      accessToType: 'ModelVersion',
-      accessToId: { in: activeGateVersionIds },
-      accessorType: 'User',
-    },
-    select: { accessToId: true, accessorId: true, meta: true },
-  });
-
-  // Only rows carrying a purchase transaction id count — owner-granted access has nothing to refund.
-  const purchases = accessRows
-    .map((row) => {
-      const rowMeta = (row.meta ?? {}) as Record<string, unknown>;
-      const buzzTransactionIds = ['download-buzzTransactionId', 'generation-buzzTransactionId']
-        .map((key) => rowMeta[key])
-        .filter((value): value is string => typeof value === 'string' && value.length > 0);
-      return { modelVersionId: row.accessToId, buyerId: row.accessorId, buzzTransactionIds };
-    })
-    .filter((purchase) => purchase.buzzTransactionIds.length > 0);
-  if (purchases.length === 0) return empty;
-
-  // Refund amounts come from the ledger, not current terms — prices can change after purchase.
-  const limit = pLimit(5);
-  const ledgers = await Promise.all(
-    purchases
-      .flatMap((purchase) => purchase.buzzTransactionIds)
-      .map((prefix) => limit(() => getMultiAccountTransactionsByPrefix(prefix)))
-  );
-
-  // Each leg is reported by the account the BUYER spent from, so the owner's side has to be
-  // re-derived through the same mapping the charge used.
-  const totalsByAccount: Partial<Record<BuzzSpendType, number>> = {};
-  for (const leg of ledgers.flat()) {
-    const account = paidAccessPayoutAccount(BuzzTypes.toSpendType(leg.accountType));
-    totalsByAccount[account] = (totalsByAccount[account] ?? 0) + leg.amount;
-  }
-
-  return {
-    purchases,
-    buyerCount: new Set(purchases.map((purchase) => purchase.buyerId)).size,
-    totalBuzz: Object.values(totalsByAccount).reduce((sum, amount) => sum + amount, 0),
-    totalsByAccount,
-  };
-};
-
-const refundModelEarlyAccessPurchases = async ({
-  modelId,
-  requirement,
-}: {
-  modelId: number;
-  requirement: ModelEarlyAccessRefundRequirement;
-}) => {
-  const model = await dbWrite.model.findUniqueOrThrow({
-    where: { id: modelId },
-    select: { name: true, userId: true },
-  });
-
-  // Checked per account, not against one total: a creator paid in blue holds nothing in yellow, and
-  // the two are not interchangeable. The ledger exempts refunds from its own sufficiency check and
-  // will take an account negative, so nothing downstream re-checks this.
-  const accounts = Object.keys(requirement.totalsByAccount) as BuzzSpendType[];
-  const balances = await getUserBuzzAccountByAccountTypes(model.userId, accounts);
-  const shortfalls = accounts
-    .map((account) => ({
-      account,
-      required: requirement.totalsByAccount[account] ?? 0,
-      available: balances[account] ?? 0,
-    }))
-    .filter(({ required, available }) => available < required);
-
-  if (shortfalls.length > 0) {
-    throw throwInsufficientFundsError(
-      `Refunding early access buyers requires ${shortfalls
-        .map((s) => `${s.required} ${s.account} Buzz but the account only has ${s.available}`)
-        .join('; ')}.`
-    );
-  }
-
-  let refundedCount = 0;
-  for (const purchase of requirement.purchases) {
-    try {
-      for (const prefix of purchase.buzzTransactionIds) {
-        await refundMultiAccountTransaction({
-          externalTransactionIdPrefix: prefix,
-          description: `Refund early access purchase: ${model.name} (model unpublished)`,
-        });
-      }
-      // Revoke the now-refunded grant so a retry after a mid-loop failure skips this buyer
-      // instead of refunding them twice. deleteMany, not delete: the money already moved, so an
-      // already-gone row must not abort the loop.
-      await dbWrite.entityAccess.deleteMany({
-        where: {
-          accessToId: purchase.modelVersionId,
-          accessToType: 'ModelVersion',
-          accessorId: purchase.buyerId,
-          accessorType: 'User',
-        },
-      });
-      refundedCount++;
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'model-unpublish-early-access-refund',
-        message: `Failed to refund early access purchases for model ${modelId}`,
-        error,
-        modelId,
-        modelVersionId: purchase.modelVersionId,
-        buyerId: purchase.buyerId,
-        refundedCount,
-      });
-      throw throwBadRequestError(
-        `Failed to refund early access buyers (${refundedCount} of ${requirement.purchases.length} refunded). The model was not unpublished — please try again.`
-      );
-    }
-  }
-};
+// Re-exported for the callers that predate the extraction. The version-scoped entry point is
+// deliberately NOT re-exported here — reaching it through this module is what would put the
+// model-version → model import edge back.
+export { getModelEarlyAccessRefundRequirement } from '~/server/services/model-early-access-refund.service';
+export type { ModelEarlyAccessRefundRequirement } from '~/server/services/model-early-access-refund.service';
 
 export const unpublishModelById = async ({
   id,
@@ -2952,6 +2788,14 @@ export const unpublishModelById = async ({
   isModerator?: boolean;
 }) => {
   if (!isModerator) {
+    // The guard below reasons from "an owner-initiated unpublish carries no reason". `reason` is a
+    // plain optional input, so without this that is an assumption rather than a precondition: an
+    // owner supplying one takes the non-preserve branch and overwrites the moderator's verdict,
+    // explanation and attribution — no republish escape, but the record destroyed by the person it
+    // is against, and the take-down notification re-fired.
+    if (reason || customMessage)
+      throw throwAuthorizationError('Only a moderator can give a reason for unpublishing.');
+
     const requirement = await getModelEarlyAccessRefundRequirement({ id });
     if (requirement.purchases.length > 0) {
       if (!refundEarlyAccess) {
@@ -2965,34 +2809,104 @@ export const unpublishModelById = async ({
 
   const model = await dbWrite.$transaction(
     async (tx) => {
+      // 🔴 Never write a moderator's verdict down. A reasonless unpublish — every owner-initiated
+      // one — would otherwise overwrite an existing UnpublishedViolation with plain Unpublished and
+      // restamp the record, and `model.controller.ts` blocks an owner republish only WHILE the
+      // status is UnpublishedViolation. That is an owner-reachable way to clear a moderation flag.
+      //
+      // Decided from the STATUS, not from `meta.unpublishedReason`: 2,327 of 43,492 violation rows
+      // in prod carry no reason in meta, and keying on meta fails open for exactly those. The
+      // moderator's explanation, timestamp and actor are all left untouched — refreshing
+      // `unpublishedAt` alone re-fires the take-down notification, and `customMessage` is the ONLY
+      // explanation rendered when the reason is 'other', which is the largest bucket.
+      const existing = await tx.model.findUniqueOrThrow({
+        where: { id },
+        select: { status: true },
+      });
+      // Any moderator-only status, not UnpublishedViolation alone: Deleted is the other one, and
+      // clearing it lets an owner republish a soft-deleted model.
+      const preserveModStatus =
+        !reason && constants.modPublishOnlyStatuses.includes(existing.status);
+
       const unpublishedAt = new Date().toISOString();
-      const updatedMeta = {
-        ...meta,
-        ...(reason
-          ? {
-              unpublishedReason: reason,
-              customMessage,
-            }
-          : {}),
-        unpublishedAt,
-        unpublishedBy: userId,
-      };
+      const updatedMeta = preserveModStatus
+        ? meta
+        : {
+            ...meta,
+            ...(reason
+              ? {
+                  unpublishedReason: reason,
+                  customMessage,
+                }
+              : {}),
+            unpublishedAt,
+            unpublishedBy: userId,
+          };
       const updatedModel = await tx.model.update({
         where: { id },
         data: {
-          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          status: reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished,
           meta: updatedMeta,
-          modelVersions: {
-            updateMany: {
-              where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-              data: { status: ModelStatus.Unpublished, meta: updatedMeta },
-            },
-          },
         },
         select: { userId: true, modelVersions: { select: { id: true } } },
       });
 
       const versionIds = updatedModel.modelVersions.map((x) => x.id);
+
+      // One statement for the version take-down, and it has to stay one.
+      //
+      // 🔴 MERGE the keys into each version's own meta rather than writing an object over the
+      // column. Overwriting replaced every version's meta wholesale and `hadEarlyAccessPurchase`
+      // went with it — that flag is the only pre-filter on the refund requirement and the guard on
+      // both delete paths, so losing it turns an unpublish into a way to shed the refund obligation
+      // and then delete the version past every guard. `updateMany` cannot write a different value
+      // per row, hence raw SQL.
+      //
+      // On a preserved take-down the status follows the model but the NARRATIVE does not: merging
+      // unpublishedAt into version meta re-fires the per-version notification —
+      // unpublish.notifications.ts selects on that meta with no status predicate — naming the owner
+      // as the actor of a moderator's decision.
+      //
+      // 🔴 And the keys must land on exactly the versions this call takes down. They are what
+      // unpublish.notifications.ts selects on — meta alone, no status predicate, keyed per version —
+      // so stamping a draft tells the creator a version they never published was unpublished.
+      // Status and meta move together under one snapshot, which makes "stamped iff transitioned"
+      // structural rather than two predicates someone has to keep in step.
+      await tx.$executeRaw`
+        UPDATE "ModelVersion"
+        SET "status" = ${
+          reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished
+        }::"ModelStatus",
+            "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(
+              preserveModStatus
+                ? {}
+                : {
+                    ...(reason ? { unpublishedReason: reason, customMessage } : {}),
+                    unpublishedAt,
+                    unpublishedBy: userId,
+                  }
+            )}::jsonb,
+            -- Prisma's @updatedAt does not apply to raw SQL, and there is no DB default or trigger.
+            -- Without this a taken-down version keeps a pre-take-down updatedAt, which is on the
+            -- public v1 payload via modelVersion.selector.
+            "updatedAt" = NOW()
+        WHERE "modelId" = ${id}
+          AND "status" IN (${ModelStatus.Published}::"ModelStatus", ${
+        ModelStatus.Scheduled
+      }::"ModelStatus")
+      `;
+
+      // Deliberately the WIDE id list, unlike the statement above: a post attached to a version that
+      // was already down can still be published, and `publishedAt IS NOT NULL` is what scopes this —
+      // not the id set. Narrowing it to the versions this call took down would leave those posts public.
       await tx.$executeRaw`
         UPDATE "Post"
         SET "metadata"    = "metadata" || jsonb_build_object(

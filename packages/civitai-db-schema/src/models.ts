@@ -672,6 +672,10 @@ export interface User {
   appOwnershipTransfersFrom?: AppOwnershipTransfer[];
   appOwnershipTransfersTo?: AppOwnershipTransfer[];
   targetedAnnouncements?: AnnouncementUser[];
+  authoredAnnouncements?: Announcement[];
+  announcementSpends?: AnnouncementSpend[];
+  announcementMutesGiven?: UserAnnouncementMute[];
+  announcementMutesReceived?: UserAnnouncementMute[];
   placementSuspension?: PlacementSuspension | null;
   placementsReceived?: Placement[];
   placementsMade?: Placement[];
@@ -1440,6 +1444,7 @@ export interface Image {
   connections?: ImageConnection[];
   UserProfile?: UserProfile[];
   userProfileSfwCover?: UserProfile[];
+  announcementCovers?: Announcement[];
   clubCover?: Club[];
   clubHeader?: Club[];
   clubAvatar?: Club[];
@@ -1987,6 +1992,8 @@ export interface AppBlockPublishRequest {
   rejectionReason: string | null;
   approvalNotes: string | null;
   forgejoCommitSha: string | null;
+  sourceCommit: string | null;
+  sourceDirty: boolean | null;
   deployState: string | null;
   deployDetail: string | null;
   deployUpdatedAt: Date | null;
@@ -2653,7 +2660,30 @@ export interface Announcement {
   endsAt: Date | null;
   metadata: JsonValue | null;
   disabled: boolean;
+  userId: number | null;
+  user?: User | null;
+  coverId: number | null;
+  cover?: Image | null;
+  profileOnly: boolean;
   targetUsers?: AnnouncementUser[];
+  spends?: AnnouncementSpend[];
+}
+
+export interface AnnouncementSpend {
+  id: number;
+  userId: number;
+  announcementId: number | null;
+  createdAt: Date;
+  user?: User;
+  announcement?: Announcement | null;
+}
+
+export interface UserAnnouncementMute {
+  userId: number;
+  creatorId: number;
+  createdAt: Date;
+  user?: User;
+  creator?: User;
 }
 
 export interface AnnouncementUser {

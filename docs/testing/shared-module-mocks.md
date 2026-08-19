@@ -245,6 +245,29 @@ because the failing set is order-dependent — 1574 failures at 8 workers agains
 Do not read a suite result through `| tail` or `| grep`; that reports the pipe's exit
 code. Redirect to a file and read the file.
 
+🔴 **Never run two vitest runs in one worktree — the second one's result is not evidence.**
+
+A targeted run and a full suite sharing a checkout produce assertion failures in the targeted
+run that the code does not explain. Measured on one frozen SHA, five files, identical bytes on
+disk for every run: **10/10 green** with nothing else in the tree, **1/5 red** with a full suite
+running concurrently in the same worktree, and earlier the same day 5/10 and 4/5 red under that
+condition. A control rules out load as the cause: 6/6 green under 24 spinning CPU processes with
+no rival vitest.
+
+The failure reads as a test bug, which is what makes it expensive. The symptom is that a `dbRead`
+lookup the test configured returns the canonical mock's **empty default** instead — so the code
+under test resolves nothing, a guard finds no owner, and an assertion that something is refused
+fails as "resolved instead of rejecting". It is not a consumed `…Once` queue: it reproduces on
+plain `mockResolvedValue` too. The mechanism is unproven; the shared `node_modules/.vite` cache
+is the obvious suspect and has not been demonstrated. CI runs one suite at a time, so this is a
+local hazard.
+
+Two rules follow. Anyone's flakiness number measured in a shared worktree — including a green one
+— says nothing, so re-measure alone before believing it. And before attributing a red run to the
+diff, check whether anything else was running in that checkout: this condition sent two separate
+diagnoses the wrong way in one afternoon, once at a test file and once at run contention, and a
+tree that moves underneath a probe will do the same.
+
 ## Not covered here
 
 `~/server/services/buzz.service` (98 sites) and `~/server/services/image.service` (88) lead

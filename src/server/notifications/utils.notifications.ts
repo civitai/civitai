@@ -17,6 +17,7 @@ import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.
 import { placementNotifications } from '~/server/notifications/placement.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
+import { creatorAnnouncementNotifications } from '~/server/notifications/creator-announcement.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
 import { generationMuteNotifications } from '~/server/notifications/generation-mute.notifications';
 import { imageNotifications } from '~/server/notifications/image.notifications';
@@ -34,6 +35,7 @@ import { userJourneyNotifications } from '~/server/notifications/user-journey.no
 import { referralNotifications } from '~/server/notifications/referral.notifications';
 
 export const notificationProcessors = {
+  ...creatorAnnouncementNotifications,
   ...mentionNotifications,
   ...modelNotifications,
   ...reviewNotifications,

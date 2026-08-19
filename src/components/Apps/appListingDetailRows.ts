@@ -11,9 +11,24 @@
  *   1. A row whose underlying field is null/absent is OMITTED. A "Rating: —" row is
  *      noise; an absent row is the honest signal.
  *   2. In `preview` posture (the moderator listing-media review, rendering an
- *      UNAPPROVED shadow listing) the REVIEWS row is omitted. A shadow listing has no
- *      review rows at all, so its rollup is structurally 0/0 and rendering "No reviews
- *      yet" there would read as a fact about the app rather than about the posture.
+ *      UNAPPROVED shadow listing) the REVIEWS, INSTALLS and UPDATED rows are omitted.
+ *      One rule, three fields — every one of them is a number or a date the posture
+ *      cannot supply honestly:
+ *        - REVIEWS: a shadow listing has no review rows at all, so its rollup is
+ *          structurally 0/0. "No reviews yet" there reads as a fact about the APP
+ *          rather than about the POSTURE.
+ *        - INSTALLS: identical reasoning, and it was the inconsistency this rule was
+ *          widened to close. `buildListingStatChips` already returns NO chips in
+ *          preview precisely so a zero cannot be read as a measurement — and then
+ *          `Installs: 0` rendered here anyway, in the rail, one column over. An
+ *          un-approved listing has never been installable by anyone.
+ *        - UPDATED: the date a preview carries is NOT `app_listings.updated_at`.
+ *          `buildListingDetailPreview` has no such field to read and substitutes the
+ *          publish request's SUBMISSION time, so the row labelled "Updated" showed a
+ *          moderator the moment the app was submitted. `AppListingDetailBody` already
+ *          omits its header META LINE in preview for exactly this reason; the rail row
+ *          rendered the same value under the same label two inches lower. The review
+ *          surface prints the submission time itself, twice, correctly labelled.
  *
  * The REVIEWS row's word label comes from the SHARED ladder (`~/utils/rating-label`),
  * the same one the model version page renders — not a second copy with its own
@@ -48,7 +63,8 @@ function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
 /**
  * Build the ordered Details rows for a listing.
  *
- * @param opts.preview read-only moderator posture — omits the reviews row (rule 2).
+ * @param opts.preview read-only moderator posture — omits the reviews, installs and
+ *   updated rows (rule 2).
  * @param opts.formatDate injected so this module stays pure and the test can pin the
  *   ORDER and OMISSION rules without depending on dayjs' locale or the host timezone.
  */
@@ -110,7 +126,11 @@ export function buildListingDetailRows(
   // A details row is DECORATION. It must never be able to blank the page it decorates,
   // and a required TYPE is not a runtime guarantee about a value that crossed a cast.
   // An absent field therefore takes the same path as a null `category`: omit the row.
-  if (typeof detail.installCount === 'number') {
+  //
+  // 🔴 …AND OMITTED WHOLESALE IN `preview` (rule 2). A shadow listing has never been
+  // installable, so the zero is a fact about the POSTURE, not about the app — the same
+  // reasoning that makes `buildListingStatChips` return no chips at all in preview.
+  if (!opts.preview && typeof detail.installCount === 'number') {
     rows.push({
       key: 'installs',
       label: 'Installs',
@@ -118,7 +138,11 @@ export function buildListingDetailRows(
     });
   }
 
-  if (detail.updatedAt) {
+  // 🔴 OMITTED IN `preview` (rule 2): a preview's `updatedAt` is not the listing row's
+  // `updated_at` — the fallback builder substitutes the publish request's submission
+  // time — so this row labelled a submission date "Updated". The body already omits its
+  // header meta line in preview for the same reason.
+  if (!opts.preview && detail.updatedAt) {
     rows.push({ key: 'updated', label: 'Updated', value: opts.formatDate(detail.updatedAt) });
   }
 

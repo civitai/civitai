@@ -31,6 +31,8 @@ interface DownloadVariantDropdownProps {
   userPreferences?: UserFilePreferences;
   canDownload: boolean;
   downloadPrice?: number;
+  /** What buyers pay; shown to the owner, who already has access. */
+  listedPrice?: number;
   isLoadingAccess?: boolean;
   archived?: boolean;
   onPurchase?: () => void;
@@ -50,6 +52,7 @@ export function DownloadVariantDropdown({
   userPreferences,
   canDownload,
   downloadPrice,
+  listedPrice,
   isLoadingAccess,
   archived,
   onPurchase,
@@ -151,6 +154,7 @@ export function DownloadVariantDropdown({
             onClick={handleDownloadClick}
             canDownload={canDownload}
             downloadPrice={downloadPrice}
+            listedPrice={listedPrice}
             disabled={archived || isLoadingAccess}
             fullWidth
             variant="light"
@@ -257,7 +261,13 @@ export function DownloadVariantDropdown({
                       )}
                     </Group>
                     {label && (
-                      <Text size="xs" c="dimmed" truncate style={{ maxWidth: 200 }} title={file.name}>
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        truncate
+                        style={{ maxWidth: 200 }}
+                        title={file.name}
+                      >
                         {file.name}
                       </Text>
                     )}
@@ -380,6 +390,7 @@ export function DownloadVariantDropdown({
           onClick={handleDownloadClick}
           canDownload={canDownload}
           downloadPrice={downloadPrice}
+          listedPrice={listedPrice}
           disabled={!activeFile || archived || isLoadingAccess}
           fullWidth
           style={{

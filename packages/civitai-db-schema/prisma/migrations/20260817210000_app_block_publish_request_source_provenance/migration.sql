@@ -1,0 +1,169 @@
+-- ============================================================
+-- App Blocks — publish-request SOURCE PROVENANCE (#4059)
+-- ============================================================
+-- `appBlocks.submitVersion` accepts a bundle and records nothing about where it
+-- came from, so a bundle built from an uncommitted tree is indistinguishable,
+-- afterwards, from one built from a tagged release. Deploy-vs-source drift is
+-- observable but not diagnosable.
+--
+-- Measured cost of that gap: five first-party apps were found behind their live
+-- deployed version, one (`custom-generators`) live on a 0.5.2 that has NEVER
+-- existed anywhere in its git history. Reconciling them was a session of
+-- archaeology. Two columns turn that into a lookup.
+--
+--   source_commit  the 40-hex git sha the CLIENT says the bundle was built from
+--   source_dirty   whether the CLIENT says that work tree had uncommitted changes
+--
+-- 🔴 CLIENT-CLAIMED, NEVER SERVER-VERIFIED. The server accepts these off the
+-- submit body. It validates the SHAPE (lowercase 40-hex, enforced in
+-- `submitVersionSchema`) and stores the value as a CLAIM. It cannot and does not
+-- confirm the uploaded bundle was actually built from that commit — a client is
+-- free to send a sha it never built. Nothing downstream may present these as
+-- verified facts; they are a diagnosis aid, not an attestation.
+--
+-- 🔴 NOT `forgejo_commit_sha`, WHICH THIS TABLE ALREADY HAS. That column is
+-- SERVER-side: it is written on approve, after the platform's own Forgejo commit
+-- succeeds, so it is a fact about what the platform did. `source_commit` is a
+-- claim about the AUTHOR'S OWN TREE, made before review. They are different
+-- commits in different repositories and must never be aliased, defaulted from
+-- each other, or fallen back between. The push-originated recorder
+-- (`recordPendingFromPush`) writes `forgejo_commit_sha` and deliberately leaves
+-- both of these NULL.
+--
+-- ------------------------------------------------------------------
+-- NULLABLE, NO DEFAULT, AND DELIBERATELY NO BACKFILL.
+-- ------------------------------------------------------------------
+-- Every publish request submitted before this column existed was submitted by a
+-- client that computed nothing and sent nothing. There is no value that could be
+-- inferred for those rows: the bundle bytes are in MinIO but the tree they came
+-- from is exactly the thing that was never recorded.
+--
+-- So NULL means UNKNOWN, in both columns, and that is a load-bearing distinction
+-- for `source_dirty` specifically:
+--
+--   source_dirty = NULL   we do not know whether the tree was dirty
+--   source_dirty = false  the client asserted the tree was CLEAN
+--   source_dirty = true   the client asserted the tree was DIRTY
+--
+-- A backfill of `false` would convert "nobody looked" into "someone looked and
+-- it was clean" for every historical row — turning the absence of evidence into
+-- positive evidence of exactly the property the feature exists to establish.
+-- Do not add one later either; a DEFAULT false would do the same thing to every
+-- future row written by a client that sends nothing.
+--
+-- ------------------------------------------------------------------
+-- ⚠️ ORDERING: APPLY THIS BEFORE DEPLOYING THE APP THAT WRITES IT.
+-- ------------------------------------------------------------------
+-- Both columns are nullable with no default, so once they EXIST the mixed-pod
+-- window is safe in both directions. Apply this first and there is no window at
+-- all. Deploy first and the READ path is what breaks, immediately and for
+-- everyone:
+--
+--   code │ columns  │ outcome
+--   ─────┼──────────┼────────────────────────────────────────────────────────
+--   old  │ present  │ safe — the SELECT never names them; INSERT omits them
+--   new  │ present  │ safe — the claim is read and stored
+--   old  │ MISSING  │ today's behaviour
+--   new  │ MISSING  │ ✗✗ TOTAL OUTAGE OF BOTH READ **AND** WRITE
+--
+-- 🔴 BOTH PATHS FAIL, BOTH UNCONDITIONALLY. An earlier revision of this comment
+-- called the write "SECONDARY and CONDITIONAL — only a submit that actually
+-- CARRIES provenance names a column the table lacks". **That was wrong**, and it
+-- was wrong in the reassuring direction. It is corrected here rather than
+-- deleted, because "day one is safe for everyone who sends nothing" is exactly
+-- the belief that gets a deploy scheduled ahead of an apply.
+--
+-- READ — `src/pages/api/v1/blocks/submissions.ts` adds BOTH columns to its
+-- `SELECT` constant, which serves BOTH the `findFirst` and the `findMany`. It
+-- does not depend on what any client sends, on whether any row has provenance,
+-- or on anyone using the feature: a 100% failure of
+-- `GET /api/v1/blocks/submissions` with Prisma P2022. The CLI's status and poll
+-- commands go down wholesale.
+--
+-- WRITE — equally unconditional, by a DIFFERENT mechanism. It is true that
+-- Prisma omits an `undefined` field from the INSERT column list, so the *data*
+-- a no-provenance client sends is unchanged. That is not what breaks. The
+-- `create` at `publish-request.service.ts:1249` passes **no `select`**, so
+-- Prisma reads the row back — `INSERT … RETURNING <every scalar in the model>` —
+-- and the model now knows about both columns. So EVERY submit raises P2022,
+-- including from a client that has never heard of provenance. `submitVersion`
+-- is the only writer on that path, and both front doors funnel through it.
+--
+-- This is the SAME generic hazard stated below, applied to the write; the
+-- earlier text asserted the general rule and then exempted the write from it.
+-- MEASURED, not reasoned: with the code deployed to a preview whose dev-clone DB
+-- lacked the columns, `preview / smoke-tests` failed with exactly 1 failure —
+-- `tests/preview-apps-publish.spec.ts`, the only smoke spec that submits — on
+-- two successive commits, while a control PR passed 65/65 in the same window.
+-- The SQL below was then applied to that dev clone (columns confirmed present,
+-- nullable, no default; a re-apply is a clean no-op) and the very next run went
+-- `success — 65 passed, 0 flaky`, matching the control PR exactly. So the apply
+-- is not merely correlated with the fix: it is the whole fix, and this migration
+-- is a HARD PREREQUISITE of the deploy rather than a tidy-up that can follow it.
+--
+-- 🔴 THE SAME APPLIES TO PROD, FOR THE SAME REASON. The preview failure is what
+-- a prod deploy-before-apply looks like, observed in a safe place: every submit
+-- and every status poll, down, for everyone, until the columns exist.
+--
+-- Same precedent as 20260731120000_app_block_spend_tier_and_cap_override; the
+-- generic form of the hazard is that Prisma enumerates every scalar in the
+-- model when a query gives no `select` at all, so even queries that never
+-- mention these columns raise P2022 once the model knows about them. That
+-- applies to a `create` reading its row back exactly as it does to a SELECT.
+--
+-- ⚠️ NEVER DROP THESE COLUMNS ON A ROLLBACK. Old Prisma clients emit explicit
+-- column lists, so extra columns are inert to them — leaving them costs nothing,
+-- while dropping them destroys the only record of which bundles came from which
+-- tree, which is precisely the information that was expensive to recover by hand.
+--
+-- ⚠️ MANUAL APPLY — per datapacket-talos CLAUDE.md DB rule #8 the main civitai
+-- CNPG nvme0 DB does NOT auto-apply migrations. This file is committed for
+-- history; a HUMAN applies the SQL below per environment. CI / deploy does NOT
+-- run it.
+--
+-- ADDITIVE + NON-BREAKING:
+--   - Both columns nullable with no default → PG 11+ metadata-only ALTER, no
+--     table rewrite, safe online on a large table.
+--   - No index: neither column is a filter predicate. They are read per-row on
+--     an already-self-scoped / primary-key-filtered query
+--     (`/api/v1/blocks/submissions`) and looked up by hand during a drift
+--     investigation. Add one if a scan-by-commit query ever appears; it does not
+--     exist today.
+--   - No CHECK on `source_commit`: the shape gate is `submitVersionSchema`'s
+--     `/^[0-9a-f]{40}$/`. A DB CHECK is deliberately NOT added because this
+--     column is advisory — a rejected INSERT here would fail a SUBMIT over a
+--     field that must never be a submit gate. Contrast `Placement_spendType_check`,
+--     where a bad value reaches a PAYOUT.
+--   - `IF NOT EXISTS` makes the apply idempotent (re-runnable, safe online).
+--
+-- The table is snake_case-`@@map`ped (`@@map("app_block_publish_requests")`) and
+-- its columns are `@map`ped too, so both identifiers here are snake_case —
+-- unlike the camelCase-quoted `"Placement"."spendType"` style elsewhere in this
+-- directory. Confirmed against 20260731120000_app_block_spend_tier_and_cap_override,
+-- which alters `"app_blocks"."spend_tier"` the same way.
+
+ALTER TABLE "app_block_publish_requests"
+  ADD COLUMN IF NOT EXISTS "source_commit" TEXT,
+  ADD COLUMN IF NOT EXISTS "source_dirty" BOOLEAN;
+
+-- VERIFY THE SCHEMA. `IF NOT EXISTS` is a no-op on retry and reports success
+-- either way, so confirm the columns landed rather than reading a clean exit as
+-- proof. Must return exactly two rows, both `is_nullable = YES` and both
+-- `column_default` NULL — a non-NULL default here is the backfill this migration
+-- refuses, arriving by another route:
+--
+--   SELECT column_name, is_nullable, data_type, column_default
+--   FROM information_schema.columns
+--   WHERE table_name = 'app_block_publish_requests'
+--     AND column_name IN ('source_commit', 'source_dirty');
+--
+-- VERIFY THE BEHAVIOUR, after the deploy. Nothing above proves the app writes
+-- them. Submit once from a CLI that stamps provenance, then:
+--
+--   SELECT id, slug, version, source_commit, source_dirty, submitted_at
+--   FROM app_block_publish_requests
+--   ORDER BY submitted_at DESC LIMIT 5;
+--
+-- The new row must carry a 40-hex `source_commit` and a non-NULL `source_dirty`.
+-- A row submitted by an OLD CLI legitimately carries NULL in both — that is the
+-- feature working, not a fault.

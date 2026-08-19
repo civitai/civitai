@@ -375,3 +375,91 @@ describe('saveItemInCollections with an existing closed-contest membership', () 
     expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
   });
 });
+
+// The same trap on the sibling validator: a Featured membership riding along in the payload was
+// re-validated, and validateFeaturedCollectionEntry refuses anything already in a contest — so a
+// model in both failed every later save, whole-transaction, however unrelated the actual change.
+const FEATURED_COLLECTION_ID = 17888001;
+
+// Both the featured check and the permission batch go through $queryRaw; route on the SQL so the
+// assertion can say the featured check never ran, rather than counting calls.
+const isFeaturedContestProbe = (strings: unknown) =>
+  Array.isArray((strings as TemplateStringsArray)?.raw) &&
+  (strings as TemplateStringsArray).raw.join('').includes('FROM "CollectionItem" ci');
+
+function arrangeFeatured({ alreadyFeatured }: { alreadyFeatured: boolean }) {
+  vi.clearAllMocks();
+
+  mockDbRead.collection.findMany.mockResolvedValue([
+    collectionRow({ id: FEATURED_COLLECTION_ID, name: 'Featured Models', userId: -1 }),
+    collectionRow({ id: OWN_COLLECTION_ID, name: 'My collection' }),
+  ]);
+  mockDbRead.collectionItem.findMany.mockResolvedValue(
+    alreadyFeatured ? [{ collectionId: FEATURED_COLLECTION_ID, tagId: null }] : []
+  );
+  mockDbRead.collectionItem.count.mockResolvedValue(0);
+  mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
+  mockDbRead.model.findMany.mockResolvedValue([{ id: MODEL_ID, userId: USER_ID }]);
+  mockDbRead.modelVersion.findMany.mockResolvedValue([]);
+
+  mockDbRead.$queryRaw.mockImplementation(async (strings: unknown) =>
+    isFeaturedContestProbe(strings)
+      ? // The model sits in some contest collection — what the featured validator rejects on.
+        [{ id: 1 }]
+      : [
+          {
+            id: FEATURED_COLLECTION_ID,
+            userId: USER_ID,
+            write: 'Private',
+            read: 'Public',
+            type: 'Model',
+          },
+          {
+            id: OWN_COLLECTION_ID,
+            userId: USER_ID,
+            write: 'Private',
+            read: 'Public',
+            type: 'Model',
+          },
+        ]
+  );
+
+  mockDbWrite.$executeRaw.mockReturnValue('insert' as never);
+  mockDbWrite.$transaction.mockResolvedValue([]);
+}
+
+const featuredProbeRan = () =>
+  mockDbRead.$queryRaw.mock.calls.some((call) => isFeaturedContestProbe(call[0]));
+
+const saveFeatured = () =>
+  saveItemInCollections({
+    input: {
+      modelId: MODEL_ID,
+      type: 'Model',
+      userId: USER_ID,
+      collections: [{ collectionId: FEATURED_COLLECTION_ID }, { collectionId: OWN_COLLECTION_ID }],
+      removeFromCollectionIds: [],
+    },
+  } as never);
+
+describe('saveItemInCollections with an existing featured membership', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('saves to an unrelated collection without re-validating the featured membership', async () => {
+    arrangeFeatured({ alreadyFeatured: true });
+
+    await expect(saveFeatured()).resolves.toBeDefined();
+    expect(featuredProbeRan()).toBe(false);
+    expect(mockDbWrite.$transaction).toHaveBeenCalled();
+  });
+
+  it('still rejects a NEW featured entry for an item in a contest collection', async () => {
+    arrangeFeatured({ alreadyFeatured: false });
+
+    await expect(saveFeatured()).rejects.toThrow(/already in a contest collection/i);
+    expect(featuredProbeRan()).toBe(true);
+    expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+});

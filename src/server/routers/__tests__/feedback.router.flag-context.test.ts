@@ -31,11 +31,11 @@ const USER_ID = 42;
  * `isEarlyAdopter` is the ONLY thing that varies between the two callers below, so a
  * difference in outcome can only be the cohort property — not tier, mute or onboarding.
  */
-const caller = (isEarlyAdopter: boolean) =>
+const caller = (isEarlyAdopter: boolean, isModerator = false) =>
   feedbackRouter.createCaller({
     user: {
       id: USER_ID,
-      isModerator: false,
+      isModerator,
       muted: false,
       onboarding: OnboardingSteps.Buzz,
       isEarlyAdopter,
@@ -109,5 +109,99 @@ describe('feedback flag gate — read and write evaluate the flag identically', 
       message: 'Feedback is not being collected here right now.',
     });
     expect(dbMock.dbWrite.feedback.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The SAME seam for the `/apps` marketplace area, driven through the real router.
+ *
+ * Worth its own block rather than a parameter on the one above for two reasons. First
+ * the flag key: it is derived (`feedback-area-<slug>`) and never written down in the
+ * app, so the literal below is the only in-repo statement of what flipt-state must
+ * hold — and an unknown flag resolves FALSE, so a mismatch reads as "nobody can leave
+ * feedback" rather than as an error. Second the rollout differs: this area targets
+ * `early-adopters` OR `testers`, and the `testers` half is ANY_MATCH_TYPE with an
+ * `isModerator = "true"` constraint, so a moderator who never opted into the
+ * early-adopter program must get through BOTH doors. That is deliberate, not an
+ * accident, and it is the case the bitdex block cannot reach.
+ */
+describe('apps-marketplace — read and write agree, for both segments of its rollout', () => {
+  const marketplace = {
+    area: 'apps-marketplace' as const,
+    message: 'the store showed no apps',
+    context: { path: '/apps', filters: { kind: 'offsite', sort: 'newest' } },
+  };
+
+  /** What the live rollout does: early-adopters OR testers, the latter incl. mods. */
+  const appsMarketplaceRollout = async (
+    _flag: string,
+    _entityId: string,
+    context?: Record<string, string>
+  ) => context?.isEarlyAdopter === 'true' || context?.isModerator === 'true';
+
+  beforeEach(() => {
+    mockIsFlipt.mockImplementation(appsMarketplaceRollout);
+  });
+
+  it('hands Flipt the apps-marketplace flag key from both procedures', async () => {
+    await caller(true).getArea({ area: marketplace.area });
+    await caller(true).create(marketplace);
+
+    expect(evalCalls()).toHaveLength(2);
+    const [read, write] = evalCalls();
+    // The hand-typed contract with flipt-state's features.yaml.
+    expect(read[0]).toBe('feedback-area-apps-marketplace');
+    expect(write[0]).toBe(read[0]);
+    expect(write[1]).toBe(read[1]);
+    expect(write[2]).toEqual(read[2]);
+    expect(read[1]).toBe('42');
+  });
+
+  it('lets an early adopter see the notice AND submit, storing the store view', async () => {
+    await expect(caller(true).getArea({ area: marketplace.area })).resolves.toEqual({
+      enabled: true,
+    });
+    await expect(caller(true).create(marketplace)).resolves.toEqual({ id: 1 });
+    expect(dbMock.dbWrite.feedback.create.mock.calls[0][0].data).toMatchObject({
+      area: 'apps-marketplace',
+      context: { path: '/apps', filters: { kind: 'offsite', sort: 'newest' } },
+    });
+  });
+
+  // The `testers` arm: a moderator who never opted in. INTENDED — every moderator is
+  // in scope for this area.
+  it('lets a moderator who is NOT an early adopter see the notice AND submit', async () => {
+    await expect(caller(false, true).getArea({ area: marketplace.area })).resolves.toEqual({
+      enabled: true,
+    });
+    await expect(caller(false, true).create(marketplace)).resolves.toEqual({ id: 1 });
+  });
+
+  it('refuses a user in neither segment at both doors', async () => {
+    await expect(caller(false).getArea({ area: marketplace.area })).resolves.toEqual({
+      enabled: false,
+    });
+    await expect(caller(false).create(marketplace)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Feedback is not being collected here right now.',
+    });
+    expect(dbMock.dbWrite.feedback.create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The two areas are SEPARATE flags, so switching one on cannot switch the other on.
+   * Asserted against a stub that answers only for the marketplace key — a service that
+   * ignored `area` when building the key would light both surfaces at once.
+   */
+  it('is gated independently of the bitdex area', async () => {
+    mockIsFlipt.mockImplementation(
+      async (flag: string) => flag === 'feedback-area-apps-marketplace'
+    );
+    await expect(caller(true).getArea({ area: 'apps-marketplace' })).resolves.toEqual({
+      enabled: true,
+    });
+    await expect(caller(true).getArea({ area: 'bitdex-image-feed' })).resolves.toEqual({
+      enabled: false,
+    });
   });
 });

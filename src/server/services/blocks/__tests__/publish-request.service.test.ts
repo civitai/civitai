@@ -691,4 +691,76 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
   });
+
+  // ---------------------------------------------------------------------------
+  // #4059 build provenance — the service must PERSIST the client's claim into
+  // the publish-request row, and must not invent one when the client sent
+  // nothing. Asserted against the mocked `create` call args with literal values.
+  // ---------------------------------------------------------------------------
+  const SHA = '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3';
+
+  function createData() {
+    const call = dbMocks.createPublishRequest.mock.calls[0][0] as {
+      data: Record<string, unknown>;
+    };
+    return call.data;
+  }
+
+  it('#4059 PERSISTS sourceCommit + sourceDirty into the publish-request row', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      sourceCommit: SHA,
+      sourceDirty: true,
+    });
+
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+    const data = createData();
+    expect(data.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    expect(data.sourceDirty).toBe(true);
+  });
+
+  it('#4059 persists sourceDirty:false as FALSE (a CLAIM of clean, not an absence)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      sourceCommit: SHA,
+      sourceDirty: false,
+    });
+
+    const data = createData();
+    // 🔴 `toBe(false)` and not a falsy check — `undefined` here would mean
+    // UNKNOWN, the opposite claim.
+    expect(data.sourceDirty).toBe(false);
+  });
+
+  it('#4059 writes NEITHER column when the client sends nothing (NULL = unknown)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+
+    const data = createData();
+    // Prisma omits an `undefined` field, so the column lands NULL. The service
+    // must NOT default `sourceDirty` to false — that would turn "nobody looked"
+    // into "someone looked and it was clean".
+    expect(data.sourceCommit).toBeUndefined();
+    expect(data.sourceDirty).toBeUndefined();
+  });
+
+  it('#4059 does NOT conflate sourceCommit with forgejoCommitSha', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      sourceCommit: SHA,
+      sourceDirty: false,
+    });
+
+    const data = createData();
+    expect(data.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    // The submit path never mints a Forgejo commit — that happens on approve. A
+    // fallback between the two would show up here as the sha leaking across.
+    expect(data.forgejoCommitSha).toBeUndefined();
+  });
 });

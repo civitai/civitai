@@ -6,6 +6,15 @@ import { page } from 'vitest/browser';
 // useCurrentUser → useCivitaiSessionContext throws "missing CivitaiSessionContext"
 // with no provider. Mock it to a stable anon (non-mod) viewer so these
 // pre-existing chrome/breadcrumb assertions keep rendering network-free.
+/**
+ * This suite mounts ANONYMOUSLY (`useCurrentUser` is mocked to null below), and
+ * recents are ACCOUNT-scoped (#4048): the store hands a component back only the
+ * entries recorded by the SAME viewer, with `null` (signed out) as its own
+ * bucket. So every seed here must be written as `null` or the chrome's read
+ * returns nothing and the assertions below go red for the wrong reason.
+ */
+const SESSION_OWNER_ID: number | null = null;
+
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => null,
 }));
@@ -308,14 +317,23 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
 
   test('renders recents (icon + name), EXCLUDES the current app, links to /apps/run/<blockId>', async () => {
     // Seed newest-last so the resulting order is [other, noicon, current].
-    recordRecentlyOpenedApp({ id: 'current', blockId: 'current-block', name: 'Current App' });
-    recordRecentlyOpenedApp({ id: 'noicon', blockId: 'noicon-block', name: 'No Icon App' });
-    recordRecentlyOpenedApp({
-      id: 'other',
-      blockId: 'other-block',
-      name: 'Other App',
-      iconUrl: LOADABLE_IMAGE_DATA_URI,
-    });
+    recordRecentlyOpenedApp(
+      { id: 'current', blockId: 'current-block', name: 'Current App' },
+      SESSION_OWNER_ID
+    );
+    recordRecentlyOpenedApp(
+      { id: 'noicon', blockId: 'noicon-block', name: 'No Icon App' },
+      SESSION_OWNER_ID
+    );
+    recordRecentlyOpenedApp(
+      {
+        id: 'other',
+        blockId: 'other-block',
+        name: 'Other App',
+        iconUrl: LOADABLE_IMAGE_DATA_URI,
+      },
+      SESSION_OWNER_ID
+    );
 
     renderWithProviders(
       <AppBlockChrome
@@ -357,7 +375,10 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     // `canOpenPage` is ON so the absence below is caused by SELF-EXCLUSION, not
     // by the fail-closed gate. Mutation-sanity: deleting the `r.id !==
     // currentAppBlockId` filter in selectChromeRecentApps makes this red.
-    recordRecentlyOpenedApp({ id: 'solo', blockId: 'solo-block', name: 'Solo App' });
+    recordRecentlyOpenedApp(
+      { id: 'solo', blockId: 'solo-block', name: 'Solo App' },
+      SESSION_OWNER_ID
+    );
 
     renderWithProviders(
       <AppBlockChrome
@@ -402,8 +423,14 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
   // store is what makes it a real assertion — the same seed with `canOpenPage`
   // renders two items (asserted in the first test above).
   test('OMITTING canOpenPage hides the section even with offerable recents (fail-closed)', async () => {
-    recordRecentlyOpenedApp({ id: 'other', blockId: 'other-block', name: 'Other App' });
-    recordRecentlyOpenedApp({ id: 'third', blockId: 'third-block', name: 'Third App' });
+    recordRecentlyOpenedApp(
+      { id: 'other', blockId: 'other-block', name: 'Other App' },
+      SESSION_OWNER_ID
+    );
+    recordRecentlyOpenedApp(
+      { id: 'third', blockId: 'third-block', name: 'Third App' },
+      SESSION_OWNER_ID
+    );
 
     renderWithProviders(
       <AppBlockChrome
@@ -435,7 +462,10 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     // RLO override + zero-width space + a long tail well past APP_CHROME_NAME_MAX
     // (64). sanitizeAppChromeName strips the bidi/format chars and caps length.
     const rawName = 'Evil‮Hack​App' + 'X'.repeat(200);
-    recordRecentlyOpenedApp({ id: 'hostile', blockId: 'hostile-block', name: rawName });
+    recordRecentlyOpenedApp(
+      { id: 'hostile', blockId: 'hostile-block', name: rawName },
+      SESSION_OWNER_ID
+    );
 
     renderWithProviders(
       <AppBlockChrome
@@ -483,10 +513,11 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     // Close the menu (Escape), then a NEW app is recorded mid-session (simulating
     // the viewer running another app via client-nav elsewhere in the SPA).
     await page.getByRole('button', { name: 'Apps menu' }).click();
-    await expect
-      .element(page.getByRole('menuitem', { name: 'Apps home' }))
-      .not.toBeInTheDocument();
-    recordRecentlyOpenedApp({ id: 'fresh', blockId: 'fresh-block', name: 'Fresh App' });
+    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).not.toBeInTheDocument();
+    recordRecentlyOpenedApp(
+      { id: 'fresh', blockId: 'fresh-block', name: 'Fresh App' },
+      SESSION_OWNER_ID
+    );
 
     // Re-open — the open-refresh read must surface the newly-recorded app.
     await openPlatformNav();

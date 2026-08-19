@@ -109,6 +109,9 @@ import {
   ImageUploadMultipleInput,
   type ImageStatusAnnotation,
 } from './inputs/ImageUploadMultipleInput';
+import type { ImageMetadataApply } from '~/components/Generation/Input/ImageMetadataModal';
+import type { GenerationResource } from '~/shared/types/generation.types';
+import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser } from '~/utils/metadata';
 import { VideoInput } from './inputs/VideoInput';
@@ -2651,6 +2654,28 @@ function ImagesInput({
     | undefined;
   const aiMetaAnnotations = useAiMetadataAnnotations(value);
   const annotations = useMergedAnnotations(graphAnnotations, aiMetaAnnotations);
+  // The active graph IS the applicability rule: a param is offered only when
+  // there's a node to put it in, so a video workflow drops the image-only
+  // settings on its own and no per-workflow list has to be maintained here.
+  const resourcesSnapshot = useGraphSubscription(graph, 'resources');
+  const resourceLimit = (resourcesSnapshot?.meta as { limit?: number } | undefined)?.limit;
+  const metadataApply: ImageMetadataApply = {
+    canApply: (key) => graph.hasNode(key),
+    onApply: (values) => graph.set(values as Parameters<typeof graph.set>[0]),
+    resourceOptions: (resourcesSnapshot?.meta as { options?: ResourceSelectOptions } | undefined)
+      ?.options,
+    onAddResource: resourcesSnapshot
+      ? (resource) => {
+          const current =
+            ((graph.getSnapshot() as Record<string, unknown>).resources as
+              | GenerationResource[]
+              | undefined) ?? [];
+          if (current.some((r) => r.id === resource.id)) return;
+          if (resourceLimit != null && current.length >= resourceLimit) return;
+          graph.set({ resources: [...current, resource] } as Parameters<typeof graph.set>[0]);
+        }
+      : undefined,
+  };
 
   return (
     <ImageUploadMultipleInput
@@ -2668,6 +2693,8 @@ function ImagesInput({
       cropToFirstImage={meta?.cropToFirstImage}
       imageAnnotations={annotations}
       imageLayout="wrap"
+      enableMetadataExtraction
+      metadataApply={metadataApply}
     />
   );
 }

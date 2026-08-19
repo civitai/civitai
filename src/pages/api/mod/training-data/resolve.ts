@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -35,8 +36,18 @@ export default defineModeratorEndpoint('trainingData.resolve', {
     try {
       const { url } = await resolveDownloadUrl(file.id, file.url, file.name);
       return { url, name: file.name, affected: { modelVersionIds: [input.modelVersionId] } };
-    } catch {
+    } catch (e) {
       // Storage resolver and delivery-worker fallback both rejected it: registered but not deliverable.
+      // Logged because the two causes are indistinguishable to the caller — a genuinely broken key and
+      // a storage outage both read as "this version could not be resolved", and only one of them is
+      // every version at once.
+      logToAxiom({
+        name: 'training-data-resolve',
+        type: 'error',
+        modelVersionId: input.modelVersionId,
+        fileId: file.id,
+        error: (e as Error)?.message,
+      }).catch(() => undefined);
       throw throwNotFoundError('Training data could not be resolved');
     }
   },

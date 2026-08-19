@@ -41,7 +41,8 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string },
   // Items the mocked `appListings.listAvailable` returns to the related rail.
   relatedItems: [] as unknown[],
-  // Every `recordRecentlyOpenedApp(...)` argument seen this test, in order.
+  // Every `recordRecentlyOpenedApp(...)` CALL seen this test, in order —
+  // `{ app, ownerId }`, because the owner is now half the contract (#4048).
   recorded: [] as unknown[],
   // What the mocked `user.getCreator` resolves to (the SmartCreatorCard's data).
   creator: null as null | Record<string, unknown>,
@@ -62,9 +63,12 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
   const actual = await importOriginal<typeof RecentsMod>();
   return {
     ...actual,
-    recordRecentlyOpenedApp: (app: Parameters<typeof actual.recordRecentlyOpenedApp>[0]) => {
-      mocks.recorded.push(app);
-      return actual.recordRecentlyOpenedApp(app);
+    recordRecentlyOpenedApp: (
+      app: Parameters<typeof actual.recordRecentlyOpenedApp>[0],
+      ownerId: Parameters<typeof actual.recordRecentlyOpenedApp>[1]
+    ) => {
+      mocks.recorded.push({ app, ownerId });
+      return actual.recordRecentlyOpenedApp(app, ownerId);
     },
   };
 });
@@ -106,8 +110,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       upsertReview: {
         useMutation: () => ({ mutate: mocks.upsertMutate, isPending: false }),
       },
+      // 🔴 This one INVOKES the caller's `onSuccess`, unlike its siblings. The thing
+      // under test below is what the detail page does AFTER a report lands (its menu
+      // item has to go spent), and a `mutate` that never resolves can never show it.
       reportListing: {
-        useMutation: () => ({ mutate: mocks.reportMutate, isPending: false }),
+        useMutation: (opts?: { onSuccess?: () => void }) => ({
+          mutate: (input: unknown) => {
+            mocks.reportMutate(input);
+            opts?.onSuccess?.();
+          },
+          isPending: false,
+        }),
       },
     },
     // The SmartCreatorCard's own fetch. 🔴 VERIFIED PUBLIC: `user.getCreator` is a
@@ -166,6 +179,12 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
 
 // Import AFTER the mocks are declared (vi.mock is hoisted, imports are not).
 const { AppListingDetailBody } = await import('./AppListingDetailBody');
+// The store itself, through the same partial mock (the readers are the REAL
+// implementations — only the writer is wrapped above), so the owner-scoping
+// assertions below read what the component actually persisted.
+const { clearRecentlyOpenedApps, getRecentlyOpenedApps } = await import(
+  '~/components/Apps/recentlyOpenedAppsStore'
+);
 
 beforeEach(async () => {
   mocks.currentUser = null;
@@ -203,7 +222,12 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     installCount: 4213,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
-    kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true, liveUrl: 'https://my-app.civit.ai' },
+    kindData: {
+      kind: 'onsite',
+      appBlockId: 'blk-1',
+      hasPage: true,
+      liveUrl: 'https://my-app.civit.ai',
+    },
     ...over,
   };
 }
@@ -367,20 +391,75 @@ describe('AppListingDetailBody', () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
-    const item = dropdown.querySelector('[data-testid="apps-listing-review-action"]') as HTMLElement;
+    const item = dropdown.querySelector(
+      '[data-testid="apps-listing-review-action"]'
+    ) as HTMLElement;
     expect(item).not.toBeNull();
     await userEvent.click(item);
     // The modal is portalled to the body. Its own copy is the REAL component.
-    await expect.element(page.getByText('Would you recommend this app to others?')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Would you recommend this app to others?'))
+      .toBeInTheDocument();
   });
 
   test('🔴 the Report menu item opens the report modal', async () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
-    const item = dropdown.querySelector('[data-testid="apps-listing-report-action"]') as HTMLElement;
+    const item = dropdown.querySelector(
+      '[data-testid="apps-listing-report-action"]'
+    ) as HTMLElement;
     await userEvent.click(item);
     await expect.element(page.getByRole('button', { name: 'Submit report' })).toBeInTheDocument();
+  });
+
+  test('🔴 REGRESSION: after a successful report the menu item is DISABLED and reads "Reported"', async () => {
+    // The shipped defect: the modal's `onReported` callback existed and was wired
+    // only in a standalone `ReportListingButton` that nothing rendered, while THIS —
+    // the live path — mounted the modal without it. The item stayed clickable, so a
+    // second report hit the server's one-open-report-per-reporter CONFLICT and the
+    // user got an ERROR where they expected a confirmation.
+    //
+    // 🔴 Asserted on the STATE, never on the word: `disabled` + Mantine's
+    // `data-disabled` on the item itself. "Reported" as text is checked too, but it
+    // is the weakest half of the claim — any feature can spell a word.
+    mocks.currentUser = { id: 999, username: 'bob' };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+
+    const item = () =>
+      document.querySelector(
+        '[data-testid="apps-listing-report-action"]'
+      ) as HTMLButtonElement | null;
+
+    // POSITIVE CONTROL, from the same element: it is LIVE before the report, so the
+    // disabled state below is about the report and not about how the item renders.
+    await openMenu(within);
+    const before = item() as HTMLButtonElement;
+    expect(before).not.toBeNull();
+    expect(before.disabled).toBe(false);
+    expect(before.getAttribute('data-disabled')).toBeNull();
+    expect(before.textContent).toContain('Report');
+    expect(before.textContent).not.toContain('Reported');
+
+    await userEvent.click(before);
+    await page.getByRole('radio', { name: 'Spam' }).click();
+    await page.getByRole('button', { name: 'Submit report' }).click();
+    expect(mocks.reportMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.reportMutate.mock.calls[0][0]).toMatchObject({
+      appListingId: 'l1',
+      reason: 'spam',
+    });
+
+    // Re-open the menu (the dropdown UNMOUNTS on close, so this is a fresh element).
+    await openMenu(within);
+    await vi.waitFor(() => {
+      const spent = item();
+      expect(spent).not.toBeNull();
+      expect((spent as HTMLButtonElement).disabled).toBe(true);
+    });
+    const spent = item() as HTMLButtonElement;
+    expect(spent.getAttribute('data-disabled')).toBe('true');
+    expect(spent.textContent).toContain('Reported');
   });
 
   // ── Header stat chips ──────────────────────────────────────────────────────
@@ -459,7 +538,9 @@ describe('AppListingDetailBody', () => {
     await expect.element(within.getByText('My App')).toBeInTheDocument();
 
     const cols = Array.from(
-      container.querySelectorAll('[data-testid="apps-listing-main-col"], [data-testid="apps-listing-rail-col"]')
+      container.querySelectorAll(
+        '[data-testid="apps-listing-main-col"], [data-testid="apps-listing-rail-col"]'
+      )
     );
     expect(cols).toHaveLength(2);
     // 🔴 RAIL FIRST, MAIN SECOND — the same source order `ModelVersionDetails` uses,
@@ -489,7 +570,9 @@ describe('AppListingDetailBody', () => {
     expect(container.querySelectorAll('[data-testid="apps-listing-rail-col"]')).toHaveLength(1);
     // …and the rail's contents came with it, rather than being dropped on mobile.
     expect(container.querySelectorAll('[data-testid="apps-listing-action-card"]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-testid="apps-listing-details-accordion"]')).toHaveLength(1);
+    expect(
+      container.querySelectorAll('[data-testid="apps-listing-details-accordion"]')
+    ).toHaveLength(1);
   });
 
   test('🔴 the rail holds the action card, the creator card and the details accordion; the main column holds About', async () => {
@@ -661,7 +744,10 @@ describe('AppListingDetailBody', () => {
         testid === 'apps-listing-stat-chips'
           ? live.container.querySelectorAll('[data-listing-stat]').length
           : live.container.querySelectorAll(`[data-testid="${testid}"]`).length;
-      expect(liveCount, `positive control: ${what} must be findable in the live arm`).toBeGreaterThan(0);
+      expect(
+        liveCount,
+        `positive control: ${what} must be findable in the live arm`
+      ).toBeGreaterThan(0);
 
       // …and now the preview arm. `canOpenPage` stays TRUE so the ONLY thing
       // suppressing anything is `preview`.
@@ -686,16 +772,23 @@ describe('AppListingDetailBody', () => {
     expect(prev.within.getByText('Back to store').elements()).toHaveLength(0);
   });
 
-  test('🔴 preview omits the REVIEWS row from the details rail, keeping the others', async () => {
+  test('🔴 preview omits the REVIEWS / INSTALLS / UPDATED rows, keeping the others', async () => {
     const prev = await renderScoped(
       <AppListingDetailBody detail={base({ contentRating: 'PG' })} preview />
     );
-    await expect.element(prev.within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
-    const rows = Array.from(
-      prev.container.querySelectorAll('[data-listing-detail-row]')
-    ).map((r) => r.getAttribute('data-listing-detail-row'));
+    await expect
+      .element(prev.within.getByTestId('apps-listing-details-accordion'))
+      .toBeInTheDocument();
+    const rows = Array.from(prev.container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
+      r.getAttribute('data-listing-detail-row')
+    );
     // Control: the live arm has 6 rows including `reviews` (asserted above).
-    expect(rows).toEqual(['kind', 'category', 'rating', 'installs', 'updated']);
+    // The three dropped here are the ones a shadow listing cannot state honestly: two
+    // usage aggregates and a date that is the SUBMISSION time, not `updated_at`.
+    expect(rows).toEqual(['kind', 'category', 'rating']);
+    // 🔴 The rule itself is pinned in the blocking node project
+    // (`__tests__/appListingDetailRows.test.ts` + `__tests__/reviewListingPreview.test.ts`);
+    // this arm only pins that the DOM the component renders agrees with it.
   });
 
   test('🔴 preview keeps the read-only creator CHIP so the submitter is still named', async () => {
@@ -1029,8 +1122,9 @@ describe('AppListingDetailBody', () => {
     // Two related cards, not three — self was dropped.
     expect(container.querySelectorAll('[data-testid="apps-related-grid-col"]')).toHaveLength(2);
     // No related card links back to this very listing.
-    const hrefs = Array.from(container.querySelectorAll('[data-testid="apps-related-grid-col"]'))
-      .flatMap((col) => Array.from(col.querySelectorAll('a')).map((a) => a.getAttribute('href')));
+    const hrefs = Array.from(
+      container.querySelectorAll('[data-testid="apps-related-grid-col"]')
+    ).flatMap((col) => Array.from(col.querySelectorAll('a')).map((a) => a.getAttribute('href')));
     expect(hrefs).not.toContain('/apps/store-preview/my-app');
   });
 
@@ -1191,6 +1285,36 @@ describe('AppListingDetailBody', () => {
     expect(mocks.recorded).toHaveLength(1);
   });
 
+  /**
+   * 🔴 BEHAVIOURAL COVER FOR THE CALL-SITE LEDGER (#4048).
+   *
+   * `recentsCallSites.test.ts` proves this module CALLS the store with a
+   * session-shaped owner expression; it cannot prove the expression reads the
+   * VIEWER. This does: a real click, a mounted session, and the entry readable
+   * by that account and by no other.
+   *
+   * The viewer id (77) is deliberately distinct from `base().creator.id` (5) —
+   * the plausible copy-paste is to stamp the listing's CREATOR, and against a
+   * fixture where the two coincide that mutant survives.
+   */
+  test('🔴 the recorded write is OWNED by the mounted session, not by anyone else', async () => {
+    clearRecentlyOpenedApps();
+    mocks.currentUser = { id: 77, username: 'viewer' };
+    const detail = offsite();
+    const { within } = await renderScoped(<AppListingDetailBody detail={detail} />);
+    const cta = within.getByTestId('apps-listing-open-live');
+    await expect.element(cta).toBeInTheDocument();
+    await withoutNavigating(() => userEvent.click(cta));
+
+    expect(mocks.recorded).toHaveLength(1);
+    expect((mocks.recorded[0] as { ownerId: unknown }).ownerId).toBe(77);
+    // …and the store agrees: only that account reads it back.
+    expect(getRecentlyOpenedApps(77).map((r) => r.id)).toEqual([detail.id]);
+    expect(getRecentlyOpenedApps(5)).toEqual([]); // the listing's creator
+    expect(getRecentlyOpenedApps(null)).toEqual([]); // the anonymous bucket
+    clearRecentlyOpenedApps();
+  });
+
   test('🔴 the banner records recents exactly as the Open CTA does — i.e. not on click at all', async () => {
     // `/apps/run/<slug>` records the open in its own mount effect, which is why
     // the `open` CTA has no onClick. The banner must match it: 0 here, 1 there.
@@ -1257,11 +1381,21 @@ describe('AppListingDetailBody — the public collaborator byline (anonymous vie
     );
     // The page itself rendered (so this zero is not "nothing rendered at all").
     await expect.element(within.getByText('My App')).toBeInTheDocument();
-    expect(container.querySelectorAll('[data-testid="apps-listing-collaborators"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-testid="apps-listing-collaborators"]')).toHaveLength(
+      0
+    );
   });
 
   test('the byline is rendered alongside — not instead of — the creator card', async () => {
-    mocks.creator = { id: 5, username: 'alice', image: null, rank: null, links: [], cosmetics: [], stats: null };
+    mocks.creator = {
+      id: 5,
+      username: 'alice',
+      image: null,
+      rank: null,
+      links: [],
+      cosmetics: [],
+      stats: null,
+    };
     const { container, within } = await renderScoped(
       <AppListingDetailBody
         detail={base({ collaborators: [{ id: 42, username: 'bob', image: null }] })}

@@ -260,6 +260,16 @@ export const unpublishModelSchema = z.object({
   // Owner's explicit consent to refund all active early access purchases (debited from their
   // account) as part of unpublishing. Ignored for moderator unpublishes.
   refundEarlyAccess: z.boolean().optional(),
+  // What the confirm dialog priced, echoed back so the server can refuse when the world moved
+  // underneath it. `refundEarlyAccess: true` is a yes with no ceiling on its own: a sibling going
+  // down between the dialog's read and the mutation widens an unpublish from one version to a whole
+  // model and can debit the owner more Buzz than the figure they agreed to.
+  expected: z
+    .object({
+      scope: z.enum(['model', 'version']),
+      totalBuzz: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 export type ToggleModelLockInput = z.infer<typeof toggleModelLockSchema>;

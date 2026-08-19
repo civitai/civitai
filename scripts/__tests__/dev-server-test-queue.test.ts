@@ -421,3 +421,51 @@ describe('dev-server test queue', () => {
     expect(run.waitCommand).toBe(`node cli.mjs test wait ${run.id}`);
   });
 });
+
+/**
+ * A run's log window is bounded, and it has to be. What is not acceptable is dropping lines
+ * without saying so: a clipped log is byte-for-byte indistinguishable from a whole one, which is
+ * how a fragment gets read — and quoted — as a complete run.
+ *
+ * Measured through the real queue before this counter existed: a child that wrote 5,000 lines
+ * produced 1,998 in the window, and neither the run view nor the log response said a word.
+ */
+describe('a clipped log announces itself', () => {
+  const drive = (lines: number) => {
+    const { startRun } = makeRunner();
+    const queue = new TestQueue({ startRun });
+    const view = queue.request({ worktree: '/repo' });
+    const run = queue.runs.get(view.id);
+    for (let i = 0; i < lines; i++) queue.addLog(run, 'stdout', `line ${i}`);
+    return queue.get(view.id);
+  };
+
+  it('reports nothing dropped while the window still holds everything', () => {
+    const state = drive(10);
+    expect(state.logIndex).toBe(10);
+    expect(state.logsDropped).toBe(0);
+  });
+
+  // The count is the difference between what was emitted and what survives, so a reader can tell
+  // exactly how much of the run is missing rather than only that some of it is.
+  it('counts every line the window threw away', () => {
+    const state = drive(5000);
+    expect(state.logIndex).toBe(5000);
+    expect(state.logsDropped).toBe(3000);
+    expect(state.logIndex - state.logsDropped).toBe(2000);
+  });
+
+  // The waiters warn, but `test logs` fetches the window directly and would otherwise get a
+  // fragment with nothing attached to it. The daemon's log route reads this.
+  it('offers the same count to a caller reading logs directly', () => {
+    const { startRun } = makeRunner();
+    const queue = new TestQueue({ startRun });
+    const { id } = queue.request({ worktree: '/repo' });
+    const run = queue.runs.get(id);
+    for (let i = 0; i < 2500; i++) queue.addLog(run, 'stdout', `line ${i}`);
+    expect(queue.droppedFor(id)).toBe(500);
+    expect(queue.logs(id, -1)).toHaveLength(2000);
+    // An unknown run is 0 dropped, not a throw: the route answers 404 on its own terms.
+    expect(queue.droppedFor('nope')).toBe(0);
+  });
+});

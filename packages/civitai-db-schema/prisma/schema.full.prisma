@@ -615,6 +615,10 @@ model User {
   appOwnershipTransfersFrom          AppOwnershipTransfer[]     @relation("AppOwnershipTransferFrom")
   appOwnershipTransfersTo            AppOwnershipTransfer[]     @relation("AppOwnershipTransferTo")
   targetedAnnouncements              AnnouncementUser[]
+  authoredAnnouncements              Announcement[]             @relation("authoredAnnouncements")
+  announcementSpends                 AnnouncementSpend[]        @relation("announcementSpends")
+  announcementMutesGiven             UserAnnouncementMute[]     @relation("announcementMutesGiven")
+  announcementMutesReceived          UserAnnouncementMute[]     @relation("announcementMutesReceived")
   placementSuspension                PlacementSuspension?       @relation("PlacementSuspensionUser")
   placementsReceived                 Placement[]                @relation("PlacementOwner")
   placementsMade                     Placement[]                @relation("PlacementPlacer")
@@ -1792,6 +1796,7 @@ model Image {
   connections         ImageConnection[]
   UserProfile         UserProfile[]
   userProfileSfwCover UserProfile[]         @relation("UserProfileSfwCoverImage")
+  announcementCovers  Announcement[]        @relation("AnnouncementCover")
   clubCover           Club[]                @relation("coverImage")
   clubHeader          Club[]                @relation("headerImage")
   clubAvatar          Club[]                @relation("avatarImage")
@@ -2767,6 +2772,15 @@ model AppBlockPublishRequest {
   rejectionReason       String?   @map("rejection_reason")
   approvalNotes         String?   @map("approval_notes")
   forgejoCommitSha      String?   @map("forgejo_commit_sha")                                // populated on approve after Forgejo commit succeeds
+  // #4059 build provenance — an UNTRUSTED CLIENT CLAIM about the tree the bundle
+  // was built from. NOT interchangeable with forgejoCommitSha above: that is a
+  // SERVER-side sha written on approve once the Forgejo commit succeeded, so it
+  // is a fact. These two are whatever the submitting client said; the server
+  // never confirms the bundle was actually built from sourceCommit, and nothing
+  // downstream may imply it did. NULL = unknown (a pre-feature row, or a client
+  // that sent nothing) — never "clean".
+  sourceCommit          String?   @map("source_commit")                                     // client-claimed 40-hex git sha the bundle was built from
+  sourceDirty           Boolean?  @map("source_dirty")                                      // client-claimed uncommitted-changes flag. NULL (unknown) != false (known clean)
   deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
   deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
   deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
@@ -3483,7 +3497,10 @@ model BlockSpendAttribution {
   /// (bounded, app-owned). NULL when the app supplied none.
   sharedContentKey    String? @map("shared_content_key")
 
-  status             String   @default("pending")
+  // Must stay equal to the column default in Postgres and to what backpay selects: Prisma supplies
+  // this itself on create, so a value backpay does not read makes an omitted-status row invisible to
+  // payout forever. Pinned by block-spend-attribution-status-default.test.ts.
+  status             String   @default("tracked")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.
   voidedReason       String?  @map("voided_reason")
@@ -4073,7 +4090,48 @@ model Announcement {
   endsAt      DateTime?
   metadata    Json?
   disabled    Boolean            @default(false)
+  /// Author. Null is Civitai itself; the sitewide caches select on null, so a
+  /// non-null row can never reach the global banner.
+  userId      Int?
+  user        User?              @relation("authoredAnnouncements", fields: [userId], references: [id], onDelete: Cascade)
+  coverId     Int?
+  cover       Image?             @relation("AnnouncementCover", fields: [coverId], references: [id], onDelete: SetNull)
+  /// Profile-only rows never enter the announcements feed and never notify.
+  profileOnly Boolean            @default(false)
   targetUsers AnnouncementUser[]
+  spends      AnnouncementSpend[]
+
+  @@index([userId, startsAt])
+}
+
+/// One spent announcement slot. Deliberately outlives the announcement it paid for:
+/// counting live announcements would return the slot on delete, making the cap
+/// refundable and therefore not a cap.
+model AnnouncementSpend {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  announcementId Int?
+  createdAt      DateTime      @default(now())
+  user           User          @relation("announcementSpends", fields: [userId], references: [id], onDelete: Cascade)
+  announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
+
+  /// The migration writes this as a PARTIAL unique (WHERE "announcementId" IS NOT NULL).
+  /// Same behaviour — Postgres already treats NULLs as distinct — so do not "correct"
+  /// either artifact to match the other.
+  @@unique([announcementId])
+  @@index([userId, createdAt])
+}
+
+/// A follower silencing one creator's announcements without unfollowing them.
+model UserAnnouncementMute {
+  userId    Int
+  creatorId Int
+  createdAt DateTime @default(now())
+  user      User     @relation("announcementMutesGiven", fields: [userId], references: [id], onDelete: Cascade)
+  creator   User     @relation("announcementMutesReceived", fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@id([userId, creatorId])
+  @@index([creatorId])
 }
 
 /// Allowlist of users an announcement targets. No rows = shown to everyone.

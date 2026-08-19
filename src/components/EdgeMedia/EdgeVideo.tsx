@@ -24,6 +24,7 @@ import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import clsx from 'clsx';
+import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
@@ -325,9 +326,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           onDragStart={
             draggableEnabled
               ? (e) => {
-                  e.dataTransfer.setData('text/uri-list', videoUrl);
-                  e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
-                  e.dataTransfer.setData('application/x-civitai-media-type', 'video');
+                  setMediaDragData(e.dataTransfer, {
+                    url: videoUrl,
+                    mediaId: imageId,
+                    type: 'video',
+                  });
                 }
               : undefined
           }

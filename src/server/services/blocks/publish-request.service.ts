@@ -107,6 +107,23 @@ export type ManifestDiffSummary =
 export type SubmitVersionParams = {
   bundleBuffer: Buffer;
   submittedByUserId: number;
+  /**
+   * #4059 build provenance — an UNTRUSTED CLIENT CLAIM about the tree the bundle
+   * was built from. Shape-validated by `submitVersionSchema` (lowercase 40-hex)
+   * and stored verbatim; the server never confirms the bundle was actually built
+   * from it, so nothing downstream may present it as a verified fact.
+   *
+   * 🔴 NOT `forgejoCommitSha`. That is a SERVER-side sha written on approve after
+   * the platform's own Forgejo commit succeeds — a fact about a different
+   * repository. Never alias, default, or fall back between the two.
+   */
+  sourceCommit?: string;
+  /**
+   * The client's claim that its work tree had uncommitted changes. Tri-state:
+   * `undefined` = unknown, `false` = client asserted CLEAN, `true` = client
+   * asserted DIRTY. `false` and unknown are different answers — never `?? false`.
+   */
+  sourceDirty?: boolean;
 };
 
 export type SubmitVersionResult = {
@@ -1013,7 +1030,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       import('~/server/utils/app-block-ids'),
       import('~/server/schema/blocks/publish-request.schema'),
     ]);
-  const { bundleBuffer, submittedByUserId } = params;
+  const { bundleBuffer, submittedByUserId, sourceCommit, sourceDirty } = params;
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
@@ -1243,6 +1260,17 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
         fileSummary: fileSummary as object,
         manifestDiffSummary: manifestDiffSummary as object,
         status: 'pending',
+        // #4059 — the client's UNVERIFIED provenance claim, stored as a claim.
+        // Passing `undefined` leaves the column NULL (Prisma omits an undefined
+        // field), which is what an old client sending nothing must produce:
+        // NULL means UNKNOWN in both columns, never "clean".
+        //
+        // 🔴 `sourceCommit` is NOT `forgejoCommitSha` (written on approve, after
+        // the platform's own Forgejo commit succeeds — a SERVER fact about a
+        // different repo). Different commits, different repositories, different
+        // trust. Never alias, default, or fall back between them.
+        sourceCommit,
+        sourceDirty,
       },
     });
   } catch (err) {
@@ -1905,6 +1933,12 @@ export async function recordPendingFromPush(args: {
         },
         status: 'pending',
         forgejoCommitSha: args.sha,
+        // #4059: `sourceCommit` / `sourceDirty` are deliberately NOT set here and
+        // stay NULL. This path has no client and no author work tree — the row
+        // originates from a Forgejo push, so `args.sha` is a SERVER-side commit in
+        // the platform's own repo. Copying it into `sourceCommit` would turn a
+        // server fact into a fabricated claim about an author's tree that nobody
+        // made. NULL is the correct answer: unknown.
       },
     });
   } catch (err) {

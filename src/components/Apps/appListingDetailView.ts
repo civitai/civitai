@@ -4,9 +4,11 @@
  * The kind-aware PRIMARY-ACTION logic for the unified listing detail
  * (`AppListingDetailBody`), extracted into a pure function so the correctness
  * coverage lives in the node `unit` project — the fast, deterministic suite,
- * which CI runs `continue-on-error` while not running the browser-mode component
- * suites at all. Neither BLOCKS a merge; this is simply where the detail action
- * matrix is actually pinned, mirroring `appListingCardView`.
+ * which CI runs `continue-on-error` on every PR, whereas the browser-mode
+ * component suites run only in the PR preview pipeline, report-only and behind a
+ * preview build that fails intermittently. Neither BLOCKS a merge; this is simply
+ * where the detail action matrix is actually pinned, mirroring
+ * `appListingCardView`.
  *
  * DARK / parallel-run: consumed by the mod-only `/apps/store-preview/<slug>`
  * detail surface (`AppListingDetailBody`) AND by `MySubmissionsList`'s owner

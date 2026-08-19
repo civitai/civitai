@@ -1,5 +1,6 @@
 import {
   IconLayoutDashboard,
+  IconSpeakerphone,
   IconLicense,
   IconCoin,
   IconChartBar,
@@ -20,6 +21,8 @@ export type NavItem = {
   icon: NavIcon;
   memberOnly?: boolean;
   nonMemberOnly?: boolean;
+  // Hidden unless the named feature flag resolved true for this user (see +layout.server.ts).
+  flag?: string;
   // Sub-pages shown nested in the sidebar when this section is active.
   children?: NavChild[];
 };
@@ -40,6 +43,12 @@ export const NAV: NavItem[] = [
       { href: '/analytics/content', label: 'Content' },
       { href: '/analytics/audience', label: 'Audience' },
     ],
+  },
+  {
+    href: '/announcements',
+    label: 'Announcements',
+    icon: IconSpeakerphone,
+    flag: 'creator-announcements',
   },
   { href: '/settings', label: 'Settings', icon: IconSettings },
   { href: '/join', label: 'Join Creator Program', icon: IconSparkles, nonMemberOnly: true },
@@ -65,6 +74,8 @@ export function activeNavHref(pathname: string): string | undefined {
 
 // `isMember` here is the Creator Program gate (B1) — the single bar the Studio's member-only surfaces key on,
 // not subscription tier. Callers pass `membership.isCreatorProgramMember`.
-export function navForMember(isMember: boolean): NavItem[] {
-  return NAV.filter((item) => (item.nonMemberOnly ? !isMember : true));
+export function navForMember(isMember: boolean, enabledFlags: string[] = []): NavItem[] {
+  return NAV.filter((item) => (item.nonMemberOnly ? !isMember : true)).filter(
+    (item) => !item.flag || enabledFlags.includes(item.flag)
+  );
 }

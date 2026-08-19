@@ -32,10 +32,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
-import {
-  useGenerationConfig,
-  useGenerationStatus,
-} from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
   matchesMarkerTags,
@@ -122,7 +119,6 @@ export function QueueItem({
   const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id });
 
-  const generationStatus = useGenerationStatus();
   const { unstableResources } = useGenerationConfig();
 
   const { copied, copy } = useClipboard();
@@ -131,6 +127,7 @@ export function QueueItem({
   const { status } = request;
   const params = request.params;
   const resources = request.resources;
+  const sourceLineageStep = request.sourceLineageStep;
 
   const allImages = request.steps.flatMap((s) => s.output);
 
@@ -189,10 +186,7 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    // Workflow-level replay: read directly from workflow.metadata (the form input
-    // snapshot). Per-image remix lives on the GeneratedOutput menu and uses step
-    // metadata for source-lineage cases.
-    const replayParams = request.params;
+    const replayParams = sourceLineageStep?.params ?? request.params;
     const isTxt2Img = replayParams?.workflow === 'txt2img';
     // 3D Models: pin the ecosystem so the form's discriminator activates the
     // matching subgraph (auto-hiding the checkpoint picker via Controller's
@@ -232,9 +226,9 @@ export function QueueItem({
       },
       // PolyGen has no checkpoint/LoRA resources — drop any inherited ones so
       // the form provider doesn't push a `model` value onto the polyGen branch.
-      resources: isPolyGenReplay ? [] : request.resources,
+      resources: isPolyGenReplay ? [] : sourceLineageStep?.resources ?? request.resources,
       runType: 'replay',
-      remixOfId: request.remixOfId,
+      remixOfId: sourceLineageStep?.remixOfId ?? request.remixOfId,
     });
   };
 
@@ -262,7 +256,8 @@ export function QueueItem({
     (params.workflow &&
       !['img2img-upscale', 'img2img-background-removal'].includes(params.workflow as string)) ||
     (!!params.engine && allImages.length > 0) ||
-    isPolyGen;
+    isPolyGen ||
+    !!sourceLineageStep;
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
 
@@ -394,7 +389,7 @@ export function QueueItem({
                   {copied ? <IconCheck /> : <IconInfoHexagon />}
                 </LegacyActionIcon>
               </ButtonTooltip>
-              {generationStatus.available && canRemix && (
+              {canRemix && (
                 <ButtonTooltip {...tooltipProps} label="Remix">
                   <LegacyActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
                     <IconArrowsShuffle />
