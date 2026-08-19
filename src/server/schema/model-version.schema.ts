@@ -403,7 +403,12 @@ export type ModelVersionPaidAccessDto = {
    * Present only while a sale is actually discounting this viewer's price. `listTerms` is the
    * pre-sale price so the UI can strike it through; `endsAt` is what a countdown reads.
    */
-  sale: { listTerms: ModelVersionTerms; endsAt: Date } | null;
+  sale: {
+    listTerms: ModelVersionTerms;
+    endsAt: Date;
+    discountType: 'Fixed' | 'Percent';
+    discountAmount: number;
+  } | null;
 };
 
 // Narrow input for editing only a version's paid access (e.g. from the creator studio) without

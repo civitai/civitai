@@ -5,8 +5,11 @@ import { trpc } from '~/utils/trpc';
 type Context = {
   useModelVersionRedirect?: boolean;
   activeBaseModels?: string[];
-  /** modelId -> when its running sale ends. Absent means no sale. */
-  salesByModelId?: Record<number, { endsAt: Date }>;
+  /** modelId -> its running sale. Absent means no sale. */
+  salesByModelId?: Record<
+    number,
+    { endsAt: Date; discountType: 'Fixed' | 'Percent'; discountAmount: number }
+  >;
 };
 
 const ModelCardContext = createContext<Context | null>(null);

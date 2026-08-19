@@ -287,9 +287,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const paidAccessEndsAt = version?.paidAccess?.endsAt;
   const isEarlyAccess = !!paidAccessEndsAt && paidAccessEndsAt > new Date();
   const paidAccessTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
-  // Only shown to someone who is actually quoted the sale price: the server reports no sale to an
-  // owner or moderator, who are shown the stored terms their editors write back.
-  const saleForViewer = !hasDownloadPermissions ? version?.paidAccess?.sale : null;
+  // Owners see it too, worded differently: they are quoted their stored price, but their own live sale
+  // should not be invisible on their own model page.
+  const saleForViewer = version?.paidAccess?.sale ?? null;
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
@@ -547,7 +547,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       </Card.Section>
       {saleForViewer ? (
         <Card.Section className="px-4 pt-2">
-          <ModelVersionSaleBadge sale={saleForViewer} />
+          <ModelVersionSaleBadge sale={saleForViewer} isOwner={isOwnerOrMod} />
         </Card.Section>
       ) : null}
       <Card.Section>

@@ -218,10 +218,16 @@ function paidAccessCache(entityType: PaidAccessEntityType) {
 export async function getActiveSalesForModels(
   modelIds: number[],
   now: Date = new Date()
-): Promise<Record<number, { endsAt: Date }>> {
+): Promise<
+  Record<number, { endsAt: Date; discountType: SaleDiscountKind; discountAmount: number }>
+> {
   if (!modelIds.length) return {};
-  const rows = await dbRead.$queryRaw<{ modelId: number; endsAt: Date }[]>`
-    SELECT mv."modelId" AS "modelId", MIN(s."endsAt") AS "endsAt"
+  const rows = await dbRead.$queryRaw<
+    { modelId: number; endsAt: Date; discountType: SaleDiscountKind; discountAmount: number }[]
+  >`
+    SELECT DISTINCT ON (mv."modelId")
+      mv."modelId" AS "modelId", s."endsAt" AS "endsAt",
+      s."discountType" AS "discountType", s."discountAmount" AS "discountAmount"
     FROM "ModelVersionSaleItem" si
     JOIN "ModelVersionSale" s ON s.id = si."saleId"
     JOIN "ModelVersion" mv ON mv.id = si."modelVersionId"
@@ -233,9 +239,14 @@ export async function getActiveSalesForModels(
       AND s."userId" = m."userId"
       AND s."startsAt" <= ${now} AND s."endsAt" > ${now}
       AND (s."canceledAt" IS NULL OR s."canceledAt" > ${now})
-    GROUP BY mv."modelId"
+    ORDER BY mv."modelId", s."endsAt"
   `;
-  return Object.fromEntries(rows.map((r) => [Number(r.modelId), { endsAt: r.endsAt }]));
+  return Object.fromEntries(
+    rows.map((r) => [
+      Number(r.modelId),
+      { endsAt: r.endsAt, discountType: r.discountType, discountAmount: r.discountAmount },
+    ])
+  );
 }
 
 /**
@@ -380,7 +391,12 @@ export type ViewerMonetization = {
    * pre-sale terms so a surface can show what the price was without recomputing the discount — and so
    * nothing downstream has to know how a sale is resolved to be able to draw one.
    */
-  sale: { listTerms: ModelVersionTerms; endsAt: Date } | null;
+  sale: {
+    listTerms: ModelVersionTerms;
+    endsAt: Date;
+    discountType: SaleDiscountKind;
+    discountAmount: number;
+  } | null;
   /** What THIS viewer is quoted. The owner and moderators see the stored value, not the capped one. */
   licensingFee: number | null;
   /**
@@ -446,9 +462,23 @@ export async function getViewerMonetization({
           )
         : null;
     if (!cappableIds.has(v.id)) {
+      // An owner or moderator is shown the STORED price — their editors write it back — but they are still
+      // told a sale is running. Suppressing it here made a creator's own model page the one place their
+      // own live sale was invisible.
+      const ownerSale = row?.sales?.length
+        ? bestSaleFor(gatePrices(row.terms as ModelVersionTerms).download, row.sales)
+        : undefined;
       out[v.id] = {
         paidAccess: row,
-        sale: null,
+        sale:
+          ownerSale && row
+            ? {
+                listTerms: row.terms as ModelVersionTerms,
+                endsAt: ownerSale.endsAt,
+                discountType: ownerSale.discountType,
+                discountAmount: ownerSale.discountAmount,
+              }
+            : null,
         licensingFee: storedFee,
         effectiveLicensingFee: effectiveFee,
       };
@@ -481,7 +511,12 @@ export async function getViewerMonetization({
         listTerms &&
         saleTerms &&
         gatePrices(saleTerms).download < gatePrices(listTerms).download
-          ? { listTerms, endsAt: activeSale.endsAt }
+          ? {
+              listTerms,
+              endsAt: activeSale.endsAt,
+              discountType: activeSale.discountType,
+              discountAmount: activeSale.discountAmount,
+            }
           : null,
       licensingFee:
         storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType, mediaType) : null,

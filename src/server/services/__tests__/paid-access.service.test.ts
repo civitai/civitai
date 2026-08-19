@@ -639,14 +639,22 @@ describe('getViewerMonetization — what the UI is told about a sale', () => {
     expect(out[1].paidAccess?.terms).toEqual({ download: { price: 800 } });
     expect(out[1].sale?.listTerms).toEqual({ download: { price: 1000 } });
     expect(out[1].sale?.endsAt).toEqual(FUTURE);
+    // The discount travels with the sale so a badge can say "20% off" without deriving it client-side.
+    expect(out[1].sale?.discountType).toBe('Percent');
+    expect(out[1].sale?.discountAmount).toBe(20);
   });
 
-  it('reports no sale to the owner, who is shown the stored price', async () => {
+  it('tells the OWNER about their own sale, while still quoting them the stored price', async () => {
+    // Their editors write the stored terms back, so those must not be discounted — but suppressing the
+    // sale entirely made a creator's own model page the one place their live sale was invisible.
     drive({ 1: row({ sales: [sale()] }) });
 
     const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
 
-    expect(out[1].sale).toBeNull();
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+    expect(out[1].sale?.discountType).toBe('Percent');
+    expect(out[1].sale?.discountAmount).toBe(20);
+    expect(out[1].sale?.endsAt).toEqual(FUTURE);
   });
 
   it('reports no sale when there is none', async () => {
