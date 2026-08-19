@@ -41,6 +41,9 @@ const creatorAnnouncementSelect = {
     },
   },
   user: { select: { id: true, username: true, image: true } },
+  // Whether this row consumed an allowance slot. A row that notified and was later
+  // switched to profileOnly still spent one, and nothing else on the row shows that.
+  _count: { select: { spends: true } },
   // `satisfies`, not `as const`: a standalone object literal gets no excess-property
   // check when it is passed to Prisma later, so a column that does not exist typechecks
   // clean and 500s at runtime on every read and write. This is the check that catches it.
@@ -49,6 +52,7 @@ const creatorAnnouncementSelect = {
 type RawCreatorAnnouncement = {
   metadata: unknown;
   cover: { nsfwLevel: number } | null;
+  _count?: { spends: number };
 };
 
 /**
@@ -56,9 +60,13 @@ type RawCreatorAnnouncement = {
  * text carries no rating here. Surfaced as a top-level field anyway so callers gate on one
  * number and cannot forget the cover, which is the only thing that can be mature.
  */
-function toCreatorAnnouncementDTO<T extends RawCreatorAnnouncement>(announcement: T) {
+function toCreatorAnnouncementDTO<T extends RawCreatorAnnouncement>({
+  _count,
+  ...announcement
+}: T) {
   return {
     ...announcement,
+    spentSlot: (_count?.spends ?? 0) > 0,
     // Parsed here, as the sitewide DTO does, so the client reads metadata.actions
     // without a cast rather than being trusted to know the shape.
     metadata: (announcement.metadata ?? {}) as AnnouncementMetaSchema,
@@ -249,7 +257,14 @@ export async function upsertCreatorAnnouncement({
     domain: input.domain,
     startsAt: input.startsAt ?? null,
     endsAt: input.endsAt ?? null,
-    disabled: input.disabled ?? false,
+    // Absent means "leave alone", not "clear". `disabled ?? false` un-hid a row a
+    // moderator had taken down as soon as its author edited a typo — and that path
+    // spends no slot, so the restore was free.
+    ...(input.disabled !== undefined
+      ? { disabled: input.disabled }
+      : existing
+      ? {}
+      : { disabled: false }),
     profileOnly: input.profileOnly,
     metadata,
     ...(coverId !== undefined ? { coverId } : {}),

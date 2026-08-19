@@ -373,3 +373,49 @@ describe('the allowance cannot be walked around', () => {
     expect(strings.join('')).toContain('pg_advisory_xact_lock');
   });
 });
+
+describe('an omitted field means leave it alone', () => {
+  it('does not clear `disabled` on an update that never mentions it', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue({
+      id: 9,
+      coverId: null,
+      profileOnly: false,
+    } as never);
+
+    await upsertCreatorAnnouncement({ ...validInput, id: 9, userId: AUTHOR });
+
+    const data = (
+      dbMock.dbWrite.announcement.update.mock.calls[0][0] as { data: Record<string, unknown> }
+    ).data;
+
+    // A row a moderator disabled would otherwise go live again the moment its author
+    // fixed a typo — and that path spends no slot, so the restore would be free.
+    expect('disabled' in data).toBe(false);
+    // Positive control: the edit still writes the fields it did send.
+    expect(data.title).toBe(validInput.title);
+  });
+
+  it('still honours an explicit disabled on an update', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue({
+      id: 9,
+      coverId: null,
+      profileOnly: false,
+    } as never);
+
+    await upsertCreatorAnnouncement({ ...validInput, id: 9, disabled: true, userId: AUTHOR });
+
+    const data = (
+      dbMock.dbWrite.announcement.update.mock.calls[0][0] as { data: Record<string, unknown> }
+    ).data;
+    expect(data.disabled).toBe(true);
+  });
+
+  it('defaults a new announcement to enabled', async () => {
+    await upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR });
+
+    const data = (
+      dbMock.dbWrite.announcement.create.mock.calls[0][0] as { data: Record<string, unknown> }
+    ).data;
+    expect(data.disabled).toBe(false);
+  });
+});
