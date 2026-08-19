@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deriveMuteColumns } from '~/shared/utils/chat';
+import type { PrivateMemberFields } from '~/shared/utils/chat';
+import { deriveMuteColumns, scopeMemberPrivacy } from '~/shared/utils/chat';
 import { ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import { shouldNotifyForMessage } from '~/shared/utils/chat';
 import { EMOJI_JUMBO_LIMIT, emojiOnlyCount, isJumboEmojiText } from '~/shared/constants/base-emoji';
@@ -136,5 +137,62 @@ describe('deriveMuteColumns', () => {
       isMuted: true,
       notifyLevel: ChatNotifyLevel.Mentions,
     });
+  });
+});
+
+/**
+ * What the other side of a conversation is allowed to learn about you.
+ *
+ * Every field here answers a question about how someone uses a chat — whether
+ * they filtered you into Requests, deleted the thread, muted it, pinned it, or
+ * read your last message. The membership rows go to every participant, so the
+ * scrub is the only thing between those answers and the person they are about.
+ *
+ * Two of them were missed for a while: `isMuted` mirrors `notifyLevel`, so
+ * scrubbing the level alone still answered "have they muted me?", and
+ * `lastViewedMessageId` is a read receipt this product does not show.
+ */
+describe('scopeMemberPrivacy', () => {
+  const member = (userId: number): PrivateMemberFields & { id: number; username: string } => ({
+    id: userId * 10,
+    username: `user${userId}`,
+    userId,
+    filteredAt: new Date('2026-08-01T00:00:00Z'),
+    clearedAt: new Date('2026-08-02T00:00:00Z'),
+    notifyLevel: ChatNotifyLevel.None,
+    pinnedAt: new Date('2026-08-03T00:00:00Z'),
+    isMuted: true,
+    lastViewedMessageId: 4221084,
+  });
+
+  it('hands back your own membership untouched', () => {
+    const mine = member(1);
+    expect(scopeMemberPrivacy(1)(mine)).toBe(mine);
+  });
+
+  it('answers none of the questions for anyone else', () => {
+    // Asserted as a whole object rather than field by field: dropping a scrub
+    // has to fail here, and a per-field assertion only covers what someone
+    // remembered to list.
+    expect(scopeMemberPrivacy(1)(member(2))).toEqual({
+      id: 20,
+      username: 'user2',
+      userId: 2,
+      filteredAt: null,
+      clearedAt: null,
+      notifyLevel: ChatNotifyLevel.All,
+      pinnedAt: null,
+      isMuted: false,
+      lastViewedMessageId: null,
+    });
+  });
+
+  it('leaves everything that is not private alone', () => {
+    // The row still has to be usable: identity and anything else the UI renders
+    // for other participants must survive the scrub.
+    const scoped = scopeMemberPrivacy(1)(member(2));
+    expect(scoped.userId).toBe(2);
+    expect(scoped.username).toBe('user2');
+    expect(scoped.id).toBe(20);
   });
 });

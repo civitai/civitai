@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Box,
   Divider,
   Group,
@@ -12,6 +13,8 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { IconArrowLeft, IconLock, IconX } from '@tabler/icons-react';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
 import produce from 'immer';
 import React from 'react';
 import type { ChatSettingsScope } from '~/components/Chat/ChatProvider';
@@ -25,7 +28,7 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 import type { ChatDmPolicy, UserSettingsChat } from '~/server/schema/chat.schema';
 import { DEFAULT_CHAT_SETTINGS } from '~/server/schema/chat.schema';
 import type { ChatThemeSlug } from '~/shared/constants/chat-theme';
-import { CHAT_THEME_DEFAULT, chatThemes } from '~/shared/constants/chat-theme';
+import { chatThemes } from '~/shared/constants/chat-theme';
 import { ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -309,7 +312,7 @@ function GlobalChatSettings({
       </SettingsGroup>
 
       <SettingsGroup title="Appearance">
-        <ChatThemePicker value={settings.theme} onChange={(theme) => update({ theme })} />
+        <ChatThemePicker onChange={(theme) => update({ theme })} />
       </SettingsGroup>
 
       <SettingsGroup title="Notifications">
@@ -329,15 +332,13 @@ function GlobalChatSettings({
   );
 }
 
-function ChatThemePicker({
-  value,
-  onChange,
-}: {
-  value: ChatThemeSlug | undefined;
-  onChange: (slug: ChatThemeSlug) => void;
-}) {
-  const { isMember } = useChatTheme();
-  const selected = value ?? CHAT_THEME_DEFAULT;
+function ChatThemePicker({ onChange }: { onChange: (slug: ChatThemeSlug) => void }) {
+  const { isMember, theme: rendered } = useChatTheme();
+  const router = useRouter();
+  // What the window is actually painted with, not what is stored: a lapsed
+  // membership leaves the stored choice in place, and marking it selected would
+  // claim a theme the reader is not looking at.
+  const selected = rendered.slug;
 
   return (
     <>
@@ -347,10 +348,14 @@ function ChatThemePicker({
           return (
             <UnstyledButton
               key={theme.slug}
+              component={locked ? Link : undefined}
+              href={locked ? `/pricing?returnUrl=${encodeURIComponent(router.asPath)}` : undefined}
               className={clsx(classes.themeOption, { [classes.themeLocked]: locked })}
               aria-pressed={selected === theme.slug}
-              disabled={locked}
-              onClick={() => onChange(theme.slug)}
+              // Locked stays clickable on purpose: a disabled swatch is a dead
+              // end, and the thing a non-member wants from it is the offer.
+              title={locked ? `${theme.name} comes with a membership` : undefined}
+              onClick={locked ? undefined : () => onChange(theme.slug)}
             >
               <span
                 className={classes.themeSwatch}
@@ -365,8 +370,23 @@ function ChatThemePicker({
         })}
       </Group>
       <Text component="div" className={classes.previewStrip}>
-        Themes reskin <b>your</b> chat window only — the other side sees their own. Everything past
-        Civitai comes with a membership, and reverts to Civitai if one lapses.
+        Themes reskin <b>your</b> chat window only — the other side sees their own.{' '}
+        {isMember ? (
+          <>
+            Everything past Civitai came with your membership, and reverts to Civitai if it lapses.
+          </>
+        ) : (
+          <>
+            Citron, Bubblegum and Terminal come with any{' '}
+            <Anchor
+              component={Link}
+              href={`/pricing?returnUrl=${encodeURIComponent(router.asPath)}`}
+            >
+              membership
+            </Anchor>
+            .
+          </>
+        )}
       </Text>
     </>
   );

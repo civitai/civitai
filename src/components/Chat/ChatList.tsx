@@ -80,8 +80,9 @@ export function ChatList() {
   const { connected } = useSignalContext();
   const isMobile = useContainerSmallerThan(700);
   const domainColor = useDomainColor();
-  const userSettings = queryUtils.chat.getUserSettings.getData();
-  // const { data: userSettings } = trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
+  const { data: userSettings } = trpc.chat.getUserSettings.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
 
   const replaceBadWords = userSettings?.replaceBadWords ?? false;
 

@@ -10,7 +10,11 @@ import { StickerTopUp } from '~/components/Sticker/StickerTopUp';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { StickerSurface } from '~/shared/utils/sticker-token';
-import { STICKER_SURFACES, stickerBalanceLabel } from '~/shared/utils/sticker-token';
+import {
+  STICKER_SURFACES,
+  rankStickerMatch,
+  stickerBalanceLabel,
+} from '~/shared/utils/sticker-token';
 import { BASE_EMOJI } from '~/shared/constants/base-emoji';
 import { trpc } from '~/utils/trpc';
 
@@ -65,14 +69,14 @@ export function StickerPicker({
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return sticker;
-    return sticker.filter((x) => x.slug.includes(needle) || x.name.toLowerCase().includes(needle));
+    return sticker.filter((x) => rankStickerMatch(needle, x.slug, x.name) !== null);
   }, [sticker, query]);
 
   const withEmoji = !!onSelectEmoji;
   const emoji = useMemo(() => {
     const needle = query.trim().toLowerCase().replace(/^:|:$/g, '');
     if (!needle) return BASE_EMOJI;
-    return BASE_EMOJI.filter((e) => e.slug.includes(needle) || (e.keywords ?? '').includes(needle));
+    return BASE_EMOJI.filter((e) => rankStickerMatch(needle, e.slug, e.keywords) !== null);
   }, [query]);
 
   // Gated at the single mount point every surface shares, so chat and the RTE

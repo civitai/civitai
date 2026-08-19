@@ -97,3 +97,37 @@ export function deriveMuteColumns(input: { isMuted?: boolean; notifyLevel?: Chat
       isMuted ?? (notifyLevel === undefined ? undefined : notifyLevel === ChatNotifyLevel.None),
   };
 }
+/**
+ * Every per-member field that says something about how a person uses a
+ * conversation. Naming them in the constraint rather than accepting any member
+ * shape is the point: adding one to `chatSelect` without adding it here stops
+ * compiling instead of silently shipping it to the other side.
+ */
+export type PrivateMemberFields = {
+  userId: number;
+  filteredAt: Date | null;
+  clearedAt: Date | null;
+  notifyLevel: ChatNotifyLevel;
+  pinnedAt: Date | null;
+  isMuted: boolean;
+  lastViewedMessageId: number | null;
+};
+
+export const scopeMemberPrivacy =
+  (userId: number) =>
+  <T extends PrivateMemberFields>(member: T): T =>
+    member.userId === userId
+      ? member
+      : {
+          ...member,
+          filteredAt: null,
+          clearedAt: null,
+          notifyLevel: ChatNotifyLevel.All,
+          pinnedAt: null,
+          // Mirrors `notifyLevel`, so scrubbing only that one still answered
+          // "have they muted me?".
+          isMuted: false,
+          // A read receipt nobody renders — every reader of this field takes it
+          // off their own membership.
+          lastViewedMessageId: null,
+        };

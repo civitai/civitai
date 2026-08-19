@@ -15,6 +15,7 @@ import {
   Textarea,
   Title,
   Tooltip,
+  UnstyledButton,
   useComputedColorScheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
@@ -68,6 +69,7 @@ import classes from './ExistingChat.module.scss';
 import { Sticker } from '~/components/Sticker/Sticker';
 import { StickerPicker } from '~/components/Sticker/StickerPicker';
 import { StickerProvider } from '~/components/Sticker/StickerProvider';
+import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCleanText } from '~/hooks/useCheckProfanity';
 import {
@@ -75,11 +77,13 @@ import {
   isStickerOnlyContent,
   parseStickerIds,
   parseStickerLines,
+  rankStickerMatch,
   resolveStickerTokens,
+  stickerQueryAtCaret,
   stripStickerTokens,
 } from '~/shared/utils/sticker-token';
 import { MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
-import { isJumboEmojiText } from '~/shared/constants/base-emoji';
+import { BASE_EMOJI, isJumboEmojiText } from '~/shared/constants/base-emoji';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -88,6 +92,9 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 type TypingStatus = {
   [key: string]: boolean;
 };
+
+/** A typeahead is a shortcut, not a browser — the picker is one click away. */
+const SUGGESTION_LIMIT = 8;
 
 /** The counter turns amber here, far enough out to still be editing rather than deleting. */
 const COUNTER_WARN_AT = 1800;
@@ -710,6 +717,9 @@ function ChatInputBox({
   const [isSending, setIsSending] = useState(false);
   const [chatMsg, setChatMsg] = useState<string>('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [caret, setCaret] = useState(0);
+  const [suggestIndex, setSuggestIndex] = useState(0);
+  const [suggestDismissed, setSuggestDismissed] = useState(false);
   const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
   const ownedSticker = useOwnedSticker();
 
@@ -743,6 +753,64 @@ function ChatInputBox({
       ),
     [currentUser, doIsTyping, isMuted, existingChatId]
   );
+
+  const activeQuery = suggestDismissed ? null : stickerQueryAtCaret(chatMsg, caret);
+  const activeQueryText = activeQuery?.query ?? null;
+
+  const suggestions = useMemo(() => {
+    if (!activeQueryText) return [];
+
+    const ranked: {
+      rank: number;
+      key: string;
+      slug: string;
+      insert: string;
+      sticker?: ResolvedSticker;
+    }[] = [];
+
+    for (const item of ownedSticker.sticker) {
+      const rank = rankStickerMatch(activeQueryText, item.slug, item.name);
+      if (rank !== null)
+        ranked.push({
+          rank,
+          key: `s${item.id}`,
+          slug: item.slug,
+          insert: `:${item.slug}:`,
+          sticker: item,
+        });
+    }
+    for (const item of BASE_EMOJI) {
+      const rank = rankStickerMatch(activeQueryText, item.slug, item.keywords);
+      if (rank !== null)
+        ranked.push({ rank, key: `e${item.slug}`, slug: item.slug, insert: item.char });
+    }
+
+    // Stickers before emoji at equal rank: an owned sticker is the more
+    // deliberate thing to have typed, and the free set is always there.
+    return ranked.sort((a, b) => a.rank - b.rank).slice(0, SUGGESTION_LIMIT);
+  }, [activeQueryText, ownedSticker.sticker]);
+
+  const suggestOpen = !!activeQuery && suggestions.length > 0;
+  const activeSuggestion = suggestions[Math.min(suggestIndex, suggestions.length - 1)];
+
+  const applySuggestion = (item: (typeof suggestions)[number]) => {
+    if (!activeQuery) return;
+    const before = chatMsg.slice(0, activeQuery.start);
+    const after = chatMsg.slice(caret);
+    const insert = `${item.insert} `;
+    const next = `${before}${insert}${after}`;
+
+    setChatMsg(next);
+    setSuggestIndex(0);
+    // The caret has to land after what was inserted, not at the end of a
+    // message the sender may be editing the middle of.
+    const nextCaret = before.length + insert.length;
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCaret, nextCaret);
+      setCaret(nextCaret);
+    });
+  };
 
   const { mutate: updateMessage, isPending: isSavingEdit } = trpc.chat.updateMessage.useMutation({
     onSuccess({ messageId, chatId, content }) {
@@ -841,8 +909,11 @@ function ChatInputBox({
     },
   });
 
-  const handleChatTyping = (value: string) => {
+  const handleChatTyping = (value: string, nextCaret?: number) => {
     setChatMsg(value);
+    setCaret(nextCaret ?? value.length);
+    setSuggestDismissed(false);
+    setSuggestIndex(0);
     if (!currentUser) return;
 
     // only send signal if they're not erasing the chat
@@ -920,6 +991,34 @@ function ChatInputBox({
 
   return (
     <>
+      {suggestOpen && (
+        <div className={classes.suggestList} role="listbox" aria-label="Sticker suggestions">
+          {suggestions.map((item, idx) => (
+            <UnstyledButton
+              key={item.key}
+              role="option"
+              aria-selected={idx === suggestIndex}
+              className={clsx(classes.suggestItem, {
+                [classes.suggestActive]: idx === suggestIndex,
+              })}
+              // Pointer-down would blur the composer first, closing the list
+              // out from under the click.
+              onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
+              onMouseEnter={() => setSuggestIndex(idx)}
+              onClick={() => applySuggestion(item)}
+            >
+              <span className={classes.suggestGlyph}>
+                {item.sticker ? (
+                  <Sticker cosmeticId={item.sticker.id} size={STICKER_SIZE.preview} />
+                ) : (
+                  item.insert
+                )}
+              </span>
+              <span className={classes.suggestSlug}>{`:${item.slug}:`}</span>
+            </UnstyledButton>
+          ))}
+        </div>
+      )}
       <div className={classes.composerRow}>
         <StickerPicker
           surface="chat"
@@ -945,8 +1044,35 @@ function ChatInputBox({
           minRows={1}
           maxRows={4}
           value={chatMsg}
-          onChange={(event) => handleChatTyping(event.currentTarget.value)}
+          onChange={(event) =>
+            handleChatTyping(event.currentTarget.value, event.currentTarget.selectionStart)
+          }
+          // Moving the caret with the mouse or arrows changes which token it
+          // sits in, and neither fires onChange.
+          onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
+          onClick={(e) => setCaret(e.currentTarget.selectionStart)}
+          onBlur={() => setSuggestDismissed(true)}
           onKeyDown={(e) => {
+            // The list owns these keys while it is up, or Enter sends the
+            // half-typed `:fi` instead of completing it.
+            if (suggestOpen) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const delta = e.key === 'ArrowDown' ? 1 : -1;
+                setSuggestIndex((i) => (i + delta + suggestions.length) % suggestions.length);
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                if (activeSuggestion) applySuggestion(activeSuggestion);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setSuggestDismissed(true);
+                return;
+              }
+            }
             if (e.key === 'Escape' && editing) {
               e.preventDefault();
               setEditing(undefined);
@@ -1211,7 +1337,8 @@ function DisplayMessages({
                         <div
                           className={clsx(classes.messageText, {
                             [classes.mine]: isMe,
-                            [classes.stickerOnlyMessage]: isStickerOnlyContent(c.content),
+                            [classes.standalone]:
+                              isStickerOnlyContent(c.content) || isJumboEmojiText(c.content),
                           })}
                         >
                           <ChatMessageContent content={c.content} blur={blur} />

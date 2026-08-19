@@ -22,7 +22,7 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
-import { deriveMuteColumns } from '~/shared/utils/chat';
+import { deriveMuteColumns, scopeMemberPrivacy } from '~/shared/utils/chat';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -46,7 +46,7 @@ import {
   throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { ChatMemberStatus, ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
 
@@ -78,18 +78,6 @@ function assertChatRedesign(ctx: ProtectedContext) {
  * copy tells a sender whether their message was filtered — an oracle on the
  * recipient's DM policy — and tells them the recipient deleted the thread.
  */
-const scopeMemberPrivacy =
-  (userId: number) =>
-  <T extends { userId: number; filteredAt: Date | null; clearedAt: Date | null }>(member: T): T =>
-    member.userId === userId
-      ? member
-      : {
-          ...member,
-          filteredAt: null,
-          clearedAt: null,
-          notifyLevel: ChatNotifyLevel.All,
-          pinnedAt: null,
-        };
 
 /**
  * Get user chat settings
@@ -963,7 +951,7 @@ export const deleteMessageHandler = async ({
     });
 
     if (!existing || (existing.userId !== userId && !isModerator)) {
-      throw throwBadRequestError(`Could not find message with id: (${input.messageId})`);
+      throw throwNotFoundError(`No message found for ID (${input.messageId})`);
     }
     if (existing.deletedAt) return { messageId: existing.id, chatId: existing.chatId };
 

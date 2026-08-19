@@ -118,6 +118,15 @@
   background-color: var(--chat-bubble-me);
 }
 
+/* A sticker or a lone jumbo emoji IS the message. A themed bubble around it
+   reads as a frame drawn on the artwork, and the sticker's own transparency
+   stops being transparent. Doubled to outrank `.mine`, which is equally
+   specific and would otherwise win on source order. */
+.standalone.standalone {
+  background-color: transparent;
+  padding: 0;
+}
+
 .editedTag {
   font-size: 10px;
   color: var(--chat-meta);
@@ -240,4 +249,47 @@
   position: sticky;
   bottom: 0;
   display: inline-flex;
+}
+
+/* Sits directly above the composer rather than floating: the chat pane is
+   narrow and a portalled dropdown lands outside it at several widths. */
+.suggestList {
+  margin: 0 8px;
+  max-height: 210px;
+  overflow-y: auto;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--mantine-radius-sm);
+  background-color: var(--chat-panel-strong);
+  box-shadow: 0 6px 18px light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 55%));
+}
+
+.suggestItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 5px 9px;
+  font-size: 12.5px;
+  color: var(--chat-text-dim);
+}
+
+.suggestActive {
+  background-color: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+
+.suggestGlyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.suggestSlug {
+  font-family: var(--mantine-font-family-monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
