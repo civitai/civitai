@@ -144,7 +144,18 @@ export function AppTransferOffersView({
          * re-run here and no `connectClientId` is in scope — the service computed this
          * from the SAME `refusesTransferForConnectClient` its two enforcement gates use,
          * so this surface cannot invent a stricter or looser rule of its own.
+         *
+         * 🔴 ONE PREDICATE, READ ONCE, USED BY BOTH BRANCHES. The banner below and the
+         * Accept button used to test this value differently — `blockedReason ? …` for the
+         * banner, `blockedReason != null` for the button — which agree on today's two
+         * possible values and disagree on a third: an EMPTY-STRING reason would have
+         * disabled Accept while rendering no explanation at all, leaving a card the
+         * recipient can neither accept nor understand. Unreachable while the service can
+         * only send the constant or `null`, and reachable the moment a second reason is
+         * added by someone who has no way to know the two branches differ. `blocked` is
+         * the single test; `!== null` is the one that matches the field's type.
          */
+        const blocked = transfer.acceptBlockedReason !== null;
         const blockedReason = transfer.acceptBlockedReason;
         return (
           <Paper
@@ -183,18 +194,20 @@ export function AppTransferOffersView({
               </Group>
 
               {/* 🔴 THE REFUSAL, BEFORE THE CLICK — the recipient half of #3935.
-                  `acceptTransfer` re-asserts the connect-client refusal IN-TRANSACTION
-                  precisely because a revision approve can link an OAuth client while an
-                  offer sits open, so this card can be live, valid and guaranteed to fail.
-                  Without this the recipient learned that only by pressing Accept and
-                  reading a toast — the same learn-it-by-doing-the-work shape the owner's
-                  tab already fixed, on the other side of the wire.
+                  `acceptTransfer` re-asserts the connect-client refusal IN-TRANSACTION, so
+                  a card here can be live, valid-looking and guaranteed to fail. Without
+                  this the recipient learned that only by pressing Accept and reading a
+                  toast — the same learn-it-by-doing-the-work shape the owner's tab already
+                  fixed, on the other side of the wire. (How reachable that state actually
+                  is today is answered honestly at the field's definition in
+                  `app-ownership-transfer.service.ts` — the short version is "not, through
+                  the product", so this is gap-closure ahead of traffic.)
 
                   The message is the SERVER's own constant, verbatim, not a paraphrase: the
                   recipient reads the same sentence the mutation would have returned. It
                   states a constraint and instructs NOTHING, because there is no unlink
                   path in the product for them OR the owner to pursue. */}
-              {blockedReason ? (
+              {blocked ? (
                 <Alert
                   color="yellow"
                   variant="light"
@@ -254,7 +267,7 @@ export function AppTransferOffersView({
                 <Button
                   size="xs"
                   color="red"
-                  disabled={busy || blockedReason != null}
+                  disabled={busy || blocked}
                   loading={busy}
                   data-testid={`apps-transfer-accept-${transfer.transferId}`}
                   onClick={() => onRespond?.(transfer.transferId, true)}

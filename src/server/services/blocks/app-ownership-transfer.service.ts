@@ -697,11 +697,35 @@ export type IncomingTransferView = {
    * the up-front refusal #3935 gave the owner.
    *
    * A connect-linked off-site listing is refused at initiate AND re-asserted
-   * IN-TRANSACTION at accept ({@link refusesTransferForConnectClient}), and that second
-   * gate exists because a revision approve can link an OAuth client while an offer sits
-   * open. So a live, valid-looking offer in this inbox can be guaranteed to fail on
-   * accept, and until this field existed the inbox could not know: the recipient met the
+   * IN-TRANSACTION at accept ({@link refusesTransferForConnectClient}). So an offer in
+   * this inbox can in principle be live, valid-looking and guaranteed to fail on accept,
+   * and until this field existed the inbox could not know it: the recipient met the
    * refusal only by clicking Accept.
+   *
+   * 🔴 HOW REACHABLE IS THAT, HONESTLY: NOT, THROUGH THE PRODUCT, TODAY. Several comments
+   * in this file and in `AppCollaboratorsPanelView` justify the accept-time re-assert by
+   * saying "a revision approve can LINK an OAuth client while the offer is open". That
+   * sentence was inherited rather than checked, and an enumeration of every writer of
+   * `AppListing.connectClientId` does not support it:
+   *   - the ONLY non-null write is `submitExternalListing`'s `create` of a BRAND-NEW row,
+   *     where the schema makes the field required — a listing is BORN linked;
+   *   - `beginListingRevision` copies `parent.connectClientId` onto the shadow, the approve
+   *     merge copies `shadow.connectClientId` back onto the parent, and in between
+   *     `buildListingPatchData` never assigns the column and `updateListingPatchSchema` has
+   *     no such key — so the revision round trip returns the value it started with;
+   *   - no raw SQL, nested relation write, or spread writes it.
+   * So a listing cannot ACQUIRE a link, and `initiateTransfer` refuses to open an offer on
+   * one that was born with it. The blocked state is therefore not producible through the
+   * product as it stands — it needs a direct DB write, a migration, or a future unlink/link
+   * flow. (Caveat: that enumeration is textual plus call-site based; a fully dynamic key or
+   * a runtime-assembled raw UPDATE would evade it. None was found.)
+   *
+   * 🔴 WHICH IS A REASON TO SHIP THIS, NOT TO SKIP IT — but as GAP-CLOSURE AHEAD OF
+   * TRAFFIC, not as a live bug fix, and it should not be described as one. The accept-time
+   * gate is correct defence-in-depth whether or not today's writers can reach it, and the
+   * two stale comments at :2273 and :2573 of `offsite-listing.service.ts` show a link flow
+   * is anticipated. When one lands, this field is already the channel that tells the
+   * recipient — rather than a second learn-it-by-clicking defect to find later.
    *
    * 🔴 A DERIVED REASON, NOT THE RAW `connectClientId`, and the distinction is a
    * disclosure boundary rather than style. #3935 carried the raw column to the OWNER's
@@ -717,6 +741,26 @@ export type IncomingTransferView = {
    * {@link CONNECT_CLIENT_TRANSFER_REFUSAL} constant both server gates use. Those gates are
    * UNCHANGED and remain the enforcement — this is an addition in front of them, never a
    * replacement, and it runs on data the client could lie to itself about.
+   *
+   * 🔴 SCOPE — `null` MEANS "NO KNOWN-IN-ADVANCE BLOCKER", NOT "THIS WILL SUCCEED". The
+   * name reads as an exhaustive verdict and is not one. `acceptTransfer` also refuses:
+   *   - a BANNED recipient (`'That account cannot receive app ownership'`);
+   *   - an on-site listing whose `AppBlock.appId` is missing;
+   *   - ownership having already moved out from under the offer, on either the
+   *     `OauthClient` row or the listing row (two separate `count === 0` guards);
+   *   - the transfer no longer being `pending` when the close runs.
+   * NONE of those are encoded here, deliberately. Every one of them is either a property
+   * of ANOTHER row this read does not touch, or a race that only exists at accept time —
+   * so a read-time answer would be a guess that goes stale between the render and the
+   * click, which is the failure mode this field exists to remove rather than relocate.
+   * What belongs here is exactly what is stable and knowable from the offer plus its
+   * listing; the connect-client refusal is the only such blocker today.
+   *
+   * The name is kept GENERAL on purpose. A second stable read-time blocker would join this
+   * field rather than add another one, so narrowing it to name the connect client would
+   * force a wire-contract rename the first time that happens. If you add one: put it here,
+   * extend this list, and extend `app-ownership-transfer.inbox.test.ts` — do NOT let a
+   * client-side branch decide which reasons count.
    */
   acceptBlockedReason: string | null;
 };

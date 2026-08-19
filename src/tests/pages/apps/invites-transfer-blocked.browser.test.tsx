@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+import type { IncomingTransferRow } from '~/components/Apps/AppTransferOffersView';
 import { CONNECT_CLIENT_TRANSFER_REFUSAL } from '~/shared/constants/app-transfer.constants';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -18,40 +19,59 @@ import type * as TrpcModule from '~/utils/trpc';
  * container forwards the rows uncast, and the View decides what to render.
  *
  * WHAT IT PINS: a connect-linked off-site listing is refused at initiate AND re-asserted
- * IN-TRANSACTION at accept, because a revision approve can link an OAuth client while an
- * offer sits open. The recipient's card was therefore live, valid-looking, and guaranteed
- * to fail — the refusal reached them only as a toast, after the click.
+ * IN-TRANSACTION at accept, so a card in this inbox can be live, valid-looking and
+ * guaranteed to fail — and the refusal reached the recipient only as a toast, after the
+ * click. 🔴 That state is NOT reachable through the product today (a listing is born
+ * connect-linked or never becomes one, and `initiateTransfer` refuses to open an offer on
+ * one that was born linked) — see the honest reachability note on `acceptBlockedReason` in
+ * `app-ownership-transfer.service.ts`. This suite is gap-closure ahead of traffic, and the
+ * arms below drive the state from the payload precisely BECAUSE nothing else can.
  *
- * 🔴 WHAT IT DOES **NOT** COVER, stated exactly rather than implied. The payload comes from
- * the local `offer()` fixture below, NOT from the server, so the `tRPC proc → payload` hop
- * is OUT of frame: deleting `connectClientId: true` from `listMyPendingTransfers`'s select,
- * or dropping the derived field entirely, leaves this file green. That hop is covered by
- * `src/server/services/blocks/__tests__/app-ownership-transfer.inbox.test.ts` (whose Prisma
- * fake projects through the `select`) and, now that `IncomingTransferRow` is derived from
- * the service's `IncomingTransferView` and the container's cast is gone, by `tsc`. Three
- * instruments, three hops; no one of them sees all of it.
+ * 🔴 WHAT IT DOES **NOT** COVER, stated exactly rather than implied, and MEASURED rather
+ * than reasoned. The payload comes from the local `offer()` fixture below, NOT from the
+ * server, so the `tRPC proc → payload` hop is OUT of frame at RUNTIME: deleting
+ * `connectClientId: true` from `listMyPendingTransfers`'s select leaves every test in this
+ * file green. That hop belongs to
+ * `src/server/services/blocks/__tests__/app-ownership-transfer.inbox.test.ts`, whose Prisma
+ * fake projects through the `select`.
+ *
+ * The SHAPE of the payload is not out of frame, though — not any more. `TransferRow` is
+ * `IncomingTransferRow`, so deleting `acceptBlockedReason` from the service's
+ * `IncomingTransferView` is now 9 `tsc` errors IN THIS FILE (measured; it was ZERO while
+ * the fixture carried its own hand-written type, which is the anti-pattern this PR removes
+ * from the container). Two instruments, two different hops — a `select` line and a field —
+ * and neither sees the other's.
  *
  * 🔴 THE SERVER GATES ARE UNCHANGED AND REMAIN THE ENFORCEMENT. Everything below is an
  * addition in front of them, running on data the client could lie to itself about.
  */
 
-type TransferRow = {
-  transferId: string;
-  appListingId: string;
-  slug: string;
-  name: string;
-  kind: 'onsite' | 'offsite';
-  appBlockId: string | null;
-  iconUrl: string | null;
-  fromUserId: number;
-  expiresAt: Date;
-  createdAt: Date;
-  acceptBlockedReason: string | null;
-};
+/**
+ * 🔴 THE FIXTURE'S SHAPE IS THE PAYLOAD'S SHAPE, not a hand-written lookalike.
+ *
+ * This started life as its own structural duplicate, which is precisely the hole this PR
+ * closes in the container — and it was measurably the same hole: deleting
+ * `acceptBlockedReason` from the service produced `tsc` errors in the View, in the View's
+ * own suite and in the service, and NOTHING here, in the file whose entire purpose is to
+ * prove the seam. A suite that claims to drive the real payload has to be pinned to it, or
+ * it is testing a shape nobody ships.
+ *
+ * Derived from {@link IncomingTransferRow} — the View's row type, itself derived from the
+ * service's `IncomingTransferView` — so this fixture sits at the END of the same chain the
+ * production code does. A type-only import is erased at build time.
+ */
+type TransferRow = IncomingTransferRow;
 
 const state = vi.hoisted(() => ({
-  /** The `listMyPendingTransfers` payload — THE ONLY THING ANY ARM VARIES. */
-  transfers: [] as unknown[],
+  /**
+   * The `listMyPendingTransfers` payload — THE ONLY THING ANY ARM VARIES.
+   *
+   * Typed as the real row rather than `unknown[]`: it is what the mocked query hands the
+   * container, so this is the assignment `tsc` has to see in order for the fixture to be
+   * pinned at all. (Declared inside `vi.hoisted`, whose factory is hoisted above the
+   * imports — the TYPE reference is erased, so there is nothing left to hoist.)
+   */
+  transfers: [] as TransferRow[],
   /** Seat invites. Empty everywhere here; the transfer half is the subject. */
   invites: [] as unknown[],
   /** 🔴 Recorded and asserted EMPTY on every blocked arm. A blocked card must not submit. */
@@ -297,6 +317,32 @@ describe('🔴 AN OFFER THE SERVER WILL REFUSE — said so before the click', ()
    * action, and leaves the owner's own tab (which still shows the offer) disagreeing with
    * this one about whether an offer exists.
    */
+  /**
+   * 🔴 ONE PREDICATE, PINNED BEHAVIOURALLY — the two branches must agree on EVERY value of
+   * the field, not just on the two the service can send today.
+   *
+   * They used to disagree: the banner tested `blockedReason ? …` and the button tested
+   * `blockedReason != null`. Both agree on the constant and on `null`, and they diverge on
+   * `''` — Accept disabled with NO explanation rendered, a card the recipient can neither
+   * accept nor understand. Unreachable while there is exactly one reason, and reachable the
+   * moment someone adds a second without knowing the branches differ.
+   *
+   * So the empty string is the discriminating input, and it is fed on the PAYLOAD like
+   * every other arm. The assertion is that the two branches move TOGETHER: the banner
+   * element is present (its `title` still explains the card even with an empty body) AND
+   * Accept is disabled. A comment could not have held this; this arm goes red the moment
+   * the predicates are re-split.
+   */
+  test('🔴 an EMPTY reason still renders the banner AND disables Accept — one predicate', async () => {
+    state.transfers = [offer({ transferId: 'aot_empty', acceptBlockedReason: '' })];
+    renderWithProviders(<AppInvitesPage />);
+
+    await expect.element(page.getByTestId('apps-transfer-blocked-aot_empty')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-transfer-accept-aot_empty')).toBeDisabled();
+    // …and Decline stays the way out, exactly as on a normally-blocked card.
+    await expect.element(page.getByTestId('apps-transfer-decline-aot_empty')).toBeEnabled();
+  });
+
   test('the offer still renders as an offer — name, deadline and all', async () => {
     state.transfers = [
       offer({
@@ -316,24 +362,18 @@ describe('🔴 AN OFFER THE SERVER WILL REFUSE — said so before the click', ()
     await expect.element(page.getByTestId('apps-transfer-offerer-aot_blocked')).toBeInTheDocument();
   });
 
-  /**
-   * 🔴 THE RAW COLUMN NEVER REACHES THIS SURFACE. The recipient holds no role on the
-   * listing and the inbox read has no status gate, so an offer can sit on a `draft` listing
-   * whose `connectClientId` the public read does not expose. The derived sentence is all
-   * that crosses; this pins the fixture ITSELF as shaped that way, so a future widening of
-   * the payload has to change this line and say why.
+  /*
+   * 🔴 THERE IS DELIBERATELY NO LEAK TEST HERE, and its absence is a correction rather
+   * than a gap. An earlier revision asserted `'connectClientId' in row` against this
+   * file's OWN `offer()` factory — no render, no production code — so it could not fail
+   * for any change under `src/`. A test that cannot go red is worse than no test, because
+   * it reads as coverage. The real guard is in
+   * `src/server/services/blocks/__tests__/app-ownership-transfer.inbox.test.ts`, which
+   * asserts the property on what the SERVICE actually returns, with the fixture's column
+   * present as its positive control. The shape claim this file can honestly make is now
+   * made by `tsc` instead: `TransferRow` IS `IncomingTransferRow`, so a `connectClientId`
+   * appearing on the payload would have to appear in the service's own type first.
    */
-  test('🔴 the payload carries a REASON, never the raw connectClientId', () => {
-    const row = offer({
-      transferId: 'aot_blocked',
-      acceptBlockedReason: CONNECT_CLIENT_TRANSFER_REFUSAL,
-    });
-    expect('connectClientId' in row).toBe(false);
-    // POSITIVE CONTROL: the field that DID replace it is present and non-empty, so the
-    // absence above is a shape claim rather than an empty object.
-    expect('acceptBlockedReason' in row).toBe(true);
-    expect(row.acceptBlockedReason).toBe(CONNECT_CLIENT_TRANSFER_REFUSAL);
-  });
 });
 
 describe('🔴 THE CONTROL ARM — an offer with no reason is untouched', () => {
