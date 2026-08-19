@@ -24,6 +24,7 @@ import {
 } from '~/shared/utils/sticker-placement';
 import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
+import { pendingCount } from '~/components/Placement/queue-counts';
 import { placementPriceCaption, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -128,9 +129,7 @@ export function PlacementSpaceSection() {
   // the unpaged queue told.
   const waitingLabel = pending?.nextCursor ? `${waiting}+` : `${waiting}`;
 
-  // Pending only. An approved placement is live rather than outstanding, and a
-  // count that included it would keep growing with nothing behind it to do.
-  const placedCount = (sent ?? []).filter((row) => row.status === 'pending').length;
+  const placedCount = pendingCount(sent ?? []);
   const caption = placementPriceCaption(
     'sticker',
     price === '' ? DEFAULT_PRICE ?? 0 : price,

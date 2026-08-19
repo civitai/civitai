@@ -1720,9 +1720,11 @@ describe('getMyStickerPlacements', () => {
 
     await getMyStickerPlacements({ placerId: PLACER, ...LEVELS });
 
-    const { where, take } = placementFindMany.mock.calls.at(-1)?.[0] as {
+    const { where, take, orderBy, select } = placementFindMany.mock.calls.at(-1)?.[0] as {
       where: Record<string, unknown>;
       take: number;
+      orderBy: unknown;
+      select: Record<string, unknown>;
     };
     // `placerId` is the scope: without it this returns other people's spending,
     // and the amount on every row is real Buzz.
@@ -1732,6 +1734,16 @@ describe('getMyStickerPlacements', () => {
       status: { in: ['pending', 'approved'] },
     });
     expect(take).toBe(STICKER_PLACEMENT_QUEUE_LIMIT);
+    // Newest first, and asserted because the fixtures cannot show it: the mock
+    // returns rows in whatever order the test wrote them, so a dropped or
+    // flipped `orderBy` reaches production looking exactly like this one does.
+    expect(orderBy).toEqual({ createdAt: 'desc' });
+    // `free` is the only thing that distinguishes a placement that moved no
+    // Buzz from one that moved some, and the list prints an amount when it is
+    // false. Dropped from the select, every row reads as paid — and no
+    // assertion over the RETURNED rows can catch it, because the fixtures carry
+    // whatever fields they were written with.
+    expect(select.free).toBe(true);
   });
 
   /**

@@ -23,14 +23,17 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { Meta } from '~/components/Meta/Meta';
 import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
 import { PlacementFreeFilter } from '~/components/Placement/PlacementFreeFilter';
+import { useWithheldHref } from '~/components/Placement/useWithheldHref';
 import { selectionAfterHidingFree, visibleQueueRows } from '~/components/Placement/free-filter';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
-import { placementAmountLine, selectionFree } from '~/components/Sticker/payout-copy';
+import {
+  placedSpendLabel,
+  placementAmountLine,
+  selectionFree,
+} from '~/components/Sticker/payout-copy';
 import { WithheldThumb } from '~/components/RemixGallery/SubmissionPair';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
-import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { STICKER_PLACEMENT_QUEUE_LIMIT } from '~/shared/utils/sticker-placement';
 import type { RouterOutput } from '~/types/router';
@@ -139,16 +142,6 @@ export default function StickerPlacements() {
       </Container>
     </>
   );
-}
-
-/**
- * Where to send someone whose domain will not serve an image. The row stays so
- * the placement can still be answered or found; this is the only route left to
- * the picture itself, since no asset was sent to reveal.
- */
-function useWithheldHref() {
-  const domains = useServerDomains();
-  return (image: { id: number }) => syncAccount(`//${domains.red}/images/${image.id}`);
 }
 
 type ReceivedRow = RouterOutput['placement']['getPending']['items'][number];
@@ -462,54 +455,59 @@ function PlacedTab({
         </Text>
       )}
 
-      {rows.map((row) => (
-        <Card key={row.id} withBorder p="sm">
-          <Group align="start" wrap="nowrap" gap="sm">
-            <PlacementThumb image={row.image} withheldHref={withheldHref} />
-            <StickerArt art={sticker.get(row.data.cosmeticId)} data={row.data} />
+      {rows.map((row) => {
+        const spend = placedSpendLabel(row.free, row.amount);
 
-            <Stack gap={2} className="flex-1">
-              <Group gap="xs">
-                <Badge
-                  size="sm"
-                  variant="light"
-                  color={row.status === 'approved' ? 'green' : 'yellow'}
-                >
-                  {row.status === 'approved' ? 'Live' : 'Awaiting review'}
-                </Badge>
-                {/* The same rule the owner queue's headline follows: a free row
-                    carries `amount: 0`, so naming an amount here would report a
-                    payment of zero instead of no payment. */}
-                {row.free ? (
-                  <PlacementFreeBadge noun="placement" />
-                ) : (
-                  <Text size="xs" c="dimmed">
-                    {row.amount} Buzz
+        return (
+          <Card key={row.id} withBorder p="sm">
+            <Group align="start" wrap="nowrap" gap="sm">
+              <PlacementThumb image={row.image} withheldHref={withheldHref} />
+              <StickerArt art={sticker.get(row.data.cosmeticId)} data={row.data} />
+
+              <Stack gap={2} className="flex-1">
+                <Group gap="xs">
+                  <Badge
+                    size="sm"
+                    variant="light"
+                    color={row.status === 'approved' ? 'green' : 'yellow'}
+                  >
+                    {row.status === 'approved' ? 'Live' : 'Awaiting review'}
+                  </Badge>
+                  {/* The branch lives in `payout-copy` for the reason the owner
+                    queue's headline does: a free row carries `amount: 0`, and a
+                    money statement written inline here is one nothing can
+                    assert. */}
+                  {spend ? (
+                    <Text size="xs" c="dimmed">
+                      {spend}
+                    </Text>
+                  ) : (
+                    <PlacementFreeBadge noun="placement" />
+                  )}
+                </Group>
+                <Text size="sm">On {row.owner?.username ?? 'a creator'}&apos;s image</Text>
+                <Text size="xs" c="dimmed">
+                  Placed {formatDate(row.createdAt)}
+                  {row.status === 'pending' && row.expiresAt
+                    ? ` · expires ${formatDate(row.expiresAt)}`
+                    : ''}
+                </Text>
+                {row.data.comment && (
+                  <Text size="sm" className="whitespace-pre-wrap break-words">
+                    &ldquo;{row.data.comment}&rdquo;
                   </Text>
                 )}
-              </Group>
-              <Text size="sm">On {row.owner?.username ?? 'a creator'}&apos;s image</Text>
-              <Text size="xs" c="dimmed">
-                Placed {formatDate(row.createdAt)}
-                {row.status === 'pending' && row.expiresAt
-                  ? ` · expires ${formatDate(row.expiresAt)}`
-                  : ''}
-              </Text>
-              {row.data.comment && (
-                <Text size="sm" className="whitespace-pre-wrap break-words">
-                  &ldquo;{row.data.comment}&rdquo;
-                </Text>
-              )}
-              <Anchor component={Link} href={`/images/${row.targetId}`} size="xs" target="_blank">
-                <Group gap={4} wrap="nowrap">
-                  <IconExternalLink size={12} />
-                  See it on the image
-                </Group>
-              </Anchor>
-            </Stack>
-          </Group>
-        </Card>
-      ))}
+                <Anchor component={Link} href={`/images/${row.targetId}`} size="xs" target="_blank">
+                  <Group gap={4} wrap="nowrap">
+                    <IconExternalLink size={12} />
+                    See it on the image
+                  </Group>
+                </Anchor>
+              </Stack>
+            </Group>
+          </Card>
+        );
+      })}
     </Stack>
   );
 }
