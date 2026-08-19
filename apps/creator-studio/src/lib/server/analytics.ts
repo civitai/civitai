@@ -901,6 +901,8 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     LEFT JOIN "ComicChapterRead" r ON r."chapterId" = c.id
     LEFT JOIN "Image" i ON i.id = p."coverImageId"
     WHERE p."userId" = ${uid}
+      -- Comic deletion is soft and lives in status, not in a deletedAt column like the sibling entities.
+      AND p.status <> 'Deleted'
     GROUP BY p.id, p.name, i.url, p."nsfwLevel", p."publishedAt"
     ORDER BY count(DISTINCT r."userId") DESC, p.id DESC
   `.execute(dbRead);
