@@ -140,7 +140,7 @@ const baseInput = {
   status: ModelStatus.Draft,
 } satisfies Partial<ModelUpsertInput>;
 
-function upsert(input: Partial<ModelUpsertInput> & { userId: number }) {
+function upsert(input: Partial<ModelUpsertInput> & { userId: number; isModerator?: boolean }) {
   return upsertModel({ ...baseInput, ...input } as Parameters<typeof upsertModel>[0]);
 }
 
@@ -206,6 +206,42 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
     });
     expect(submitModelTextModeration).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Old Name' })
+    );
+  });
+
+  // IMPORTANT 1 — upsertModel already destructures `isModerator` out of `input` for
+  // enforceLockedProperties and the profanity branch; this proves it also reaches the
+  // submit call rather than staying only on those two older paths.
+  it('update branch: threads isModerator through to submitModelTextModeration', async () => {
+    mockDbWrite.model.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({
+        id: MODEL_ID,
+        name: 'New Name',
+        description: 'New description',
+        nsfwLevel: 1,
+        poi: false,
+        minor: false,
+        sfwOnly: false,
+        nsfw: false,
+        gallerySettings: { level: 1, users: [], tags: [] },
+        status: ModelStatus.Draft,
+        meta: null,
+        availability: 'Public',
+        ...data,
+        modelVersions: [],
+      })
+    );
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      isModerator: true,
+      name: 'New Name',
+      description: 'New description',
+    });
+
+    expect(submitModelTextModeration).toHaveBeenCalledWith(
+      expect.objectContaining({ isModerator: true })
     );
   });
 });

@@ -2438,6 +2438,7 @@ export const upsertModel = async (
       id: result.id,
       name: data.name,
       description: data.description,
+      isModerator,
     }).catch(() => null);
 
     return { ...result, meta: stripMinorHashMeta(modelMeta) };
@@ -2589,6 +2590,7 @@ export const upsertModel = async (
       id: result.id,
       name: result.name,
       description: result.description,
+      isModerator,
     }).catch(() => null);
 
     return withoutMinorHashMeta(result);
@@ -4272,6 +4274,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
           metrics: meta.profanityEvaluation?.metrics ?? null,
         }
       : null,
+    textModeration: meta.textModeration ?? null,
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,

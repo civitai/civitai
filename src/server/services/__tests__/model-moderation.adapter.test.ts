@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   buildModelModerationText,
   isModelTextNsfw,
@@ -12,10 +13,19 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('~/server/flipt/client')>()),
   isFlipt: vi.fn(),
 }));
+// Read path only. `env.REPLICATION_LAG_DELAY` is undefined (not 0) under the env mock, so the
+// real function's `<= 0` short-circuit does not fire — override it directly rather than rely
+// on that, matching article-locked-properties.service.test.ts's pattern for the same helper.
+vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/db/db-lag-helpers')>()),
+  getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
+}));
 
 const { modelModerationAdapter } = await import('~/server/services/model-moderation.adapter');
 const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 const { isFlipt } = await import('~/server/flipt/client');
+const { submitTextModeration } = await import('~/server/services/text-moderation.service');
+const { getDbWithoutLag } = await import('~/server/db/db-lag-helpers');
 
 const okOutput = (triggeredLabels: string[], blocked = false) =>
   ({
@@ -62,6 +72,14 @@ describe('modelModerationAdapter.applyResult', () => {
       })
     );
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
+  });
+
+  // A moderation write is exactly the case a replication-lag read must not miss a lock a
+  // moderator set seconds earlier — see FIX-BEFORE-RAMP 4.
+  it('reads the model through getDbWithoutLag, not a bare replica read', async () => {
+    await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
+
+    expect(getDbWithoutLag).toHaveBeenCalledWith('model', 1);
   });
 
   // T2 — the submit sends 15 labels; a Review-action label must not act.
@@ -214,6 +232,79 @@ describe('modelModerationAdapter.applyResult', () => {
       'suggestive term',
     ]);
   });
+
+  // IMPORTANT 3(b) — a label the scanner never answers must not read as a clean 0% rate.
+  // Logged unconditionally, ahead of the nsfw-verdict early return: the shadow phase needs
+  // this signal on every callback, not only the ones that also happened to trigger.
+  it('logs missing requested labels to Axiom, even when nothing triggered', async () => {
+    await modelModerationAdapter.applyResult?.(applyArgs([]));
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'model-text-moderation',
+        modelId: 1,
+        missingLabels: expect.arrayContaining(MODEL_MODERATION_SCAN_LABELS as unknown as string[]),
+      })
+    );
+  });
+
+  it('does not log missing labels when every requested label answered', async () => {
+    const output = {
+      blocked: false,
+      triggeredLabels: [],
+      results: MODEL_MODERATION_SCAN_LABELS.map((label) => ({
+        label,
+        score: 0.1,
+        threshold: 0.5,
+        matchedTerms: { text: [], positivePrompt: [], negativePrompt: [] },
+      })),
+    } as never;
+
+    await modelModerationAdapter.applyResult?.({
+      entityId: 1,
+      workflowId: 'wf-1',
+      blocked: false,
+      triggeredLabels: [],
+      output,
+    });
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'model-text-moderation', message: expect.stringContaining('missing') })
+    );
+  });
+});
+
+describe('modelModerationAdapter.submit', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // FIX-BEFORE-RAMP 5 — off must mean "no scan is requested at all," including from the
+  // retry cron, which calls this hook directly rather than through submitModelTextModeration.
+  it('submits the full label list at low priority, recorded for review, when the flag is on', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(true);
+    vi.mocked(submitTextModeration).mockResolvedValue({ id: 'wf-1' });
+
+    const result = await modelModerationAdapter.submit({ entityId: 5, content: 'some text' });
+
+    expect(isFlipt).toHaveBeenCalledWith('model-text-moderation-xguard', '5');
+    expect(submitTextModeration).toHaveBeenCalledWith({
+      entityType: 'Model',
+      entityId: 5,
+      content: 'some text',
+      labels: [...MODEL_MODERATION_SCAN_LABELS],
+      priority: 'low',
+      recordForReview: true,
+    });
+    expect(result).toEqual({ id: 'wf-1' });
+  });
+
+  it('does not submit when the flag is off, so a retry-cron tick cannot spend on a dark feature', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(false);
+
+    const result = await modelModerationAdapter.submit({ entityId: 5, content: 'some text' });
+
+    expect(submitTextModeration).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
 });
 
 // T7 — the drift this guards is silent: dedup stops hitting and nothing errors.
@@ -273,10 +364,68 @@ describe('isModelTextNsfw', () => {
     expect(isModelTextNsfw({ triggeredLabels: [] })).toBe(false);
     expect(isModelTextNsfw({})).toBe(false);
   });
+
+  // IMPORTANT 3(a) — `triggeredLabels` and `results[]` are two views of the same fact across a
+  // network boundary; a level label present in only one view must still count.
+  it('triggers on results[].triggered === true even when absent from triggeredLabels', () => {
+    expect(
+      isModelTextNsfw({
+        triggeredLabels: [],
+        results: [
+          { label: 'Explicit', score: 0.9, threshold: 0.5, triggered: true } as never,
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it('triggers on score >= threshold even when triggered is false/absent', () => {
+    expect(
+      isModelTextNsfw({
+        triggeredLabels: [],
+        results: [{ label: 'Suggestive', score: 0.7, threshold: 0.5 } as never],
+      })
+    ).toBe(true);
+  });
+
+  it('does not trigger on a non-level label regardless of score', () => {
+    expect(
+      isModelTextNsfw({
+        triggeredLabels: [],
+        results: [{ label: 'Celebrity', score: 0.99, threshold: 0.1, triggered: true } as never],
+      })
+    ).toBe(false);
+  });
+
+  it('does not trigger below threshold with no explicit triggered flag', () => {
+    expect(
+      isModelTextNsfw({
+        triggeredLabels: [],
+        results: [{ label: 'NSFW', score: 0.1, threshold: 0.5 } as never],
+      })
+    ).toBe(false);
+  });
 });
 
 describe('MODEL_MODERATION_SCAN_LABELS', () => {
-  it('covers all fifteen registry labels', () => {
-    expect(MODEL_MODERATION_SCAN_LABELS).toHaveLength(15);
+  // A rename or reorder must fail this — per-label trigger rates are keyed on these exact
+  // strings, and a silent drift here is IMPORTANT 3's whole failure mode.
+  it('is the exact fifteen labels, in order', () => {
+    expect(MODEL_MODERATION_SCAN_LABELS).toEqual([
+      'NSFW',
+      'Suggestive',
+      'Explicit',
+      'Young',
+      'Grooming',
+      'Sex Trafficking',
+      'Exploitation',
+      'Extremism',
+      'Impersonating Civitai Staff',
+      'Bestiality',
+      'Urine',
+      'Diaper',
+      'Scat',
+      'Menstruation',
+      'Celebrity',
+    ]);
   });
 });

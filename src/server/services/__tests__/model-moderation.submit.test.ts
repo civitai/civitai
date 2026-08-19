@@ -9,7 +9,9 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 // meilisearch/prom at module load — mock it or the suite fails to load, not just fails.
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
 
-const { submitModelTextModeration } = await import('~/server/services/model-moderation.adapter');
+const { submitModelTextModeration, MODEL_MODERATION_SCAN_LABELS } = await import(
+  '~/server/services/model-moderation.adapter'
+);
 const { submitTextModeration } = await import('~/server/services/text-moderation.service');
 const { isFlipt } = await import('~/server/flipt/client');
 
@@ -22,8 +24,18 @@ describe('submitModelTextModeration', () => {
     await submitModelTextModeration({ id: 7, name: 'My LoRA', description: '<p>text</p>' });
 
     expect(isFlipt).toHaveBeenCalledWith('model-text-moderation-xguard', '7');
+    // IMPORTANT 3(e) — widened from entityType/entityId/content alone: deleting
+    // `recordForReview: true` would silently zero out scanner_label_results, the shadow
+    // phase's primary output, with no assertion here to catch it.
     expect(submitTextModeration).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: 'Model', entityId: 7, content: 'My LoRA text' })
+      expect.objectContaining({
+        entityType: 'Model',
+        entityId: 7,
+        content: 'My LoRA text',
+        labels: [...MODEL_MODERATION_SCAN_LABELS],
+        priority: 'low',
+        recordForReview: true,
+      })
     );
   });
 
@@ -33,6 +45,24 @@ describe('submitModelTextModeration', () => {
     await submitModelTextModeration({ id: 7, name: 'My LoRA', description: null });
 
     expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  // IMPORTANT 1 — the doc's "moderator-authored saves are not scanned" carve-out, matching
+  // the profanity branch's `!isModerator` guard. Without this, a mod clearing an nsfw lock
+  // while fixing a title produces a new contentHash, a new scan, and applyResult re-flips
+  // nsfw and re-locks it — undoing the moderator's own decision.
+  it('does not submit for a moderator-authored save, even with the flag on', async () => {
+    vi.mocked(isFlipt).mockResolvedValue(true);
+
+    await submitModelTextModeration({
+      id: 7,
+      name: 'My LoRA',
+      description: null,
+      isModerator: true,
+    });
+
+    expect(submitTextModeration).not.toHaveBeenCalled();
+    expect(isFlipt).not.toHaveBeenCalled();
   });
 
   // upsertModel must never fail because moderation submission failed.
