@@ -3128,6 +3128,70 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // properly means changing what the query asks for, which is not this PR.
   if (input.isModerator && (input.scheduled || input.notPublished)) return null;
 
+  // Resolve `username` → `userId` BEFORE anything reads the creator scope.
+  //
+  // `skipOwnExcluded` below decides whether to issue the own-excluded second
+  // pass from `input.userId`. When the caller addresses a creator by handle
+  // instead of id, that field is empty here — the resolution used to happen
+  // later and locally, inside `getImagesFromBitdexPreFilter` — so the "viewing
+  // someone else's profile" arm of that guard tested `undefined`, never fired,
+  // and the caller's own private/blocked/nsfw0 content was merged into a feed
+  // it does not belong to (#3929). Every document involved belongs to the
+  // caller, so nothing of anyone else's is exposed; what breaks is feed
+  // integrity — the feed misrepresents what that creator posted.
+  //
+  // Precedence is spelled exactly as every other resolution site in this file
+  // spells it (`username && !userId`): an explicit `userId` wins and a
+  // disagreeing `username` is ignored. Spelling it differently here would make
+  // the two forms of the same request address different creators depending on
+  // which backend answered.
+  //
+  // The handle is passed to the lookup verbatim — no lowercasing. Case
+  // semantics stay whatever the column's collation already decides, and the
+  // BitDex and Meili legs keep agreeing about which account a handle names.
+  // (Trimming is not a concern reachable from the request surface.
+  // `usernameSchema` is `.regex(/^[A-Za-z0-9_]*$/).trim()` and the REGEX RUNS
+  // FIRST — that ordering is what makes padding unreachable, since a padded
+  // handle is rejected outright rather than trimmed into a valid one. The
+  // ordering is pinned by a premise guard in
+  // `src/server/services/__tests__/bitdex-username-own-excluded-scope.test.ts`,
+  // because this argument rests on a file this one does not own.)
+  //
+  // Normally this costs no extra round trip: `getImagesFromBitdexPreFilter`
+  // guards its own resolution on `!userId`, so handing it the resolved input
+  // makes that a no-op — and it runs once PER PASS, so one lookup here replaces
+  // up to MAX_PASSES + MAX_EMPTIED_PAGES of them. The one exception is
+  // `hidden: true`, whose branch sits BEFORE that resolution and can return
+  // null without reaching it; such a request now pays one lookup it previously
+  // skipped.
+  //
+  // Same client (`dbRead`) and same query as the resolution it replaces, so
+  // this path's replica-lag behaviour is unchanged. It does NOT have the
+  // `dbRead ?? dbWrite` fallback the Meili-side sites have — deliberately, to
+  // keep a primary read off the feed hot path. On a replica miss the effect is
+  // strictly better than before: BitDex declines and the Meili leg, which does
+  // have the fallback, resolves and answers.
+  if (input.username && !input.userId) {
+    const targetUser = await dbRead.user.findUnique({
+      where: { username: input.username },
+      select: { id: true },
+    });
+    // A handle that resolves to nothing names no view, so there is nothing for
+    // a second pass to be scoped to. Returning null hands the request to the
+    // Meili leg, which raises NotFound — which is what a bad handle should do
+    // and, before this, did not: the main pass declined, but the own-excluded
+    // pass had already been issued, so `data` was non-empty and BitDex served
+    // the caller their own private images under a creator who does not exist.
+    if (!targetUser) return null;
+    // A NEW object, never an in-place mutation. `getImagesFromSearch` hands the
+    // caller's own `input` to the Meili leg after this function returns null,
+    // and to the shadow comparator; writing `userId` into it would rob the
+    // Meili leg of its own `dbRead ?? dbWrite` resolution and its NotFound, and
+    // would flip the shadow comparator's `hasFilters` from false to true for
+    // every username-addressed request. Pinned by a test.
+    input = { ...input, userId: targetUser.id };
+  }
+
   const limit = input.limit ?? 100;
   // Opt-in to one's own not-yet-published content. Read once so the main
   // post-filter and the own-excluded merge below cannot disagree about it.
@@ -3338,6 +3402,32 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       .filter((d) => !mainIds.has(d.id));
 
     // Content-scope filtering — narrow unscoped results to the current view
+    //
+    // Creator scope first, because it is the one the rest of this list was
+    // missing. The second pass asks BitDex for `userId = currentUserId` and
+    // nothing else, so on a view pinned to a single creator these documents
+    // belong on the page only when that creator IS the caller. The
+    // `skipOwnExcluded` guard above already refuses to issue the pass
+    // otherwise — this makes the constraint hold where the documents are ADDED
+    // to the page rather than only where the decision to fetch them was made.
+    //
+    // That separation is exactly what #3929 broke: the decision was computed
+    // from a field that had not been resolved yet, and nothing downstream
+    // re-checked it. With the resolution above in place no live caller reaches
+    // this clause, so it is a structural guard rather than a second fix.
+    //
+    // 🔴 Be precise about what it does and does not catch, because the obvious
+    // reading is backwards. It catches a RESOLVED creator that reaches the
+    // merge past a wrong upstream decision — e.g. `skipOwnExcluded` recomputed
+    // from a stale pre-resolution binding. It does NOT catch an UNRESOLVED
+    // creator: `input.userId` is falsy in that case, so this clause is skipped
+    // entirely and the merge fails OPEN. That is measured, not assumed —
+    // deleting the resolution above while leaving this clause in place still
+    // serves the caller's own private image on another creator's feed. The two
+    // guards are therefore SEQUENTIAL, not independent: this one only has
+    // anything to test once the resolution has run. Do not cite it as coverage
+    // for a caller that arrives here with no creator resolved.
+    if (input.userId) ownDocs = ownDocs.filter((d) => d.userId === input.userId);
     if (input.modelVersionId) {
       ownDocs = ownDocs.filter(
         (d) =>
