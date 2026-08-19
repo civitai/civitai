@@ -2,7 +2,6 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, requiresGrant } from '$lib/server/access';
-import { denied } from '$lib/permissions';
 import {
   parseForm,
   parseIdList,

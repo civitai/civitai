@@ -89,8 +89,15 @@
             </a>
           {/each}
           {#if trigger.inputVideo}
-            <a href={trigger.inputVideo} target="_blank" rel="noreferrer">
-              <!-- svelte-ignore a11y_media_has_caption -->
+            <!-- Labelled explicitly: the link's only child is a video, so it has no text to name it
+                 and a screen reader announces the bare URL. The sibling image links above get their
+                 name from the img's `alt`. -->
+            <a
+              href={trigger.inputVideo}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open the input video in a new tab"
+            >
               <video
                 src={trigger.inputVideo}
                 muted

@@ -105,6 +105,10 @@
         aria-label="Civitai Moderator"
         class="flex items-center gap-2 px-2 py-1 [&>span>svg]:block [&>span>svg]:h-6 [&>span>svg]:w-auto"
       >
+        <!-- `buildWordmarkSvg` builds this string from a literal template in @civitai/brand and
+             interpolates only a colour we pass in — no user input reaches it, and the SVG is inlined
+             rather than <img> so it can inherit `currentColor`. -->
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
         <span>{@html wordmark}</span>
         <span
           class="rounded bg-sidebar-accent px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-sidebar-accent-foreground"

@@ -2,7 +2,6 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, requiresGrant } from '$lib/server/access';
-import { denied } from '$lib/permissions';
 import { parseForm, userIdSchema } from '$lib/server/query';
 import { banFieldsSchema, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { RETIRED_SECTIONS, isSection } from '../sections';

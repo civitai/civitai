@@ -22,7 +22,6 @@
             class="max-h-64 w-full object-contain"
           />
         {:else if asset.kind === 'video'}
-          <!-- svelte-ignore a11y_media_has_caption -->
           <video controls muted loop playsinline preload="metadata" class="max-h-64 w-full">
             <source src={asset.url} type={asset.mimeType} />
           </video>
