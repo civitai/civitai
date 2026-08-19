@@ -3233,18 +3233,35 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // followed-with-zero-follows, and newCreators-with-none. Counting on entry
   // re-created the same overcount one door down.
   //
-  // ⚠️ SCOPE, because an earlier revision of this comment claimed all five are
-  // excluded and MEASUREMENT REFUTED IT. The exclusion holds only when the feed
-  // query is the request's ONLY query — an anonymous caller, or any paginated
-  // request — because `skipOwnExcluded` is true there. For a SIGNED-IN caller on
-  // the first page the own-content pass is issued regardless of what the feed
-  // query does, so a call goes out and the request IS recorded. Measured on
-  // signed-in + `followed` with zero follows: one call, `fallback_empty`
-  // recorded. Worse for the old claim, `currentUserId` is a PRECONDITION of two
-  // of the five doors, so for those the exclusion can never apply at all.
-  // Counting that request is defensible — a call did go out — and is deliberately
-  // left as is. Both cases are pinned in bitdex-feed-source.test.ts so this
-  // cannot drift back to the absolute.
+  // ⚠️ SCOPE. Do NOT paraphrase this — READ THE PREDICATE. Three successive
+  // hand-written glosses of it were each refuted by measurement ("all five doors
+  // are excluded"; "an anonymous caller, or any paginated request"), so the rule
+  // here is to name the predicate and enumerate it exactly, never to describe it.
+  //
+  // A door-walking request is excluded from this counter exactly when
+  // `skipOwnExcluded` (declared below, next to the own-content pass) is TRUE,
+  // because that is what decides whether a SECOND query goes out. Its three
+  // disjuncts, verbatim from that line:
+  //   1. `!input.currentUserId`                                  — anonymous caller
+  //   2. `bitdexCursor`                — a `bdx:` cursor, i.e. a BitDex-paginated
+  //                                      request (NOT any paginated request)
+  //   3. `input.userId && input.userId !== input.currentUserId`
+  //                                    — signed-in, viewing another user's profile
+  // If none holds, the own-content pass is issued regardless of what the feed
+  // query did, a call goes out, and the request IS counted.
+  //
+  // Measured, driving the real path (each row is a request that walks a door):
+  //   signed-in, other user's profile        → 0 calls, nothing recorded
+  //   signed-in, `bdx:` cursor               → 0 calls, nothing recorded
+  //   signed-in, NON-`bdx:` cursor           → 1 call,  `fallback_empty` recorded
+  //   signed-in, first page                  → 1 call,  `fallback_empty` recorded
+  // The third row is why "any paginated request" was wrong, and it is the NORMAL
+  // shape: a request that walks a door falls back to Meili, so its next page
+  // carries a MEILI cursor, which the `bdx:` decode above does not accept.
+  //
+  // Counting those requests is correct under the stated denominator — a call did
+  // go out — and is deliberately left as is. Both shapes are pinned in
+  // bitdex-feed-source.test.ts.
   //
   // The two observations that mean "a call was made": the client reported a
   // FAILURE, or it handed back a NON-NULL result (it returns null on every
@@ -3257,12 +3274,16 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   //     misconfigured deployment counts as a call and records `fallback_error`.
   //     Deliberate: a missing endpoint is a real degradation and that is exactly
   //     when the tripwire should fire, not go quiet.
-  //   • A completed call whose body decodes to a FALSY value (`0`, `""`, `null`
-  //     via `res.json()`, which is returned unfiltered) is non-null-by-contract
-  //     but falsy here, so neither observation fires and the call is NOT counted.
-  //     That is an UNDER-count, the worse direction, since the served ratio
-  //     silently improves. Not reachable against a backend that returns an
-  //     object; noted because the converse was previously stated as absolute.
+  //   • A completed call whose body decodes to a value that is FALSY BUT SURVIVES
+  //     A PROPERTY READ (`0`, `""`, `false`, `NaN`) is returned unfiltered by the
+  //     client, so it is falsy here and neither observation fires — the call is
+  //     NOT counted. An UNDER-count, the worse direction, since the served ratio
+  //     silently improves. Measured. `null` is NOT in that set: the client
+  //     dereferences `.total_matched` on the parsed body, which THROWS on null,
+  //     so a null body is classified `parse` and IS counted — an earlier revision
+  //     of this comment listed it here and was wrong. Whether a falsy body throws
+  //     on that dereference is the whole distinction. Not reachable against a
+  //     backend that returns an object.
   //
   // Why it matters: recording a request that never contacted BitDex inflates the
   // FALLBACK side of the exact ratio a roll-forward/rollback decision is read
@@ -3406,8 +3427,10 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       : getImagesFromBitdexPreFilter(input, true, lastCursor, noteQueryFailure));
     // Non-null ⇒ the client completed a call (it returns null on every failure,
     // and the wrapper returns null without calling it at all on its early-return
-    // paths). A failed call is counted by `noteQueryFailure` instead, so exactly
-    // one of the two fires per call.
+    // paths). A failed call is counted by `noteQueryFailure` instead, so AT MOST
+    // one of the two fires per call — not exactly one. For a body that decodes
+    // falsy-but-non-throwing, NEITHER fires; see the exhaustiveness note at
+    // `bitdexCallsObserved`, which is the single place that scope is stated.
     if (result) bitdexCallsObserved++;
     if (skipBudgetStartedAt === 0) skipBudgetStartedAt = Date.now();
     firstPage = false;

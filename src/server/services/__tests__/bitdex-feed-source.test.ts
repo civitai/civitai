@@ -399,17 +399,21 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
    * followed-with-zero-follows, and newCreators-with-none. A guard that counted
    * LOOP ENTRY rather than evidence of an actual call over-counted all of them.
    *
-   * ⚠️ READ THE SCOPE, because an earlier revision of this comment overstated it
-   * and the case below is the one that flatters the claim. The exclusion holds
-   * when the FEED query is the only query the request makes — i.e. an anonymous
-   * caller, or any paginated request — because `skipOwnExcluded` is then true.
-   * For a SIGNED-IN caller on the first page the own-content pass is issued
-   * regardless, so a call does go out and the request IS recorded. The sibling
-   * case below pins exactly that, so this pair cannot drift back into the
-   * absolute claim.
+   * ⚠️ READ THE SCOPE FROM THE PREDICATE, NOT FROM A SENTENCE. Two revisions of
+   * this comment glossed it and both were refuted by measurement. The exclusion
+   * holds exactly when `skipOwnExcluded` (image.service.ts, declared beside the
+   * own-content pass) is true, i.e. one of: anonymous caller; a `bdx:` cursor;
+   * signed-in caller viewing another user's profile. A NON-`bdx:` cursor does
+   * NOT qualify — and that is the common case, since a request that fell back to
+   * Meilisearch carries a Meilisearch cursor on its next page.
    *
-   * Anonymous `hidden` is the cleanest of the five to drive — it returns at the
-   * first line of that block with no database round trip.
+   * This case drives an ANONYMOUS caller, which is the disjunct that makes the
+   * exclusion apply — so on its own it flatters the claim. The sibling case below
+   * pins a request where a call DOES go out, and the two together are what stop
+   * this drifting back into an absolute.
+   *
+   * Anonymous `hidden` is the cleanest of the five doors to drive — it returns at
+   * the first line of that block with no database round trip.
    */
   it('🔴 PRIMARY where the query builder returns early issues NO BitDex query, so nothing is recorded', async () => {
     getFliptVariantMock.mockResolvedValue('primary');
@@ -432,9 +436,10 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
    *
    * A signed-in caller on the first page opening the Following feed with zero
    * follows: the FEED query returns early inside the builder and never reaches
-   * the client — but `skipOwnExcluded` is false for any signed-in first-page
-   * request, so the own-content pass IS issued, completes, and counts. One call
-   * went out, so the request is recorded as `fallback_empty`.
+   * the client — but no disjunct of `skipOwnExcluded` holds here (signed in, no
+   * `bdx:` cursor, not viewing another user's profile), so the own-content pass
+   * IS issued, completes, and counts. One call went out, so the request is
+   * recorded as `fallback_empty`.
    *
    * That is defensible under the stated denominator — "requests that ENGAGED the
    * backend" — and it is deliberately NOT changed here. What was wrong was the

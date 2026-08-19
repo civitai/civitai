@@ -52,16 +52,24 @@
 // with no hidden images, an unresolvable username, followed-with-zero-follows,
 // newCreators-with-none.
 //
-// ⚠️ BUT ONLY WHEN THE FEED QUERY IS THE REQUEST'S ONLY QUERY, i.e. an anonymous
-// caller or any paginated request. An earlier revision of this note claimed all
-// five doors are excluded outright; MEASUREMENT REFUTED THAT. A signed-in caller
-// on the FIRST page also issues the own-content pass, which goes out regardless
-// of what the feed query does — so that request made a call and IS counted, even
-// though its feed query never left the process. `currentUserId` is in fact a
-// PRECONDITION of two of the five doors, so for those the exclusion can never
-// apply. Counting such a request is correct under "requests that ENGAGED the
-// backend"; it simply is not the same set as "requests whose FEED query went
-// out", and a dashboard must not read it as the latter.
+// ⚠️ BUT ONLY WHEN NO SECOND QUERY GOES OUT — AND THAT IS A PREDICATE, NOT A
+// DESCRIPTION. Two successive hand-written glosses of it were each refuted by
+// measurement ("all five doors are excluded"; "an anonymous caller or any
+// paginated request"), so do not paraphrase it a third time. The condition is
+// `skipOwnExcluded` in `fetchBitdexPrimary` (image.service.ts, declared beside
+// the own-content pass), whose three disjuncts are exactly:
+//   1. anonymous caller (`!input.currentUserId`)
+//   2. a `bdx:` cursor — i.e. a BITDEX-paginated request, which is NOT the same
+//      as any paginated request: a request that fell back to Meilisearch carries
+//      a Meilisearch cursor on its next page and does NOT match
+//   3. signed-in caller viewing ANOTHER user's profile
+// When none holds, the own-content query goes out regardless of what the feed
+// query did, so the request made a call and IS counted even though its feed
+// query never left the process.
+//
+// Counting it is correct under "requests that ENGAGED the backend". It is simply
+// not the same set as "requests whose FEED query went out", and a dashboard must
+// not read it as the latter.
 //
 // The hand-driven internal comparison endpoint is outside the denominator too,
 // by passing no callback: its calls reach `bitdex_query_failures_total` but
@@ -259,8 +267,8 @@ export function ensureRegisterBitdexFeedServeMetrics(
     'APP-EMITTED (the web application, not the BitDex service, which exports its own bitdex_* families from a different scrape target). ' +
       'Feed requests that issued at least one query against BitDex, by what the application then did with the answer. ' +
       'One increment = one request, NOT one page shown to a user (shadow requests reach nobody) and NOT every request routed to the primary path: the moderator queues declined before any query is issued are deliberately outside this denominator. ' +
-      'TWO documented exceptions to that denominator, both deliberate: outcome=fallback_exception is emitted from the caller catch arms and is NOT gated on a query having been issued (it means the application threw on this path, which is worth paging on even if it threw before the first call); and a deployment with no endpoint configured reports a failure without a request leaving the process, so it records fallback_error rather than going quiet. ' +
-      'Also note a request whose FEED query returned early can still be counted when a signed-in first-page caller issued the parallel own-content query, so this is "requests that engaged the backend", not "requests whose feed query went out". ' +
+      'Deliberate exceptions to that denominator include: outcome=fallback_exception, which is emitted from the caller catch arms and is NOT gated on a query having been issued (it means the application threw on this path, which is worth paging on even if it threw before the first call); and a deployment with no endpoint configured, which reports a failure without a request leaving the process and so records fallback_error rather than going quiet. ' +
+      'Also note a request whose FEED query returned early can still be counted, because the parallel own-content query may have gone out regardless (the condition is the skipOwnExcluded predicate in the feed service, not a property of the feed query). So this is "requests that engaged the backend", NOT "requests whose feed query went out", and must not be read as the latter. ' +
       'outcome (served = BitDex answered and its documents were returned; fallback_empty = every query succeeded and the merged post-filtered result was still empty, so the index genuinely had nothing — not a defect; fallback_error = the result was empty AND at least one query in the request failed, so the emptiness is untrustworthy; fallback_exception = the application code itself threw while handling the response — page the app team, not the backend team). ' +
       'mode (primary = BitDex served the user or its failure sent the request to Meilisearch; shadow = the same path ran in the background for comparison and Meilisearch served the user regardless).',
     ['outcome', 'mode']
