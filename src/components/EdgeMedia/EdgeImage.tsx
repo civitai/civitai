@@ -2,6 +2,7 @@ import type { SyntheticEvent } from 'react';
 import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
 import styles from './EdgeImage.module.scss';
 import clsx from 'clsx';
+import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 
@@ -48,11 +49,7 @@ export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
         src={url}
         style={{ maxWidth: options?.width ? options.width : undefined, ...style }}
         onDragStart={(e) => {
-          e.dataTransfer.setData('text/uri-list', url);
-          if (imageId) {
-            e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
-            e.dataTransfer.setData('application/x-civitai-media-type', 'image');
-          }
+          setMediaDragData(e.dataTransfer, { url, mediaId: imageId || undefined, type: 'image' });
         }}
         {...props}
       />

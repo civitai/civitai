@@ -1,6 +1,7 @@
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -203,7 +204,7 @@ export function ImageDetailCarousel({
         withKeyboardEvents={false}
       >
         {/* pan-y keeps vertical page scrolling native while horizontal drags go to embla */}
-        <Embla.Viewport className="h-full touch-pan-y" onDragStartCapture={allowNativeDragStart}>
+        <Embla.Viewport className="h-full touch-pan-y">
           <Embla.Container className="flex h-full">
             {images.map((image, i) => (
               <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
@@ -262,10 +263,24 @@ function ImageContent({
 
   const isVideo = image?.type === 'video';
 
+  const handleDragStart = (event: React.DragEvent) => {
+    allowNativeDragStart(event);
+    const media = event.target as HTMLImageElement | HTMLVideoElement;
+    setMediaDragData(event.dataTransfer, {
+      url: media.currentSrc || media.src,
+      mediaId: image.id,
+      type: isVideo ? 'video' : 'image',
+    });
+  };
+
   return (
     <ImageGuardContent image={image} {...connect}>
       {(safe) => (
-        <div ref={setRef} className="relative flex size-full items-center justify-center">
+        <div
+          ref={setRef}
+          onDragStartCapture={handleDragStart}
+          className="relative flex size-full items-center justify-center"
+        >
           {!safe && width && height ? (
             <div
               className="relative flex max-h-full max-w-full flex-1"

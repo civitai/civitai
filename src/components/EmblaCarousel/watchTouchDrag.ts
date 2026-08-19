@@ -21,9 +21,12 @@ export function watchTouchDrag(
  * `watchTouchDrag` alone does not restore the native HTML5 drag: embla's
  * DragHandler.init binds `dragstart -> preventDefault()` on the viewport for as
  * long as `watchDrag` is truthy, and never consults `watchDrag` for that event —
- * only for mousedown/touchstart. Stopping dragstart in React's capture phase, on
- * the viewport or an ancestor, keeps it from reaching that listener so the drag
- * survives. (embla-carousel 8.6.0)
+ * only for mousedown/touchstart. Stopping dragstart in React's capture phase
+ * keeps it from reaching that listener, so the drag survives. (embla-carousel 8.6.0)
+ *
+ * The stop lands on the native event at React's root container, so the dragged
+ * element's own `onDragStart` never runs either — a caller that needs a payload
+ * has to set it here, as `ImageDetailCarousel` does.
  */
 export function allowNativeDragStart(event: DragEvent) {
   event.stopPropagation();
