@@ -15,6 +15,7 @@ vi.mock('~/server/services/collection.service', () => ({
 }));
 
 import { resolveHubSources, upsertUserHub } from '~/server/services/user-hub.service';
+import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
 import { CollectionReadConfiguration, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const findFirstHub = dbMock.dbRead.userHub.findFirst;
@@ -91,7 +92,18 @@ describe('upsertUserHub collection sources', () => {
     userId: 5,
   });
 
-  it('refuses a private collection', async () => {
+  it('refuses every collection while the index attribute is not live', async () => {
+    // The guard sits before the per-collection checks, so this fires for a
+    // collection that would otherwise be perfectly usable.
+    findManyCollections.mockResolvedValue([
+      { id: 44, name: 'Fine', read: CollectionReadConfiguration.Public, metadata: {} },
+    ]);
+    permissionsMock.mockResolvedValue({ 44: { read: true } });
+
+    await expect(upsertUserHub(hubInput(44))).rejects.toThrow(/cannot be added to a hub yet/i);
+  });
+
+  it.skipIf(!HUB_COLLECTION_SOURCES_ENABLED)('refuses a private collection', async () => {
     findManyCollections.mockResolvedValue([
       { id: 40, name: 'Secret', read: CollectionReadConfiguration.Private, metadata: {} },
     ]);
@@ -100,37 +112,46 @@ describe('upsertUserHub collection sources', () => {
     await expect(upsertUserHub(hubInput(40))).rejects.toThrow(/private/i);
   });
 
-  it('refuses a collection with a forced browsing level', async () => {
-    findManyCollections.mockResolvedValue([
-      {
-        id: 41,
-        name: 'Contest',
-        read: CollectionReadConfiguration.Public,
-        metadata: { forcedBrowsingLevel: 3 },
-      },
-    ]);
-    permissionsMock.mockResolvedValue({ 41: { read: true } });
+  it.skipIf(!HUB_COLLECTION_SOURCES_ENABLED)(
+    'refuses a collection with a forced browsing level',
+    async () => {
+      findManyCollections.mockResolvedValue([
+        {
+          id: 41,
+          name: 'Contest',
+          read: CollectionReadConfiguration.Public,
+          metadata: { forcedBrowsingLevel: 3 },
+        },
+      ]);
+      permissionsMock.mockResolvedValue({ 41: { read: true } });
 
-    await expect(upsertUserHub(hubInput(41))).rejects.toThrow(/content ratings/i);
-  });
+      await expect(upsertUserHub(hubInput(41))).rejects.toThrow(/content ratings/i);
+    }
+  );
 
-  it('refuses a collection the viewer cannot read', async () => {
-    findManyCollections.mockResolvedValue([
-      { id: 42, name: 'Theirs', read: CollectionReadConfiguration.Public, metadata: {} },
-    ]);
-    permissionsMock.mockResolvedValue({ 42: { read: false } });
+  it.skipIf(!HUB_COLLECTION_SOURCES_ENABLED)(
+    'refuses a collection the viewer cannot read',
+    async () => {
+      findManyCollections.mockResolvedValue([
+        { id: 42, name: 'Theirs', read: CollectionReadConfiguration.Public, metadata: {} },
+      ]);
+      permissionsMock.mockResolvedValue({ 42: { read: false } });
 
-    await expect(upsertUserHub(hubInput(42))).rejects.toThrow(/not found/i);
-  });
+      await expect(upsertUserHub(hubInput(42))).rejects.toThrow(/not found/i);
+    }
+  );
 
-  it('accepts a readable public collection with no forced level', async () => {
-    findManyCollections.mockResolvedValue([
-      { id: 43, name: 'Fine', read: CollectionReadConfiguration.Public, metadata: {} },
-    ]);
-    permissionsMock.mockResolvedValue({ 43: { read: true } });
+  it.skipIf(!HUB_COLLECTION_SOURCES_ENABLED)(
+    'accepts a readable public collection with no forced level',
+    async () => {
+      findManyCollections.mockResolvedValue([
+        { id: 43, name: 'Fine', read: CollectionReadConfiguration.Public, metadata: {} },
+      ]);
+      permissionsMock.mockResolvedValue({ 43: { read: true } });
 
-    // Proves the three rejections above are not passing for free — the same call
-    // shape reaches the write path when the collection is usable.
-    await expect(upsertUserHub(hubInput(43))).resolves.not.toThrow();
-  });
+      // Proves the three rejections above are not passing for free — the same call
+      // shape reaches the write path when the collection is usable.
+      await expect(upsertUserHub(hubInput(43))).resolves.not.toThrow();
+    }
+  );
 });

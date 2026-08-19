@@ -4,7 +4,7 @@ import type {
   UpsertUserHubInput,
   UserHubSourceInput,
 } from '~/server/schema/user-hub.schema';
-import { hubLimits } from '~/server/schema/user-hub.schema';
+import { HUB_COLLECTION_SOURCES_ENABLED, hubLimits } from '~/server/schema/user-hub.schema';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { CollectionReadConfiguration, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
@@ -164,6 +164,11 @@ async function assertHubSourcesUsable({
     .filter((s) => s.type === UserHubSourceType.Collection)
     .map((s) => s.targetId);
   if (!collectionIds.length) return;
+
+  if (!HUB_COLLECTION_SOURCES_ENABLED)
+    throw throwBadRequestError(
+      'Collections cannot be added to a hub yet. Creators, models and model versions work today.'
+    );
 
   const collections = await dbRead.collection.findMany({
     where: { id: { in: collectionIds } },

@@ -3794,6 +3794,7 @@ export async function getImagesFromFeedSearch(
 
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
 import { resolveHubSources } from '~/server/services/user-hub.service';
+import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
 
 // The OR-group a hub's sources become. Mirrors the single-`modelVersionId`
 // branch below, including its two gates: a hub must honour hideAutoResources /
@@ -3819,7 +3820,9 @@ function buildHubFilter(
     if (!hideManualResources)
       arms.push(makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${ids}]`));
   }
-  if (sources.collectionIds.length)
+  // Guarded, not merely unused: filtering on an attribute the index has not been
+  // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
+  if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
     arms.push(
       makeMeiliImageSearchFilter('collectionIds', `IN [${sources.collectionIds.join(',')}]`)
     );

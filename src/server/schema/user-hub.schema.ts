@@ -9,6 +9,17 @@ export const hubLimits = {
   aliasLength: 60,
 } as const;
 
+// `collectionIds` is declared on the metrics-images index but is NOT yet a live
+// filterable attribute: onIndexSetup only runs inside the index RESET job
+// (base.search-index.ts:358 — the call in the incremental path is commented out
+// at :414), and that job is pinned to UNRUNNABLE_JOB_CRON. Until someone runs a
+// reset, filtering on it makes Meilisearch reject the whole query, which surfaces
+// as a 503 rather than a degraded feed.
+//
+// So collection sources stay dark until the index has actually been rebuilt.
+// Flip this to true in the same change that confirms the attribute is live.
+export const HUB_COLLECTION_SOURCES_ENABLED = false;
+
 export const hubSortSchema = z.enum([
   ImageSort.Newest,
   ImageSort.Oldest,
