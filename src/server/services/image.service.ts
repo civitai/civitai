@@ -239,6 +239,10 @@ import {
   recordBitdexError,
   recordSortAtOnlyHolds,
 } from '~/server/bitdex/compare';
+import {
+  recordBitdexPrimaryResult,
+  type BitdexQueryFailureReason,
+} from '~/server/metrics/bitdex-feed-serve.metrics';
 
 // --- BitDex native filter helpers ---
 const _int = (v: number): Value => ({ Integer: v });
@@ -3126,6 +3130,13 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // queue and is shown a different population, with nothing signalling that the
   // wrong question was answered. Declining is the honest containment; answering
   // properly means changing what the query asks for, which is not this PR.
+  // 🔴 Deliberately BEFORE any outcome is recorded, and deliberately not
+  // recorded itself. This declines the request without issuing a single BitDex
+  // query, so it is not a served page, not an empty index and not a failure — it
+  // is a policy choice. Counting it as a fallback would make the served ratio
+  // sag every time a moderator opened one of these queues. The denominator of
+  // `bitdex_primary_result_total` is therefore "requests that engaged BitDex",
+  // which the metric's help string states.
   if (input.isModerator && (input.scheduled || input.notPublished)) return null;
 
   // Resolve `username` → `userId` BEFORE anything reads the creator scope.
@@ -3191,6 +3202,100 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // every username-addressed request. Pinned by a test.
     input = { ...input, userId: targetUser.id };
   }
+
+  // Which cohort this run belongs to. Read once so the three emit points below
+  // cannot disagree, and computed here rather than at each call so a later
+  // caller-mode cannot be added to one of them and missed by the others.
+  const serveMode = opts.serving ? ('primary' as const) : ('shadow' as const);
+
+  // 🔴 THE PER-REQUEST PREDICATE: did ANY BitDex call in this request fail?
+  //
+  // Not "did the last call fail" and not "did the main pass fail". A request
+  // issues 1-4 calls — the paginating main pass plus, for a signed-in caller on
+  // the first page, an own-content pass that runs in PARALLEL. If the
+  // own-content pass failed while the main pass legitimately came back empty,
+  // the page is not known to be empty: the documents that would have filled it
+  // are exactly the ones the failed call was fetching. Collapsing that into
+  // `fallback_empty` would report the one case this instrument exists to find as
+  // the healthy one.
+  //
+  // Read AFTER `await ownExcludedPromise` below, which is where both passes have
+  // settled and which already precedes the `!data.length` guard.
+  // 🔴 DID THIS REQUEST ACTUALLY REACH BITDEX AT ALL? It can be ZERO, and the
+  // empty-result guard below cannot tell — an empty page and a page nobody asked
+  // for are the same `data.length === 0`.
+  //
+  // COUNTED FROM EVIDENCE THAT A CALL HAPPENED, NOT FROM LOOP ENTRY. An earlier
+  // revision incremented just before calling `getImagesFromBitdexPreFilter`,
+  // which was wrong in a way that looked right: that function has FIVE early
+  // `return null` paths that never reach `queryBitdex` — `hidden` with no
+  // signed-in user, `hidden` with no hidden images, an unresolvable username,
+  // followed-with-zero-follows, and newCreators-with-none. Counting on entry
+  // re-created the same overcount one door down.
+  //
+  // ⚠️ SCOPE. Do NOT paraphrase this — READ THE PREDICATE. Three successive
+  // hand-written glosses of it were each refuted by measurement ("all five doors
+  // are excluded"; "an anonymous caller, or any paginated request"), so the rule
+  // here is to name the predicate and enumerate it exactly, never to describe it.
+  //
+  // A door-walking request is excluded from this counter exactly when
+  // `skipOwnExcluded` (declared below, next to the own-content pass) is TRUE,
+  // because that is what decides whether a SECOND query goes out. Its three
+  // disjuncts, verbatim from that line:
+  //   1. `!input.currentUserId`                                  — anonymous caller
+  //   2. `bitdexCursor`                — a `bdx:` cursor, i.e. a BitDex-paginated
+  //                                      request (NOT any paginated request)
+  //   3. `input.userId && input.userId !== input.currentUserId`
+  //                                    — signed-in, viewing another user's profile
+  // If none holds, the own-content pass is issued regardless of what the feed
+  // query did, a call goes out, and the request IS counted.
+  //
+  // Measured, driving the real path (each row is a request that walks a door):
+  //   signed-in, other user's profile        → 0 calls, nothing recorded
+  //   signed-in, `bdx:` cursor               → 0 calls, nothing recorded
+  //   signed-in, NON-`bdx:` cursor           → 1 call,  `fallback_empty` recorded
+  //   signed-in, first page                  → 1 call,  `fallback_empty` recorded
+  // The third row is why "any paginated request" was wrong, and it is the NORMAL
+  // shape: a request that walks a door falls back to Meili, so its next page
+  // carries a MEILI cursor, which the `bdx:` decode above does not accept.
+  //
+  // Counting those requests is correct under the stated denominator — a call did
+  // go out — and is deliberately left as is. Both shapes are pinned in
+  // bitdex-feed-source.test.ts.
+  //
+  // The two observations that mean "a call was made": the client reported a
+  // FAILURE, or it handed back a NON-NULL result (it returns null on every
+  // failure). At most one fires per call, so this cannot double-count.
+  //
+  // ⚠️ Neither is exhaustive, in opposite directions, and both are accepted:
+  //   • `unconfigured` fires the failure callback WITHOUT a request leaving the
+  //     process (the client returns before any fetch — pinned by the
+  //     `not.toHaveBeenCalled()` assertion in the client suite). So a
+  //     misconfigured deployment counts as a call and records `fallback_error`.
+  //     Deliberate: a missing endpoint is a real degradation and that is exactly
+  //     when the tripwire should fire, not go quiet.
+  //   • A completed call whose body decodes to a value that is FALSY BUT SURVIVES
+  //     A PROPERTY READ (`0`, `""`, `false`, `NaN`) is returned unfiltered by the
+  //     client, so it is falsy here and neither observation fires — the call is
+  //     NOT counted. An UNDER-count, the worse direction, since the served ratio
+  //     silently improves. Measured. `null` is NOT in that set: the client
+  //     dereferences `.total_matched` on the parsed body, which THROWS on null,
+  //     so a null body is classified `parse` and IS counted — an earlier revision
+  //     of this comment listed it here and was wrong. Whether a falsy body throws
+  //     on that dereference is the whole distinction. Not reachable against a
+  //     backend that returns an object.
+  //
+  // Why it matters: recording a request that never contacted BitDex inflates the
+  // FALLBACK side of the exact ratio a roll-forward/rollback decision is read
+  // from. (Reachability is measured; organic frequency is NOT.)
+  let bitdexCallsObserved = 0;
+
+  let anyQueryFailed = false;
+  const noteQueryFailure = () => {
+    anyQueryFailed = true;
+    // Evidence of a call, with the `unconfigured` exception noted above.
+    bitdexCallsObserved++;
+  };
 
   const limit = input.limit ?? 100;
   // Opt-in to one's own not-yet-published content. Read once so the main
@@ -3294,7 +3399,8 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       500,
       undefined,
       undefined,
-      true
+      true,
+      noteQueryFailure
     );
   }
 
@@ -3317,8 +3423,15 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
 
   while (pass < MAX_PASSES && accumulated.length < limit) {
     const result = await (firstPage
-      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor)
-      : getImagesFromBitdexPreFilter(input, true, lastCursor));
+      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor, noteQueryFailure)
+      : getImagesFromBitdexPreFilter(input, true, lastCursor, noteQueryFailure));
+    // Non-null ⇒ the client completed a call (it returns null on every failure,
+    // and the wrapper returns null without calling it at all on its early-return
+    // paths). A failed call is counted by `noteQueryFailure` instead, so AT MOST
+    // one of the two fires per call — not exactly one. For a body that decodes
+    // falsy-but-non-throwing, NEITHER fires; see the exhaustiveness note at
+    // `bitdexCallsObserved`, which is the single place that scope is stated.
+    if (result) bitdexCallsObserved++;
     if (skipBudgetStartedAt === 0) skipBudgetStartedAt = Date.now();
     firstPage = false;
 
@@ -3395,6 +3508,10 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // Since the second pass is unscoped (for cacheability), we apply content-scoping
   // filters here to match the current view.
   const ownExcluded = await ownExcludedPromise;
+  // Same rule as the main pass. `ownExcludedPromise` is null when the pass was
+  // skipped entirely, and `await null` is null, so this counts only a pass that
+  // both ran and completed.
+  if (ownExcluded) bitdexCallsObserved++;
   if (ownExcluded?.documents?.length) {
     const mainIds = new Set(data.map((d) => d.id));
     let ownDocs = ownExcluded.documents
@@ -3533,6 +3650,21 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // cost the user nothing.
     recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, 'fallback');
 
+    // 🔴 THE SPLIT THIS PR EXISTS FOR. Both branches return the same `null` and
+    // land the user on the same Meilisearch page; what differs is whether the
+    // emptiness is TRUSTWORTHY. `fallback_empty` says every call succeeded and
+    // the index had nothing — routine, and the bulk of today's fallback volume.
+    // `fallback_error` says at least one call in this request failed, so nobody
+    // knows what was in the index. Before this line the two were the same
+    // observable, which is why a BitDex outage looked exactly like a quiet index.
+    //
+    // Gated on `bitdexCallsObserved` for the reason given at its declaration: a
+    // request that never contacted BitDex is neither of these things, and
+    // recording it would make this counter's denominator disagree with its own
+    // help string.
+    if (bitdexCallsObserved > 0)
+      recordBitdexPrimaryResult(anyQueryFailed ? 'fallback_error' : 'fallback_empty', serveMode);
+
     // ⚠️ A cursored request does not fall back cleanly — the Meili path parses
     // cursors as `offset|entryTimestamp` (:2594) and a `bdx:{…}` cursor fails
     // both `isNumber` guards, so offset degrades to 0. An earlier revision of
@@ -3548,6 +3680,25 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   data = data.slice(0, limit);
 
   recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, opts.serving ? 'serving' : 'shadow');
+
+  // Recorded on the RESULT, not on the flag: a request can serve a full page
+  // while one of its calls failed (a failed own-content pass alongside a healthy
+  // main pass), and that is a served page. `anyQueryFailed` only decides which
+  // KIND of empty an empty result is; it never demotes a page that exists.
+  //
+  // 🔴 THE CONSEQUENCE, STATED SO NOBODY HAS TO REDERIVE IT FROM AN ALERT THAT
+  // LOOKS FINE. If the own-content pass fails PERSISTENTLY while the main pass
+  // stays healthy, users silently lose their own private / blocked / unpublished
+  // content from their feed — a real, user-visible degradation — and THIS
+  // counter reads 100% `served` throughout, because a page was in fact served.
+  // That is a deliberate choice (a served page is a served page; demoting it
+  // would make `served` mean "served and perfect", which no threshold could then
+  // interpret), but it means `bitdex_primary_result_total` ALONE cannot see this
+  // failure. `bitdex_query_failures_total` is the only counter that moves.
+  //
+  // ⇒ Any dashboard or alert built on this family MUST watch BOTH counters. One
+  // keyed on the served ratio alone will stay green straight through this.
+  recordBitdexPrimaryResult('served', serveMode);
 
   const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
   console.log(
@@ -3608,6 +3759,12 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     } catch (err) {
       console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
       recordBitdexError(err);
+      // Distinct from `fallback_error`, and the distinction is the point: the
+      // client never throws, so nothing that reaches here came from BitDex being
+      // unhealthy. This is the application's own map/merge/sort code throwing —
+      // a different team's page. It reads a flat zero today, which is what makes
+      // it a usable tripwire rather than a redundant series.
+      recordBitdexPrimaryResult('fallback_exception', 'primary');
     }
     // Fall through to Meili if BitDex fails
   }
@@ -3650,7 +3807,13 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
             });
           }
         })
-        .catch((err) => recordBitdexError(err))
+        .catch((err) => {
+          recordBitdexError(err);
+          // Same meaning as the primary arm above, in the cohort where nothing
+          // reaches a user. Recorded so an app-side throw is visible BEFORE the
+          // cohort is flipped, rather than only once it is serving.
+          recordBitdexPrimaryResult('fallback_exception', 'shadow');
+        })
     );
   }
 
@@ -4547,7 +4710,12 @@ export function mapBitdexDoc(doc: Record<string, unknown>) {
 export async function getImagesFromBitdexPreFilter(
   input: ImageSearchInput,
   includeDocs?: boolean | string[],
-  cursor?: any
+  cursor?: any,
+  // Threaded through to the client so the per-request outcome in
+  // fetchBitdexPrimary can tell "this page is empty" from "we do not know
+  // whether this page is empty" (#3930). Optional: the internal comparison
+  // endpoint calls this with `input` alone and is unaffected.
+  onFailure?: (reason: BitdexQueryFailureReason) => void
 ) {
   let { postIds = [] } = input;
   const {
@@ -4780,7 +4948,8 @@ export async function getImagesFromBitdexPreFilter(
     limit,
     cursor,
     cursor ? undefined : offset,
-    includeDocs
+    includeDocs,
+    onFailure
   );
   return result;
 }

@@ -1,3 +1,7 @@
+import {
+  recordBitdexQueryFailure,
+  type BitdexQueryFailureReason,
+} from '~/server/metrics/bitdex-feed-serve.metrics';
 import { withSpan, safeUrl } from '~/server/utils/otel-helpers';
 
 export type Value = { Integer: number } | { Bool: boolean } | { String: string };
@@ -96,7 +100,43 @@ export interface BitdexQueryResult {
  * Query BitDex with pre-built filter clauses and sort.
  * Returns null on any error (never throws).
  *
+ * 🔴 THE `null` IS AMBIGUOUS BY CONSTRUCTION, AND `onFailure` IS THE ONLY THING
+ * THAT DISAMBIGUATES IT. Missing config, a non-2xx, a thrown fetch, an abort at
+ * the deadline and a body that would not parse all return the same `null` as a
+ * successful query over an index that genuinely had no match. The caller cannot
+ * tell a degraded backend from an empty one, which is why an empty feed page was
+ * unalertable (#3930). `onFailure` fires ONLY on the failure half, with the
+ * classification made HERE — the one place the status code and the error object
+ * are still in scope; once this function returns, that information is gone.
+ *
+ * Deliberately an OPTIONAL, ADDITIVE last parameter rather than a change of
+ * return type. Counting precisely, because two different numbers are true and
+ * conflating them has already caused confusion: `queryBitdex` has exactly TWO
+ * direct call sites, both in `image.service.ts` (the parallel own-content pass
+ * in `fetchBitdexPrimary`, and the one inside `getImagesFromBitdexPreFilter`).
+ * The `null` RETURN CONTRACT, however, is interpreted by THREE consumers, because
+ * `getImagesFromBitdexPreFilter` is itself re-exported and called from
+ * `~/pages/api/internal/bitdex-compare.ts` — so a discriminated union would have
+ * rewritten all three, plus every test mock, in the same commit that changes the
+ * behaviour, which is precisely the commit you want to be able to read. It
+ * reverts by deleting one argument.
+ *
+ * The callback is for the CALLER's per-request attribution. The per-call counter
+ * is emitted here regardless, so a caller that passes nothing still contributes
+ * the failure reason.
+ *
  * @param includeDocs - true to return all fields, or an array of field names
+ * @param onFailure - invoked with the failure classification when this call
+ *   returns null for any reason OTHER than a successful empty result. Never
+ *   invoked on success. Must not throw; it is called on the feed hot path.
+ *
+ *   🔴 IT IS NOT A GUARANTEE THAT A REQUEST LEFT THE PROCESS. The
+ *   `unconfigured` arm fires it before any `fetch` — no endpoint means no call
+ *   to make — which is asserted by the `not.toHaveBeenCalled()` case in the
+ *   client suite. A caller using this as "a call happened" evidence (as
+ *   `fetchBitdexPrimary` does) is therefore also counting the misconfigured
+ *   deployment. That is deliberate there: a missing endpoint is a real
+ *   degradation, and the tripwire should fire on it rather than go quiet.
  */
 export async function queryBitdex(
   indexName: string,
@@ -106,11 +146,33 @@ export async function queryBitdex(
   cursor?: any,
   offset?: number,
   includeDocs?: boolean | string[],
+  onFailure?: (reason: BitdexQueryFailureReason) => void
 ): Promise<BitdexQueryResult | null> {
-  if (!BITDEX_URL) return null;
+  // Emitting the reason and notifying the caller are one action; splitting them
+  // is how one call site ends up counted and another not.
+  const fail = (reason: BitdexQueryFailureReason): null => {
+    recordBitdexQueryFailure(reason);
+    // The callback is caller-supplied. A throw here would convert an already-
+    // failed BitDex call into a thrown feed request — strictly worse than the
+    // fallback it is reporting.
+    try {
+      onFailure?.(reason);
+    } catch {
+      /* instrument-only */
+    }
+    return null;
+  };
+
+  if (!BITDEX_URL) return fail('unconfigured');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BITDEX_TIMEOUT_MS);
+  // Distinguishes a fetch-phase throw from a body-decode throw. Both arrive at
+  // the same `catch` with error objects that are not reliably distinguishable by
+  // type, and `parse` vs `network` is the difference between "the backend is
+  // unreachable" and "the backend answered something we could not read".
+  let phase: 'fetch' | 'parse' = 'fetch';
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), BITDEX_TIMEOUT_MS);
     const body: any = { filters, limit };
     if (sort) body.sort = sort;
     if (cursor) body.cursor = cursor;
@@ -136,12 +198,24 @@ export async function queryBitdex(
           signal: controller.signal,
         })
     );
+    // Cleared EAGERLY here, exactly as before, so the abort deadline still
+    // covers the fetch only and not the body decode below. The `finally` is the
+    // leak fix, not a widening of the budget: `clearTimeout` on an already-
+    // cleared handle is a no-op, so behaviour on this path is unchanged.
     clearTimeout(timeout);
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error(`[BitDex] Query failed ${res.status} (${Date.now() - start}ms): ${errText.slice(0, 500)}`);
-      return null;
+      console.error(
+        `[BitDex] Query failed ${res.status} (${Date.now() - start}ms): ${errText.slice(0, 500)}`
+      );
+      // 4xx and 5xx are split because they have different owners: a 4xx is
+      // almost always something this application sent (the field-the-index-does-
+      // not-know case), a 5xx is the backend. A non-2xx below 400 cannot
+      // normally occur here (fetch follows redirects) and is classified with the
+      // client-error half rather than being invented a seventh label.
+      return fail(res.status >= 500 ? 'http_5xx' : 'http_4xx');
     }
+    phase = 'parse';
     const result = await withSpan(
       'bitdex:http:parse',
       {
@@ -151,16 +225,33 @@ export async function queryBitdex(
       },
       () => res.json()
     );
-    console.log('[BitDex] result:', JSON.stringify({
-      ms: Date.now() - start,
-      matched: result.total_matched,
-      ids: result.ids?.length ?? 0,
-      docs: result.documents?.length ?? 0,
-      elapsed_us: result.elapsed_us,
-    }));
+    console.log(
+      '[BitDex] result:',
+      JSON.stringify({
+        ms: Date.now() - start,
+        matched: result.total_matched,
+        ids: result.ids?.length ?? 0,
+        docs: result.documents?.length ?? 0,
+        elapsed_us: result.elapsed_us,
+      })
+    );
     return result;
   } catch (err) {
     console.error(`[BitDex] Query error:`, err);
-    return null;
+    // Duck-typed on `name` rather than `err instanceof Error`. A real abort here
+    // is a `DOMException`, and while THIS runtime happens to make DOMException an
+    // Error subclass (measured), that is a WebIDL detail we should not be
+    // depending on — if it were ever false, every timeout would silently
+    // reclassify as `network`, which is the wrong team paged and no error
+    // anywhere. The narrowing below cannot throw on null/undefined.
+    const aborted = (err as { name?: unknown } | null | undefined)?.name === 'AbortError';
+    return fail(aborted ? 'timeout' : phase === 'parse' ? 'parse' : 'network');
+  } finally {
+    // 🔴 The leak. Before this, the only `clearTimeout` was the eager one above,
+    // which a thrown fetch (connection refused, DNS failure, abort) skips
+    // entirely — leaving a 30s timer holding the AbortController alive on every
+    // failed call, at feed request rate. The sibling `fetchBitdexDocuments`
+    // already used `finally` for this reason.
+    clearTimeout(timeout);
   }
 }

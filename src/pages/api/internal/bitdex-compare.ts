@@ -16,10 +16,7 @@ import { ImageSort } from '~/server/common/enums';
  * GET /api/internal/bitdex-compare?sort=Newest&browsingLevel=1&limit=20
  * GET /api/internal/bitdex-compare?sort=MostReactions&browsingLevel=1&limit=20&cursor=20|1772150400000
  */
-export default PublicEndpoint(async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
+export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const q = req.query;
 
   const limit = Number(q.limit) || 20;
@@ -55,7 +52,9 @@ export default PublicEndpoint(async function handler(
     ...(q.postId && { postId: Number(q.postId) }),
     ...(q.modelVersionId && { modelVersionId: Number(q.modelVersionId) }),
     ...(q.baseModels && { baseModels: (q.baseModels as string).split(',') }),
-    ...(q.excludedTagIds && { excludedTagIds: (q.excludedTagIds as string).split(',').map(Number) }),
+    ...(q.excludedTagIds && {
+      excludedTagIds: (q.excludedTagIds as string).split(',').map(Number),
+    }),
     ...(q.period && { period: q.period as string }),
   };
 
@@ -75,6 +74,13 @@ export default PublicEndpoint(async function handler(
   let bitdexResult: any = null;
   let bitdexError: string | undefined;
   try {
+    // No `onFailure` callback ON PURPOSE (#3930). A failure here still counts
+    // toward `bitdex_query_failures_total` — that counter is emitted inside the
+    // client and needs no cooperation — but it contributes nothing to
+    // `bitdex_primary_result_total`, which counts USER-FACING FEED REQUESTS.
+    // This is a hand-driven internal comparison endpoint; folding its calls into
+    // the served/fallback ratio would let an operator running comparisons move
+    // the number a rollout decision is read from.
     bitdexResult = await getImagesFromBitdexPreFilter(input);
   } catch (err: any) {
     bitdexError = err.message || String(err);
@@ -99,9 +105,8 @@ export default PublicEndpoint(async function handler(
     if (commonMeili[i] === commonBitdex[i]) orderMatch++;
   }
 
-  const nextCursor = meiliResult?.nextCursor != null
-    ? `${offset + limit}|${meiliResult.nextCursor}`
-    : null;
+  const nextCursor =
+    meiliResult?.nextCursor != null ? `${offset + limit}|${meiliResult.nextCursor}` : null;
 
   return res.status(200).json({
     query: {
@@ -118,14 +123,15 @@ export default PublicEndpoint(async function handler(
       count: meiliIds.length,
       elapsed_ms: meiliElapsed,
       error: meiliError ?? null,
-      sample: meiliResult?.data?.slice(0, 5)?.map((d: any) => ({
-        id: d.id,
-        sortAtUnix: d.sortAtUnix,
-        reactionCount: d.reactionCount,
-        commentCount: d.commentCount,
-        nsfwLevel: d.nsfwLevel,
-        type: d.type,
-      })) ?? [],
+      sample:
+        meiliResult?.data?.slice(0, 5)?.map((d: any) => ({
+          id: d.id,
+          sortAtUnix: d.sortAtUnix,
+          reactionCount: d.reactionCount,
+          commentCount: d.commentCount,
+          nsfwLevel: d.nsfwLevel,
+          type: d.type,
+        })) ?? [],
     },
     bitdex: {
       ids: bitdexIds,
