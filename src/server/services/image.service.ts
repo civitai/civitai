@@ -4053,6 +4053,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     fromPlatform,
     notPublished,
     scheduled,
+    publishedOnly,
     username,
     tags,
     tools,
@@ -4296,7 +4297,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      if (currentUserId) {
+      // `publishedOnly` is the caller saying it cannot use an unpublished row at
+      // all, so the moderator's own-content carve-out is lifted too. Without
+      // this a moderator got their own drafts in a picker whose mutation
+      // refuses them, and no other caller could opt out of that.
+      if (currentUserId && !publishedOnly) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -4727,6 +4732,7 @@ export async function getImagesFromBitdexPreFilter(
     fromPlatform,
     notPublished,
     scheduled,
+    publishedOnly,
     username,
     tags,
     tools,
@@ -4967,6 +4973,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     fromPlatform,
     notPublished,
     scheduled,
+    publishedOnly,
     username,
     tags,
     tools,
@@ -5195,7 +5202,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      if (currentUserId) {
+      // `publishedOnly` is the caller saying it cannot use an unpublished row at
+      // all, so the moderator's own-content carve-out is lifted too. Without
+      // this a moderator got their own drafts in a picker whose mutation
+      // refuses them, and no other caller could opt out of that.
+      if (currentUserId && !publishedOnly) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);

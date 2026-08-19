@@ -928,6 +928,74 @@ describe('owner actions', () => {
     expect(placementUpdateMany.mock.calls[0][0].data).toMatchObject({ removedBy: 'moderator' });
   });
 
+  describe('a moderator on their own gallery', () => {
+    // Ownership used to decide the mode on its own, so a moderator got the
+    // creator rules on their own content and could moderate every gallery
+    // except their own. The mode is now asked for, and these pin both halves:
+    // asking works, and not asking still gets the creator rules.
+    const lockedOwnEntry = () => {
+      placementFindUnique.mockResolvedValue({
+        ...pending,
+        status: 'approved',
+        resolvedAt: new Date(),
+      });
+      placementUpdateMany.mockResolvedValue({ count: 1 });
+    };
+
+    it('is still held to the removal lock when they have not asked to moderate', async () => {
+      // The control on the pair below. Exempting them for holding the role
+      // would pass that test and silently drop the wait their own submitters
+      // were promised, on every removal they ever make.
+      lockedOwnEntry();
+
+      await expect(
+        actOnRemixGallerySubmission({
+          placementId: PLACEMENT,
+          action: 'remove',
+          userId: OWNER,
+          isModerator: true,
+        })
+      ).rejects.toThrow(/can be removed from/i);
+      expect(placementUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it('takes down a locked entry once they ask to act as a moderator', async () => {
+      lockedOwnEntry();
+
+      await actOnRemixGallerySubmission({
+        placementId: PLACEMENT,
+        action: 'remove',
+        userId: OWNER,
+        isModerator: true,
+        asModerator: true,
+      });
+
+      // Recorded as the moderation action it is. `owner` here would say a
+      // creator removed it under creator rules, which is the one thing that
+      // did not happen — those rules refused it a moment ago.
+      expect(placementUpdateMany.mock.calls[0][0].data).toMatchObject({
+        removedBy: 'moderator',
+      });
+    });
+
+    it('ignores the claim from someone who is not a moderator', async () => {
+      // `asModerator` chooses between two things a moderator may already do.
+      // It is not where the permission comes from, and a plain owner sending it
+      // must buy nothing.
+      lockedOwnEntry();
+
+      await expect(
+        actOnRemixGallerySubmission({
+          placementId: PLACEMENT,
+          action: 'remove',
+          userId: OWNER,
+          asModerator: true,
+        })
+      ).rejects.toThrow(/can be removed from/i);
+      expect(placementUpdateMany).not.toHaveBeenCalled();
+    });
+  });
+
   it('takes a live entry down with a direct write, not through settlePlacement', async () => {
     // `settlePlacement` claims with `WHERE status = 'pending'`, so routing an
     // approved row through it matched nothing and threw — owner remove was
