@@ -93,3 +93,18 @@ export const shouldDisplayUserNullState = ({
     (!overview?.hasReceivedReviews || !someSectionEnabled(['recentReviews']))
   );
 };
+
+/**
+ * The legacy `UserProfile.message` banner is superseded by a live announcement, not replaced
+ * by the feature flag: the `message` columns stay populated until the migration retires them,
+ * so a creator with no announcement yet must keep the banner they have.
+ */
+export const shouldShowProfileMessage = ({
+  message,
+  userMuted,
+  announcementCount,
+}: {
+  message?: string | null;
+  userMuted?: boolean;
+  announcementCount: number;
+}) => !!message && !userMuted && announcementCount === 0;
