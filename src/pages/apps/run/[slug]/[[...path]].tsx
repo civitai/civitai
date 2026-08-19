@@ -116,16 +116,25 @@ export default function AppPage(props: PageProps) {
   // `iconUrl` is omitted — consumers fall back to the seeded monogram / a
   // generic app icon. Fires once per mount; the store dedups, so revisiting just
   // moves the entry to the front.
+  //
+  // 🔴 STAMPED WITH THE VIEWER'S ACCOUNT (#4048). localStorage is per browser
+  // PROFILE, so without an owner the next account to use this browser inherits
+  // these entries — which is how a rail of apps that 404 for the viewer got
+  // rendered. `ownerId` is `null` for a signed-out run, which is its own bucket.
+  const recentsOwnerId = currentUser?.id ?? null;
   useEffect(() => {
-    recordRecentlyOpenedApp({
-      id: appBlockId,
-      blockId,
-      slug: blockId,
-      kind: 'onsite',
-      hasPage: true,
-      name: appName,
-    });
-  }, [appBlockId, blockId, appName]);
+    recordRecentlyOpenedApp(
+      {
+        id: appBlockId,
+        blockId,
+        slug: blockId,
+        kind: 'onsite',
+        hasPage: true,
+        name: appName,
+      },
+      recentsOwnerId
+    );
+  }, [appBlockId, blockId, appName, recentsOwnerId]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
   // from the approved AppBlock (no install row).
