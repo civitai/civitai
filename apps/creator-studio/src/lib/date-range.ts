@@ -207,3 +207,11 @@ export function formatRange(r: DateRange): string {
     Date.parse(`${r.to}T00:00:00Z`)
   )}`;
 }
+
+// Image views (and anything else read from a nightly owner rollup) are only sealed through yesterday, so a
+// series drawn from one has to stop a day before `through` — its gap-fill writes today's absence as a real 0,
+// which renders as the line diving at the right-hand edge of the current month rather than simply ending.
+export function rollupThrough(through: string, today = new Date()): string {
+  const yesterday = new Date(today.getTime() - 86_400_000).toISOString().slice(0, 10);
+  return through < yesterday ? through : yesterday;
+}

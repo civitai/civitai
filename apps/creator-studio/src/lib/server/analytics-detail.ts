@@ -120,7 +120,7 @@ async function fetchComicViewDetail(
           }' AND entityId IN (${chapterIds.join(',')}) AND ${inRange} GROUP BY id`
         )
       : Promise.resolve([]),
-    viewTrackingLive(VIEW_ENTITY.comicProject),
+    viewTrackingLive(VIEW_ENTITY.comicProject, from, to),
   ]);
 
   const readsById = new Map(perChapter.map((r) => [Number(r.id), Number(r.reads)]));
@@ -185,7 +185,7 @@ async function fetchModel3dViewDetail(
       totalSql(VIEW_ENTITY.model3d, id, compareFrom, compareTo)
     ),
     ch.$query<{ value: number | string }>(totalSql(VIEW_ENTITY.model3d, id)),
-    viewTrackingLive(VIEW_ENTITY.model3d),
+    viewTrackingLive(VIEW_ENTITY.model3d, from, to),
   ]);
 
   const series = points(viewRows);
@@ -212,14 +212,14 @@ type RangeArgs = {
 };
 
 export const getComicViewDetail = createCache({
-  name: 'analytics:comic-detail:v1',
+  name: 'analytics:comic-detail:v2',
   fetch: (a: RangeArgs & { projectId: number }) =>
     fetchComicViewDetail(a.userId, a.projectId, a.from, a.to, a.compareFrom, a.compareTo),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getModel3dViewDetail = createCache({
-  name: 'analytics:model3d-detail:v1',
+  name: 'analytics:model3d-detail:v2',
   fetch: (a: RangeArgs & { model3dId: number }) =>
     fetchModel3dViewDetail(a.userId, a.model3dId, a.from, a.to, a.compareFrom, a.compareTo),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),

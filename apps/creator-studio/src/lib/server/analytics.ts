@@ -4,6 +4,7 @@ import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
+import { viewTrackingSql } from '$lib/analytics/view-tracking';
 import { VIEW_ENTITY, IMPRESSION_ENTITY } from '$lib/server/view-entities';
 import type { ViewEntity, ImpressionEntity } from '$lib/server/view-entities';
 
@@ -114,8 +115,10 @@ export type Model3dSummary = {
 };
 export type Model3dPanel = { models: Model3dSummary[]; tracking: boolean };
 
-// The article equivalent of ImageViewDetail. No comment series: the `comments` table's type enum covers
-// Model/Image/Post/Comment/Review/Bounty/BountyEntry and has no Article arm, so there is nothing to read.
+// The article equivalent of ImageViewDetail, minus the comment series — which is unbuilt, not impossible.
+// ClickHouse cannot answer it (the `comments` type enum has no Article arm), but ClickHouse is not where the
+// image drilldown reads comments from either: `fetchImageViewDetail` counts `CommentV2` through `Thread`, and
+// `Thread.articleId` exists, so the same query shape works here whenever someone wants the series.
 export type ArticleViewDetail = {
   articleId: number;
   title: string;
@@ -166,14 +169,14 @@ export const getTopMedia = createCache({
 }).get;
 
 export const getComics = createCache({
-  name: 'analytics:comics:v3',
+  name: 'analytics:comics:v4',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchComics(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getModel3ds = createCache({
-  name: 'analytics:model3d:v2',
+  name: 'analytics:model3d:v3',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchModel3ds(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -785,19 +788,21 @@ async function fetchImageViewDetail(
   };
 }
 
-// Has ANY row of this entity type ever been written, platform-wide? Answers "not collecting yet" as distinct
-// from "you have none". `LIMIT 1` short-circuits, and `entityType` leads the primary key on `daily_views`, so
-// this is a prefix seek rather than a scan — a few ms, so it runs per panel load.
+// Answers "not collecting yet" as distinct from "you have none", for the range the surrounding numbers cover.
+// The query — and why it must carry the range — is in `$lib/analytics/view-tracking`.
 //
-// 🔴 Deliberately NOT cached, and the reason is the asymmetry. This answer starts false and flips true once,
-// forever. Caching it means caching a `false` — and a cached `false` outlives the event it is wrong about, so
-// the surface keeps saying "not collecting yet" for the whole TTL after data lands. That is exactly what
-// happened with a 1h TTL: impressions were live and attributed, and the tile stayed hidden. A stale `true`
-// would be harmless; a stale `false` hides a working feature and looks identical to the real pre-launch state.
-export async function viewTrackingLive(entityType: string): Promise<boolean> {
-  const rows = await getClickhouse().$query<{ one: number }>(
-    `SELECT 1 AS one FROM daily_views WHERE entityType = '${entityType}' LIMIT 1`
-  );
+// 🔴 Deliberately NOT cached, and the reason is the asymmetry. For any given range this answer starts false
+// and flips true once, forever. Caching it means caching a `false` — and a cached `false` outlives the event
+// it is wrong about, so the surface keeps saying "not collecting yet" for the whole TTL after data lands.
+// That is exactly what happened with a 1h TTL: impressions were live and attributed, and the tile stayed
+// hidden. A stale `true` would be harmless; a stale `false` hides a working feature and looks identical to
+// the real pre-launch state.
+export async function viewTrackingLive(
+  entityType: string,
+  from: string,
+  to: string
+): Promise<boolean> {
+  const rows = await getClickhouse().$query<{ one: number }>(viewTrackingSql(entityType, from, to));
   return rows.length > 0;
 }
 
@@ -822,7 +827,7 @@ async function fetchModel3ds(userId: number, from: string, to: string): Promise<
     ])
     .execute();
 
-  const tracking = await viewTrackingLive(VIEW_ENTITY.model3d);
+  const tracking = await viewTrackingLive(VIEW_ENTITY.model3d, from, to);
   if (!rows.length) return { models: [], tracking };
 
   const viewRows = await getClickhouse().$query<{ id: number | string; views: number | string }>(
@@ -900,7 +905,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     ORDER BY count(DISTINCT r."userId") DESC, p.id DESC
   `.execute(dbRead);
 
-  const tracking = await viewTrackingLive(VIEW_ENTITY.comicProject);
+  const tracking = await viewTrackingLive(VIEW_ENTITY.comicProject, from, to);
   const projectIds = result.rows.map((r) => Number(r.projectId));
   if (!projectIds.length) return { comics: [], tracking };
 
