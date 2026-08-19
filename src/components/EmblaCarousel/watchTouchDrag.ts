@@ -1,4 +1,5 @@
 import type { EmblaCarouselType } from 'embla-carousel';
+import type { DragEvent } from 'react';
 
 /**
  * Touch and pen drags navigate; mouse drags don't, so click-dragging an image on
@@ -14,4 +15,16 @@ export function watchTouchDrag(
   // correct if it ever moves to pointer events
   if ('pointerType' in event) return event.pointerType !== 'mouse';
   return event.type.startsWith('touch');
+}
+
+/**
+ * `watchTouchDrag` alone does not restore the native HTML5 drag: embla's
+ * DragHandler.init binds `dragstart -> preventDefault()` on the viewport for as
+ * long as `watchDrag` is truthy, and never consults `watchDrag` for that event —
+ * only for mousedown/touchstart. Stopping dragstart in React's capture phase, on
+ * the viewport or an ancestor, keeps it from reaching that listener so the drag
+ * survives. (embla-carousel 8.6.0)
+ */
+export function allowNativeDragStart(event: DragEvent) {
+  event.stopPropagation();
 }

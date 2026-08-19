@@ -16,7 +16,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
-import { watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
+import { allowNativeDragStart, watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
 type ImageDetailCarouselProps = {
   videoRef?: React.ForwardedRef<EdgeVideoRef>;
@@ -203,7 +203,7 @@ export function ImageDetailCarousel({
         withKeyboardEvents={false}
       >
         {/* pan-y keeps vertical page scrolling native while horizontal drags go to embla */}
-        <Embla.Viewport className="h-full touch-pan-y">
+        <Embla.Viewport className="h-full touch-pan-y" onDragStartCapture={allowNativeDragStart}>
           <Embla.Container className="flex h-full">
             {images.map((image, i) => (
               <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
