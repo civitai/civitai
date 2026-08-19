@@ -1,7 +1,12 @@
 import {
+  clearChatHandler,
   createChatHandler,
   createMessageHandler,
+  deleteMessageHandler,
+  getChatAuditHandler,
+  getModeratorChatHandler,
   getChatsForUserHandler,
+  updateMessageHandler,
   getInfiniteMessagesHandler,
   getMessageByIdHandler,
   getUnreadMessagesForUserHandler,
@@ -13,8 +18,11 @@ import {
   setUserSettingsHandler,
 } from '~/server/controllers/chat.controller';
 import {
+  clearChatInput,
   createChatInput,
   createMessageInput,
+  deleteMessageInput,
+  updateMessageInput,
   getInfiniteMessagesInput,
   getMessageByIdInput,
   isTypingInput,
@@ -22,7 +30,8 @@ import {
   modifyUserInput,
   userSettingsChat,
 } from '~/server/schema/chat.schema';
-import { guardedProcedure, protectedProcedure, router } from '~/server/trpc';
+import { getChatAuditInput, getModeratorChatInput } from '~/server/schema/chat-audit.schema';
+import { guardedProcedure, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // nb: muted users can perform read actions but no communication actions (except responding to mod chat)
@@ -47,6 +56,10 @@ export const chatRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(modifyUserInput)
     .mutation(modifyUserHandler),
+  clearChat: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(clearChatInput)
+    .mutation(clearChatHandler),
   markAllAsRead: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .mutation(markAllAsReadHandler),
@@ -66,11 +79,26 @@ export const chatRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createMessageInput)
     .mutation(createMessageHandler),
-  // updateMessage: guardedProcedure.input(updateMessageInput).mutation(updateMessageHandler),
+  deleteMessage: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(deleteMessageInput)
+    .mutation(deleteMessageHandler),
+  updateMessage: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(updateMessageInput)
+    .mutation(updateMessageHandler),
   isTyping: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(isTypingInput)
     .mutation(isTypingHandler),
+  getAudit: moderatorProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getChatAuditInput)
+    .query(getChatAuditHandler),
+  getModeratorChat: moderatorProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getModeratorChatInput)
+    .query(getModeratorChatHandler),
   getUnreadCount: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getUnreadMessagesForUserHandler),

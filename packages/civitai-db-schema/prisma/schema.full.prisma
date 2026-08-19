@@ -4167,6 +4167,10 @@ enum CosmeticType {
   ProfileDecoration
   ProfileBackground
   Sticker
+  // Applied, unused. Chat themes come with a membership; a cosmetic-granted
+  // theme is the shape a later pass would want, and an enum value cannot be
+  // dropped without recreating the type.
+  ChatTheme
 }
 
 enum CosmeticSource {
@@ -5285,6 +5289,12 @@ enum ChatMemberStatus {
   Kicked
 }
 
+enum ChatNotifyLevel {
+  All
+  Mentions
+  None
+}
+
 model ChatMember {
   id                  Int              @id @default(autoincrement())
   createdAt           DateTime         @default(now()) // doubles as invited_at
@@ -5299,12 +5309,17 @@ model ChatMember {
   leftAt              DateTime? // do we need a rejoin option?
   kickedAt            DateTime?
   unkickedAt          DateTime? // TODO maybe remove
+  filteredAt          DateTime? // reached this member via Requests rather than their inbox
+  notifyLevel         ChatNotifyLevel @default(All)
+  pinnedAt            DateTime?
+  clearedAt           DateTime? // this member's clean-slate watermark; messages before it are hidden from them only
 
   user              User         @relation(fields: [userId], references: [id])
   chat              Chat         @relation(fields: [chatId], references: [id])
   lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
 
   @@index([userId, status, isMuted])
+  @@index([userId, status, filteredAt])
 }
 
 enum ChatMessageType {
@@ -5324,7 +5339,7 @@ model ChatMessage {
   contentType        ChatMessageType @default(Markdown)
   referenceMessageId Int?
   editedAt           DateTime?
-  // TODO deletedAt DateTime
+  deletedAt          DateTime? // hidden from both sides; the row is retained for moderation
 
   user             User         @relation(fields: [userId], references: [id])
   chat             Chat         @relation(fields: [chatId], references: [id])
@@ -5332,6 +5347,8 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+
+  @@index([chatId, id])
 }
 
 model BuildGuide {

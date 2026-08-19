@@ -1,5 +1,6 @@
 import type { GroupProps } from '@mantine/core';
 import {
+  ActionIcon,
   Badge,
   Box,
   Button,
@@ -11,6 +12,7 @@ import {
   Image,
   Indicator,
   Loader,
+  Menu,
   SegmentedControl,
   Stack,
   Text,
@@ -20,11 +22,13 @@ import {
 import {
   IconCirclePlus,
   IconCloudOff,
+  IconEar,
+  IconEarOff,
   IconEye,
-  IconPin,
+  IconMessageExclamation,
   IconPlugConnected,
   IconSearch,
-  IconSettings,
+  IconTool,
   IconUsers,
   IconUserX,
   IconX,
@@ -41,16 +45,15 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import type { ChatListMessage } from '~/types/router';
+import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import styles from './ChatList.module.css';
+import styles from './ChatListV1.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { BlurText } from '~/components/BlurText/BlurText';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { stripStickerTokens } from '~/shared/utils/sticker-token';
-import type { ChatBucket } from '~/shared/utils/chat';
-import { chatBucketFor } from '~/shared/utils/chat';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
@@ -70,12 +73,22 @@ const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 //   },
 // }));
 
-export function ChatList() {
+const statusMap = {
+  [ChatMemberStatus.Invited]: 'Pending',
+  [ChatMemberStatus.Ignored]: 'Archived',
+  [ChatMemberStatus.Left]: 'Archived',
+  [ChatMemberStatus.Kicked]: 'Archived',
+  [ChatMemberStatus.Joined]: 'Active',
+};
+type StatusKeys = keyof typeof statusMap;
+type StatusValues = (typeof statusMap)[StatusKeys];
+
+export function ChatListV1() {
   const existingChatId = useChatStore((state) => state.existingChatId);
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const [searchInput, setSearchInput] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<ChatBucket>('Inbox');
+  const [activeTab, setActiveTab] = useState<StatusValues>('Active');
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
   const { connected } = useSignalContext();
   const isMobile = useContainerSmallerThan(700);
@@ -84,16 +97,18 @@ export function ChatList() {
     enabled: !!currentUser,
   });
 
+  const muteSounds = userSettings?.muteSounds ?? false;
   const replaceBadWords = userSettings?.replaceBadWords ?? false;
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
 
-  const requestCount = !!data
-    ? data.filter((d) => {
-        const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
-        return !!myMember && chatBucketFor(myMember) === 'Requests';
-      }).length
+  const pendingCount = !!data
+    ? data.filter(
+        (d) =>
+          d.chatMembers.find((cm) => cm.userId === currentUser?.id)?.status ===
+          ChatMemberStatus.Invited
+      ).length
     : 0;
 
   const activeIds = !!data
@@ -112,6 +127,22 @@ export function ChatList() {
         return acc;
       }, 0)
     : 0;
+
+  const { mutate: modifySettings } = trpc.chat.setUserSettings.useMutation({
+    onSuccess(data) {
+      queryUtils.chat.getUserSettings.setData(undefined, (old) => {
+        if (!old) return old;
+        return data;
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update settings.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
 
   const { mutate: markAsRead } = trpc.chat.markAllAsRead.useMutation({
     onSuccess(data) {
@@ -154,19 +185,21 @@ export function ChatList() {
 
   useEffect(() => {
     if (!data) return;
-    const activeMember = data
+    const activeStatus = data
       .find((d) => d.id === existingChatId)
-      ?.chatMembers?.find((cm) => cm.userId === currentUser?.id);
-    if (!activeMember) return;
-    setActiveTab(chatBucketFor(activeMember));
+      ?.chatMembers?.find((cm) => cm.userId === currentUser?.id)?.status;
+    if (!activeStatus) return;
+    const defaultActiveTab = statusMap[activeStatus];
+    setActiveTab(defaultActiveTab);
   }, [currentUser?.id, data, existingChatId]);
 
   useEffect(() => {
     if (!data) return;
 
     const tabData = data.filter((d) => {
-      const myMember = d.chatMembers.find((cm) => cm.userId === currentUser?.id);
-      return !!myMember && chatBucketFor(myMember) === activeTab;
+      const tStatus = d.chatMembers.find((cm) => cm.userId === currentUser?.id)?.status;
+      if (!tStatus) return;
+      if (statusMap[tStatus] === activeTab) return d;
     });
 
     // TODO we could probably search all messages, but that involves another round trip to grab ALL messages for all chats
@@ -183,13 +216,7 @@ export function ChatList() {
           })
         : tabData;
 
-    const pinnedFor = (chat: ChatListMessage) =>
-      !!chat.chatMembers.find((cm) => cm.userId === currentUser?.id)?.pinnedAt;
-
     tabFiltered.sort((a, b) => {
-      const pinDiff = Number(pinnedFor(b)) - Number(pinnedFor(a));
-      if (pinDiff !== 0) return pinDiff;
-
       const aDate = a.messages[0]?.createdAt ?? a.createdAt;
       const bDate = b.messages[0]?.createdAt ?? b.createdAt;
       return aDate < bDate ? 1 : -1;
@@ -198,50 +225,73 @@ export function ChatList() {
     setFilteredData(tabFiltered);
   }, [currentUser?.id, data, searchInput, activeTab]);
 
+  const handleMute = () => {
+    modifySettings({ muteSounds: !muteSounds });
+  };
+
+  const handleReplaceBadWords = () => {
+    modifySettings({ replaceBadWords: !replaceBadWords });
+  };
+
   return (
     <Stack gap={0} h="100%">
       <Group p="sm" justify="space-between" align="center">
-        <Group gap="xs">
-          <Tooltip label="Chat settings">
-            <LegacyActionIcon
-              variant="light"
-              aria-label="Chat settings"
-              onClick={() =>
-                useChatStore.setState({ isSettingsOpen: true, settingsScope: 'global' })
-              }
-            >
-              <IconSettings size={18} strokeWidth={1.5} />
-            </LegacyActionIcon>
-          </Tooltip>
+        <Group>
           <Text>Chats</Text>
+          <Menu withArrow position="bottom">
+            <Menu.Target>
+              <LegacyActionIcon variant="light">
+                <IconTool size={18} strokeWidth={1.5} />
+              </LegacyActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                leftSection={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
+                onClick={handleMute}
+                disabled={isApril1() && !muteSounds}
+              >
+                {isApril1() && !muteSounds
+                  ? 'No muting for senpai! 🥰 '
+                  : `${muteSounds ? 'Play' : 'Mute'} sounds`}
+              </Menu.Item>
+              <Menu.Item
+                disabled={activeCount === 0}
+                leftSection={<IconEye size={18} />}
+                onClick={() => markAsRead()}
+              >
+                {`Mark all as read${activeCount > 0 ? ` (${activeCount})` : ''}`}
+              </Menu.Item>
+              {domainColor !== 'green' && (
+                <>
+                  <Menu.Divider />
+                  <Menu.Label>Moderation</Menu.Label>
+                  <Menu.Item
+                    color="yellow"
+                    leftSection={<IconMessageExclamation size={18} />}
+                    onClick={handleReplaceBadWords}
+                  >
+                    {replaceBadWords
+                      ? 'Disable conversation moderation'
+                      : 'Enable conversation moderation'}
+                  </Menu.Item>
+                </>
+              )}
+            </Menu.Dropdown>
+          </Menu>
           {!connected && (
             <Tooltip label="Not connected. May not receive live messages or alerts.">
               <IconPlugConnected color="orangered" />
             </Tooltip>
           )}
         </Group>
-        <Group gap="xs">
-          <Button
-            size="compact-xs"
-            variant="subtle"
-            color="gray"
-            disabled={activeCount === 0}
-            leftSection={<IconEye size={14} />}
-            onClick={() => markAsRead()}
-          >
-            {`Mark all read${activeCount > 0 ? ` (${activeCount})` : ''}`}
-          </Button>
+        <Group>
           <Button
             size="xs"
             variant="light"
             styles={{ section: { marginRight: 6 } }}
             leftSection={<IconCirclePlus size={18} />}
             onClick={() => {
-              useChatStore.setState({
-                isCreating: true,
-                existingChatId: undefined,
-                isSettingsOpen: false,
-              });
+              useChatStore.setState({ isCreating: true, existingChatId: undefined });
             }}
           >
             New
@@ -276,20 +326,20 @@ export function ChatList() {
       <Box>
         <SegmentedControl
           value={activeTab}
-          onChange={(value) => setActiveTab(value as ChatBucket)}
+          onChange={setActiveTab}
           fullWidth
           data={[
-            { value: 'Inbox', label: 'Inbox' },
+            { value: 'Active', label: 'Active' },
             {
-              value: 'Requests',
+              value: 'Pending',
               label: (
                 <Center>
-                  {requestCount > 0 && (
-                    <Badge p={5} color="gray" variant="filled">
-                      {requestCount > 9 ? '9+' : requestCount}
+                  {pendingCount > 0 && (
+                    <Badge p={5} color="red" variant="filled">
+                      {pendingCount > 9 ? '9+' : pendingCount}
                     </Badge>
                   )}
-                  <Box ml={6}>Requests</Box>
+                  <Box ml={6}>Pending</Box>
                 </Center>
               ),
             },
@@ -334,7 +384,7 @@ export function ChatList() {
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ type: 'spring', duration: 0.4 }}
                     onClick={() => {
-                      useChatStore.setState({ existingChatId: d.id, isSettingsOpen: false });
+                      useChatStore.setState({ existingChatId: d.id });
                     }}
                   >
                     <Indicator
@@ -356,25 +406,20 @@ export function ChatList() {
                       </Box>
                     </Indicator>
                     <Stack style={{ overflow: 'hidden' }} gap={0}>
-                      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-                        <Highlight
-                          size="sm"
-                          fw={500}
-                          style={{
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            minWidth: 0,
-                          }}
-                          c={hasMod ? 'red' : undefined}
-                          highlight={searchInput}
-                        >
-                          {otherMembers.map((cm) => cm.user.username).join(', ')}
-                        </Highlight>
-                        {!!myMember?.pinnedAt && (
-                          <IconPin size={12} style={{ flex: 'none', opacity: 0.6 }} />
-                        )}
-                      </Group>
+                      <Highlight
+                        size="sm"
+                        fw={500}
+                        style={{
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          minWidth: 0,
+                        }}
+                        c={hasMod ? 'red' : undefined}
+                        highlight={searchInput}
+                      >
+                        {otherMembers.map((cm) => cm.user.username).join(', ')}
+                      </Highlight>
                       {/* TODO this is kind of a hack, we should be returning only valid latest message */}
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
                         <BlurText
