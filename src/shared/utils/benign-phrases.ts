@@ -33,12 +33,38 @@ const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export function buildBenignPhraseRegex(phrases: string[]): RegExp | null {
   const cleaned = phrases.map((p) => p.trim()).filter((p) => p.length > 0);
   if (!cleaned.length) return null;
-  const alternation = cleaned.map((p) => escapeRegex(p).replace(/\s+/g, '[^a-zA-Z0-9]+')).join('|');
+  // The separator is CAPTURED so the strip can inspect what it matched — see
+  // `stripBenignPhrasesWith`. Capturing changes nothing about what the pattern matches, which
+  // is what keeps it identical to `prepareWordRegex`.
+  const alternation = cleaned
+    .map((p) => escapeRegex(p).replace(/\s+/g, '([^a-zA-Z0-9]+)'))
+    .join('|');
   return new RegExp(`(?<![a-zA-Z0-9])(?:${alternation})(?![a-zA-Z0-9])`, 'gi');
 }
 
-/** Synchronous counterpart to the server's `stripBenignPhrases`, for an already-fetched list. */
+/**
+ * Blank whitelisted phrases, REFUSING any occurrence whose inter-word gap contains a letter.
+ *
+ * 🔴 This is the guard that stops a swallow flipping a moderation gate. `[^a-zA-Z0-9]` excludes
+ * only ASCII alphanumerics, so a term written entirely in non-ASCII letters is a word to the
+ * detector and a separator to this pattern. That matters more than "one term hidden": the nsfw
+ * word list gates the POI and minor sub-checks (`audit.ts` — `if (!nsfw && !includesNsfw(...))
+ * return false`, and every search caller passes no `nsfw` argument), so swallowing the only
+ * nsfw signal in an input stops those sub-checks running at all.
+ *
+ * Refusing after the match rather than bounding the separator is deliberate: a bound made this
+ * matcher disagree with `prepareWordRegex` and handed back the false positives on ordinary
+ * punctuation (`emma,,,, stone`). This leaves the pattern identical and only declines to strip
+ * an occurrence whose gap holds something the detector would read as a word — and a gap of
+ * punctuation or whitespace, which is every ordinary case, still strips.
+ */
 export function stripBenignPhrasesWith(text: string | undefined, pattern: RegExp | null) {
   if (!text || !pattern) return text ?? '';
-  return text.replace(pattern, ' ');
+  return text.replace(pattern, (...args: unknown[]) => {
+    const match = args[0] as string;
+    // Drop the trailing `offset` and `whole string` arguments; the rest are the captured gaps.
+    const gaps = args.slice(1, -2) as (string | undefined)[];
+    const gapHoldsALetter = gaps.some((gap) => typeof gap === 'string' && /\p{L}/u.test(gap));
+    return gapHoldsALetter ? match : ' ';
+  });
 }

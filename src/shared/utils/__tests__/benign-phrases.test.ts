@@ -39,6 +39,19 @@ describe('benign phrases reach the client-side search gates', () => {
     expect(strip('stonemason', ['stone'])).toBe('stonemason');
   });
 
+  // The gate this protects: the nsfw word list decides whether the POI and minor sub-checks
+  // run at all, so swallowing the only nsfw signal in an input silences them rather than
+  // merely hiding one term. `[^a-zA-Z0-9]` excludes only ASCII alphanumerics, so a non-ASCII
+  // word is a separator to this pattern and a word to the detector.
+  it('refuses to strip when the gap between the words holds a letter', () => {
+    const withLetters = 'emma шок stone';
+    expect(strip(withLetters, ['emma stone'])).toBe(withLetters);
+  });
+
+  it('CONTROL: the same shape with a punctuation-only gap still strips', () => {
+    expect(strip('emma ,, stone', ['emma stone']).trim()).toBe('');
+  });
+
   it('blanks the phrase for the ordinary separators a moderator would expect', () => {
     for (const text of ['emma stone', 'emma  stone', 'emma-stone', 'emma. stone']) {
       expect(strip(text, ['emma stone']).trim(), text).toBe('');

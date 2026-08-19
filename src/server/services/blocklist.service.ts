@@ -10,7 +10,7 @@ import type {
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { createLruCache } from '~/server/utils/lru-cache';
 import { logToAxiom } from '~/server/logging/client';
-import { buildBenignPhraseRegex } from '~/shared/utils/benign-phrases';
+import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 
 export type BlocklistDTO = {
   id?: number;
@@ -181,7 +181,9 @@ export async function stripBenignPhrases(text = '', type: BlocklistType) {
   if (!text) return text;
   const { pattern } = await benignPhraseRegexCache.fetch(type);
   if (!pattern) return text;
-  return text.replace(pattern, ' ');
+  // Same helper as the client gates on purpose — it carries the refusal that stops a
+  // letter-bearing gap being swallowed, and the two sides must strip identically.
+  return stripBenignPhrasesWith(text, pattern);
 }
 /**
  * The benign lists the BROWSER needs. The search gates (`AutocompleteSearch`,
