@@ -61,6 +61,7 @@ export const announcementRouter = router({
   getMyAllowance: protectedProcedure.query(({ ctx }) => getAnnouncementAllowance(ctx.user.id)),
   getCreatorAnnouncements: publicProcedure
     .input(getCreatorAnnouncementsSchema)
+    .use(applyRequestDomainColor)
     .query(({ input }) => getCreatorAnnouncements(input)),
   getFollowedAnnouncements: protectedProcedure
     .input(
@@ -75,7 +76,9 @@ export const announcementRouter = router({
     )
     .use(applyRequestDomainColor)
     .query(({ ctx, input }) => getFollowedAnnouncements({ ...input, userId: ctx.user.id })),
-  getMutedCreators: protectedProcedure.query(({ ctx }) => getMutedAnnouncementCreators(ctx.user.id)),
+  getMutedCreators: protectedProcedure.query(({ ctx }) =>
+    getMutedAnnouncementCreators(ctx.user.id)
+  ),
   isCreatorMuted: protectedProcedure
     .input(z.object({ creatorId: z.number() }))
     .query(({ ctx, input }) =>
@@ -84,17 +87,19 @@ export const announcementRouter = router({
   upsertCreatorAnnouncement: guardedProcedure
     .input(upsertCreatorAnnouncementSchema)
     .mutation(({ ctx, input }) =>
-      upsertCreatorAnnouncement({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
-  deleteCreatorAnnouncement: guardedProcedure
-    .input(getByIdSchema)
-    .mutation(({ ctx, input }) =>
-      deleteCreatorAnnouncement({
-        id: input.id,
+      upsertCreatorAnnouncement({
+        ...input,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       })
     ),
+  deleteCreatorAnnouncement: guardedProcedure.input(getByIdSchema).mutation(({ ctx, input }) =>
+    deleteCreatorAnnouncement({
+      id: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    })
+  ),
   toggleAnnouncementMute: protectedProcedure
     .input(z.object({ creatorId: z.number(), muted: z.boolean() }))
     .mutation(({ ctx, input }) => toggleAnnouncementMute({ ...input, userId: ctx.user.id })),

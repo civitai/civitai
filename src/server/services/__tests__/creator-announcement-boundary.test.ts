@@ -116,8 +116,9 @@ describe('creator announcement service pins the author and the surface', () => {
   it('scopes reads to one author', async () => {
     await getCreatorAnnouncements({ userId: AUTHOR });
 
-    const where = (dbMock.dbRead.announcement.findMany.mock.calls[0][0] as { where: { userId: number } })
-      .where;
+    const where = (
+      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as { where: { userId: number } }
+    ).where;
     expect(where.userId).toBe(AUTHOR);
   });
 });
@@ -191,5 +192,30 @@ describe('a moderator may remove an authored announcement, never a platform one'
       dbMock.dbRead.announcement.findFirst.mock.calls[0][0] as { where: { userId: unknown } }
     ).where;
     expect(where.userId).toBe(101);
+  });
+});
+
+describe('reads are scoped to the requesting domain', () => {
+  it('filters the profile read, so a green visitor cannot see the non-green banner', async () => {
+    await getCreatorAnnouncements({ userId: AUTHOR, domain: 'green' as never });
+
+    const where = (
+      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as {
+        where: { domain?: { hasSome: string[] }; userId: number };
+      }
+    ).where;
+
+    expect(where.domain?.hasSome).toEqual(['all', 'green']);
+    // Positive control: the author scope is still the primary filter.
+    expect(where.userId).toBe(AUTHOR);
+  });
+
+  it('does not invent a domain filter when the host supplies none', async () => {
+    await getCreatorAnnouncements({ userId: AUTHOR });
+
+    const where = (
+      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as { where: { domain?: unknown } }
+    ).where;
+    expect(where.domain).toBeUndefined();
   });
 });
