@@ -209,8 +209,26 @@ describe('GET /api/v1/apps (list)', () => {
     expect(opts).toMatchObject({ scope: 'full' });
   });
 
-  it('serves the public-external scope (offsite-only) to a widened caller', async () => {
+  // 🔴 civitai#4048: the external-only cohort is BELOW the public floor, so while the
+  // grant is active they are LIFTED to it rather than held at `public-external`.
+  // Before the fix they short-circuited past the grant, which meant signing in
+  // REDUCED what this public endpoint returned (measured live: 4 items vs 14).
+  it('lifts a `public-external` caller to the public floor while the grant is active', async () => {
     mockResolveScope.mockResolvedValueOnce('public-external');
+    const { req, res } = createMocks();
+    await (listHandler as unknown as Handler)(req, res, undefined);
+    expect(res._status()).toBe(200);
+    const [, opts] = mockList.mock.calls[0];
+    expect(opts).toMatchObject({ scope: 'full' });
+  });
+
+  // …and the other half of the same invariant: the kill switch withdraws the public
+  // FLOOR, it does not revoke what the caller resolved for themselves. A handler that
+  // narrowed this caller to `none` would 200-with-an-empty-page a cohort member who is
+  // entitled to the offsite catalog.
+  it('serves the public-external scope (offsite-only) when the grant is WITHHELD', async () => {
+    mockResolveScope.mockResolvedValueOnce('public-external');
+    mockIsFlipt.mockResolvedValue(true);
     const { req, res } = createMocks();
     await (listHandler as unknown as Handler)(req, res, undefined);
     expect(res._status()).toBe(200);
