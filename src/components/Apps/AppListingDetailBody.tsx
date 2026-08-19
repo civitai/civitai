@@ -623,12 +623,15 @@ export interface AppListingDetailBodyProps {
    *     stands in so the submitter is still identified),
    *   - the header META LINE (`Updated:` + category), whose date is the publish
    *     request's submission time rather than a listing's `updated_at`,
-   *   - the Details rail's REVIEWS row (same reason as the chips),
+   *   - the Details rail's REVIEWS, INSTALLS and UPDATED rows — the first two for the
+   *     same reason as the chips (aggregates a shadow listing structurally cannot
+   *     have), the third for the same reason as the meta line above. All three
+   *     omissions are decided inside the pure row builder, not here.
    *   - the related-listings rail and the back-to-store link.
    *
-   * The Details ACCORDION itself is KEPT: kind / category / rating / installs /
-   * updated are exactly the scalars a moderator is reviewing, and the reviews row is
-   * dropped inside the pure row builder.
+   * The Details ACCORDION itself is KEPT: kind / category / rating are exactly the
+   * scalars a moderator is reviewing, and they are the ones the posture can state
+   * honestly.
    *
    * Used by the moderator listing-media review to render an unapproved SHADOW listing
    * as a store preview. Every omission above has its own test, each paired with a

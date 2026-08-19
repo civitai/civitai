@@ -772,7 +772,7 @@ describe('AppListingDetailBody', () => {
     expect(prev.within.getByText('Back to store').elements()).toHaveLength(0);
   });
 
-  test('🔴 preview omits the REVIEWS row from the details rail, keeping the others', async () => {
+  test('🔴 preview omits the REVIEWS / INSTALLS / UPDATED rows, keeping the others', async () => {
     const prev = await renderScoped(
       <AppListingDetailBody detail={base({ contentRating: 'PG' })} preview />
     );
@@ -783,7 +783,12 @@ describe('AppListingDetailBody', () => {
       r.getAttribute('data-listing-detail-row')
     );
     // Control: the live arm has 6 rows including `reviews` (asserted above).
-    expect(rows).toEqual(['kind', 'category', 'rating', 'installs', 'updated']);
+    // The three dropped here are the ones a shadow listing cannot state honestly: two
+    // usage aggregates and a date that is the SUBMISSION time, not `updated_at`.
+    expect(rows).toEqual(['kind', 'category', 'rating']);
+    // 🔴 The rule itself is pinned in the blocking node project
+    // (`__tests__/appListingDetailRows.test.ts` + `__tests__/reviewListingPreview.test.ts`);
+    // this arm only pins that the DOM the component renders agrees with it.
   });
 
   test('🔴 preview keeps the read-only creator CHIP so the submitter is still named', async () => {

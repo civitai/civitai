@@ -24,10 +24,14 @@ import type { MantineColor } from '@mantine/core';
  *     does), and a drifted copy planted in `components/Apps/` passed all 49 tests. The
  *     second scan looks for this ladder's OUTPUT ALPHABET in the source text instead.
  *
- * 🔴 KNOWN, NOT YET CONSOLIDATED: `pages/3d-models/[id]/[[...slug]].tsx` defines
- * `sentimentLabel`, a third ladder on a 0–100 scale with different bands and a sixth
- * label. It predates this extraction, the scan DOES flag it, and it is allowlisted by
- * name in that test file with the follow-up recorded there — not silently tolerated.
+ * 🔴 DECIDED, NOT PENDING: `pages/3d-models/[id]/[[...slug]].tsx` keeps its own
+ * `sentimentLabel` ladder — a DELIBERATE divergence, not a consolidation still owed.
+ * The follow-up that was recorded here was worked and closed with "leave it separate";
+ * the reasoning, and the measurement it rests on, live beside the allowlist entry in
+ * `__tests__/rating-label.test.ts`. The short version: the two ladders disagree only at
+ * the EXTREMES, and they disagree there because this one withholds its strongest words
+ * until 500 reviews — a threshold a 3D model does not reach. Folding them together
+ * would change verdicts on a live page at exactly the review counts that page sees.
  */
 export type RatingLabel = {
   /** Display copy, e.g. `Very Positive`. Rendered `tt="capitalize"` by both callers. */
