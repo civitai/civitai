@@ -18,10 +18,23 @@
 -- protects production from this migration.
 SET lock_timeout = '5s';
 
-ALTER TABLE "Announcement"
-  ADD COLUMN IF NOT EXISTS "userId" INTEGER,
-  ADD COLUMN IF NOT EXISTS "coverId" INTEGER,
-  ADD COLUMN IF NOT EXISTS "profileOnly" BOOLEAN NOT NULL DEFAULT false;
+-- 🔴 Guarded by a lookup, NOT by `ADD COLUMN IF NOT EXISTS` alone. ALTER TABLE takes
+-- ACCESS EXCLUSIVE on "Announcement" before it evaluates IF NOT EXISTS, so on a re-run
+-- where all three columns already exist it still queues for an exclusive lock and does no
+-- work. "Announcement" is read on effectively every page load, so at peak that request
+-- starves behind the stream of AccessShareLocks — three retries were lost here, on the
+-- first statement, after the real work had already landed.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = '"Announcement"'::regclass AND attname = 'userId' AND NOT attisdropped
+  ) THEN
+    ALTER TABLE "Announcement"
+      ADD COLUMN IF NOT EXISTS "userId" INTEGER,
+      ADD COLUMN IF NOT EXISTS "coverId" INTEGER,
+      ADD COLUMN IF NOT EXISTS "profileOnly" BOOLEAN NOT NULL DEFAULT false;
+  END IF;
+END $$;
 
 -- Postgres has no ADD CONSTRAINT IF NOT EXISTS, hence the guards.
 DO $$ BEGIN
@@ -80,10 +93,17 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- Serves the author's own listing and the follower fan-out. CONCURRENTLY because
--- "Announcement" already exists; if it is cancelled the index is left INVALID and must be
--- dropped before retrying — IF NOT EXISTS will NOT replace an invalid one.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "Announcement_userId_startsAt_idx"
+-- Serves the author's own listing and the follower fan-out.
+--
+-- 🔴 Plain, NOT CONCURRENTLY, and that is the opposite of the usual advice for an existing
+-- table — because "Announcement" is 310 rows / 264 kB. The build is sub-millisecond, so the
+-- only cost is acquiring the lock. CONCURRENTLY needs TWO lock acquisitions and waits out
+-- every in-flight transaction, which on a table read by every page load is the worst
+-- possible shape at peak: on prod it was cancelled mid-build and left an INVALID index
+-- behind, which `IF NOT EXISTS` will NOT replace — so every later retry skipped it and
+-- reported success with no usable index. Size is what makes CONCURRENTLY worth its cost,
+-- and this table has none.
+CREATE INDEX IF NOT EXISTS "Announcement_userId_startsAt_idx"
   ON "Announcement"("userId", "startsAt");
 
 -- Plain CREATE INDEX on the two tables created above: they are empty and brand new, so
