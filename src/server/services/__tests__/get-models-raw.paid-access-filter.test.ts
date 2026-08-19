@@ -59,7 +59,10 @@ describe('getModelsRaw — paidAccess filter', () => {
   // anywhere) and a dropped status check all leave the suite green.
   it('emits a correlated, positive EXISTS over published versions only', async () => {
     const sql = await sqlFor({ paidAccess: true });
-    expect(sql).not.toContain('NOT EXISTS');
+    // Scoped to THIS subquery on purpose: an unrelated `NOT EXISTS` is emitted for
+    // excludedTagIds, and a bare 'NOT EXISTS (' substring check would also match
+    // the positive form, since 'EXISTS (' is contained in it.
+    expect(sql).not.toMatch(/NOT\s+EXISTS\s*\(\s*SELECT 1 FROM "PaidAccess"/);
     expect(sql).toContain('AND pamv."modelId" = m.id');
     expect(sql).toContain(
       `AND pamv.status = 'Published'::"ModelStatus" AND pa."timeframeDays" IS NULL`
