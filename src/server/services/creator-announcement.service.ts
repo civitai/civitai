@@ -72,16 +72,22 @@ export async function getCreatorAnnouncements({
   userId,
   limit = 10,
   includeHidden = false,
+  domain,
 }: {
   userId: number;
   limit?: number;
   includeHidden?: boolean;
+  domain?: DomainColor;
 }) {
   const now = new Date();
 
   const announcements = await dbRead.announcement.findMany({
     where: {
       userId,
+      // The migrated SFW banners exist precisely so a green visitor does not see the
+      // other one. Without this the profile shows both, which is a browsing-boundary
+      // leak rather than a double-render.
+      ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
       ...(includeHidden
         ? {}
         : {
@@ -144,7 +150,10 @@ export async function getFollowedAnnouncements({
 
   const items = announcements.slice(0, limit).map(withEffectiveNsfwLevel);
 
-  return { items, nextCursor: announcements.length > limit ? items[items.length - 1]?.id : undefined };
+  return {
+    items,
+    nextCursor: announcements.length > limit ? items[items.length - 1]?.id : undefined,
+  };
 }
 
 /**
@@ -180,7 +189,9 @@ export async function upsertCreatorAnnouncement({
     if (allowance.used >= allowance.limit)
       throw throwBadRequestError(
         allowance.nextAvailableAt
-          ? `You have used your ${allowance.limit} announcement(s) for this period. Next available ${allowance.nextAvailableAt.toDateString()}.`
+          ? `You have used your ${
+              allowance.limit
+            } announcement(s) for this period. Next available ${allowance.nextAvailableAt.toDateString()}.`
           : 'You have used your announcements for this period.'
       );
   }
@@ -201,7 +212,11 @@ export async function upsertCreatorAnnouncement({
   const metadata: AnnouncementMetaSchema = {
     dismissible: true,
     ...(input.action
-      ? { actions: [{ type: 'button' as const, link: input.action.link, linkText: input.action.linkText }] }
+      ? {
+          actions: [
+            { type: 'button' as const, link: input.action.link, linkText: input.action.linkText },
+          ],
+        }
       : {}),
   };
 
@@ -222,7 +237,11 @@ export async function upsertCreatorAnnouncement({
   // The author is set here and never read from input, so this path cannot write a row
   // attributed to anyone else.
   return existing
-    ? dbWrite.announcement.update({ where: { id: existing.id }, data, select: creatorAnnouncementSelect })
+    ? dbWrite.announcement.update({
+        where: { id: existing.id },
+        data,
+        select: creatorAnnouncementSelect,
+      })
     : dbWrite.announcement.create({ data: { ...data, userId }, select: creatorAnnouncementSelect });
 }
 

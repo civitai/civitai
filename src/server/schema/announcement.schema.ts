@@ -111,4 +111,6 @@ export type UpsertCreatorAnnouncementSchema = z.infer<typeof upsertCreatorAnnoun
 export const getCreatorAnnouncementsSchema = z.object({
   userId: z.number(),
   limit: z.number().min(1).max(50).default(10),
+  // Stamped from the request host by applyRequestDomainColor, never sent by the client.
+  domain: domainColorEnum.optional(),
 });

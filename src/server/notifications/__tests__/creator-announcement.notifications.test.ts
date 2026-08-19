@@ -30,12 +30,17 @@ describe('creator announcement fan-out', () => {
     const sql = query();
 
     expect(sql).toContain('"UserAnnouncementMute"');
-    expect(sql).toMatch(/NOT EXISTS \( SELECT 1 FROM "UserAnnouncementMute" m WHERE m\."userId" = ue\."userId" AND m\."creatorId" = la\.author_id \)/);
+    expect(sql).toMatch(
+      /NOT EXISTS \( SELECT 1 FROM "UserAnnouncementMute" m WHERE m\."userId" = ue\."userId" AND m\."creatorId" = la\.author_id \)/
+    );
   });
 
   it('honours the category-wide off switch', () => {
+    // Whitespace is normalised before matching, but the repo's notification-settings
+    // polarity guard scans the raw SQL and only recognises the single-line spelling of
+    // this clause — so the shape here has to stay the shape that guard can see.
     expect(query()).toMatch(
-      /NOT EXISTS \( SELECT 1 FROM "UserNotificationSettings" uns WHERE uns\."userId" = r\.recipient_id AND uns\.type = 'creator-announcement' \)/
+      /NOT EXISTS \(SELECT 1 FROM "UserNotificationSettings" uns WHERE uns\."userId" = r\.recipient_id AND uns\.type = 'creator-announcement'\)/
     );
   });
 

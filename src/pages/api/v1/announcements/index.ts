@@ -5,7 +5,7 @@ import {
   deleteCreatorAnnouncement,
   upsertCreatorAnnouncement,
 } from '~/server/services/creator-announcement.service';
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import type { SessionUser } from '~/types/session';
 
 // Creator announcements from a spoke (the Creator Studio composer), which has no tRPC
@@ -38,7 +38,8 @@ export default AuthedEndpoint(
 
       if (req.method === 'DELETE') {
         const id = Number(body.id ?? req.query.id);
-        if (!Number.isInteger(id)) return res.status(400).json({ error: 'A numeric id is required' });
+        if (!Number.isInteger(id))
+          return res.status(400).json({ error: 'A numeric id is required' });
         return res.status(200).json(
           await deleteCreatorAnnouncement({
             id,
@@ -50,7 +51,9 @@ export default AuthedEndpoint(
 
       const parsed = upsertCreatorAnnouncementSchema.safeParse(reviveDates(body));
       if (!parsed.success)
-        return res.status(400).json({ error: 'Invalid announcement', details: parsed.error.issues });
+        return res
+          .status(400)
+          .json({ error: 'Invalid announcement', details: parsed.error.issues });
 
       return res.status(200).json(
         await upsertCreatorAnnouncement({
@@ -60,10 +63,10 @@ export default AuthedEndpoint(
         })
       );
     } catch (error) {
-      const err = error as { code?: string; message?: string };
-      const status =
-        err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'UNAUTHORIZED' ? 403 : 500;
-      return res.status(status).json({ error: err?.message ?? 'Announcement request failed.' });
+      // Never serialize the error itself: a Prisma error's enumerable own props carry the
+      // table and column, and a pg 23505 carries the offending row value. The audience
+      // here is a cross-origin caller.
+      return handleEndpointError(res, error);
     }
   },
   ['GET', 'POST', 'DELETE']

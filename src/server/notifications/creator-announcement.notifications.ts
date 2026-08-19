@@ -62,10 +62,8 @@ export const creatorAnnouncementNotifications = createNotificationProcessor({
         'creator-announcement' "type",
         details
       FROM recipients r
-      WHERE NOT EXISTS (
-        SELECT 1 FROM "UserNotificationSettings" uns
-        WHERE uns."userId" = r.recipient_id AND uns.type = 'creator-announcement'
-      )
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" uns
+        WHERE uns."userId" = r.recipient_id AND uns.type = 'creator-announcement')
     `,
   },
 });
