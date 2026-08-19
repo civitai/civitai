@@ -692,6 +692,33 @@ export type IncomingTransferView = {
   fromUserId: number;
   expiresAt: Date;
   createdAt: Date;
+  /**
+   * 🔴 WHY THIS OFFER CANNOT BE ACCEPTED, or `null` when it can — the recipient half of
+   * the up-front refusal #3935 gave the owner.
+   *
+   * A connect-linked off-site listing is refused at initiate AND re-asserted
+   * IN-TRANSACTION at accept ({@link refusesTransferForConnectClient}), and that second
+   * gate exists because a revision approve can link an OAuth client while an offer sits
+   * open. So a live, valid-looking offer in this inbox can be guaranteed to fail on
+   * accept, and until this field existed the inbox could not know: the recipient met the
+   * refusal only by clicking Accept.
+   *
+   * 🔴 A DERIVED REASON, NOT THE RAW `connectClientId`, and the distinction is a
+   * disclosure boundary rather than style. #3935 carried the raw column to the OWNER's
+   * authoring context, arguing it is public via the approved listing-detail read. That
+   * argument does NOT carry over here: a pending offeree holds NO role on the listing
+   * (`resolveListingAccess` gives them nothing), and this read imposes no status gate, so
+   * an offer can sit on a `draft`/`pending` listing whose client id the public read never
+   * exposes. Shipping the column would be a NEW disclosure on exactly those rows, to the
+   * least privileged reader in the feature — for a value they cannot act on. They can only
+   * read the sentence, so the sentence is what crosses the wire.
+   *
+   * It is not a second copy of the rule: this is the SAME predicate and the SAME
+   * {@link CONNECT_CLIENT_TRANSFER_REFUSAL} constant both server gates use. Those gates are
+   * UNCHANGED and remain the enforcement — this is an addition in front of them, never a
+   * replacement, and it runs on data the client could lie to itself about.
+   */
+  acceptBlockedReason: string | null;
 };
 
 /**
@@ -733,6 +760,12 @@ export async function listMyPendingTransfers(
           name: true,
           kind: true,
           appBlockId: true,
+          // 🔴 READ, BUT NEVER RETURNED. It is the input to
+          // {@link refusesTransferForConnectClient} and is consumed entirely here, into
+          // `acceptBlockedReason` below — see that field for why the raw column must not
+          // reach a pending offeree. Deleting this line silently turns every blocked offer
+          // back into an ordinary-looking one, which is the defect this closes.
+          connectClientId: true,
           icon: { select: { url: true } },
         },
       },
@@ -745,6 +778,7 @@ export async function listMyPendingTransfers(
         name: string;
         kind: string;
         appBlockId: string | null;
+        connectClientId: string | null;
         icon: { url: string } | null;
       } | null;
     }
@@ -765,6 +799,14 @@ export async function listMyPendingTransfers(
       fromUserId: row.fromUserId,
       expiresAt: row.expiresAt,
       createdAt: row.createdAt,
+      // 🔴 THE VERDICT, COMPUTED HERE AND CROSSED AS PROSE. The raw `connectClientId`
+      // stops at this line — see {@link IncomingTransferView.acceptBlockedReason}.
+      acceptBlockedReason: refusesTransferForConnectClient({
+        kind: row.appListing.kind,
+        connectClientId: row.appListing.connectClientId,
+      })
+        ? CONNECT_CLIENT_TRANSFER_REFUSAL
+        : null,
     });
   }
   return out;
