@@ -96,9 +96,12 @@ export async function getAnnouncementAllowance(userId: number): Promise<Announce
 
   const tier = toAnnouncementTier(requirements?.membership);
   const cap = config.caps[tier] ?? DEFAULTS.caps[tier];
-  // getCreatorRequirements returns score as { min, current }; Number() on the object is
-  // NaN, and NaN >= minScore is false, which silently refuses every creator forever.
-  const score = requirements?.score?.current ?? 0;
+  // Two coercions, both load-bearing. getCreatorRequirements returns score as
+  // { min, current }, so Number() on the object itself is NaN and NaN >= minScore is
+  // false — that silently refused every creator forever. And `current` arrives from a
+  // raw ::numeric as a Decimal, which serialises to a quoted string over JSON: the
+  // comparison below survives it, arithmetic downstream would not.
+  const score = Number(requirements?.score?.current ?? 0) || 0;
   const eligible = score >= config.minScore;
 
   const windowStart = new Date(Date.now() - cap.days * 24 * 60 * 60 * 1000);

@@ -178,3 +178,29 @@ describe('spend counting', () => {
     expect(allowance.nextAvailableAt).toBeNull();
   });
 });
+
+describe('score arrives from a raw ::numeric', () => {
+  it('coerces a Decimal-as-string to a number, so callers can do arithmetic on it', async () => {
+    vi.mocked(getCreatorRequirements).mockResolvedValue({
+      score: { min: 40_000, current: '444574' },
+    } as never);
+
+    const allowance = await getAnnouncementAllowance(USER);
+
+    expect(allowance.score).toBe(444_574);
+    expect(typeof allowance.score).toBe('number');
+    expect(allowance.eligible).toBe(true);
+  });
+
+  it('treats an unparseable score as zero rather than as NaN', async () => {
+    vi.mocked(getCreatorRequirements).mockResolvedValue({
+      score: { min: 40_000, current: 'lots' },
+    } as never);
+
+    const allowance = await getAnnouncementAllowance(USER);
+
+    // NaN would serialise to null over JSON and crash any .toLocaleString() downstream.
+    expect(allowance.score).toBe(0);
+    expect(allowance.eligible).toBe(false);
+  });
+});
