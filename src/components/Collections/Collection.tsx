@@ -110,7 +110,13 @@ const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
 );
 
-const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
+const ModelCollection = ({
+  collection,
+  permissions,
+}: {
+  collection: NonNullable<CollectionByIdModel>;
+  permissions?: CollectionContributorPermissionFlags;
+}) => {
   const { set, ...query } = useModelQueryParams();
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
@@ -151,12 +157,15 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
     <ModelContextMenuProvider
       setMenuItems={(data, menuItems) => {
         const items = menuItems.filter((m) => m.key !== 'add-to-collection');
-        const isOwnerOrMod =
+        // Same rule the image collection uses, and the same one the server enforces — a Manager
+        // could not remove anything here while being able to on an image collection.
+        const canRemove =
+          permissions?.manage ||
           currentUser?.id === collection.user.id ||
           currentUser?.id === data.user.id ||
           currentUser?.isModerator;
 
-        if (isOwnerOrMod) {
+        if (canRemove) {
           items.push({
             key: 'remove-from-collection',
             component: (
@@ -288,11 +297,17 @@ const ImageCollection = ({
         );
       }}
       additionalMenuItemsAfter={(image) => {
-        const isOwnerOrMod =
-          permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
+        // Mirrors `removeCollectionItem`: a manage holder, the collection owner, a moderator, the
+        // image's author, or whoever put it in the collection.
+        const canRemove =
+          permissions?.manage ||
+          currentUser?.id === collection.user.id ||
+          currentUser?.isModerator ||
+          currentUser?.id === (image.userId ?? image.user?.id) ||
+          currentUser?.id === image.collectionItemAddedById;
         return (
           <>
-            {isOwnerOrMod && (
+            {canRemove && (
               <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={image.id} />
             )}
           </>
@@ -370,12 +385,17 @@ const ImageCollection = ({
     </ImageContextMenuProvider>
   );
 };
+// Contest rotation randomises the sort on each render to spread entry visibility. Oldest is
+// held out of that pool deliberately: it is the only ascending sort, so a roll landing on it
+// pins the earliest submissions to the top of every contest feed for that render.
+const contestPostSorts = Object.values(PostSort).filter((sort) => sort !== PostSort.Oldest);
+
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
-    ? getRandom(Object.values(PostSort))
+    ? getRandom(contestPostSorts)
     : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
@@ -578,12 +598,29 @@ export function Collection({
     !!permissions?.collaborationDisabled && !permissions?.write && !permissions?.writeReview;
   const showSubmissionsClosedNotice =
     !!permissions?.collaborationDisabled && (submissionsClosed || !!permissions?.isOwner);
+  // Open collections get the same entry point contests have always had. Without it the only way
+  // in was the save picker on someone else's model or image page, so a collection asking for
+  // submissions had no way to accept one from its own page.
+  const canSubmitEntry =
+    collection?.mode !== CollectionMode.Contest &&
+    !permissions?.isOwner &&
+    !submissionsClosed &&
+    (permissions?.write || permissions?.writeReview) &&
+    (collectionType === CollectionType.Image || collectionType === CollectionType.Post) &&
+    (!metadata.submissionStartDate || new Date(metadata.submissionStartDate) < new Date()) &&
+    (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
+
+  // validateContestCollectionEntry applies the base-model list to model entries only, so on any
+  // other collection type a stored value advertises a restriction nothing enforces.
+  const showAllowedBaseModels =
+    !!metadata.baseModels?.length &&
+    (collectionType ?? CollectionType.Model) === CollectionType.Model;
 
   const submissionPeriod =
     metadata.submissionStartDate ||
     metadata.submissionEndDate ||
     metadata.maxItemsPerUser ||
-    metadata.baseModels?.length ? (
+    showAllowedBaseModels ? (
       <Popover
         zIndex={200}
         position="bottom-end"
@@ -614,8 +651,8 @@ export function Collection({
               <Text size="sm">Max items per user: {metadata.maxItemsPerUser}</Text>
             )}
 
-            {!!metadata.baseModels?.length && (
-              <Text size="sm">Allowed base models: {metadata.baseModels.join(', ')}</Text>
+            {showAllowedBaseModels && (
+              <Text size="sm">Allowed base models: {metadata.baseModels?.join(', ')}</Text>
             )}
           </Stack>
         </Popover.Dropdown>
@@ -793,11 +830,32 @@ export function Collection({
                           </HoverCard>
                         ) : (
                           <>
+                            {canSubmitEntry && (
+                              <Button
+                                color="blue"
+                                radius="xl"
+                                onClick={() => {
+                                  if (
+                                    !!metadata.existingEntriesDisabled ||
+                                    collection.type === CollectionType.Post
+                                  ) {
+                                    router.push(`/posts/create?collectionId=${collection.id}`);
+                                  } else {
+                                    dialogStore.trigger({
+                                      component: AddUserContentModal,
+                                      props: { collectionId: collection.id },
+                                    });
+                                  }
+                                }}
+                              >
+                                Submit an entry
+                              </Button>
+                            )}
                             <CollectionFollowAction
                               collectionId={collection.id}
                               permissions={permissions}
                             />
-                            {!submissionsClosed && canAddContent && (
+                            {!canSubmitEntry && !submissionsClosed && canAddContent && (
                               <Tooltip label="Add from your library." position="bottom" withArrow>
                                 <LegacyActionIcon
                                   color="blue"
@@ -955,7 +1013,7 @@ export function Collection({
                       </AlertWithIcon>
                     )}
                     {collection && collectionType === CollectionType.Model && (
-                      <ModelCollection collection={collection} />
+                      <ModelCollection collection={collection} permissions={permissions} />
                     )}
                     {collection && collectionType === CollectionType.Image && (
                       <ImageCollection collection={collection} permissions={permissions} />

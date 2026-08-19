@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
   revokeCosmeticsFromUsers,
   validateStickerCosmetic,
@@ -84,6 +85,7 @@ const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
   ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
 });
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
+import { bustUserSettings, patchUserSettings } from '~/server/services/user.service';
 import {
   STICKER_DEFAULT_USES,
   STICKER_MIN_BUZZ_PER_USE,
@@ -357,7 +359,13 @@ export const submitCreatorShopItem = async ({
   if (!feeTxId) throw throwBadRequestError('Unable to charge the submission fee');
 
   try {
-    return await dbWrite.$transaction(async (tx) => {
+    // Captured out of the transaction so the hash can be queued after it commits
+    // — the request is a network round-trip and has no business inside a write
+    // transaction, and a cosmetic that exists without a hash is invisible to
+    // review. This path is why 228 of the 231 unhashed cosmetics on 2026-08-14
+    // were creator submissions.
+    let submittedCosmeticId: number | undefined;
+    const created = await dbWrite.$transaction(async (tx) => {
       const cosmetic = await tx.cosmetic.create({
         data: {
           name,
@@ -372,6 +380,7 @@ export const submitCreatorShopItem = async ({
           createdById: userId,
         },
       });
+      submittedCosmeticId = cosmetic.id;
 
       return tx.cosmeticShopItem.create({
         data: {
@@ -406,6 +415,11 @@ export const submitCreatorShopItem = async ({
         select: creatorShopItemSelect,
       });
     });
+
+    if (submittedCosmeticId)
+      queueCosmeticPerceptualHash({ id: submittedCosmeticId, url: imageUrl });
+
+    return created;
   } catch (error) {
     await refundTransaction(feeTxId, 'Creator Shop submission failed');
     throw error;
@@ -699,6 +713,11 @@ export const updateCreatorShopItem = async ({
         ...(patchedData !== undefined ? { data: patchedData } : {}),
       },
     });
+    // A raw update replaces `data.url` without going near updateCosmetic, so
+    // nothing else re-hashes it: the old hash survives against new artwork and
+    // `pHashUrl` is what tells the two apart afterwards.
+    if (artChanged && imageUrl)
+      queueCosmeticPerceptualHash({ id: existing.cosmeticId, url: imageUrl });
   }
 
   const updatedMeta: CosmeticShopItemMeta = {
@@ -1190,6 +1209,7 @@ export const getCommunityCosmetics = async ({
   owned,
   limited,
   acceptsBlueBuzz,
+  query,
   stickersEnabled,
   packsEnabled,
 }: GetCommunityCosmeticsInput & {
@@ -1274,6 +1294,19 @@ export const getCommunityCosmetics = async ({
         : []),
       ...(viewerId && owned === 'owned'
         ? [{ cosmetic: { UserCosmetic: { some: { userId: viewerId } } } }]
+        : []),
+      // In `AND` rather than beside the branches above: a second top-level `OR`
+      // key would replace the creator/pack one and widen the feed to every
+      // official item.
+      ...(query
+        ? [
+            {
+              OR: [
+                { title: { contains: query, mode: Prisma.QueryMode.insensitive } },
+                { cosmetic: { name: { contains: query, mode: Prisma.QueryMode.insensitive } } },
+              ],
+            },
+          ]
         : []),
     ],
   };
@@ -1527,7 +1560,10 @@ export const getShopItemResellers = async ({
     select: {
       sellerShare: true,
       createdAt: true,
-      user: { select: { id: true, username: true, image: true, deletedAt: true } },
+      // The list renders UserAvatar with decorations and username, which reads
+      // the profile picture AND the equipped cosmetics. Selecting less than this
+      // renders a bare placeholder for nearly every reseller.
+      user: { select: userWithCosmeticsSelect },
     },
   });
   return rows
@@ -2347,8 +2383,11 @@ export const updateCreatorShopSettings = async ({
   userId,
   ...patch
 }: UpdateCreatorShopSettingsInput & { userId: number }) => {
-  // Read-merge-write the JSON blob so we only touch the creatorShop key.
-  return dbWrite.$transaction(async (tx) => {
+  // The merge happens in Postgres, over the stored column. Reading the blob into JS
+  // and writing the whole object back replaced every other settings key with the value
+  // it held at read time, discarding any write that landed in between (a notice
+  // dismissal, a feature toggle, a content preference).
+  const settings = await dbWrite.$transaction(async (tx) => {
     if (patch.enabled === true) {
       // Don't let a creator publish an empty shop — there'd be nothing to show.
       const itemCount = await tx.cosmeticShopItem.count({ where: { addedById: userId } });
@@ -2356,13 +2395,15 @@ export const updateCreatorShopSettings = async ({
         throw throwBadRequestError('Add at least one item to your shop before publishing.');
     }
 
-    const user = await tx.user.findUnique({ where: { id: userId }, select: { settings: true } });
-    const settings = (user?.settings ?? {}) as UserSettingsSchema;
-    const creatorShop: CreatorShopSettings = { ...(settings.creatorShop ?? {}), ...patch };
-    await tx.user.update({
-      where: { id: userId },
-      data: { settings: { ...settings, creatorShop } as Prisma.InputJsonValue },
-    });
-    return creatorShop;
+    // Every field of the input is optional, so `patch` can be empty. `patchUserSettings`
+    // then writes nothing and returns the row read inside this transaction — the same
+    // value the old read-merge-write returned for an empty patch, and deliberately not
+    // the Redis-cached blob, which can be hours old.
+    return patchUserSettings(userId, { mergeInto: { creatorShop: patch } }, tx);
   });
+
+  // After commit — the settings cache is Redis, and it was never busted here at all,
+  // so `getUserSettings` served a pre-shop blob for up to its 4h TTL.
+  await bustUserSettings(userId);
+  return (settings.creatorShop ?? {}) as CreatorShopSettings;
 };

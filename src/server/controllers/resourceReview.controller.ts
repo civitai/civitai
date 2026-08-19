@@ -71,7 +71,11 @@ export const createResourceReviewHandler = async ({
       throw throwAuthorizationError('You do not have access to this model version.');
     }
 
-    const result = await createResourceReview({ ...input, userId: ctx.user.id });
+    const result = await createResourceReview({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
     await ctx.track.resourceReview({
       type: 'Create',
       modelId: result.modelId,
@@ -96,7 +100,11 @@ export const updateResourceReviewHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const result = await updateResourceReview({ ...input });
+    const result = await updateResourceReview({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
     await ctx.track.resourceReview({
       type: 'Update',
       modelId: result.modelId,

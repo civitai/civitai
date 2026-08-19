@@ -72,28 +72,28 @@ export function isAppDeveloper(
  * bundle (the established pattern — see `src/shared/data-graph/generation/context.ts`).
  */
 export type AppsStoreFeatureFlags =
-  | Partial<Pick<FeatureAccess, 'appBlocks' | 'appListings'>>
+  | Partial<Pick<FeatureAccess, 'appBlocks' | 'appListings' | 'appListingsPublicExternal'>>
   | null
   | undefined;
 
 /**
- * App Blocks — App STORE-VISIBILITY gate (`appListings || appBlocks`).
+ * App Blocks — App STORE-VISIBILITY gate
+ * (`appListings || appBlocks || appListingsPublicExternal`).
  *
  * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer see the /apps store", for
- * the six surfaces under `components/Apps` and `pages/apps`: the `/apps` SSR
- * resolver (`resolveAppsPageAccess`), the `/apps` page body, the store-preview
- * route, the marketplace grid query, the related-listings rail, and the `/apps/*`
- * sub-nav. All six route through THIS predicate.
+ * seven surfaces: the `/apps` SSR resolver (`resolveAppsPageAccess`), the `/apps`
+ * page body, the store-preview route, the marketplace grid query, the
+ * related-listings rail, the `/apps/*` sub-nav — all six under `components/Apps`
+ * / `pages/apps` — and, since #3907, the user-menu "Apps" → `/apps` entry
+ * (`components/AppLayout/AppHeader/appsNavVisibility.ts`). All seven route
+ * through THIS predicate.
  *
- * ⚠️ "Every store surface" would be TOO STRONG, so it is not claimed. One
- * store-visibility decision is deliberately NOT converted:
- * `components/AppLayout/AppHeader/appsNavVisibility.ts` gates the user-menu
- * "Apps" → `/apps` entry on `appBlocks` alone, and its own doc says it "stays
- * gated on `appBlocks`" — a standing decision, not drift. Consequence worth
- * knowing before the launch: for a `{appListings, NOT appBlocks}` cohort the
- * store renders but has no in-product entry point, since that menu item is the
- * only route TO `/apps`. Tracked in issue #3907 — settle it BEFORE widening
- * `app-listings`, not after.
+ * ⚠️ "Every store surface" would still be TOO STRONG, so it is not claimed —
+ * only that these seven are pinned. The seventh was converted because it is the
+ * ONLY in-product route to `/apps`, so while it read `appBlocks` alone a
+ * `{appListings, NOT appBlocks}` or external-only cohort got a store that
+ * rendered but could not be found. Converting it widens DISCOVERY only: the
+ * block-runtime surfaces listed below keep their own gates.
  *
  * Do NOT re-inline `features.appListings || features.appBlocks`; the
  * gates drifting apart is exactly what this function exists to prevent, and it
@@ -103,7 +103,7 @@ export type AppsStoreFeatureFlags =
  * sub-navigation at all.
  *
  * ENFORCED, not merely requested: `components/Apps/__tests__/appsStoreAccessCallSites.test.ts`
- * pins the exact ledger of the six sites and fails if one is added, reverted, or
+ * pins the exact ledger of the seven sites and fails if one is added, reverted, or
  * re-inlines the boolean. Adding a store surface means adding it to that ledger.
  *
  * ## Why an OR, and which flag is which
@@ -119,16 +119,46 @@ export type AppsStoreFeatureFlags =
  * of truth. Server-side mirror: `isAppListingsEnabled` in
  * `~/server/services/app-blocks-flag`.
  *
+ * `appListingsPublicExternal` (Flipt `app-listings-public-external`) is the THIRD,
+ * ORTHOGONAL term: the EXTERNAL-ONLY cohort. Its holders are not "less privileged
+ * catalog viewers" — they are viewers the SERVER will serve a `kind='offsite'`-only
+ * catalog to (`resolveStoreVisibilityScope` → `public-external`). They must be
+ * admitted HERE or `/apps` is structurally unreachable for them: this predicate is
+ * the only thing standing between them and `notFound`, so the server would resolve
+ * a perfectly good external catalog for a page they can never load.
+ *
+ * 🔴 REACHABILITY ONLY — this term does NOT decide WHAT they see. That is the
+ * server's `StoreVisibilityScope`, threaded into the data-layer kind predicate. A
+ * viewer admitted solely by this flag reaches the store and sees offsite listings
+ * and nothing else; onsite App Blocks stay hidden by the SERVER, not by this gate.
+ * So do NOT read this OR as "external-flag holders get the full catalog."
+ *
+ * 🔴 SEAM: `appListingsPublicExternal` and the server's
+ * `isExternalListingsPublicEnabled()` are two evaluations of ONE Flipt key and must
+ * agree, or a viewer passes this gate and gets an empty store (or is 404'd off a
+ * catalog the server would serve). They agree by construction for a logged-in
+ * viewer (same key, same entityId, same `buildFliptContext`) and fail closed
+ * together when the flag is absent — the client entry is deliberately
+ * `availability: []` so its Flipt-down static answer is `false` too. Full
+ * reasoning + the anon residual: `isExternalListingsPublicEnabled` in
+ * `~/server/services/app-blocks-flag`. Pinned by
+ * `components/Apps/__tests__/hasAppsStoreAccess.test.ts` and — with BOTH real sides
+ * driven against one fake Flipt config —
+ * `server/services/__tests__/app-blocks-flag.external-scope.seam.test.ts`.
+ *
  * 🔴 This is NOT the gate for the block-RUNTIME surfaces. `/apps/installed`,
  * `/apps/review`, `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`
  * and the `blocks.*` tRPC procedures gate on `appBlocks` alone, on purpose —
  * they need the runtime, not just the catalog. Widening them is a product
  * decision, not a mechanical alignment; do not sweep them into this predicate.
+ * The external-only cohort in particular must NOT reach them: they hold neither
+ * `appBlocks` nor `appListings`, and adding this third term here leaves those
+ * surfaces untouched.
  *
  * Fails CLOSED: absent / null features, or an empty object, → `false`.
  */
 export function hasAppsStoreAccess(features: AppsStoreFeatureFlags): boolean {
-  return !!features?.appListings || !!features?.appBlocks;
+  return !!features?.appListings || !!features?.appBlocks || !!features?.appListingsPublicExternal;
 }
 
 /**

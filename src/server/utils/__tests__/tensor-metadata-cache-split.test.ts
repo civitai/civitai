@@ -24,35 +24,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const store = new Map<string, unknown>();
 const setCompressFlags = new Map<string, boolean | undefined>();
 
-const packedGet = vi.fn(async (key: string) => (store.has(key) ? store.get(key) : null));
-const packedSet = vi.fn(
-  async (key: string, value: unknown, _opts?: unknown, packedOptions?: { compress?: boolean }) => {
-    store.set(key, value);
-    setCompressFlags.set(key, packedOptions?.compress);
-  }
-);
-const setNxMock = vi.fn().mockResolvedValue(true); // always win the lock
-const delMock = vi.fn().mockResolvedValue(undefined);
-
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: {
-      get: (...a: unknown[]) => packedGet(...(a as [string])),
-      set: (...a: unknown[]) =>
-        packedSet(...(a as [string, unknown, unknown, { compress?: boolean }])),
-    },
-    setNxKeepTtlWithEx: (...a: unknown[]) => setNxMock(...a),
-    del: (...a: unknown[]) => delMock(...a),
-  },
-  sysRedis: {},
-  REDIS_KEYS: {
-    CACHE_LOCKS: 'caches:lock',
-    CACHES: {
-      TENSOR_METADATA: 'packed:caches:tensor-metadata',
-      TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
-    },
-  },
-}));
+const packedGet = redisMock.redis.packed.get;
+const packedSet = redisMock.redis.packed.set;
+const setNxMock = redisMock.redis.setNxKeepTtlWithEx; // always win the lock
+const delMock = redisMock.redis.del;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/prom/client', () => ({
@@ -65,6 +40,14 @@ vi.mock('~/server/prom/client', () => ({
 
 import { CacheTTL } from '~/server/common/constants';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.get.mockImplementation(async (key: string) => (store.has(key) ? store.get(key) : null));
+redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown, _opts?: unknown, packedOptions?: { compress?: boolean }) => {
+    store.set(key, value);
+    setCompressFlags.set(key, packedOptions?.compress);
+  });
+redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
+redisMock.redis.del.mockResolvedValue(undefined);
 
 const FULL_KEY = 'packed:caches:tensor-metadata:42';
 const SUMMARY_KEY = 'packed:caches:tensor-metadata-summary:42';

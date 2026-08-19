@@ -196,9 +196,9 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   per-version "Block generation" action on the model-version menu, backed by the
   `ModelVersionFlag.GenerationDisabled` bit on `ModelVersion.flags`. No page to migrate.
 - [ ] **`/moderator/generation-config`** — `generation-config.tsx` — flag: none
-  - Procedures: `getEcosystemConfig`, `getGateRules` (queries); `setEcosystemConfig`, `setGateRules` (mutations)
-  - Services: `generation/generation.service.ts` (`getGenerationEcosystemConfig`, `setGenerationEcosystemConfig`, `getGateRules`, `setGateRules`)
-  - Schemas: `generation.schema.ts` (`generationEcosystemConfigSchema`), `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
+  - Procedures: `getGateRules` (query); `setGateRules` (mutation)
+  - Services: `generation/generation.service.ts` (`getGateRules`, `setGateRules`)
+  - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
   - Infra: **Redis (sysRedis `SYSTEM.FEATURES`) + Flipt** (`GENERATION_TESTING`)
 - [ ] **`/moderator/generation-restrictions`** — `generation-restrictions.tsx` — flag: none (nav-gated on `csamReports`)
   - Procedures: `userRestriction.getAll` (query); `userRestriction.resolve`, `userRestriction.saveSuspiciousMatches` (mutations) — **logic inline in router**

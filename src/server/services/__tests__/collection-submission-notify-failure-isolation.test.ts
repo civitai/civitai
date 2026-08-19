@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // Failure isolation for the submission-notification fan-out in `saveItemInCollections`
 // (collection.service.ts): by the time recipients are resolved, `dbWrite.$transaction`
@@ -7,32 +12,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // `saveItemInCollections` — the caller would see an error for a submit that actually
 // succeeded, and likely retry and double-submit.
 
-const {
-  mockDbRead,
-  mockDbWrite,
-  mockCreateNotification,
-  mockHomeBlockCacheBust,
-  mockQueueUpdate,
-  mockLogToAxiom,
-} = vi.hoisted(() => ({
-  mockDbRead: {
-    collection: { findMany: vi.fn() },
-    $queryRaw: vi.fn(),
-    collectionContributor: { findMany: vi.fn() },
-    collectionItem: { findMany: vi.fn() },
-  },
-  mockDbWrite: {
-    $executeRaw: vi.fn(),
-    $transaction: vi.fn(),
-  },
+const { mockCreateNotification, mockHomeBlockCacheBust, mockQueueUpdate } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn(),
   mockHomeBlockCacheBust: vi.fn(),
   mockQueueUpdate: vi.fn(),
-  mockLogToAxiom: vi.fn(() => Promise.resolve(undefined)),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));

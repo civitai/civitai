@@ -64,7 +64,6 @@ export const useGenerationStatus = () => {
 
 const DEFAULT_GENERATION_CONFIG = {
   unstableResources: [] as number[],
-  experimentalEcosystems: [] as string[],
   selfHostedDisabledEcosystems: [] as string[],
   selfHostedMode: 'enabled' as GenerationStatusMode,
   gateRules: [] as GateRule[],
@@ -74,9 +73,6 @@ const DEFAULT_GENERATION_CONFIG = {
  * Returns the dynamic, Redis-backed generator config:
  * - `unstableResources`: model version IDs flagged unstable by the
  *   `resource-gen-availability` cron
- * - `experimentalEcosystems`: ecosystem keys that should show the
- *   "experimental build" alert in the generator UI (unioned with the
- *   static `isEcosystemExperimental` check)
  * - `selfHostedDisabledEcosystems` / `selfHostedMode`: the self-hosted toggle
  * - `gateRules`: the gate rules that apply to this user (audience-filtered
  *   server-side), resolved per-item by the graph nodes

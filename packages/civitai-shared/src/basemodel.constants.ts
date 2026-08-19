@@ -88,6 +88,10 @@ export type LicenseRecord = {
   url?: string;
   notice?: string;
   poweredBy?: string;
+  // Set only when the licence obliges us to name the model in the product's own
+  // UI, and holds the exact string it demands. Distinct from `poweredBy`, which
+  // several licences use for a liability disclaimer rather than an attribution.
+  attribution?: string;
   disableMature?: boolean;
   // License forbids commercial use (drives commercial-use override + monetization block).
   nonCommercial?: boolean;
@@ -1542,7 +1546,9 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.MiniMaxH3,
     defaults: {
-      model: { id: 3183239 },
+      // The comfy variant, not the hosted API one: it is the version the model
+      // page publishes, and the only one that takes LoRAs.
+      model: { id: 3216500 },
       modelLocked: true,
     },
   },
@@ -2385,6 +2391,21 @@ export const licenses: LicenseRecord[] = [
     // to LTX-2.5 and later, and stricter than the Jan 2026 text the 2.x weights carry.
     name: 'LTX-2.x Community License Agreement',
     url: 'https://github.com/Lightricks/LTX-2/blob/2362161611a61154d342e02724fb8fe58efd455d/LICENSE.md',
+  },
+  {
+    id: 41,
+    // Separate from id 33: that is the Hailuo hosted-service ToS, this is the
+    // 2 Aug 2026 open-weights licence the on-site H3 models carry.
+    name: 'MiniMax H3 Community License Agreement',
+    // Permalinked to the 2 Aug 2026 revision. The model page tracks the latest
+    // commit, and section III.1 obliges us to hand over a stable copy.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
+    notice:
+      'MiniMax H3 is licensed by MiniMax under the MiniMax H3 Community License Agreement. That agreement’s Applicable Territory excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America. Your use of H3 and of any H3 derivative is subject to that agreement and its Acceptable Use Policy.',
+    // Section IV.2 demands this exact string in the product UI. "Powered by
+    // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
+    attribution: 'MiniMax H3',
+    poweredBy: 'MiniMax H3',
   },
 ];
 
@@ -3405,7 +3426,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "MiniMax's video generation model with cinematic quality",
     type: 'video',
     ecosystemId: ECO.MiniMaxH3,
-    licenseId: 33,
+    licenseId: 41,
   },
 
   // Kling

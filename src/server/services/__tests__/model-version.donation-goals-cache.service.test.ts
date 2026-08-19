@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Leak-safety + cache-routing contract for `modelVersionDonationGoal`.
@@ -16,29 +17,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *       for the same underlying goal row.
  */
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findFirstOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-  });
-  const read = { modelVersion: mk(), donationGoal: mk(), model: mk(), $queryRaw: vi.fn() };
-  const write = { modelVersion: mk(), model: mk(), $queryRaw: vi.fn() };
-  return { mockDbRead: read, mockDbWrite: write };
-});
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
-const { mockCacheFetch, mockCacheBust, mockGetDonationGoals, mockGetOwnerDonationGoals } = vi.hoisted(
-  () => ({
+const { mockCacheFetch, mockCacheBust, mockGetDonationGoals, mockGetOwnerDonationGoals } =
+  vi.hoisted(() => ({
     mockCacheFetch: vi.fn(),
     mockCacheBust: vi.fn(),
     mockGetDonationGoals: vi.fn(),
     mockGetOwnerDonationGoals: vi.fn(),
-  })
-);
+  }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, dbReadFallbackCounter: { inc: vi.fn() } };
@@ -47,12 +36,6 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/redis/caches', () => ({
   modelVersionPublicDonationGoalsCache: { fetch: mockCacheFetch, bust: mockCacheBust },
 }));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
-    '@civitai/redis/client'
-  );
-  return { ...actual, redis: { get: vi.fn(), set: vi.fn() }, sysRedis: { get: vi.fn() } };
-});
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: {} }));
 vi.mock('~/server/search-index', () => ({}));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
@@ -78,7 +61,6 @@ vi.mock('~/server/services/model.service', () => ({
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import { modelVersionDonationGoal } from '~/server/services/model-version.service';
 
@@ -133,7 +115,9 @@ describe('modelVersionDonationGoal — privileged bypass (no draft-goal leak)', 
   it('(2) an OWNER read is computed fresh (privileged accessor) and NEVER touches the public cache', async () => {
     mockDbRead.modelVersion.findFirstOrThrow.mockResolvedValueOnce(ownerVersion(7));
     // Owner sees their goal even when it's a draft/inactive one that must never enter the cache.
-    mockGetOwnerDonationGoals.mockResolvedValueOnce({ 5: publicGoal({ active: false, title: 'Draft' }) });
+    mockGetOwnerDonationGoals.mockResolvedValueOnce({
+      5: publicGoal({ active: false, title: 'Draft' }),
+    });
 
     const res = await modelVersionDonationGoal({ id: 5, userId: 7 }); // owner
 

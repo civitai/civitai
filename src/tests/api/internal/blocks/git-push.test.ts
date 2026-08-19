@@ -3,12 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 
-// The handler module imports ~/server/db/client (which inits Prisma at module
-// load and reads env.LOGGING.filter). The pure parseExpectedRepo +
-// verifyForgejoSignature tests don't touch the db, but the import side-effect
-// would still run — stub the db + pipeline + flipt deps to keep the import
-// side-effect-free.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: vi.fn(),
 }));
@@ -40,6 +34,7 @@ const mockEnv = vi.hoisted(() => ({}) as Record<string, unknown>);
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 
 import { parseExpectedRepo, verifyForgejoSignature } from '~/pages/api/internal/blocks/git-push';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * M-WEBHOOK coverage. The git-push webhook is authenticated only by the

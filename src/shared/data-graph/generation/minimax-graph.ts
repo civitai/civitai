@@ -21,8 +21,8 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
+  createTextEditorGraph,
   imagesNode,
-  promptGraph,
   seedNode,
   sliderNode,
   snippetsGraph,
@@ -43,14 +43,7 @@ export type MinimaxVariant = 'api' | 'comfy';
 
 const versionIdToVariant = new Map<number, MinimaxVariant>([[minimaxVersionIds.comfy, 'comfy']]);
 
-const minimaxAspectRatioList: GenerationAspectRatio[] = [
-  '21:9',
-  '16:9',
-  '4:3',
-  '1:1',
-  '3:4',
-  '9:16',
-];
+const minimaxAspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
 const minimaxAspectRatios = getAspectRatioOptions('2K', minimaxAspectRatioList);
 
@@ -66,9 +59,20 @@ const snapDown = (n: number) =>
     Math.floor(n / COMFY_DIMENSION_MULTIPLE) * COMFY_DIMENSION_MULTIPLE
   );
 
-const minimaxComfyAspectRatios = getAspectRatioOptions('720p', minimaxAspectRatioList).map(
+export const minimaxComfyAspectRatios = getAspectRatioOptions('720p', minimaxAspectRatioList).map(
   (option) => ({ ...option, width: snapDown(option.width), height: snapDown(option.height) })
 );
+
+/**
+ * Shared by the picker's default and the handler's fallback for a frame whose
+ * dimensions never arrived, so the two can't drift and neither depends on the
+ * order of the list above.
+ */
+export const MINIMAX_DEFAULT_ASPECT_RATIO = '16:9';
+
+export const minimaxComfyDefaultAspectRatio =
+  minimaxComfyAspectRatios.find((option) => option.value === MINIMAX_DEFAULT_ASPECT_RATIO) ??
+  minimaxComfyAspectRatios[0];
 
 /** Reference images map to `referenceImages` on the H3 input. */
 const MAX_REFERENCE_IMAGES = 9;
@@ -130,11 +134,11 @@ export const minimaxGraph = new DataGraph<
       createCheckpointGraph({
         versions: {
           options: [
-            { label: 'H3 (API)', value: minimaxVersionIds['v1.0'] },
             { label: 'H3 (Comfy)', value: minimaxVersionIds.comfy },
+            { label: 'H3 (API)', value: minimaxVersionIds['v1.0'] },
           ],
         },
-        defaultModelId: minimaxVersionIds['v1.0'],
+        defaultModelId: minimaxVersionIds.comfy,
       }),
     []
   )
@@ -149,7 +153,7 @@ export const minimaxGraph = new DataGraph<
           ctx.model?.id === minimaxVersionIds.comfy
             ? minimaxComfyAspectRatios
             : minimaxAspectRatios,
-        defaultValue: '16:9',
+        defaultValue: MINIMAX_DEFAULT_ASPECT_RATIO,
       }),
       when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
     }),
@@ -168,6 +172,8 @@ export const minimaxGraph = new DataGraph<
 
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)
-  .merge(promptGraph);
+  // Unlike the shared promptGraph, an attached image does not excuse the prompt:
+  // H3 rejects a text-less request outright (`content[0].text is empty`, 2013).
+  .merge(createTextEditorGraph({ name: 'prompt', required: true }));
 
 export { minimaxAspectRatios };

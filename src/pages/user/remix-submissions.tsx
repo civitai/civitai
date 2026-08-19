@@ -4,24 +4,28 @@ import {
   Badge,
   Button,
   Card,
-  Center,
   Container,
   Group,
   Loader,
-  Skeleton,
   Stack,
   Tabs,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconCheck, IconExternalLink, IconPhotoOff, IconX } from '@tabler/icons-react';
+import { IconCheck, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useState } from 'react';
+import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
+import { PlacementFreeFilter } from '~/components/Placement/PlacementFreeFilter';
+import { visibleQueueRows } from '~/components/Placement/free-filter';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Meta } from '~/components/Meta/Meta';
-import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';
+import { SubmissionPair } from '~/components/RemixGallery/SubmissionPair';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
@@ -59,6 +63,11 @@ const agedLabel = (at: Date | string) => {
  */
 export default function RemixSubmissions() {
   const router = useRouter();
+  // The queue marks rows against this rather than filtering on it. A submission
+  // hidden for being outside the owner's band still expires, and expiry costs
+  // the submitter nothing and the owner their fee — so it has to be visible
+  // enough to act on.
+  const browsingLevel = useBrowsingLevelDebounced();
   const tab: TabValue = isTabValue(router.query.tab) ? router.query.tab : 'received';
 
   const setTab = (value: string | null) =>
@@ -78,11 +87,11 @@ export default function RemixSubmissions() {
     hasNextPage,
     isFetchingNextPage,
   } = trpc.placement.getPendingRemixGallerySubmissions.useInfiniteQuery(
-    {},
+    { browsingLevel },
     { getNextPageParam: (lastPage) => lastPage.nextCursor }
   );
   const { data: sent, isLoading: sentLoading } =
-    trpc.placement.getMyRemixGallerySubmissions.useQuery();
+    trpc.placement.getMyRemixGallerySubmissions.useQuery({ browsingLevel });
 
   const receivedRows = received?.pages.flatMap((page) => page.items) ?? [];
   const waiting = receivedRows.length;
@@ -145,6 +154,16 @@ export default function RemixSubmissions() {
   );
 }
 
+/**
+ * Where to send someone whose domain will not serve an image. The queue keeps
+ * the row so the escrow can still be answered; this is the only route left to
+ * the picture itself, since the withheld tile has no pixels to reveal.
+ */
+function useWithheldHref() {
+  const domains = useServerDomains();
+  return (image: { id: number }) => syncAccount(`//${domains.red}/images/${image.id}`);
+}
+
 type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions']['items'][number];
 
 function ReceivedTab({
@@ -163,6 +182,13 @@ function ReceivedTab({
   onLoadMore: () => void;
 }) {
   const utils = trpc.useUtils();
+  const withheldHref = useWithheldHref();
+  const [showFree, setShowFree] = useState(true);
+
+  // Filtered here rather than in the parent so the tab's own badge keeps
+  // counting everything waiting: hiding the free ones is a view of the queue,
+  // not a statement about how much is in it.
+  const visible = visibleQueueRows(rows, showFree);
 
   const act = trpc.placement.actOnRemixGallerySubmission.useMutation({
     onSuccess: (_result, variables) => {
@@ -213,8 +239,9 @@ function ReceivedTab({
       <Alert color="gray">
         <Text size="sm">Nothing is waiting for your review.</Text>
         <Text size="sm" c="dimmed" mt={4}>
-          When someone pays to feature their remix on one of your images, it appears here for you to
-          approve or decline. You choose whether to accept them at all, and what they cost, in{' '}
+          When someone submits a remix on one of your images — paid, or against the free slots you
+          offer — it appears here for you to approve or decline. You choose whether to accept them
+          at all, how many free ones you take, and what the paid ones cost, in{' '}
           <Anchor component={Link} href="/user/account">
             your account settings
           </Anchor>
@@ -225,6 +252,12 @@ function ReceivedTab({
 
   return (
     <Stack gap="md">
+      {rows.some((row) => row.free) && (
+        <Group justify="flex-end">
+          <PlacementFreeFilter show={showFree} onChange={setShowFree} noun="submissions" />
+        </Group>
+      )}
+
       {!rows.length && (
         <Text size="sm" c="dimmed">
           Nothing on this page can be shown — the images behind these submissions are gone or still
@@ -232,11 +265,29 @@ function ReceivedTab({
         </Text>
       )}
 
-      {rows.map((row) => (
+      {/* Said separately from the line above it, which is about rows the server
+          dropped. An empty queue because the owner hid the free ones is their
+          own doing, and telling them their images are gone would be false. */}
+      {!!rows.length && !visible.length && (
+        <Text size="sm" c="dimmed">
+          Every submission waiting on you is a free one, and free ones are hidden.
+        </Text>
+      )}
+
+      {visible.map((row) => (
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Group gap="sm" wrap="nowrap" align="flex-start">
-              {row.image && <SubmissionThumb image={row.image} />}
+              <SubmissionPair
+                host={row.targetImage}
+                remix={row.image}
+                hostCaption="Yours"
+                remixCaption="Theirs"
+                hostLabel="Open your image in a new tab"
+                remixLabel="Open this remix in a new tab"
+                hostMissing="Your image is no longer available to preview"
+                withheldHref={withheldHref}
+              />
               <Stack gap={4}>
                 <Text size="sm">
                   <Text span fw={600}>
@@ -244,22 +295,22 @@ function ReceivedTab({
                   </Text>{' '}
                   wants to feature this on your image
                 </Text>
-                <Group gap={4}>
-                  <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                  <Text size="xs" c="dimmed">
-                    {row.amount}
-                  </Text>
-                </Group>
+                {/* Nothing was paid on a free row, so a Buzz chip there reads
+                    as an offer of 0 rather than as a different kind of offer. */}
+                {row.free ? (
+                  <PlacementFreeBadge noun="submission" />
+                ) : (
+                  <Group gap={4}>
+                    <CurrencyIcon currency={Currency.BUZZ} size={12} />
+                    <Text size="xs" c="dimmed">
+                      {row.amount}
+                    </Text>
+                  </Group>
+                )}
                 <Text size="xs" c="dimmed">
                   Sent {agedLabel(row.createdAt)}
                   {row.expiresAt ? ` — expires ${formatDate(row.expiresAt)}` : ''}
                 </Text>
-                <Anchor component={Link} href={`/images/${row.targetId}`} size="xs">
-                  <Group gap={4} wrap="nowrap">
-                    <IconExternalLink size={12} />
-                    See your image
-                  </Group>
-                </Anchor>
               </Stack>
             </Group>
 
@@ -309,15 +360,20 @@ type SentRow = RouterOutput['placement']['getMyRemixGallerySubmissions'][number]
 
 function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
   const utils = trpc.useUtils();
+  const withheldHref = useWithheldHref();
 
   const retract = trpc.placement.retractRemixGallerySubmission.useMutation({
     onSuccess: () => {
       // States what happened, not what the ledger has done. A successful settle
       // means the transition was claimed, not that the refund leg has paid —
       // chunk C ships a sweep for unpaid legs precisely because those differ.
+      // No Buzz claim: this fires for free submissions too, which put nothing
+      // in escrow, and the row-level confirmation above already said what each
+      // kind gets back. A blanket "your Buzz is on its way" is false on half of
+      // them and unverifiable on the other half from here.
       showSuccessNotification({
         title: 'Withdrawn',
-        message: 'Your submission is withdrawn. Your Buzz is on its way back.',
+        message: 'Your submission is withdrawn.',
       });
       utils.placement.invalidate();
     },
@@ -346,8 +402,9 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
   return (
     <Stack gap="md">
       <Text size="sm" c="dimmed">
-        You can withdraw a submission any time before the creator reviews it and get your Buzz back
-        in full. Once it has been accepted there is nothing to withdraw.
+        You can withdraw a submission any time before the creator reviews it. A paid one refunds in
+        full; a free one does not return your daily free placement. Once it has been accepted there
+        is nothing to withdraw.
       </Text>
 
       {/* Neither queue pages. A list that stops at the cap and says nothing
@@ -362,22 +419,16 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Group gap="sm" wrap="nowrap" align="flex-start">
-              {row.image ? (
-                <SubmissionThumb image={row.image} />
-              ) : (
-                // The row is kept even when its image will not resolve —
-                // unpublished, deleted, flagged — because the withdraw beside it
-                // is the only route back to the escrow. A placeholder says the
-                // preview is gone without implying the submission is.
-                <Tooltip label="This image is no longer available to preview" withArrow>
-                  <div className="relative w-20 shrink-0">
-                    <Skeleton animate={false} className="aspect-square w-full rounded-md" />
-                    <Center className="absolute inset-0">
-                      <IconPhotoOff size={20} className="text-dimmed" />
-                    </Center>
-                  </div>
-                </Tooltip>
-              )}
+              <SubmissionPair
+                host={row.targetImage}
+                remix={row.image}
+                hostCaption="Theirs"
+                remixCaption="Yours"
+                hostLabel="Open the gallery image in a new tab"
+                remixLabel="Open your remix in a new tab"
+                hostMissing="This gallery image is no longer available to preview"
+                withheldHref={withheldHref}
+              />
               <Stack gap={4}>
                 <Group gap="xs">
                   <Badge
@@ -387,12 +438,18 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
                   >
                     {row.status === 'approved' ? 'Live' : 'Awaiting review'}
                   </Badge>
-                  <Group gap={4}>
-                    <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                    <Text size="xs" c="dimmed">
-                      {row.amount}
-                    </Text>
-                  </Group>
+                  {row.free ? (
+                    <Badge size="sm" variant="light" color="green">
+                      Free
+                    </Badge>
+                  ) : (
+                    <Group gap={4}>
+                      <CurrencyIcon currency={Currency.BUZZ} size={12} />
+                      <Text size="xs" c="dimmed">
+                        {row.amount}
+                      </Text>
+                    </Group>
+                  )}
                 </Group>
                 <Text size="sm">On {row.owner?.username ?? 'a creator'}&apos;s image</Text>
                 <Text size="xs" c="dimmed">
@@ -401,12 +458,6 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
                     ? ` — expires ${formatDate(row.expiresAt)}`
                     : ''}
                 </Text>
-                <Anchor component={Link} href={`/images/${row.targetId}`} size="xs">
-                  <Group gap={4} wrap="nowrap">
-                    <IconExternalLink size={12} />
-                    See the gallery
-                  </Group>
-                </Anchor>
               </Stack>
             </Group>
 
@@ -428,8 +479,9 @@ function SentTab({ rows, isLoading }: { rows: SentRow[]; isLoading: boolean }) {
                     children: (
                       <Text size="sm">
                         It comes out of {row.owner?.username ?? 'the creator'}&apos;s review queue
-                        and your {row.amount} Buzz starts on its way back. You can submit it again
-                        later.
+                        {row.free
+                          ? '. Your free placement for today stays spent, and free is once per gallery — withdrawing does not give it back, so you will not be able to submit here for free again.'
+                          : ` and your ${row.amount} Buzz starts on its way back. You can submit it again later.`}
                       </Text>
                     ),
                     labels: { confirm: 'Withdraw', cancel: 'Keep it' },

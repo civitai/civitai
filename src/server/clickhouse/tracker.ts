@@ -4,7 +4,7 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
-import requestIp from 'request-ip';
+import { resolveClientIp } from '~/server/utils/client-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
@@ -12,6 +12,7 @@ import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { sleep } from '~/utils/errorHandling';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
@@ -20,7 +21,6 @@ import type {
   BountyEngagementType,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
-  EntityType,
   NewOrderRankType,
   ReportReason,
   ReportStatus,
@@ -58,7 +58,31 @@ export type ViewType =
   | 'ArticleView'
   | 'CollectionView'
   | 'BountyView'
-  | 'BountyEntryView';
+  | 'BountyEntryView'
+  | 'Model3DView'
+  | 'ComicProjectView'
+  | 'ComicChapterView';
+
+/**
+ * The `entityType` arm of the ClickHouse `views` Enum8 — deliberately NOT the
+ * Prisma `EntityType`, which this used to be typed as. Prisma's enum carries
+ * values the ClickHouse column has never had (`Comment`, `CommentV2`,
+ * `ResourceReview`, `ChatMessage`, `UserProfile`), so it type-checked rows the
+ * insert would reject. Keep this list in lockstep with the column.
+ */
+export type ViewEntityType =
+  | 'User'
+  | 'Image'
+  | 'Post'
+  | 'Model'
+  | 'ModelVersion'
+  | 'Article'
+  | 'Collection'
+  | 'Bounty'
+  | 'BountyEntry'
+  | 'Model3D'
+  | 'ComicProject'
+  | 'ComicChapter';
 
 export type UserActivityType =
   | 'Registration'
@@ -261,7 +285,23 @@ export class Tracker {
     if (req && res) {
       this.req = req;
       this.res = res;
-      this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
+      // ATTRIBUTION surface: this value becomes the `ip` column on every event
+      // this Tracker writes. It is a record of who acted, not a gate on whether
+      // they may — so it takes the derivation that always yields a label, not
+      // the fail-closed one, which would collapse every non-edge caller onto a
+      // shared hop and destroy exactly the distinction these rows exist to keep.
+      //
+      // `resolveClientIp` is total and already answers `'unknown'` when nothing
+      // resolves, which is the same value this field is initialised to — so the
+      // `?? this.actor.ip` coalesce it replaces has no remaining case to cover.
+      //
+      // ⚠️ SEAM: this column is READ back by `fetchDownloadCount` under a
+      // different derivation. That seam — how far this change narrows it and
+      // what remains — is described ONCE, in `~/server/utils/download-count`,
+      // which owns the read half. Do not restate it here; two copies of a
+      // seam description drift, and the read side is where the gap is
+      // actionable.
+      this.actor.ip = resolveClientIp(req);
       this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
     }
     if (session !== undefined) {
@@ -474,7 +514,7 @@ export class Tracker {
 
   public view(values: {
     type: ViewType;
-    entityType: EntityType;
+    entityType: ViewEntityType;
     entityId: number;
     // Optional client-supplied context, forwarded verbatim into the `views`
     // ClickHouse row (same shape the track.addView tRPC resolver passed
@@ -486,6 +526,43 @@ export class Tracker {
     details?: Record<string, unknown>;
   }) {
     return this.track('views', values);
+  }
+
+  // Feed impressions — entities SEEN in a feed rather than opened. Deliberately
+  // its own table: impressions outnumber views by roughly an order of magnitude,
+  // so folding them into `views` would silently redefine every view number on the
+  // platform (and the three materialized views built on it) overnight.
+  //
+  // Uses trackMany, NOT track. `track` posts one HTTP request per row to the
+  // tracker service, which is what makes the single-event methods above viable at
+  // their volume and would make this one ruinous: a 250-entity flush would become
+  // 250 outbound requests, so client-side batching would buy nothing. trackMany
+  // sends the whole array as one insert, so one browser flush is one insert.
+  //
+  // The part-count concern that volume raises — many pods each inserting on a
+  // short interval — is already handled: the shared client sets `async_insert`
+  // for every insert it makes (packages/civitai-clickhouse/src/client.ts).
+  public impressions(values: {
+    sessionKey: string;
+    surface: ImpressionSurface;
+    entities: { entityType: ImpressionEntityType; entityId: number }[];
+  }) {
+    const { sessionKey, surface, entities } = values;
+    return this.trackMany(
+      'impressions',
+      entities.map(({ entityType, entityId }) => ({ entityType, entityId, sessionKey, surface })),
+      // 🔴 `skipActorMeta` stamps userId only, dropping ip and userAgent. On this
+      // table that is not a detail: measured on `views`, ip is 4.74 B/row and
+      // userAgent 3.92 B/row out of 15.99 — together 54% of the stored bytes, for
+      // two columns an impression has no use for. Halving the row is worth more
+      // here than anywhere else on the platform because this table takes ~10x the
+      // `views` insert rate.
+      //
+      // It also means impressions carry no IP. Anything wanting per-viewer
+      // forensics on this data needs a deliberate decision to start collecting it,
+      // rather than finding it already there.
+      { skipActorMeta: true }
+    );
   }
 
   // App Blocks Analytics Phase 2 — block render/impression event. Fired once per

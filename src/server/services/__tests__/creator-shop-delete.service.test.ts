@@ -12,17 +12,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique },
-    user: { findUnique: mocks.userFindUnique },
-  },
-  dbWrite: {
-    cosmeticShopItem: { delete: mocks.shopItemDelete },
-    cosmetic: { delete: mocks.cosmeticDelete, deleteMany: mocks.cosmeticDeleteMany },
-    userCosmetic: { delete: mocks.userCosmeticDelete, deleteMany: mocks.userCosmeticDeleteMany },
-  },
-}));
 vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -34,6 +23,28 @@ vi.mock('~/server/services/creator-program.service', () => ({
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 
 import { deleteCreatorShopItem } from '../creator-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.user.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.userFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.delete.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemDelete as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmetic.delete.mockImplementation((...args: unknown[]) =>
+  (mocks.cosmeticDelete as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmetic.deleteMany.mockImplementation((...args: unknown[]) =>
+  (mocks.cosmeticDeleteMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmetic.delete.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticDelete as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmetic.deleteMany.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticDeleteMany as (...a: unknown[]) => unknown)(...args)
+);
 
 const shopItemRow = {
   id: 42,

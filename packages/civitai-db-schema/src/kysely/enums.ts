@@ -550,6 +550,17 @@ export const CollectionItemStatus = {
   REJECTED: 'REJECTED',
 } as const;
 export type CollectionItemStatus = (typeof CollectionItemStatus)[keyof typeof CollectionItemStatus];
+export const CollectionItemRejectionReason = {
+  OffTopic: 'OffTopic',
+  WrongFormat: 'WrongFormat',
+  Duplicate: 'Duplicate',
+  Quality: 'Quality',
+  RulesViolation: 'RulesViolation',
+  Other: 'Other',
+  Automated: 'Automated',
+} as const;
+export type CollectionItemRejectionReason =
+  (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
 export const CollectionContributorPermission = {
   VIEW: 'VIEW',
   ADD: 'ADD',

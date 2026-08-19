@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from 'vitest';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
 const {
-  mockDbWrite,
   mockClickhouse,
   mockCreateBuzzTransaction,
   mockGetCounterPartyBuzzTransactions,
@@ -15,13 +15,13 @@ const {
   mockCreateNotification,
   mockPayToTipaltiAccount,
   mockSignalClient,
-  mockSysRedis,
   mockFetchThroughCache,
   mockBustFetchThroughCache,
   mockClearCacheByPattern,
   mockCachedObject,
   mockCreateCachedObject,
   mockGetHighestTierSubscription,
+  capturedCacheConfigs,
 } = vi.hoisted(() => {
   const mockCachedObject = {
     fetch: vi.fn().mockResolvedValue({}),
@@ -29,21 +29,13 @@ const {
     flush: vi.fn().mockResolvedValue(undefined),
   };
 
+  // Plain array rather than reading mockCreateCachedObject.mock.calls: the caches are created
+  // lazily once per module, so whichever test triggers creation may run before a beforeEach
+  // clearAllMocks wipes the record of it.
+  const capturedCacheConfigs: any[] = [];
+
   return {
-    mockDbWrite: {
-      user: { findFirstOrThrow: vi.fn(), findFirst: vi.fn() },
-      customerSubscription: { findFirst: vi.fn() },
-      cashWithdrawal: {
-        findMany: vi.fn(),
-        findUniqueOrThrow: vi.fn(),
-        create: vi.fn(),
-        update: vi.fn(),
-      },
-      userPaymentConfiguration: { findUnique: vi.fn() },
-      $executeRaw: vi.fn(),
-      $queryRaw: vi.fn(),
-      $queryRawUnsafe: vi.fn(),
-    },
+    capturedCacheConfigs,
     mockClickhouse: {
       $query: vi.fn().mockResolvedValue([]),
     },
@@ -61,18 +53,18 @@ const {
       paymentRefCode: 'ref-1',
     }),
     mockSignalClient: { topicSend: vi.fn() },
-    mockSysRedis: { get: vi.fn().mockResolvedValue(null) },
     mockFetchThroughCache: vi.fn(async (_key: string, fn: () => Promise<any>) => fn()),
     mockBustFetchThroughCache: vi.fn().mockResolvedValue(undefined),
     mockClearCacheByPattern: vi.fn().mockResolvedValue(undefined),
     mockCachedObject,
-    mockCreateCachedObject: vi.fn(() => mockCachedObject),
+    mockCreateCachedObject: vi.fn((config: any) => {
+      capturedCacheConfigs.push(config);
+      return mockCachedObject;
+    }),
     mockGetHighestTierSubscription: vi.fn().mockResolvedValue(null),
   };
 });
 
-// ── Module mocks ───────────────────────────────────────────────────────────────
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
@@ -95,21 +87,6 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   clearCacheByPattern: mockClearCacheByPattern,
   createCachedObject: mockCreateCachedObject,
 }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CREATOR_PROGRAM: {
-      CAPS: 'cp:caps',
-      BANKED: 'cp:banked',
-      CASH: 'cp:cash',
-      POOL_VALUE: 'cp:pool-value',
-      POOL_SIZE: 'cp:pool-size',
-      POOL_FORECAST: 'cp:pool-forecast',
-      PREV_MONTH_STATS: 'cp:prev-month-stats',
-    },
-  },
-  REDIS_SYS_KEYS: { CREATOR_PROGRAM: { FLIP_PHASES: 'cp:flip' } },
-  sysRedis: mockSysRedis,
-}));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: mockGetHighestTierSubscription,
 }));
@@ -127,9 +104,14 @@ import {
   getCompensationPool,
   getCreatorRequirements,
   getPoolParticipantsV2,
+  getUserCapCache,
   joinCreatorsProgram,
   withdrawCash,
 } from '~/server/services/creator-program.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbWrite = dbMock.dbWrite;
+const mockSysRedis = redisMock.sysRedis;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const userId = 42;
@@ -174,6 +156,52 @@ beforeEach(() => {
   mockSysRedis.get.mockResolvedValue(null);
   // Default fetchThroughCache: just call the function
   mockFetchThroughCache.mockImplementation(async (_key: string, fn: () => Promise<any>) => fn());
+});
+
+// ─── user cap cache (peak earning) ─────────────────────────────────────────────
+describe('userCapCache peak-earning query', () => {
+  /** Run the cap cache's lookupFn and return the ClickHouse SQL it issued. */
+  async function runLookup(ids: number[], peakRows: any[] = []) {
+    getUserCapCache();
+    const config = capturedCacheConfigs.find((c) => c.key === REDIS_KEYS.CREATOR_PROGRAM.CAPS);
+    if (!config) throw new Error('cap cache was never created');
+
+    mockClickhouse.$query.mockResolvedValueOnce(peakRows);
+    const result = await config.lookupFn(ids);
+
+    const call = mockClickhouse.$query.mock.calls.at(-1);
+    if (!call) throw new Error('peak-earning query was never issued');
+    const [parts, ...values] = call as [string[], ...any[]];
+    const sql = parts.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '');
+
+    return { sql, result };
+  }
+
+  beforeEach(() => {
+    mockDbWrite.$queryRawUnsafe.mockResolvedValue([{ userId, tier: 'gold' }]);
+  });
+
+  it('excludes system-minted tips, which are manual support credits and not earnings', async () => {
+    const { sql } = await runLookup([userId]);
+
+    expect(sql).not.toMatch(/'tip'/);
+  });
+
+  it('still counts generation compensation and early-access purchases', async () => {
+    const { sql } = await runLookup([userId]);
+
+    expect(sql).toMatch(/type IN \('compensation'\)/);
+    expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
+  });
+
+  it('derives the cap from the peak month returned by ClickHouse', async () => {
+    const month = new Date('2026-01-01T00:00:00Z');
+    const { result } = await runLookup([userId], [{ id: userId, month, earned: 800000 }]);
+
+    // gold: peak x 1.5, uncapped
+    expect(result[userId].cap).toBe(1200000);
+    expect(result[userId].peakEarning).toEqual({ id: userId, month, earned: 800000 });
+  });
 });
 
 // ─── getCreatorRequirements ────────────────────────────────────────────────────
@@ -363,8 +391,10 @@ describe('bankBuzz', () => {
   it('busts banked and pool size caches after banking', async () => {
     await bankBuzz(userId, 10000, 'yellow');
 
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(`cp:banked:${userId}`);
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith('cp:pool-size');
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`
+    );
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
   });
 
   it('sends compensation pool update signal after banking', async () => {
@@ -477,8 +507,10 @@ describe('extractBuzz', () => {
 
     await extractBuzz(userId);
 
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(`cp:banked:${userId}`);
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith('cp:pool-size');
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`
+    );
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
   });
 });
 
@@ -507,12 +539,12 @@ describe('getCompensationPool', () => {
 
     // fetchThroughCache should be called for pool value and forecast (not size)
     expect(mockFetchThroughCache).toHaveBeenCalledWith(
-      'cp:pool-value',
+      REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE,
       expect.any(Function),
       expect.any(Object)
     );
     expect(mockFetchThroughCache).toHaveBeenCalledWith(
-      'cp:pool-forecast',
+      REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST,
       expect.any(Function),
       expect.any(Object)
     );

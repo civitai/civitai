@@ -1,9 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
 // Use vi.hoisted to define mocks available in vi.mock factories
 const {
-  mockDbRead,
   mockGetChallengeConfig,
   mockGetChallengeById,
   mockAssertUserAccountInGoodStanding,
@@ -12,12 +13,6 @@ const {
   mockResolveJudgingCategories,
 } = vi.hoisted(() => {
   return {
-    mockDbRead: {
-      $queryRaw: vi.fn(),
-      modelVersion: { findMany: vi.fn() },
-      image: { findUnique: vi.fn(), findFirst: vi.fn() },
-      challenge: { findUnique: vi.fn() },
-    },
     mockGetChallengeConfig: vi.fn(),
     mockGetChallengeById: vi.fn(),
     mockAssertUserAccountInGoodStanding: vi.fn(),
@@ -26,11 +21,6 @@ const {
     mockResolveJudgingCategories: vi.fn(),
   };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {},
-}));
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),

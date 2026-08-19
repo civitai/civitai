@@ -2,7 +2,7 @@ import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
-import { usePromptEnhanceStore } from './promptEnhanceStore';
+import { usePromptEnhanceStore, type PromptEnhanceImage } from './promptEnhanceStore';
 
 const PromptEnhanceDrawer = dynamic(
   () => import('~/components/Generation/PromptEnhance/PromptEnhanceDrawer')
@@ -13,6 +13,7 @@ export type PromptEnhanceProps = {
   negativePrompt?: string;
   ecosystem: string;
   resources?: ResourceData[];
+  images?: PromptEnhanceImage[];
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
 };
 
@@ -33,6 +34,11 @@ export function triggerPromptEnhance(
      * mutation can preserve every `#category` reference through the LLM.
      */
     snippetTargets?: Record<string, SnippetReferenceValue[]>;
+    /**
+     * The form's attached images at trigger time. Offered in the enhance form
+     * as opt-out visual context for the rewrite.
+     */
+    images?: PromptEnhanceImage[];
   },
   setWorkflow: (workflow: string) => void
 ) {
@@ -46,6 +52,7 @@ export function triggerPromptEnhance(
     ecosystem: data.ecosystem,
     triggerWords,
     snippetTargets: data.snippetTargets,
+    images: data.images,
   });
   setWorkflow('prompt:enhance');
 }

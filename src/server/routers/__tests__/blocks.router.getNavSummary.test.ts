@@ -23,32 +23,12 @@ const {
   mockParseSubjectUserId,
   mockGetUserById,
   mockGetUserBuzzAccounts,
-  mockLogToAxiom,
-  mockRedis,
-  mockSysRedis,
-  mockDbRead,
 } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
   mockGetUserById: vi.fn(),
   mockGetUserBuzzAccounts: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
-  mockRedis: { get: vi.fn(), set: vi.fn() },
-  mockSysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    appBlock: { findMany: vi.fn(), findFirst: vi.fn() },
-    appBlockPublishRequest: { findFirst: vi.fn() },
-    blockUserSubscription: { findFirst: vi.fn() },
-    blockBuzzAttribution: { groupBy: vi.fn() },
-    // The two COLLABORATOR-aware probes (`resolveAppsNavAccess`): an owned-or-seated
-    // listing drives "My apps", a pending invite drives "Invites".
-    appListing: { findFirst: vi.fn() },
-    appCollaborator: { findFirst: vi.fn() },
-  },
 }));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
@@ -86,22 +66,11 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/user.service', () => ({
   getUserById: (...a: unknown[]) => mockGetUserById(...a),
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
-}));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return { ...actual, redis: mockRedis, sysRedis: mockSysRedis };
-});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: (...a: unknown[]) => mockGetUserBuzzAccounts(...a),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
@@ -122,6 +91,13 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // enforceAppBlocksFlag gates on isAppBlocksEnabled({ user }); the live flag is
 // base-false with a moderators segment. Model that: flag ON iff user is a mod.
@@ -165,12 +141,14 @@ beforeEach(() => {
   mockDbRead.appBlock.findFirst.mockReset();
   mockDbRead.appListing.findFirst.mockReset();
   mockDbRead.appCollaborator.findFirst.mockReset();
+  mockDbRead.appOwnershipTransfer.findFirst.mockReset();
   // Default: nothing exists for anyone.
   mockDbRead.blockUserSubscription.findFirst.mockResolvedValue(null);
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.appBlock.findFirst.mockResolvedValue(null);
   mockDbRead.appListing.findFirst.mockResolvedValue(null);
   mockDbRead.appCollaborator.findFirst.mockResolvedValue(null);
+  mockDbRead.appOwnershipTransfer.findFirst.mockResolvedValue(null);
 });
 
 describe('getNavSummary — gate', () => {
@@ -182,6 +160,7 @@ describe('getNavSummary — gate', () => {
     expect(mockDbRead.appBlock.findFirst).not.toHaveBeenCalled();
     expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
     expect(mockDbRead.appCollaborator.findFirst).not.toHaveBeenCalled();
+    expect(mockDbRead.appOwnershipTransfer.findFirst).not.toHaveBeenCalled();
   });
 
   it('flag OFF: returns the all-false shape and runs NO existence query', async () => {
@@ -321,6 +300,32 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     expect(result.hasApprovedApps).toBe(false);
   });
 
+  it('🔴 an inbound OWNERSHIP-TRANSFER OFFER lights "Invites" through the router', async () => {
+    // The router-level half of the gap: `/apps/invites` renders a pending transfer offer
+    // as well as a seat invite, so the tab that routes there must see both. With seats
+    // empty, the ONLY thing that can light this flag is the transfer probe.
+    mockDbRead.appOwnershipTransfer.findFirst.mockResolvedValue({ id: 'aot_1' });
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getNavSummary();
+    expect(result.hasPendingInvites).toBe(true);
+    // …and an offer confers no capability, so "My apps" stays dark.
+    expect(result.hasEditableApps).toBe(false);
+  });
+
+  it('the transfer probe is scoped to ctx.user.id as the ADDRESSEE, and status-filtered', async () => {
+    // Cross-user leakage is the failure this shape prevents: `toUserId` is the addressee,
+    // so an offer the caller SENT can never light their own tab.
+    const caller = blocksRouter.createCaller(fakeCtx(otherModUser) as never);
+    await caller.getNavSummary();
+    const where = mockDbRead.appOwnershipTransfer.findFirst.mock.calls[0][0].where;
+    expect(where.toUserId).toBe(otherModUser.id);
+    expect(where.status).toBe('pending');
+    // Expiry is a READ-TIME predicate with no sweeper — a dead offer keeps
+    // `status='pending'` forever, so this bound is what stops the tab latching on.
+    expect(where.expiresAt.gt).toBeInstanceOf(Date);
+    expect(where.fromUserId).toBeUndefined();
+  });
+
   it('a PENDING seat does NOT light "My apps" — only "Invites"', async () => {
     // An unaccepted invite confers ZERO capability; offering an editor route for it
     // would be offering a page every child query refuses.
@@ -346,14 +351,24 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     ]);
   });
 
-  it('ownership is resolved BLOCK-FIRST, shadows excluded — same predicate as listMine', async () => {
+  it('ownership is resolved KIND-AWARE, shadows excluded — same predicate as listMine', async () => {
+    // 🔴 WAS "BLOCK-FIRST" (two branches) UNTIL ISSUE #3844. That predicate let an
+    // attached `AppBlock` decide ownership on an OFF-SITE listing, where
+    // `AppListing.userId` is canonical — so after `claimListing` or an off-site
+    // `acceptTransfer` (both of which move only the column) the sub-nav offered the
+    // "My apps" route to the PREVIOUS owner and hid it from the rightful one. The third
+    // branch is that fix, and this assertion is enumerated equality on purpose: it is the
+    // structural half of "the tab and the page it opens cannot disagree", the other half
+    // being `app-access.kind-aware-owner.test.ts`, which asserts both reads pass the
+    // shared `canonicalOwnerWhereBranches` output.
     const caller = blocksRouter.createCaller(fakeCtx(otherModUser) as never);
     await caller.getNavSummary();
     const where = mockDbRead.appListing.findFirst.mock.calls[0][0].where;
     expect(where.revisionOfId).toBeNull();
     expect(where.OR).toEqual([
-      { appBlock: { app: { userId: otherModUser.id } } },
-      { appBlock: { is: null }, userId: otherModUser.id },
+      { kind: 'onsite', appBlock: { app: { userId: otherModUser.id } } },
+      { kind: 'onsite', appBlock: { is: null }, userId: otherModUser.id },
+      { kind: { not: 'onsite' }, userId: otherModUser.id },
     ]);
   });
 

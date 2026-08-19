@@ -1,21 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-/**
- * A denied owner asks for review again on the Appeal row they already have.
- * The moderator queue both sorts and displays on `Appeal."createdAt"`, so the
- * reopened request has to re-enter as new work rather than keeping the original
- * request's date and its place in the queue.
- */
-
-const { mockUpdate } = vi.hoisted(() => ({ mockUpdate: vi.fn() }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: { appeal: { update: mockUpdate } },
-}));
-
 import { reopenModelAppeal } from '~/server/services/report.service';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockUpdate = dbMock.dbWrite.appeal.update;
 
 type UpdateArgs = { where: unknown; data: Record<string, unknown> };
 

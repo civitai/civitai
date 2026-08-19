@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
 
 // Task 8 fix round 1: proves endChallengeAndPickWinners assembles excludeUserIds as the union of
 // winners AND participation-prize earners, not winners alone. sendChallengeResultsNotification
@@ -7,27 +12,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // challenge-results-notification.test.ts).
 
 const {
-  mockDbWrite,
-  mockDbReadQueryRaw,
   mockGetChallengeById,
   mockGetExistingWinnersForRetry,
   mockSendChallengeResultsNotification,
 } = vi.hoisted(() => ({
-  mockDbWrite: {
-    challenge: {
-      update: vi.fn().mockResolvedValue(undefined),
-      findUnique: vi.fn().mockResolvedValue({ prizePool: 0, prizeDistribution: null }),
-    },
-  },
-  mockDbReadQueryRaw: vi.fn(),
   mockGetChallengeById: vi.fn(),
   mockGetExistingWinnersForRetry: vi.fn(),
   mockSendChallengeResultsNotification: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: mockDbReadQueryRaw, challenge: { findUnique: vi.fn() } },
-  dbWrite: mockDbWrite,
 }));
 
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({

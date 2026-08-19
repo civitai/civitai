@@ -60,8 +60,6 @@ vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},
   pgDbWrite: mocks.pgDbWrite,
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
-
 vi.mock('~/server/meilisearch/client', () => ({
   metricsSearchClient: null,
   withMeiliHealthProbe: (fn: () => Promise<boolean>) => fn(),
@@ -93,6 +91,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
 
 import { runHealthChecks } from '~/pages/api/health';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // A never-aborted signal so runHealthChecks runs the full check set.
 const liveSignal = () => new AbortController().signal;

@@ -1,9 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+// One local served both clients. Everything this file drives is dbWrite —
+// modelFile.findUnique/update (model-file-scan.service:132, :161, :203), modelFileHash.*
+// (:171, :213, :214), modelVersion.findUnique (:339, :686), modelFile.updateMany (:670) —
+// EXCEPT rescanModel's modelFile.findMany at :616, which is dbRead. One line decides it.
+const mockDbWrite = dbMock.dbWrite;
+const mockDbRead = dbMock.dbRead;
+const mockLogToAxiom = loggingMock.logToAxiom;
+const mockSetNxKeepTtlWithEx = redisMock.sysRedis.setNxKeepTtlWithEx;
 
 const {
-  mockDbWrite,
   mockGetWorkflow,
-  mockLogToAxiom,
   mockDeleteFilesForModelVersionCache,
   mockCreateNotification,
   mockModelsSearchIndexQueueUpdate,
@@ -12,7 +22,6 @@ const {
   mockModelFileScanSubmissionError,
   mockLimitConcurrency,
   mockUnpublishModelById,
-  mockSetNxKeepTtlWithEx,
   mockCheckMinorHashOnScan,
   mockIsFlipt,
 } = vi.hoisted(() => {
@@ -29,32 +38,8 @@ const {
       this.name = 'ModelFileScanSubmissionError';
     }
   }
-  const mockModelFile = {
-    findUnique: vi.fn(),
-    update: vi.fn(),
-    findMany: vi.fn(),
-    updateMany: vi.fn(),
-  };
-
-  const mockModelFileHash = {
-    deleteMany: vi.fn(),
-    createMany: vi.fn(),
-    findMany: vi.fn(),
-  };
-
-  const mockModelVersion = {
-    findUnique: vi.fn(),
-  };
-
   return {
-    mockDbWrite: {
-      modelFile: mockModelFile,
-      modelFileHash: mockModelFileHash,
-      modelVersion: mockModelVersion,
-      $transaction: vi.fn(),
-    },
     mockGetWorkflow: vi.fn(),
-    mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
     mockDeleteFilesForModelVersionCache: vi.fn().mockResolvedValue(undefined),
     mockCreateNotification: vi.fn().mockResolvedValue(undefined),
     mockModelsSearchIndexQueueUpdate: vi.fn().mockResolvedValue(undefined),
@@ -66,16 +51,10 @@ const {
       for (const t of tasks) await t();
     }),
     mockUnpublishModelById: vi.fn().mockResolvedValue({}),
-    mockSetNxKeepTtlWithEx: vi.fn().mockResolvedValue(true),
     mockCheckMinorHashOnScan: vi.fn().mockResolvedValue('skipped'),
     mockIsFlipt: vi.fn().mockResolvedValue(true),
   };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: mockDbWrite,
-  dbRead: mockDbWrite,
-}));
 
 vi.mock('@civitai/client', () => ({
   getWorkflow: mockGetWorkflow,
@@ -87,10 +66,6 @@ vi.mock('@civitai/client', () => ({
 
 vi.mock('~/server/services/orchestrator/client', () => ({
   internalOrchestratorClient: {},
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
 }));
 
 vi.mock('~/server/redis/caches', () => ({
@@ -124,13 +99,6 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({
 // Stub the whole module to avoid loading its dep tree.
 vi.mock('~/server/services/model.service', () => ({
   unpublishModelById: mockUnpublishModelById,
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { setNxKeepTtlWithEx: mockSetNxKeepTtlWithEx },
-  REDIS_SYS_KEYS: {
-    WEBHOOKS: { MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed' },
-  },
 }));
 
 vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: vi.fn() }));
@@ -1043,13 +1011,13 @@ describe('model-file-scan.service', () => {
   // ==========================================================================
   describe('rescanModel', () => {
     beforeEach(() => {
-      mockDbWrite.modelFile.findMany.mockReset().mockResolvedValue([]);
+      mockDbRead.modelFile.findMany.mockReset().mockResolvedValue([]);
       mockDbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 0 });
       mockCreateModelFileScanRequest.mockReset();
     });
 
     it('returns { sent: 0, failed: 0 } when the model has no files', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+      mockDbRead.modelFile.findMany.mockResolvedValue([]);
 
       const result = await rescanModel({ id: 1 });
 
@@ -1058,11 +1026,11 @@ describe('model-file-scan.service', () => {
     });
 
     it('queries with the orchestrator-shaped select (includes modelVersion + model)', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+      mockDbRead.modelFile.findMany.mockResolvedValue([]);
 
       await rescanModel({ id: 1 });
 
-      const findManyArgs = mockDbWrite.modelFile.findMany.mock.calls[0][0];
+      const findManyArgs = mockDbRead.modelFile.findMany.mock.calls[0][0];
       expect(findManyArgs.select).toMatchObject({
         id: true,
         url: true,
@@ -1076,7 +1044,7 @@ describe('model-file-scan.service', () => {
     });
 
     it('routes every file through createModelFileScanRequest', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         {
           id: 1,
           url: 's3://k1',
@@ -1110,7 +1078,7 @@ describe('model-file-scan.service', () => {
     });
 
     it('skips files with a null modelVersion (orphaned/soft-deleted) without crashing', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         { id: 1, url: 's3://k1', modelVersion: null },
         {
           id: 2,
@@ -1127,7 +1095,7 @@ describe('model-file-scan.service', () => {
     });
 
     it('counts createModelFileScanRequest throws as failures, not crashes', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         {
           id: 1,
           url: 's3://k1',
@@ -1153,7 +1121,7 @@ describe('model-file-scan.service', () => {
     });
 
     it('marks scanRequestedAt=now only for files that were sent', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         {
           id: 1,
           url: 's3://k1',
@@ -1176,7 +1144,7 @@ describe('model-file-scan.service', () => {
     });
 
     it('does NOT call updateMany when no files were sent', async () => {
-      mockDbWrite.modelFile.findMany.mockResolvedValue([
+      mockDbRead.modelFile.findMany.mockResolvedValue([
         { id: 1, url: 's3://k1', modelVersion: null },
       ]);
 

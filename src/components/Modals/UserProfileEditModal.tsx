@@ -47,7 +47,7 @@ import {
   creatorCardStats,
   creatorCardStatsDefaults,
 } from '~/server/common/constants';
-import { CosmeticType, LinkType } from '~/shared/utils/prisma/enums';
+import { CosmeticType, DomainColor, LinkType } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -267,16 +267,24 @@ export default function UserProfileEditModal() {
     [user]
   );
 
-  const leaderboardOptions = useMemo(
-    () =>
-      leaderboards
-        .filter((board) => board.public)
-        .map(({ title, id }) => ({
-          label: titleCase(title),
-          value: id,
-        })),
-    [leaderboards]
-  );
+  // Mirrors the exclusion in `updateLeaderboardRank`: a RED-exclusive board's title
+  // would render sitewide, so it never earns a badge. Offering it here let people
+  // pick an option that could never take effect. A board already stored as this user's
+  // showcase stays listed regardless, so the Select doesn't render blank while still
+  // holding that value. That only reaches boards `getLeaderboards` returned at all —
+  // on a domain where the stored board isn't visible it was already blank before this.
+  const leaderboardOptions = useMemo(() => {
+    const current = user?.leaderboardShowcase;
+    return leaderboards
+      .filter((board) => board.public)
+      .filter(
+        (board) => board.id === current || board.domain.some((color) => color !== DomainColor.red)
+      )
+      .map(({ title, id }) => ({
+        label: titleCase(title),
+        value: id,
+      }));
+  }, [leaderboards, user?.leaderboardShowcase]);
 
   const form = useForm({ schema, shouldUnregister: false });
 

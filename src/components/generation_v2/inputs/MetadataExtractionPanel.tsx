@@ -7,6 +7,10 @@
  * can render remix/workflow action buttons.
  */
 
+import {
+  CIVITAI_MEDIA_ID_MIME,
+  CIVITAI_MEDIA_TYPE_MIME,
+} from '~/components/EdgeMedia/media-drag-data';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   ActionIcon,
@@ -64,18 +68,17 @@ function getDroppedImageUrl(event: React.DragEvent): string | undefined {
 
 /**
  * Try to extract a Civitai media database ID and type from the drop event's custom drag data.
- * EdgeImage/EdgeVideo
- * set 'application/x-civitai-media-id' and 'application/x-civitai-media-type'
- * when imageId is provided, allowing drop targets to fetch stored metadata server-side.
+ * EdgeImage/EdgeVideo set CIVITAI_MEDIA_ID_MIME and CIVITAI_MEDIA_TYPE_MIME when imageId is
+ * provided, allowing drop targets to fetch stored metadata server-side.
  */
 function getDroppedMediaInfo(
   event: React.DragEvent
 ): { id: number; type: 'image' | 'video' } | undefined {
-  const raw = event.dataTransfer.getData('application/x-civitai-media-id');
+  const raw = event.dataTransfer.getData(CIVITAI_MEDIA_ID_MIME);
   if (!raw) return undefined;
   const id = parseInt(raw, 10);
   if (!Number.isFinite(id)) return undefined;
-  const type = event.dataTransfer.getData('application/x-civitai-media-type');
+  const type = event.dataTransfer.getData(CIVITAI_MEDIA_TYPE_MIME);
   return { id, type: type === 'video' ? 'video' : 'image' };
 }
 
@@ -307,7 +310,7 @@ export function MetadataExtractionPanel() {
         onDragOver={(e) => {
           // Allow drop so the event fires for URL-based drags
           if (
-            e.dataTransfer.types.includes('application/x-civitai-media-id') ||
+            e.dataTransfer.types.includes(CIVITAI_MEDIA_ID_MIME) ||
             e.dataTransfer.types.includes('text/uri-list') ||
             e.dataTransfer.types.includes('text/plain')
           ) {

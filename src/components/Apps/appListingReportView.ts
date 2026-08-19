@@ -37,6 +37,22 @@ const REASON_LABELS: Record<AppListingReportReason, string> = {
 export const APP_LISTING_REPORT_REASON_OPTIONS: ReportReasonOption[] =
   APP_LISTING_REPORT_REASONS.map((value) => ({ value, label: REASON_LABELS[value] }));
 
+/** How the report TRIGGER presents itself, given whether this viewer already reported. */
+export type ReportTriggerState = { label: string; disabled: boolean };
+
+/**
+ * The "already reported" rule, in ONE place.
+ *
+ * The server keeps at most one OPEN report per reporter per listing, so a second
+ * submission comes back as a friendly CONFLICT — which reads as an error toast where
+ * the user expects a confirmation. The affordance therefore has to go spent: the
+ * trigger is DISABLED and reads "Reported". Pure + React-free so the blocking node
+ * `unit` project owns it (the browser `component` project is report-only).
+ */
+export function reportTriggerState(reported: boolean): ReportTriggerState {
+  return reported ? { label: 'Reported', disabled: true } : { label: 'Report', disabled: false };
+}
+
 /** Human label for a stored reason value (falls back to the raw value). */
 export function getReportReasonLabel(reason: string): string {
   return (REASON_LABELS as Record<string, string>)[reason] ?? reason;

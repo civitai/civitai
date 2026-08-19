@@ -61,8 +61,6 @@ const {
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockSign,
-  mockAppBlockFindUnique,
-  mockPublishRequestFindFirst,
   mockSysRedis,
   mockMultiIncr,
   mockWithSysReadDeadline,
@@ -106,8 +104,6 @@ const {
     mockIsAppBlocksEnabled: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockSign: vi.fn(),
-    mockAppBlockFindUnique: vi.fn(),
-    mockPublishRequestFindFirst: vi.fn(),
     mockSysRedis: {
       multi: vi.fn(multiFactory),
       ttl: vi.fn().mockResolvedValue(60),
@@ -128,12 +124,6 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/server/services/block-token.service', () => ({
   BlockTokenService: { sign: mockSign },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    appBlock: { findUnique: mockAppBlockFindUnique },
-    appBlockPublishRequest: { findFirst: mockPublishRequestFindFirst },
-  },
-}));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
   REDIS_SYS_KEYS: { BLOCKS: { DEV_TOKEN_RATE_LIMIT: 'system:blocks:dev-token-rate-limit' } },
@@ -146,6 +136,9 @@ vi.mock('~/env/server', () => ({
 import handler from '~/pages/api/v1/blocks/dev-token';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockAppBlockFindUnique = dbMock.dbWrite.appBlock.findUnique;
+const mockPublishRequestFindFirst = dbMock.dbWrite.appBlockPublishRequest.findFirst;
 
 const SFW = domainBrowsingCeiling(null);
 

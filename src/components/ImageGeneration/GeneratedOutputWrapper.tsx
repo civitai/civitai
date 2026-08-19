@@ -132,6 +132,10 @@ export function GeneratedOutputWrapper({
 
   const aspectRatio = image.aspect;
 
+  // The user stopped this job, so a missing output is the outcome they asked for.
+  // Leave the slot empty — the step's cancellation alert already accounts for it.
+  if (!available && step.status === 'canceled') return <></>;
+
   // Step terminated but the blob never materialized — show an error card in the slot.
   if (!image.available && image.errored) {
     return (

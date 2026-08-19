@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Focused test for the in-proc memoization of getSupportedCurrencies (a GLOBAL,
 // rarely-changing list). Mocks only what nowpayments.service needs to import;
@@ -15,7 +16,7 @@ const { packedGet, packedSet, getMerchantCoins, getFullCurrencies, getMinimumPay
   }));
 
 vi.mock('~/env/server', () => ({ env: { NEXTAUTH_URL: 'https://example.test' } }));
-vi.mock('../../logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../buzz.service', () => ({
   getMultipliersForUser: vi.fn(),
   getTransactionByExternalId: vi.fn(),
@@ -24,7 +25,6 @@ vi.mock('../buzz.service', () => ({
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
   default: { getMerchantCoins, getFullCurrencies, getMinimumPaymentAmount },
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/utils/distributed-lock', () => ({ withDistributedLock: vi.fn() }));
 vi.mock('~/utils/signal-client', () => ({ signalClient: { send: vi.fn() } }));
 vi.mock('~/server/common/enums', () => ({

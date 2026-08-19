@@ -5,7 +5,10 @@ import { useRouter } from 'next/router';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
-import { RECENTLY_OPENED_APPS_KEY } from '~/components/Apps/recentlyOpenedAppsStore';
+import {
+  RECENTLY_OPENED_APPS_KEY,
+  RECENTS_ENVELOPE_VERSION,
+} from '~/components/Apps/recentlyOpenedAppsStore';
 
 /**
  * LEGACY-RECENTS RECONCILIATION — the `/apps` rail's stale-icon defect.
@@ -125,7 +128,24 @@ const router = useRouter();
  * the store's de-dup key). No `kind`, no `hasPage`, no `slug`.
  */
 function seedLegacyRecents(entries: { id: string; blockId: string; name: string }[]) {
-  window.localStorage.setItem(RECENTLY_OPENED_APPS_KEY, JSON.stringify(entries));
+  seedOwnedRecents(entries);
+}
+
+/**
+ * Write a raw entry list into the store as the CURRENT (anonymous) viewer's.
+ *
+ * 🔴 The envelope is the point, not boilerplate. Recents are ACCOUNT-scoped
+ * (#4048): a bare `RecentApp[]` carries no owner, and an unowned blob is
+ * DROPPED on read rather than attributed to whoever reads it next — so seeding
+ * one here would empty the rail and make every reconciliation assertion below
+ * pass vacuously. This suite mounts anonymously (`useCurrentUser` → null), so
+ * the owner it seeds as is `null`.
+ */
+function seedOwnedRecents(entries: unknown[], ownerId: number | null = null) {
+  window.localStorage.setItem(
+    RECENTLY_OPENED_APPS_KEY,
+    JSON.stringify({ v: RECENTS_ENVELOPE_VERSION, ownerId, apps: entries })
+  );
 }
 
 beforeEach(() => {
@@ -229,19 +249,16 @@ describe('the /apps rail reconciles LEGACY recents against the loaded listings',
       makeOnsiteCard({ id: 'lst_pv', slug: 'prompt-vault', name: 'Prompt Vault', hasPage: false }),
     ];
     // A fully-populated, NON-legacy entry that went stale the other way.
-    window.localStorage.setItem(
-      RECENTLY_OPENED_APPS_KEY,
-      JSON.stringify([
-        {
-          id: 'blk_prompt-vault',
-          blockId: 'prompt-vault',
-          slug: 'prompt-vault',
-          kind: 'onsite',
-          hasPage: true,
-          name: 'Prompt Vault',
-        },
-      ])
-    );
+    seedOwnedRecents([
+      {
+        id: 'blk_prompt-vault',
+        blockId: 'prompt-vault',
+        slug: 'prompt-vault',
+        kind: 'onsite',
+        hasPage: true,
+        name: 'Prompt Vault',
+      },
+    ]);
 
     renderWithProviders(<AppListingsMarketplaceBody />);
 
@@ -266,10 +283,7 @@ describe('the /apps rail reconciles LEGACY recents against the loaded listings',
         appBlockId: 'blk_gen-matrix',
       }),
     ];
-    window.localStorage.setItem(
-      RECENTLY_OPENED_APPS_KEY,
-      JSON.stringify([{ id: 'blk_gen-matrix', slug: 'gen-matrix', name: 'Gen Matrix' }])
-    );
+    seedOwnedRecents([{ id: 'blk_gen-matrix', slug: 'gen-matrix', name: 'Gen Matrix' }]);
 
     renderWithProviders(<AppListingsMarketplaceBody />);
 

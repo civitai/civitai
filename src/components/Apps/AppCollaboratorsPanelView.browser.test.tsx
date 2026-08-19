@@ -10,6 +10,7 @@ import {
   pickerExcludedUserIds,
 } from '~/components/Apps/AppCollaboratorsPanelView';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
+import { CONNECT_CLIENT_TRANSFER_REFUSAL } from '~/shared/constants/app-transfer.constants';
 
 /**
  * The collaborator roster panel, driven props-only (the container's tRPC + search-stack
@@ -396,5 +397,209 @@ describe('inviteBlockedReason / pickerExcludedUserIds', () => {
       const hidden = pickerExcludedUserIds(rows).includes(row.userId);
       expect(blocked, `disagreement on user ${row.userId}`).toBe(hidden);
     }
+  });
+});
+
+/**
+ * 🔴 OWNERSHIP TRANSFER — THE OWNER HALF of the Collaborators tab.
+ *
+ * The product rule this pins: a COLLABORATOR cannot transfer the app. The panel says so
+ * in its own disclosure ("Collaborators cannot invite or remove anyone, and cannot
+ * transfer the app"), the service refuses an editor at `loadOwnedListing` with NOT_OWNER,
+ * and this is where the promise and the control are checked against each other.
+ */
+describe('AppCollaboratorsPanelView — ownership transfer (owner half)', () => {
+  test('an OWNER gets the transfer section, its warning, and the recipient picker', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={ONSITE}
+        rows={[]}
+        viewerUserId={OWNER_ID}
+        transferPicker={<div data-testid="stub-transfer-picker" />}
+      />
+    );
+    await expect.element(page.getByTestId('apps-transfer-owner-section')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-transfer-owner-disclosure'))
+      .toHaveTextContent(/no longer the owner/i);
+    await expect.element(page.getByTestId('stub-transfer-picker')).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 ABSENCE, WITH AN AWAITED POSITIVE CONTROL FIRST. `locator.elements()` is
+   * SYNCHRONOUS: an emptiness asserted before React commits passes whatever the component
+   * renders. The editor notice is the branch this render MUST produce, so awaiting it
+   * proves the tree is committed before anything is claimed to be missing.
+   */
+  test('🔴 an EDITOR gets NO transfer section, NO picker and NO cancel control', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="editor"
+        capabilities={ONSITE}
+        rows={[seat({ userId: EDITOR_ID })]}
+        viewerUserId={EDITOR_ID}
+        transferPicker={<div data-testid="stub-transfer-picker" />}
+        pendingTransfer={{ id: 'aot_1', toUserId: 99, expiresAt: new Date() }}
+        onCancelTransfer={() => undefined}
+      />
+    );
+    await expect.element(page.getByTestId('apps-collaborators-editor-notice')).toBeInTheDocument();
+    expect(page.getByTestId('apps-transfer-owner-section').elements()).toHaveLength(0);
+    expect(page.getByTestId('stub-transfer-picker').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-transfer-pending').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-transfer-cancel').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 POSITIVE CONTROL FOR THE ZEROES ABOVE. Identical props, `role="owner"` — every one
+   * of those testids appears. Without this, the four zeroes are indistinguishable from
+   * testids that never render for anyone.
+   */
+  test('🔴 POSITIVE CONTROL: the same props with role="owner" DO render all four', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={ONSITE}
+        rows={[seat({ userId: EDITOR_ID })]}
+        viewerUserId={OWNER_ID}
+        transferPicker={<div data-testid="stub-transfer-picker" />}
+        pendingTransfer={{ id: 'aot_1', toUserId: 99, expiresAt: new Date() }}
+        onCancelTransfer={() => undefined}
+      />
+    );
+    await expect.element(page.getByTestId('apps-transfer-owner-section')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-transfer-pending')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-transfer-cancel')).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 ONE LIVE OFFER PER LISTING is a partial-unique index in the database, so a second
+   * initiate loses on P2002. Rendering the picker beside a pending offer would be
+   * rendering an action that cannot succeed.
+   */
+  test('a PENDING offer replaces the picker with the offer and a Cancel control', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={ONSITE}
+        rows={[]}
+        viewerUserId={OWNER_ID}
+        transferPicker={<div data-testid="stub-transfer-picker" />}
+        pendingTransfer={{ id: 'aot_1', toUserId: 42, expiresAt: new Date() }}
+        onCancelTransfer={() => undefined}
+        renderUser={(id) => <span data-testid={`stub-user-${id}`}>user {id}</span>}
+      />
+    );
+    // Awaited PRESENT element first, then the absence.
+    await expect.element(page.getByTestId('apps-transfer-pending')).toBeInTheDocument();
+    await expect.element(page.getByTestId('stub-user-42')).toBeInTheDocument();
+    expect(page.getByTestId('stub-transfer-picker').elements()).toHaveLength(0);
+  });
+
+  test('Cancel reports the pending offer’s id', async () => {
+    const cancelled: string[] = [];
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={ONSITE}
+        rows={[]}
+        viewerUserId={OWNER_ID}
+        pendingTransfer={{ id: 'aot_specific', toUserId: 42, expiresAt: new Date() }}
+        onCancelTransfer={(id) => cancelled.push(id)}
+      />
+    );
+    const cancel = page.getByTestId('apps-transfer-cancel');
+    await expect.element(cancel).toBeInTheDocument();
+    await userEvent.click(cancel.element());
+    expect(cancelled).toEqual(['aot_specific']);
+  });
+
+  test('the Cancel control is disabled while a transfer mutation is in flight', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={ONSITE}
+        rows={[]}
+        viewerUserId={OWNER_ID}
+        pendingTransfer={{ id: 'aot_1', toUserId: 42, expiresAt: new Date() }}
+        onCancelTransfer={() => undefined}
+        transferBusy
+      />
+    );
+    await expect.element(page.getByTestId('apps-transfer-cancel')).toBeDisabled();
+  });
+
+  /**
+   * 🔴 THE CONNECT-CLIENT REFUSAL, RENDERED WITH ITS REASON.
+   *
+   * A connect-linked off-site listing is refused at initiate AND again in-transaction at
+   * accept, with a message that names the REASON (the credentials/split-ownership
+   * consequence) rather than a remedy — there is no unlink path in the product, so the
+   * string deliberately instructs nothing. Collapsing it into a generic "something went
+   * wrong" would leave the owner with a control that fails forever and no way to learn
+   * why, so the message is asserted VERBATIM against the server's own exported constant
+   * rather than against a paraphrase.
+   *
+   * NOTE: this test drives the MUTATION-ERROR route (the prop), which still exists for
+   * every other refusal reason. The connect-client case is now caught BEFORE submission —
+   * see `src/tests/pages/apps/listing-collaborators-transfer.browser.test.tsx`, which
+   * drives it from listing data with no prop at all.
+   */
+  test('🔴 a refusal renders inline, with the server’s reason intact', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={OFFSITE}
+        rows={[]}
+        viewerUserId={OWNER_ID}
+        transferPicker={<div data-testid="stub-transfer-picker" />}
+        transferErrorMessage={CONNECT_CLIENT_TRANSFER_REFUSAL}
+      />
+    );
+    const error = page.getByTestId('apps-transfer-owner-error');
+    await expect.element(error).toBeInTheDocument();
+    await expect.element(error).toHaveTextContent(/linked to an OAuth application/i);
+    // NOT `/cannot be transferred/i` — this Alert's `title` prop already spells that, so
+    // the regex would match the chrome rather than the message. Assert on the body.
+    await expect.element(error).toHaveTextContent(/split ownership/i);
+    // 🔴 The message the SERVER will send, character for character — a paraphrase here
+    // would let the copy drift out from under the assertion.
+    await expect.element(error).toHaveTextContent(CONNECT_CLIENT_TRANSFER_REFUSAL);
+  });
+
+  test('no refusal ⇒ no error panel (awaited control first)', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={ONSITE}
+        rows={[]}
+        viewerUserId={OWNER_ID}
+        transferPicker={<div data-testid="stub-transfer-picker" />}
+      />
+    );
+    await expect.element(page.getByTestId('apps-transfer-owner-section')).toBeInTheDocument();
+    expect(page.getByTestId('apps-transfer-owner-error').elements()).toHaveLength(0);
+  });
+
+  /**
+   * The disclosure two sections up PROMISES that a collaborator cannot transfer the app.
+   * This pins the promise and the control together — a panel that grew a transfer control
+   * for editors would contradict its own copy.
+   */
+  test('the invite disclosure’s promise and the transfer control agree', async () => {
+    renderWithProviders(
+      <AppCollaboratorsPanelView
+        role="owner"
+        capabilities={ONSITE}
+        rows={[]}
+        viewerUserId={OWNER_ID}
+        transferPicker={<div data-testid="stub-transfer-picker" />}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-collaborators-invite-disclosure'))
+      .toHaveTextContent(/cannot transfer the app/i);
+    await expect.element(page.getByTestId('apps-transfer-owner-section')).toBeInTheDocument();
   });
 });

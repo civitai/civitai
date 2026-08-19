@@ -1,7 +1,12 @@
 import client from 'prom-client';
 
 // HMR-safe metric registration (same pattern as prom/client.ts)
-function registerHistogram<T extends string>(opts: { name: string; help: string; labelNames?: readonly T[]; buckets: number[] }) {
+function registerHistogram<T extends string>(opts: {
+  name: string;
+  help: string;
+  labelNames?: readonly T[];
+  buckets: number[];
+}) {
   try {
     return new client.Histogram(opts);
   } catch {
@@ -9,7 +14,11 @@ function registerHistogram<T extends string>(opts: { name: string; help: string;
   }
 }
 
-function registerCounter<T extends string>(opts: { name: string; help: string; labelNames?: readonly T[] }) {
+function registerCounter<T extends string>(opts: {
+  name: string;
+  help: string;
+  labelNames?: readonly T[];
+}) {
   try {
     return new client.Counter(opts);
   } catch {
@@ -54,6 +63,59 @@ const errorCounter = registerCounter({
   labelNames: ['type'] as const, // 'timeout', 'connection', 'other'
 });
 
+// Documents the feed's publication filter held back on `sortAt` alone — their
+// own `publishedAt` was already past, so they are probably published content
+// hidden by index drift rather than genuinely-unpublished content caught.
+//
+// Deliberately UNLABELLED. A labelled counter publishes no series at all until
+// its first observation, and an alert over an absent series renders as "No data"
+// — indistinguishable from a healthy zero. (That is not hypothetical: BitDex's
+// own `activation_verify_inconclusive_total` is absent on the serving pod for
+// exactly this reason, measured 2026-08-17.) Unlabelled, this registers at 0 on
+// process start, so an alert on it can actually fire.
+// Three names rather than one series with a `mode` label, for the same reason
+// they are unlabelled at all: the three cases must be separable (an alert
+// threshold cannot mean different things depending on a flag), and each must
+// publish a zero from process start so an alert over any of them can fire before
+// its first event.
+//
+// The shadow one is not decoration. Shadow mode exists to size a risk before
+// taking it, so a counter that only observes the serving path reads zero until a
+// cohort is flipped — measuring the exposure only after it has been taken.
+const sortAtOnlyHoldCounterServing = registerCounter({
+  name: 'bitdex_feed_sortat_only_holds_total',
+  help: 'Feed documents held back by the publication filter on sortAt alone (publishedAt was already past), on requests BitDex served',
+});
+
+const sortAtOnlyHoldCounterShadow = registerCounter({
+  name: 'bitdex_feed_sortat_only_holds_shadow_total',
+  help: 'Feed documents the publication filter WOULD have held back on sortAt alone, on shadow-mode requests where Meili served',
+});
+
+const sortAtOnlyHoldCounterFallback = registerCounter({
+  name: 'bitdex_feed_sortat_only_holds_fallback_total',
+  help: 'Feed documents held back on sortAt alone on requests where the hold emptied the result and Meili served instead (so nothing was hidden from the user)',
+});
+
+/**
+ * Record documents held back on `sortAt` alone by the feed publication filter.
+ *
+ * Three modes, three names, because they mean different things to an operator:
+ * `serving` hid content from a user, `shadow` would have hidden it had the flag
+ * been on, and `fallback` held documents but Meili then served the request — so
+ * the user saw them anyway. Folding `fallback` into `serving` would make the
+ * alert loudest in the case where the guard cost the user nothing.
+ */
+export function recordSortAtOnlyHolds(
+  count: number,
+  mode: 'serving' | 'shadow' | 'fallback'
+): void {
+  if (count <= 0) return;
+  if (mode === 'serving') sortAtOnlyHoldCounterServing.inc(count);
+  else if (mode === 'shadow') sortAtOnlyHoldCounterShadow.inc(count);
+  else sortAtOnlyHoldCounterFallback.inc(count);
+}
+
 interface ComparisonInput {
   bitdexIds: number[];
   meiliIds: number[];
@@ -69,8 +131,12 @@ interface ComparisonInput {
 export function compareBitdexResults(comparison: ComparisonInput): void {
   const sort = comparison.sort ?? 'unknown';
   const queryClass = comparison.hasPeriod
-    ? comparison.hasFilters ? 'complex' : 'period'
-    : comparison.hasFilters ? 'filtered' : 'simple';
+    ? comparison.hasFilters
+      ? 'complex'
+      : 'period'
+    : comparison.hasFilters
+    ? 'filtered'
+    : 'simple';
 
   // Record latencies
   queryDurationHistogram.observe({ source: 'bitdex' }, comparison.bitdexElapsedMs / 1000);
@@ -100,7 +166,7 @@ export function recordBitdexError(err: unknown): void {
     errObj.name === 'AbortError'
       ? 'timeout'
       : errObj.message?.includes('ECONNREFUSED')
-        ? 'connection'
-        : 'other';
+      ? 'connection'
+      : 'other';
   errorCounter.inc({ type });
 }

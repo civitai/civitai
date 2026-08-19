@@ -1,6 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import client from 'prom-client';
 import type { PersistedChallengeWinner } from '~/server/games/daily-challenge/challenge-winner-reconcile';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
+  prizePool: 0,
+  prizeDistribution: null,
+});
 
 // Regression coverage for the MOD -> JOB completion boundary.
 //
@@ -21,11 +33,6 @@ import type { PersistedChallengeWinner } from '~/server/games/daily-challenge/ch
 // at the module boundary, so the mock set below is the union of what each module needs.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbWriteQueryRaw,
-  mockDbWriteExecuteRaw,
-  mockDbWriteChallengeUpdate,
-  mockDbWriteChallengeFindUnique,
   mockClaimChallengeForCompletion,
   mockCompleteChallengeIfClaimHeld,
   mockGetChallengeById,
@@ -37,14 +44,6 @@ const {
   mockUpdateChallengeStatus,
   mockSendChallengeResultsNotification,
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbWriteQueryRaw: vi.fn(),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
-  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  }),
   mockClaimChallengeForCompletion: vi.fn(),
   mockCompleteChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   mockGetChallengeById: vi.fn(),
@@ -55,18 +54,6 @@ const {
   mockEndChallenge: vi.fn().mockResolvedValue(undefined),
   mockUpdateChallengeStatus: vi.fn().mockResolvedValue(undefined),
   mockSendChallengeResultsNotification: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: mockDbReadQueryRaw,
-    challenge: { findUnique: vi.fn() },
-  },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
-  },
 }));
 
 vi.mock('~/server/events', () => ({

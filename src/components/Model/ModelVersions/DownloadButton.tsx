@@ -14,9 +14,25 @@ import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
-  ({ iconOnly, canDownload, downloadPrice, children, tooltip, joinAlert, ...buttonProps }, ref) => {
+  (
+    {
+      iconOnly,
+      canDownload,
+      downloadPrice,
+      listedPrice,
+      children,
+      tooltip,
+      joinAlert,
+      ...buttonProps
+    },
+    ref
+  ) => {
     const theme = useMantineTheme();
-    const purchaseIcon = (
+    // `downloadPrice` is what THIS viewer must pay; `listedPrice` is what buyers pay, shown to the
+    // owner who already has access and would otherwise see no price at all on their own model.
+    const shownPrice = downloadPrice ?? listedPrice;
+    const isListedOnly = downloadPrice == null && listedPrice != null;
+    const priceBadge = (
       <Badge
         radius="sm"
         size="sm"
@@ -34,10 +50,17 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
         <Group gap={0} wrap="nowrap">
           <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={14} />{' '}
           <Text size="xs" fz={11} c="dark.9">
-            {abbreviateNumber(downloadPrice ?? 0)}
+            {abbreviateNumber(shownPrice ?? 0)}
           </Text>
         </Group>
       </Badge>
+    );
+    const purchaseIcon = isListedOnly ? (
+      <Tooltip label={`Buyers pay ${abbreviateNumber(listedPrice ?? 0)} Buzz`} withArrow>
+        {priceBadge}
+      </Tooltip>
+    ) : (
+      priceBadge
     );
 
     const button = iconOnly ? (
@@ -50,14 +73,14 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
           variant="light"
         >
           <IconDownload size={24} />
-          {downloadPrice && <>{purchaseIcon}</>}
+          {!!shownPrice && <>{purchaseIcon}</>}
         </Button>
       </Tooltip>
     ) : (
       <Button pos="relative" className="overflow-visible" ref={ref} {...buttonProps}>
         <Group gap={8} wrap="nowrap">
           <IconDownload size={20} />
-          {downloadPrice && <>{purchaseIcon}</>}
+          {!!shownPrice && <>{purchaseIcon}</>}
           {children}
         </Group>
       </Button>
@@ -78,6 +101,8 @@ type Props = ButtonProps & {
   iconOnly?: boolean;
   canDownload?: boolean;
   downloadPrice?: number;
+  /** What buyers pay. Informational only — shown to the owner/mod, never gates the button. */
+  listedPrice?: number;
   modelVersionId?: number;
   tooltip?: string;
   joinAlert?: string;

@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { jobDurationHistogram, jobErrorsCounter } from '~/server/prom/client';
+import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { applySourceMaps } from '~/server/utils/errorHandling';
 
 export type Job = {
@@ -81,7 +82,14 @@ export function createJob(
         await Promise.all(onCancel.map((x) => x()));
       };
       const endTimer = jobDurationHistogram.startTimer({ job: name });
-      const result = fn(jobContext)
+      // When the long-task LABELS tier is armed, attribute synchronous event-loop
+      // blocks inside this job to `job:<name>`. Costs one AsyncLocalStorage.run() per
+      // job invocation and is OFF by default; when disarmed this is the original
+      // direct call. See src/server/eventloop-longtask.ts.
+      const started = longTaskLabelsArmed
+        ? runWithLongTaskLabel(`job:${name}`, () => fn(jobContext))
+        : fn(jobContext);
+      const result = started
         .catch(async (e) => {
           jobErrorsCounter.inc({ job: name });
           const error = e instanceof Error ? e : undefined;

@@ -8,15 +8,16 @@ import type {
   CollectionWriteConfiguration,
   CosmeticSource,
   CosmeticType,
-  MediaType,
 } from '~/shared/utils/prisma/enums';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
-import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
+import {
+  collectionIndexImageSql,
+  type CollectionIndexImage,
+} from '~/server/search-index/collection-index-image';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
@@ -89,23 +90,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-type ImageProps = {
-  type: MediaType;
-  id: number;
-  createdAt: Date;
-  name: string | null;
-  url: string;
-  hash: string | null;
-  height: number | null;
-  width: number | null;
-  nsfwLevel: number;
-  postId: number | null;
-  index: number | null;
-  scannedAt: Date | null;
-  mimeType: string | null;
-  meta: Prisma.JsonObject | null;
-  userId: number;
-} | null;
+type ImageProps = CollectionIndexImage | null;
 
 type CollectionForSearchIndex = {
   id: number;
@@ -149,11 +134,6 @@ type CollectionImageRaw = {
   src: string | null;
 };
 
-const parseImageMeta = (meta: ImageMetaProps) => {
-  const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
-  return parsed?.success ? parsed.data : {};
-};
-
 const WHERE = [
   Prisma.sql`c."userId" != -1`,
   Prisma.sql`c.read = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"`,
@@ -162,23 +142,29 @@ const WHERE = [
   Prisma.sql`c."availability" != 'Unsearchable'::"Availability"`,
 ];
 
+/**
+ * What `pullData` hands `transformData`. Declared so `pullData` can be annotated with
+ * it: an early `return []` for an empty batch type-checks against an inferred return
+ * type, then destructures to `collections === undefined` and throws in `transformData`.
+ */
+type CollectionPullData = {
+  collections: CollectionForSearchIndex[];
+  itemImages: CollectionImageRaw[];
+  tags: { imageId: number; tagId: number }[];
+  profilePictures: ProfileImage[];
+};
+
 const transformData = async ({
   collections,
   itemImages,
   tags,
   profilePictures,
-}: {
-  collections: CollectionForSearchIndex[];
-  itemImages: CollectionImageRaw[];
-  tags: { imageId: number; tagId: number }[];
-  profilePictures: ProfileImage[];
-}) => {
+}: CollectionPullData) => {
   const records = collections
     .map(({ cosmetics, user, image, ...collection }) => {
       const collectionImage = image
         ? {
             ...image,
-            meta: parseImageMeta(image.meta as ImageMetaProps),
             tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
           }
         : null;
@@ -188,7 +174,6 @@ const transformData = async ({
         .filter(isDefined)
         .map((i) => ({
           ...i,
-          meta: parseImageMeta(i.meta as ImageMetaProps),
           tags: tags.filter((t) => t.imageId === i.id).map((t) => ({ id: t.tagId })),
         }));
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
@@ -240,7 +225,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch, step) => {
+  pullData: async ({ db, logger }, batch, step): Promise<CollectionPullData> => {
     logger(`PullData :: Pulling data for batch: ${batch}`);
     const where = [
       ...WHERE,
@@ -249,26 +234,6 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
         ? Prisma.sql`c.id >= ${batch.startId} AND c.id <= ${batch.endId}`
         : undefined,
     ].filter(isDefined);
-
-    const imageSql = Prisma.sql`
-    jsonb_build_object(
-        'id', i."id",
-        'index', i."index",
-        'postId', i."postId",
-        'name', i."name",
-        'url', i."url",
-        'nsfwLevel', i."nsfwLevel",
-        'width', i."width",
-        'height', i."height",
-        'hash', i."hash",
-        'createdAt', i."createdAt",
-        'mimeType', i."mimeType",
-        'scannedAt', i."scannedAt",
-        'type', i."type",
-        'userId', i."userId",
-        'meta', i."meta"
-      ) image
-  `;
 
     // When metrics are ready use this one :D
     const collections = await db.$queryRaw<CollectionForSearchIndex[]>`
@@ -325,7 +290,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
     ), images AS MATERIALIZED (
       SELECT
         i.id,
-        ${imageSql}
+        ${collectionIndexImageSql}
       FROM "Image" i
       WHERE i.id IN (SELECT "imageId" FROM target)
         AND i."ingestion" = 'Scanned'
@@ -356,7 +321,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
     // Avoids hitting the DB without data.
     if (collections.length === 0) {
       logger(`PullData :: no collections found in batch`);
-      return [];
+      return { collections: [], itemImages: [], tags: [], profilePictures: [] };
     }
 
     const collectionsNeedingImages = collections.filter((c) => !c.image).map((c) => c.id);
@@ -380,7 +345,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
       ), imageItemImage AS MATERIALIZED (
         SELECT
           i.id,
-          ${imageSql}
+          ${collectionIndexImageSql}
         FROM "Image" i
         WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
           AND i."ingestion" = 'Scanned'
@@ -389,7 +354,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
         SELECT * FROM (
             SELECT
               i."postId" id,
-              ${imageSql},
+              ${collectionIndexImageSql},
               ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
             FROM "Image" i
             WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
@@ -401,7 +366,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
         SELECT * FROM (
             SELECT
               m.id,
-              ${imageSql},
+              ${collectionIndexImageSql},
               ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
             FROM "Image" i
             JOIN "Post" p ON p.id = i."postId"
@@ -412,9 +377,23 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
                 AND i."needsReview" IS NULL
         ) t
         WHERE t.rn = 1
-      ), articleItemImage as MATERIALIZED (
-          SELECT a.id, a.cover image FROM "Article" a
-          WHERE a.id IN (SELECT "articleId" FROM target)
+      ), articleItemImage AS MATERIALIZED (
+          SELECT a.id, ${collectionIndexImageSql}
+          FROM "Article" a
+          JOIN "Image" i ON i.id = a."coverId"
+          WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+            AND i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
+      ), articleItemSrc AS MATERIALIZED (
+          SELECT a.id, a.cover src FROM "Article" a
+          WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+      ), model3dItemImage AS MATERIALIZED (
+          SELECT m3.id, ${collectionIndexImageSql}
+          FROM "Model3D" m3
+          JOIN "Image" i ON i.id = m3."thumbnailImageId"
+          WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
+            AND i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
       )
       SELECT
           target."collectionId" id,
@@ -422,9 +401,11 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
             (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
             (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
             (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+            (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
+            (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
             NULL
           ) image,
-          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
+          (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
       FROM target
     `;
     }

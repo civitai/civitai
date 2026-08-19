@@ -8,12 +8,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: { findMany: mocks.shopItemFindMany, count: mocks.shopItemCount },
-  },
-  dbWrite: {},
-}));
 vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -29,6 +23,13 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 
 import { CosmeticShopSort } from '~/server/common/enums';
 import { getCommunityCosmetics } from '../creator-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItem.count.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemCount as (...a: unknown[]) => unknown)(...args)
+);
 
 const cosmeticBranch = (where: { OR: { cosmetic?: Record<string, never> }[] }) =>
   where.OR.find((b) => b.cosmetic)?.cosmetic as Record<string, never>;
@@ -112,6 +113,29 @@ describe('getCommunityCosmetics', () => {
     expect(where.addedBy).toEqual({
       settings: { path: ['creatorShop', 'enabled'], equals: true },
     });
+  });
+
+  it('searches title and cosmetic name without displacing the creator/pack branch', async () => {
+    await getCommunityCosmetics({ ...baseInput, query: 'sparkle', packsEnabled: true });
+    const { where } = mocks.shopItemFindMany.mock.calls[0][0];
+    // The creator/pack gating lives in the top-level OR. A search written there
+    // instead of into AND would replace it and leak official items into the feed.
+    expect(cosmeticBranch(where).createdById).toEqual({ not: null });
+    expect(packBranch(where)).toBeDefined();
+    expect(andClauses(where)).toContainEqual({
+      OR: [
+        { title: { contains: 'sparkle', mode: 'insensitive' } },
+        { cosmetic: { name: { contains: 'sparkle', mode: 'insensitive' } } },
+      ],
+    });
+  });
+
+  it('adds no search clause when no query is given', async () => {
+    await getCommunityCosmetics(baseInput);
+    const { where } = mocks.shopItemFindMany.mock.calls[0][0];
+    expect(
+      andClauses(where).filter((clause) => JSON.stringify(clause).includes('contains'))
+    ).toEqual([]);
   });
 
   it('skips the block lookup for anonymous viewers', async () => {

@@ -12,7 +12,7 @@ const { mockPublicApiContext2, mockGetAll } = vi.hoisted(() => ({
   mockGetAll: vi.fn(),
 }));
 
-vi.mock('~/server/createContext', () => ({
+vi.mock('~/server/public-api-context', () => ({
   publicApiContext2: mockPublicApiContext2,
 }));
 

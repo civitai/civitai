@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * `BlockRegistry.getAppSpendCapConfig` / `setAppSpendCapConfig` — the per-app
@@ -23,43 +25,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * captured so the SHAPE is asserted.
  */
 
-const { mockDb, mockInvalidate } = vi.hoisted(() => ({
-  mockDb: {
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    appBlock: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
-    },
-    blockUserSubscription: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-    },
-    modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-  },
-  mockInvalidate: vi.fn(),
-}));
+const { mockInvalidate } = vi.hoisted(() => ({ mockInvalidate: vi.fn() }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    // Yields nothing — this fake holds no keys.
-    scanIterator: async function* () {
-      return;
-    },
-  },
-  sysRedis: { sMembers: vi.fn(async () => []) },
-  REDIS_KEYS: {
-    BLOCKS: {
-      REGISTRY: 'packed:caches:block-registry',
-      TOKEN_RATE_LIMIT: 'rl',
-      REVOKED_INSTANCE: 'rev',
-    },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
+// One local served both clients and the two entry points disagree: getAppSpendCapConfig reads
+// `dbRead.appBlock.findUnique` (block-registry.service:3652), setAppSpendCapConfig uses
+// `dbWrite` for its findUnique (:3702) and its update (:3720). The shared `beforeEach` therefore
+// arms findUnique on BOTH nodes — see the comment there.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
+
+// `scanIterator` is consumed with `for await`; a vivified spy returns undefined, which throws
+// rather than iterating.
+mockRedis.scanIterator.mockImplementation(async function* () {});
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
 vi.mock('~/server/services/blocks/app-cap-limits.service', async () => {
   // Keep the REAL normalisation (it is the contract under test); only the cache
@@ -84,16 +62,22 @@ import {
 const APP = 'apb_1';
 
 function updateData(): Record<string, unknown> {
-  const call = mockDb.appBlock.update.mock.calls.at(-1) as [{ data: Record<string, unknown> }];
+  const call = mockDbWrite.appBlock.update.mock.calls.at(-1) as [{ data: Record<string, unknown> }];
   return call[0].data;
 }
 
 beforeEach(() => {
-  mockDb.appBlock.findUnique.mockReset();
-  mockDb.appBlock.update.mockReset();
+  // `appBlock.findUnique` is armed on BOTH clients because the two describe blocks below read it
+  // through different ones — getAppSpendCapConfig on dbRead (block-registry.service:3652),
+  // setAppSpendCapConfig on dbWrite (:3702). Arming only one would leave the other describe on
+  // the canonical `null` default and take the NOT_FOUND branch throughout.
+  mockDbRead.appBlock.findUnique.mockReset();
+  mockDbWrite.appBlock.findUnique.mockReset();
+  mockDbWrite.appBlock.update.mockReset();
   mockInvalidate.mockReset();
-  mockDb.appBlock.findUnique.mockResolvedValue({ id: APP });
-  mockDb.appBlock.update.mockResolvedValue({
+  mockDbRead.appBlock.findUnique.mockResolvedValue({ id: APP });
+  mockDbWrite.appBlock.findUnique.mockResolvedValue({ id: APP });
+  mockDbWrite.appBlock.update.mockResolvedValue({
     id: APP,
     spendTier: 'trusted',
     spendCapBuzzPerDay: null,
@@ -103,7 +87,7 @@ beforeEach(() => {
 
 describe('getAppSpendCapConfig', () => {
   it('returns the SPEND tier, the raw override and the RESOLVED effective ceilings', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValue({
+    mockDbRead.appBlock.findUnique.mockResolvedValue({
       id: APP,
       spendTier: 'trusted',
       spendCapBuzzPerDay: null,
@@ -120,7 +104,7 @@ describe('getAppSpendCapConfig', () => {
   });
 
   it('surfaces the STRICTEST ceilings for an app on an unrecognised tier', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValue({
+    mockDbRead.appBlock.findUnique.mockResolvedValue({
       id: APP,
       spendTier: 'platinum',
       spendCapBuzzPerDay: null,
@@ -131,18 +115,18 @@ describe('getAppSpendCapConfig', () => {
   });
 
   it('returns null for a missing app (the router turns that into NOT_FOUND)', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
     await expect(BlockRegistry.getAppSpendCapConfig('nope')).resolves.toBeNull();
   });
 });
 
 describe('setAppSpendCapConfig', () => {
   it('throws NOT_FOUND for a missing app and NEVER writes', async () => {
-    mockDb.appBlock.findUnique.mockResolvedValue(null);
+    mockDbWrite.appBlock.findUnique.mockResolvedValue(null);
     await expect(
       BlockRegistry.setAppSpendCapConfig({ appBlockId: 'nope', spendCapBuzzPerDay: 5 })
     ).rejects.toBeTruthy();
-    expect(mockDb.appBlock.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
   });
 
   it('is a PATCH — an OMITTED field is left out of the write entirely', async () => {
@@ -189,7 +173,7 @@ describe('setAppSpendCapConfig', () => {
   });
 
   it('returns the newly EFFECTIVE ceilings, not just the stored columns', async () => {
-    mockDb.appBlock.update.mockResolvedValue({
+    mockDbWrite.appBlock.update.mockResolvedValue({
       id: APP,
       spendTier: 'standard',
       spendCapBuzzPerDay: null,
@@ -248,7 +232,7 @@ describe('setAppSpendCapConfig', () => {
   });
 
   it('reports the effective ceilings for the NEW tier after a promotion', async () => {
-    mockDb.appBlock.update.mockResolvedValue({
+    mockDbWrite.appBlock.update.mockResolvedValue({
       id: APP,
       spendTier: 'platform',
       spendCapBuzzPerDay: null,

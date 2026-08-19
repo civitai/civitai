@@ -8,7 +8,15 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import { chartType } from '$lib/stores/chart-type';
-  import { IconHeart, IconUserPlus, IconPhoto, IconArticle, IconEye } from '@tabler/icons-svelte';
+  import {
+    IconHeart,
+    IconUserPlus,
+    IconPhoto,
+    IconArticle,
+    IconEye,
+    IconUser,
+    IconBox,
+  } from '@tabler/icons-svelte';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
@@ -87,6 +95,27 @@
     data.analytics
       ? [
           {
+            label: 'Image views',
+            value: data.analytics.totals.imageViews,
+            prev: data.analyticsPrev?.totals.imageViews ?? null,
+            icon: IconEye,
+            color: '#ffa94d',
+          },
+          {
+            label: 'Model views',
+            value: data.analytics.totals.modelViews,
+            prev: data.analyticsPrev?.totals.modelViews ?? null,
+            icon: IconBox,
+            color: '#748ffc',
+          },
+          {
+            label: 'Article views',
+            value: data.analytics.totals.articleViews,
+            prev: data.analyticsPrev?.totals.articleViews ?? null,
+            icon: IconArticle,
+            color: '#f783ac',
+          },
+          {
             label: 'Reactions',
             value: data.analytics.totals.reactions,
             prev: data.analyticsPrev?.totals.reactions ?? null,
@@ -118,7 +147,7 @@
             label: 'Profile views',
             value: data.analytics.totals.profileViews,
             prev: data.analyticsPrev?.totals.profileViews ?? null,
-            icon: IconEye,
+            icon: IconUser,
             color: '#20c997',
           },
         ]
@@ -152,6 +181,18 @@
             prev: data.analyticsPrev?.profileViews,
             color: 4,
           },
+          {
+            title: 'Model views',
+            series: data.analytics.modelViews,
+            prev: data.analyticsPrev?.modelViews,
+            color: 5,
+          },
+          {
+            title: 'Article views',
+            series: data.analytics.articleViews,
+            prev: data.analyticsPrev?.articleViews,
+            color: 6,
+          },
         ]
       : []
   );
@@ -172,7 +213,7 @@
   </div>
 {:else}
   <p class="mb-2 text-xs text-dark-2">Totals {periodLabel}</p>
-  <section class="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
+  <section class="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
     {#each tiles as tile (tile.label)}
       <StatCard label={tile.label} icon={tile.icon} color={tile.color}>
         <div class="mt-1 flex items-baseline gap-2">
@@ -183,12 +224,45 @@
     {/each}
   </section>
   {#if data.allTime}
-    <p class="mb-6 text-xs text-dark-3">
-      All-time on your images: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong>
-      reactions ·
-      <strong class="text-dark-1">{num(data.allTime.comments)}</strong> comments
+    <!-- The two halves have different scopes, so the sentence names each one. Reactions are all-content (that is
+         what `reactions_owner_scores` aggregates, and it keeps this in agreement with the profile); comments are
+         images only, replies included, and the creator's own comments deliberately excluded — for some creators
+         those were 71% of the raw total, on a page about their audience. The sentence spends its words on scope
+         and nothing else: scope is what was wrong here, twice, and a creator has no prior about replies to
+         violate. `text-sm`, not `text-xs text-dark-3` — the most-qualified line on the page shouldn't also be
+         the faintest. -->
+    <p class="mb-6 text-sm text-dark-2">
+      All-time: <strong class="text-dark-1">{num(data.allTime.reactions)}</strong>
+      reactions across your content ·
+      <strong class="text-dark-1">{num(data.allTime.comments)}</strong> comments on your images
     </p>
   {/if}
+
+  <div class="mb-4 cs-panel p-4">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <p class="text-sm font-medium text-white">
+        Image views over time
+        <span class="text-xs text-dark-3">· counted through yesterday</span>
+      </p>
+      <ChartTypeToggle />
+    </div>
+    <div class="h-64">
+      {#key chartType.value}
+        <Chart
+          type={chartType.value}
+          data={lineData(
+            data.analytics.imageViews,
+            'Image views',
+            5,
+            data.analyticsPrev?.imageViews
+          )}
+          options={commonOptions}
+          plugins={[crosshair]}
+          class="h-full"
+        />
+      {/key}
+    </div>
+  </div>
 
   <div class="mb-4 cs-panel p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">

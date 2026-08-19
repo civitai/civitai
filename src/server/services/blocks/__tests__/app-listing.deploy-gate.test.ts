@@ -37,7 +37,7 @@ const { mockDbRead } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
@@ -74,6 +74,10 @@ function onsiteRow(over: Record<string, unknown> = {}) {
     cover: null,
     user: { id: 7, username: 'dev', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: {
       currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
       manifest: { name: 'Cool App', page: { path: '/run' } },
@@ -101,14 +105,17 @@ function offsiteRow(over: Record<string, unknown> = {}) {
     cover: null,
     user: { id: 7, username: 'dev', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: null,
     screenshots: [],
     ...over,
   };
 }
 
-const ONSITE_DEPLOY_GATE =
-  /al\.kind <> 'onsite' OR ab\.current_version_deployed_at IS NOT NULL/i;
+const ONSITE_DEPLOY_GATE = /al\.kind <> 'onsite' OR ab\.current_version_deployed_at IS NOT NULL/i;
 
 describe('listAvailableListings — DEPLOY-GATE WHERE clause', () => {
   beforeEach(() => {
@@ -136,12 +143,12 @@ describe('getListingDetail — DEPLOY-GATE (app-layer)', () => {
       ...onsiteRow({ appBlock: { currentVersionDeployedAt: null, manifest: {} } }),
       status: 'approved',
     });
-    expect(await getListingDetail({ slug: 'cool-app' })).toBeNull();
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).toBeNull();
   });
 
   it('SHOWS a deployed ONSITE listing', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
-    const detail = await getListingDetail({ slug: 'cool-app' });
+    const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail).not.toBeNull();
     expect(detail!.id).toBe('apl_1');
   });
@@ -156,12 +163,12 @@ describe('getListingDetail — DEPLOY-GATE (app-layer)', () => {
       }),
       status: 'approved',
     });
-    expect(await getListingDetail({ slug: 'cool-app' })).not.toBeNull();
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).not.toBeNull();
   });
 
   it('SHOWS an OFFSITE listing (no backing AppBlock/deploy — exempt)', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...offsiteRow(), status: 'approved' });
-    const detail = await getListingDetail({ slug: 'ext-app' });
+    const detail = await getListingDetail({ slug: 'ext-app' }, { scope: 'full' });
     expect(detail).not.toBeNull();
     expect(detail!.id).toBe('apl_2');
   });

@@ -1,6 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as LoggingClient from '~/server/logging/client';
 import { freshPersistedWinner } from './persisted-winner.fixture';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
+const mockLogToAxiom = loggingMock.logToAxiom;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
+    prizePool: 0,
+    prizeDistribution: null,
+  });
 
 // Task 19: hardens the LLM-winner -> judged-entry mapping in pickWinnersForChallenge against
 // creator-name spoofing. generateWinners (a TEXT-only LLM call) returns
@@ -19,12 +34,6 @@ import { freshPersistedWinner } from './persisted-winner.fixture';
 // is mocked at the module boundary.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbReadChallengeFindUnique,
-  mockDbWriteQueryRaw,
-  mockDbWriteExecuteRaw,
-  mockDbWriteChallengeUpdate,
-  mockDbWriteChallengeFindUnique,
   mockGetChallengeConfig,
   mockGetJudgingConfig,
   mockEndChallenge,
@@ -38,17 +47,8 @@ const {
   mockCreateNotification,
   mockCreateChallengeWinner,
   mockGetChallengeById,
-  mockLogToAxiom,
+  
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbReadChallengeFindUnique: vi.fn(),
-  mockDbWriteQueryRaw: vi.fn(),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
-  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  }),
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
   mockEndChallenge: vi.fn().mockResolvedValue(undefined),
@@ -62,19 +62,7 @@ const {
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: mockDbReadQueryRaw,
-    challenge: { findUnique: mockDbReadChallengeFindUnique },
-  },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
-  },
+  
 }));
 
 vi.mock('~/server/events', () => ({
@@ -159,11 +147,6 @@ vi.mock('~/utils/logging', () => ({
   createLogger: vi.fn(() => vi.fn()),
 }));
 
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: mockLogToAxiom,
-}));
-
 const { pickWinnersForChallenge } = await import('~/server/jobs/daily-challenge-processing');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
 
@@ -195,6 +178,12 @@ const JUDGING_CONFIG = {
   reviewTemplate: null,
 } as never;
 
+const PRIZES = [
+  { buzz: 500, points: 10 },
+  { buzz: 250, points: 5 },
+  { buzz: 100, points: 2 },
+];
+
 const currentChallenge = {
   challengeId: 1,
   type: 'daily',
@@ -206,7 +195,7 @@ const currentChallenge = {
   title: 'Test',
   invitation: '',
   coverUrl: '',
-  prizes: [{ buzz: 500, points: 10 }, { buzz: 250, points: 5 }, { buzz: 100, points: 2 }],
+  prizes: PRIZES,
   entryPrizeRequirement: 10,
   entryPrize: { buzz: 0, points: 0 },
 } as never;
@@ -268,8 +257,18 @@ describe('pickWinnersForChallenge winner mapping (name-spoof hardening)', () => 
     // name-based (or name-OR-id) match would resolve BOTH winners to whichever entry happens to
     // come first in array order, since both share the spoofed name.
     mockJudgedEntryRows([
-      { imageId: 1, userId: 100, username: 'Alice', score: { theme: 10, aesthetic: 10, humor: 10, wittiness: 10 } },
-      { imageId: 2, userId: 200, username: 'Alice', score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 } },
+      {
+        imageId: 1,
+        userId: 100,
+        username: 'Alice',
+        score: { theme: 10, aesthetic: 10, humor: 10, wittiness: 10 },
+      },
+      {
+        imageId: 2,
+        userId: 200,
+        username: 'Alice',
+        score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 },
+      },
     ]);
     // Global winner-cooldown query (System source, no event context) — nobody excluded.
     mockDbWriteQueryRaw.mockResolvedValueOnce([]);
@@ -362,7 +361,7 @@ describe('pickWinnersForChallenge unmatched picks (challenge 390)', () => {
     mockDbWriteQueryRaw.mockResolvedValueOnce([]);
     mockGetChallengeById.mockResolvedValue({
       source: ChallengeSource.System,
-      prizes: currentChallenge.prizes,
+      prizes: PRIZES,
       metadata: null,
     });
 

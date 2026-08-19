@@ -8,10 +8,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { cosmeticShopSection: { findMany: mocks.sectionFindMany } },
-  dbWrite: {},
-}));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
   refundTransaction: vi.fn(),
@@ -19,7 +15,6 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 // `importOriginal` keeps the rest of the module real: this suite's import graph
 // reaches prom collectors it never names, and a hand-listed mock silently breaks
 // the moment that graph grows.
@@ -33,6 +28,11 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 
 import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import { getShopSectionsWithItems } from '../cosmetic-shop.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.cosmeticShopSection.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.sectionFindMany as (...a: unknown[]) => unknown)(...args)
+);
 
 // The regression this file pins: official shop items carry the listing mod's id
 // in `addedById`, so viewer gating must key on `cosmetic.createdById` (null =
@@ -131,7 +131,10 @@ describe('getShopSectionsWithItems viewer gating', () => {
   // community hub for everyone, moderators included.
   it.each([
     ['creatorShop + stickers', { creatorShopEnabled: true, stickersEnabled: true }],
-    ['moderator + stickers', { isModerator: true, creatorShopEnabled: true, stickersEnabled: true }],
+    [
+      'moderator + stickers',
+      { isModerator: true, creatorShopEnabled: true, stickersEnabled: true },
+    ],
     ['stickers only', { stickersEnabled: true }],
     ['anonymous', {}],
   ])('the cosmetic arm still constrains something (%s)', async (_label, flags) => {

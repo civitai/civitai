@@ -8,9 +8,6 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { truncate } from 'lodash-es';
-import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { constants } from '~/server/common/constants';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import styles from './common.module.scss';
@@ -23,9 +20,7 @@ export const CollectionsSearchItem = forwardRef<
 
   const { user, images, metrics } = hit;
   const [image] = images;
-  const alt = truncate((image.meta as ImageMetaProps)?.prompt, {
-    length: constants.altTruncateLength,
-  });
+  const alt = image.name ?? undefined;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 

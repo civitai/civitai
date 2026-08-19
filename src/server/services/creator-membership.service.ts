@@ -174,22 +174,27 @@ export type UserMetricPrivacyDefaults = {
  *
  * Derived from an audit of every writer of the `User.settings` JSONB column, since that
  * is the only thing this cache derives from. The three `hideModel*` booleans are
- * written by exactly ONE path — `setUserSetting`, reached from the account
- * Creator-Controls toggles — and that path busts this key in the same call. The THREE
- * writers that touch `settings` WITHOUT going through `setUserSetting` do not move
- * these flags: `setDismissedAlerts` uses a `jsonb_set` scoped to the
- * `{dismissedAlerts}` path; `updateCreatorShopSettings` and
- * `copyGallerySettingsToAllModelsByUser` (`model.service.ts`) each read-merge-write the
- * blob from a fresh in-transaction row read, overriding only their own key
- * (`creatorShop` / `gallerySettings` respectively).
+ * written by exactly ONE caller path — the account Creator-Controls toggles
+ * (`CreatorControlsCard`) → `user.setSettings` → `setUserSettingHandler` →
+ * `patchUserSettings` — and that path busts this key in the same call, via
+ * `bustUserSettings`. (It reaches `patchUserSettings` DIRECTLY, not through
+ * `setUserSetting`; an earlier revision of this paragraph named `setUserSetting` as the
+ * writer, which stopped being true when the settings writers were consolidated.) The
+ * writers that touch `settings` on other paths do not move these flags:
+ * `setAlertDismissed` is a `jsonb_set` scoped to the `{dismissedAlerts}` path, and
+ * `updateCreatorShopSettings` / `copyGallerySettingsToAllModelsByUser`
+ * (`model.service.ts`) each merge only their own key (`creatorShop` /
+ * `gallerySettings`).
  *
- * One caveat on those last two, so nobody reads this as a stronger guarantee than it
- * is: both are whole-blob read-modify-writes at READ COMMITTED with no `FOR UPDATE`,
- * so a `setUserSetting` landing between their read and their update is silently
- * reverted. That is a lost update on the ROW, not a stale cache — no TTL at any value
- * helps, because the cache would then be faithfully reporting a wrong row. It is a
- * real pre-existing bug and deliberately out of scope here; it just means the correct
- * claim is "cannot move these flags absent a lost-update race", not "provably cannot".
+ * 🔴 The lost-update caveat this paragraph used to carry is RESOLVED, and the resolution
+ * is what the numbers below now rest on. Those writers were whole-blob read-modify-writes
+ * at READ COMMITTED with no `FOR UPDATE`, so a `setUserSetting` landing between their read
+ * and their update was silently reverted — a lost update on the ROW that no TTL could
+ * help, because the cache would then be faithfully reporting a wrong row. Every writer is
+ * now a single statement computed over the stored column (`patchUserSettings` /
+ * `setAlertDismissed` in `user.service.ts`), so the claim is no longer hedged: these
+ * writers cannot move the `hideModel*` flags. Both also bust this key now, where the two
+ * transactional ones previously did not bust it at all.
  *
  * So the TTL is NOT bounding a bypassing writer. What it bounds is two ways a CORRECT
  * write can still leave a wrong value cached, and in both the TTL is the only thing
@@ -356,8 +361,9 @@ export async function getUserMetricPrivacyDefaultsMap(userIds: number[]) {
 
 /**
  * Bust the cached metric-privacy defaults for one or more users. Wired into
- * `setUserSetting`, which is the ONLY path that writes the `hideModel*` flags, so a
- * change to a user's defaults takes effect on the next read.
+ * `bustUserSettings` (`user.service.ts`), which every settings writer calls, so a change
+ * to a user's defaults takes effect on the next read. `setUserSetting` remains the only
+ * path that WRITES the `hideModel*` flags; the others bust because they share the blob.
  *
  * 🔴 This is best-effort by design — it swallows Redis errors so a cache problem can
  * never fail the user's settings mutation. That makes it a non-guaranteed invalidation,

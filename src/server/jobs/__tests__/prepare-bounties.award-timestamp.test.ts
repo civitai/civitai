@@ -1,31 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockDbWrite, executedStatements, mockCreateBuzzTransactionMany, mockQueueUpdate } =
-  vi.hoisted(() => {
-    const executedStatements: string[] = [];
-    return {
-      executedStatements,
-      mockCreateBuzzTransactionMany: vi.fn(),
-      mockQueueUpdate: vi.fn(),
-      mockDbWrite: {
-        bounty: { findMany: vi.fn() },
-        $queryRaw: vi.fn(),
-        $executeRawUnsafe: vi.fn(async (sql: string) => {
-          executedStatements.push(sql);
-          return 1;
-        }),
-        $transaction: vi.fn((operations: Promise<unknown>[]) => Promise.all(operations)),
-      },
-    };
-  });
+const { executedStatements, mockCreateBuzzTransactionMany, mockQueueUpdate } = vi.hoisted(() => {
+  const executedStatements: string[] = [];
+  return {
+    executedStatements,
+    mockCreateBuzzTransactionMany: vi.fn(),
+    mockQueueUpdate: vi.fn(),
+  };
+});
 
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
   getJobDate: async () => [new Date(0), vi.fn()],
 }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: () => ({ catch: vi.fn() }) }));
 vi.mock('~/server/utils/errorHandling', () => ({ handleLogError: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
@@ -55,6 +43,17 @@ vi.mock('~/server/email/templates', () => {
 });
 
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbWrite = dbMock.dbWrite;
+loggingMock.logToAxiom.mockImplementation(() => ({ catch: vi.fn() }));
+dbMock.dbWrite.$executeRawUnsafe.mockImplementation(async (sql: string) => {
+  executedStatements.push(sql);
+  return 1;
+});
+dbMock.dbWrite.$transaction.mockImplementation((operations: Promise<unknown>[]) =>
+  Promise.all(operations)
+);
 
 const BOUNTY_ID = 4321;
 const WINNER_ENTRY_ID = 99;

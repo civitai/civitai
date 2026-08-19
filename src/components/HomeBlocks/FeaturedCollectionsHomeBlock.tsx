@@ -9,7 +9,8 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { FeaturedCollectionHeader } from '~/components/HomeBlocks/FeaturedCollectionHeader';
-import { ITEMS_PER_ROW, useCappedItems } from '~/components/HomeBlocks/homeBlockItems';
+import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -18,9 +19,9 @@ import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
+type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; blockIndex: number };
 
-export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
+export const FeaturedCollectionsHomeBlock = ({ homeBlockId, blockIndex }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
@@ -35,6 +36,7 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
       <HomeBlockWrapper py={32}>
         <FeaturedCollectionSection
           pick={{ collection: null, items: [], rows: 2, limit: 8 }}
+          order={dedupeOrder(blockIndex)}
           isLoading
         />
       </HomeBlockWrapper>
@@ -43,10 +45,10 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
 
   return (
     <>
-      {picks.map((pick) =>
+      {picks.map((pick, subIndex) =>
         pick.collection ? (
           <HomeBlockWrapper key={pick.collection.id} py={32}>
-            <FeaturedCollectionSection pick={pick} />
+            <FeaturedCollectionSection pick={pick} order={dedupeOrder(blockIndex, subIndex)} />
           </HomeBlockWrapper>
         ) : null
       )}
@@ -54,19 +56,20 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId }: Props) => {
   );
 };
 
-type SectionProps =
+type SectionProps = { order: number } & (
   | { pick: PickedFeaturedCollection; isLoading?: false }
   | {
       pick: { collection: null; items: []; rows: number; limit: number; maxPerUser?: number };
       isLoading: true;
-    };
+    }
+);
 
-function FeaturedCollectionSection({ pick, isLoading }: SectionProps) {
+function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
   const { collection, items: rawItems } = pick;
   const rows = pick.rows;
   const maxPerUser = pick.maxPerUser;
 
-  const shuffled = useMemo(() => shuffle(rawItems ?? []), [rawItems]);
+  const shuffled = useMemo(() => shuffle([...(rawItems ?? [])]), [rawItems]);
   const shuffledData = useMemo(() => shuffled.map((x: { data: unknown }) => x.data), [shuffled]);
   const firstType = (shuffled[0] as { type?: string } | undefined)?.type ?? 'image';
   const type = firstType as 'image' | 'model' | 'post' | 'article';
@@ -76,7 +79,12 @@ function FeaturedCollectionSection({ pick, isLoading }: SectionProps) {
     data: shuffledData as any,
   });
 
-  const items = useCappedItems(filtered as { user?: { id: number } | null }[], rows, maxPerUser);
+  const items = useDedupedCappedItems(filtered as { id: number; user?: { id: number } | null }[], {
+    order,
+    entity: type,
+    rows,
+    maxPerUser,
+  });
 
   const title = collection?.name ?? 'Collection';
   const link = collection ? `/collections/${collection.id}` : '#';

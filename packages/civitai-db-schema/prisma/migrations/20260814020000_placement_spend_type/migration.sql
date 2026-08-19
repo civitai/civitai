@@ -1,0 +1,130 @@
+-- Which Buzz a placement was paid in, so settlement can pay the same kind back.
+--
+-- APPLY BEFORE deploying the app that writes this column. The column is nullable
+-- with no default, so an old pod writing a row without it stays valid.
+--
+-- THERE IS DELIBERATELY NO BACKFILL.
+--
+-- Every placement made before this column existed was BOOKED into escrow as
+-- yellow whatever the placer spent: the escrow debit named no destination
+-- account, so the Buzz service credited its default. Verified in ClickHouse
+-- `buzzTransactions` — those hold legs read `fromAccountType: green,
+-- toAccountType: yellow`.
+--
+-- NULL therefore means "legacy: booked as yellow, settle as yellow", which is
+-- what the application reads it as.
+--
+-- Be clear about what kind of decision this is: a CHOICE, not a constraint. The
+-- escrow is the bank, which is not balance-constrained, so a legacy row could be
+-- paid in the placer's true currency and it would succeed. Leaving settled
+-- history reading the way the ledger recorded it is simply the smaller change,
+-- for 8 production rows — 7 already settled, 1 pending, worth 100 Buzz. Going
+-- forward the column carries the truth and nothing has to be inferred.
+--
+-- ⚠️ THE WRONG COMBINATION IS A GREEN PLACEMENT SETTLED BY OLD CODE, and it is
+-- reachable in BOTH directions. New code books the hold in GREEN; old settlement
+-- code names no account, so it pays the owner YELLOW.
+--
+-- What that costs, stated accurately: the OWNER IS PAID THE WRONG CURRENCY, and
+-- the receipt stops any later run from correcting it. It is NOT stranded money —
+-- the escrow is the bank, which is not balance-constrained (`buzz.service.ts`
+-- exempts account 0), so paying yellow against a green-booked hold succeeds and
+-- costs the platform nothing. An earlier draft of this file claimed the green
+-- was stranded and the pooled yellow drained; that was wrong, and the cosmetic
+-- shop has been paying creators green out of a yellow-credited bank for months
+-- to prove it.
+--
+--   created by │ settled by │ escrow │ pays   │
+--   ───────────┼────────────┼────────┼────────┤
+--   old        │ old        │ yellow │ yellow │ safe
+--   old        │ new        │ yellow │ yellow │ safe (NULL -> yellow)
+--   new        │ new        │ green  │ green  │ safe
+--   new        │ OLD        │ green  │ YELLOW │ ✗
+--
+-- A canary is a mixed-pod window by construction, so the last row happens on the
+-- way FORWARD too, not only on rollback — and measured on prod, owners have
+-- approved 34 seconds after a placement was made, well inside one. **Turn the
+-- `sticker-placement` and `remix-gallery` Flipt flags OFF before deploying and
+-- back ON only after the canary is fully promoted.** Both surfaces are flag-
+-- gated and mod-only today, so the pause costs nothing.
+--
+-- Expiry and removals are safe in both directions: they refund through the hold's
+-- own ledger legs, which reverse in kind without naming an account.
+--
+-- Before rolling the app back, drain green placements that old code could still
+-- settle. `status = 'pending'` alone is NOT enough — an approved placement whose
+-- payout legs are only partly receipted is resumed by the unpaid-leg sweep:
+--
+--   SELECT DISTINCT p.id, p.status
+--   FROM "Placement" p
+--   LEFT JOIN "PlacementTransaction" t ON t."placementId" = p.id
+--   WHERE p."spendType" = 'green'
+--     AND ( p.status = 'pending'
+--        OR (t.kind IN ('toOwner','feeToOwner','toSeller') AND t."transactionId" IS NULL) );
+--
+-- Settle those under NEW code, or expire them; then stop new placements (flags
+-- off) so the set cannot refill while the rollback rolls.
+--
+-- ⚠️ NEVER DROP THIS COLUMN on a rollback. Old Prisma clients emit explicit
+-- column lists, so an extra column is inert to them — leaving it costs nothing.
+-- Dropping it destroys the only record of which escrows hold green, and makes a
+-- later roll-forward pay yellow out of them with no way to find them.
+
+-- 1 and 2 together: a dropped session between them leaves the column with no
+-- CHECK, which is the second of the two guards keeping a currency the escrow
+-- cannot hold out of a payout. The whole block is idempotent, so a retry after a
+-- failure is safe.
+SET lock_timeout = '5s';
+BEGIN;
+
+ALTER TABLE "Placement" ADD COLUMN IF NOT EXISTS "spendType" TEXT;
+
+-- 2. The same shape as "Placement_removedBy_check": the column is TEXT because
+--    Prisma models it as a string, and the constraint is what actually keeps a
+--    typo'd or newly-invented currency out of a column the settlement pays from.
+--
+--    Only the two purchasable types are allowed. Blue is excluded because a
+--    placement that took Blue and paid it out would be a transfer channel for
+--    non-transferable Buzz — the same reason PLACEMENT_SPEND_TYPES excludes it —
+--    and adding it here must be a deliberate edit rather than a string that
+--    happens to reach a write.
+ALTER TABLE "Placement" DROP CONSTRAINT IF EXISTS "Placement_spendType_check";
+ALTER TABLE "Placement" ADD CONSTRAINT "Placement_spendType_check"
+  CHECK ("spendType" IS NULL OR "spendType" IN ('green', 'yellow'));
+
+COMMIT;
+
+-- 3. VERIFY THE SCHEMA. Step 1 is a no-op on retry and step 2 reports success
+--    either way, so confirm both landed rather than reading a clean exit as
+--    proof. Both must return exactly one row:
+--
+--      SELECT column_name, is_nullable, data_type
+--      FROM information_schema.columns
+--      WHERE table_name = 'Placement' AND column_name = 'spendType';
+--
+--      SELECT conname, pg_get_constraintdef(oid), convalidated
+--      FROM pg_constraint
+--      WHERE conrelid = '"Placement"'::regclass AND conname = 'Placement_spendType_check';
+--
+--    Expect a nullable `text` column, and a CHECK naming both 'green' and
+--    'yellow' with `convalidated = true`. A missing constraint is not cosmetic —
+--    it is the second of the two guards standing between a bad write and a
+--    payout in a currency the escrow cannot hold.
+--
+-- 4. VERIFY THE BEHAVIOUR, after the deploy and after the flags go back on.
+--    Everything above proves the schema; none of it proves the app is writing
+--    the column. Make one placement, then:
+--
+--      SELECT id, status, "spendType", "expiresAt"
+--      FROM "Placement" ORDER BY id DESC LIMIT 5;
+--
+--    The new row must carry a `spendType` matching the domain it was made on
+--    (green on the SFW domain, yellow otherwise) and a non-NULL `expiresAt`.
+--
+--    Standing check afterwards — this should never return a row created after
+--    the deploy, because such a row was charged in one currency and will settle
+--    in another:
+--
+--      SELECT id, "createdAt" FROM "Placement"
+--      WHERE "expiresAt" IS NOT NULL AND "spendType" IS NULL
+--        AND "createdAt" > '<deploy time>';

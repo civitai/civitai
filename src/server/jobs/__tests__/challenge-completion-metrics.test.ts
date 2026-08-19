@@ -1,6 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import client from 'prom-client';
 import { freshPersistedWinner } from '~/server/games/daily-challenge/__tests__/persisted-winner.fixture';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
+  prizePool: 0,
+  prizeDistribution: null,
+});
 
 // Regression coverage for the SCHEDULED-JOB challenge completion telemetry.
 //
@@ -18,12 +31,6 @@ import { freshPersistedWinner } from '~/server/games/daily-challenge/__tests__/p
 // heavy transitive chain, everything touching DB/LLM/buzz is mocked at the module boundary.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbReadChallengeFindUnique,
-  mockDbWriteQueryRaw,
-  mockDbWriteExecuteRaw,
-  mockDbWriteChallengeUpdate,
-  mockDbWriteChallengeFindUnique,
   mockGetChallengeConfig,
   mockGetJudgingConfig,
   mockEndChallenge,
@@ -42,15 +49,6 @@ const {
   mockGetChallengeBuzzType,
   mockSendChallengeResultsNotification,
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbReadChallengeFindUnique: vi.fn(),
-  mockDbWriteQueryRaw: vi.fn(),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
-  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  }),
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
   mockEndChallenge: vi.fn().mockResolvedValue(undefined),
@@ -68,18 +66,6 @@ const {
   mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
   mockGetChallengeBuzzType: vi.fn().mockResolvedValue('yellow'),
   mockSendChallengeResultsNotification: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: mockDbReadQueryRaw,
-    challenge: { findUnique: mockDbReadChallengeFindUnique },
-  },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
-  },
 }));
 
 vi.mock('~/server/events', () => ({

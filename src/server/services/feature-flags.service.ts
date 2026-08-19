@@ -165,6 +165,13 @@ const featureFlags = createFeatureFlags({
   // dark-flag precedent.) No client bundle change is required (the feed already
   // renders any-length image arrays), so this is a pure server behavior flag.
   getAllModelImagesSlim: { availability: [], fliptKey: 'get-all-model-images-slim' },
+  // Feed impression tracking. Ships dark: this is the only new telemetry stream
+  // on the site whose volume is set by scrolling rather than by clicking, so the
+  // rollout wants a dial that does not need a deploy to turn back down. Ramp the
+  // `feed-impressions` cohort while watching the impressions table's insert rate
+  // and part count; instant rollback = set the cohort to 0, which stops the
+  // browser observing at all rather than merely dropping rows server-side.
+  feedImpressions: { availability: [], fliptKey: 'feed-impressions' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -318,6 +325,14 @@ const featureFlags = createFeatureFlags({
   // not strip cosmetics people paid for, only stop new packs being listed,
   // discovered or sold.
   cosmeticPacks: { availability: ['mod'], fliptKey: 'cosmetic-packs' },
+  // Perceptual near-match surfacing in creator-shop review. `availability: []` =
+  // DARK and FAILS CLOSED, and it gates the LOOKUP as well as the panel: at the
+  // current 64-bit hash width the two badges we know were imitations of official
+  // artwork sit at Hamming 17 and 22 against a corpus whose 1st percentile is 17,
+  // so the list would show mods unrelated cosmetics ahead of the real match. It
+  // stays off until the orchestrator offers a wider hash and the sweep has
+  // re-hashed the corpus into that lane.
+  cosmeticSimilarity: { availability: [], fliptKey: 'cosmetic-similarity' },
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
@@ -422,11 +437,15 @@ const featureFlags = createFeatureFlags({
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
   // Per-model 3D generator gates, layered UNDER `model3dGenerator` (which gates
-  // the whole 3D surface). Let Tripo & Hunyuan3D ship dark and roll out
-  // independently of Meshy (PolyGen) via Flipt. Off ⇒ the ecosystem is hidden
-  // from the img2model3d picker and rejected on submit (see ecosystem-graph.ts).
+  // the whole 3D surface), so each can ship dark and roll out independently via
+  // Flipt. Tripo & Hunyuan3D are whole ecosystems — off ⇒ hidden from the
+  // img2model3d picker and rejected on submit (see ecosystem-graph.ts).
+  // `meshyV7Generator` instead gates ONE version inside PolyGen: off ⇒ v7 is
+  // dropped from the version options, which both hides it and makes a submitted
+  // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
   tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
   hunyuan3dGenerator: { availability: ['mod'], fliptKey: 'hunyuan3d-generator' },
+  meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
   // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
   // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
   // is unaffected when this is off. Mod-only until the `grok-imagine-2` Flipt
@@ -454,6 +473,31 @@ const featureFlags = createFeatureFlags({
   // to `app-blocks-enabled` — i.e. ZERO behavior change today (the currently
   // mod+app-dev-testers cohort keeps identical store access).
   appListings: { availability: ['mod'], fliptKey: 'app-listings' },
+  // App Blocks — EXTERNAL-ONLY store scope. The CLIENT/SSR half of the server's
+  // `isExternalListingsPublicEnabled()` (same Flipt key), so the `/apps` page gate
+  // can admit a viewer whose ONLY qualification is this flag — without it the store
+  // is structurally unreachable for that cohort (`hasAppsStoreAccess` would be
+  // false → `notFound`) even though the server would happily serve them the offsite
+  // catalog. Read via the shared `hasAppsStoreAccess` predicate, never open-coded.
+  //
+  // 🔴 `availability: []` (DARK + fail-closed for EVERYONE, mods included), NOT
+  // `['mod']`, and that is load-bearing for the server/client seam rather than
+  // taste: an ABSENT flag makes the SERVER's async `isFlipt` return `false`, while
+  // the CLIENT's `isEnabledSync` returns `null` and falls through to this static
+  // availability. With `['mod']` a moderator's client value would be `true` against
+  // a server `false` — the two evaluations of one flag disagreeing, which is exactly
+  // the failure this entry exists to prevent. `[]` makes the static answer `false`
+  // too, so both sides are dark until Flipt says otherwise. (Mirrors the
+  // `appBlocksAgenticReview` precedent.) A mod loses nothing: they already hold
+  // `appListings`/`appBlocks`, and the server checks the privileged axis FIRST.
+  //
+  // Grants ONLY store CATALOG reachability — the server still scopes the data to
+  // `kind='offsite'` (`resolveStoreVisibilityScope` → `public-external`). It does
+  // NOT widen any block-RUNTIME surface (those stay on `appBlocks` alone).
+  appListingsPublicExternal: {
+    availability: [],
+    fliptKey: 'app-listings-public-external',
+  },
   // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
   // so the page surface enables independently of the master `app-blocks-enabled`
   // gate. The page route + page-token mint require BOTH `appBlocks` AND
@@ -506,6 +550,40 @@ const featureFlags = createFeatureFlags({
   // the route SSR resolver reads the same resolved flag) but staged `['mod']`
   // rather than `[]` because it's a re-host, not a brand-new dark capability.
   appReviewPage: { availability: ['mod'], fliptKey: 'app-review-page' },
+  // Metadata info button on image feed cards. `availability: []` hides it for
+  // EVERYONE, mods included — this is a probe measuring whether anyone misses
+  // it, and a cohort that still sees the button cannot report missing it.
+  // Turning it back on is the expected outcome if people complain, not a
+  // failure. Two things the person flipping it should know:
+  //   - The flag does NOT exist in flipt-state yet, so until someone creates it
+  //     there is no runtime lever at all and restoring the button means a code
+  //     change and a deploy.
+  //   - Enabling it restores the overflow it was hidden to fix (ClickUp
+  //     868krjmvv): on a featured-grid card whose four reaction counts all reach
+  //     four digits, the button wraps onto a second line. Pinned by
+  //     `ImageCard.browser.test.tsx`.
+  imageCardInfoButton: { availability: [], fliptKey: 'image-card-info-button' },
+  // Early-adopter opt-in cohort. `availability: []` means static evaluation is false, so
+  // when Flipt is UNREACHABLE (isFliptSync → null) nobody is in the cohort. NOT
+  // `['user']`/`['public']`: those would fail OPEN during a Flipt outage, which defeats the
+  // point of an opt-in.
+  //
+  // 🔴 SCOPE OF THAT PROTECTION — it covers the Flipt-DOWN case ONLY, and nothing else.
+  // Once Flipt ANSWERS, `hasFeature` returns the Flipt result and never reaches static
+  // evaluation (see the `if (fliptResult !== null) return fliptResult` branch below), so
+  // `availability: []` cannot defend against a MIS-DEFINED flag. The correctness of this
+  // cohort therefore rests on a precondition held in ANOTHER REPO:
+  //
+  //   flipt-state `civitai-app/default/features.yaml` → flag `early-adopter` MUST be
+  //   `enabled: false` with the `early-adopters` segment rollout.
+  //
+  // For a boolean flag, Flipt's `enabled` is the value returned when NO rollout matches —
+  // it is not a master switch. `enabled: true` there would hand this flag to every
+  // non-opted-in user and every anonymous request, and nothing on this side would stop it.
+  // That exact defect was caught pre-merge in flipt-state#62; the shape is now gated by
+  // `scripts/validate-flag-shape.py` in that repo, and modelled in
+  // `feature-flags.early-adopter.seam.test.ts`.
+  earlyAdopter: { availability: [], fliptKey: 'early-adopter' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -638,6 +716,11 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
     // Creator Program membership is recorded as an onboarding-step bit
     // (set on join in creator-program.service, cleared on leave).
     ctx.isInCreatorProgram = String(Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram));
+    // Early-adopter opt-in, stored in `User.settings` and projected onto the session by
+    // the auth hub. Always emitted for a logged-in user (never opted in ⇒ 'false'), so a
+    // Flipt segment can match on the string EQUALLY rather than on key presence — same
+    // shape as `isModerator` above. Absent entirely for an anonymous request.
+    ctx.isEarlyAdopter = String(!!user.isEarlyAdopter);
   } else {
     ctx.isLoggedIn = 'false';
   }
@@ -789,8 +872,12 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
 // one user scrolling the feed (many getInfinite calls) — skip the per-flag work.
 //
 // KEY COMPLETENESS IS A CORRECTNESS INVARIANT. The cache key must include EVERY
-// input hasFeature reads: user id/isModerator/tier/permissions, host (domain
-// gating), and the FULL region. Region gates compliance-sensitive
+// input hasFeature reads: user id/isModerator/tier/isEarlyAdopter/permissions,
+// host (domain gating), and the FULL region. `isEarlyAdopter` is in the key for
+// exactly this reason — it feeds buildFliptContext, so an entry cached before the
+// user toggled it would keep the OLD cohort decision for the whole TTL, which is
+// precisely the staleness the toggle's `refreshSession` exists to prevent.
+// Region gates compliance-sensitive
 // restricted-region features, so two different regions must NEVER share an entry
 // — the whole region object is serialized into the key to guarantee that. Live
 // Flipt config changes are bounded by the TTL (same staleness as the per-eval
@@ -808,10 +895,9 @@ function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccess
   // checkRegionAccess's `if (req)`) so key construction never throws.
   const region = isDev || !req ? undefined : getRegion(req);
   const u = user
-    ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${(user.permissions ?? [])
-        .slice()
-        .sort()
-        .join(',')}`
+    ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${
+        user.isEarlyAdopter ? 1 : 0
+      }:${(user.permissions ?? []).slice().sort().join(',')}`
     : 'anon';
   return `${u}|h:${host ?? ''}|r:${region ? JSON.stringify(region) : ''}`;
 }

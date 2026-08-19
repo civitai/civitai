@@ -1,11 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { Tracker } from './clickhouse/client';
-import requestIp from 'request-ip';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { isProd } from '~/env/other';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { createCallerFactory } from '~/server/trpc';
-import { appRouter } from '~/server/routers';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -27,7 +25,19 @@ export const createContext = async ({
   res: NextApiResponse;
 }) => {
   const session = await getServerAuthSession({ req, res });
-  const ip = requestIp.getClientIp(req) ?? '';
+  // ATTRIBUTION surface. `ctx.ip` labels a caller for tracking, audit trails and
+  // actor hashing; it is not an input to an allow/deny decision, so it takes the
+  // derivation that always yields a label rather than the fail-closed one that
+  // collapses non-edge callers onto a shared hop. See the "CHOOSING BETWEEN THE
+  // TWO PREDICATES" section in `~/server/utils/client-ip`.
+  //
+  // The `''` sentinel is PRESERVED deliberately. `ctx.ip` is read in 23 places,
+  // and two of them treat a falsy address as meaningfully different from a
+  // non-address string: `base.reward.ts` folds `''` to `undefined` before it
+  // reaches a buzz-transaction idempotency key, and the captcha verifier
+  // forwards the value to an external API as a remote address. Only WHICH
+  // address is derived changes here — the unresolvable case is byte-identical.
+  const ip = resolveClientIpOrNull(req) ?? '';
   // Bearer/API-key auth carries no cookies, so CSRF does not apply.
   const isBearerAuth = (req as any).context?.apiKeyId != null;
   const acceptableOrigin = !isProd || isBearerAuth || isAllowedOriginRequest(req);
@@ -97,42 +107,14 @@ export const createContext = async ({
   };
 };
 
-const createCaller = createCallerFactory(appRouter);
-export const publicApiContext2 = async (req: NextApiRequest, res: NextApiResponse) => {
-  const domain = getRequestDomainColor(req) ?? 'blue';
-
-  return createCaller({
-    user: undefined,
-    acceptableOrigin: true,
-    features: getFeatureFlagsLazy({ req }),
-    track: new Tracker(req, res),
-    ip: requestIp.getClientIp(req) ?? '',
-    cache: {
-      browserTTL: 3 * 60,
-      edgeTTL: 3 * 60,
-      staleWhileRevalidate: 60,
-      canCache: true,
-      skip: false,
-    },
-    res,
-    req,
-    domain,
-    // Non-client-facing context â€” use an always-open signal so downstream
-    // callers that expect AbortSignal have a valid value.
-    signal: new AbortController().signal,
-    tokenScope: TokenScope.Full,
-    apiKeyId: undefined,
-    subject: undefined,
-  });
-};
-
 export const publicApiContext = async (req: NextApiRequest, res: NextApiResponse) => {
   return {
     user: undefined,
     acceptableOrigin: true,
     features: getFeatureFlagsLazy({ req }),
     track: new Tracker(req, res),
-    ip: requestIp.getClientIp(req) ?? '',
+    // ATTRIBUTION surface — see the note on `ip` in `createContext` above.
+    ip: resolveClientIpOrNull(req) ?? '',
     cache: {
       browserCacheTTL: 3 * 60,
       edgeCacheTTL: 3 * 60,

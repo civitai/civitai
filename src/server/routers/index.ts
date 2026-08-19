@@ -146,6 +146,7 @@ export const appRouter = router({
   rewardsBonusEvent: lazy(() =>
     import('./rewards-bonus-event.router').then((m) => m.rewardsBonusEventRouter)
   ),
+  rewardConfig: lazy(() => import('./reward-config.router').then((m) => m.rewardConfigRouter)),
   oauthClient: lazy(() =>
     import('~/server/routers/oauth-client.router').then((m) => m.oauthClientRouter)
   ),

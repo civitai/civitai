@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
-import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { CollectionItemRejectionReason, CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
@@ -22,7 +22,7 @@ import {
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
 import { isDefined } from '~/utils/type-guards';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { createJob } from './job';
 
 // Chunks are barriers waiting on the slowest call (~3s median, 13-20s tail), so they must be wide
@@ -204,6 +204,18 @@ async function classifyItem({
   return { collectionItemId: item.collectionItemId, action, message };
 }
 
+// Keyed on the status alone: an AI rejection with no message is still an AI rejection, and gating
+// on the message instead silently persisted no reason at all.
+export function resolveAutomatedRejectionReason({
+  status,
+}: {
+  status: CollectionItemStatus;
+}): CollectionItemRejectionReason | undefined {
+  return status === CollectionItemStatus.REJECTED
+    ? CollectionItemRejectionReason.Automated
+    : undefined;
+}
+
 // Stamps before writing status: a status write can throw, and an unstamped item is reselected and
 // re-billed on the next run.
 async function applyOutcomes({
@@ -249,10 +261,15 @@ async function applyOutcomes({
   for (const write of writes) {
     try {
       await updateCollectionItemsStatus({
-        input: { collectionId, collectionItemIds: write.ids, status: write.status },
+        input: {
+          collectionId,
+          collectionItemIds: write.ids,
+          status: write.status,
+          rejectionReason: resolveAutomatedRejectionReason({ status: write.status }),
+        },
         userId: SYSTEM_USER_ID,
         isSystem: true,
-        reason: write.reason,
+        rejectionDetail: write.reason,
       });
     } catch (error) {
       logToAxiom({

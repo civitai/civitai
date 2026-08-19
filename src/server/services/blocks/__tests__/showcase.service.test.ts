@@ -23,7 +23,7 @@ vi.mock('~/server/services/image.service', () => ({
   getImageMetricsObject: mockGetImageMetricsObject,
 }));
 // Mock getEdgeUrl as identity so tests assert against the input urls.
-vi.mock('~/client-utils/cf-images-utils', () => ({
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (src: string) => src,
 }));
 

@@ -1,6 +1,7 @@
 // @ts-check
 import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
+import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import {
   commaDelimitedStringArray,
   commaDelimitedStringObject,
@@ -310,6 +311,11 @@ export const serverSchema = z
     // of silently disabling the guard (withTimeoutFallback passes through unbounded
     // when ms<=0 → the exact ~30s hang this exists to prevent, with no signal).
     CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
+    // Per-read deadline for `/api/user/settings`, which `_app` self-fetches on every SSR
+    // render. Must stay well under `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s): a response the
+    // caller has stopped waiting for is the same outage. .int().positive() for the same
+    // reason as above — withTimeoutFallback passes through unbounded when ms<=0.
+    SETTINGS_READ_DEADLINE_MS: z.coerce.number().int().positive().default(2000),
     NODE_ENV: z.enum(['development', 'test', 'production']),
     NEXTAUTH_SECRET: z.string(),
     NEXTAUTH_URL: z.preprocess(
@@ -401,6 +407,24 @@ export const serverSchema = z
     STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
     STORAGE_RESOLVER_AUTH: z.string().optional(), // Basic auth credentials (username:password)
     TRPC_ORIGINS: commaDelimitedStringArray().default([]),
+    // Server-side cap on how many procedure calls ONE batched tRPC request may carry
+    // (`maxBatchSize` on the adapter). Defaults to the compiled-in constant that the browser
+    // batch link also mirrors, so an unset env is byte-identical to hardcoding it; the env var
+    // exists so the cap can be corrected with a config change instead of an image build plus a
+    // canary rollout. 🔴 FAIL SOFT, NOT LOUD — `.catch(...)` rather than `.default(...)`.
+    // `serverSchema` is parsed once by `src/env/server.ts`, which THROWS on any invalid field,
+    // so a `.default()` here meant a bad value ('' / '0' / '-5' / 'abc' / '12.5' / ' ') crashed
+    // the ENTIRE app boot. That is the wrong failure mode for a knob whose whole purpose is
+    // mid-incident correction: a typo on the Deployment would take the fleet down during the
+    // very incident the lever exists to fix. `.catch()` degrades any parse/validation failure
+    // to the compiled-in constant — i.e. to "the cap we shipped" — instead. The `.min(1)` floor
+    // is what makes 0 / negatives fall back rather than pass: 0 would reject every batch.
+    // Mirrors SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS / EXTERNAL_MODERATION_TIMEOUT_MS.
+    // Pinned behaviourally by `src/env/__tests__/server-schema-trpc-max-batch-size.test.ts`.
+    // 🔴 RAISING is a safe rollback; LOWERING below the compiled-in constant is a tightening
+    // that 400s batches already-loaded browsers can still build — see `getTrpcMaxBatchSize` in
+    // `src/server/trpc/batch-cap.ts`.
+    TRPC_MAX_BATCH_SIZE: z.coerce.number().int().min(1).catch(TRPC_MAX_BATCH_SIZE),
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
@@ -699,6 +723,11 @@ export const serverSchema = z
     // verifies orders/* HMAC. Admin auth: the custom app uses the client_credentials
     // grant (CLIENT_ID + CLIENT_SECRET → short-lived token); set SHOPIFY_ADMIN_TOKEN
     // instead only if using a static store custom-app token.
+    // ClickUp -> Known Issues board sync. Signing secret ClickUp returns when the
+    // webhook is created; unset disables the receiver (503) rather than trusting
+    // unsigned deliveries.
+    CLICKUP_WEBHOOK_SECRET: z.string().optional(),
+
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
     SHOPIFY_CLIENT_ID: z.string().optional(),

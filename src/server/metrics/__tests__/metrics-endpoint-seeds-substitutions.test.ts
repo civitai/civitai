@@ -1,5 +1,6 @@
 import client from 'prom-client';
 import { describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * 🔴 THE SEAM: does loading the module that SERVES the scrape actually register
@@ -40,8 +41,6 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 const METRIC = 'civitai_generation_model_substitutions_total';
 
 describe('/api/metrics registers + seeds the substitution counter at module load', () => {

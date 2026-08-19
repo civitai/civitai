@@ -124,6 +124,10 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import {
+  getModelVersionEarlyAccessRefundRequirement,
+  refundModelEarlyAccessPurchases,
+} from '~/server/services/model-early-access-refund.service';
 import type {
   ModelType,
   ModelVersionEngagementType,
@@ -144,7 +148,6 @@ import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -749,6 +752,29 @@ export const upsertModelVersion = async ({
     if (existingModelMeta?.cannotPublish && data.status === ModelStatus.Published) {
       throw throwBadRequestError(
         'This model version cannot be published due to moderation restrictions.'
+      );
+    }
+
+    // `status` is client-settable on this route (`z.enum(ModelStatus)`, unconstrained) and rides the
+    // general `...data` spread into the update, so an edit-and-save could move a published version to
+    // any other status. Downloads and the public reads both gate on `status === 'Published'`, so
+    // EVERY other value takes the version off the page — Draft as surely as Unpublished — and none of
+    // them computes the refund that unpublishModelVersionById owes its buyers. So this refuses
+    // LEAVING Published rather than listing the values that do it: an enumeration of forbidden
+    // statuses is not a control, and ModelStatus has eight members.
+    //
+    // ⚠️ This closes the take-down, NOT every way this route can defeat the gate. The same save
+    // clears the PaidAccess row when `paidAccess` is omitted (writePaidAccessForModelVersion →
+    // deleteMany), and the requirement returns empty with no active gate — so one save then an
+    // ordinary unpublish still refunds nobody. That is tracked separately; do not read this guard
+    // as "the editor can no longer strand a buyer".
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.status !== undefined &&
+      data.status !== ModelStatus.Published
+    ) {
+      throw throwBadRequestError(
+        'Use the unpublish action to take a published version down — it settles any refunds owed to buyers.'
       );
     }
 
@@ -1637,9 +1663,29 @@ export const unpublishModelVersionById = async ({
   id,
   reason,
   customMessage,
+  refundEarlyAccess,
   meta,
   user,
 }: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+  // Same obligation as unpublishing the whole model, scoped to this version: taking a version down
+  // revokes its buyers' access, so recent purchases have to be refunded first. Moderators bypass it
+  // exactly as they do in unpublishModelById.
+  if (!user.isModerator) {
+    const requirement = await getModelVersionEarlyAccessRefundRequirement({ id });
+    if (requirement.purchases.length > 0) {
+      if (!refundEarlyAccess) {
+        throw throwBadRequestError(
+          `Cannot unpublish a version with active early access purchases without refunding buyers. ${requirement.buyerCount} member(s) must be refunded a total of ${requirement.totalBuzz} Buzz.`
+        );
+      }
+      const { modelId } = await dbWrite.modelVersion.findUniqueOrThrow({
+        where: { id },
+        select: { modelId: true },
+      });
+      await refundModelEarlyAccessPurchases({ modelId, requirement, scope: 'version' });
+    }
+  }
+
   const unpublishedAt = new Date().toISOString();
   const version = await dbWrite.$transaction(
     async (tx) => {
@@ -2144,7 +2190,10 @@ export const earlyAccessPurchase = async ({
       details: { modelVersionId, type, earlyAccessPurchase: true, permanent },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],
-      toAccountType: paidAccessPayoutAccount(buzzType),
+      // Paid in kind. Naming the buyer's own account is what stops the buzz
+      // service applying its yellow default, which had converted every green
+      // purchase into yellow for the seller since green became spendable.
+      toAccountType: buzzType,
     });
 
     if (data?.transactionCount === 0)

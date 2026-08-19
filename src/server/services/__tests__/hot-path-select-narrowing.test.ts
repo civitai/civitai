@@ -46,31 +46,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * block, and `vi.mock` is file-scoped.
  */
 
-const postFindUnique = vi.fn();
-const entityCollaboratorFindMany = vi.fn();
-const entityCollaboratorFindFirst = vi.fn();
-const entityCollaboratorCount = vi.fn();
-const entityCollaboratorUpsert = vi.fn();
-const entityCollaboratorDelete = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    post: {
-      findUnique: (...args: unknown[]) => postFindUnique(...args),
-    },
-    entityCollaborator: {
-      findMany: (...args: unknown[]) => entityCollaboratorFindMany(...args),
-      findFirst: (...args: unknown[]) => entityCollaboratorFindFirst(...args),
-      count: (...args: unknown[]) => entityCollaboratorCount(...args),
-    },
-  },
-  dbWrite: {
-    entityCollaborator: {
-      upsert: (...args: unknown[]) => entityCollaboratorUpsert(...args),
-      delete: (...args: unknown[]) => entityCollaboratorDelete(...args),
-    },
-  },
-}));
+const postFindUnique = dbMock.dbRead.post.findUnique;
+const entityCollaboratorFindMany = dbMock.dbRead.entityCollaborator.findMany;
+const entityCollaboratorFindFirst = dbMock.dbRead.entityCollaborator.findFirst;
+const entityCollaboratorCount = dbMock.dbRead.entityCollaborator.count;
+const entityCollaboratorUpsert = dbMock.dbWrite.entityCollaborator.upsert;
+const entityCollaboratorDelete = dbMock.dbWrite.entityCollaborator.delete;
 
 // Reached transitively by the service under test; instantiating the real chat
 // stack here would pull in Redis. Nothing below exercises messaging.
@@ -86,6 +67,7 @@ import {
 } from '~/server/services/entity-collaborator.service';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { EntityType, EntityCollaboratorStatus } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const OWNER_ID = 101;
 const COLLABORATOR_ID = 202;

@@ -2124,6 +2124,7 @@ const REDIS_KEYS_UNPREFIXED = {
     FEATURED_MODELS: 'packed:featured-models-2',
     OFFICIAL_MODELS: 'packed:caches:official-models',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
+    HOME_BLOCKS_SYSTEM: 'packed:caches:home-blocks-system',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',
@@ -2182,14 +2183,20 @@ const REDIS_KEYS_UNPREFIXED = {
     // only (bid submission re-validates the true minimum server-side). See
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
-    // url -> {id, url, hideMeta} lookup backing the internal image-delivery endpoint
-    // (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
+    // url -> {id, url, hideMeta, type, mimeType} lookup backing the internal image-delivery
+    // endpoint (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
     // `Image WHERE url = $1` single-row read is the highest-volume DB query in the
     // profile. Keyed by the EXACT url (case/whitespace-sensitive — the WHERE key is not
     // normalized), positive results only (an unknown url stays uncached so a newly
     // registered image resolves immediately), busted when `hideMeta` flips in
     // updatePostImage. See `getCachedImageDeliveryMetadata` in image-delivery.service.
-    IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata',
+    // `:v2` — the cached value gained `type`/`mimeType`. Entries packed by the previous
+    // release hold only `{id, url, hideMeta}`, and a hit on one would serve a response with
+    // the media-type fields MISSING (indistinguishable, to a caller, from "this image has
+    // no mimeType") for up to the TTL after a release. A new key prefix makes the widened
+    // shape correct from the first request instead; the cold window costs at most one
+    // single-row indexed lookup per url per TTL.
+    IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata:v2',
     // Per-user `id -> isValidCreatorMember(boolean)` for the read-time metric-privacy /
     // donation-goal hide gate (#3266). Near-static per user; both TRUE and FALSE are
     // cached (the resolver is a total function over the id). Busted on any subscription
@@ -2261,9 +2268,13 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CACHE_LOCKS: 'cache-lock',
   BUZZ: {
-    POTENTIAL_POOL: 'buzz:potential-pool',
-    POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
-    EARNED: 'buzz:earned',
+    // v2: these three feed one forecast (earned / poolSize x poolValue) and each expires on its own
+    // day-long TTL, `earned` per user. Widening them to count green without moving the keys would
+    // serve a green `earned` over a yellow-only pool for up to a day — every mixture wrong, none of
+    // them an error. Bump all three together whenever any of their predicates changes.
+    POTENTIAL_POOL: 'buzz:potential-pool:v2',
+    POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value:v2',
+    EARNED: 'buzz:earned:v2',
   },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',

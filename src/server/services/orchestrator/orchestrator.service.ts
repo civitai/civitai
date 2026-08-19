@@ -1,6 +1,7 @@
 import type {
   MediaHashStep,
   MediaHashStepTemplate,
+  MediaHashType,
   Priority,
   WorkflowStepTemplate,
   WorkflowTemplate,
@@ -9,7 +10,7 @@ import type {
 import { submitWorkflow } from '@civitai/client';
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { isProd } from '~/env/other';
@@ -249,11 +250,19 @@ export function computePerceptualHash(perceptual?: string) {
  * error to signal it. Verified against prod: same-lane rows matched exactly,
  * legacy rows were uncorrelated.
  *
- * Returns `undefined` on any failure — a hash is a signal, not a gate, so
- * callers persist what they get and leave the rest for a backfill sweep. Note
- * `0n` is a legitimate hash (a solid-colour image); test against `undefined`.
+ * Returns the raw hex the orchestrator produced, or `undefined` on any failure —
+ * a hash is a signal, not a gate, so callers persist what they get and leave the
+ * rest for a sweep. An all-zero hash is a legitimate result (a flat or
+ * mostly-transparent image), so test against `undefined`, not falsiness.
+ *
+ * `hashType` selects the lane. Widths and algorithms differ between lanes and
+ * their outputs are not comparable, so whatever a caller stores it must also
+ * record which lane produced it.
  */
-export async function getPerceptualHash(url: string): Promise<bigint | undefined> {
+export async function getPerceptualHash(
+  url: string,
+  hashType: MediaHashType = 'perceptual'
+): Promise<string | undefined> {
   const mediaUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
 
   // getEdgeUrl drops a missing NEXT_PUBLIC_IMAGE_LOCATION from the join instead
@@ -284,7 +293,7 @@ export async function getPerceptualHash(url: string): Promise<bigint | undefined
         steps: [
           {
             $type: 'mediaHash',
-            input: { mediaUrl, hashTypes: ['perceptual'] },
+            input: { mediaUrl, hashTypes: [hashType] },
           } as MediaHashStepTemplate,
         ],
       },
@@ -296,7 +305,8 @@ export async function getPerceptualHash(url: string): Promise<bigint | undefined
     const step = data?.steps?.[0] as MediaHashStep | undefined;
     if (data?.status !== 'succeeded' || step?.status !== 'succeeded') return undefined;
 
-    return computePerceptualHash(step.output?.hashes?.perceptual);
+    const hex = step.output?.hashes?.[hashType];
+    return hex ? hex.toLowerCase() : undefined;
   } catch (error) {
     logToAxiom({
       type: 'error',

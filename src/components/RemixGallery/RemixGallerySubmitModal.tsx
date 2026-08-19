@@ -1,5 +1,16 @@
-import { Alert, Anchor, Button, Divider, Group, Loader, Modal, Stack, Text } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import {
+  Alert,
+  Anchor,
+  Button,
+  Divider,
+  Group,
+  Loader,
+  Modal,
+  SegmentedControl,
+  Stack,
+  Text,
+} from '@mantine/core';
+import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -8,8 +19,15 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
+import {
+  freeRefusalExplanation,
+  freeRefusalOutcome,
+  freeSubmissionOffer,
+  paidSubmissionOpen,
+  submissionMethod,
+} from '~/components/RemixGallery/remix-gallery.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -23,15 +41,78 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
+  const spendTypes = useAvailableBuzz();
   const [selected, setSelected] = useState<number | null>(null);
+  /**
+   * An explicit choice, or `null` for "whatever the default is". Kept apart from
+   * the resolved method below so the default can reapply when the selection
+   * changes — free eligibility is a property of the image, not of the gallery,
+   * so a choice made about one remix must not carry to the next.
+   */
+  const [chosen, setChosen] = useState<'free' | 'paid' | null>(null);
+  /**
+   * Why a free submission was refused, when a re-read could explain it. Held
+   * here rather than shown as an error notification because it is an ordinary
+   * outcome with a next step — the paid option, already on screen.
+   */
+  const [freeRefusal, setFreeRefusal] = useState<string | null>(null);
 
   const { data: visibility, isError: visibilityFailed } =
     trpc.placement.getRemixGalleryVisibility.useQuery({ imageId: hostImageId });
+
+  /**
+   * Asked for the selected image alone rather than for the whole grid. The
+   * verification is a per-row containment test, and the control only ever needs
+   * the answer for the one image about to be submitted — probing every image the
+   * picker has paged through would grow without bound for the sake of a state
+   * nobody is looking at.
+   */
+  const { data: freeInfo } = trpc.placement.getRemixGalleryFreeEligibility.useQuery(
+    { hostImageId, imageIds: selected != null ? [selected] : [] },
+    { enabled: !!currentUser && selected != null }
+  );
 
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
     { userId: currentUser?.id, period: 'AllTime', limit: 50 },
     { enabled: !!currentUser }
   );
+
+  const price = visibility?.price ?? null;
+
+  const takesFree = (visibility?.freeSlots ?? 0) > 0;
+
+  // `null` rather than a number when the viewer may not be told how many of a
+  // creator's free slots are currently held — signed out, gallery closed, or
+  // their own image. Treated as "not on offer" rather than as zero, because zero
+  // would render "all taken right now" about a count we were not given.
+  const slotsHeldKnown = visibility?.freeSlotsRemaining != null;
+
+  // Not `visibility.open`, which is `mode !== 'off'` and says nothing about
+  // price. A gallery can take free submissions and refuse every paid one.
+  //
+  // ⚠️ An UNLOADED gallery is not a closed one. `visibility?.price` is undefined
+  // while the query is in flight, and treating that as closed put the card on
+  // "Submit for free" for a beat on every ordinary paid gallery before it
+  // flipped. Unknown reads as open, which is the pre-existing behaviour and the
+  // one that does not flash.
+  const paidOpen = visibility ? paidSubmissionOpen(visibility.price) : true;
+
+  const offer = freeSubmissionOffer({
+    verified: selected != null && !!freeInfo?.verifiedImageIds.includes(selected),
+    freeSlots: visibility?.freeSlots ?? 0,
+    freeSlotsRemaining: visibility?.freeSlotsRemaining ?? 0,
+    allowanceRemaining: freeInfo?.allowance.remaining ?? 0,
+    usedHere: !!freeInfo?.usedHere,
+    resetsAt: freeInfo?.allowance.resetsAt ?? new Date(),
+    paidOpen,
+  });
+  const freeAvailable = offer.available && slotsHeldKnown;
+  // Withheld while the answer is in flight, so the card says nothing rather than
+  // briefly asserting a reason drawn from defaulted zeroes.
+  const freeUnavailableReason =
+    selected != null && freeInfo && slotsHeldKnown ? offer.reason : null;
+
+  const method = submissionMethod(chosen, freeAvailable, paidOpen, takesFree);
 
   const submit = trpc.placement.submitToRemixGallery.useMutation({
     onSuccess: () => {
@@ -42,14 +123,105 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
       utils.placement.invalidate();
       dialog.onClose();
     },
-    onError: (error) =>
-      showErrorNotification({
-        title: "Couldn't submit that",
-        error: new Error(error.message),
-      }),
-  });
+    onError: async (error) => {
+      /**
+       * A free submission can be refused for two very different kinds of reason,
+       * and only one of them is an ordinary outcome.
+       *
+       * The free primitive re-counts under its lock, so losing the last slot —
+       * or the allowance, or the never-twice rule — is a race the control cannot
+       * win and should not report as an error. Everything else is a real refusal
+       * the submitter needs to read: unverified, a duplicate entry, an
+       * unpublished image, the content rule, a block.
+       *
+       * Told apart by re-reading rather than by matching the server's wording,
+       * which is prose it is free to change. If the fresh numbers still say free
+       * was on offer, the refusal was not about capacity and the message is
+       * shown. Falls back to showing it if the re-read itself fails, because
+       * silence is the one outcome that leaves nobody informed.
+       */
+      /**
+       * 🔴 `staleTime: 0` on both fetches, and it is load-bearing rather than
+       * decorative — the sticker sibling says the same thing at
+       * `Sticker/placement.util.ts`. The client's global default is
+       * `staleTime: Infinity`, and `fetchQuery` applies it: both keys below are
+       * the mounted queries' own keys and both have data at click time, so
+       * without this the "re-read" resolves the CACHE and never calls the
+       * procedure.
+       *
+       * What that cost when it was missing is the whole point of this handler.
+       * Pressing Submit for free requires `freeAvailable`, which means
+       * `freeSubmissionOffer` over those cached inputs returned available — and
+       * `freeRefusalExplanation` is that same function over those same inputs,
+       * so it returned `null` every time. Every refused free submission fell to
+       * the server branch and showed raw server prose, which is precisely the
+       * behaviour the refusal split exists to remove.
+       *
+       * The FRESH `paidOpen` then travels out beside the explanation, because
+       * the rendered one is not merely stale: with `staleTime: Infinity` and no
+       * refetch on focus, a modal left open across a price change holds the
+       * render value for the whole session.
+       *
+       * Using the stale flag here while the explanation beside it used the fresh
+       * one produced the exact failure `paidOpen` was added to prevent: an owner
+       * clearing their price mid-submission got "you can still submit with Buzz"
+       * and a control moved to paid, then `submissionMethod` pulled it back to
+       * free-disabled on the next render — a banner pointing at a button that is
+       * not on the screen.
+       */
+      const refusal =
+        method === 'free' && selected != null
+          ? await utils.placement.getRemixGalleryVisibility
+              .fetch({ imageId: hostImageId }, { staleTime: 0 })
+              .then(async (space) => {
+                const standing = await utils.placement.getRemixGalleryFreeEligibility.fetch(
+                  { hostImageId, imageIds: [selected] },
+                  { staleTime: 0 }
+                );
 
-  const price = visibility?.price ?? null;
+                const freshPaidOpen = paidSubmissionOpen(space.price);
+                return {
+                  paidOpen: freshPaidOpen,
+                  explained:
+                    space.freeSlotsRemaining == null
+                      ? null
+                      : freeRefusalExplanation({
+                          verified: standing.verifiedImageIds.includes(selected),
+                          freeSlots: space.freeSlots,
+                          freeSlotsRemaining: space.freeSlotsRemaining,
+                          allowanceRemaining: standing.allowance.remaining,
+                          usedHere: standing.usedHere,
+                          resetsAt: standing.allowance.resetsAt,
+                          paidOpen: freshPaidOpen,
+                        }),
+                };
+              })
+              // A real network read can reject, which is what `staleTime: 0`
+              // reintroduces. A failed re-read explains nothing, so this lands on
+              // the server's own message — the outcome that leaves somebody
+              // informed. The `paidOpen` here is never read: `freeRefusalOutcome`
+              // consults it only on the explained branch. Supplied so the shape
+              // matches rather than because it decides anything.
+              .catch(() => ({ paidOpen, explained: null }))
+          : { paidOpen, explained: null };
+
+      const explained = refusal.explained;
+      const outcome = freeRefusalOutcome(explained, error.message, refusal.paidOpen);
+      if (outcome.fallBackToPaid) setChosen('paid');
+
+      // Keyed on whether we could explain it, NOT on whether we moved the
+      // control. Those came apart once paid stopped being a guaranteed
+      // alternative: an explained refusal on a gallery that takes no paid
+      // submissions still has something worth saying, and routing it to the
+      // toast instead would file an ordinary outcome as an error.
+      setFreeRefusal(explained !== null ? outcome.message : null);
+      if (explained === null)
+        showErrorNotification({
+          title: outcome.title,
+          error: new Error(outcome.message),
+        });
+    },
+  });
 
   // Filtered rather than shown-and-refused. Until the ceiling arrives nothing is
   // offered: rendering the whole grid first and removing images a moment later
@@ -73,58 +245,93 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
     // scroll container can run edge to edge and own its own insets.
     <Modal
       {...dialog}
-      title="Submit your remix"
+      // Spans, not a `div`/`Text` stack: Mantine renders the title inside an
+      // `h2`, and block elements there are invalid nesting that React reparses.
+      title={
+        <span className="flex flex-col gap-0.5">
+          <span>Submit your remix</span>
+          <Text span size="xs" fw={400} c="dimmed" className="block leading-snug">
+            The creator reviews every submission and decides what belongs in their gallery.
+          </Text>
+        </span>
+      }
       size="lg"
-      classNames={{ body: 'p-0', header: 'pb-2' }}
+      classNames={{ body: 'p-0', header: 'items-start pb-3' }}
     >
       {/* Three bands: the explanation and the actions stay put, only the picker
           scrolls. The fee warning is money copy, so it must not be the thing
           that scrolls out of sight while someone hunts for an image. */}
       <div className="flex max-h-[70vh] flex-col">
         <Stack gap="xs" className="shrink-0 px-4 pb-3 pt-0">
-          {/* The decline consequence used to be said here too. The footer now
-              states it with the actual number, and saying it twice made the
-              vaguer version the one people read first. */}
-          <Text size="sm" c="dimmed">
-            The creator reviews every submission and decides what belongs in their gallery.
-          </Text>
-
-          {/* The picker lists published images because that is all the mutation
-              accepts, and a freshly generated image is not one. Said here rather
-              than only in the empty state: the case that confuses people is
-              having images in the grid and not the one they just made. */}
-          <Text size="xs" c="dimmed">
-            Only images you have posted appear below.{' '}
-            <Anchor href="/posts/create" target="_blank" rel="noreferrer" size="xs">
-              Post your remix first
-            </Anchor>{' '}
-            if you don&apos;t see it.
-          </Text>
-
-          {/* Says why the grid is short. Without it a submitter whose work is
-              mostly mature sees a picker missing their best images and no
-              reason, which reads as a bug rather than a rule. The reason is not
-              named: which rule bit is the host's business, not the
-              submitter's. */}
-          {maxLevel === 0 ? (
-            <Text size="xs" c="dimmed">
-              This image has no rating yet, so nothing can be submitted to it.
-            </Text>
-          ) : (
-            overRated > 0 && (
+          {/* Footnotes on the title's sentence, not statements of equal weight —
+              icon rows in the crypto deposit card's shape, so a stack of them
+              reads as one block rather than as paragraphs. */}
+          <Stack gap={4}>
+            {/* The picker lists published images because that is all the mutation
+                accepts, and a freshly generated image is not one. Said here rather
+                than only in the empty state: the case that confuses people is
+                having images in the grid and not the one they just made. */}
+            <Group gap="xs" wrap="nowrap" align="flex-start">
+              <IconInfoCircle
+                size={14}
+                className="text-blue-5"
+                style={{ flexShrink: 0, marginTop: 2 }}
+              />
               <Text size="xs" c="dimmed">
-                {overRated === 1 ? '1 of your images is' : `${overRated} of your images are`} rated
-                above what this gallery accepts, so {overRated === 1 ? 'it is' : 'they are'} not
-                shown.
+                Only images you have posted appear below.{' '}
+                <Anchor href="/posts/create" target="_blank" rel="noreferrer" size="xs">
+                  Post your remix first
+                </Anchor>{' '}
+                if you don&apos;t see it.
               </Text>
-            )
-          )}
+            </Group>
 
-          {visibility && !visibility.open && (
-            <Alert color="yellow" icon={<IconAlertTriangle />}>
-              This creator has stopped accepting submissions.
-            </Alert>
-          )}
+            {/* Says why the grid is short. Without it a submitter whose work is
+                mostly mature sees a picker missing their best images and no
+                reason, which reads as a bug rather than a rule. The reason is not
+                named: which rule bit is the host's business, not the
+                submitter's. */}
+            {maxLevel === 0 ? (
+              <Group gap="xs" wrap="nowrap" align="flex-start">
+                <IconAlertTriangle
+                  size={14}
+                  className="text-yellow-500"
+                  style={{ flexShrink: 0, marginTop: 2 }}
+                />
+                <Text size="xs" c="dimmed">
+                  This image has no rating yet, so nothing can be submitted to it.
+                </Text>
+              </Group>
+            ) : (
+              overRated > 0 && (
+                <Group gap="xs" wrap="nowrap" align="flex-start">
+                  <IconAlertTriangle
+                    size={14}
+                    className="text-yellow-500"
+                    style={{ flexShrink: 0, marginTop: 2 }}
+                  />
+                  <Text size="xs" c="dimmed">
+                    {overRated === 1 ? '1 of your images is' : `${overRated} of your images are`}{' '}
+                    rated above what this gallery accepts, so{' '}
+                    {overRated === 1 ? 'it is' : 'they are'} not shown.
+                  </Text>
+                </Group>
+              )
+            )}
+
+            {visibility && !visibility.open && (
+              <Group gap="xs" wrap="nowrap" align="flex-start">
+                <IconAlertTriangle
+                  size={14}
+                  className="text-yellow-500"
+                  style={{ flexShrink: 0, marginTop: 2 }}
+                />
+                <Text size="xs" c="yellow">
+                  This creator has stopped accepting submissions.
+                </Text>
+              </Group>
+            )}
+          </Stack>
         </Stack>
 
         <Divider />
@@ -157,7 +364,13 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                     key={image.id}
                     aspectRatio="square"
                     image={image}
-                    onClick={() => setSelected(image.id)}
+                    onClick={() => {
+                      setSelected(image.id);
+                      // Free eligibility is a property of the image, so a choice
+                      // made about one remix must not carry to the next.
+                      setChosen(null);
+                      setFreeRefusal(null);
+                    }}
                     className={clsx(
                       'cursor-pointer',
                       selected === image.id && 'ring-2 ring-blue-5'
@@ -225,14 +438,114 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
 
         <Divider />
 
-        {/* Same shape as the crypto deposit card's warnings. The amount is the
-            server's own figure, computed with the helper the refund uses from
-            the operator-set rate — quoting "30%" here would be a number this
-            file cannot keep true, and it is the one fact a submitter needs
-            before spending. */}
-        <Group justify="space-between" gap="sm" wrap="nowrap" className="shrink-0 px-4 py-3">
-          {visibility?.declineFee ? (
-            <Group gap="xs" wrap="nowrap" align="flex-start">
+        {/* The free/paid choice, and the last moment it can be made. It carries
+            the mode as well as the price because those are two different offers
+            and the placer is about to spend something either way — a free
+            submission still costs them their daily allowance, decline or not.
+            Hidden entirely when the gallery takes no free submissions at all: a
+            control with one reachable answer is not a choice. */}
+        {/* 🔴 Outside the block below, and that is the point rather than layout.
+            The choice is hidden when the creator takes no free submissions —
+            and `freeSlots <= 0` is ALSO one of the rungs that can explain a
+            refusal, when a creator closes their free capacity mid-modal. Nested,
+            the same fresh read that produces this message unmounts the thing
+            rendering it: the submission fails, the toast is suppressed because
+            the refusal was explained, and the only visible change is the control
+            quietly turning into a Buzz button. That is the same shape as the bug
+            this message exists to fix — written for somebody, shown to nobody. */}
+        {freeRefusal && (
+          <>
+            <Divider />
+            <Group gap="xs" wrap="nowrap" align="flex-start" className="shrink-0 px-4 pt-3">
+              <IconAlertTriangle
+                size={14}
+                className="text-yellow-500"
+                style={{ flexShrink: 0, marginTop: 2 }}
+              />
+              <Text size="xs" c="yellow">
+                {freeRefusal}
+              </Text>
+            </Group>
+          </>
+        )}
+
+        {/* 🔴 OUTSIDE the free/paid block, and that is the point rather than
+            layout. This is the sentence saying WHY free is unavailable, and
+            every gate it has lived behind has hidden it in the state that needed
+            it most: `method === 'paid'` hid it once the card started holding on
+            free, and `takesFree` hides it on a gallery that takes no free
+            submissions and no paid ones either — a dead end with no explanation.
+            `offer.reason` is null whenever free is genuinely on offer, so this
+            cannot fire against the FREE button. It can and should fire beside a
+            working PAID one — an unverified remix on an ordinarily-priced
+            gallery is the commonest case there is, and the sentence is the only
+            thing explaining why the free option is greyed out. */}
+        {selected != null && !freeRefusal && freeUnavailableReason && (
+          <>
+            <Divider />
+            <Text size="xs" c="dimmed" className="shrink-0 px-4 pt-3">
+              {freeUnavailableReason}
+            </Text>
+          </>
+        )}
+
+        {selected != null && takesFree && (
+          <>
+            <Divider />
+            <Stack gap={6} className="shrink-0 px-4 pt-3">
+              <SegmentedControl
+                value={method}
+                onChange={(value) => setChosen(value as 'free' | 'paid')}
+                data={[
+                  {
+                    value: 'free',
+                    // Always "needs review" on this surface: a gallery places
+                    // arbitrary media on someone else's page, so `auto` is
+                    // refused for it in three places. Written out rather than
+                    // branched on the mode, which cannot be anything else here.
+                    label: 'Free · needs review',
+                    disabled: !freeAvailable,
+                  },
+                  {
+                    value: 'paid',
+                    label: paidOpen ? `${price} Buzz` : 'With Buzz',
+                    // Not `price == null`: a gallery priced below the surface
+                    // floor refuses paid submissions too, and offering that
+                    // option leads into a second refusal rather than a disabled
+                    // button. Same predicate as the copy, one layer down —
+                    // `paidOpen` reaching only the sentence is how this shipped
+                    // wrong once already.
+                    disabled: !paidOpen,
+                  },
+                ]}
+              />
+
+              {/* No number and no reset time written here. The allowance is a
+                  server-side rule and both of its facts already come back from
+                  `getFreePlacementAllowance`; a sentence that spells either one
+                  out is a claim this file cannot keep true. */}
+              {method === 'free' && freeAvailable && (
+                <Text size="xs" c="dimmed">
+                  This spends a free placement from today&apos;s allowance, and it is spent even if
+                  the creator declines.
+                </Text>
+              )}
+            </Stack>
+          </>
+        )}
+
+        <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
+          {/* The paid path's own warning, and paid-only: a free submission puts
+              nothing in escrow, so there is no decline fee and quoting one would
+              describe money that never moved. The amount is the server's own
+              figure, computed with the helper the refund uses from the
+              operator-set rate — "30%" written here would be a number this file
+              cannot keep true. */}
+          {method === 'paid' && visibility?.declineFee ? (
+            // `min-w-0` is what makes the note wrap instead of pushing: a flex
+            // item's floor is its content width otherwise, so a long sentence
+            // squeezed the Submit button until its label clipped.
+            <Group gap="xs" wrap="nowrap" align="flex-start" className="min-w-0 flex-1">
               <IconAlertTriangle
                 size={14}
                 className="text-yellow-500"
@@ -244,37 +557,51 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               </Text>
             </Group>
           ) : (
-            <span />
+            <span className="flex-1" />
           )}
-          <Group gap="sm" wrap="nowrap">
-            <Button variant="default" onClick={dialog.onClose}>
-              Cancel
-            </Button>
-            {/* The price shown here is the one the balance check runs against, and
+          <div className="shrink-0">
+            {/* A plain button on the free path. `BuzzTransactionButton` exists to
+              check a balance and open the top-up flow, and running a free
+              submission through it would ask someone to have Buzz they are not
+              about to spend. */}
+            {method === 'free' ? (
+              <Button
+                disabled={!selected || !visibility?.open || !freeAvailable}
+                loading={submit.isPending}
+                onClick={() =>
+                  selected != null && submit.mutate({ hostImageId, imageId: selected, free: true })
+                }
+              >
+                Submit for free
+              </Button>
+            ) : (
+              /* The price shown here is the one the balance check runs against, and
               the owner can move it between this render and the click. The
               mutation reads the price fresh, so the button is honest about
               affordability but cannot promise the amount — hence the note above
-              it rather than a silent charge. */}
-            <BuzzTransactionButton
-              buzzAmount={price ?? 0}
-              // Yellow and Green only, matching what the escrow will actually
-              // draw. The mutation refuses Blue regardless, so offering it here
-              // would promise a payment that is then refused.
-              accountTypes={PLACEMENT_SPEND_TYPES}
-              label="Submit"
-              disabled={!selected || !visibility?.open || price == null}
-              loading={submit.isPending}
-              // The price this render displayed travels with the submission, so
-              // the server refuses rather than charging a number the submitter
-              // never agreed to. Affordability was checked against this one too.
-              onPerformTransaction={() =>
-                selected != null &&
-                price != null &&
-                submit.mutate({ hostImageId, imageId: selected, expectedPrice: price })
-              }
-            />
-          </Group>
-        </Group>
+              it rather than a silent charge. */
+              <BuzzTransactionButton
+                buzzAmount={price ?? 0}
+                // Says what it means. `BuzzTransactionButton` already ran the pair
+                // through `useAvailableBuzz`, which strips both and appends the
+                // domain's, so this renders identically — the pair was never the
+                // hole. That was server-side, where the escrow drew from both.
+                accountTypes={spendTypes}
+                label="Submit"
+                disabled={!selected || !visibility?.open || !paidOpen}
+                loading={submit.isPending}
+                // The price this render displayed travels with the submission, so
+                // the server refuses rather than charging a number the submitter
+                // never agreed to. Affordability was checked against this one too.
+                onPerformTransaction={() =>
+                  selected != null &&
+                  price != null &&
+                  submit.mutate({ hostImageId, imageId: selected, expectedPrice: price })
+                }
+              />
+            )}
+          </div>
+        </div>
       </div>
     </Modal>
   );

@@ -1,7 +1,7 @@
 import type { SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import {

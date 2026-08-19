@@ -37,15 +37,25 @@ export const placementNotifications = createNotificationProcessor({
         JOIN "User" u ON u.id = p."placerId"
         WHERE p.surface = 'sticker'
           AND p."targetType" = 'image'
+          -- Paid rows only. A free one carries amount 0, so without this it
+          -- reads "wants to place a sticker on your image for 0 Buzz" and is
+          -- silenced by the toggle for the paid kind.
+          AND p.free = false
           -- Only rows that are still waiting. A placement approved, declined or
           -- expired between the last run and this one has already been answered,
           -- and telling someone to review it sends them to a dead link.
           AND p.status = 'pending'
-          -- Stamped by holdPlacementEscrow, so its presence means the escrow has
-          -- at least been attempted. The row is created before that runs, and a
-          -- notification landing in the gap would send someone to review a
-          -- placement that is about to be unwound, or one in an auto space that
-          -- approves itself seconds later.
+          -- Stamped by holdPlacementEscrow, so on the rows THIS query can see its
+          -- presence means the escrow has at least been attempted. The row is
+          -- created before that runs, and a notification landing in the gap would
+          -- send someone to review a placement about to be unwound, or one in an
+          -- auto space that approves itself seconds later.
+          --
+          -- ⚠️ The escrow half of that reasoning holds only because of the
+          -- p.free = false above. A free row gets its deadline from the same
+          -- INSERT that creates it and never touches escrow, so this gate alone
+          -- would pass one straight through — announced as a paid placement,
+          -- quoting 0 Buzz. The two clauses are load-bearing together.
           AND p."expiresAt" IS NOT NULL
           AND p."createdAt" > '${lastSent}'
       )
@@ -55,6 +65,71 @@ export const placementNotifications = createNotificationProcessor({
         'sticker-placement-pending' "type",
         details
       FROM data
+      -- A row means opted OUT. There is no global filter — every processor that
+      -- honours its own toggle writes this clause itself — so without it the
+      -- setting renders, saves, and does nothing. Kept on one line because the
+      -- notification-settings-polarity guard matches the clause as a literal.
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'sticker-placement-pending')
+    `,
+  },
+
+  /**
+   * Its own type, not a branch of the paid one, because it is a different
+   * decision to make and a different one to mute.
+   *
+   * A creator who has opened free capacity has said yes to the free tier in
+   * particular, and one who wants only the paid queue in their notifications
+   * needs to be able to say so without silencing the placements they are being
+   * paid for. One type with a branching message would make those two settings
+   * the same switch.
+   *
+   * The message carries no amount for the obvious reason and one less obvious
+   * one: "0 Buzz" reads as a bug rather than as the offer, and the thing worth
+   * saying instead is that a slot is being held while they decide.
+   *
+   * Only ever fires for a review-mode space. An auto space approves the row at
+   * the call site before the job next runs, and `status = 'pending'` is what
+   * keeps this from telling someone to review something already live.
+   */
+  'sticker-placement-free-pending': {
+    displayName: 'Free sticker awaiting your review',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.placerUsername} wants to place a free sticker on your image`,
+      url: `/images/${details.imageId}`,
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."ownerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'placerId', p."placerId",
+            'placerUsername', u.username
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."placerId"
+        WHERE p.surface = 'sticker'
+          AND p."targetType" = 'image'
+          AND p.free = true
+          AND p.status = 'pending'
+          -- Written by the same INSERT that creates a free row rather than
+          -- stamped afterwards, so unlike the paid path there is no window where
+          -- this is null. Kept anyway: it is the one column that says the row is
+          -- reachable by the expiry sweep, and a free row that is not would hold
+          -- one of the creator's slots forever.
+          AND p."expiresAt" IS NOT NULL
+          AND p."createdAt" > '${lastSent}'
+      )
+      SELECT
+        CONCAT('sticker-placement-free-pending:',"placementId") "key",
+        "userId",
+        'sticker-placement-free-pending' "type",
+        details
+      FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'sticker-placement-free-pending')
     `,
   },
 
@@ -90,11 +165,24 @@ export const placementNotifications = createNotificationProcessor({
         WHERE p.surface = 'remixGallery'
           AND p."targetType" = 'image'
           AND p.status = 'pending'
+          -- Free submissions are their own type, with their own toggle. Excluded
+          -- here rather than left to fall through both: this message quotes an
+          -- amount, and a free row's amount is 0.
+          AND NOT p.free
           -- Stamped by holdPlacementEscrow. Its absence means the row exists but
           -- the escrow has not been attempted, and a notification landing in that
           -- gap sends someone to review a submission about to be unwound.
           AND p."expiresAt" IS NOT NULL
           AND p."createdAt" > '${lastSent}'
+          -- A row means opted OUT, and there is no global filter — every
+          -- processor that honours its own toggle writes this clause itself. It
+          -- was missing here, so the setting rendered, saved, and did nothing.
+          --
+          -- Inside the CTE and against p."ownerId", which is the recipient; the
+          -- projected "userId" outside the CTE is the same value and would work
+          -- there too. Kept on one line either way, because the polarity guard
+          -- matches the clause as a literal.
+          AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = p."ownerId" AND type = 'remix-gallery-pending')
       )
       SELECT
         CONCAT('remix-gallery-pending:',"placementId") "key",
@@ -106,15 +194,72 @@ export const placementNotifications = createNotificationProcessor({
   },
 
   /**
+   * The free tier's own type, so a creator can take one stream and not the other.
+   *
+   * Separate rather than a branch inside the paid message, because the two are
+   * different offers: the paid one quotes Buzz and the free one spends one of the
+   * creator's own slots and pays them nothing until they accept. A creator who
+   * wants only paid submissions announced has no way to say so if both arrive
+   * under one type.
+   *
+   * `expiresAt` is not checked here. It gates the paid types because
+   * `holdPlacementEscrow` stamps it in a second statement, so its absence means
+   * the escrow has not been attempted yet; a free row is written with its
+   * deadline by the same INSERT, so there is no such gap to wait out.
+   */
+  'remix-gallery-free-pending': {
+    displayName: 'Free remix awaiting your review',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.placerUsername} submitted a free remix to your gallery`,
+      url: `/images/${details.imageId}`,
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."ownerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'placerId', p."placerId",
+            'placerUsername', u.username
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."placerId"
+        WHERE p.surface = 'remixGallery'
+          AND p."targetType" = 'image'
+          AND p.status = 'pending'
+          AND p.free
+          AND p."createdAt" > '${lastSent}'
+          -- A row here means opted OUT, and its own type rather than the paid
+          -- one's: silencing free submissions must not silence the queue a
+          -- creator is being paid for.
+          AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = p."ownerId" AND type = 'remix-gallery-free-pending')
+      )
+      SELECT
+        CONCAT('remix-gallery-free-pending:',"placementId") "key",
+        "userId",
+        'remix-gallery-free-pending' "type",
+        details
+      FROM data
+    `,
+  },
+
+  /**
    * The submitter's side of the same decision. They paid and then waited, and
    * without this the only signal that anything happened is their Buzz balance.
    *
-   * Approve and decline share one type so the two cannot disagree about what
-   * counts as resolved — the message branches on the stored status instead.
+   * Announces an outcome the submitter benefits from hearing and stays silent on
+   * the ones they don't: approval, and an owner removing an entry that was
+   * already live in their gallery. A decline is deliberately not announced —
+   * Justin's call, 2026-08-18 — on the grounds that "X declined you" mostly buys
+   * the placer a grudge against a creator who is entitled to say no. The
+   * placements page still shows it.
    *
-   * Deliberately excludes `expired`: nobody decided anything, the refund is
-   * full, and telling someone their submission was rejected when the owner
-   * simply never looked is both wrong and worse.
+   * Also excludes `expired`, for a different reason: nobody decided anything and
+   * the refund is full, so any message here would describe a decision that was
+   * never made.
    */
   'remix-gallery-resolved': {
     displayName: 'Your remix submission was answered',
@@ -132,6 +277,10 @@ export const placementNotifications = createNotificationProcessor({
           message: `${details.ownerUsername} removed your remix from their gallery`,
           url,
         };
+      // Unreachable for anything sent from now on -- the query stopped selecting
+      // declines. Kept because the message is rendered at READ time from the
+      // stored details, so deleting this branch would blank the notifications
+      // already delivered to people who were declined before that changed.
       return { message: `${details.ownerUsername} declined your remix submission`, url };
     },
     prepareQuery: async ({ lastSent }) => `
@@ -163,7 +312,7 @@ export const placementNotifications = createNotificationProcessor({
           -- approval trail.
           AND (
             (
-              p.status IN ('approved', 'declined')
+              p.status = 'approved'
               AND p."resolvedAt" IS NOT NULL
               AND p."resolvedAt" > '${lastSent}'
             )
@@ -185,6 +334,75 @@ export const placementNotifications = createNotificationProcessor({
         'remix-gallery-resolved' "type",
         details
       FROM data
+      -- A row means opted OUT. This type shipped without the clause, so its
+      -- toggle rendered, saved, and changed nothing -- there is no global filter
+      -- on this path (createNotificationsBulk does no settings lookup), so a
+      -- processor that omits it is unmuteable. Kept on one line because the
+      -- polarity guard matches the clause as a literal.
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'remix-gallery-resolved')
+    `,
+  },
+
+  /**
+   * The sticker placer's side, and the gap Ellie reported: a placement could be
+   * accepted and the only signal was the placer's Buzz balance moving.
+   *
+   * Approval only — Justin's call, 2026-08-18. No decline, no expiry, no
+   * removal of any kind. The asymmetry with the remix type, which also announces
+   * an owner removal, is deliberate: a remix that is removed was already live in
+   * someone's gallery, where a declined sticker never appeared anywhere.
+   *
+   * Covers free placements as well as paid, unlike the pending pair, which split
+   * because their messages quote an amount and a free row's is 0. This one names
+   * no amount, so one type serves both and a creator muting it mutes both.
+   *
+   * An `auto` space approves at the call site, so its placer gets this seconds
+   * after placing, confirming something they watched happen. Left that way on
+   * purpose: no column distinguishes an auto approval from a fast one, and the
+   * only discriminator available -- the gap between `createdAt` and
+   * `resolvedAt` -- would be a rule we invented and would have to keep true.
+   */
+  'sticker-placement-resolved': {
+    displayName: 'Your sticker placement was accepted',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.ownerUsername} accepted your sticker`,
+      url: `/images/${details.imageId}`,
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."placerId" "userId",
+          p.id "placementId",
+          p.status "status",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'ownerId', p."ownerId",
+            'ownerUsername', u.username,
+            'status', p.status
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."ownerId"
+        WHERE p.surface = 'sticker'
+          AND p."targetType" = 'image'
+          AND p.status = 'approved'
+          -- Keyed off when the owner acted, never off createdAt: a placement
+          -- made before the last run and accepted after it would be missed
+          -- entirely by a createdAt window.
+          AND p."resolvedAt" IS NOT NULL
+          AND p."resolvedAt" > '${lastSent}'
+      )
+      SELECT
+        -- The status is in the key even though only one status can reach here.
+        -- It costs nothing now and is what stops a later branch -- a removal,
+        -- say -- from being deduped away silently against the approval's key.
+        CONCAT('sticker-placement-resolved:',"status",':',"placementId") "key",
+        "userId",
+        'sticker-placement-resolved' "type",
+        details
+      FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'sticker-placement-resolved')
     `,
   },
 });

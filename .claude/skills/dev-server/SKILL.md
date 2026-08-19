@@ -19,6 +19,9 @@ node .claude/skills/dev-server/cli.mjs start
 # Start for a specific worktree
 node .claude/skills/dev-server/cli.mjs start /path/to/worktree
 
+# Start with a service on production (see Env modes)
+node .claude/skills/dev-server/cli.mjs start /path/to/worktree --prod buzz
+
 # View logs
 node .claude/skills/dev-server/cli.mjs logs <session-id>
 
@@ -28,13 +31,123 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 
 **Checking if server is ready:** After starting, poll the session status to check `ready: true`. The daemon marks sessions ready either via configured health check endpoint or by detecting "Ready" patterns in logs.
 
+## Never curl a dev port — `probe` instead
+
+```bash
+node .claude/skills/dev-server/cli.mjs probe /home
+```
+
+A dev server that has stopped serving properly does not refuse connections. It accepts and answers
+slowly, or accepts and never answers — so an unbounded `curl` sits there until the 300s tool timeout
+and returns nothing you can act on. Chaining a few in one shell call is how ten minutes disappear.
+A `PreToolUse` hook blocks unbounded requests at dev ports for this reason; `--max-time` is the
+escape hatch if you really want curl.
+
+`probe` requests the route twice with a hard budget, reads the session's own log for those two
+requests, and returns a verdict with the matching remedy. It always terminates.
+
+```
+UPSTREAM-SLOW  http://localhost:3000/home
+  UPSTREAM-SLOW — the framework is fine; time is spent in application code (database, tunnel, cache).
+  first : 200 in 8.10s  [next.js 30ms | application-code 8.10s]
+  repeat: 200 in 8.10s  [next.js 31ms | application-code 8.10s]
+  -> Not a cache problem — do NOT purge, it will not help. [...]
+```
+
+Exit code is 0 for `ok`/`cold` and 1 for everything else, so it substitutes for a curl in a check.
+
+Two verdicts worth knowing before you meet them. **`stopped-answering`** means the first request was
+served and the second was not — the process is up and something inside it has parked, so starting
+another session is the wrong move and the remedy says so. And a probe may add
+`note: more than one request to this route in the window`: `probe` tags its own request with a
+`?__probe=` nonce so it can find its own log line, but a route that already has a query string —
+and every `/api/trpc/*` route, whose handlers parse their query — falls back to matching on the
+path, where a busy session's traffic is genuinely indistinguishable from ours. The note means the
+reading may not be about your request, which is different from the server declining to explain
+itself.
+
+### Why timing alone cannot tell you what is wrong
+
+Two different failures produce the **same** shape — a page that takes ~8s, warm and cold alike, with
+a 200 and nothing in the log that reads as an error. Health checks keep passing through both, because
+`/api/health` is a cheap already-compiled API route and neither failure touches what it does.
+
+Next already separates them on every request line it prints:
+
+```
+ GET /home 200 in 8.1s (next.js: 39ms, proxy.ts: 8ms, application-code: 8.1s)
+```
+
+| Reading | Meaning | Remedy |
+|---|---|---|
+| `next.js` dominates on a **repeat** hit | The build cache is not serving; the framework redoes the work every time | `unwedge` — purge and restart |
+| `application-code` dominates | The framework is fine; the time is downstream (database, tunnel, cache) | Fix the upstream. **Purging costs 45s and changes nothing** |
+| Repeat is fast | Cold compile, working as designed | Nothing |
+
+**Two failures are FAST, and both are checked before any timing rule**, because a verdict of `ok` on
+a broken page is worse than no verdict. A stale `node_modules` after a merge or checkout 500s in
+milliseconds (`STALE-DEPS` — the fix is `pnpm install`, and purging the build cache installs
+nothing); and the settings self-fetch case below renders a degraded page quickly.
+
+**One case defeats the split, and `probe` checks for it first.** `_app` self-fetches
+`/api/user/settings` on every SSR render and aborts at `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s default).
+That abort is billed to *application-code*, so a server that cannot answer its own API route reads as
+"slow database" on the split alone. The greppable marker `[_app] settings bootstrap fetch failed`
+outranks the timing, and the verdict is `SELF-FETCH-FAILING`; `probe` then requests that endpoint
+directly and tells you which of the two causes you have — a self-fetch aimed at the wrong port
+(`NEXTAUTH_URL_INTERNAL` vs the session's port) or an endpoint that genuinely never answers.
+
+The tell that separates it from any slow dependency: **the page time is a constant equal to a
+configured timeout**, identical warm and cold. A slow dependency varies; a timeout does not. Measured
+2026-08-16 — moving `APP_SETTINGS_FETCH_TIMEOUT_MS` from 8000 to 30000 moved `/home` from 8.1s to
+30.1s in lockstep, and purging `.next` did not help at either value.
+
+Worth knowing when you read that verdict: `updateEnvUrlsForPort` returns early on port 3000, so a
+primary session uses `NEXTAUTH_URL_INTERNAL` exactly as the `.env` writes it while every secondary
+session gets it rewritten to its own port. The value is correct today — this is only why the two
+kinds of session can differ, and why the verdict asks you to compare it against the session's port.
+
+This is why "flat 8s means purge `.next`" is wrong as a rule and cost real time as a habit: measured
+on this repo on 2026-08-16, a flat 8.1s `/home` was **30ms of framework and 8.1s of application
+code** — a purge would have deleted several GB and fixed nothing. Read the split, not the total.
+
+When the split is unavailable (log buffer overran, no session), the verdict is `slow-unclassified`
+and it says so rather than guessing.
+
+### `unwedge` — only after a `WEDGED` verdict
+
+```bash
+node .claude/skills/dev-server/cli.mjs unwedge <session-id>
+```
+
+Stops the session, deletes its build dir, restarts on the same env modes, waits for ready, re-probes,
+and prints each timing. It costs a guaranteed ~45s rebuild, so it is not automatic and it does not
+guess a session: name the id, because the session you did not name is usually the one someone is
+looking at.
+
+Self-tests — run all three after touching `probe.mjs` or the hook:
+
+```bash
+node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
+node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
+node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
+```
+
+The integration one exists because the unit one cannot see the bug that matters most. `runSample`
+once dropped `missingModule` on the way to `classify`, so the whole `stale-deps` verdict was dead
+code — and every unit case for it passed, because they hand-built the field the shipping code never
+produced. **Reintroduce that bug today and the unit test is still green while the integration test
+fails.** Anything that adds a new signal belongs in the integration file, not just the unit one.
+
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
+| `probe [route]` | Bounded request + verdict (`ok`/`cold`/`wedged`/`stale-deps`/`upstream-slow`/`proxy-slow`/`error-status`/`self-fetch-failing`). Use instead of curl |
+| `unwedge <session-id>` | Stop, purge the build dir, restart, wait, re-probe (~45s) |
 | `status` | Check daemon status and list all sessions |
 | `list` | List all dev sessions |
-| `start [worktree]` | Start dev server (default: current directory) |
+| `start [worktree] [--prod a,b] [--dev a,b]` | Start dev server (default: current directory) |
 | `logs [session-id]` | Get logs for a session |
 | `tail [session-id]` | Tail logs continuously |
 | `stop <session-id>` | Stop a session |
@@ -43,7 +156,126 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 | `app` | List the spoke apps and their state |
 | `app <name> [subcmd]` | Spoke app control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `auth [subcmd]` | Auth hub control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
+| `test run [worktree]` | Queue a unit-test run; returns position + the command to wait on it |
+| `test wait <run-id>` | Block until that run finishes; exits with the run's exit code |
+| `test list` / `test show <id>` / `test logs <id>` | Queue state, one run, one run's output |
+| `test cancel <id>` | Cancel a queued or running run |
+| `test config [n]` | Show or set the concurrency limit (`0` pauses the queue) |
 | `shutdown` | Shutdown the daemon |
+
+## Env modes — which services a session talks to
+
+A session picks one `.env` (its worktree's if present, otherwise the project root's) and then
+applies a per-service **overlay** on top of it. The overlay only restates the keys for the services
+it names, so nothing else in the chosen `.env` moves — the two `.env` files are still never merged.
+
+**No `env-modes.local` means no overlay at all** — not "everything on dev". The file is gitignored,
+so it never comes with a checkout: until it exists, every start runs on the base `.env` exactly as
+before this feature, and the summary says `(no groups defined — no overlay applied)`.
+
+```bash
+# Every defined group on dev. This is what a bare start does.
+node .claude/skills/dev-server/cli.mjs start
+
+# Buzz on production, everything else still dev.
+node .claude/skills/dev-server/cli.mjs start --prod buzz
+
+# Several groups, the whole lot, and the whole lot with an exception.
+node .claude/skills/dev-server/cli.mjs start --prod db,search
+node .claude/skills/dev-server/cli.mjs start --prod all
+node .claude/skills/dev-server/cli.mjs start --prod all --dev search
+```
+
+The groups are whatever `env-modes.local` defines — today `db`, `buzz`, `search`, `signals`,
+`redis`. Copy `env-modes.example` to `env-modes.local` (gitignored, holds credentials) and fill it
+in; adding a service is an edit to that file, not to the code.
+
+**Defaults.** Every group defaults to `dev`. Move a default in the skill's own `.env` when a dev
+service is unreliable:
+
+```
+DEVSERVER_PROD_GROUPS=buzz
+```
+
+Editing that line does not move a session that is already up — a session pins the defaults it was
+created with, so no branch switch or crash restart can quietly relocate it. The cost is that until
+those sessions are restarted, a bare `start` against one of them is refused as a mode mismatch,
+which is accurate rather than convenient: a bare start would now resolve to something else.
+
+A `--prod` / `--dev` flag beats that, and the flag applies to that start only — a bare start after
+a `--prod` start is back on dev, including when it reuses a dead session. Asking for different
+modes while a session is already running that worktree is refused rather than silently answered
+with the running one; stop it first.
+
+⚠️ **`dev` is not a synonym for safe.** The orchestrator, payments, S3, ClickHouse, the
+notifications DB, the feeds proxy and OpenSearch have **no dev counterpart at all** — a session in
+full dev mode still talks to production for every one of them. Pressing Generate submits a real job
+and spends real Buzz whatever the mode says. That list is printed after every mode summary for
+exactly this reason.
+
+**The auth hub does not follow `db`.** It is one process shared by every session and reads its own
+`apps/auth/.env`, so a `--prod db` session authenticates against whatever database that file names
+and then resolves the resulting user id against production. Dev and prod user ids are unrelated
+rows, so expect a 404 — or, worse, to be acting as a different real user. Point `apps/auth/.env` at
+the same database by hand before using `--prod db` with a login.
+
+**Changing `search` or `signals` mode on a warm build dir is not fully clean.** Those groups set
+`NEXT_PUBLIC_*` values, which Turbopack inlines into client chunks, and the build dir is keyed on
+branch rather than on mode. Delete `.next` when you change either of them if the browser matters —
+server-side code reads the new value immediately, so this only affects what the client was compiled
+against.
+
+**Where to read a running session's modes:** `status` and `list` carry `envModes` and
+`envModeSummary`, and the daemon log prints them next to `Env:` at start:
+
+```
+Env: C:\Dev\Repos\work\wt-thing\.env
+Env modes: buzz=dev db=prod redis=dev search=dev signals=dev | always prod (no dev target): ...
+```
+
+## Queued test runs
+
+The unit suite takes every core. One run is fine; five agents each starting one at the same moment
+is what flattens the machine. The daemon serialises them.
+
+```bash
+# 1. Request a run. Returns immediately, whether it started or queued.
+node .claude/skills/dev-server/cli.mjs test run
+#    Run t3f9a2 queued at position 2 of 3 (1/1 running).
+#    Wait for it in the background: node .claude/skills/dev-server/cli.mjs test wait t3f9a2
+
+# 2. Wait for it — in the background, so you can work meanwhile.
+node .claude/skills/dev-server/cli.mjs test wait t3f9a2
+```
+
+`test wait` exits with the run's own exit code, so it substitutes for `pnpm run test:unit:run`
+wherever that was being checked. Extra args after `--` are passed to vitest, so
+`test run . -- path/to/one.test.ts` narrows the run.
+
+**Concurrency defaults to 1**, configurable with `TEST_CONCURRENCY` in the skill's `.env` or at
+runtime with `test config <n>`. `0` is legal and means *paused* — nothing starts until it is raised.
+A caller that queues behind a paused queue is told so explicitly rather than being handed a position
+and left waiting.
+
+Things worth knowing before you rely on it:
+
+- **The daemon owns the run, not you.** An agent that dies mid-wait releases nothing, because it was
+  holding nothing. The slot frees when the child process exits.
+- **A queued run whose caller stopped polling is dropped** after 10 minutes, so a dead agent cannot
+  hold the queue. `test wait` polls every 2s, so a live waiter never trips this.
+- **A run that overruns 30 minutes is killed** and reported as `timeout`. If the kill produces no
+  exit, the slot is released anyway after a grace period rather than held forever.
+- **A daemon restart drops the queue.** `test wait` treats an unknown run id as terminal and exits
+  nonzero telling you to re-request — it will not poll forever against a daemon that has forgotten
+  you.
+- **Position is exact**, not an estimate: it is the index in one ordered list.
+- **The log window holds the last 2000 lines, and says when it clipped.** A run that emits
+  more than that loses its oldest lines, so a late `test wait` or a `test logs` read can be a
+  fragment. Both waiters print `WARNING: this log is INCOMPLETE …` naming how many lines went,
+  and `logsDropped` is on the run view — a non-zero value means do not quote what you see as
+  the whole run. A live waiter that has been streaming from the start is unaffected.
+- **The exit code is `exitCodeFor`'s, in both waiters.** `test wait` and `pnpm run test:unit:run`
+  read the same rule, so a run killed by a signal reports 1 from either, never a shell 255.
 
 ## Session Object
 
@@ -59,7 +291,9 @@ Each session includes:
   "ready": true,
   "readyAt": "2024-01-15T10:30:02.000Z",
   "startedAt": "2024-01-15T10:30:00.000Z",
-  "url": "http://localhost:3000"
+  "url": "http://localhost:3000",
+  "envModes": { "db": "dev", "buzz": "dev", "search": "dev", "signals": "dev", "redis": "dev" },
+  "envModeSummary": "buzz=dev db=dev ... | always prod (no dev target): orchestrator, payments, ..."
 }
 ```
 
@@ -324,6 +558,20 @@ What's already handled:
   session it marked `crashed`, or any other local server on loopback — is skipped rather than handed
   out. Passing an explicit port is no longer a workaround for that. It still cannot see a listener
   bound only to a non-loopback address (`next dev -H <lan-ip>`), which on Windows nothing detects.
+- **A session holds its port until it is stopped, whatever its status says.** Status is a report
+  about a process the daemon cannot see into: it has read `crashed` for a session that was alive and
+  serving, and it reads dead for the moment inside a restart between the kill and the rebind. So the
+  reservation follows the session, not the status, and `stop <session-id>` (which removes the
+  session) is what frees the port.
+- **`start` on a worktree that already has a session takes that session over**, restarting it on its
+  own port rather than leaving it stranded and picking a new one. `start` and `restart` are now the
+  same thing for an existing worktree; there is no longer a port to lose by picking the wrong one.
+
+  Both check the port is actually free in the moment between the stop and the start, and move the
+  session to a new one if something else is holding it — an orphan of its own that outlived a kill,
+  or another local server. That check is not optional: `next dev` does **not** fail on an occupied
+  port, it warns and quietly moves to another, so a session started onto a held port would report a
+  `url` and pass a health check against a server it does not own.
 
 Fresh worktrees still need `pnpm install` (or a `node_modules` junction) and `git submodule update --init event-engine-common`.
 
@@ -354,6 +602,18 @@ Real-time protection scans all ~210k files in `node_modules` plus every build-ca
 ```powershell
 powershell -File .claude\skills\dev-server\scripts\defender-exclusions.ps1
 ```
+
+## Self-tests
+
+The daemon's trickier invariants are pinned by plain-node self-tests. Run them after touching the
+files they cover — they take milliseconds and need no daemon:
+
+```bash
+node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs
+```
+
+Each case is a shape measured on this repo, and each is mutation-checked: reverting the code it
+covers produces a wrong number, not a hang.
 
 ## Notes
 

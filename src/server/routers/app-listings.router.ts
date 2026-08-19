@@ -58,7 +58,12 @@ import {
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { rateLimit } from '~/server/middleware.trpc';
+import {
+  recordStoreScopeApplied,
+  type StoreScopeEntrypoint,
+} from '~/server/prom/store-scope.metrics';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import {
   isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
@@ -204,6 +209,28 @@ function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): bo
 }
 
 /**
+ * Read the visibility scope `enforceAppListingsReadFlag` put on ctx, RECORDING what
+ * this entry point actually branched on.
+ *
+ * 🔴 The record happens BEFORE the `?? 'none'` fallback, and that ordering is the
+ * point. The fallback is correct (an absent scope must fail CLOSED), but it also
+ * erases the difference between "the resolver said `none`" and "no scope ever
+ * reached this procedure" — two very different faults that produce the identical
+ * `{ items: [] }`. civitai#3983 was stuck on exactly that ambiguity for the whole
+ * investigation. `recordStoreScopeApplied` keeps them apart (`none` vs `absent`).
+ */
+function applyStoreScope(ctx: unknown, entrypoint: StoreScopeEntrypoint): StoreVisibilityScope {
+  const raw = (ctx as { _storeScope?: unknown })._storeScope;
+  recordStoreScopeApplied(raw as string | undefined, entrypoint);
+  // 🔴 `raw ?? 'none'` already failed closed for a MISSING scope; `narrowStoreScope`
+  // extends that to any value outside the closed set (a typo, a scope from a newer
+  // branch this build cannot interpret), and — the point of consolidating it — makes
+  // this branch and the two REST handlers apply the SAME rule instead of three
+  // independently-written defaults that disagreed (civitai#3983).
+  return narrowStoreScope(raw);
+}
+
+/**
  * Map a thrown off-site SERVICE error to the correct TRPC error for the mod client.
  *
  *   - A `TRPCError` the service already shaped (BAD_REQUEST: assets-incomplete /
@@ -238,7 +265,7 @@ function mapOffsiteError(err: unknown): TRPCError {
         : code === 'ALREADY_REPORTED'
         ? 'CONFLICT'
         : 'BAD_REQUEST';
-    return new TRPCError({ code: trpcCode, message: err.message });
+    return new TRPCError({ code: trpcCode, message: err.message, cause: err });
   }
   return new TRPCError({
     code: 'INTERNAL_SERVER_ERROR',
@@ -253,7 +280,9 @@ export const appListingsRouter = router({
     .use(enforceAppBlocksAuthorFlag)
     .input(listingAssetsQuerySchema)
     .query(async ({ ctx, input }) => {
-      const { getListingAssets } = await import('~/server/services/blocks/app-listing-assets.service');
+      const { getListingAssets } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
       return getListingAssets({ listingId: input.listingId }, ctx.user);
     }),
 
@@ -314,7 +343,9 @@ export const appListingsRouter = router({
     .use(enforceAppBlocksAuthorFlag)
     .input(setListingIconSchema)
     .mutation(async ({ ctx, input }) => {
-      const { setListingIcon } = await import('~/server/services/blocks/app-listing-assets.service');
+      const { setListingIcon } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
       try {
         return await setListingIcon(input, ctx.user);
       } catch (err) {
@@ -327,7 +358,9 @@ export const appListingsRouter = router({
     .use(enforceAppBlocksAuthorFlag)
     .input(setListingCoverSchema)
     .mutation(async ({ ctx, input }) => {
-      const { setListingCover } = await import('~/server/services/blocks/app-listing-assets.service');
+      const { setListingCover } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
       try {
         return await setListingCover(input, ctx.user);
       } catch (err) {
@@ -492,7 +525,11 @@ export const appListingsRouter = router({
           userId: ctx.user.id,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
       return { ok: true };
     }),
@@ -589,8 +626,11 @@ export const appListingsRouter = router({
     }),
 
   /**
-   * OWNER: resolve the caller's OWN listing by its backing `appBlockId` — the entry
-   * read for the owner-facing on-site listing-media page (`/apps/<appBlockId>/listing`).
+   * OWNER: resolve the caller's OWN listing by its backing `appBlockId` OR by its public
+   * `slug` — the entry read for the owner-facing on-site listing-media page
+   * (`/apps/<appBlockId>/listing`) and for non-web clients that only hold a slug.
+   * `appBlockId` takes PRECEDENCE: the slug arm runs only when it missed or was absent,
+   * and it resolves any TOP-LEVEL listing (either kind, any status) — civitai/civitai#3984.
    * Returns the `AppListing.id` the page passes to `beginListingRevision` + the asset
    * procs, plus the listing status / content rating / whether a revision is already
    * under review, AND the EDITABLE target's current assets (`assets` + `shadowId`) so
@@ -599,9 +639,31 @@ export const appListingsRouter = router({
    * CALLER'S OWN listing only — nothing here is exposed to a public listing DTO);
    * typed failures map via `mapOffsiteError` (NOT_OWNED→FORBIDDEN, NOT_FOUND when no
    * listing row exists for the app).
+   *
+   * Rate-limited because the SLUG arm resolves any top-level listing and its two
+   * outcomes are distinguishable (NOT_OWNED→FORBIDDEN vs NOT_FOUND), i.e. it answers
+   * "does this slug exist?" for rows the public catalogue never shows — civitai#4003.
+   * Bounding is defence-in-depth, not closure: `submitExternalListing`'s
+   * `slugTakenError` is the same oracle at 10/hour. See the enforcement matrix in
+   * `app-listings.router.getMyListingForApp.rate-limit.test.ts` — both numbers are
+   * pinned there, so change them together.
    */
   getMyListingForApp: appDeveloperProcedure
     .meta(listingMediaCliScope)
+    .use(
+      rateLimit({
+        // A READ limit, shaped like this router's other reads (`getAppDetail`,
+        // `listAvailable`, `listReviews` are all 60/60) rather than like the hourly
+        // write caps — it must not interrupt authoring. The media editor invalidates
+        // this query after EVERY asset mutation, and the heaviest legitimate burst
+        // (a screenshot batch + icon + cover + reorders) is well under a refetch a
+        // second; the CLI calls it once per `app listing`. 60/60 clears both with
+        // room, while turning an unbounded enumeration into a metered one.
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many listing lookups — slow down.',
+      })
+    )
     .input(getMyListingForAppSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -955,9 +1017,7 @@ export const appListingsRouter = router({
     .input(reportListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
-      const { reportListing } = await import(
-        '~/server/services/blocks/offsite-moderation.service'
-      );
+      const { reportListing } = await import('~/server/services/blocks/offsite-moderation.service');
       try {
         return await reportListing({ input, userId: ctx.user.id });
       } catch (err) {
@@ -1001,34 +1061,30 @@ export const appListingsRouter = router({
    * `reportId` in the same tx. Typed failures map via `mapOffsiteError`
    * (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST, infra→INTERNAL/no leak).
    */
-  delistListing: moderatorProcedure
-    .input(delistListingSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Delisting off-site listings is restricted to civitai team');
-      }
-      const { delistListing } = await import('~/server/services/blocks/offsite-moderation.service');
-      try {
-        return await delistListing({ input, reviewerUserId: ctx.user.id });
-      } catch (err) {
-        throw mapOffsiteError(err);
-      }
-    }),
+  delistListing: moderatorProcedure.input(delistListingSchema).mutation(async ({ ctx, input }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Delisting off-site listings is restricted to civitai team');
+    }
+    const { delistListing } = await import('~/server/services/blocks/offsite-moderation.service');
+    try {
+      return await delistListing({ input, reviewerUserId: ctx.user.id });
+    } catch (err) {
+      throw mapOffsiteError(err);
+    }
+  }),
 
   /** MOD relist a removed off-site listing (removed → approved). Reversibility. */
-  relistListing: moderatorProcedure
-    .input(relistListingSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Relisting off-site listings is restricted to civitai team');
-      }
-      const { relistListing } = await import('~/server/services/blocks/offsite-moderation.service');
-      try {
-        return await relistListing({ input, reviewerUserId: ctx.user.id });
-      } catch (err) {
-        throw mapOffsiteError(err);
-      }
-    }),
+  relistListing: moderatorProcedure.input(relistListingSchema).mutation(async ({ ctx, input }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Relisting off-site listings is restricted to civitai team');
+    }
+    const { relistListing } = await import('~/server/services/blocks/offsite-moderation.service');
+    try {
+      return await relistListing({ input, reviewerUserId: ctx.user.id });
+    } catch (err) {
+      throw mapOffsiteError(err);
+    }
+  }),
 
   /**
    * MOD claim (reassign ownership of) an approved/removed off-site listing (PR4) —
@@ -1040,21 +1096,17 @@ export const appListingsRouter = router({
    * `mapOffsiteError` (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE/INVALID_TARGET_USER→
    * BAD_REQUEST, infra→INTERNAL with no leak).
    */
-  claimListing: moderatorProcedure
-    .input(claimListingSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError(
-          'Reassigning off-site listings is restricted to civitai team'
-        );
-      }
-      const { claimListing } = await import('~/server/services/blocks/offsite-moderation.service');
-      try {
-        return await claimListing({ input, reviewerUserId: ctx.user.id });
-      } catch (err) {
-        throw mapOffsiteError(err);
-      }
-    }),
+  claimListing: moderatorProcedure.input(claimListingSchema).mutation(async ({ ctx, input }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Reassigning off-site listings is restricted to civitai team');
+    }
+    const { claimListing } = await import('~/server/services/blocks/offsite-moderation.service');
+    try {
+      return await claimListing({ input, reviewerUserId: ctx.user.id });
+    } catch (err) {
+      throw mapOffsiteError(err);
+    }
+  }),
 
   /**
    * MOD hard-delete (purge) an off-site listing — the final expunge + the
@@ -1065,51 +1117,45 @@ export const appListingsRouter = router({
    * index / raw SQL (a slug-keyed orphaned-events read path is deferred to pre-GA).
    * Destructive — the UI gates it behind a confirm.
    */
-  purgeListing: moderatorProcedure
-    .input(purgeListingSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Purging off-site listings is restricted to civitai team');
-      }
-      const { purgeListing } = await import('~/server/services/blocks/offsite-moderation.service');
-      try {
-        return await purgeListing({ input, reviewerUserId: ctx.user.id });
-      } catch (err) {
-        throw mapOffsiteError(err);
-      }
-    }),
+  purgeListing: moderatorProcedure.input(purgeListingSchema).mutation(async ({ ctx, input }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Purging off-site listings is restricted to civitai team');
+    }
+    const { purgeListing } = await import('~/server/services/blocks/offsite-moderation.service');
+    try {
+      return await purgeListing({ input, reviewerUserId: ctx.user.id });
+    } catch (err) {
+      throw mapOffsiteError(err);
+    }
+  }),
 
   /** MOD resolve a pending report (pending → resolved) + audit event. */
-  resolveReport: moderatorProcedure
-    .input(resolveReportSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Resolving reports is restricted to civitai team');
-      }
-      const { resolveReport } = await import('~/server/services/blocks/offsite-moderation.service');
-      try {
-        await resolveReport({ input, reviewerUserId: ctx.user.id });
-      } catch (err) {
-        throw mapOffsiteError(err);
-      }
-      return { ok: true };
-    }),
+  resolveReport: moderatorProcedure.input(resolveReportSchema).mutation(async ({ ctx, input }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Resolving reports is restricted to civitai team');
+    }
+    const { resolveReport } = await import('~/server/services/blocks/offsite-moderation.service');
+    try {
+      await resolveReport({ input, reviewerUserId: ctx.user.id });
+    } catch (err) {
+      throw mapOffsiteError(err);
+    }
+    return { ok: true };
+  }),
 
   /** MOD dismiss a pending report (pending → dismissed) + audit event. */
-  dismissReport: moderatorProcedure
-    .input(dismissReportSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Dismissing reports is restricted to civitai team');
-      }
-      const { dismissReport } = await import('~/server/services/blocks/offsite-moderation.service');
-      try {
-        await dismissReport({ input, reviewerUserId: ctx.user.id });
-      } catch (err) {
-        throw mapOffsiteError(err);
-      }
-      return { ok: true };
-    }),
+  dismissReport: moderatorProcedure.input(dismissReportSchema).mutation(async ({ ctx, input }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Dismissing reports is restricted to civitai team');
+    }
+    const { dismissReport } = await import('~/server/services/blocks/offsite-moderation.service');
+    try {
+      await dismissReport({ input, reviewerUserId: ctx.user.id });
+    } catch (err) {
+      throw mapOffsiteError(err);
+    }
+    return { ok: true };
+  }),
 
   /** MOD per-listing moderation history (audit trail), newest-first, keyset. */
   listModerationEvents: moderatorProcedure
@@ -1305,7 +1351,7 @@ export const appListingsRouter = router({
     )
     .input(listAppListingsSchema)
     .query(async ({ ctx, input }) => {
-      const scope = (ctx as { _storeScope?: StoreVisibilityScope })._storeScope ?? 'none';
+      const scope = applyStoreScope(ctx, 'trpc-list');
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
@@ -1327,7 +1373,7 @@ export const appListingsRouter = router({
     )
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
-      const scope = (ctx as { _storeScope?: StoreVisibilityScope })._storeScope ?? 'none';
+      const scope = applyStoreScope(ctx, 'trpc-detail');
       if (scope === 'none') {
         throw throwNotFoundError('Listing not found');
       }
@@ -1411,7 +1457,7 @@ export const appListingsRouter = router({
     )
     .input(listAppListingReviewsSchema)
     .query(async ({ ctx, input }) => {
-      const scope = (ctx as { _storeScope?: StoreVisibilityScope })._storeScope ?? 'none';
+      const scope = applyStoreScope(ctx, 'trpc-reviews');
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }

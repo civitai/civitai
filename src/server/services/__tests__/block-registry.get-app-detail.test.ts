@@ -1,55 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.scanIterator.mockImplementation(async function* () {});
+const mockDbRead = dbMock.dbRead;
 
-/**
- * F-E E2 — anon-exposure security tests for the per-app detail
- * (`BlockRegistry.getAppDetail`, served by the anon-capable
- * `blocks.getAppDetail` publicProcedure that backs `/apps/<appBlockId>`).
- *
- * The detail page is anon-CAPABLE (dark today behind the mod-segmented flag,
- * lit at launch by widening the segment). These tests pin the exposure
- * protections so they FAIL if any regresses:
- *
- *   1. APPROVED-ONLY — a non-approved (pending/rejected/withdrawn) OR missing
- *      app returns `null` (→ the router maps null to NOT_FOUND). A non-approved
- *      app's data can never be enumerated by id.
- *   2. PUBLIC MANIFEST ALLOWLIST — the raw stored `manifest` jsonb is arbitrary
- *      publisher JSON + server-SET internal fields (`trustTier`, internal
- *      `iframe.src`, `renderMode`, `settings`, raw `scopes`, …). The detail
- *      must project ONLY the vetted public subset (name/description/
- *      targets[].slotId) — never the raw manifest.
- *   3. SCOPES are the APPROVED scope ids (the permission-disclosure list), NOT
- *      the manifest's internal declaration.
- *   4. liveUrl is the already-public standalone origin (`<slug>.<APPS_DOMAIN>`),
- *      built from blockId + APPS_DOMAIN — no token / secret.
- *
- * We don't run the query (no DB in unit tests). We mock dbRead.$queryRaw to
- * capture the SQL + return seeded rows so we can assert the projected SHAPE.
- */
-
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    blockUserSubscription: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  },
-  sysRedis: { sMembers: vi.fn(async () => []) },
-  REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'packed:caches:block-registry', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
 // getAppDetail builds liveUrl from `env.APPS_DOMAIN` via a dynamic import of
 // `~/env/server` — stub it so the test doesn't pull the real env schema.
 // LOGGING is read by cache-helpers' createLogger at module-eval (the service
@@ -427,9 +383,7 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
   });
 
   it('a malformed/missing manifest yields an empty public manifest (no crash, no leak)', async () => {
-    mockDbRead.$queryRaw.mockResolvedValueOnce([
-      rawRow({ manifest: null }),
-    ]);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([rawRow({ manifest: null })]);
     const { BlockRegistry } = await import('../block-registry.service');
     const detail = await BlockRegistry.getAppDetail('ab_1');
     expect(detail!.manifest).not.toHaveProperty('trustTier');

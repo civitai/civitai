@@ -1,5 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
+  prizePool: 0,
+  prizeDistribution: null,
+});
 
 // #3774: winning a Community (source=User) challenge put the user on the System Daily winner
 // cooldown. `getJudgedEntries` already skipped the cooldown when the challenge being judged is
@@ -10,41 +23,10 @@ import type * as FliptClient from '~/server/flipt/client';
 // and the heavy service modules are cut so daily-challenge-processing can load, while the pure
 // ranking/cooldown helpers stay real.
 
-const {
-  mockDbReadQueryRaw,
-  mockDbReadChallengeFindUnique,
-  mockDbWriteQueryRaw,
-  mockDbWriteExecuteRaw,
-  mockDbWriteChallengeUpdate,
-  mockDbWriteChallengeFindUnique,
-  mockIsFlipt,
-  mockGetChallengeConfig,
-  mockGetJudgingConfig,
-} = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbReadChallengeFindUnique: vi.fn(),
-  mockDbWriteQueryRaw: vi.fn(),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
-  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  }),
+const { mockIsFlipt, mockGetChallengeConfig, mockGetJudgingConfig } = vi.hoisted(() => ({
   mockIsFlipt: vi.fn().mockResolvedValue(false),
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: mockDbReadQueryRaw,
-    challenge: { findUnique: mockDbReadChallengeFindUnique },
-  },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
-  },
 }));
 
 vi.mock('~/server/events', () => ({

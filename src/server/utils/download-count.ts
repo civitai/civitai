@@ -47,11 +47,36 @@ import { isIpAddress } from '~/server/utils/client-ip';
  * instead of the true 24h figure everywhere else.
  *
  * The direction is permissive — an under-count relaxes a limit, it does not
- * block anyone — and closing it means changing the WRITE side, which is a wider
- * blast radius than this module. What is pinned instead is the half this module
- * controls: `download-quota-seam.test.ts` asserts that the value used for the
- * lookup is the one the trusted derivation produced, so a future change to
- * either side has something to trip over.
+ * block anyone.
+ *
+ * ── HOW FAR THE WRITE SIDE MOVING NARROWED IT: NARROWED, NOT CLOSED ───────
+ *
+ * The tracker no longer derives its address from the library resolver; it now
+ * calls the shared attribution predicate. That removes the largest class of
+ * disagreement — a request that DID transit the edge, where the two sides
+ * previously had no reason to settle on the same hop. Both sides now start from
+ * the edge-attested address for such a request.
+ *
+ * 🔴 It does NOT close, and the two remaining classes are stated so nobody
+ * upgrades this to "fixed":
+ *
+ *   1. NORMALISATION. This side is compared against a NORMALIZED address
+ *      (`getTrustedClientIp` folds its result); the write side stores the
+ *      derived text as-is. For IPv4 the two coincide. For IPv6 they coincide
+ *      only while the address is already in canonical form — one address has
+ *      several legal spellings, and the filter is exact string equality.
+ *   2. REQUESTS THAT DID NOT TRANSIT THE EDGE. The two predicates fall back
+ *      differently by design: the enforcement one drops to the transport peer,
+ *      the attribution one does not. That difference is deliberate — it is the
+ *      whole reason there are two — so it cannot be "fixed" here without
+ *      re-deciding the trade for the surface that depends on it.
+ *
+ * So the gap is narrower and still real. Closing it entirely would mean one of
+ * the two surfaces adopting the other's trade, which is a product decision
+ * about the download quota, not a refactor. What is pinned meanwhile is the
+ * half this module controls: `download-quota-seam.test.ts` asserts that the
+ * value used for the lookup is the one the trusted derivation produced, so a
+ * future change to either side has something to trip over.
  *
  * Keep the validation adjacent to the interpolation. If this function ever
  * grows a second query or a third key shape, validate the new one here too

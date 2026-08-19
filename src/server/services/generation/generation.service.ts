@@ -27,7 +27,11 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import type { GenerationAlias, ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
-import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -63,14 +67,6 @@ import {
   SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
-import type {
-  GenerationEcosystemConfig,
-  GenerationEcosystemContext,
-} from '~/server/schema/generation.schema';
-import {
-  DEFAULT_GENERATION_ECOSYSTEM_CONFIG,
-  generationEcosystemConfigSchema,
-} from '~/server/schema/generation.schema';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   getBaseModelEngine,
@@ -283,7 +279,15 @@ export const getGenerationData = async ({
         sfwOnly,
       });
     default:
-      throw new Error('unsupported generation data type');
+      // 🔴 REACHABLE, and it is a CLIENT error: `getGenerationDataSchema` accepts
+      // `type: 'audio'` but this switch has no arm for it, so `?type=audio&id=1`
+      // lands here. `/api/generation/data` used to answer its whole catch with a
+      // 400, which made this a 400 by accident; now that the route delegates to
+      // `handleEndpointError`, a plain `Error` would be classified as a server
+      // fault and collapse into a generic 500. `throwBadRequestError` keeps BOTH
+      // the 400 and this exact text on the wire — the helper's 4xx arm passes a
+      // non-JSON message through as `{ message }`, byte-identical to before.
+      throw throwBadRequestError('unsupported generation data type');
   }
 };
 
@@ -508,7 +512,12 @@ async function getMediaGenerationData({
     height,
   });
 
-  if (type === 'audio') throw new Error('not implemented');
+  // Same reclassification as the `default:` arm of `getGenerationData`: the caller
+  // asked for generation data derived from a media item we cannot derive it from.
+  // A plain `Error` here would now be genericized into a 500 by
+  // `handleEndpointError`; `throwBadRequestError` preserves the pre-fix 400 and
+  // this exact message.
+  if (type === 'audio') throw throwBadRequestError('not implemented');
 
   // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
   return {
@@ -685,43 +694,10 @@ export async function getUnstableResources() {
 }
 
 /**
- * Loads the operator-set ecosystem config (now just `experimentalEcosystems` —
- * an alert flag, not a gate) from Redis and resolves the `generation-testing`
- * Flipt flag for the given user in parallel. `hasTestingAccess` is still needed
- * to resolve the `testers` tier of the gate rules.
- *
- * Mods are always treated as having testing access. Pass an empty user
- * object for unauthenticated/anonymous calls — `hasTestingAccess` will be
- * `false`.
+ * Whether the user passes the `generation-testing` Flipt flag — the `testers`
+ * tier of the gate rules. Mods always do; anonymous callers never do.
  */
-export async function getGenerationEcosystemConfig(
-  user: { id?: number; isModerator?: boolean } = {}
-): Promise<GenerationEcosystemContext> {
-  const [cached, hasTestingAccess] = await Promise.all([
-    // Wall-clock deadline: runs in getGenerationConfig's Promise.all on every
-    // gen submit — a silent sysRedis half-open would park the whole submit.
-    withSysReadDeadline(
-      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
-    )
-      .then((data) => (data ? fromJson<Partial<GenerationEcosystemConfig>>(data) : null))
-      .catch((err) => {
-        // fallback to default if redis fails (DOWN or SLOW/deadline)
-        logSysRedisFailOpen('read-degraded', 'getGenerationEcosystemConfig', err);
-        return null;
-      }),
-    resolveTestingAccess(user),
-  ]);
-
-  // Parse fills any missing fields with their schema defaults; on a corrupt
-  // value fall back to the default (fail-open).
-  const parsed = generationEcosystemConfigSchema.safeParse(cached ?? {});
-  return {
-    ...(parsed.success ? parsed.data : DEFAULT_GENERATION_ECOSYSTEM_CONFIG),
-    hasTestingAccess,
-  };
-}
-
-async function resolveTestingAccess(user: {
+export async function resolveTestingAccess(user: {
   id?: number;
   isModerator?: boolean;
 }): Promise<boolean> {
@@ -732,25 +708,13 @@ async function resolveTestingAccess(user: {
   });
 }
 
-/**
- * Persists the operator-set ecosystem gating config to Redis. Used by the
- * moderator UI at `/moderator/generation-config`. The shape matches
- * `GenerationEcosystemConfig`; arrays are written as-is, no merging with
- * the previous value, so the form is the single source of truth for what
- * gets stored.
- */
-export async function setGenerationEcosystemConfig(input: GenerationEcosystemConfig) {
-  await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config', toJson(input));
-  return input;
-}
-
 const gateRulesArraySchema = z.array(gateRuleSchema);
 
 /**
  * The operator-authored gate rules (the normalized "rules" model). Stored as a
- * single JSON array under `generation:gate-rules`; starts empty and coexists
- * with the legacy `generation:ecosystem-config` lists + self-hosted toggle.
- * Fail-open to `[]` so a bad/missing value never blocks generation.
+ * single JSON array under `generation:gate-rules`; the only gating store, though
+ * it coexists with the self-hosted toggle. Fail-open to `[]` so a bad/missing
+ * value never blocks generation.
  */
 export async function getGateRules(): Promise<GateRule[]> {
   // Wall-clock deadline: getGateRules runs in getGenerationConfig's
@@ -776,12 +740,6 @@ export async function setGateRules(rules: GateRule[]): Promise<GateRule[]> {
 
 export type GenerationConfig = {
   unstableResources: number[];
-  /**
-   * Ecosystem keys that should display the "experimental build" alert in
-   * the generator UI. Surfaced to the client so `ExperimentalModelAlert`
-   * can union this list with the static `isEcosystemExperimental` check.
-   */
-  experimentalEcosystems: string[];
   /**
    * Self-hosted ecosystem keys disabled FOR THIS USER, resolved against the
    * `selfHostedMode` toggle + the user's membership/mod status. Shown-but-disabled
@@ -828,16 +786,16 @@ export function getSelfHostedDisabledEcosystems({
 
 /**
  * Composed config returned to clients in a single round-trip. Bundles unstable
- * resources (set by the `resource-gen-availability` cron), the experimental-
- * ecosystem alert list, the self-hosted toggle state, and the user's applicable
- * gate rules — everything the generator UI needs in one query.
+ * resources (set by the `resource-gen-availability` cron), the self-hosted
+ * toggle state, and the user's applicable gate rules — everything the generator
+ * UI needs in one query.
  */
 export async function getGenerationConfig(
   user: { id?: number; isModerator?: boolean; tier?: string } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, ecosystemConfig, status, gateRules] = await Promise.all([
+  const [unstableResources, hasTestingAccess, status, gateRules] = await Promise.all([
     getUnstableResources(),
-    getGenerationEcosystemConfig(user),
+    resolveTestingAccess(user),
     getGenerationStatus(),
     getGateRules(),
   ]);
@@ -845,7 +803,6 @@ export async function getGenerationConfig(
   const isMember = (user.tier ?? 'free') !== 'free';
   return {
     unstableResources,
-    experimentalEcosystems: ecosystemConfig.experimentalEcosystems,
     selfHostedMode,
     selfHostedDisabledEcosystems: getSelfHostedDisabledEcosystems({
       selfHostedMode,
@@ -855,7 +812,7 @@ export async function getGenerationConfig(
     gateRules: applicableRulesFor(gateRules, {
       isModerator: !!user.isModerator,
       isMember,
-      hasTestingAccess: ecosystemConfig.hasTestingAccess,
+      hasTestingAccess,
     }),
   };
 }
@@ -1160,14 +1117,23 @@ export async function getResourceData(
       hiddenGates,
     });
 
+    // Drop these props so the client doesn't notify the user about them — they are irrelevant if
+    // the resource cannot be used for generation.
+    //
+    // 🔴 Build a NEW model object rather than `delete`-ing on `item.model`. `{ settings, ...item }`
+    // above clones only the TOP level, so `item.model` is still the object the resource cache
+    // handed us — and on the cache's fail-open path one origin lookup is single-flighted and its
+    // record shared by every caller that joined that window. `canGenerate` is a PER-USER decision,
+    // so mutating in place applies this user's gate outcome to a concurrent user's payload.
+    let model = item.model;
     if (!canGenerate) {
-      // Delete these items so that the client doesn't have to notify users about these props. They are irrelevant if the resource cannot be used for generation.
-      delete item.model.sfwOnly;
-      delete item.model.minor;
+      const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = item.model;
+      model = rest;
     }
 
     return {
       ...item,
+      model,
       // Merged in after the cache read (see mergePaidAccess) from PaidAccess — NOT stored in the 1h
       // resourceDataCache, whose TTL would serve stale gating terms after a config change.
       paidAccess: null as { endsAt: Date | null; terms: ModelVersionTerms } | null,

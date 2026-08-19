@@ -151,7 +151,7 @@ import type { ModelById } from '~/types/router';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
+import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -555,6 +555,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               ? paidAccessTerms.download.price
               : undefined
           }
+          listedPrice={
+            hasDownloadPermissions && isOwnerOrMod && paidAccessTerms?.download
+              ? paidAccessTerms.download.price
+              : undefined
+          }
           isLoadingAccess={isLoadingAccess}
           archived={archived}
           onPurchase={() => onPurchase('download')}
@@ -716,6 +721,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       generationPrice={
                         generationRequiresPurchase && !isLoadingAccess && paidAccessTerms
                           ? generationPrice(paidAccessTerms)
+                          : undefined
+                      }
+                      listedPrice={
+                        !generationRequiresPurchase && isOwnerOrMod && paidAccessTerms
+                          ? generationPrice(paidAccessTerms) || undefined
                           : undefined
                       }
                       onPurchase={() => onPurchase('generation')}

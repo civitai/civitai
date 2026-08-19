@@ -1,24 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const redisGet = redisMock.redis.get;
+const redisSet = redisMock.redis.set;
 
 // The announcement redis read (getAnnouncementsCached) is memoized per domain,
 // while getCurrentAnnouncements applies the per-user (targetAudience) + active
 // time-window filter AFTER, in JS. These tests prove the read collapses per
 // domain and is user-INDEPENDENT (so the memo is safe). TTL expiry is covered
 // in ttl-memoize.test.ts. Fresh module (fresh memos) per test via resetModules.
-const { redisGet, redisSet } = vi.hoisted(() => ({
-  redisGet: vi.fn(),
-  redisSet: vi.fn(),
-}));
-
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { day: 86400 } }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { announcement: { findMany: vi.fn(), count: vi.fn() }, $transaction: vi.fn() },
-  dbWrite: { announcement: { findMany: vi.fn() } },
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: redisGet, set: redisSet, del: vi.fn() },
-  REDIS_KEYS: { CACHES: { ANNOUNCEMENTS: 'packed:caches:announcements' } },
-}));
 vi.mock('~/server/utils/pagination-helpers', () => ({
   DEFAULT_PAGE_SIZE: 20,
   getPagination: vi.fn(),

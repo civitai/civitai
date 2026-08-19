@@ -10,9 +10,9 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertTriangle, IconExternalLink, IconInfoCircle, IconX } from '@tabler/icons-react';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
+import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
-import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
-import { trpc } from '~/utils/trpc';
 
 type OnrampService = {
   name: string;
@@ -230,31 +230,12 @@ const regions: OnrampRegion[] = [
   },
 ];
 
-const ALERT_ID = 'crypto-onramp-guidance';
-
 export function useOnrampDismissed() {
-  const settings = useCurrentUserSettings();
-  return (settings.dismissedAlerts ?? []).includes(ALERT_ID);
+  return useFeatureNotice(FEATURE_NOTICES.cryptoOnrampGuidance).isDismissed;
 }
 
 export function OnrampGuidance() {
-  const isDismissed = useOnrampDismissed();
-  const utils = trpc.useUtils();
-  const dismissMutation = trpc.user.dismissAlert.useMutation({
-    onMutate: async () => {
-      await utils.user.getSettings.cancel();
-      const prev = utils.user.getSettings.getData();
-      utils.user.getSettings.setData(undefined, (old) => ({
-        ...old,
-        dismissedAlerts: [...(old?.dismissedAlerts ?? []), ALERT_ID],
-      }));
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
-    },
-    onSettled: () => utils.user.getSettings.invalidate(),
-  });
+  const { isDismissed, dismiss } = useFeatureNotice(FEATURE_NOTICES.cryptoOnrampGuidance);
 
   if (isDismissed) return null;
 
@@ -269,7 +250,7 @@ export function OnrampGuidance() {
           variant="subtle"
           size="xs"
           color="gray"
-          onClick={() => dismissMutation.mutate({ alertId: ALERT_ID })}
+          onClick={() => dismiss()}
           leftSection={<IconX size={14} />}
         >
           Dismiss
@@ -393,29 +374,11 @@ export function OnrampGuidance() {
 
 /** Small toggle to re-show the guidance card after it's been dismissed. Place at page bottom. */
 export function OnrampGuidanceToggle() {
-  const isDismissed = useOnrampDismissed();
-  const utils = trpc.useUtils();
-  const restoreMutation = trpc.user.dismissAlert.useMutation({
-    onMutate: async () => {
-      await utils.user.getSettings.cancel();
-      const prev = utils.user.getSettings.getData();
-      utils.user.getSettings.setData(undefined, (old) => ({
-        ...old,
-        dismissedAlerts: (old?.dismissedAlerts ?? []).filter((id: string) => id !== ALERT_ID),
-      }));
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
-    },
-    onSettled: () => utils.user.getSettings.invalidate(),
-  });
+  const { isDismissed, restore } = useFeatureNotice(FEATURE_NOTICES.cryptoOnrampGuidance);
 
   if (!isDismissed) return null;
 
-  const handleRestore = () => {
-    restoreMutation.mutate({ alertId: ALERT_ID, dismiss: false });
-  };
+  const handleRestore = () => restore();
 
   return (
     <Button

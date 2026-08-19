@@ -28,17 +28,40 @@ import { describe, it, expect } from 'vitest';
  *   - `AppListingsMarketplaceBody.storeGate.browser.test.tsx` — the grid query gate
  *   - `hasAppsStoreAccess.test.ts`                 — the predicate + the SSR seam
  *
- * THREE of the six sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
+ * THREE of the seven sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
  * and `pages/apps/store-preview/[slug].tsx` (Next pages, no component harness) and
  * `components/Apps/RelatedListings.tsx` (its only existing test covers the pure
  * selection helper and never mounts the component, so it never touches
  * `useFeatureFlags` / `canSeeStore`). Those three are covered against REVERSION,
- * not against a wrong-argument call. Stated rather than implied.
+ * not against a wrong-argument call. Stated rather than implied. The seventh —
+ * `appsNavVisibility.ts` — has behavioural cover in the same unit project
+ * (`AppHeader/appsNavVisibility.test.ts`, which asserts the external-only and
+ * catalog-only cohorts resolve `marketplace: true`), so its own argument IS
+ * checked. What no test covers, there or here: that `useGetMenuItems` hands it
+ * the real `useFeatureFlags()` object and wires `appsNav.marketplace` to the
+ * right menu item. That seam is untested for BOTH nav entries and predates this
+ * ledger — do not read the behavioural cover as reaching it.
  *
  * 🔴 AND THE SCOPE THAT MATTERS IN CI: the component suites above are REPORT-ONLY
  * (`preview / component-tests`) and do not block a merge. This unit-project ledger
- * does. So in CI all six sites are pinned STRUCTURALLY ONLY, by this file — which
- * is precisely why a hole in its masker (see below) is worth more than it looks.
+ * does. So in CI six of the seven sites are pinned STRUCTURALLY ONLY, by this file
+ * — which is precisely why a hole in its masker (see below) is worth more than it
+ * looks. (`appsNavVisibility` is the exception: its behavioural test is a unit
+ * test, so it blocks too.)
+ *
+ * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
+ * before treating a green run as "no site re-inlines the gate":
+ *   1. `INLINED_GATE` matches two flag names in PROXIMITY inside ONE expression.
+ *      Four re-inlining shapes evade it and were verified green: hoisted locals
+ *      (`const a = features.appListings; … a || b`), names split across a `;` (the
+ *      `[^;{}]` class stops there by design), a ternary, and
+ *      `[features.appListings, features.appBlocks].some(Boolean)`. Widening the
+ *      NAME list (as the external-only term did) does not touch the SHAPE.
+ *   2. The "EXACT" assertion below pins DIRECT importers only, so a site that
+ *      reaches the gate transitively is invisible to it — including
+ *      `pages/apps/[appBlockId]/index.tsx`, which routes through
+ *      `resolveLegacyAppRoute` → `resolveAppsPageAccess`. That is the site a real
+ *      disclosure defect appeared at, so the blindness is not academic.
  */
 
 const SRC = path.resolve(__dirname, '../../..');
@@ -55,21 +78,24 @@ const SRC = path.resolve(__dirname, '../../..');
  *    `appBlocks` ALONE because they need the runtime, not just the catalog.
  *    Sweeping them in here would be a silent access widening.
  *
- * 2. 🔴 `components/AppLayout/AppHeader/appsNavVisibility.ts` — `marketplace:
- *    !!features.appBlocks`, which drives the user-menu "Apps" → `/apps` entry.
- *    That IS a store-visibility decision and it is NOT converted, deliberately:
- *    that module's own doc comment states the entry "stays gated on `appBlocks`",
- *    so it is a standing decision, not drift. It is also outside `SCAN_ROOTS`
- *    (`components/AppLayout`), so grow-detection below is STRUCTURALLY BLIND to
- *    it — do not read the ledger's exactness as covering it.
+ * 2. The user-menu entry is IN the ledger now (#3907, resolved), and its module
+ *    lives outside `components/Apps` — `components/AppLayout/AppHeader/
+ *    appsNavVisibility.ts` — which is why `SCAN_ROOTS` carries that directory
+ *    too. Earlier revisions of this comment recorded it as deliberately NOT
+ *    converted and therefore structurally invisible here; both halves are now
+ *    false, and the reason it changed is worth keeping:
  *
- *    CONSEQUENCE, recorded so nobody rediscovers it during the launch: for the
- *    `{appListings, NOT appBlocks}` cohort the store renders but has NO in-product
- *    entry point — that menu item is the only route TO `/apps` (the sub-nav's
- *    Marketplace tab only appears once you are already on `/apps/*`). Reachable by
- *    direct URL only. Tracked in issue #3907; not this file's to fix.
+ *    that entry is the ONLY in-product route TO `/apps` (the sub-nav's
+ *    Marketplace tab only appears once you are already on `/apps/*`), and it read
+ *    `!!features.appBlocks`. So `{appListings, NOT appBlocks}` — the documented
+ *    shape of the store launch — and `{appListingsPublicExternal, NOT appBlocks,
+ *    NOT appListings}` — the live external-only tester cohort — both passed the
+ *    other six gates onto a store they could reach only by direct URL. Reachable
+ *    is not findable. Widening it moves DISCOVERY only: every runtime surface
+ *    behind `/apps` keeps its own `appBlocks` gate (see 1).
  */
 const STORE_GATE_SITES = [
+  'components/AppLayout/AppHeader/appsNavVisibility.ts',
   'components/Apps/AppListingsMarketplaceBody.tsx',
   'components/Apps/AppsSubNav.tsx',
   'components/Apps/RelatedListings.tsx',
@@ -81,8 +107,16 @@ const STORE_GATE_SITES = [
 /** The ONE module allowed to spell the boolean out — it defines it. */
 const DEFINING_MODULE = 'shared/utils/app-blocks-access.ts';
 
-/** Directories scanned for a re-inlined gate. The definition lives outside them. */
-const SCAN_ROOTS = ['components/Apps', 'pages/apps'];
+/**
+ * Directories scanned for a re-inlined gate. The definition lives outside them.
+ *
+ * `components/AppLayout/AppHeader` is here for ONE file — `appsNavVisibility.ts`,
+ * the user-menu route to the store (#3907). Scanning the whole directory rather
+ * than allowlisting that file is deliberate: the header is where a future "show
+ * the Apps entry when …" tweak would most plausibly open-code the gate, and the
+ * re-inline scan below only has teeth over directories it walks.
+ */
+const SCAN_ROOTS = ['components/AppLayout/AppHeader', 'components/Apps', 'pages/apps'];
 
 /**
  * 🔴 MASKING RUNS THROUGH THE REAL TypeScript PARSER, NOT A QUOTE SCANNER.
@@ -205,6 +239,21 @@ function stripComments(code: string): string {
 }
 
 /**
+ * The flag names the store gate is built from. The predicate is
+ * `appListings || appBlocks || appListingsPublicExternal` — the third term admits
+ * the EXTERNAL-ONLY cohort, who reach the store and are then scoped SERVER-side to
+ * `kind='offsite'` listings. Any TWO of these joined by a logical operator in live
+ * code under SCAN_ROOTS is a re-inlined gate.
+ *
+ * 🔴 Kept as data, not baked into one literal regex, because the gate GREW: a
+ * two-name regex would have gone on reporting a clean zero for a site that
+ * re-inlined `appListings || appListingsPublicExternal` — the newest and least
+ * familiar half of the rule, i.e. the one most likely to be open-coded by someone
+ * who has not read this file.
+ */
+const STORE_FLAG_NAMES = ['appListingsPublicExternal', 'appListings', 'appBlocks'] as const;
+
+/**
  * An open-coded store gate in LIVE code.
  *
  * Deliberately matched on PROXIMITY + a logical operator rather than one literal
@@ -215,11 +264,18 @@ function stripComments(code: string): string {
  * collapsed first so line wrapping is irrelevant, and `[^;{}]` keeps a match inside
  * one expression rather than spanning statements.
  *
- * `\b` after each flag name matters: it stops `appBlocksPages` / `appBlocksAuthor`
- * — different flags with their own rules — from being read as `appBlocks`.
+ * `\b` after each flag name matters twice over: it stops `appBlocksPages` /
+ * `appBlocksAuthor` — different flags with their own rules — from being read as
+ * `appBlocks`, and it stops `appListingsPublicExternal` from being read as
+ * `appListings`. Both directions are pinned by the masker controls below.
  */
-const INLINED_GATE =
-  /appListings\b[^;{}]{0,120}?(?:\|\||&&|\?\?)[^;{}]{0,120}?appBlocks\b|appBlocks\b[^;{}]{0,120}?(?:\|\||&&|\?\?)[^;{}]{0,120}?appListings\b/;
+const INLINED_GATE = new RegExp(
+  STORE_FLAG_NAMES.flatMap((a) =>
+    STORE_FLAG_NAMES.filter((b) => b !== a).map(
+      (b) => `${a}\\b[^;{}]{0,120}?(?:\\|\\||&&|\\?\\?)[^;{}]{0,120}?${b}\\b`
+    )
+  ).join('|')
+);
 
 /** Collapse whitespace so a prettier line-wrap cannot hide a gate from the regex. */
 function flatten(code: string): string {
@@ -353,6 +409,58 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     expect(
       flatten(maskNonCode('const x = features.appListings || features.appBlocksPages;', 'p.ts'))
     ).not.toMatch(INLINED_GATE);
+    expect(
+      flatten(maskNonCode('const x = features.appListings || features.appBlocksAuthor;', 'p.ts'))
+    ).not.toMatch(INLINED_GATE);
+  });
+
+  /**
+   * 🔴 THE THIRD TERM. `appListingsPublicExternal` admits the EXTERNAL-ONLY cohort
+   * and is now part of the gate, so a site re-inlining a pair that includes it must
+   * be caught — while `appListingsPublicExternal` alone must NOT be mistaken for
+   * `appListings` (they are different flags with different meanings, and the prefix
+   * relationship makes that the easy mistake for a `\b`-less regex).
+   */
+  it('🔴 catches a re-inlined gate built from the EXTERNAL-only term', () => {
+    const cases: Record<string, string> = {
+      'external OR listings':
+        'const ok = features.appListings || features.appListingsPublicExternal;',
+      'external OR blocks': 'const ok = features.appListingsPublicExternal || features.appBlocks;',
+      'external first, wrapped':
+        'const ok =\n  features.appListingsPublicExternal ||\n  features.appListings;',
+      'De Morgan with external':
+        'if (!features.appBlocks && !features.appListingsPublicExternal) return null;',
+      'destructured external': 'const ok = appListingsPublicExternal || appBlocks;',
+    };
+    for (const [label, src] of Object.entries(cases)) {
+      expect(flatten(maskNonCode(src, 'probe.ts')), label).toMatch(INLINED_GATE);
+    }
+  });
+
+  it('🔴 does NOT read appListingsPublicExternal as appListings (prefix collision)', () => {
+    // A single mention of the longer name, OR-ed with an unrelated flag, is not a
+    // store gate. Without `\b` the `appListings` alternative would match its prefix
+    // and report a false offender at every external-cohort call site.
+    expect(
+      flatten(
+        maskNonCode('const x = features.appListingsPublicExternal || features.canViewNsfw;', 'p.ts')
+      )
+    ).not.toMatch(INLINED_GATE);
+    expect(
+      flatten(maskNonCode('const x = features.appListingsPublicExternal;', 'p.ts'))
+    ).not.toMatch(INLINED_GATE);
+    // The sharp case: a hypothetical SIBLING of the longest name. Only the `\b` on
+    // `appListingsPublicExternal` itself rejects this — every other guard in this
+    // file passes it either way, so this is the one assertion that dies for that
+    // specific reason.
+    expect(
+      flatten(
+        maskNonCode(
+          'const x = features.appListingsPublicExternalOverride || features.appBlocksPages;',
+          'p.ts'
+        )
+      )
+    ).not.toMatch(INLINED_GATE);
   });
 
   it('🔴 maskComments keeps STRINGS (the import-path regression this file already hit)', () => {
@@ -405,10 +513,10 @@ describe('🔒 every store-visibility site routes through the shared predicate',
         flatten(f.comments)
       )
     ).map((f) => f.rel);
-    // ⚠️ "EXACT" is scoped to SCAN_ROOTS. `components/AppLayout/AppHeader/
-    // appsNavVisibility.ts` is a real store-visibility decision that lives outside
-    // them and is deliberately excluded — see the STORE_GATE_SITES doc. This
-    // assertion cannot and does not speak for it.
+    // ⚠️ "EXACT" is scoped to SCAN_ROOTS — three directories now, the third
+    // added for the user-menu entry (#3907). A store-visibility decision made
+    // OUTSIDE those roots is still invisible here; the scoping is the limit, not
+    // the file list.
     expect(importers.sort()).toEqual([...STORE_GATE_SITES].sort());
   });
 });

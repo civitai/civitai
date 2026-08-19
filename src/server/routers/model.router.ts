@@ -42,6 +42,8 @@ import {
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
+import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
+import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import {
   changeModelModifierSchema,
@@ -222,12 +224,12 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
-    .query(async ({ input }) => {
-      const { purchases, buyerCount, totalBuzz } = await getModelEarlyAccessRefundRequirement(
-        input
-      );
-      return { purchaseCount: purchases.length, buyerCount, totalBuzz };
-    }),
+    // Annotated so dropping a field is a type error rather than a silently missing dialog: the
+    // caller reads `exemptBuyerCount > 0`, which an absent field answers with `false`.
+    .query(
+      async ({ input }): Promise<EarlyAccessRefundSummary> =>
+        toEarlyAccessRefundSummary(await getModelEarlyAccessRefundRequirement(input))
+    ),
   // TODO - TEMP HACK for reporting modal
   getModelReportDetails: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })

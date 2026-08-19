@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.5",
+  "version": "5.1.22",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -93,14 +93,14 @@
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
     "test:reset": "make bootstrap-db",
-    "test:unit": "vitest --project unit",
-    "test:unit:run": "vitest run --project unit",
-    "test:unit:coverage": "vitest run --project unit --coverage",
+    "test:unit": "vitest --project 'unit*'",
+    "test:unit:run": "node scripts/test-unit-run.mjs",
+    "test:unit:coverage": "vitest run --project 'unit*' --coverage",
     "test:packages": "vitest --project '@civitai/*'",
     "test:packages:run": "vitest run --project '@civitai/*'",
     "test:apps": "vitest --project 'app:*'",
     "test:apps:run": "vitest run --project 'app:*'",
-    "test:lint-rules": "vitest run --project unit src/server/services/__tests__/no-io-in-transaction.test.ts src/server/services/__tests__/no-module-scope-cache.test.ts src/server/services/__tests__/no-server-infra-in-app-graph.test.ts src/server/services/__tests__/no-unbounded-paging-fake.test.ts src/server/services/__tests__/no-unloadable-image-fixture.test.ts src/server/services/__tests__/no-wholesale-module-mock.test.ts",
+    "test:lint-rules": "vitest run --project 'unit*' src/server/services/__tests__/no-io-in-transaction.test.ts src/server/services/__tests__/no-module-scope-cache.test.ts src/server/services/__tests__/no-server-infra-in-app-graph.test.ts src/server/services/__tests__/no-unbounded-paging-fake.test.ts src/server/services/__tests__/no-unloadable-image-fixture.test.ts src/server/services/__tests__/no-wholesale-module-mock.test.ts",
     "test:component": "vitest run --project component",
     "test:component:watch": "vitest --project component",
     "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts",
@@ -108,7 +108,8 @@
     "madge:orphans": "madge --orphans --image ./public/orphans-graph.svg --ts-config ./tsconfig.json --extensions ts,tsx src/",
     "depcheck": "depcheck",
     "generate-types": "typed-scss-modules src",
-    "ts-script": "NODE_ENV=development tsx"
+    "ts-script": "NODE_ENV=development tsx",
+    "generate:moderator-endpoints": "node scripts/generate-moderator-endpoint-catalog.mjs"
   },
   "prisma": {
     "schema": "packages/civitai-db-schema/prisma/schema.prisma",
@@ -122,7 +123,7 @@
     "@civitai/app-sdk": "^0.14.0",
     "@civitai/auth": "workspace:*",
     "@civitai/buzz": "workspace:*",
-    "@civitai/client": "0.2.0-beta.90",
+    "@civitai/client": "0.2.0-beta.91",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
@@ -246,6 +247,7 @@
     "happy-dom": "^20.0.2",
     "he": "^1.2.0",
     "html-to-text": "^9.0.5",
+    "html2canvas-pro": "2.3.8",
     "idb-keyval": "^6.2.0",
     "immer": "^9.0.15",
     "instantsearch.js": "4.64.1",
@@ -265,7 +267,7 @@
     "meilisearch": "0.33.0",
     "motion": "^11.11.17",
     "msgpackr": "^1.10.2",
-    "next": "^16.3.0",
+    "next": "^16.3.1",
     "nodemailer": "^6.8.0",
     "obscenity": "^0.4.5",
     "openai": "^4.73.0",
@@ -433,7 +435,7 @@
     ],
     "patchedDependencies": {
       "@mantine/hooks": "patches/@mantine__hooks.patch",
-      "next@16.3.0": "patches/next@16.3.0.patch"
+      "next@16.3.1": "patches/next@16.3.1.patch"
     }
   }
 }

@@ -605,7 +605,11 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 // route afterwards that could record it (the on-site path is
                 // recorded by `/apps/run/<slug>` itself). Recording on a detail
                 // VIEW would be wrong: browsing is not opening.
-                onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(card))}
+                // 🔴 Stamped with the viewer's account id (#4048) — recents are
+                // per-account, not per browser profile.
+                onClick={() =>
+                  recordRecentlyOpenedApp(toRecentAppFromListing(card), currentUser?.id ?? null)
+                }
               >
                 {cta.label}
               </Button>

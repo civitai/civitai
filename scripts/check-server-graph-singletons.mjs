@@ -104,6 +104,10 @@ if (mapFiles.length === 0) {
 
 // chunk (relative .js path) -> Set(source modules inlined into it)
 const chunkSources = new Map();
+// The same key -> the absolute .js path, so reading a chunk never goes back through
+// the key. The key is a NAME: it is what every violation above prints, so it carries
+// posix separators on all platforms rather than whatever the host filesystem uses.
+const chunkFiles = new Map();
 for (const m of mapFiles) {
   let sources;
   try {
@@ -112,12 +116,15 @@ for (const m of mapFiles) {
     continue; // an unparseable map is not evidence of a violation
   }
   if (!Array.isArray(sources)) continue;
-  chunkSources.set(relative(SERVER_DIR, m).replace(/\.map$/, ''), sources);
+  const abs = m.replace(/\.map$/, '');
+  const rel = relative(SERVER_DIR, abs).replace(/\\/g, '/');
+  chunkSources.set(rel, sources);
+  chunkFiles.set(rel, abs);
 }
 
 const readChunk = (rel) => {
   try {
-    return readFileSync(join(SERVER_DIR, rel), 'utf8');
+    return readFileSync(chunkFiles.get(rel) ?? join(SERVER_DIR, rel), 'utf8');
   } catch {
     return '';
   }

@@ -28,6 +28,7 @@ import {
   ModelUploadType,
 } from '~/shared/utils/prisma/enums';
 import { deleteModelFileObject } from '~/utils/s3-utils';
+import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 
@@ -316,6 +317,28 @@ export async function deleteFile({
         })
       )
       .catch(() => {});
+  }
+
+  // Post-commit: drop this file's storage-resolver registry row (best-effort).
+  // Deleting one file leaves its model version alive, so the version-keyed
+  // deregistration can never reach this entry — without a file-keyed call the
+  // registry keeps describing a file that no longer exists. Keyed on `id`, the
+  // id the DELETE above actually removed (a returned `row` is the proof it did),
+  // never a re-read. Same fire-and-forget shape as the object cleanup beside it,
+  // with a terminal .catch so an Axiom-side rejection can't leak as an unhandled
+  // rejection. The helper is best-effort and never throws, but the wrapper keeps
+  // a future change from turning a registry blip into a failed delete.
+  if (row) {
+    deregisterFileLocationsByFile([id])
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-delete-deregister-file-locations',
+          message: `Failed to deregister file locations for file ${id}`,
+          error,
+        })
+      )
+      .catch(() => undefined);
   }
 
   return row ? { modelVersionId: row.modelVersionId, modelId: row.modelId } : undefined;

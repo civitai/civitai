@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * STEP-7 sysRedis soft-dependency (Group A) — daily-challenge.service.getCustomChallenge.
@@ -13,19 +14,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * the wrap would hang the call → the test would TIME OUT.
  */
 
-const { get, mockWithSysReadDeadline, mockLogSysRedisFailOpen } = vi.hoisted(() => ({
-  get: vi.fn(),
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({
   mockLogSysRedisFailOpen: vi.fn(),
 }));
 
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { get },
-  REDIS_SYS_KEYS: { GENERATION: { CUSTOM_CHALLENGE: 'generation:custom-challenge' } },
-  withSysReadDeadline: mockWithSysReadDeadline,
-}));
+const get = redisMock.sysRedis.get;
+const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
+
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
-vi.mock('~/server/db/client', () => ({ dbRead: {} }));
 // Heavy sibling modules pulled in by the service's import graph — stub so the
 // import doesn't pull DB / article service.
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
@@ -36,6 +32,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({ getChalleng
 vi.mock('~/server/services/article.service', () => ({ getArticles: vi.fn() }));
 
 import { getCustomChallenge } from '~/server/services/daily-challenge.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const VALID = JSON.stringify({
   articleId: 1,

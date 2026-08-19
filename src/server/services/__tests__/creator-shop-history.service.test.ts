@@ -14,19 +14,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, findFirst: vi.fn() },
-    // Reviewing anything other than an approval runs the D14 pack delist
-    // cascade, which reads the join table.
-    cosmeticShopItemCosmetic: { findMany: vi.fn().mockResolvedValue([]) },
-  },
-  dbWrite: {
-    cosmeticShopItem: { update: mocks.shopItemUpdate, updateMany: vi.fn() },
-    cosmetic: { update: vi.fn() },
-    userCosmetic: { createMany: mocks.userCosmeticCreateMany },
-  },
-}));
 vi.mock('sharp', () => ({ default: () => ({ metadata: mocks.sharpMetadata }) }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -42,6 +29,16 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 }));
 
 import { reviewCreatorShopItem, updateCreatorShopItem } from '../creator-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmetic.createMany.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticCreateMany as (...a: unknown[]) => unknown)(...args)
+);
 
 // The item as it stands after the moderator asked for changes: approved once at
 // 500 Buzz, currently sitting in RequestedChanges with the mod's note.

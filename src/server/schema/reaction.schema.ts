@@ -23,7 +23,9 @@ export const reactionRateLimits: RateLimit[] = [
   { limit: 8000, period: CacheTTL.day, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000 },
 ];
 
-export const reactableEntities: readonly [string, ...string[]] = [
+// `as const` (not `readonly [string, ...string[]]`) so `ReactionEntityType` stays a
+// literal union — the block-check owner resolver switches exhaustively over it.
+export const reactableEntities = [
   'question',
   'answer',
   'comment',
@@ -33,7 +35,7 @@ export const reactableEntities: readonly [string, ...string[]] = [
   'resourceReview',
   'article',
   'bountyEntry',
-];
+] as const;
 
 export type ReactionEntityType = ToggleReactionInput['entityType'];
 export type ToggleReactionInput = z.infer<typeof toggleReactionSchema>;

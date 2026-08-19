@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Verifies deleteVersionById's post-commit cleanup: it deregisters the
 // storage-resolver file_locations rows for the deleted version (the go-forward
@@ -6,38 +7,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // cleanup for non-tiered/legacy files. deregister is best-effort — a failure
 // must not fail the (already-committed) version delete.
 
-const { mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findFirstOrThrow: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    delete: vi.fn(),
-    deleteMany: vi.fn(),
-    groupBy: vi.fn(),
-    count: vi.fn(),
-  });
-  const write = {
-    modelVersion: mk(),
-    modelFile: mk(),
-    entityAccess: mk(),
-    paidAccess: mk(),
-    $queryRaw: vi.fn(),
-    $transaction: vi.fn(),
-  };
-  return { mockDbWrite: write };
-});
+// `deleteVersionById` (model-version.service:1047) is dbWrite only — the dbRead spellings
+// elsewhere in that module belong to functions this test never calls — so the old alias's read
+// half was dead and everything binds to the write client.
+const mockDbWrite = dbMock.dbWrite;
 
 const { mockDeleteModelFileObjects, mockDeregisterFileLocations } = vi.hoisted(() => ({
   mockDeleteModelFileObjects: vi.fn(),
   mockDeregisterFileLocations: vi.fn(),
 }));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, dbReadFallbackCounter: { inc: vi.fn() } };
@@ -47,10 +25,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 // (mirrors model-version.idempotent.service.test.ts).
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/redis/caches', () => ({}));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return { ...actual, redis: { get: vi.fn(), set: vi.fn() }, sysRedis: { get: vi.fn() } };
-});
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: {} }));
 vi.mock('~/server/search-index', () => ({}));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
@@ -82,7 +56,6 @@ vi.mock('~/server/services/paid-access.service', () => ({
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, preventModelVersionLag: vi.fn() };
@@ -97,13 +70,9 @@ vi.mock('~/utils/storage-resolver', () => ({
 
 import { deleteVersionById } from '~/server/services/model-version.service';
 
-// Drive the interactive transaction: invoke the callback with a `tx` that maps
-// to our mocked dbWrite delegates, so the snapshot + cascade run against mocks.
-function wireTransaction() {
-  mockDbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
-    cb(mockDbWrite)
-  );
-}
+// The old `wireTransaction()` ran the callback against `mockDbWrite` itself — tx and the write
+// client were already one object — which is exactly what the canonical `$transaction` default
+// does, so it is safe to inherit and the helper is gone.
 
 const VERSION_ID = 4242;
 
@@ -126,14 +95,15 @@ function stubVersionRows(fileUrls: string[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  wireTransaction();
   mockDeleteModelFileObjects.mockResolvedValue(undefined);
   mockDeregisterFileLocations.mockResolvedValue({ deleted: 1 });
 });
 
 describe('deleteVersionById — file_locations deregistration', () => {
   it('deregisters by version id AND still runs the legacy ModelFile.url S3 cleanup', async () => {
-    stubVersionRows(['https://s3.us-west-004.backblazeb2.com/civitai-modelfiles/model/7/a.safetensors']);
+    stubVersionRows([
+      'https://s3.us-west-004.backblazeb2.com/civitai-modelfiles/model/7/a.safetensors',
+    ]);
 
     await deleteVersionById({ id: VERSION_ID });
 
@@ -172,7 +142,9 @@ describe('deleteVersionById — file_locations deregistration', () => {
   });
 
   it('does not fail the version delete if deregistration throws (best-effort)', async () => {
-    stubVersionRows(['https://s3.us-west-004.backblazeb2.com/civitai-modelfiles/model/7/a.safetensors']);
+    stubVersionRows([
+      'https://s3.us-west-004.backblazeb2.com/civitai-modelfiles/model/7/a.safetensors',
+    ]);
     mockDeregisterFileLocations.mockRejectedValue(new Error('storage-resolver down'));
 
     const result = await deleteVersionById({ id: VERSION_ID });

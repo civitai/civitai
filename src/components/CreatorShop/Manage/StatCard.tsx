@@ -32,12 +32,7 @@ export function StatCard({
           <Text size="xs" c="dimmed" lineClamp={1}>
             {label}
           </Text>
-          <Text
-            size="lg"
-            fw={700}
-            className="whitespace-nowrap"
-            style={{ color: `var(--mantine-color-${color}-light-color)` }}
-          >
+          <Text size="lg" fw={700} style={{ color: `var(--mantine-color-${color}-light-color)` }}>
             {value}
           </Text>
           {sub && (

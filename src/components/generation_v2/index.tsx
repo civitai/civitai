@@ -81,4 +81,5 @@ export { FormFooter } from './FormFooter';
 export { AccordionLayout } from './AccordionLayout';
 export { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 export { WhatIfProvider, useWhatIfContext } from './WhatIfProvider';
-export { ResourceAlerts, ExperimentalModelAlert, ReadyAlert } from './ResourceAlerts';
+export { ResourceAlerts, ReadyAlert } from './ResourceAlerts';
+export { ExperimentalFlask, ExperimentalAlerts } from './Experimental';

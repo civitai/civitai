@@ -29,7 +29,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 const {
   limiterOptions,
-  mockFindUnique,
   mockGetServerAuthSession,
   mockGetFileForModelVersion,
   mockHasExceededLimit,
@@ -40,17 +39,11 @@ const {
   // time of the route, so a spy's call record would be wiped by the
   // `clearAllMocks` in beforeEach before any test could read it.
   limiterOptions: {} as Record<string, unknown>,
-  mockFindUnique: vi.fn(),
   mockGetServerAuthSession: vi.fn(),
   mockGetFileForModelVersion: vi.fn(),
   mockHasExceededLimit: vi.fn(),
   mockIncrement: vi.fn(),
   mockChQuery: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { keyValue: { findUnique: mockFindUnique } },
-  dbWrite: { keyValue: { findUnique: mockFindUnique } },
 }));
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -114,6 +107,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 import handler from '~/pages/api/download/models/[modelVersionId]';
 import { fetchDownloadCount } from '~/server/utils/download-count';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+// The handler reads the blocklist from the REPLICA only (`dbRead.keyValue.findUnique` in
+// the route). The old fixture aliased dbRead and dbWrite to one spy, so a read routed to
+// the primary would have satisfied it silently; binding dbRead alone makes that
+// distinguishable.
+const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
 function run(headers: Record<string, string>, remoteAddress?: string) {
   const req = {

@@ -1,5 +1,8 @@
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+} from '~/server/notifications/base.notifications';
 import {
   CommentNotificationPriority,
   commentDedupeKeyByVersion,
@@ -40,6 +43,10 @@ export const mentionNotifications = createNotificationProcessor({
       WITH new_mentions AS (
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          -- The recipient is produced by unnest() in this select list, so it can't be referenced
+          -- from these WHERE clauses. Each branch carries its author out instead, and the block
+          -- filter runs once on the outer query where both sides are finally in scope.
+          c."userId" "actorId",
           JSONB_BUILD_OBJECT(
             'version', 2,
             'mentionedIn', 'comment',
@@ -131,6 +138,7 @@ export const mentionNotifications = createNotificationProcessor({
 
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          c."userId" "actorId",
           JSONB_BUILD_OBJECT(
             'mentionedIn', 'comment',
             'modelId', c."modelId",
@@ -151,6 +159,7 @@ export const mentionNotifications = createNotificationProcessor({
 
         SELECT DISTINCT
           CAST(unnest(regexp_matches(m.description, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          m."userId" "actorId",
           JSONB_BUILD_OBJECT(
             'mentionedIn', 'model',
             'modelId', m.id,
@@ -187,6 +196,7 @@ export const mentionNotifications = createNotificationProcessor({
       FROM new_mentions r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-mention')
+        AND ${notBlockedBetween('r."ownerId"', 'r."actorId"')}
     `,
   },
 });

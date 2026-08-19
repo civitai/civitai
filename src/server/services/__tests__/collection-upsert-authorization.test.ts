@@ -1,19 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as RedisCaches from '~/server/redis/caches';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
-const { mockDbRead, mockDbWrite, mockCountCacheRefresh } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn() },
-  mockDbWrite: {
-    $queryRaw: vi.fn(),
-    $transaction: vi.fn(),
-    collection: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn() },
-    collectionContributor: { updateMany: vi.fn() },
-    collectionInvite: { findMany: vi.fn().mockResolvedValue([]) },
-  },
+const { mockCountCacheRefresh } = vi.hoisted(() => ({
   mockCountCacheRefresh: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/search-index', () => ({ collectionsSearchIndex: { queueUpdate: vi.fn() } }));
 
 // `upsertCollection` refreshes the collection-count cache once the transaction commits, and that

@@ -2,6 +2,8 @@ import clsx from 'clsx';
 import React from 'react';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
+import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import styles from './AspectRatioCard.module.scss';
 
@@ -20,6 +22,8 @@ export type AspectRatioCardProps = {
   footer?: React.ReactNode;
   footerGradient?: boolean;
   render: (props: { inView: boolean }) => React.ReactNode;
+  /** Entities this card presents, reported once it has been half visible for a second. */
+  impressions?: ImpressionTarget[];
 };
 
 export function AspectRatioCard({
@@ -30,11 +34,14 @@ export function AspectRatioCard({
   footer,
   footerGradient,
   render,
+  impressions,
 }: AspectRatioCardProps) {
   const wrapperStyle = { aspectRatio: aspectRatioMap[aspectRatio] };
+  const impressionRef = useTrackImpression<HTMLDivElement>(impressions);
 
   return (
     <ElementInView
+      ref={impressionRef}
       component={CosmeticCard}
       cosmetic={cosmetic}
       cosmeticStyle={cosmetic ? wrapperStyle : undefined}

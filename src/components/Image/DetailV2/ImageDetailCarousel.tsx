@@ -1,6 +1,7 @@
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -16,7 +17,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
-import { watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
+import { allowNativeDragStart, watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
 type ImageDetailCarouselProps = {
   videoRef?: React.ForwardedRef<EdgeVideoRef>;
@@ -262,10 +263,31 @@ function ImageContent({
 
   const isVideo = image?.type === 'video';
 
+  // dragstart carries no pointerType, and android chrome fires it for a long-press
+  // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
+  const pointerType = useRef('mouse');
+
+  const handleDragStart = (event: React.DragEvent) => {
+    if (pointerType.current !== 'mouse') return;
+    const media = event.target;
+    if (!(media instanceof HTMLImageElement) && !(media instanceof HTMLVideoElement)) return;
+    allowNativeDragStart(event);
+    setMediaDragData(event.dataTransfer, {
+      url: media.currentSrc || media.src,
+      mediaId: image.id,
+      type: isVideo ? 'video' : 'image',
+    });
+  };
+
   return (
     <ImageGuardContent image={image} {...connect}>
       {(safe) => (
-        <div ref={setRef} className="relative flex size-full items-center justify-center">
+        <div
+          ref={setRef}
+          onPointerDownCapture={(event) => (pointerType.current = event.pointerType)}
+          onDragStartCapture={handleDragStart}
+          className="relative flex size-full items-center justify-center"
+        >
           {!safe && width && height ? (
             <div
               className="relative flex max-h-full max-w-full flex-1"

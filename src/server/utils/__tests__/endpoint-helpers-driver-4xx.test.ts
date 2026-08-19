@@ -289,6 +289,55 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
     expect((res._json() as Record<string, unknown>).code).toBe('CONFLICT');
   });
 
+  /**
+   * 🔴 The PAIR that justifies the `cause: err` sweep over the 17 App Blocks /
+   * referral router sites — the two bodies differ by nothing but that one word.
+   *
+   * This is a MECHANISM guard, green on both sides of that sweep: the predicate
+   * has always behaved this way, and the sweep changed the call sites, not the
+   * predicate. It is here because the sweep's whole justification is the
+   * difference below, and a reviewer should be able to see it rather than take
+   * it on trust. `rest-error-envelope-ledger.test.ts` is the part that goes red
+   * when a site regresses.
+   *
+   * 🔴 SCOPE, stated plainly: `isDriverAuthoredMessage` is consulted by
+   * `handleEndpointError` and by NOTHING else, and `handleEndpointError` serves
+   * the REST `/api/*` surface. tRPC has its own `errorFormatter` (`trpc.ts`),
+   * which does not call it and does not put `cause` on the wire. So on today's
+   * wiring the sweep changes no observable tRPC response — it removes a latent
+   * gap and makes those sites correct the moment one of their procedures is
+   * reached through the REST helper. It is not a live leak being closed.
+   */
+  it('INVARIANT: WITHOUT `cause`, driver text at a 4xx survives — the reason for `cause: err`', () => {
+    const driver = prismaError('P2000', 'Invalid `prisma.appListing.create()` invocation');
+    const res = createRes();
+    // Exactly what the 17 sites used to build: the driver's own text forwarded
+    // into a fresh BAD_REQUEST, with nothing tying the two together.
+    handleEndpointError(
+      res as never,
+      new TRPCError({ code: 'BAD_REQUEST', message: driver.message })
+    );
+
+    expect(res._status()).toBe(400);
+    expect(
+      JSON.stringify(res._json()),
+      "the pre-sweep shape: nothing in the chain proves this text is the driver's, so it stands"
+    ).toContain('prisma.appListing.create()');
+  });
+
+  it('INVARIANT: WITH `cause`, the same 4xx is genericized — status kept, driver text gone', () => {
+    const driver = prismaError('P2000', 'Invalid `prisma.appListing.create()` invocation');
+    const res = createRes();
+    // What they build now. One added word, and the identity predicate can see it.
+    handleEndpointError(
+      res as never,
+      new TRPCError({ code: 'BAD_REQUEST', message: driver.message, cause: driver })
+    );
+
+    expect(res._status(), 'the STATUS is caller feedback and is kept').toBe(400);
+    expectNoneDisclosed(res, ['prisma.appListing.create()', 'invocation', 'appListing']);
+  });
+
   // ── 🔴 The guard that makes IDENTITY-vs-CHAIN observable ────────────────────
   it('does NOT genericize a HAND-AUTHORED 4xx that merely carries a driver `cause`', () => {
     // `throwBadRequestError(msg, dbError)` attaches the driver as `cause` while

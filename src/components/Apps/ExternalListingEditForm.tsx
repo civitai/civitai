@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconApps,
   IconDeviceFloppy,
   IconExternalLink,
   IconInfoCircle,
@@ -42,6 +43,7 @@ import {
   isOnsiteEdit,
   hasScalarChanges,
   isApprovedEdit,
+  listingEditHeaderCopy,
   type ListingEditContext,
 } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -90,6 +92,8 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
    * Assets on an on-site listing. Off-site keeps 0/1/2 exactly as before.
    */
   const showUrlStep = !isOnsiteEdit(edit);
+  // 🔴 The HEADER reads the SAME flag the wizard shape does — see `listingEditHeaderCopy`.
+  const headerCopy = listingEditHeaderCopy(showUrlStep);
   const STEP_DETAILS = showUrlStep ? 1 : 0;
   const STEP_ASSETS = showUrlStep ? 2 : 1;
 
@@ -268,16 +272,18 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
 
   return (
     <Stack gap="md" data-testid="apps-offsite-edit-form">
+      {/* 🔴 KIND-AWARE HEADER, off the SAME `showUrlStep` flag as the wizard shape. Both
+          the icon and the sentence used to be hardcoded to the off-site case, so an
+          on-site listing was told to "change the link" — under an external-link icon —
+          about an app that has no link and no URL step. See `listingEditHeaderCopy`. */}
       <Alert
         color="blue"
         variant="light"
-        icon={<IconExternalLink size={16} />}
+        icon={showUrlStep ? <IconExternalLink size={16} /> : <IconApps size={16} />}
         title={`Editing ${edit.slug}`}
+        data-testid={headerCopy.testId}
       >
-        <Text size="sm">
-          Update your external-link app. Change the link, details, or assets across the steps below,
-          then save.
-        </Text>
+        <Text size="sm">{headerCopy.blurb}</Text>
       </Alert>
 
       {approved && (

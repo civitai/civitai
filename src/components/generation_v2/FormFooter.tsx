@@ -34,7 +34,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
@@ -83,7 +83,11 @@ import {
   getEcosystemsForWorkflow,
   isWorkflowAvailable,
 } from '~/shared/data-graph/generation/config/workflows';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import {
+  ecosystemByKey,
+  getBaseModelLicense,
+  getBaseModelsByEcosystemId,
+} from '~/shared/constants/basemodel.constants';
 import {
   pickStrongerGate,
   rulesToStates,
@@ -96,6 +100,7 @@ import {
   SDCPP_SUPPORTED_ECOSYSTEMS,
 } from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   openCompatibilityConfirmModal,
@@ -631,9 +636,16 @@ function PriorityAlertSpace({
     );
   }
 
+  // Experimental warnings sit alongside the priority alert rather than inside the
+  // chain above, for the same reason QueueSnackbar does: the chain is exclusive
+  // and ordered by urgency of the moment, and its first branch (`missingFieldMessage`)
+  // fires whenever a required field is blank. Joining it would hide the warning
+  // for anyone who hasn't written a prompt yet — the moment it's most worth
+  // reading, since nothing has been invested in the selection yet.
   return (
     <>
       <QueueSnackbar right={snackbarRight} />
+      <ExperimentalWarnings />
       {priorityAlert}
     </>
   );
@@ -971,8 +983,73 @@ function BlueBuzzMatureReminder() {
 }
 
 // =============================================================================
+// Experimental Warnings
+// =============================================================================
+
+/**
+ * The experimental warnings for the current selection, rendered in the footer's
+ * alert region above the submit row — the last thing read before Buzz is
+ * committed. Several can show at once (an ecosystem and a version can both be
+ * experimental), which is the other reason these stay out of the priority chain:
+ * it resolves to a single node.
+ */
+function ExperimentalWarnings() {
+  const graph = useGraph<GenerationGraphTypes>();
+
+  return (
+    <MultiController
+      graph={graph}
+      names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
+      render={({ values }) => <ExperimentalAlerts selection={values} />}
+    />
+  );
+}
+
+// =============================================================================
 // FormFooter Component
 // =============================================================================
+
+/**
+ * Names the selected model under the submit button, for licences that oblige us
+ * to do it in the product's own UI rather than only on the model page.
+ */
+function EcosystemAttribution() {
+  const graph = useGraph<GenerationGraphTypes>();
+  const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
+
+  const license = useMemo(() => {
+    const ecosystemId = ecosystem ? ecosystemByKey.get(ecosystem)?.id : undefined;
+    if (ecosystemId == null) return undefined;
+    return getBaseModelsByEcosystemId(ecosystemId)
+      .map((baseModel) => getBaseModelLicense(baseModel.id))
+      .find((found) => !!found?.attribution);
+  }, [ecosystem]);
+
+  if (!license?.attribution) return null;
+
+  return (
+    <Text size="xs" ta="center">
+      {license.attribution}
+      {license.url && (
+        <>
+          {' · '}
+          <Text
+            component="a"
+            href={license.url}
+            target="_blank"
+            rel="noreferrer"
+            td="underline"
+            inherit
+          >
+            License
+          </Text>
+        </>
+      )}
+    </Text>
+  );
+}
 
 export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void } = {}) {
   const graph = useGraph<GenerationGraphTypes>();
@@ -1366,6 +1443,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           </Tooltip>
         </div>
       )}
+
+      <EcosystemAttribution />
     </>
   );
 }

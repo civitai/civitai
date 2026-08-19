@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PLACEMENT_SPEND_TYPES } from '~/shared/constants/placement.constants';
+// Mocked below; imported for the assertion that a swallowed reward failure is
+// still reported.
+import { logToAxiom } from '~/server/logging/client';
 // Stubbed globally in src/__tests__/setup.ts.
 import { placementUnfundedSettlementsGauge } from '~/server/prom/client';
 
@@ -14,6 +16,25 @@ vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction,
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
+
+// Wholesale on purpose: the real module loads `base.reward`, which builds a
+// ClickHouse client, redis handles and prom collectors at import time. The
+// reward's own behaviour is tested in stickerPlacementAccepted.reward.test.ts;
+// what this suite owns is WHEN settlement hands it a placement.
+const applyAcceptReward = vi.fn();
+vi.mock('~/server/rewards/active/stickerPlacementAccepted.reward', () => ({
+  stickerPlacementAcceptedReward: { apply: applyAcceptReward },
+}));
+
+// The remix reward, which this service must NEVER grant — it is granted from
+// `actOnRemixGallerySubmission`, the only path by which a remix submission is
+// approved. Mocked here so the exclusivity test below observes the real shared
+// chokepoint: this suite is the only place that exercises it, since the remix
+// suite mocks `settlePlacement` wholesale and cannot see what it fires.
+const applyRemixReward = vi.fn();
+vi.mock('~/server/rewards/active/remixAccept.reward', () => ({
+  remixAcceptReward: { apply: applyRemixReward },
+}));
 
 // A real mutex, not a pass-through: the lock is what stops two callers both
 // reaching the Buzz call after one has claimed the ledger row, so a double that
@@ -287,6 +308,14 @@ const givenPlacement = (overrides: Record<string, unknown> = {}) => {
     status: 'pending',
     removedBy: null,
     amount: 1000,
+    // Present and NULL, as the column is on a real row. Omitting it made the
+    // double answer `undefined` where Postgres answers NULL, which is a
+    // different thing to a `where: { spendType: null }` predicate.
+    spendType: null,
+    // Present and false, as the column is on a real row. Left off, `free` reads
+    // `undefined` here where Postgres answers false — falsy either way today, and
+    // a difference the moment anything compares it rather than tests it.
+    free: false,
     expiresAt: null,
     resolvedAt: null,
     resolvedById: null,
@@ -351,13 +380,30 @@ beforeEach(() => {
   configState.shares = { seller: 0, platform: 0.3 };
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 2, totalAmount: 0 });
   createBuzzTransaction.mockResolvedValue({ transactionId: 'buzz-tx' });
-  refundMultiAccountTransaction.mockResolvedValue({ externalTransactionIdPrefix: 'refund-tx' });
+  applyAcceptReward.mockResolvedValue(undefined);
+  applyRemixReward.mockResolvedValue(undefined);
+  // The real response carries the legs it reversed. The double used to return
+  // only the prefix, which let a refund that moved NOTHING look identical to one
+  // that moved everything — the exact discrepancy the service now refuses on.
+  refundMultiAccountTransaction.mockResolvedValue({
+    externalTransactionIdPrefix: 'refund-tx',
+    refundedTransactions: [
+      {
+        originalTransactionId: 'orig',
+        refundTransactionId: 'refund-tx',
+        accountType: 'User',
+        amount: 1,
+      },
+    ],
+    totalRefunded: 1,
+  });
 });
 
 describe('holding the escrow', () => {
   it('takes two holds so every release is a whole-hold operation', async () => {
     givenPlacement();
     const held = await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -374,6 +420,7 @@ describe('holding the escrow', () => {
   it('draws from paid Buzz only', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -381,15 +428,121 @@ describe('holding the escrow', () => {
     });
 
     for (const call of createMultiAccountBuzzTransaction.mock.calls) {
-      expect(call[0].fromAccountTypes).toEqual(PLACEMENT_SPEND_TYPES);
+      expect(call[0].fromAccountTypes).toEqual(['yellow']);
       expect(call[0].fromAccountTypes).not.toContain('blue');
       expect(call[0].toAccountId).toBe(0);
     }
   });
 
+  // The hold names its destination account. Leaving it unnamed let the buzz
+  // service apply its yellow default, which converted a green placement to
+  // yellow on the way INTO escrow — so by settlement there was no green left to
+  // pay the owner with, whatever the payout leg asked for.
+  it('holds green in green, rather than converting it at intake', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(2);
+    for (const call of createMultiAccountBuzzTransaction.mock.calls) {
+      expect(call[0].fromAccountTypes).toEqual(['green']);
+      expect(call[0].toAccountType).toBe('green');
+    }
+  });
+
+  // One currency per placement. Two would leave the settlement unable to pay
+  // back in kind: a placement funded 40 green and 60 yellow has no single
+  // account to release from.
+  it('draws from exactly one account, never the pair', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    for (const call of createMultiAccountBuzzTransaction.mock.calls)
+      expect(call[0].fromAccountTypes).toHaveLength(1);
+  });
+
+  it('refuses a currency the escrow cannot hold', async () => {
+    givenPlacement();
+
+    await expect(
+      holdPlacementEscrow({
+        spendType: 'blue',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
+    ).rejects.toThrow('not a placement spend type');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  // The currency write rides the `expiresAt: null` stamp, which a second run
+  // does not match — but this function is deliberately idempotent, so a row that
+  // already has a deadline must still end up carrying its currency. Otherwise
+  // the holds charge green against a row that settles yellow.
+  it('records the currency even when the deadline was already stamped', async () => {
+    const placement = givenPlacement({ expiresAt: new Date('2030-01-01') });
+
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(placement.spendType).toBe('green');
+  });
+
+  // The one case that cannot be reconciled: the escrow can hold only one
+  // currency, so charging a second one against the same row would strand
+  // whichever the settlement does not pay.
+  it('refuses to charge a currency the row is not held in', async () => {
+    givenPlacement({ expiresAt: new Date('2030-01-01'), spendType: 'yellow' });
+
+    await expect(
+      holdPlacementEscrow({
+        spendType: 'green',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
+    ).rejects.toThrow('refusing to charge green');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('records the currency on the row, so a resumed settlement can read it', async () => {
+    const placement = givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    expect(placement.spendType).toBe('green');
+    // Written by the same statement as the deadline. A row that got one without
+    // the other would settle as legacy yellow over an escrow holding green.
+    expect(placement.expiresAt).toBeInstanceOf(Date);
+  });
+
   it('uses row-derived external ids, so a retry cannot mint a fresh one', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -405,6 +558,7 @@ describe('holding the escrow', () => {
   it('is a no-op when run twice', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -413,6 +567,7 @@ describe('holding the escrow', () => {
     createMultiAccountBuzzTransaction.mockClear();
 
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -426,7 +581,13 @@ describe('holding the escrow', () => {
   it('refuses an amount that is not a whole number of Buzz', async () => {
     givenPlacement();
     await expect(
-      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 10.5 })
+      holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 10.5,
+      })
     ).rejects.toThrow(/non-negative integer/);
     expect(moneyMoved()).toBe(0);
   });
@@ -434,7 +595,13 @@ describe('holding the escrow', () => {
 
 describe('settling', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   it('pays the owner and keeps the platform share on approval', async () => {
     givenPlacement();
@@ -446,6 +613,49 @@ describe('settling', () => {
     // Defaults: owner 70%, platform 30%, seller 0.
     expect(payouts).toEqual([[OWNER, 700]]);
     expect(legsFor(1)).toMatchObject({ toOwner: 700, toPlatform: 300 });
+  });
+
+  // The whole point of the column. A green placement paid the owner yellow for
+  // ten months because this leg named no account and took the service default.
+  it('pays the owner in the currency the placer spent', async () => {
+    givenPlacement();
+    await holdPlacementEscrow({
+      spendType: 'green',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toAccountId: OWNER,
+        toAccountType: 'green',
+        // Drawn from the escrow's green too: paying green out of the yellow
+        // balance would mint it, which is the mirror of the bug being fixed.
+        fromAccountType: 'green',
+      }),
+      expect.anything()
+    );
+  });
+
+  // Rows made before the column existed were HELD as yellow whatever was spent,
+  // so yellow is what the escrow has for them. Settling one as green would pay
+  // out Buzz the escrow never received — which is why nothing backfills this.
+  it('settles a placement with no recorded currency as yellow', async () => {
+    givenPlacement({ spendType: null });
+    await hold();
+    // Written by the hold above; cleared to stand in for a legacy row.
+    db.placements.get(1)!.spendType = null;
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ toAccountType: 'yellow', fromAccountType: 'yellow' }),
+      expect.anything()
+    );
   });
 
   it('pays the fee to the owner and returns the principal hold on decline', async () => {
@@ -514,7 +724,13 @@ describe('settling', () => {
 
 describe('running a release path twice', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   it.each([
     'approve',
@@ -563,7 +779,13 @@ describe('running a release path twice', () => {
 
 describe('crashing between the legs', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   // The case the ledger exists for. A status column says the placement was
   // processed; only a receipt says the money moved.
@@ -627,6 +849,7 @@ describe('expiry sweep', () => {
     givenPlacement({ id: 1, expiresAt: new Date(Date.now() - 1000) });
     givenPlacement({ id: 2, expiresAt: new Date(Date.now() + 60_000) });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -643,6 +866,7 @@ describe('expiry sweep', () => {
   it('is a no-op on a second run', async () => {
     givenPlacement({ id: 1, expiresAt: new Date(Date.now() - 1000) });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -660,7 +884,13 @@ describe('expiry sweep', () => {
 
 describe('the amounts a resume replays', () => {
   const hold = () =>
-    holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 });
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
 
   // The holds are sized by the config as it stood when the placement was made.
   // Recomputing the fee at decline time paid out more than was ever held — a
@@ -741,6 +971,7 @@ describe('the seller share survives a resume', () => {
     givenPlacement({ sellerId: SELLER });
     storedShares({ seller: 0.3, platform: 0.3 });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -777,6 +1008,7 @@ describe('two callers on one leg', () => {
     });
 
     const first = holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -784,6 +1016,7 @@ describe('two callers on one leg', () => {
     });
     await Promise.resolve();
     const second = holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -799,8 +1032,19 @@ describe('two callers on one leg', () => {
     expect(feeCalls).toHaveLength(1);
     // The loser fails rather than reporting an escrow it did not take — its
     // caller must not go on to create a placement backed by nothing.
-    expect(firstResult.status).toBe('fulfilled');
-    expect(secondResult.status).toBe('rejected');
+    //
+    // WHICH caller loses is not the property, and neither is "exactly one wins".
+    // Whoever reaches the row second spends an extra query reconciling the
+    // currency, so how the two interleave at the per-leg locks is an artefact of
+    // how many awaits precede them — they can end up holding one leg each, and
+    // then BOTH refuse. That is still safe: a refusal sends the caller into its
+    // compensating expire, which refunds the holds that were taken.
+    //
+    // What must never happen is a caller reporting success over an escrow it did
+    // not take. So: no more than one success, and only one Buzz call.
+    const fulfilled = [firstResult, secondResult].filter((r) => r.status === 'fulfilled');
+    expect(fulfilled.length).toBeLessThanOrEqual(1);
+    expect([firstResult.status, secondResult.status]).toContain('rejected');
   });
 });
 
@@ -810,6 +1054,7 @@ describe('the expiry deadline', () => {
   it('is set when the escrow is taken', async () => {
     givenPlacement({ expiresAt: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -828,6 +1073,7 @@ describe('when the lock cannot be acquired', () => {
   it('still records the claim, so the sweeper can finish it', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -857,7 +1103,13 @@ describe('when the lock cannot be acquired', () => {
     lockState.available = false;
 
     await expect(
-      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 })
+      holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
     ).rejects.toThrow(/nothing was charged/);
 
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
@@ -867,7 +1119,13 @@ describe('when the lock cannot be acquired', () => {
     givenPlacement();
     lockState.available = false;
     await expect(
-      holdPlacementEscrow({ placementId: 1, placerId: PLACER, surface: 'sticker', amount: 1000 })
+      holdPlacementEscrow({
+        spendType: 'yellow',
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 1000,
+      })
     ).rejects.toThrow();
 
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
@@ -875,6 +1133,7 @@ describe('when the lock cannot be acquired', () => {
 
     lockState.available = true;
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -894,6 +1153,7 @@ describe('the sweeper converges', () => {
   it('does not persist a leg that moves no money', async () => {
     givenPlacement({ sellerId: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -907,6 +1167,7 @@ describe('the sweeper converges', () => {
   it('reports nothing stranded once a placement is fully paid', async () => {
     givenPlacement({ sellerId: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -927,6 +1188,7 @@ describe('the sweeper converges', () => {
     for (const id of [1, 2, 3]) {
       givenPlacement({ id, sellerId: null });
       await holdPlacementEscrow({
+        spendType: 'yellow',
         placementId: id,
         placerId: PLACER,
         surface: 'sticker',
@@ -937,6 +1199,7 @@ describe('the sweeper converges', () => {
 
     givenPlacement({ id: 4, sellerId: null });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 4,
       placerId: PLACER,
       surface: 'sticker',
@@ -976,6 +1239,7 @@ describe('when two callers claim different amounts', () => {
     });
 
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -992,6 +1256,7 @@ describe('when two callers claim different amounts', () => {
   it('pays the payout amounts the ledger holds, not a freshly computed plan', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1027,6 +1292,7 @@ describe('a settlement always leaves a plan', () => {
   it('writes the payout plan in the same breath as the status', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1052,6 +1318,7 @@ describe('a settlement always leaves a plan', () => {
   it('does not let a later takedown forfeit what the owner had earned', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1165,6 +1432,7 @@ describe('the unpaid-leg sweep only covers legs it can finish', () => {
 
     givenPlacement({ id: 2 });
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 2,
       placerId: PLACER,
       surface: 'sticker',
@@ -1190,6 +1458,7 @@ describe('a leg that can never succeed', () => {
   const givenPermanentlyFailingLeg = async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1277,6 +1546,7 @@ describe('a settlement with no funded escrow behind it', () => {
   it('counts a genuinely resumable settlement as planned', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1345,6 +1615,7 @@ describe('the retry budget measures elapsed failure, not sweep frequency', () =>
   it('skips a leg attempted too recently', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1369,6 +1640,7 @@ describe('the retry budget measures elapsed failure, not sweep frequency', () =>
   it('retries once the gap has passed', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1393,6 +1665,7 @@ describe('the exhausted-leg alert', () => {
   const exhaustLeg = async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1444,6 +1717,7 @@ describe('the Buzz call bound', () => {
   it('retries only failures that provably never reached the server', async () => {
     givenPlacement();
     await holdPlacementEscrow({
+      spendType: 'yellow',
       placementId: 1,
       placerId: PLACER,
       surface: 'sticker',
@@ -1500,5 +1774,318 @@ describe('the Buzz call bound', () => {
     expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
     expect(BUZZ_CALL_TIMEOUT_MS).toBeLessThan(LEG_RETRY_BACKOFF_MINUTES * 60_000);
     expect(BUZZ_CALL_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+  });
+});
+
+describe('a free placement never touches the money path', () => {
+  /**
+   * Escrow that a free row must not be able to release.
+   *
+   * Receipted, so `heldAmountsFor` counts it as real Buzz sitting in the escrow
+   * account. That state should be unreachable — the free path takes no holds and
+   * `holdPlacementEscrow` refuses a free row — and it is exactly the state the
+   * guard has to survive, because "unreachable" is a claim about today's callers
+   * and PRs 2 and 4 are the callers that do not exist yet.
+   *
+   * Without this fixture the free-row tests below are vacuous: with no holds,
+   * every branch of the payout already computes to zero and is filtered out, so
+   * deleting the guard would change nothing they observe.
+   */
+  const givenReceiptedHolds = () => {
+    db.legs.set('1:holdFee', {
+      placementId: 1,
+      kind: 'holdFee',
+      amount: 300,
+      transactionId: 'placement-1-holdFee',
+      attempts: 1,
+      createdAt: new Date(0),
+    });
+    db.legs.set('1:holdPrincipal', {
+      placementId: 1,
+      kind: 'holdPrincipal',
+      amount: 700,
+      transactionId: 'placement-1-holdPrincipal',
+      attempts: 1,
+      createdAt: new Date(0),
+    });
+  };
+
+  it('plans nothing on approval, even with escrow sitting behind the row', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    givenReceiptedHolds();
+    clearMoneyMocks();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(legsFor(1)).toEqual({ holdFee: 300, holdPrincipal: 700 });
+    expect(moneyMoved()).toBe(0);
+  });
+
+  it('takes no decline fee, so a decline costs the placer nothing', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    givenReceiptedHolds();
+    clearMoneyMocks();
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    expect(legsFor(1)).not.toHaveProperty('feeToOwner');
+    expect(moneyMoved()).toBe(0);
+  });
+
+  it('refunds nothing on expiry, because nothing was ever taken', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    givenReceiptedHolds();
+    clearMoneyMocks();
+
+    await settlePlacement({ placementId: 1, action: 'expire' });
+
+    expect(legsFor(1)).not.toHaveProperty('principalToPlacer');
+    expect(moneyMoved()).toBe(0);
+  });
+
+  it('still settles the row, so the slot it holds is released', async () => {
+    givenPlacement({ free: true, amount: 0 });
+
+    const { settled, placement } = await settlePlacement({ placementId: 1, action: 'decline' });
+
+    // The money is the part that does nothing. The status transition is the part
+    // that matters — it is what takes the placement out of
+    // `FREE_SLOT_HOLDING_STATUSES` and hands the slot to the next placer.
+    expect(settled).toBe(true);
+    expect(placement.status).toBe('declined');
+  });
+
+  it('refuses to take escrow at all, rather than holding zero', async () => {
+    givenPlacement({ free: true, amount: 0 });
+    clearMoneyMocks();
+
+    await expect(
+      holdPlacementEscrow({
+        placementId: 1,
+        placerId: PLACER,
+        surface: 'sticker',
+        amount: 100,
+        spendType: 'yellow',
+      })
+    ).rejects.toThrow(/free/);
+
+    expect(moneyMoved()).toBe(0);
+    expect(legsFor(1)).toEqual({});
+  });
+});
+
+describe('the accept reward', () => {
+  const hold = () =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+  it('pays the owner of the space, for the placement, crediting the placer', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+    expect(applyAcceptReward).toHaveBeenCalledWith({
+      placementId: 1,
+      ownerId: OWNER,
+      placerId: PLACER,
+    });
+  });
+
+  it('pays it for a free placement too', async () => {
+    givenPlacement({ free: true, amount: 0 });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+  });
+
+  // The reason it hangs off `count > 0` and not off the callers. The ledger key
+  // never expires while the daily cap does, so a second presentation of the same
+  // placement on a later day spends a tenth of the owner's day and moves no Buzz.
+  it('pays nothing on a second approve of the same placement', async () => {
+    givenPlacement();
+    await hold();
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    applyAcceptReward.mockClear();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(false);
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  it.each(['decline', 'expire', 'removeByOwner', 'removeByModerator'] as const)(
+    'pays nothing when the placement settles as %s',
+    async (action) => {
+      givenPlacement();
+      await hold();
+
+      const { settled } = await settlePlacement({ placementId: 1, action, actorId: OWNER });
+
+      // The settle has to have happened, or "the reward did not fire" is true of
+      // a call that did nothing at all and the assertion below proves nothing.
+      expect(settled).toBe(true);
+      expect(applyAcceptReward).not.toHaveBeenCalled();
+    }
+  );
+
+  /**
+   * 🔴 **Auto-accept pays, and that is designed** — but read what this asserts.
+   *
+   * This service has no notion of space mode. Both sticker approve paths — the
+   * owner acting through `actOnStickerPlacement`, and `createStickerPlacement`
+   * settling inline at placement time when `space.mode === 'auto'` — arrive here
+   * as the identical call, which is exactly why the reward hangs off the settle
+   * rather than off either caller. So this cannot tell them apart, and is not
+   * named as though it can: what it pins is that **any** approve pays.
+   *
+   * The auto half is pinned in two places that together need no inference:
+   * 'settles an auto space immediately' in sticker-placement.service.test.ts
+   * asserts that path issues exactly this settle, and this asserts that settle
+   * pays.
+   *
+   * Written out because the intent otherwise lives only in a Discord thread.
+   * Justin's decision, in the intent doc: creators switching from Review to Auto
+   * Accept to collect this is a fine outcome, not a leak. A reviewer reading the
+   * code alone has already once read auto-mode paying as an oversight and
+   * recommended removing it. If you are here to make auto stop paying, that is
+   * the conversation you are having, and it is Justin's to have.
+   */
+  it('pays on any approve, whichever of the two sticker paths issued it', async () => {
+    givenPlacement();
+    await hold();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 **Exactly one reward per surface, and this is the only place that can see
+   * it.** The tempting cleanup after both reward PRs land is to consolidate here
+   * — move the remix `apply` into `rewardAccepted` — and leave the call in
+   * `actOnRemixGallerySubmission` in place. That double-pays 20 Blue Buzz on
+   * every remix accept, and nothing else goes red: the remix suite mocks
+   * `settlePlacement` wholesale so it cannot observe this service firing
+   * anything, the two ledger keys differ by type, and the daily cap hash is
+   * keyed `userId:type` so both grants look legitimate to both caps.
+   *
+   * The consolidation is a recorded follow-up and is fine to do — but it must
+   * MOVE the remix call, not add one. This test is what tells you which you did.
+   *
+   * The remix half was inert while `remixAcceptReward` did not exist on this
+   * branch — a tripwire armed on merge rather than coverage. #4013 landed it, so
+   * both halves are live and the mocked path now resolves to a real module.
+   */
+  it('grants exactly one reward per surface, and never the other surface reward', async () => {
+    givenPlacement({ id: 1, surface: 'sticker' });
+    givenPlacement({ id: 2, surface: 'remixGallery' });
+
+    const sticker = await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    expect(sticker.settled).toBe(true);
+    expect(applyAcceptReward).toHaveBeenCalledTimes(1);
+    expect(applyRemixReward).not.toHaveBeenCalled();
+
+    applyAcceptReward.mockClear();
+
+    const remix = await settlePlacement({ placementId: 2, action: 'approve', actorId: OWNER });
+    expect(remix.settled).toBe(true);
+    expect(applyRemixReward).not.toHaveBeenCalled();
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  // 🔴 If you are here because you added a `remixGallery` branch to
+  // `rewardAccepted`: that reward is already granted from
+  // `actOnRemixGallerySubmission`, the only path by which a remix submission is
+  // approved. A branch here does not replace that grant, it doubles it — and no
+  // guard either reward owns can tell: the types differ, so the ledger keys
+  // differ, and the daily cap hash is keyed `userId:type`. This test is the only
+  // thing standing between that edit and paying every remix approval twice.
+  it('pays nothing on a remix approval, which is granted from its own surface', async () => {
+    givenPlacement({ surface: 'remixGallery' });
+    await hold();
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    // Establishes the approval actually happened, so this is "approved and paid
+    // nothing" rather than a call that quietly did nothing at all.
+    expect(settled).toBe(true);
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+    // The reward the comment above is about. Without this the test asserted only
+    // that the STICKER reward stayed out of a remix approval, so the exact edit
+    // it warns against — a `remixGallery` branch here — left it green.
+    expect(applyRemixReward).not.toHaveBeenCalled();
+  });
+
+  // The approval has already paid the owner out of escrow by this point. A
+  // throw here would 500 a request whose money has moved, and the caller would
+  // read that as the approval having failed.
+  it('does not fail the approval when the reward throws', async () => {
+    givenPlacement();
+    await hold();
+    applyAcceptReward.mockRejectedValue(new Error('clickhouse is gone'));
+
+    const { settled, placement } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(placement.status).toBe('approved');
+    expect(legsFor(1)).toMatchObject({ toOwner: 700 });
+  });
+
+  /**
+   * The log is the entire compensation for swallowing the throw. Without it a
+   * reward that never arrived leaves no trace at all on a money path — and
+   * `.catch(() => null)` is a plausible-looking edit that produces exactly that
+   * while every other assertion here stays green.
+   *
+   * Rejected with a non-`Error` on purpose: that is what tells `.message` apart
+   * from the `instanceof` narrowing, and a bare `.message` logs `undefined` —
+   * the failure reads as "the reward failed, cause unknown", which is the shape
+   * that makes an outage unreadable at 3am.
+   */
+  it('reports a swallowed reward failure, whatever was thrown', async () => {
+    givenPlacement();
+    await hold();
+    applyAcceptReward.mockRejectedValue('clickhouse is gone');
+
+    const { settled } = await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+    });
+
+    expect(settled).toBe(true);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'placement-escrow',
+        message: 'accept reward failed',
+        placementId: 1,
+        error: 'clickhouse is gone',
+      })
+    );
   });
 });

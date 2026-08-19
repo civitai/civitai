@@ -3076,6 +3076,30 @@ describe('recordPendingFromPush', () => {
     // Push-originated marker: empty bundle pointers.
     expect(createArg.data.bundleKey).toBe('');
     expect(createArg.data.bundleSha256).toBe('');
+    // 🔴 #4059 — INVARIANT GUARD, NOT REGRESSION COVERAGE. Say so plainly: this
+    // block was MEASURED to stay green when both provenance fields were deleted
+    // from the `submitVersion` INSERT (only publish-request.service.test.ts went
+    // red), because `recordPendingFromPush` never wrote them in the first place
+    // and the bug it would have to catch has never existed on this path. It
+    // pins an invariant; it does not cover the submit path. Do not count it.
+    //
+    // The invariant: this path has NO client and NO author work tree, so it sets
+    // NEITHER provenance column — they stay NULL (unknown). `forgejoCommitSha`
+    // above is a SERVER-side commit in the platform's own repo; copying it into
+    // `sourceCommit` would manufacture a claim about an author's tree that
+    // nobody made.
+    expect(createArg.data.sourceCommit).toBeUndefined();
+    expect(createArg.data.sourceDirty).toBeUndefined();
+    // The key must be ABSENT, not merely `undefined`-valued. This CAN fail while
+    // the two `toBeUndefined()`s above pass — an explicit `sourceCommit:
+    // undefined` in the create data satisfies them and fails this — which the
+    // old `expect(...).not.toBe(pushArgs.sha)` could not do: that one was
+    // strictly implied by `toBeUndefined()` and could never fail on its own.
+    // Absence is also the load-bearing property: Prisma OMITS an absent field
+    // from the INSERT but names the column for an explicit `null`, so absence is
+    // what keeps this path's SQL byte-for-byte what it was before #4059.
+    expect(Object.keys(createArg.data)).not.toContain('sourceCommit');
+    expect(Object.keys(createArg.data)).not.toContain('sourceDirty');
   });
 
   it('(c) create throws P2002 → re-reads the EXACT-sha winner and returns its id', async () => {

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * A6 (audit HIGH / design-gaps C2) — pinned-version manifest/scope resolution.
@@ -10,44 +12,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * silently escalated every pinned install on the next render.
  */
 
-const { mockDb, mockRedis, mockSysRedis } = vi.hoisted(() => {
-  const db = {
-    platformDefaultBlock: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
-      findFirst: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-    blockUserSubscription: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
-      findFirst: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-    appBlockPublishRequest: {
-      findFirst: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-    model: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-    modelVersion: {
-      findFirst: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-    appBlock: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-  };
-  const redis = {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    scanIterator: async function* () {},
-  };
-  const sysRedis = { sMembers: vi.fn(async () => []) };
-  return { mockDb: db, mockRedis: redis, mockSysRedis: sysRedis };
-});
+// resolveBlockInstance and applyPinnedVersion take the client as a PARAMETER, and this file
+// passes no `db` option, so both fall to their default — dbWrite (block-registry.service:1362).
+// A grep for `dbRead.appBlockPublishRequest.findFirst` finds nothing, and that absence is the
+// tell rather than a dead end. `model.findUnique` is spelled dbRead in the source.
+//
+// 🔴 The two `not.toHaveBeenCalled()` on appBlockPublishRequest.findFirst are the most dangerous
+// assertions in this bucket: the code reaches that table only through the parameterised `db`, so
+// routing them to dbRead would satisfy them whatever the code did.
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: { BLOCKS: { REGISTRY: 'r', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' } },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
+// `scanIterator` is consumed with `for await`; a vivified spy returns undefined, which throws
+// rather than iterating.
+mockRedis.scanIterator.mockImplementation(async function* () {});
 
 // Live (v2) AppBlock row — has scope A + scope B.
 const LIVE_BLOCK = {
@@ -86,20 +64,14 @@ function makePinnedSub(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function resetAll() {
-  for (const tbl of Object.values(mockDb)) {
-    for (const fn of Object.values(tbl)) (fn as ReturnType<typeof vi.fn>).mockReset();
-  }
-}
-
 describe('resolveBlockInstance — pinned-version resolution (A6)', () => {
-  beforeEach(resetAll);
+  beforeEach(() => vi.clearAllMocks());
 
   it('unpinned install returns the LIVE manifest + approved scopes', async () => {
-    mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(
+    mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(
       makePinnedSub({ pinnedVersion: null })
     );
-    mockDb.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
+    mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
     const { BlockRegistry } = await import('../block-registry.service');
     const r = await BlockRegistry.resolveBlockInstance({
       blockInstanceId: 'bki_real',
@@ -110,15 +82,15 @@ describe('resolveBlockInstance — pinned-version resolution (A6)', () => {
     expect(r).not.toBeNull();
     expect(r!.appBlock.approvedScopes).toEqual(['models:read:self', 'ai:write:budgeted']);
     // The publish-request table is never consulted for an unpinned install.
-    expect(mockDb.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
   });
 
   it('pinned install resolves the pinned version manifest/scopes (NOT the live row)', async () => {
-    mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(
+    mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(
       makePinnedSub({ pinnedVersion: '1.0.0' })
     );
-    mockDb.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
-    mockDb.appBlockPublishRequest.findFirst.mockResolvedValueOnce({ manifest: V1_MANIFEST });
+    mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({ manifest: V1_MANIFEST });
     const { BlockRegistry } = await import('../block-registry.service');
     const r = await BlockRegistry.resolveBlockInstance({
       blockInstanceId: 'bki_real',
@@ -131,18 +103,18 @@ describe('resolveBlockInstance — pinned-version resolution (A6)', () => {
     expect(r!.appBlock.approvedScopes).toEqual(['models:read:self']);
     expect(r!.appBlock.manifest).toEqual(V1_MANIFEST);
     // The pinned lookup was keyed on the version + approved status.
-    const arg = mockDb.appBlockPublishRequest.findFirst.mock.calls[0][0];
+    const arg = mockDbWrite.appBlockPublishRequest.findFirst.mock.calls[0][0];
     expect(arg.where.version).toBe('1.0.0');
     expect(arg.where.status).toBe('approved');
     expect(arg.where.appBlockId).toBe('ab_test');
   });
 
   it('pinned version with no approved publish request FALLS BACK to the live row', async () => {
-    mockDb.blockUserSubscription.findUnique.mockResolvedValueOnce(
+    mockDbWrite.blockUserSubscription.findUnique.mockResolvedValueOnce(
       makePinnedSub({ pinnedVersion: '9.9.9' })
     );
-    mockDb.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
-    mockDb.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null); // withdrawn/rejected
+    mockDbWrite.model.findUnique.mockResolvedValueOnce({ userId: 42, type: 'LORA' });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null); // withdrawn/rejected
     const { BlockRegistry } = await import('../block-registry.service');
     const r = await BlockRegistry.resolveBlockInstance({
       blockInstanceId: 'bki_real',
@@ -158,9 +130,12 @@ describe('resolveBlockInstance — pinned-version resolution (A6)', () => {
 
   it('applyPinnedVersion is a no-op when pinnedVersion is null', async () => {
     const { BlockRegistry } = await import('../block-registry.service');
-    const live = { manifest: { scopes: ['models:read:self'] }, approvedScopes: ['models:read:self'] };
-    const out = await BlockRegistry.applyPinnedVersion(live, 'ab_test', null, mockDb as never);
+    const live = {
+      manifest: { scopes: ['models:read:self'] },
+      approvedScopes: ['models:read:self'],
+    };
+    const out = await BlockRegistry.applyPinnedVersion(live, 'ab_test', null, mockDbWrite as never);
     expect(out).toBe(live);
-    expect(mockDb.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
   });
 });

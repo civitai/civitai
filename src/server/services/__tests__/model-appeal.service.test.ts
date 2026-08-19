@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Contesting a "depicts a minor" flag goes through the existing Appeal system.
@@ -8,18 +9,16 @@ import type * as BuzzService from '~/server/services/buzz.service';
  * other appeal type.
  */
 
-const { mockGetAppealCount } = vi.hoisted(() => ({ mockGetAppealCount: vi.fn() }));
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockGetAppealCount = mockDbRead.appeal.count;
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const tx = { image: { update: vi.fn() }, appeal: { create: vi.fn() } };
-  return {
-    mockDbRead: { appeal: { count: mockGetAppealCount } },
-    mockDbWrite: {
-      $transaction: vi.fn((cb: (tx: typeof tx) => unknown) => cb(tx)),
-      appeal: { create: vi.fn() },
-    },
-  };
-});
+// The transaction client is DELIBERATELY not `dbMock.dbWrite`. This fixture's `tx` was a separate
+// object, so `dbWrite.appeal.create` only ever saw calls made OUTSIDE the transaction; handing the
+// callback the canonical write client instead would collapse the two and let an in-transaction
+// call satisfy an assertion that means "written outside the transaction".
+const tx = { image: { update: vi.fn() }, appeal: { create: vi.fn() } };
+mockDbWrite.$transaction.mockImplementation((cb: (t: typeof tx) => unknown) => cb(tx));
 
 const { mockCreateMultiAccountBuzzTransaction, mockRefundMultiAccountTransaction } = vi.hoisted(
   () => ({
@@ -28,7 +27,6 @@ const { mockCreateMultiAccountBuzzTransaction, mockRefundMultiAccountTransaction
   })
 );
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   createMultiAccountBuzzTransaction: mockCreateMultiAccountBuzzTransaction,

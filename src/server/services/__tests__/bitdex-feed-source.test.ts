@@ -20,11 +20,6 @@ const { queryBitdexMock, getFliptVariantMock } = vi.hoisted(() => ({
   getFliptVariantMock: vi.fn(),
 }));
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(async () => undefined),
-  safeError: (e: unknown) => e,
-}));
-
 vi.mock('../../../../event-engine-common/feeds', () => ({
   ImagesFeed: class {
     populatedQuery = vi.fn();
@@ -53,24 +48,7 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- self-referential key proxy
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: {
-      get: vi.fn().mockResolvedValue('[]'),
-      set: vi.fn().mockResolvedValue(undefined),
-      packed: { get: vi.fn(), set: vi.fn() },
-    },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
-
 // `metricsSearchClient: null` makes getImagesFromSearchPreFilter return an empty
 // page immediately — the Meili leg still RUNS and still stamps source 'meili',
 // which is the whole point, without needing a live index.
@@ -91,6 +69,10 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { getImagesFromSearch } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.get.mockResolvedValue('[]');
+redisMock.redis.set.mockResolvedValue(undefined);
 
 const bitdexDoc = {
   id: 101,

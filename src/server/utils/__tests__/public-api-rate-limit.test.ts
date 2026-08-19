@@ -12,24 +12,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * The redis cache client is mocked so no real connection is constructed.
  */
 
-const { mockRedis } = vi.hoisted(() => ({
-  mockRedis: {
-    incrBy: vi.fn(),
-    expire: vi.fn(),
-    ttl: vi.fn(),
-  },
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-}));
-
 import {
   checkPublicApiRateLimit,
   resolveClientIp,
   PUBLIC_API_RATE_LIMIT_AUTH_MAX,
   PUBLIC_API_RATE_LIMIT_UNAUTH_MAX,
 } from '../public-api-rate-limit';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
 
 function reqWith(headers: Record<string, string | string[]>): NextApiRequest {
   return { headers } as unknown as NextApiRequest;

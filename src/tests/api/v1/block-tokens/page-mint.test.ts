@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
 
 /**
  * W10 — handler-level coverage for the PAGE token-mint path of
@@ -17,59 +19,45 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *     (no entityType field) for the canonical generate-from-model manifest.
  */
 
-const {
-  mockDbWrite,
-  mockRedis,
-  mockSession,
-  mockTokenService,
-  mockBlockRegistry,
-  mockFlags,
-} = vi.hoisted(() => {
-  const dbWrite = {
-    user: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
-    appUserScopeGrant: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
-    },
-  };
-  const redis = {
-    incrBy: vi.fn(async () => 1),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => 60),
-  };
-  const session = { value: null as { user: { id: number; bannedAt: Date | null } } | null };
-  const tokenService = {
-    sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
-      token: 'jwt.signed.value',
-      expiresAt: '2099-01-01T00:00:00Z',
-      jti: 'j',
-    })),
-    checkRateLimit: vi.fn<(...args: any[]) => Promise<boolean>>(async () => true),
-  };
-  const blockRegistry = {
-    resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
-    resolvePageBlock: vi.fn<(...args: any[]) => Promise<any>>(),
-    // Phase 2 dev-tunnel author-own mint resolver — default null (not owned), so
-    // the dev branch cleanly `continue`s to the bare 404 in this suite.
-    resolveDevPageBlockForAuthor: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
-  };
-  // Flag mock that both the master + pages flag default ON for a mod.
-  const flags = {
-    getFeatureFlags: vi.fn(
-      ({ user }: { user?: { isModerator?: boolean } }) => ({
+const { mockRedis, mockSession, mockTokenService, mockBlockRegistry, mockFlags } = vi.hoisted(
+  () => {
+    const redis = {
+      incrBy: vi.fn(async () => 1),
+      expire: vi.fn(async () => true),
+      ttl: vi.fn(async () => 60),
+    };
+    const session = { value: null as { user: { id: number; bannedAt: Date | null } } | null };
+    const tokenService = {
+      sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+        token: 'jwt.signed.value',
+        expiresAt: '2099-01-01T00:00:00Z',
+        jti: 'j',
+      })),
+      checkRateLimit: vi.fn<(...args: any[]) => Promise<boolean>>(async () => true),
+    };
+    const blockRegistry = {
+      resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
+      resolvePageBlock: vi.fn<(...args: any[]) => Promise<any>>(),
+      // Phase 2 dev-tunnel author-own mint resolver — default null (not owned), so
+      // the dev branch cleanly `continue`s to the bare 404 in this suite.
+      resolveDevPageBlockForAuthor: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
+    };
+    // Flag mock that both the master + pages flag default ON for a mod.
+    const flags = {
+      getFeatureFlags: vi.fn(({ user }: { user?: { isModerator?: boolean } }) => ({
         appBlocks: !!user?.isModerator,
         appBlocksPages: !!user?.isModerator,
-      })
-    ),
-  };
-  return {
-    mockDbWrite: dbWrite,
-    mockRedis: redis,
-    mockSession: session,
-    mockTokenService: tokenService,
-    mockBlockRegistry: blockRegistry,
-    mockFlags: flags,
-  };
-});
+      })),
+    };
+    return {
+      mockRedis: redis,
+      mockSession: session,
+      mockTokenService: tokenService,
+      mockBlockRegistry: blockRegistry,
+      mockFlags: flags,
+    };
+  }
+);
 
 vi.mock('~/env/server', () => ({
   env: {
@@ -80,7 +68,6 @@ vi.mock('~/env/server', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
@@ -348,9 +335,7 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
     expect(res._status).toBe(200);
     const signArg = mockTokenService.sign.mock.calls[0][0];
-    expect(signArg.scopes).toEqual(
-      expect.arrayContaining(['social:tip:self', 'buzz:read:self'])
-    );
+    expect(signArg.scopes).toEqual(expect.arrayContaining(['social:tip:self', 'buzz:read:self']));
   });
 
   it('is flag-gated on appBlocksPages (appBlocks alone is not enough → 403, no token)', async () => {
@@ -409,7 +394,10 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     await handler(
       makeReq({
         origin: 'https://civitai.com',
-        body: { blockInstanceId: 'bki_smuggled', slotContext: { entityType: 'none', slotId: 'app.page' } },
+        body: {
+          blockInstanceId: 'bki_smuggled',
+          slotContext: { entityType: 'none', slotId: 'app.page' },
+        },
       }),
       res
     );
@@ -424,7 +412,10 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     await handler(
       makeReq({
         origin: 'https://civitai.com',
-        body: { blockInstanceId: 'page_apb_page', slotContext: { entityType: 'none', slotId: 'model.sidebar_top' } },
+        body: {
+          blockInstanceId: 'page_apb_page',
+          slotContext: { entityType: 'none', slotId: 'model.sidebar_top' },
+        },
       }),
       res
     );

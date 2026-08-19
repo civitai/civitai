@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * The quote and the charge, against the same fixture.
@@ -54,10 +55,6 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('~/server/redis/caches', () => ({ refreshOwnedStickerCache: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
 const { getPackDetail } = await import('~/server/services/creator-shop-pack.service');
 const { getPackMembers, purchaseCosmeticPack } = await import(
   '~/server/services/cosmetic-pack.service'

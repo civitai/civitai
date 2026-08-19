@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * Regression coverage for GET /api/v1/models/[id] — per-file `downloadUrl`
@@ -40,11 +41,6 @@ vi.mock('~/server/services/model-version.service', () => ({
 // Origin cache is disabled for this suite (IS_DATAPACKET false below), so these
 // are never exercised; stubbed only to keep the redis graph out of the suite.
 vi.mock('~/server/utils/cache-helpers', () => ({ fetchThroughCache: vi.fn() }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { packed: { get: vi.fn(), set: vi.fn() }, del: vi.fn() },
-  REDIS_KEYS: { CACHES: { PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response' } },
-}));
-
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   withBlockScope: (handler: any) => (req: any, res: any) => handler(req, res),
 }));
@@ -65,7 +61,7 @@ vi.mock('~/env/server', () => ({
   env: { IS_DATAPACKET: false, LOGGING: '', IS_BUILD: true },
 }));
 
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 // The serialized `name` is not the subject here; a per-file deterministic name
 // keeps the fixture readable while staying distinct per file.
 vi.mock('~/server/services/file.service', () => ({

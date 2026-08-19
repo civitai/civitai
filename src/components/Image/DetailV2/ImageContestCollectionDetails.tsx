@@ -6,12 +6,17 @@ import produce from 'immer';
 import { useState } from 'react';
 import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
+import {
+  openRejectCollectionItemsModal,
+  type RejectionSelection,
+} from '~/components/Collections/components/RejectCollectionItemsModal';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { resolveRejectionCopy } from '~/shared/constants/collection-rejection.constants';
 import { CollectionItemStatus, CollectionType } from '~/shared/utils/prisma/enums';
 import type { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -70,6 +75,10 @@ export const ImageContestCollectionDetails = ({
           const inReview = item.status === CollectionItemStatus.REVIEW;
           const collectionSupportsScoring = item?.collection?.metadata?.judgesCanScoreEntries;
           const isCollectionJudge = item?.permissions?.manage || isModerator;
+          const rejectionCopy = resolveRejectionCopy({
+            reason: item.rejectionReason,
+            detail: item.rejectionDetail,
+          });
           const handleScoreUpdated = ({
             collectionItemId,
             score,
@@ -223,8 +232,10 @@ export const ImageContestCollectionDetails = ({
                 )}
                 {item.status === CollectionItemStatus.REJECTED && (
                   <Text>
-                    Your submission to the {item.collection.name} contest has been rejected and will
-                    not be visible in the contest collection.
+                    {isOwner ? 'Your submission' : "This user's submission"} to the{' '}
+                    {item.collection.name} contest has been rejected and will not be visible in the
+                    contest collection.
+                    {rejectionCopy ? ` ${rejectionCopy}` : ''}
                   </Text>
                 )}
 
@@ -313,27 +324,34 @@ function ReviewActions({
 
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
-      async onMutate({ collectionItemIds, status }) {
+      async onMutate({ collectionItemIds }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
 
+        // Drop the item from every cached review queue. This writes across queries whose filters
+        // we cannot read here, and a decided item belongs in none of the pending ones — leaving it
+        // visible keeps it selectable for a bulk action that would re-decide it.
         const queryKey = getQueryKey(trpc.collection.getAllCollectionItems);
+        // Snapshot every queue we are about to edit, so a failed write cannot leave an entry
+        // hidden from a reviewer while it is still pending.
+        const prevQueues = queryClient.getQueriesData({ queryKey, exact: false });
         queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
           produce(state, (old?: InfiniteData<CollectionGetAllItems>) => {
             if (!old?.pages?.length) return;
 
             for (const page of old.pages)
-              for (const item of page.collectionItems) {
-                if (collectionItemIds.includes(item.id)) {
-                  item.status = status;
-                }
-              }
+              page.collectionItems = page.collectionItems.filter(
+                (item) => !collectionItemIds.includes(item.id)
+              );
           })
         );
+
+        return { prevQueues };
       },
       onSuccess(_, { status }) {
         showSuccessNotification({ message: `The items have been ${status.toLowerCase()}` });
       },
-      onError(error) {
+      onError(error, _variables, context) {
+        for (const [key, data] of context?.prevQueues ?? []) queryClient.setQueryData(key, data);
         showErrorNotification({
           title: 'Failed to review items',
           error: new Error(error.message),
@@ -341,13 +359,15 @@ function ReviewActions({
       },
     });
 
-  const handleSubmit = (status: CollectionItemStatus) => () => {
-    updateCollectionItemsStatusMutation.mutate({
-      collectionItemIds: [itemId],
-      status,
-      collectionId,
-    });
-  };
+  const handleSubmit =
+    (status: CollectionItemStatus, selection?: RejectionSelection) => () => {
+      updateCollectionItemsStatusMutation.mutate({
+        collectionItemIds: [itemId],
+        status,
+        collectionId,
+        ...selection,
+      });
+    };
 
   const status = updateCollectionItemsStatusMutation.variables?.status;
   const loading = updateCollectionItemsStatusMutation.isPending;
@@ -369,22 +389,21 @@ function ReviewActions({
         </InfoPopover>
       </div>
       <div className="flex items-center justify-center gap-4">
-        <PopConfirm
-          message="Are you sure you want to reject this entry?"
-          onConfirm={handleSubmit(CollectionItemStatus.REJECTED)}
-          withArrow
-          withinPortal
+        <Button
+          className="flex-1"
+          leftSection={<IconBan size="1.25rem" />}
+          color="red"
+          disabled={loading}
+          loading={loading && status === CollectionItemStatus.REJECTED}
+          onClick={() =>
+            openRejectCollectionItemsModal({
+              count: 1,
+              onConfirm: (selection) => handleSubmit(CollectionItemStatus.REJECTED, selection)(),
+            })
+          }
         >
-          <Button
-            className="flex-1"
-            leftSection={<IconBan size="1.25rem" />}
-            color="red"
-            disabled={loading}
-            loading={loading && status === CollectionItemStatus.REJECTED}
-          >
-            Reject
-          </Button>
-        </PopConfirm>
+          Reject
+        </Button>
         <PopConfirm
           message="Are you sure you want to approve this entry?"
           onConfirm={handleSubmit(CollectionItemStatus.ACCEPTED)}

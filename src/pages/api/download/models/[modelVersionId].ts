@@ -12,8 +12,9 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
-import { isRequestFromBrowser } from '~/server/utils/request-helpers';
+import { isRequestFromBrowser, repairSplitQueryString } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -33,6 +34,39 @@ const downloadLimiter = createLimiter({
   fetchCount: fetchDownloadCount,
 });
 
+/**
+ * A caller can drive this 400 at will, so it is sampled where the repair below
+ * is not. Neither payload carries a query VALUE — `token` on this route is the
+ * caller's API key, and Axiom applies no redaction of its own.
+ */
+const SCHEMA_REJECTION_SAMPLE_RATE = 0.01;
+
+function logSplitQueryRepair(req: NextApiRequest) {
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'info',
+    message: 'split-query-repaired',
+    keys: Object.keys(req.query),
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
+
+function logSchemaRejection(error: z.ZodError, repaired: boolean) {
+  if (Math.random() >= SCHEMA_REJECTION_SAMPLE_RATE) return;
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'warning',
+    message: 'schema-rejected',
+    fields: error.issues.map((issue) => issue.path.join('.')),
+    // A rejection AFTER a repair is a different bug from one the repair never saw.
+    repaired,
+    sampleRate: SCHEMA_REJECTION_SAMPLE_RATE,
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
+
 export default PublicEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
     // This response is per-user, auth/early-access-gated, rate-limited, and
@@ -43,6 +77,14 @@ export default PublicEndpoint(
     // cache window after the origin already returns 404 — defeating DMCA
     // takedowns. Override with no-store so deletes take effect immediately.
     res.setHeader('Cache-Control', 'no-store, max-age=0');
+
+    // Must run before `getServerAuthSession` below, which reads `?token=` off
+    // `req.url` — a stray `?` swallows that param into the one before it, so an
+    // API-key caller would otherwise be treated as anonymous.
+    const repaired = repairSplitQueryString(req);
+    // Unsampled: this is what says whether any client still needs the shim, and
+    // a rate that can report zero is the point.
+    if (repaired) logSplitQueryRepair(req);
 
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
@@ -118,10 +160,12 @@ export default PublicEndpoint(
 
       // Validate query params
       const queryResults = schema.safeParse(req.query);
-      if (!queryResults.success)
+      if (!queryResults.success) {
+        logSchemaRejection(queryResults.error, repaired);
         return res
           .status(400)
           .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid modelVersionId' });
+      }
       const input = queryResults.data;
       const modelVersionId = input.modelVersionId;
       if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
@@ -244,17 +288,37 @@ export default PublicEndpoint(
       res.redirect(fileResult.url);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
+      // `token` is the caller's API key, and Axiom applies no redaction of its own.
+      const { token, ...loggableQuery } = req.query;
       logToAxiom({
         name: 'download-model-endpoint',
         type: 'error',
         message: err.message,
         stack: err.stack,
-        query: req.query,
+        query: loggableQuery,
       }).catch(() => {
         // swallow logging failure
       });
       if (res.headersSent) return;
-      return errorResponse(500, err.message);
+      // 🔴 civitai#3845 TIER 1. This was `errorResponse(500, err.message)` on a
+      // `PublicEndpoint`, so an anonymous caller got the driver's own prose —
+      // ``Invalid `prisma.modelFile.findFirst()` invocation``, table and column
+      // names — through BOTH arms of `errorResponse`: `{ error: <text> }` as JSON
+      // and, for a browser UA, `res.send(<text>)` as bare text/plain. The ledger
+      // sweep only inspects `.json({…})` bodies, so the text/plain arm was never
+      // even visible to it.
+      //
+      // Not delegated to `handleEndpointError`: that would force JSON on the
+      // browser arm and drop the content negotiation this route exists to do. The
+      // genericization is the same one the helper applies, sharing its constant so
+      // the two cannot drift. Nothing is lost — `logToAxiom` directly above still
+      // records the un-redacted message and stack.
+      //
+      // Every OTHER exit from this handler already answers with a string literal,
+      // so after this line `errorResponse` can no longer be reached with
+      // caught-error text. `src/tests/api/tier1-public-route-disclosure.test.ts`
+      // pins that structurally, per call site.
+      return errorResponse(500, GENERIC_SERVER_ERROR_MESSAGE);
     }
   },
   ['GET']

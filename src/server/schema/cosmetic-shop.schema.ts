@@ -227,6 +227,16 @@ export const purchaseCosmeticShopItemInput = z.object({
   // only (default), or blue first with the remainder in the domain color.
   // Rejected server-side if the item doesn't accept blue.
   payWith: z.enum(['default', 'blue-first']).optional(),
+  // One buying intent, so a retry or a double-click cannot be charged twice.
+  // Only stickers can be bought more than once, which is what makes a second
+  // charge for one intent reachable at all — every other type is still refused
+  // outright by the ownership check.
+  //
+  // The expected price is checked with it: the buyer pressed a button showing a
+  // number, and a listing re-priced since that render must refuse rather than
+  // charge something they never agreed to.
+  idempotencyKey: z.string().uuid().optional(),
+  expectedUnitAmount: z.number().int().nonnegative().optional(),
 });
 
 export type ToggleWishlistShopItemInput = z.infer<typeof toggleWishlistShopItemInput>;

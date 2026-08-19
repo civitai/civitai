@@ -73,6 +73,7 @@ import type {
   CollectionType,
   CollectionMode,
   CollectionItemStatus,
+  CollectionItemRejectionReason,
   CollectionContributorPermission,
   CollectionCollaboratorRole,
   CollectionInviteStatus,
@@ -306,6 +307,8 @@ export type AppBlockPublishRequest = {
   rejection_reason: string | null;
   approval_notes: string | null;
   forgejo_commit_sha: string | null;
+  source_commit: string | null;
+  source_dirty: boolean | null;
   deploy_state: string | null;
   deploy_detail: string | null;
   deploy_updated_at: Timestamp | null;
@@ -1819,6 +1822,8 @@ export type CollectionItem = {
   reviewedAt: Timestamp | null;
   note: string | null;
   status: Generated<CollectionItemStatus>;
+  rejectionReason: CollectionItemRejectionReason | null;
+  rejectionDetail: string | null;
   tagId: number | null;
 };
 export type CollectionItemScore = {
@@ -2052,6 +2057,9 @@ export type Cosmetic = {
   createdById: number | null;
   pHash: string | null;
   pHashUrl: string | null;
+  pHashHex: string | null;
+  pHashVersion: string | null;
+  pHashFailedAt: Timestamp | null;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
@@ -3039,8 +3047,34 @@ export type Placement = {
   /**
    * What the placer paid into escrow, in Buzz. Kept per row rather than read back from
    * the space, whose price may move between placement and release.
+   *
+   * Always 0 on a free placement, and nothing reads it there — the payout is
+   * derived from receipted holds, of which a free placement has none.
    */
   amount: number;
+  /**
+   * A placement made against the space's free capacity rather than paid for.
+   *
+   * Escrow is bypassed entirely: zero-amount Buzz transactions are a landmine,
+   * and the escrow's two-hold structure has neither a decline fee nor a
+   * principal to hold. Settlement moves no money at all for one of these.
+   *
+   * On the row rather than inferred from `amount = 0`, which is also what a paid
+   * placement into a zero-priced space looks like. It also has to be immutable
+   * and readable by a sweeper that never saw the request that made it.
+   */
+  free: Generated<boolean>;
+  /**
+   * Which Buzz the placer paid in, so the settlement pays the same kind back out.
+   * On the row for the same reason `amount` is: settlement is resumable, and the
+   * domain that decided the currency is not visible to a sweeper.
+   *
+   * NULL means a placement made before this column existed. Those were booked
+   * into escrow as yellow whatever was spent, and settle as yellow to match the
+   * ledger. Deliberately not backfilled — the bank is not balance-constrained,
+   * so it is a choice about legacy rows, not a limit. See `settledSpendType`.
+   */
+  spendType: string | null;
   /**
    * Who sold the thing being placed, when an approved placement owes them a cut.
    * On the row rather than passed in, because the settlement is resumable and a
@@ -3101,6 +3135,19 @@ export type PlacementSpace = {
    * stored effective price goes stale the moment a membership lapses.
    */
   price: number | null;
+  /**
+   * How many free placements this space accepts. NULL means the owner has never
+   * chosen, which resolves to the surface's default (1) rather than to zero —
+   * free capacity is opt-out. An explicit 0 is the owner taking none, which is
+   * why this replaces an on/off toggle instead of sitting beside one.
+   *
+   * Stored uncapped and ceilinged at read by the score/tier table, exactly like
+   * `price`: a stored effective value goes stale the moment a membership lapses.
+   *
+   * A column rather than a key in `settings`, because the foundation reads it
+   * and `settings` is surface-owned by construction.
+   */
+  freeSlots: number | null;
   /**
    * Surface-owned settings, read only by the surface that wrote them — a max
    * sticker size means nothing to a remix gallery. Kept as JSON so this layer

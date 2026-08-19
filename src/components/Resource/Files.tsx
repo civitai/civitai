@@ -64,7 +64,7 @@ import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
+import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
 
 // Small inline dropzone for adding files within a section
 function InlineDropzone({
@@ -180,8 +180,10 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
     onDrop(droppedFiles, defaultType, skipInference);
   };
 
-  const primaryAccept = { 'mime/type': primary.extensions };
-  const additionalAccept = { 'mime/type': additional.extensions };
+  // iOS resolves `accept` entries to UTIs with no extension fallback, so a bare
+  // `.safetensors` greys out every file in the picker; octet-stream maps to `public.data`.
+  const primaryAccept = { 'application/octet-stream': primary.extensions };
+  const additionalAccept = { 'application/octet-stream': additional.extensions };
   const makeRejectHandler =
     (section: 'primary' | 'additional') => (rejectedFiles: FileRejection[]) => {
       const sectionConfig = section === 'primary' ? primary : additional;
@@ -222,6 +224,31 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
     };
   const handleRejectPrimary = makeRejectHandler('primary');
   const handleRejectAdditional = makeRejectHandler('additional');
+
+  // `application/octet-stream` is what makes the picker usable on iOS, but it also matches
+  // any file the OS reports as octet-stream, whatever its extension. react-dropzone's
+  // attr-accept is the only other client-side type check and the upload API only screens
+  // against a denylist, so re-check the extension here before anything reaches onDrop.
+  const withExtensionGuard =
+    (section: 'primary' | 'additional', handle: (files: File[]) => void) =>
+    (droppedFiles: File[]) => {
+      const { extensions } = section === 'primary' ? primary : additional;
+      const accepted = droppedFiles.filter((file) =>
+        extensions.includes(`.${getFileExtension(file.name).toLowerCase()}`)
+      );
+      const rejected = droppedFiles.filter((file) => !accepted.includes(file));
+
+      if (rejected.length)
+        makeRejectHandler(section)(
+          rejected.map((file) => ({
+            file,
+            errors: [
+              { code: 'file-invalid-type', message: `${file.name} has an unsupported type` },
+            ],
+          }))
+        );
+      if (accepted.length) handle(accepted);
+    };
 
   const handleLinkResource = (resource: GenerationResource) => {
     const componentType = modelTypeToComponentType(resource.model.type);
@@ -310,14 +337,14 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
               ))}
               <InlineDropzone
                 label="Add another model file variant"
-                onDrop={(dropped) =>
+                onDrop={withExtensionGuard('primary', (dropped) =>
                   handleInlineDrop(
                     dropped,
                     modelFiles,
                     primary.maxFiles,
                     primaryTypes.length === 1 ? primaryTypes[0] : undefined
                   )
-                }
+                )}
                 accept={primaryAccept}
                 maxFiles={primary.maxFiles}
                 onReject={handleRejectPrimary}
@@ -326,12 +353,12 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
           ) : (
             <Dropzone
               accept={primaryAccept}
-              onDrop={(droppedFiles) => {
+              onDrop={withExtensionGuard('primary', (droppedFiles) => {
                 if (modelFiles.length + droppedFiles.length > primary.maxFiles) return;
                 if (files.length + droppedFiles.length > totalMaxFiles) return;
                 const defaultType = primaryTypes.length === 1 ? primaryTypes[0] : undefined;
                 onDrop(droppedFiles, defaultType);
-              }}
+              })}
               maxFiles={primary.maxFiles}
               onReject={handleRejectPrimary}
               className={classes.dropzone}
@@ -409,7 +436,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
           <InlineDropzone
             label="Upload a component file"
             description={`Supports ${additional.extensions.join(', ')} files`}
-            onDrop={(dropped) =>
+            onDrop={withExtensionGuard('additional', (dropped) =>
               handleInlineDrop(
                 dropped,
                 additionalFiles,
@@ -417,7 +444,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
                 additionalFileTypes.length === 1 ? additionalFileTypes[0] : undefined,
                 true
               )
-            }
+            )}
             accept={additionalAccept}
             maxFiles={additional.maxFiles}
             onReject={handleRejectAdditional}

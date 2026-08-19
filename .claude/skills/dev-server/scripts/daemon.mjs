@@ -13,11 +13,21 @@
 
 import http from 'http';
 import { spawn, execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirSync, rmSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirSync, rmSync, realpathSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
+import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
+import { TestQueue } from './test-queue.mjs';
+import {
+  loadModeDefinitions,
+  resolveSessionModes,
+  applyModes,
+  formatModeSummary,
+  parseGroupList,
+  sameResolvedModes,
+} from './env-modes.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, '..');
@@ -50,8 +60,23 @@ function loadSkillConfig() {
     perBranchDistDir: false,
     killOnBranchSwitch: false,
     autoInstall: true,
-    prewarmRoutes: [],
+    // NOT empty by default. `_app` SSR-fetches /api/user/settings on every page render and gives
+    // up after APP_SETTINGS_FETCH_TIMEOUT_MS (8s). On a cold build dir that fetch is what triggers
+    // the on-demand COMPILE of that route, and the compile does not fit in the budget — measured
+    // on this repo at 15.4s and 28.6s — so every render in flight degrades to a signed-out page
+    // and the server looks broken while being perfectly healthy.
+    //
+    // Compiling it once, up front, on prewarm's 300s budget removes the whole failure. Measured,
+    // same worktree, same cold `.next`, four concurrent /home requests: without this, four
+    // `[_app] settings bootstrap fetch failed` and the settings route taking 15.4s per render;
+    // with it, zero failures and 162-200ms per render.
+    //
+    // It stays FIRST in the list: any page route ahead of it would trigger the same compile from
+    // inside a render, which is the thing being avoided.
+    prewarmRoutes: ['/api/user/settings'],
     prewarmTimeout: 300000,
+    testConcurrency: 1,
+    prodGroups: [],
   };
 
   if (existsSync(envPath)) {
@@ -122,6 +147,19 @@ function loadSkillConfig() {
         case 'PREWARM_TIMEOUT':
           if (value) config.prewarmTimeout = parseInt(value, 10);
           break;
+        case 'TEST_CONCURRENCY': {
+          // Every other setting here degrades to its default on a bad value. This one feeds a
+          // constructor that throws, and the queue is built at module scope — so a typo in an
+          // optional test setting would stop the daemon binding at all, taking every agent's dev
+          // server with it.
+          const parsed = parseInt(value, 10);
+          if (Number.isInteger(parsed) && parsed >= 0) config.testConcurrency = parsed;
+          else if (value) console.error(`Ignoring TEST_CONCURRENCY=${value} (want an integer >= 0)`);
+          break;
+        }
+        case 'DEVSERVER_PROD_GROUPS':
+          config.prodGroups = parseGroupList(value);
+          break;
       }
     }
   }
@@ -159,6 +197,17 @@ function parseArgs() {
   }
 
   return config;
+}
+
+// Where the port scan starts. Set once from the parsed args so the session-side code paths — a
+// branch switch restarting itself, a session moved off a stolen port — can reach it too.
+let baseDevPort = DEFAULT_BASE_DEV_PORT;
+
+// Windows hands back whatever drive-letter and casing the caller typed.
+function samePath(a, b) {
+  return process.platform === 'win32'
+    ? resolve(a).toLowerCase() === resolve(b).toLowerCase()
+    : resolve(a) === resolve(b);
 }
 
 // Generate session ID
@@ -272,6 +321,22 @@ function readHeadRef(headPath) {
   } catch (e) {
     return null;
   }
+}
+
+// The debounce exists so a rebase — HEAD moving several times in a second — settles before the
+// session reacts. It must therefore be re-armed when HEAD moves AGAIN, and only then.
+//
+// Re-arming on every poll instead is a livelock, because the poll keeps seeing the same unchanged
+// HEAD: `session.branch` is not updated until the switch actually runs, so with the shipped
+// defaults (poll 1000ms, debounce 3000ms) the timer was cleared and re-set three times per debounce
+// window and could never expire. Every consequence of a switch — `pnpm install` on a lockfile
+// change, `db:generate` on a schema change, re-prewarm, even the reported branch name — was
+// therefore unreachable whenever the poll interval was shorter than the debounce, which is what the
+// defaults specify. `pendingHead` is what makes "moved again" distinguishable from "still moved".
+export function shouldScheduleSwitch(head, branch, pendingHead) {
+  if (!head) return false;
+  if (head === branch) return false;
+  return head !== pendingHead;
 }
 
 function branchSlug(branch) {
@@ -402,19 +467,42 @@ async function findAvailablePort(basePort, usedPorts = new Set()) {
   while (usedPorts.has(port) || !(await isPortFree(port))) {
     port++;
     if (port > basePort + 100) {
-      throw new Error('No available ports found within range');
+      // Reserved ports come back only when their session is stopped, so an agent reading this
+      // needs to be told that is the lever, not left to conclude the machine is out of ports.
+      const cli = 'node .claude/skills/dev-server/cli.mjs';
+      throw new Error(
+        `No available ports in ${basePort}-${basePort + 100}. ${usedPorts.size} are reserved by ` +
+          `tracked sessions — \`${cli} list\` shows them, \`${cli} stop <session-id>\` releases one.`
+      );
     }
   }
   return port;
 }
 
+// The reason a start failed, for the HTTP response — the session's own last error line, so the
+// caller reads what the log says rather than a generic failure.
+function lastErrorLog(session) {
+  for (let i = session.logs.length - 1; i >= 0; i--) {
+    if (session.logs[i].level === 'error') return session.logs[i].message;
+  }
+  return null;
+}
+
 // Session class
 class DevSession {
-  constructor(id, worktree, port, envPath) {
+  constructor(id, worktree, port, envPath, modeOverrides = { prod: [], dev: [] }) {
     this.id = id;
     this.worktree = worktree;
     this.port = port;
     this.envPath = envPath;
+    this.modeOverrides = modeOverrides;
+    // Pinned at creation. start() re-reads the skill .env for everything else, so without this an
+    // edit to DEVSERVER_PROD_GROUPS would move a LIVE session onto production at its next
+    // unattended restart — a branch switch or a crash — with nobody having asked for it.
+    this.defaultProdGroups = [...skillConfig.prodGroups];
+    this.modes = {};
+    this.modeSummary = null;
+    this.pendingModes = null;
     this.status = 'starting';
     this.process = null;
     this.logs = [];
@@ -433,10 +521,15 @@ class DevSession {
     this.headPath = resolveGitHeadPath(worktree);
     this.branchWatchTimer = null;
     this.branchSwitchTimer = null;
+    this.pendingHead = null;
     this.switching = false;
+    this.removed = false;
+    this.busyDepth = 0;
+    this.lifecycleLock = Promise.resolve();
     this.prewarming = false;
     this.lockHash = null;
     this.schemaHash = null;
+    this.depsBaselined = false;
   }
 
   lockfilePath() {
@@ -485,6 +578,14 @@ class DevSession {
   }
 
   async start() {
+    // A session removed while a branch switch was mid-install would otherwise reach its start and
+    // spawn a dev server nothing tracks, on a port nothing reserves — the one state the whole
+    // reservation model cannot see.
+    if (this.removed) {
+      this.addLog('info', 'Start abandoned — this session has been removed');
+      return this.getStatus();
+    }
+
     // Re-read the skill .env each start so edits to PREWARM_ROUTES et al. take effect
     // on the next branch switch instead of needing a daemon restart. Mutated in place
     // because healthCheckConfig aliases this object.
@@ -495,11 +596,89 @@ class DevSession {
     this.branch =
       (this.headPath && readHeadRef(this.headPath)) || getGitBranch(this.worktree) || 'unknown';
     this.distDir = skillConfig.perBranchDistDir ? distDirForBranch(this.branch) : '.next';
-    this.lockHash = fileHash(this.lockfilePath());
-    this.schemaHash = fileHash(this.schemaPath());
+
+    // Baseline the dependency hashes ONCE, on the session's first start.
+    //
+    // Re-baselining on every start is how a checkout gets swallowed for good. `stop()` kills the
+    // poller and drops any pending switch, so a restart landing inside the debounce window — or a
+    // second checkout during the `pnpm install` of the first, which also runs with the poller off
+    // — arrives here with HEAD already on the new branch. Re-reading the hashes then adopts that
+    // branch's lockfile as the baseline WITHOUT having installed it, and every later poll sees
+    // `head === this.branch` and returns. The result is a stale `node_modules` that nothing will
+    // ever reconcile: `Module not found` 500s until someone installs by hand.
+    //
+    // Keeping the earlier hashes instead means the mismatch survives the restart, and
+    // reconcileDeps() below acts on it.
+    //
+    // Scope, honestly: the baseline is "what was on disk when this session first started", which is
+    // only the same thing as "what was installed" if nobody checked out a branch while the daemon
+    // was down. Restart the daemon after a checkout and the new session baselines the new lockfile
+    // against a node_modules that was never installed for it, and nothing here notices.
+    // An explicit flag, not `lockHash === null`. `fileHash` returns null on ANY read error, and
+    // pnpm-lock.yaml is exactly the file another process briefly locks on Windows — one unlucky
+    // read at first start would leave the baseline unset, so the next start re-baselines and
+    // silently restores the swallow this is here to remove.
+    if (!this.depsBaselined) {
+      const lockHash = fileHash(this.lockfilePath());
+      // Only claim a baseline we actually read. `fileHash` returns null on any read error, and
+      // pnpm-lock.yaml is the file another process briefly locks on Windows — baselining a null
+      // would make reconcileDeps() see a mismatch on the next start and run one install for
+      // nothing. Leaving it unbaselined just tries again.
+      if (lockHash !== null) {
+        this.lockHash = lockHash;
+        this.schemaHash = fileHash(this.schemaPath());
+        this.depsBaselined = true;
+      }
+    }
 
     // Load environment variables
     let envVars = loadEnvFile(this.envPath);
+
+    // The overlay goes on before the port remap, so a mode that supplies its own auth URLs still
+    // gets rewritten to this session's port like any other .env value would be.
+    // Cleared before anything can fail: a session that errors out must not keep reporting the
+    // modes of the run before it, in `status`, `list` or the dashboard.
+    this.modes = {};
+    this.modeSummary = null;
+    this.pendingModes = null;
+
+    const modeDefinitions = loadModeDefinitions(skillDir);
+    if (modeDefinitions.errors.length) {
+      // Starting anyway on a half-parsed definitions file is how a typo becomes a session on the
+      // production database that reports itself as dev. A warning in a log buffer is not a guard.
+      this.status = 'error';
+      for (const error of modeDefinitions.errors) {
+        this.addLog('error', `env-modes.local: ${error}`);
+      }
+      this.addLog('error', `Refusing to start: ${modeDefinitions.path} did not parse cleanly`);
+      return this.getStatus();
+    }
+    // The start endpoint resolves these first and rejects a bad group there. Reaching a throw here
+    // means the definitions file changed under a restart, and starting on the base .env anyway
+    // would be starting on an env nobody asked for — so fail visibly instead.
+    let resolved;
+    try {
+      resolved = resolveSessionModes({
+        definitions: modeDefinitions,
+        prod: this.modeOverrides.prod,
+        dev: this.modeOverrides.dev,
+        defaultProdGroups: this.defaultProdGroups,
+      });
+    } catch (err) {
+      this.status = 'error';
+      this.addLog('error', `Env mode: ${err.message}`);
+      return this.getStatus();
+    }
+    this.modes = resolved.modes;
+    this.pendingModes = null;
+    const { applied } = applyModes(envVars, modeDefinitions, this.modes);
+    this.modeSummary = formatModeSummary(this.modes);
+    for (const note of resolved.notes) {
+      this.addLog('warn', `Env mode: ${note}`);
+    }
+    for (const change of applied) {
+      this.addLog('info', `Env mode: ${change.group}=${change.mode} (${change.keys.join(', ')})`);
+    }
 
     // Update URL-related env vars if using non-default port
     const { envVars: remapped, overrides } = updateEnvUrlsForPort(envVars, this.port);
@@ -519,6 +698,7 @@ class DevSession {
     this.addLog('info', `Worktree: ${this.worktree}`);
     this.addLog('info', `Branch: ${this.branch}`);
     this.addLog('info', `Env: ${this.envPath}`);
+    this.addLog('info', `Env modes: ${this.modeSummary}`);
     this.addLog('info', `Build dir: ${this.distDir}`);
 
     if (skillConfig.perBranchDistDir) {
@@ -547,13 +727,73 @@ class DevSession {
       spawnOptions.detached = true;
     }
 
-    this.process = spawn(npmCmd, ['run', 'dev'], spawnOptions);
+    this.detachRunningProcess();
+
+    const proc = spawn(npmCmd, ['run', 'dev'], spawnOptions);
+    this.process = proc;
 
     this.startedAt = new Date().toISOString();
+    this.stoppedAt = null;
+    this.exitCode = null;
     this.status = 'running';
 
-    // Handle stdout
-    this.process.stdout.on('data', (data) => {
+    this.attachProcessHandlers(proc);
+
+    // Start health check polling if configured
+    if (healthCheckConfig.healthCheckUrl) {
+      this.startHealthCheck();
+    }
+
+    this.startBranchWatch();
+    this.reconcileDeps();
+
+    return {
+      id: this.id,
+      port: this.port,
+      worktree: this.worktree,
+      branch: this.branch,
+      distDir: this.distDir,
+      status: this.status,
+      ready: this.ready,
+    };
+  }
+
+  // Everything that stops or starts this session runs through here, one at a time. Two restarts
+  // overlapping would have the second probe the port the first had just bound, read it as taken,
+  // and move the session off a port it had only just been given.
+  // `fn` must not re-enter lifecycle() on this session: it would wait on a lock it is itself
+  // holding, and the session would then report busy forever with DELETE the only way out.
+  lifecycle(fn) {
+    // Counted, not a boolean: each queued op chains its own clear onto the lock, so with a plain
+    // flag the first op's clear runs before the second op's body and the session reads idle while
+    // a restart is still going. That fails in the pile-up case the flag exists for.
+    this.busyDepth++;
+    const done = () => {
+      this.busyDepth--;
+    };
+    const run = this.lifecycleLock.then(fn, fn);
+    this.lifecycleLock = run.then(done, done);
+    return run;
+  }
+
+  get busy() {
+    return this.busyDepth > 0;
+  }
+
+  // Anything still attached when a new process is about to take its place is a process this
+  // session is about to stop referring to, and the exit guard would then discard even its exit.
+  // Two starts can interleave — a branch switch restarting while a request takes the session over
+  // — and the loser would otherwise keep running, unreachable and holding the port, for the
+  // daemon's lifetime.
+  detachRunningProcess() {
+    if (!this.process) return;
+    this.addLog('warn', 'A process was still attached at start — killing it before replacing it');
+    this.killProcessTree(this.process);
+    this.process = null;
+  }
+
+  attachProcessHandlers(proc) {
+    proc.stdout.on('data', (data) => {
       const lines = data.toString().split('\n').filter(l => l.trim());
       for (const line of lines) {
         this.addLog('stdout', line);
@@ -565,6 +805,11 @@ class DevSession {
               this.ready = true;
               this.readyAt = new Date().toISOString();
               this.addLog('info', 'Server ready (detected from logs)');
+              // Prewarming used to happen only on the health-check path, so a checkout with no
+              // skill `.env` — which is every fresh one, the file is gitignored — reached ready
+              // and warmed nothing. That is exactly the configuration the settings compile
+              // deadlock needs (see PREWARM_ROUTES below).
+              this.prewarm();
               break;
             }
           }
@@ -572,8 +817,7 @@ class DevSession {
       }
     });
 
-    // Handle stderr
-    this.process.stderr.on('data', (data) => {
+    proc.stderr.on('data', (data) => {
       const lines = data.toString().split('\n').filter(l => l.trim());
       for (const line of lines) {
         // Classify error levels
@@ -588,36 +832,61 @@ class DevSession {
       }
     });
 
-    // Handle exit
-    this.process.on('exit', (code, signal) => {
+    proc.on('exit', (code, signal) => {
+      this.addLog('info', `Process exited with code ${code}, signal ${signal}`);
+      // Only the process this session is currently running may move its state. stop() and
+      // start() both detach eagerly, so a kill that lands after either one belongs to a
+      // process the session has already let go of — reporting it would mark a live session
+      // crashed and leave a stale pid that Windows is free to hand to something else.
+      if (this.process !== proc) return;
+      this.process = null;
       this.exitCode = code;
       this.status = code === 0 ? 'stopped' : 'crashed';
       this.stoppedAt = new Date().toISOString();
-      this.addLog('info', `Process exited with code ${code}, signal ${signal}`);
       this.stopHealthCheck();
     });
 
-    this.process.on('error', (err) => {
+    proc.on('error', (err) => {
+      if (this.process !== proc) return;
       this.status = 'error';
       this.addLog('error', `Process error: ${err.message}`);
     });
+  }
 
-    // Start health check polling if configured
-    if (healthCheckConfig.healthCheckUrl) {
-      this.startHealthCheck();
+  killProcessTree(proc) {
+    try {
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true });
+      } else {
+        process.kill(-proc.pid, 'SIGKILL');
+      }
+    } catch (e) {
+      // A kill that fails leaves a server running while the session reports stopped, and that
+      // is only diagnosable if it is written down somewhere.
+      this.addLog('error', `Could not kill pid ${proc.pid}: ${e.message}`);
     }
+  }
 
-    this.startBranchWatch();
-
-    return {
-      id: this.id,
-      port: this.port,
-      worktree: this.worktree,
-      branch: this.branch,
-      distDir: this.distDir,
-      status: this.status,
-      ready: this.ready,
-    };
+  // What the poller cannot see, because it was not running. Any restart can land on a tree whose
+  // lockfile or schema no longer matches what was last installed — a stop/start inside the debounce
+  // window, a second checkout during an install, a crash restart after someone switched branches.
+  // Comparing the files on disk against the last INSTALLED hashes catches all of those without
+  // needing to have observed the checkout that caused them.
+  reconcileDeps() {
+    if (this.removed || this.switching) return;
+    const lockChanged = fileHash(this.lockfilePath()) !== this.lockHash;
+    const schemaChanged = fileHash(this.schemaPath()) !== this.schemaHash;
+    if (!lockChanged && !schemaChanged) return;
+    this.addLog(
+      'info',
+      `${lockChanged ? 'pnpm-lock.yaml' : 'schema.full.prisma'} does not match what was last ` +
+        `installed — reconciling`
+    );
+    // Through the ordinary switch path so it installs, regenerates and restarts exactly as a
+    // watched checkout would; it is the same work, just triggered by state instead of by an event.
+    this.pendingHead = null;
+    clearTimeout(this.branchSwitchTimer);
+    this.branchSwitchTimer = setTimeout(() => this.finishBranchSwitch(), 0);
   }
 
   startBranchWatch() {
@@ -626,7 +895,7 @@ class DevSession {
     this.branchWatchTimer = setInterval(() => {
       if (this.switching) return;
       const head = readHeadRef(this.headPath);
-      if (!head || head === this.branch) return;
+      if (!shouldScheduleSwitch(head, this.branch, this.pendingHead)) return;
       this.onHeadChanged(head);
     }, skillConfig.branchWatchInterval);
     this.branchWatchTimer.unref?.();
@@ -641,6 +910,7 @@ class DevSession {
       clearTimeout(this.branchSwitchTimer);
       this.branchSwitchTimer = null;
     }
+    this.pendingHead = null;
   }
 
   // HEAD moved. Measured: leaving the server up through a checkout beats killing it —
@@ -660,6 +930,7 @@ class DevSession {
       }
     }
 
+    this.pendingHead = head;
     clearTimeout(this.branchSwitchTimer);
     this.branchSwitchTimer = setTimeout(
       () => this.finishBranchSwitch(),
@@ -668,9 +939,29 @@ class DevSession {
   }
 
   async finishBranchSwitch() {
+    return this.lifecycle(() => this.runBranchSwitch());
+  }
+
+  async runBranchSwitch() {
+    // A DELETE that lands after this was queued would otherwise spend minutes on an install for a
+    // session nobody tracks — against a worktree `wt rm` may have just deleted — before start()
+    // refuses at the end of it.
+    if (this.removed) {
+      // Cleared here too: this is the one exit that runs before the clear below, and leaving it set
+      // would make a later switch to this same ref look like one already scheduled. Safe today only
+      // because the DELETE handler stops the session first — which is a long way from this line.
+      this.pendingHead = null;
+      return;
+    }
+
+    clearTimeout(this.branchSwitchTimer);
     this.branchSwitchTimer = null;
     this.switching = true;
     const head = readHeadRef(this.headPath);
+    // Cleared as the switch begins, not when it ends: `switching` suppresses the poll for the
+    // duration, and leaving it set would make a later switch BACK to this same ref look like one
+    // already scheduled.
+    this.pendingHead = null;
     if (!head) {
       this.switching = false;
       return;
@@ -679,7 +970,13 @@ class DevSession {
     try {
       const from = this.branch;
       this.branch = head;
-      this.addLog('info', `Branch switch: ${from} -> ${head}`);
+      // A rebase that lands back where it started, and reconcileDeps(), both arrive here with HEAD
+      // unmoved. Saying "switch: main -> main" reads as a bug in the watcher; the work below is
+      // still correct and still worth doing.
+      this.addLog(
+        'info',
+        from === head ? `Re-checking ${head} for dependency changes` : `Branch switch: ${from} -> ${head}`
+      );
 
       const env = { ...process.env, ...loadEnvFile(this.envPath) };
       const log = (l, m) => this.addLog(l, m);
@@ -707,12 +1004,21 @@ class DevSession {
         await runCommand(pnpmCmd, ['run', 'db:generate'], this.worktree, env, log);
       }
 
-      this.lockHash = lockHash;
-      this.schemaHash = schemaHash;
+      // Re-read AFTER the install, not the values captured before it. `pnpm install` can rewrite
+      // pnpm-lock.yaml (a stale lock against a changed package.json, a workspace bump), and storing
+      // the pre-install hash then makes reconcileDeps() see a mismatch on the way back up and run
+      // the whole stop/install/restart again.
+      this.lockHash = fileHash(this.lockfilePath());
+      this.schemaHash = fileHash(this.schemaPath());
+      this.depsBaselined = true;
 
       if (mustRestart) {
         await this.stop();
         this.restartCount++;
+        // Same check the request-driven restarts make. This one runs unattended, so a session
+        // silently coming back up on a port an orphan of its own still holds is the case nobody
+        // would be watching for.
+        await claimPortForReuse(this);
         this.switching = false;
         await this.start();
         return;
@@ -881,35 +1187,46 @@ class DevSession {
     this.stopHealthCheck();
     this.stopBranchWatch();
     this.prewarming = false;
-    if (!this.process) return;
+    const proc = this.process;
+    if (!proc) {
+      // An `error` session never had a process to stop; overwriting that with `stopped` would
+      // report a failed spawn as a clean shutdown.
+      if (this.status !== 'error') this.status = 'stopped';
+      this.ready = false;
+      return;
+    }
 
     this.addLog('info', 'Stopping dev server...');
 
-    return new Promise((resolve) => {
-      this.process.once('exit', resolve);
+    // Record the outcome before killing, not from the exit code. A hard kill exits nonzero,
+    // so reading the code would file every deliberate stop as a crash.
+    this.process = null;
+    this.ready = false;
+    this.status = 'stopped';
+    this.stoppedAt = new Date().toISOString();
 
-      // Hard kill immediately
-      try {
-        if (process.platform === 'win32') {
-          spawn('taskkill', ['/pid', String(this.process.pid), '/f', '/t'], { shell: true });
-        } else {
-          process.kill(-this.process.pid, 'SIGKILL');
-        }
-      } catch (e) {}
+    return new Promise((resolve) => {
+      proc.once('exit', resolve);
+      this.killProcessTree(proc);
 
       // Resolve after a short delay if process doesn't exit
       setTimeout(resolve, 500);
     });
   }
 
-  async restart() {
-    await this.stop();
-    this.restartCount++;
-    this.logs = [];
-    this.logIndex = 0;
-    this.ready = false;
-    this.readyAt = null;
-    return this.start();
+  // `claimPort` runs between the stop and the start, which is the only moment the session's own
+  // process is gone and a probe of its port says something about anyone else.
+  async restart(claimPort) {
+    return this.lifecycle(async () => {
+      await this.stop();
+      this.restartCount++;
+      this.logs = [];
+      this.logIndex = 0;
+      this.ready = false;
+      this.readyAt = null;
+      if (claimPort) await claimPort(this);
+      return this.start();
+    });
   }
 
   getStatus() {
@@ -918,8 +1235,18 @@ class DevSession {
       worktree: this.worktree,
       branch: this.branch,
       envPath: this.envPath,
+      envModes: Object.fromEntries(
+        Object.entries(this.modes).map(([group, choice]) => [group, choice.mode])
+      ),
+      envModeSummary: this.modeSummary,
+      ...(this.pendingModes && {
+        pendingEnvModes: Object.fromEntries(
+          Object.entries(this.pendingModes).map(([group, choice]) => [group, choice.mode])
+        ),
+      }),
       distDir: this.distDir,
       switching: this.switching,
+      busy: this.busy,
       prewarming: this.prewarming,
       port: this.port,
       status: this.status,
@@ -1180,9 +1507,15 @@ class AuthHub {
 
     let proc;
     try {
+      // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
+      // nothing on [::1]; Windows resolves `localhost` to ::1 first, so a browser typing the same `localhost`
+      // URL the auth redirects use got connection-refused while curl — which falls back to v4 — reported the
+      // server perfectly healthy. `localhost` is not the fix either: it resolves to ::1 *only*, which just
+      // moves the outage onto every caller that hardcodes 127.0.0.1. `::` accepts v4-mapped addresses, so both
+      // spellings work, and it matches what `next dev` already binds for the main app on 3000.
       proc = spawn(
         pnpmCmd,
-        ['exec', 'vite', 'dev', '--host', '127.0.0.1', '--port', String(this.port), '--strictPort'],
+        ['exec', 'vite', 'dev', '--host', '::', '--port', String(this.port), '--strictPort'],
         spawnOptions
       );
     } catch (err) {
@@ -1347,28 +1680,178 @@ async function stopSpokeApps() {
 // Session manager
 const sessions = new Map();
 
+const testQueue = new TestQueue({ concurrency: skillConfig.testConcurrency });
+
+// A tracked session owns its port whatever its status says. Status is a report the daemon
+// writes about a process it cannot see into — it has read `crashed` for a session whose
+// process was alive and serving 200s, and it necessarily reads dead for the window inside
+// restart() between the kill and the rebind. Handing that port to another worktree in either
+// case produces an EADDRINUSE nobody can trace back to here. Membership of this map is the
+// reservation, and DELETE /sessions/:id (what `cli stop` sends) is the release.
 function getUsedPorts() {
   const ports = new Set();
   for (const session of sessions.values()) {
-    if (session.status === 'running' || session.status === 'starting') {
-      ports.add(session.port);
-    }
+    ports.add(session.port);
   }
   return ports;
+}
+
+// Taking a session over means starting a server on the port that session owns, and its own
+// orphaned process may be the thing holding that port. `next dev` does not fail on a taken port —
+// it warns and moves to another one — so a session restarted onto an occupied port would report a
+// URL nothing of its own is serving, and the health check would go green against whatever is.
+//
+// A single probe cannot tell that apart from the session's own process still dying, and defaulting
+// to "stranger" is the destructive answer: it moves a healthy session off its port, which for the
+// primary session on 3000 silently unhooks the rgb-proxy (hardcoded to 3000) and rewrites the auth
+// URLs. Measured on this box, a killed listener releases the socket 630-668 ms after taskkill is
+// spawned, and stop() waits at most 500 ms — so the naive probe reads "held" on every restart. Wait
+// the port out instead, and move only when it stays held long past any plausible teardown.
+const PORT_RELEASE_TIMEOUT = 8000;
+const PORT_RELEASE_POLL = 250;
+
+// Anything already under way owns this session, and a second request must report that rather than
+// start a competing one. `status` alone is not enough: a restart waiting out its port reads
+// `stopped` with no process for as long as the wait lasts — and a start that seems to hang is
+// exactly what makes an agent run it again.
+function sessionIsBusy(session) {
+  return (
+    session.status === 'running' ||
+    session.status === 'starting' ||
+    session.switching ||
+    session.busy
+  );
+}
+
+async function claimPortForReuse(session, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? PORT_RELEASE_TIMEOUT;
+  const intervalMs = opts.intervalMs ?? PORT_RELEASE_POLL;
+  const scanFrom = opts.baseDevPort ?? baseDevPort;
+
+  if (await isPortFree(session.port)) return session.port;
+
+  session.addLog(
+    'info',
+    `Port ${session.port} is still held — waiting up to ${timeoutMs}ms for it to clear`
+  );
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    if (await isPortFree(session.port)) return session.port;
+  }
+
+  // Its own port is excluded from the reservations so that a port freeing during the scan can
+  // still be handed back to the session it belongs to.
+  const used = getUsedPorts();
+  used.delete(session.port);
+  const moved = await findAvailablePort(scanFrom, used);
+  session.addLog(
+    'warn',
+    `Port ${session.port} is held by something this daemon does not control — moving this session to ${moved}`
+  );
+  session.port = moved;
+  return moved;
 }
 
 function findSessionByWorktree(worktree) {
   const normalizedWorktree = resolve(worktree);
   for (const session of sessions.values()) {
-    if (resolve(session.worktree) === normalizedWorktree) {
+    // Case-insensitively on Windows: `cli start c:/dev/...` and a session created as `C:\Dev\...`
+    // are the same tree, and treating them as two would put two dev servers on it — each now
+    // holding a port for the daemon's lifetime. worktree.mjs already compares this way.
+    if (samePath(session.worktree, normalizedWorktree)) {
       return session;
     }
   }
   return null;
 }
 
-function listSessions() {
-  return Array.from(sessions.values()).map(s => s.getStatus());
+// A session whose worktree has been deleted still holds its port and cannot be started again, and
+// this listing is where someone hunting a reserved port actually looks. The check is async because
+// this runs on the daemon's only thread and the TUI polls it twice a second: a synchronous
+// existsSync against a path that has gone unreachable — a network share, a dropped VPN, a stale
+// reparse point — took 21s in one measurement, and every other agent's request queues behind it.
+async function listSessions() {
+  return Promise.all(
+    Array.from(sessions.values()).map(async (s) => {
+      const { exists, timedOut } = await checkPath(s.worktree);
+      return {
+        ...s.getStatus(),
+        worktreeMissing: !exists,
+        ...(timedOut && { worktreeCheckTimedOut: true }),
+      };
+    })
+  );
+}
+
+// `access` runs on libuv's 4-slot threadpool, and one unreachable path takes 21s there — four of
+// them starve every other filesystem call on the process, including the healthy worktrees in the
+// same listing. Racing a timeout bounds the caller's wait but NOT the slot: the loser of a race
+// keeps running. So a path gets at most one probe in flight at a time, and a settled answer is
+// reused briefly — without that, the TUI polling twice a second injects two 21s jobs per second
+// into a four-slot pool and it never drains.
+//
+// A timeout reports the worktree as present: "slow" is not evidence of deletion, and calling a
+// live tree missing is the more damaging wrong answer. The caller is told the check timed out so
+// it can say "could not tell" rather than "fine".
+const WORKTREE_CHECK_TIMEOUT = 250;
+const WORKTREE_CHECK_TTL = 2000;
+const WORKTREE_CHECK_MAX_ENTRIES = 64;
+
+const worktreeChecks = new Map();
+
+function probePath(path) {
+  const cached = worktreeChecks.get(path);
+  if (cached && (cached.pending || Date.now() - cached.settledAt < WORKTREE_CHECK_TTL)) {
+    return cached;
+  }
+
+  if (worktreeChecks.size >= WORKTREE_CHECK_MAX_ENTRIES) {
+    for (const [key, entry] of worktreeChecks) {
+      if (!entry.pending && Date.now() - entry.settledAt >= WORKTREE_CHECK_TTL) {
+        worktreeChecks.delete(key);
+      }
+    }
+  }
+
+  const entry = { pending: true, exists: true, settledAt: 0 };
+  entry.probe = access(path).then(
+    () => true,
+    () => false
+  );
+  entry.probe.then((exists) => {
+    entry.exists = exists;
+    entry.pending = false;
+    // A miss is never slow — ENOENT comes back in microseconds — so caching one protects nothing
+    // and makes a worktree created seconds after a failed start read as still missing, with the
+    // error naming the path and sending the reader after the wrong thing.
+    entry.settledAt = exists ? Date.now() : 0;
+    if (!exists) worktreeChecks.delete(path);
+  });
+  worktreeChecks.set(path, entry);
+  return entry;
+}
+
+async function checkPath(path) {
+  const entry = probePath(path);
+  if (!entry.pending) return { exists: entry.exists, timedOut: false };
+
+  let timer;
+  try {
+    const timedOut = await Promise.race([
+      entry.probe.then(() => false),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(true), WORKTREE_CHECK_TIMEOUT);
+      }),
+    ]);
+    return timedOut ? { exists: true, timedOut: true } : { exists: entry.exists, timedOut: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function pathExists(path) {
+  return (await checkPath(path)).exists;
 }
 
 // HTTP request body reader
@@ -1387,6 +1870,8 @@ async function main() {
 
   // Write PID file
   writeFileSync(pidFile, String(process.pid));
+
+  baseDevPort = config.baseDevPort;
 
   console.error(`Starting dev-server daemon...`);
   console.error(`  Daemon port: ${config.port}`);
@@ -1422,7 +1907,7 @@ async function main() {
           status: 'running',
           pid: process.pid,
           uptime: process.uptime(),
-          sessions: listSessions(),
+          sessions: await listSessions(),
         }));
         return;
       }
@@ -1434,7 +1919,7 @@ async function main() {
           status: 'running',
           pid: process.pid,
           uptime: process.uptime(),
-          sessions: listSessions(),
+          sessions: await listSessions(),
           rgbProxy: rgbProxy.getStatus(),
           authHub: authHub.getStatus(),
           projectRoot,
@@ -1583,11 +2068,122 @@ async function main() {
         return;
       }
 
+      // Test-run queue. Registered above the /sessions/:id regex so these paths are not read as
+      // session ids. Deadlines are swept on every request as well as on a timer, so a queue that
+      // is being polled cannot sit on a stale slot between ticks.
+      if (path.startsWith('/test-runs')) {
+        testQueue.sweep();
+
+        if (path === '/test-runs' && req.method === 'GET') {
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            runs: testQueue.list(),
+            concurrency: testQueue.concurrency,
+            paused: testQueue.paused,
+          }));
+          return;
+        }
+
+        if (path === '/test-runs' && req.method === 'POST') {
+          let parsed;
+          try {
+            parsed = JSON.parse(await readBody(req) || '{}');
+          } catch (e) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            return;
+          }
+          if (!parsed.worktree) {
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              error: 'worktree path required',
+              usage: '{ "worktree": "/path/to/worktree", "args": ["path/to/one.test.ts"] }',
+            }));
+            return;
+          }
+          res.writeHead(200);
+          res.end(JSON.stringify(testQueue.request({
+            worktree: resolve(parsed.worktree),
+            args: Array.isArray(parsed.args) ? parsed.args : [],
+          })));
+          return;
+        }
+
+        if (path === '/test-runs/config') {
+          if (req.method === 'POST') {
+            let parsed;
+            try {
+              parsed = JSON.parse(await readBody(req) || '{}');
+            } catch (e) {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+              return;
+            }
+            try {
+              testQueue.setConcurrency(parsed.concurrency);
+            } catch (err) {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: err.message }));
+              return;
+            }
+          }
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            concurrency: testQueue.concurrency,
+            paused: testQueue.paused,
+            queued: testQueue.order.length,
+            running: testQueue.running.size,
+          }));
+          return;
+        }
+
+        const runMatch = path.match(/^\/test-runs\/([^/]+)(\/logs)?$/);
+        if (runMatch) {
+          const [, runId, logsSuffix] = runMatch;
+
+          if (logsSuffix && req.method === 'GET') {
+            const since = parseInt(url.searchParams.get('since') || '-1', 10);
+            const logs = testQueue.logs(runId, since);
+            if (logs === null) {
+              res.writeHead(404);
+              res.end(JSON.stringify({ error: 'Unknown run', id: runId }));
+              return;
+            }
+            res.writeHead(200);
+            // `dropped` rides along so a caller reading logs directly — `test logs`, a pasted
+            // excerpt — can tell a fragment from a whole run. The waiters warn; this is the same
+            // fact for everyone else.
+            res.end(JSON.stringify({ logs, dropped: testQueue.droppedFor(runId) }));
+            return;
+          }
+
+          const run =
+            req.method === 'DELETE' ? testQueue.cancel(runId) :
+            req.method === 'GET' ? testQueue.get(runId) : undefined;
+
+          if (run === undefined) {
+            res.writeHead(405);
+            res.end(JSON.stringify({ error: 'Method not allowed', path }));
+            return;
+          }
+          // The 404 is load-bearing: it is how `test wait` learns the daemon was restarted and its
+          // run is gone, instead of polling for a result nobody will produce.
+          if (run === null) {
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'Unknown run', id: runId }));
+            return;
+          }
+          res.writeHead(200);
+          res.end(JSON.stringify(run));
+          return;
+        }
+      }
+
       // GET /sessions - List all sessions
       if (path === '/sessions' && req.method === 'GET') {
         res.writeHead(200);
         res.end(JSON.stringify({
-          sessions: listSessions(),
+          sessions: await listSessions(),
         }));
         return;
       }
@@ -1605,6 +2201,38 @@ async function main() {
         }
 
         const { worktree, port: requestedPort, envPath } = parsed;
+        const modeOverrides = {
+          prod: parseGroupList(parsed.prod),
+          dev: parseGroupList(parsed.dev),
+        };
+
+        // Resolve here as well as at start, so a bad group name is a 400 with the list of real
+        // ones rather than a session that exists and immediately errors.
+        let requestedModes;
+        try {
+          // Resolve against the same config start() will, or an edited DEVSERVER_PROD_GROUPS makes
+          // the two disagree and the mismatch check below compares against the wrong answer.
+          Object.assign(skillConfig, loadSkillConfig());
+          const definitions = loadModeDefinitions(skillDir);
+          if (definitions.errors.length) {
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              error: `${definitions.path} did not parse cleanly`,
+              details: definitions.errors,
+            }));
+            return;
+          }
+          requestedModes = resolveSessionModes({
+            definitions,
+            prod: modeOverrides.prod,
+            dev: modeOverrides.dev,
+            defaultProdGroups: skillConfig.prodGroups,
+          }).modes;
+        } catch (err) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: err.message }));
+          return;
+        }
 
         if (!worktree) {
           res.writeHead(400);
@@ -1617,20 +2245,110 @@ async function main() {
 
         const resolvedWorktree = resolve(worktree);
 
-        // Check if worktree exists
-        if (!existsSync(resolvedWorktree)) {
+        // Async for the same reason listSessions is: a synchronous stat on a path that has gone
+        // unreachable blocks the daemon's only thread, and `cli start` is not worth freezing every
+        // other agent's requests for.
+        if (!(await pathExists(resolvedWorktree))) {
+          // A tree deleted out from under its session leaves that session holding a port with no
+          // way to reach it through this endpoint, so name the session rather than only the tree.
+          const orphaned = findSessionByWorktree(resolvedWorktree);
           res.writeHead(400);
-          res.end(JSON.stringify({ error: `Worktree not found: ${resolvedWorktree}` }));
+          res.end(JSON.stringify({
+            error: `Worktree not found: ${resolvedWorktree}`,
+            ...(orphaned && {
+              trackedSession: orphaned.id,
+              hint: `Session ${orphaned.id} still holds port ${orphaned.port} for this path — release it with \`node .claude/skills/dev-server/cli.mjs stop ${orphaned.id}\`.`,
+            }),
+          }));
           return;
         }
 
         // Check if already running for this worktree
         const existing = findSessionByWorktree(resolvedWorktree);
-        if (existing && (existing.status === 'running' || existing.status === 'starting')) {
+        if (existing && sessionIsBusy(existing)) {
+          // Handing back a live session while quietly ignoring the modes just asked for is how an
+          // agent ends up believing it is on dev. Refuse instead of answering a different question.
+          if (
+            !sameResolvedModes(existing.pendingModes ?? existing.modes, requestedModes, [
+              ...modeOverrides.prod,
+              ...modeOverrides.dev,
+            ])
+          ) {
+            res.writeHead(409);
+            res.end(JSON.stringify({
+              error:
+                `Session ${existing.id} is already running this worktree with different env modes ` +
+                `(${existing.modeSummary ?? 'not yet resolved'}). Stop it first: ` +
+                `node .claude/skills/dev-server/cli.mjs stop ${existing.id}`,
+              session: existing.getStatus(),
+            }));
+            return;
+          }
           res.writeHead(200);
           res.end(JSON.stringify({
             existing: true,
             session: existing.getStatus(),
+          }));
+          return;
+        }
+
+        // A dead session still holds its port, so starting this worktree again has to take that
+        // session over rather than strand it and pick a fresh port — otherwise every crash costs
+        // a port for the life of the daemon. Only when a different port is asked for is a second
+        // session created, and the old one keeps its reservation because its process may be alive.
+        if (existing && (!requestedPort || requestedPort === existing.port)) {
+          // Taking over a dead session takes over this request's modes with it. A bare start
+          // therefore lands on dev even where the session it reuses was started with --prod,
+          // which is the whole of "prod is never sticky".
+          const previousOverrides = existing.modeOverrides;
+          const previousDefaults = existing.defaultProdGroups;
+          existing.modeOverrides = modeOverrides;
+          existing.defaultProdGroups = [...skillConfig.prodGroups];
+          // Stamped BEFORE the await: stop() plus the port claim can take seconds, and until
+          // start() runs, `modes` would still describe the run being torn down — long enough for a
+          // second agent's bare start to match it and be handed a session coming up on production.
+          //
+          // Kept separate from `modes` because a crashed session's process can still be alive and
+          // serving on the OLD env for the length of the port wait. `modes` stays true to what is
+          // running; `pendingModes` is what the next run will be, and the mismatch check reads it.
+          existing.pendingModes = requestedModes;
+          try {
+            await existing.restart((s) => claimPortForReuse(s));
+          } catch (err) {
+            // A request that errored out must not leave its --prod set pinned to the session: the
+            // next unattended restart — a branch switch, a crash — would then bring it up on
+            // production off the back of a start that failed.
+            existing.modeOverrides = previousOverrides;
+            existing.defaultProdGroups = previousDefaults;
+            throw err;
+          } finally {
+            // start() clears this on the way through, but a restart that throws — no port left in
+            // the range, a failing stop() — never reaches it, and the session would then advertise
+            // pending modes forever and compare the 409 guard against an env that will never exist.
+            existing.pendingModes = null;
+          }
+
+          const reusedStatus = existing.getStatus();
+          if (reusedStatus.status === 'error') {
+            // start() reports a mode failure by setting status and RETURNING, so the catch above
+            // never sees it. Without this the failed request's --prod set stays pinned, and the
+            // dashboard's restart key would bring the session up on production off a start the
+            // CLI reported as failed.
+            existing.modeOverrides = previousOverrides;
+            existing.defaultProdGroups = previousDefaults;
+            res.writeHead(500);
+            res.end(JSON.stringify({
+              error: lastErrorLog(existing) ?? 'Session failed to restart',
+              session: reusedStatus,
+            }));
+            return;
+          }
+
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            existing: true,
+            reused: true,
+            session: reusedStatus,
           }));
           return;
         }
@@ -1659,16 +2377,38 @@ async function main() {
         const worktreeEnvPath = resolve(resolvedWorktree, '.env');
         const resolvedEnvPath = envPath
           ? resolve(envPath)
-          : existsSync(worktreeEnvPath)
+          : // "Present" is the safe answer for the worktree and the unsafe one here: picking a
+            // file that may not exist over a known-good fallback starts the server with no env at
+            // all — no DATABASE_URL, no secrets — failing in a way that looks nothing like a slow
+            // filesystem. So an unknown answer falls back to the main .env.
+            await checkPath(worktreeEnvPath).then((r) => r.exists && !r.timedOut)
             ? worktreeEnvPath
             : mainEnvPath;
 
         // Create and start session
         const sessionId = generateSessionId();
-        const session = new DevSession(sessionId, resolvedWorktree, port, resolvedEnvPath);
+        const session = new DevSession(
+          sessionId,
+          resolvedWorktree,
+          port,
+          resolvedEnvPath,
+          modeOverrides
+        );
         sessions.set(sessionId, session);
 
         const result = await session.start();
+
+        // A start refused over its env modes is the one failure this endpoint promises to be
+        // fail-closed about. Answering 201 for it makes `cli.mjs start && curl` proceed as though a
+        // server came up, and the CLI exits 0.
+        if (result.status === 'error') {
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            error: lastErrorLog(session) ?? 'Session failed to start',
+            session: result,
+          }));
+          return;
+        }
 
         res.writeHead(201);
         res.end(JSON.stringify({
@@ -1720,7 +2460,19 @@ async function main() {
 
         // POST /sessions/:id/restart - Restart session
         if (subPath === '/restart' && req.method === 'POST') {
-          const result = await session.restart();
+          // Queueing behind an op that never finishes hangs this request forever — the CLI's fetch
+          // has no timeout either — so refuse instead. POST /sessions already short-circuits on
+          // the same predicate.
+          if (session.busy) {
+            res.writeHead(409);
+            res.end(JSON.stringify({
+              error: `Session ${session.id} is busy — a start, restart or branch switch is already running.`,
+              session: session.getStatus(),
+            }));
+            return;
+          }
+
+          await session.restart((s) => claimPortForReuse(s));
 
           res.writeHead(200);
           res.end(JSON.stringify({
@@ -1731,13 +2483,30 @@ async function main() {
 
         // DELETE /sessions/:id - Stop session
         if (subPath === '' && req.method === 'DELETE') {
+          // Set before stopping: a branch switch already past its own stop would otherwise start
+          // a server for a session this request is in the middle of removing.
+          session.removed = true;
           await session.stop();
+
+          // A process winding down still answers, so a single busy read means nothing — only a
+          // port still held on a second look is worth reporting. The session is removed either
+          // way: keeping it would leave `wt stale` counting the tree as a keeper forever, and the
+          // picker's probe is what stands between a leftover listener and reuse.
+          let stillListening = !(await isPortFree(session.port));
+          if (stillListening) {
+            await new Promise((r) => setTimeout(r, 300));
+            stillListening = !(await isPortFree(session.port));
+          }
+
           sessions.delete(sessionId);
 
           res.writeHead(200);
           res.end(JSON.stringify({
             success: true,
             id: sessionId,
+            ...(stillListening && {
+              warning: `Port ${session.port} still has a listener after stopping this session — a process outlived the kill.`,
+            }),
           }));
           return;
         }
@@ -1752,6 +2521,7 @@ async function main() {
           await session.stop();
         }
         sessions.clear();
+        testQueue.shutdown();
         await rgbProxy.stop();
         await authHub.stop();
         await stopSpokeApps();
@@ -1776,6 +2546,11 @@ async function main() {
       res.end(JSON.stringify({ error: err.message }));
     }
   };
+
+  // Deadlines still have to advance when nobody is polling — an abandoned queue is exactly the
+  // case where no requests arrive.
+  const testSweeper = setInterval(() => testQueue.sweep(), 5000);
+  testSweeper.unref();
 
   // Start server - bind to localhost only for security
   const server = http.createServer(handler);
@@ -1819,6 +2594,7 @@ async function main() {
     for (const session of sessions.values()) {
       await session.stop();
     }
+    testQueue.shutdown();
     await rgbProxy.stop();
     await authHub.stop();
     await stopSpokeApps();
@@ -1832,6 +2608,7 @@ async function main() {
     for (const session of sessions.values()) {
       await session.stop();
     }
+    testQueue.shutdown();
     await rgbProxy.stop();
     await authHub.stop();
     await stopSpokeApps();
@@ -1841,7 +2618,37 @@ async function main() {
   });
 }
 
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+// Importing this file must not start a daemon — the tests drive DevSession and the port
+// reservation directly, and a second daemon would fight the running one for its port.
+// `import.meta.url` is realpathed by node and `process.argv[1]` is not, so a launch through a
+// junction — which this repo's tooling creates routinely — would otherwise leave the daemon
+// exiting 0 having started nothing.
+function realPath(path) {
+  try {
+    return realpathSync(path);
+  } catch (e) {
+    return path;
+  }
+}
+
+const invokedDirectly =
+  !!process.argv[1] &&
+  samePath(realPath(process.argv[1]), realPath(fileURLToPath(import.meta.url)));
+
+if (invokedDirectly) {
+  main().catch(err => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}
+
+export {
+  checkPath,
+  claimPortForReuse,
+  DevSession,
+  findSessionByWorktree,
+  getUsedPorts,
+  listSessions,
+  sessionIsBusy,
+  sessions,
+};

@@ -81,11 +81,16 @@ export type EditorTabContext = {
  *                       gate an incidental PROXY: it happened to correlate with the truth
  *                       (off-site listings usually have no block) without ever expressing
  *                       it. `listingMedia` was split out of `listingContent` so the table
- *                       states the real constraint — the standalone media editor is hosted
- *                       by the BLOCK-keyed `getMyListingForApp` — and this gate now reads
- *                       it. Off-site media is still editable inside the details wizard,
- *                       which is why withholding the TAB loses nothing today.
- *                       Widening it is civitai/civitai#3893.
+ *                       states the real constraint, and this gate now reads it.
+ *                       🟡 That constraint is no longer "the host resolver is block-keyed":
+ *                       civitai/civitai#3984 re-keyed `getMyListingForApp` to take
+ *                       `appBlockId` OR `slug`, so the resolver reaches an off-site listing
+ *                       fine. What withholds the tab TODAY is the `ctx.appBlockId != null`
+ *                       clause below — the panel hands an `appBlockId` to
+ *                       `<ListingMediaEditor>`, and an off-site listing has none. Off-site
+ *                       media is still editable inside the details wizard, which is why
+ *                       withholding the TAB loses nothing today. Widening it (flip the cell
+ *                       AND re-key the panel onto the slug) is civitai/civitai#3893.
  *
  *   - `manifest`      — BOTH `capabilities.submitVersion` AND a backing block.
  *

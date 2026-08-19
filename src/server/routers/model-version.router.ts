@@ -20,6 +20,11 @@ import {
   upsertModelVersionHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
+import {
+  getModelVersionEarlyAccessRefundRequirement,
+  toEarlyAccessRefundSummary,
+} from '~/server/services/model-early-access-refund.service';
 import {
   mergeVersionsSchema,
   deleteExplorationPromptSchema,
@@ -183,6 +188,14 @@ export const modelVersionRouter = router({
     .input(unpublishModelSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelVersionHandler),
+  getEarlyAccessRefundRequirement: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .query(
+      async ({ input }): Promise<EarlyAccessRefundSummary> =>
+        toEarlyAccessRefundSummary(await getModelVersionEarlyAccessRefundRequirement(input))
+    ),
   upsertExplorationPrompt: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(upsertExplorationPromptSchema)

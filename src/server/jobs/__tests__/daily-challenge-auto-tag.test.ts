@@ -15,21 +15,11 @@ import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-
 // query upstream doesn't silently mis-feed the test.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbWriteQueryRawUnsafe,
-  mockDbWriteExecuteRaw,
-  mockDbWriteExecuteRawUnsafe,
-  mockCollectionCreate,
   mockGetChallengeConfig,
   mockCreateChallengeRecord,
   mockGenerateCollectionDetails,
   mockGenerateArticle,
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbWriteQueryRawUnsafe: vi.fn().mockResolvedValue([{ id: 1000 }]),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteExecuteRawUnsafe: vi.fn().mockResolvedValue(1),
-  mockCollectionCreate: vi.fn().mockResolvedValue({ id: 4242 }),
   mockGetChallengeConfig: vi.fn(),
   mockCreateChallengeRecord: vi.fn().mockResolvedValue(31337),
   mockGenerateCollectionDetails: vi.fn().mockResolvedValue({ name: 'Challenge collection' }),
@@ -40,16 +30,6 @@ const {
     invitation: 'invitation',
     themeElements: ['a'],
   }),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: mockDbReadQueryRaw },
-  dbWrite: {
-    $queryRawUnsafe: mockDbWriteQueryRawUnsafe,
-    $executeRaw: mockDbWriteExecuteRaw,
-    $executeRawUnsafe: mockDbWriteExecuteRawUnsafe,
-    collection: { create: mockCollectionCreate },
-  },
 }));
 
 // Imported at module scope but not reached by the creation path; cuts its
@@ -74,6 +54,16 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async (importOri
 
 import { createChallengesBatch } from '../daily-challenge-processing';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbWriteQueryRawUnsafe = dbMock.dbWrite.$queryRawUnsafe;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteExecuteRawUnsafe = dbMock.dbWrite.$executeRawUnsafe;
+const mockCollectionCreate = dbMock.dbWrite.collection.create;
+dbMock.dbWrite.$queryRawUnsafe.mockResolvedValue([{ id: 1000 }]);
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.$executeRawUnsafe.mockResolvedValue(1);
+dbMock.dbWrite.collection.create.mockResolvedValue({ id: 4242 });
 
 // The literal, not `dailyChallengeConfig.challengeTagId`. Reading the id from config makes the
 // assertion below `undefined === undefined` on a tree where the field doesn't exist yet — it would

@@ -136,6 +136,8 @@ export type CollectionMode = "Contest" | "Bookmark";
 
 export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
+export type CollectionItemRejectionReason = "OffTopic" | "WrongFormat" | "Duplicate" | "Quality" | "RulesViolation" | "Other" | "Automated";
+
 export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "MANAGE";
 
 export type CollectionCollaboratorRole = "Contributor" | "Manager";
@@ -1987,6 +1989,8 @@ export interface AppBlockPublishRequest {
   rejectionReason: string | null;
   approvalNotes: string | null;
   forgejoCommitSha: string | null;
+  sourceCommit: string | null;
+  sourceDirty: boolean | null;
   deployState: string | null;
   deployDetail: string | null;
   deployUpdatedAt: Date | null;
@@ -2700,6 +2704,9 @@ export interface Cosmetic {
   createdById: number | null;
   pHash: bigint | null;
   pHashUrl: string | null;
+  pHashHex: string | null;
+  pHashVersion: string | null;
+  pHashFailedAt: Date | null;
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];
@@ -3008,6 +3015,8 @@ export interface CollectionItem {
   reviewedAt: Date | null;
   note: string | null;
   status: CollectionItemStatus;
+  rejectionReason: CollectionItemRejectionReason | null;
+  rejectionDetail: string | null;
   tagId: number | null;
   tag?: Tag | null;
   scores?: CollectionItemScore[];
@@ -5313,6 +5322,7 @@ export interface PlacementSpace {
   entityId: number;
   mode: string;
   price: number | null;
+  freeSlots: number | null;
   settings: JsonValue;
   createdAt: Date;
   updatedAt: Date;
@@ -5331,6 +5341,8 @@ export interface Placement {
   status: string;
   removedBy: string | null;
   amount: number;
+  free: boolean;
+  spendType: string | null;
   sellerId: number | null;
   seller?: User | null;
   feeWaived: boolean;

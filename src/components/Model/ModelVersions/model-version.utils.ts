@@ -8,9 +8,6 @@ import { type ModelVersionTerms, generationOpenToNonBuyers, isFreeGeneration } f
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
-export const MIN_DONATION_GOAL = 1000;
-export const MAX_DONATION_GOAL = 1000000000;
-
 export const useQueryModelVersionsEngagement = (
   { modelId, versionId }: { modelId: number; versionId: number },
   options?: { enabled?: boolean }

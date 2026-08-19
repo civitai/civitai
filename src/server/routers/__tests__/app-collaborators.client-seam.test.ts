@@ -8,8 +8,8 @@ import { stripCommentsAndStrings } from '../../../../test/strip-comments';
 
 /**
  * 🔴 THE PROC↔CLIENT SEAM. Every `appCollaborators.*` procedure must have at least one
- * CALLER in the app, except the four ownership-TRANSFER procs, which are deliberately
- * deferred to a follow-up PR.
+ * CALLER in the app. {@link DEFERRED_PROCS} is now EMPTY — the four ownership-transfer
+ * procs it used to hold were wired by the follow-up PR, and their entries were deleted.
  *
  * ## Why this guard exists, stated as the failure it caught
  *
@@ -50,17 +50,37 @@ const ROUTER_FILE = 'src/server/routers/app-collaborators.router.ts';
 const ROUTER_EXPORT = 'appCollaboratorsRouter';
 
 /**
- * 🔴 THE DEFERRED SET — the four ownership-TRANSFER procs, out of scope for the
- * collaborator-UI PR and wired by its follow-up.
+ * 🔴 THE DEFERRED SET — procs knowingly shipped without a client. **EMPTY.**
+ *
+ * It held the four ownership-TRANSFER procs while the collaborator-UI PR shipped without
+ * them. The follow-up PR wired them and DELETED the four entries, which is the event
+ * {@link TRANSFER_PROCS} below asserts on.
  *
  * DELETE an entry from this list when its proc gets a client. Do NOT widen it, and do NOT
  * replace it with a pattern.
  */
-const DEFERRED_PROCS = [
+const DEFERRED_PROCS = [] as const;
+
+/**
+ * 🔴 THE DELETION LEDGER — the entries that had to leave {@link DEFERRED_PROCS}.
+ *
+ * This is the assertion the file's own predecessor recommended, and it exists because the
+ * "every DEFERRED proc still has ZERO clients" test below is now VACUOUS: it iterates an
+ * empty list, so it passes whatever anyone does to the transfer procs. Naming them here
+ * moves the guard from "no deferred proc is wired" (unfalsifiable once the list empties)
+ * to "THESE FIVE procs are not deferred AND each has a client" — which fails in both
+ * directions: re-adding an entry, and deleting the last caller of one.
+ *
+ * 🔴 IT DOES NOT DEPEND ON `PROC_REFERENCE_RE`'s FAIL-OPEN DIRECTION. The membership half
+ * is a plain list comparison the scanner cannot influence at all, so even a scanner that
+ * missed every call still fails this test the moment a proc is re-deferred.
+ */
+const TRANSFER_PROCS = [
   'initiateTransfer',
   'acceptTransfer',
   'cancelTransfer',
   'getPendingTransfer',
+  'listMyPendingTransfers',
 ] as const;
 
 /**
@@ -122,24 +142,44 @@ function readDeclaredProcs(): string[] {
  * turn this guard RED. Red is the direction someone looks at; a regex loose enough to
  * count prose is not.
  *
- * 🔴 BUT IT IS FAIL-OPEN FOR THE OPPOSITE DIRECTION — the `DEFERRED_PROCS` "must have ZERO
- * clients" assertion — AND THAT MATTERS FOR PR2, WHICH WIRES TRANSFER.
+ * 🔴 IT USED TO BE FAIL-OPEN FOR THE OPPOSITE DIRECTION — the `DEFERRED_PROCS` "must have
+ * ZERO clients" assertion. A proc reached through a shape a single receiver-anchored regex
+ * does not recognise (`const { initiateTransfer } = trpc.appCollaborators;`, or an aliased
+ * `const u = trpc.useUtils(); u.appCollaborators.…`) was NOT counted, so that check kept
+ * passing while the proc was in fact wired.
  *
- * A transfer proc reached through a shape this regex does not recognise —
- * `const { initiateTransfer } = trpc.appCollaborators;`, or an aliased
- * `const u = trpc.useUtils(); u.appCollaborators.…` — would NOT be counted, so the
- * deferred-set check would keep passing while the proc was in fact wired. The old bare
- * `\bappCollaborators\.(\w+)` was STRICTER here (it would have caught the destructured
- * receiver), and the trade was made knowingly: that regex also counted comments, strings
- * and `constants.appCollaborators.*`, which is how `getAppEarnings` shipped "wired".
+ * BOTH remedies its predecessor named were taken, because they cover different failures:
+ *   - the scanner now recognises the two extra receiver shapes (below), so a wired proc
+ *     is COUNTED however it was reached; and
+ *   - the deferred set is asserted by DELETION (`TRANSFER_PROCS`), which does not depend
+ *     on the scanner at all — a list comparison cannot be fooled by a receiver shape
+ *     nobody anticipated, and receiver shapes are open-ended.
  *
- * Left as-is DELIBERATELY, because the fix belongs with the work it protects: PR2 should
- * either widen `PROC_REFERENCE_RE` to recognise the destructured/aliased shapes, or —
- * better — assert on the DELETION of the `DEFERRED_PROCS` entries themselves, which is
- * the event that PR actually performs. Do not assume this guard will notice transfer
- * being wired behind an unusual receiver.
+ * The old bare `\bappCollaborators\.(\w+)` is still NOT the answer: it counted comments,
+ * strings and `constants.appCollaborators.*` (the config bag), which is how
+ * `getAppEarnings` shipped "wired". Each shape below is anchored on a receiver that can
+ * only be the tRPC client.
  */
 const PROC_REFERENCE_RE = /\b(?:trpc|utils)\.appCollaborators\.([A-Za-z_$][\w$]*)/g;
+
+/**
+ * SHAPE 2 — a DESTRUCTURED receiver: `const { initiateTransfer, list } = trpc.appCollaborators;`
+ * The names come from the brace group; `foo: bar` and `foo = fallback` are reduced to the
+ * KEY, which is the proc name (the local binding is irrelevant to the seam).
+ */
+const DESTRUCTURED_RECEIVER_RE = /\{([^{}]*)\}\s*=\s*(?:trpc|utils)\.appCollaborators\b/g;
+
+/**
+ * SHAPE 3 — an ALIASED utils binding: `const u = trpc.useUtils(); u.appCollaborators.…`.
+ *
+ * 🔴 The alias is DISCOVERED from the file, never guessed: only an identifier this file
+ * actually assigns from `trpc.useUtils()` / `trpc.useContext()` is treated as a receiver.
+ * Accepting an arbitrary `<ident>.appCollaborators.<name>` would re-admit
+ * `constants.appCollaborators.transferExpiryDays`, which is the exact false positive the
+ * receiver anchor exists to exclude.
+ */
+const UTILS_ALIAS_RE =
+  /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*trpc\.(?:useUtils|useContext)\(\)/g;
 
 /**
  * `appCollaborators.<proc>` CALL SITES in `text`.
@@ -152,7 +192,25 @@ const PROC_REFERENCE_RE = /\b(?:trpc|utils)\.appCollaborators\.([A-Za-z_$][\w$]*
  * surface. A guard a COMMENT can satisfy is not a guard.
  */
 export function findCollaboratorProcReferences(text: string): string[] {
-  return [...stripCommentsAndStrings(text).matchAll(PROC_REFERENCE_RE)].map((m) => m[1]);
+  const code = stripCommentsAndStrings(text);
+  const found: string[] = [];
+
+  for (const m of code.matchAll(PROC_REFERENCE_RE)) found.push(m[1]);
+
+  for (const m of code.matchAll(DESTRUCTURED_RECEIVER_RE)) {
+    for (const part of m[1].split(',')) {
+      // `foo`, `foo: local`, `foo = fallback`, `foo: local = fallback` → `foo`.
+      const key = part.split(/[:=]/)[0].trim();
+      if (/^[A-Za-z_$][\w$]*$/.test(key)) found.push(key);
+    }
+  }
+
+  for (const alias of new Set([...code.matchAll(UTILS_ALIAS_RE)].map((m) => m[1]))) {
+    const aliasRe = new RegExp(`\\b${alias}\\.appCollaborators\\.([A-Za-z_$][\\w$]*)`, 'g');
+    for (const m of code.matchAll(aliasRe)) found.push(m[1]);
+  }
+
+  return found;
 }
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -203,6 +261,57 @@ describe('appCollaborators proc↔client seam', () => {
     ).toEqual(['listMyPendingInvites']);
     // …and does NOT match a different router with a similar name.
     expect(findCollaboratorProcReferences('trpc.appListings.list.useQuery()')).toEqual([]);
+  });
+
+  /**
+   * 🔴 THE BYPASS THIS SCANNER USED TO WAVE THROUGH, now a control.
+   *
+   * Each of these is a REAL way to call a proc that the receiver-anchored regex alone did
+   * not see, which made the `DEFERRED_PROCS` "zero clients" assertion fail-OPEN: a
+   * transfer proc could be fully wired behind one of them and the guard would stay green.
+   * Written as an expectation of the SPECIFIC proc name so a scanner that returned
+   * everything (or nothing) fails.
+   */
+  describe('🔴 the scanner sees the receiver shapes that used to bypass it', () => {
+    it('a DESTRUCTURED receiver counts as a client', () => {
+      expect(
+        findCollaboratorProcReferences('const { initiateTransfer } = trpc.appCollaborators;')
+      ).toEqual(['initiateTransfer']);
+    });
+
+    it('…including several at once, renamed, and off `utils`', () => {
+      expect(
+        findCollaboratorProcReferences(
+          'const { acceptTransfer, cancelTransfer: cancel } = utils.appCollaborators;'
+        )
+      ).toEqual(['acceptTransfer', 'cancelTransfer']);
+    });
+
+    it('an ALIASED useUtils() binding counts as a client', () => {
+      expect(
+        findCollaboratorProcReferences(
+          'const u = trpc.useUtils();\nvoid u.appCollaborators.getPendingTransfer.invalidate();'
+        )
+      ).toEqual(['getPendingTransfer']);
+    });
+
+    /**
+     * 🔴 NEGATIVE CONTROL ON THE WIDENING, and it is the reason the alias is discovered
+     * rather than assumed. `constants.appCollaborators.transferExpiryDays` is a
+     * `<ident>.appCollaborators.<name>` too — accepting any identifier as a receiver would
+     * have re-created the exact false positive that shipped `getAppEarnings` as "wired".
+     */
+    it('an identifier that is NOT bound to trpc.useUtils() is still not a receiver', () => {
+      expect(
+        findCollaboratorProcReferences(
+          'const days = constants.appCollaborators.transferExpiryDays;'
+        )
+      ).toEqual([]);
+      // …and a destructure off something that is not the tRPC client is not one either.
+      expect(
+        findCollaboratorProcReferences('const { maxCollaborators } = constants.appCollaborators;')
+      ).toEqual([]);
+    });
   });
 
   /**
@@ -296,5 +405,39 @@ describe('appCollaborators proc↔client seam', () => {
           `(delete the entry — do not widen the list into a pattern).`
       ).toEqual([]);
     }
+  });
+
+  /**
+   * 🔴 THE DELETION ASSERTION. The test above is VACUOUS now that `DEFERRED_PROCS` is
+   * empty — it iterates nothing — so it can no longer notice anything about transfer. This
+   * one names the procs directly and fails in both directions: re-adding an entry to the
+   * deferred list, and dropping the last caller of any of them.
+   */
+  describe('🔴 ownership transfer is WIRED — the deferred entries were deleted', () => {
+    it('none of the transfer procs is deferred any more', () => {
+      for (const proc of TRANSFER_PROCS) {
+        expect(
+          DEFERRED_PROCS as readonly string[],
+          `${proc} is back in DEFERRED_PROCS. Ownership transfer has a UI — a proc it uses ` +
+            `may not be excused from the client-seam check.`
+        ).not.toContain(proc);
+      }
+      // POSITIVE CONTROL on this assertion's own instrument: the list really is empty, so
+      // "not contained" is a fact about the list rather than about a typo in a name.
+      expect(DEFERRED_PROCS).toEqual([]);
+    });
+
+    it('every transfer proc is DECLARED on the router', () => {
+      for (const proc of TRANSFER_PROCS) expect(declared).toContain(proc);
+    });
+
+    it('every transfer proc has at least one CLIENT', () => {
+      const unwired = TRANSFER_PROCS.filter((proc) => (clients.get(proc)?.length ?? 0) === 0);
+      expect(
+        unwired,
+        `These ownership-transfer procs have ZERO clients. The transfer UI is the thing ` +
+          `that makes them reachable; if it was removed, re-defer them explicitly.`
+      ).toEqual([]);
+    });
   });
 });

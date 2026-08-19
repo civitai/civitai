@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
 
 describe('challenge-cancelled notification definition', () => {
   const def = (
@@ -26,37 +34,20 @@ describe('challenge-cancelled notification definition', () => {
 });
 
 const {
-  mockDbRead,
-  mockDbWrite,
   mockGetChallengeById,
   mockCloseChallengeCollection,
   mockRefundUserChallengeFunds,
   mockCreateNotification,
-  mockLogToAxiom,
   mockIsFlipt,
   mockGetJudgedEntries,
   mockGenerateWinners,
   mockGetJudgingConfig,
   mockGetChallengeConfig,
 } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn() },
-  mockDbWrite: {
-    challenge: {
-      update: vi.fn().mockResolvedValue(undefined),
-      // voidChallenge claims the row Active/Scheduled -> Cancelled via updateMany and
-      // requires claimed.count === 1 to proceed to the refund + entrant-notification path;
-      // default to a successful single-row claim so the tests exercise that path.
-      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-      // Final-prize recompute (User source, endChallengeAndPickWinners only) — null distribution
-      // skips it so the zero-winner tests exercise the notification branch unchanged.
-      findUnique: vi.fn().mockResolvedValue({ prizePool: 0, prizeDistribution: null }),
-    },
-  },
   mockGetChallengeById: vi.fn(),
   mockCloseChallengeCollection: vi.fn().mockResolvedValue(undefined),
   mockRefundUserChallengeFunds: vi.fn(),
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockIsFlipt: vi.fn().mockResolvedValue(false),
   mockGetJudgedEntries: vi.fn(),
   mockGenerateWinners: vi.fn(),
@@ -79,8 +70,6 @@ const {
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   getChallengeById: mockGetChallengeById,
   closeChallengeCollection: mockCloseChallengeCollection,

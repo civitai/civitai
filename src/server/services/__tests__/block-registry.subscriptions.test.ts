@@ -1,4 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+dbMock.dbWrite.modelBlockInstall.upsert.mockImplementation(async () => ({
+  blockInstanceId: 'bki_test',
+}));
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.scanIterator.mockImplementation(async function* () {});
 
 /**
  * Pins the listForModel SQL after the two new UNION branches land
@@ -16,52 +28,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *   5. Cache is disabled when viewerUserId != null — neither get nor set
  *      hit Redis on that path
  */
-
-const { mockDbRead, mockDbWrite, mockRedis, mockSysRedis } = vi.hoisted(() => {
-  const dbRead = {
-    $queryRaw: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
-    modelBlockInstall: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
-    appBlock: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
-    blockUserSubscription: {
-      findMany: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
-    },
-  };
-  const dbWrite = {
-    appBlock: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
-    modelBlockInstall: {
-      upsert: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
-        blockInstanceId: 'bki_test',
-      })),
-      deleteMany: vi.fn<(...args: any[]) => Promise<any>>(),
-      update: vi.fn<(...args: any[]) => Promise<any>>(),
-      updateMany: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-    blockUserSubscription: {
-      upsert: vi.fn<(...args: any[]) => Promise<any>>(),
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
-      delete: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-  };
-  const redis = {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  };
-  const sysRedis = { sMembers: vi.fn(async () => []) };
-  return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockRedis: redis, mockSysRedis: sysRedis };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'r', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
 
 function capturedSql(): string {
   const lastCall = mockDbRead.$queryRaw.mock.calls.at(-1);
@@ -189,7 +155,7 @@ describe('BlockRegistry.listForModel — cache behaviour with viewer', () => {
     expect(mockRedis.packed.set).not.toHaveBeenCalled();
   });
 
-  it('two different viewers do not see each other\'s cached results', async () => {
+  it("two different viewers do not see each other's cached results", async () => {
     // If the cache leaked, the second call's results would match the first
     // call's. Since we don't write the cache when viewerUserId is set, the
     // second call always hits the DB — observable as two $queryRaw calls.

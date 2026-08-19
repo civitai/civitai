@@ -1,23 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-/**
- * Known-approved AppBlock id cache — bounds the render-beacon's `app_block_id`
- * prom label. Asserts: approved id → itself; unknown id → 'other'; the query is
- * filtered to status:'approved'; the result is TTL-cached (a second call in the
- * window does NOT re-query); and a DB error fails SAFE (everything → 'other').
- */
-
-const { mockFindMany } = vi.hoisted(() => ({ mockFindMany: vi.fn() }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findMany: mockFindMany } },
-}));
-
 import {
   boundAppBlockIdLabel,
   isKnownAppBlockId,
   _internalsForTests,
 } from '../known-app-blocks.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockFindMany = dbMock.dbRead.appBlock.findMany;
 
 beforeEach(() => {
   vi.clearAllMocks();
