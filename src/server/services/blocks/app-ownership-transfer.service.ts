@@ -692,6 +692,101 @@ export type IncomingTransferView = {
   fromUserId: number;
   expiresAt: Date;
   createdAt: Date;
+  /**
+   * 🔴 WHY THIS OFFER CANNOT BE ACCEPTED, or `null` when it can — the recipient half of
+   * the up-front refusal #3935 gave the owner.
+   *
+   * A connect-linked off-site listing is refused at initiate AND re-asserted
+   * IN-TRANSACTION at accept ({@link refusesTransferForConnectClient}). So an offer in
+   * this inbox can in principle be live, valid-looking and guaranteed to fail on accept,
+   * and until this field existed the inbox could not know it: the recipient met the
+   * refusal only by clicking Accept.
+   *
+   * 🔴 HOW REACHABLE IS THAT, HONESTLY: NOT, THROUGH THE PRODUCT, TODAY. Several comments
+   * in this file and in `AppCollaboratorsPanelView` justify the accept-time re-assert by
+   * saying "a revision approve can LINK an OAuth client while the offer is open". That
+   * sentence was inherited rather than checked, and an enumeration of every writer of
+   * `AppListing.connectClientId` does not support it:
+   *   - the ONLY non-null write is `submitExternalListing`'s `create` of a BRAND-NEW row.
+   *     What makes it mandatory there is the ZOD INPUT (`submitExternalListingSchema`'s
+   *     `connectClientId: z.string().min(1).max(64)`), NOT the database: the Prisma column
+   *     is `connectClientId String?` — NULLABLE, no default. Worth stating precisely,
+   *     because a reader who believes the column is NOT NULL concludes it can never become
+   *     null, and the next bullet is exactly that happening. Either way: a listing is BORN
+   *     linked;
+   *   - `beginListingRevision` copies `parent.connectClientId` onto the shadow, the approve
+   *     merge copies `shadow.connectClientId` back onto the parent, and in between
+   *     `buildListingPatchData` never assigns the column and `updateListingPatchSchema` has
+   *     no such key — so the revision round trip returns the value it started with;
+   *   - no raw SQL, nested relation write, or spread writes it — but see the caveat below,
+   *     because that list is about STATEMENTS and does not exhaust WRITERS.
+   * So a listing cannot ACQUIRE a link, and `initiateTransfer` refuses to open an offer on
+   * one that was born with it. The blocked state is therefore not producible through the
+   * product as it stands — it needs a direct DB write, a migration, or a future LINK flow.
+   *
+   * 🔴 CAVEAT, AND IT IS A CLASS THE ENUMERATION STRUCTURALLY CANNOT SEE: A WRITER CAN LIVE
+   * IN THE SCHEMA RATHER THAN AT A CALL SITE. The relation is declared
+   * `onDelete: SetNull`, so deleting the `OauthClient` row issues
+   * `UPDATE app_listings SET connect_client_id = NULL` on every listing referencing it —
+   * and `oauth-client.router::delete` performs exactly that delete with NO check for a
+   * referencing `AppListing` (its only guard, `rejectAppBlockClient`, covers App*Block*
+   * clients, which these are not). That is a product-reachable, OWNER-INITIATED UNLINK
+   * that exists today, and no grep over `data:` payloads or raw SQL would ever find it.
+   *
+   * It does NOT change the conclusion above: a referential SetNull only ever moves the
+   * column non-null → null, so it can only UNBLOCK. What it does change is a consequence
+   * worth knowing: `acceptBlockedReason` can go STALE IN THE SAFE DIRECTION — an offer
+   * rendered blocked whose client was deleted since the read would now succeed on accept.
+   * The recipient sees a stale refusal until the query refetches; the server, which is the
+   * enforcement, correctly allows it. A stale block is a delay; a stale allow would be a
+   * lie, and this cascade cannot produce one.
+   *
+   * (The enumeration is otherwise textual plus call-site based, so it would also miss a
+   * fully dynamic key or a runtime-assembled raw UPDATE. Neither construct exists.)
+   *
+   * 🔴 WHICH IS A REASON TO SHIP THIS, NOT TO SKIP IT — but as GAP-CLOSURE AHEAD OF
+   * TRAFFIC, not as a live bug fix, and it should not be described as one. The accept-time
+   * gate is correct defence-in-depth whether or not today's writers can reach it, and the
+   * two stale comments at :2273 and :2573 of `offsite-listing.service.ts` show a link flow
+   * is anticipated. When one lands, this field is already the channel that tells the
+   * recipient — rather than a second learn-it-by-clicking defect to find later.
+   *
+   * 🔴 A DERIVED REASON, NOT THE RAW `connectClientId`, and the distinction is a
+   * disclosure boundary rather than style. #3935 carried the raw column to the OWNER's
+   * authoring context, arguing it is public via the approved listing-detail read. That
+   * argument does NOT carry over here: a pending offeree holds NO role on the listing
+   * (`resolveListingAccess` gives them nothing), and this read imposes no status gate, so
+   * an offer can sit on a `draft`/`pending` listing whose client id the public read never
+   * exposes. Shipping the column would be a NEW disclosure on exactly those rows, to the
+   * least privileged reader in the feature — for a value they cannot act on. They can only
+   * read the sentence, so the sentence is what crosses the wire.
+   *
+   * It is not a second copy of the rule: this is the SAME predicate and the SAME
+   * {@link CONNECT_CLIENT_TRANSFER_REFUSAL} constant both server gates use. Those gates are
+   * UNCHANGED and remain the enforcement — this is an addition in front of them, never a
+   * replacement, and it runs on data the client could lie to itself about.
+   *
+   * 🔴 SCOPE — `null` MEANS "NO KNOWN-IN-ADVANCE BLOCKER", NOT "THIS WILL SUCCEED". The
+   * name reads as an exhaustive verdict and is not one. `acceptTransfer` also refuses:
+   *   - a BANNED recipient (`'That account cannot receive app ownership'`);
+   *   - an on-site listing whose `AppBlock.appId` is missing;
+   *   - ownership having already moved out from under the offer, on either the
+   *     `OauthClient` row or the listing row (two separate `count === 0` guards);
+   *   - the transfer no longer being `pending` when the close runs.
+   * NONE of those are encoded here, deliberately. Every one of them is either a property
+   * of ANOTHER row this read does not touch, or a race that only exists at accept time —
+   * so a read-time answer would be a guess that goes stale between the render and the
+   * click, which is the failure mode this field exists to remove rather than relocate.
+   * What belongs here is exactly what is stable and knowable from the offer plus its
+   * listing; the connect-client refusal is the only such blocker today.
+   *
+   * The name is kept GENERAL on purpose. A second stable read-time blocker would join this
+   * field rather than add another one, so narrowing it to name the connect client would
+   * force a wire-contract rename the first time that happens. If you add one: put it here,
+   * extend this list, and extend `app-ownership-transfer.inbox.test.ts` — do NOT let a
+   * client-side branch decide which reasons count.
+   */
+  acceptBlockedReason: string | null;
 };
 
 /**
@@ -733,6 +828,12 @@ export async function listMyPendingTransfers(
           name: true,
           kind: true,
           appBlockId: true,
+          // 🔴 READ, BUT NEVER RETURNED. It is the input to
+          // {@link refusesTransferForConnectClient} and is consumed entirely here, into
+          // `acceptBlockedReason` below — see that field for why the raw column must not
+          // reach a pending offeree. Deleting this line silently turns every blocked offer
+          // back into an ordinary-looking one, which is the defect this closes.
+          connectClientId: true,
           icon: { select: { url: true } },
         },
       },
@@ -745,6 +846,7 @@ export async function listMyPendingTransfers(
         name: string;
         kind: string;
         appBlockId: string | null;
+        connectClientId: string | null;
         icon: { url: string } | null;
       } | null;
     }
@@ -765,6 +867,14 @@ export async function listMyPendingTransfers(
       fromUserId: row.fromUserId,
       expiresAt: row.expiresAt,
       createdAt: row.createdAt,
+      // 🔴 THE VERDICT, COMPUTED HERE AND CROSSED AS PROSE. The raw `connectClientId`
+      // stops at this line — see {@link IncomingTransferView.acceptBlockedReason}.
+      acceptBlockedReason: refusesTransferForConnectClient({
+        kind: row.appListing.kind,
+        connectClientId: row.appListing.connectClientId,
+      })
+        ? CONNECT_CLIENT_TRANSFER_REFUSAL
+        : null,
     });
   }
   return out;
