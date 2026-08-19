@@ -616,6 +616,7 @@ model User {
   appOwnershipTransfersTo            AppOwnershipTransfer[]     @relation("AppOwnershipTransferTo")
   targetedAnnouncements              AnnouncementUser[]
   authoredAnnouncements              Announcement[]             @relation("authoredAnnouncements")
+  announcementSpends                 AnnouncementSpend[]        @relation("announcementSpends")
   announcementMutesGiven             UserAnnouncementMute[]     @relation("announcementMutesGiven")
   announcementMutesReceived          UserAnnouncementMute[]     @relation("announcementMutesReceived")
   placementSuspension                PlacementSuspension?       @relation("PlacementSuspensionUser")
@@ -4094,8 +4095,23 @@ model Announcement {
   /// Profile-only rows never enter the announcements feed and never notify.
   profileOnly Boolean            @default(false)
   targetUsers AnnouncementUser[]
+  spends      AnnouncementSpend[]
 
   @@index([userId, startsAt])
+}
+
+/// One spent announcement slot. Deliberately outlives the announcement it paid for:
+/// counting live announcements would return the slot on delete, making the cap
+/// refundable and therefore not a cap.
+model AnnouncementSpend {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  announcementId Int?
+  createdAt      DateTime      @default(now())
+  user           User          @relation("announcementSpends", fields: [userId], references: [id], onDelete: Cascade)
+  announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
 }
 
 /// A follower silencing one creator's announcements without unfollowing them.

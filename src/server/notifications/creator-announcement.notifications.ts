@@ -1,5 +1,8 @@
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+} from '~/server/notifications/base.notifications';
 
 export const creatorAnnouncementNotifications = createNotificationProcessor({
   'creator-announcement': {
@@ -58,6 +61,10 @@ export const creatorAnnouncementNotifications = createNotificationProcessor({
           SELECT 1 FROM "UserAnnouncementMute" m
           WHERE m."userId" = ue."userId" AND m."creatorId" = la.author_id
         )
+          -- A follow predates the block that followed it, so the follow edge alone would
+          -- keep a blocked creator reaching this recipient. Every other follow-derived
+          -- fan-out applies this.
+          AND ${notBlockedBetween('ue."userId"', 'la.author_id')}
       )
       SELECT
         concat('creator-announcement:', details->>'announcementId') "key",

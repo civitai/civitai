@@ -96,12 +96,16 @@ export async function getAnnouncementAllowance(userId: number): Promise<Announce
 
   const tier = toAnnouncementTier(requirements?.membership);
   const cap = config.caps[tier] ?? DEFAULTS.caps[tier];
-  const score = Number(requirements?.score ?? 0);
+  // getCreatorRequirements returns score as { min, current }; Number() on the object is
+  // NaN, and NaN >= minScore is false, which silently refuses every creator forever.
+  const score = requirements?.score?.current ?? 0;
   const eligible = score >= config.minScore;
 
   const windowStart = new Date(Date.now() - cap.days * 24 * 60 * 60 * 1000);
-  const recent = await dbRead.announcement.findMany({
-    where: { userId, profileOnly: false, createdAt: { gte: windowStart } },
+  // Spends, not live announcements: counting the rows themselves would return the slot
+  // when one is deleted, which makes the cap refundable and therefore not a cap.
+  const recent = await dbRead.announcementSpend.findMany({
+    where: { userId, createdAt: { gte: windowStart } },
     select: { createdAt: true },
     orderBy: { createdAt: 'asc' },
   });

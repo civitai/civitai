@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   AnnouncementMetaSchema,
@@ -6,6 +7,7 @@ import type {
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
 
@@ -24,7 +26,6 @@ const creatorAnnouncementSelect = {
   createdAt: true,
   metadata: true,
   userId: true,
-  nsfwLevel: true,
   cover: {
     select: {
       id: true,
@@ -40,26 +41,28 @@ const creatorAnnouncementSelect = {
     },
   },
   user: { select: { id: true, username: true, image: true } },
-} as const;
+  // `satisfies`, not `as const`: a standalone object literal gets no excess-property
+  // check when it is passed to Prisma later, so a column that does not exist typechecks
+  // clean and 500s at runtime on every read and write. This is the check that catches it.
+} satisfies Prisma.AnnouncementSelect;
 
 type RawCreatorAnnouncement = {
-  nsfwLevel: number;
   metadata: unknown;
   cover: { nsfwLevel: number } | null;
 };
 
 /**
- * The announcement is never safer than what it shows. Same rule as an article and its
- * cover (`article.service.ts:551`) — computed here because a client holding an id cannot
- * do it, and a client trusted to do it would be the gap.
+ * `Announcement` has no nsfwLevel of its own, so the cover's level IS the announcement's —
+ * text carries no rating here. Surfaced as a top-level field anyway so callers gate on one
+ * number and cannot forget the cover, which is the only thing that can be mature.
  */
-function withEffectiveNsfwLevel<T extends RawCreatorAnnouncement>(announcement: T) {
+function toCreatorAnnouncementDTO<T extends RawCreatorAnnouncement>(announcement: T) {
   return {
     ...announcement,
     // Parsed here, as the sitewide DTO does, so the client reads metadata.actions
     // without a cast rather than being trusted to know the shape.
     metadata: (announcement.metadata ?? {}) as AnnouncementMetaSchema,
-    nsfwLevel: Math.max(announcement.nsfwLevel ?? 0, announcement.cover?.nsfwLevel ?? 0),
+    nsfwLevel: announcement.cover?.nsfwLevel ?? 0,
   };
 }
 
@@ -73,13 +76,25 @@ export async function getCreatorAnnouncements({
   limit = 10,
   includeHidden = false,
   domain,
+  viewerId,
 }: {
   userId: number;
   limit?: number;
   includeHidden?: boolean;
   domain?: DomainColor;
+  viewerId?: number;
 }) {
   const now = new Date();
+
+  // After the migration this text IS the profile banner, and the banner is already
+  // withheld from a blocked viewer (`user-profile.controller.ts`). A public read on an
+  // arbitrary userId would otherwise hand it back.
+  if (
+    viewerId &&
+    viewerId !== userId &&
+    (await amIBlockedByUser({ userId: viewerId, targetUserId: userId }))
+  )
+    return [];
 
   const announcements = await dbRead.announcement.findMany({
     where: {
@@ -101,7 +116,7 @@ export async function getCreatorAnnouncements({
     take: limit,
   });
 
-  return announcements.map(withEffectiveNsfwLevel);
+  return announcements.map(toCreatorAnnouncementDTO);
 }
 
 /**
@@ -135,8 +150,25 @@ export async function getFollowedAnnouncements({
         // engagedUsers = rows where this author is the TARGET, i.e. their followers.
         // engagingUsers is the other direction (follows the author made) and would
         // return a plausible, wrong feed.
-        engagedUsers: { some: { userId, type: UserEngagementType.Follow } },
         announcementMutesReceived: { none: { userId } },
+        // Blocks both ways, mirroring `notBlockedBetween` exactly — the asymmetry is
+        // deliberate there: the viewer's Block OR Hide of the author hides it, while the
+        // author's side hides it only on Block. A follow predates the block that
+        // followed it, so the follow edge alone is not consent to keep appearing.
+        engagingUsers: { none: { targetUserId: userId, type: UserEngagementType.Block } },
+        // Both conditions are on engagedUsers, so they go in AND rather than as two keys
+        // of the same object — a repeated key silently drops the first.
+        AND: [
+          { engagedUsers: { some: { userId, type: UserEngagementType.Follow } } },
+          {
+            engagedUsers: {
+              none: {
+                userId,
+                type: { in: [UserEngagementType.Block, UserEngagementType.Hide] },
+              },
+            },
+          },
+        ],
       },
       ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
       OR: [{ startsAt: null }, { startsAt: { lte: now } }],
@@ -148,7 +180,7 @@ export async function getFollowedAnnouncements({
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
-  const items = announcements.slice(0, limit).map(withEffectiveNsfwLevel);
+  const items = announcements.slice(0, limit).map(toCreatorAnnouncementDTO);
 
   return {
     items,
@@ -177,24 +209,13 @@ export async function upsertCreatorAnnouncement({
 }: UpsertCreatorAnnouncementSchema & { userId: number; isModerator?: boolean }) {
   const existing = input.id ? await assertOwnedAnnouncement(input.id, userId) : undefined;
 
-  // Profile-only rows never notify, so they are not throttled. The allowance exists to
-  // bound what lands in other people's notifications, and this lands in nobody's.
-  const spendsAllowance = !input.profileOnly && !existing?.profileOnly;
-  if (spendsAllowance && !existing) {
-    const allowance = await getAnnouncementAllowance(userId);
-    if (!allowance.eligible)
-      throw throwAuthorizationError(
-        `Announcements require a creator score of ${allowance.minScore.toLocaleString()}.`
-      );
-    if (allowance.used >= allowance.limit)
-      throw throwBadRequestError(
-        allowance.nextAvailableAt
-          ? `You have used your ${
-              allowance.limit
-            } announcement(s) for this period. Next available ${allowance.nextAvailableAt.toDateString()}.`
-          : 'You have used your announcements for this period.'
-      );
-  }
+  // An announcement costs a slot when it starts notifying, not when it is created.
+  // profileOnly rows notify nobody, so they are free — but flipping one to profileOnly:
+  // false is the moment it gains an audience, and it must pay then. Checking only
+  // `!existing` let a creator mint free rows and flip them.
+  const willNotify = !input.profileOnly;
+  const wasNotifying = existing ? !existing.profileOnly : false;
+  const spendsAllowance = willNotify && !wasNotifying;
 
   const coverId = input.coverImage
     ? await resolveCoverImageId({
@@ -234,15 +255,61 @@ export async function upsertCreatorAnnouncement({
     ...(coverId !== undefined ? { coverId } : {}),
   };
 
-  // The author is set here and never read from input, so this path cannot write a row
-  // attributed to anyone else.
-  return existing
-    ? dbWrite.announcement.update({
-        where: { id: existing.id },
-        data,
-        select: creatorAnnouncementSelect,
-      })
-    : dbWrite.announcement.create({ data: { ...data, userId }, select: creatorAnnouncementSelect });
+  if (!spendsAllowance) {
+    // The author is set here and never read from input, so this path cannot write a row
+    // attributed to anyone else.
+    return existing
+      ? dbWrite.announcement.update({
+          where: { id: existing.id },
+          data,
+          select: creatorAnnouncementSelect,
+        })
+      : dbWrite.announcement.create({
+          data: { ...data, userId },
+          select: creatorAnnouncementSelect,
+        });
+  }
+
+  const allowance = await getAnnouncementAllowance(userId);
+  if (!allowance.eligible)
+    throw throwAuthorizationError(
+      `Announcements require a creator score of ${allowance.minScore.toLocaleString()}.`
+    );
+
+  return dbWrite.$transaction(async (tx) => {
+    // Serialises this creator's spend checks against each other. Without it the check is
+    // read-then-write and two concurrent creates both see the same free slot.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`announcement-allowance:${userId}`}))`;
+
+    const windowStart = new Date(Date.now() - allowance.windowDays * 24 * 60 * 60 * 1000);
+    const spent = await tx.announcementSpend.count({
+      where: { userId, createdAt: { gte: windowStart } },
+    });
+
+    if (spent >= allowance.limit)
+      throw throwBadRequestError(
+        allowance.nextAvailableAt
+          ? `You have used your ${
+              allowance.limit
+            } announcement(s) for this period. Next available ${allowance.nextAvailableAt.toDateString()}.`
+          : 'You have used your announcements for this period.'
+      );
+
+    const announcement = existing
+      ? await tx.announcement.update({
+          where: { id: existing.id },
+          data,
+          select: creatorAnnouncementSelect,
+        })
+      : await tx.announcement.create({
+          data: { ...data, userId },
+          select: creatorAnnouncementSelect,
+        });
+
+    await tx.announcementSpend.create({ data: { userId, announcementId: announcement.id } });
+
+    return announcement;
+  });
 }
 
 export async function deleteCreatorAnnouncement({

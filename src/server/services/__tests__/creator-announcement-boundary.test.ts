@@ -28,6 +28,7 @@ import { upsertCreatorAnnouncementSchema } from '~/server/schema/announcement.sc
 import {
   deleteCreatorAnnouncement,
   getCreatorAnnouncements,
+  getFollowedAnnouncements,
   upsertCreatorAnnouncement,
 } from '../creator-announcement.service';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
@@ -43,6 +44,14 @@ const validInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The spend check runs inside a transaction behind a per-creator advisory lock, so the
+  // callback has to actually execute for the cap to be exercised at all.
+  dbMock.dbWrite.$transaction.mockImplementation(async (fn: unknown) =>
+    (fn as (tx: unknown) => Promise<unknown>)(dbMock.dbWrite)
+  );
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+  dbMock.dbWrite.announcementSpend.count.mockResolvedValue(0 as never);
+  dbMock.dbWrite.announcementSpend.create.mockResolvedValue({ id: 1 } as never);
   dbMock.dbWrite.announcement.create.mockResolvedValue({ id: 1 } as never);
   dbMock.dbWrite.announcement.update.mockResolvedValue({ id: 1 } as never);
   dbMock.dbWrite.announcement.delete.mockResolvedValue({ id: 1 } as never);
@@ -153,6 +162,9 @@ describe('the allowance gates a notifying announcement and not a profile-only on
       windowDays: 30,
       nextAvailableAt: new Date('2026-09-01T00:00:00.000Z'),
     });
+    // Re-counted inside the transaction rather than trusted from the read above, so two
+    // concurrent creates cannot both pass on the same stale count.
+    dbMock.dbWrite.announcementSpend.count.mockResolvedValue(1 as never);
 
     await expect(upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR })).rejects.toThrow(
       /Next available/
@@ -217,5 +229,147 @@ describe('reads are scoped to the requesting domain', () => {
       dbMock.dbRead.announcement.findMany.mock.calls[0][0] as { where: { domain?: unknown } }
     ).where;
     expect(where.domain).toBeUndefined();
+  });
+});
+
+describe('the followed feed', () => {
+  const feedRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: 100 - i,
+      metadata: {},
+      cover: null,
+    }));
+
+  it('asks for followers of the author, not the authors they follow', async () => {
+    await getFollowedAnnouncements({ userId: AUTHOR });
+
+    const where = (
+      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as {
+        where: {
+          user: {
+            AND: { engagedUsers?: { some?: unknown; none?: unknown } }[];
+            engagingUsers: unknown;
+          };
+        };
+      }
+    ).where;
+
+    // engagedUsers = rows where the author is the TARGET. engagingUsers on the `some`
+    // side would be "authors this person follows", a plausible and wrong feed.
+    expect(where.user.AND[0].engagedUsers?.some).toEqual({ userId: AUTHOR, type: 'Follow' });
+  });
+
+  it('excludes profile-only rows, which notify and feed nobody', async () => {
+    await getFollowedAnnouncements({ userId: AUTHOR });
+
+    const where = (
+      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as {
+        where: { profileOnly: boolean; disabled: boolean; userId: unknown };
+      }
+    ).where;
+
+    expect(where.profileOnly).toBe(false);
+    expect(where.disabled).toBe(false);
+    // Platform rows have a null author and belong to the sitewide banner, not this feed.
+    expect(where.userId).toEqual({ not: null });
+  });
+
+  it('drops a muted creator and either side of a block', async () => {
+    await getFollowedAnnouncements({ userId: AUTHOR });
+
+    const user = (
+      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as {
+        where: {
+          user: {
+            announcementMutesReceived: { none: unknown };
+            engagingUsers: { none: unknown };
+            AND: { engagedUsers?: { none?: { type?: { in?: string[] } } } }[];
+          };
+        };
+      }
+    ).where.user;
+
+    expect(user.announcementMutesReceived.none).toEqual({ userId: AUTHOR });
+    expect(user.engagingUsers.none).toEqual({ targetUserId: AUTHOR, type: 'Block' });
+    expect(user.AND[1].engagedUsers?.none?.type?.in).toEqual(['Block', 'Hide']);
+  });
+
+  it('pages with a cursor and reports one only when a further page exists', async () => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue(feedRows(3) as never);
+
+    const page = await getFollowedAnnouncements({ userId: AUTHOR, limit: 2 });
+
+    expect(page.items).toHaveLength(2);
+    expect(page.nextCursor).toBe(page.items[1].id);
+
+    dbMock.dbRead.announcement.findMany.mockResolvedValue(feedRows(2) as never);
+    const last = await getFollowedAnnouncements({ userId: AUTHOR, limit: 2 });
+    expect(last.items).toHaveLength(2);
+    expect(last.nextCursor).toBeUndefined();
+  });
+
+  it('skips the cursor row itself so a page never repeats its predecessor', async () => {
+    await getFollowedAnnouncements({ userId: AUTHOR, limit: 5, cursor: 77 });
+
+    const args = dbMock.dbRead.announcement.findMany.mock.calls[0][0] as {
+      take: number;
+      skip?: number;
+      cursor?: { id: number };
+    };
+
+    expect(args.cursor).toEqual({ id: 77 });
+    expect(args.skip).toBe(1);
+    // limit + 1: the extra row is how nextCursor knows there is more, and must not be
+    // returned to the caller.
+    expect(args.take).toBe(6);
+  });
+});
+
+describe('the allowance cannot be walked around', () => {
+  it('charges an update that turns a free profile-only row into a notifying one', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue({
+      id: 9,
+      coverId: null,
+      profileOnly: true,
+    } as never);
+
+    await upsertCreatorAnnouncement({ ...validInput, id: 9, profileOnly: false, userId: AUTHOR });
+
+    // The flip is the moment it gains an audience, so it pays here. Checking only for a
+    // new row let a creator mint free profile-only rows and flip them into fan-outs.
+    expect(getAnnouncementAllowance).toHaveBeenCalledWith(AUTHOR);
+    expect(dbMock.dbWrite.announcementSpend.create).toHaveBeenCalled();
+  });
+
+  it('does not charge twice for editing an announcement that already notified', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue({
+      id: 9,
+      coverId: null,
+      profileOnly: false,
+    } as never);
+
+    await upsertCreatorAnnouncement({ ...validInput, id: 9, userId: AUTHOR });
+
+    expect(getAnnouncementAllowance).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.announcementSpend.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.announcement.update).toHaveBeenCalled();
+  });
+
+  it('records the spend against the row it paid for', async () => {
+    dbMock.dbWrite.announcement.create.mockResolvedValue({ id: 55 } as never);
+
+    await upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR });
+
+    expect(dbMock.dbWrite.announcementSpend.create).toHaveBeenCalledWith({
+      data: { userId: AUTHOR, announcementId: 55 },
+    });
+  });
+
+  it('takes a per-creator lock before counting, so two creates cannot both pass', async () => {
+    await upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR });
+
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalled();
+    const [strings] = dbMock.dbWrite.$executeRaw.mock.calls[0] as unknown as [TemplateStringsArray];
+    expect(strings.join('')).toContain('pg_advisory_xact_lock');
   });
 });

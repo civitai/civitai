@@ -70,3 +70,15 @@ describe('creator announcement fan-out', () => {
     expect(url).toContain('announcement=12');
   });
 });
+
+describe('blocks are honoured, as in every other follow-derived fan-out', () => {
+  it('excludes a recipient on either side of a block', () => {
+    const sql = query();
+
+    // Both directions in one clause — the helper's shape, which is also what keeps it
+    // to two primary-key lookups rather than a secondary-index scan per candidate.
+    expect(sql).toContain("blk.type IN ('Block', 'Hide')");
+    expect(sql).toMatch(/blk\."userId" = ue\."userId" AND blk\."targetUserId" = la\.author_id/);
+    expect(sql).toMatch(/blk\."userId" = la\.author_id AND blk\."targetUserId" = ue\."userId"/);
+  });
+});

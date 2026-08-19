@@ -4,6 +4,7 @@ import {
   moderatorProcedure,
   guardedProcedure,
   protectedProcedure,
+  isFlagProtected,
   middleware,
 } from '~/server/trpc';
 import {
@@ -58,12 +59,16 @@ export const announcementRouter = router({
   // Creator-authored announcements. Separate procedures on purpose: the moderator
   // mutations above can set `domain` and `metadata.type`, and nothing on this path can
   // reach either the sitewide banner or another author's rows.
-  getMyAllowance: protectedProcedure.query(({ ctx }) => getAnnouncementAllowance(ctx.user.id)),
+  getMyAllowance: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .query(({ ctx }) => getAnnouncementAllowance(ctx.user.id)),
   getCreatorAnnouncements: publicProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
     .input(getCreatorAnnouncementsSchema)
     .use(applyRequestDomainColor)
-    .query(({ input }) => getCreatorAnnouncements(input)),
+    .query(({ ctx, input }) => getCreatorAnnouncements({ ...input, viewerId: ctx.user?.id })),
   getFollowedAnnouncements: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
     .input(
       z
         .object({
@@ -76,15 +81,17 @@ export const announcementRouter = router({
     )
     .use(applyRequestDomainColor)
     .query(({ ctx, input }) => getFollowedAnnouncements({ ...input, userId: ctx.user.id })),
-  getMutedCreators: protectedProcedure.query(({ ctx }) =>
-    getMutedAnnouncementCreators(ctx.user.id)
-  ),
+  getMutedCreators: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .query(({ ctx }) => getMutedAnnouncementCreators(ctx.user.id)),
   isCreatorMuted: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
     .input(z.object({ creatorId: z.number() }))
     .query(({ ctx, input }) =>
       isAnnouncementCreatorMuted({ userId: ctx.user.id, creatorId: input.creatorId })
     ),
   upsertCreatorAnnouncement: guardedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
     .input(upsertCreatorAnnouncementSchema)
     .mutation(({ ctx, input }) =>
       upsertCreatorAnnouncement({
@@ -101,6 +108,7 @@ export const announcementRouter = router({
     })
   ),
   toggleAnnouncementMute: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
     .input(z.object({ creatorId: z.number(), muted: z.boolean() }))
     .mutation(({ ctx, input }) => toggleAnnouncementMute({ ...input, userId: ctx.user.id })),
 });
