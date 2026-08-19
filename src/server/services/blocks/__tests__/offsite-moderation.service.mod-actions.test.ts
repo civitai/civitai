@@ -261,7 +261,7 @@ describe('delistListing', () => {
     expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
   });
 
-  it('ON-SITE delist flips BOTH app_listings AND the backing app_blocks in one tx (no owner notif)', async () => {
+  it('ON-SITE delist flips BOTH app_listings AND the backing app_blocks in one tx (+ notifies the owner)', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
     const res = await delistListing({
       input: { appListingId: APP_ID, reason: GOOD_REASON },
@@ -281,8 +281,131 @@ describe('delistListing', () => {
     // Still exactly one audit event.
     expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('delist');
-    // ON-SITE owners are NOT notified in Phase 1.
-    expect(mockNotify).not.toHaveBeenCalled();
+    // ON-SITE hide → the owner is notified too (the block was just suspended, so the
+    // hosted app went dark — that is the case that most needs a signal).
+    expect(mockNotify).toHaveBeenCalledTimes(1);
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'app-listing-hidden',
+        userId: OWNER,
+        details: expect.objectContaining({ slug: SLUG, reason: GOOD_REASON }),
+      })
+    );
+  });
+
+  /**
+   * 🔴 REGRESSION (owner-notified-on-delist, both kinds).
+   *
+   * A mod delist used to notify the OFF-SITE owner only; an on-site delist fired zero
+   * notifications while ALSO suspending the backing block, so the author's hosted app
+   * went dark with no signal. Both kinds now notify.
+   *
+   * The two cases carry pairwise-DISTINCT listing ids, slugs, owners and reasons so a
+   * mutant that hardcodes either kind's payload (or re-notifies the wrong owner) cannot
+   * satisfy both assertions.
+   */
+  describe('🔴 the owner is notified on delist — for BOTH kinds', () => {
+    const ONSITE_ID = 'apl_onsite_target';
+    const ONSITE_SLUG = 'hosted-widget';
+    const ONSITE_OWNER = 611;
+    const ONSITE_REASON = 'ships an unreviewed third-party payload';
+
+    const OFFSITE_ID = 'apl_offsite_target';
+    const OFFSITE_SLUG = 'external-tool';
+    const OFFSITE_OWNER = 722;
+    const OFFSITE_REASON = 'destination page collects card details';
+
+    it('ON-SITE: notifies the owner with app-listing-hidden carrying the mod reason', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce({
+        ...onsiteListing('approved'),
+        id: ONSITE_ID,
+        slug: ONSITE_SLUG,
+        name: 'Hosted Widget',
+        userId: ONSITE_OWNER,
+      });
+
+      await delistListing({
+        input: { appListingId: ONSITE_ID, reason: ONSITE_REASON },
+        reviewerUserId: REVIEWER,
+      });
+
+      expect(mockNotify).toHaveBeenCalledTimes(1);
+      expect(mockNotify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'app-listing-hidden',
+          userId: ONSITE_OWNER,
+          details: expect.objectContaining({
+            slug: ONSITE_SLUG,
+            name: 'Hosted Widget',
+            listingId: ONSITE_ID,
+            reason: ONSITE_REASON,
+          }),
+        })
+      );
+      // Same-event idempotency key, so a repeat of the SAME hide notifies once.
+      const { key } = mockNotify.mock.calls[0][0];
+      expect(key).toMatch(/^app-listing-hidden:/);
+      // The key is bound to the audit event this delist wrote, not to a fresh nonce.
+      expect(key).toBe(
+        `app-listing-hidden:${mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.id}`
+      );
+      // The backing block really was suspended in the same action (this is WHY the
+      // on-site owner needs the notification).
+      expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
+        where: { id: BLOCK_ID, status: 'approved' },
+        data: { status: 'suspended' },
+      });
+    });
+
+    it('OFF-SITE: still notifies its own owner with its own reason (pinned, not dropped)', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce({
+        ...offsiteListing('approved'),
+        id: OFFSITE_ID,
+        slug: OFFSITE_SLUG,
+        name: 'External Tool',
+        userId: OFFSITE_OWNER,
+      });
+
+      await delistListing({
+        input: { appListingId: OFFSITE_ID, reason: OFFSITE_REASON },
+        reviewerUserId: REVIEWER,
+      });
+
+      expect(mockNotify).toHaveBeenCalledTimes(1);
+      expect(mockNotify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'app-listing-hidden',
+          userId: OFFSITE_OWNER,
+          details: expect.objectContaining({
+            slug: OFFSITE_SLUG,
+            name: 'External Tool',
+            listingId: OFFSITE_ID,
+            reason: OFFSITE_REASON,
+          }),
+        })
+      );
+      // No backing block on the off-site path.
+      expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('a guarded (0-count) ON-SITE delist notifies NOBODY — the rollback covers the notification', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce({
+        ...onsiteListing('approved'),
+        id: ONSITE_ID,
+        slug: ONSITE_SLUG,
+        userId: ONSITE_OWNER,
+      });
+      mockWrite.appListing.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        delistListing({
+          input: { appListingId: ONSITE_ID, reason: ONSITE_REASON },
+          reviewerUserId: REVIEWER,
+        })
+      ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'NOT_TRANSITIONABLE' });
+
+      expect(mockNotify).not.toHaveBeenCalled();
+    });
   });
 
   it('a status-guarded 0-count (concurrently moved out of {approved,removed}, e.g. to draft/pending) → NOT_TRANSITIONABLE, ZERO events', async () => {

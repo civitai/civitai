@@ -304,7 +304,7 @@ async function classifyOffsiteListing(
  * BOTH kinds, unlike claim/purge which stay offsite-only via `classifyOffsiteListing`).
  * Returns the fields those actions need: kind (to branch the on-site dual-table flip),
  * status/slug, the backing `appBlockId` (on-site: flip the block's status too), and
- * the owner `userId` (the off-site hide notification target). A missing listing →
+ * the owner `userId` (the hide-notification target, for either kind). A missing listing →
  * generic NOT_FOUND (no kind guard here — both kinds are valid targets).
  */
 async function classifyListingForAction(appListingId: string): Promise<{
@@ -377,16 +377,20 @@ export type DelistListingResult = { appListingId: string; status: 'removed' };
  * post-approval mgmt). The store read path is approved-only, so a `removed` listing
  * drops out of `listAvailableListings` + `getListingDetail` automatically.
  *
- *   - OFF-SITE: flip only `app_listings.status` approved → removed, then notify the
- *     owner their app was hidden (post-commit, carrying the mod reason).
+ *   - OFF-SITE: flip only `app_listings.status` approved → removed.
  *   - ON-SITE: flip BOTH `app_listings.status` (approved → removed) AND the backing
  *     `app_blocks.status` (approved → suspended) in the SAME tx — a hosted block's
  *     runtime serving gate reads `app_blocks.status`, so hiding it from the store
- *     WITHOUT suspending the block would leave `<slug>.civit.ai` still serving. No
- *     owner notification on the on-site path (out of Phase-1 scope). The listing
- *     flip is the authoritative guard; the block flip is status-guarded to avoid
- *     clobbering a drifted state but is non-fatal on a 0-count (the store status is
- *     the source of truth for visibility).
+ *     WITHOUT suspending the block would leave the hosted app still serving. The
+ *     listing flip is the authoritative guard; the block flip is status-guarded to
+ *     avoid clobbering a drifted state but is non-fatal on a 0-count (the store
+ *     status is the source of truth for visibility).
+ *
+ * BOTH kinds then notify the owner their app was hidden (post-commit, carrying the
+ * mod reason). The on-site owner is notified for the SAME reason the off-site one is,
+ * and more urgently: an on-site delist also suspends the backing block, so the hosted
+ * app goes dark. The owner's submissions/history view already renders the mod reason
+ * for both kinds — the notification is what tells them to go look.
  *
  * STATUS: a delist is allowed on an `approved` OR an already-`removed` listing. The
  * `removed → removed` case is the 🔴 "convert an owner-hide into an ENFORCED takedown"
@@ -463,18 +467,19 @@ export async function delistListing(opts: {
     }
   });
 
-  // OFF-SITE only: post-commit, best-effort — notify the owner their app was hidden,
-  // carrying the mod reason. (On-site owners aren't notified in Phase 1.)
-  if (!isOnsite) {
-    await notifyAppListingOwner({
-      type: 'app-listing-hidden',
-      userId: listing.userId,
-      // Keyed by the audit event id so each distinct hide (delist→relist→delist)
-      // notifies once, without a fresh nonce.
-      key: `app-listing-hidden:${eventId}`,
-      details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
-    });
-  }
+  // BOTH KINDS: post-commit, best-effort — notify the owner their app was hidden,
+  // carrying the mod reason. An on-site delist is the MORE adverse of the two (it also
+  // suspends the backing block, so the hosted app stops serving), so withholding the
+  // notification there left the owner with no signal at all that their app went dark.
+  // The reason is mandatory on delist and is what makes the message actionable.
+  await notifyAppListingOwner({
+    type: 'app-listing-hidden',
+    userId: listing.userId,
+    // Keyed by the audit event id so each distinct hide (delist→relist→delist)
+    // notifies once, without a fresh nonce.
+    key: `app-listing-hidden:${eventId}`,
+    details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
+  });
 
   return { appListingId: input.appListingId, status: 'removed' };
 }
