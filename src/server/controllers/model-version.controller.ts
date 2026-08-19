@@ -689,7 +689,7 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        model: { select: { userId: true, nsfw: true } },
+        model: { select: { userId: true, nsfw: true, status: true } },
       },
     });
 
@@ -706,8 +706,13 @@ export const publishModelVersionHandler = async ({
 
     const versionMeta = version.meta as ModelVersionMeta | null;
 
-    // Prevent non-moderators from re-publishing versions unpublished for violations
-    if (!ctx.user.isModerator && constants.modPublishOnlyStatuses.includes(version.status)) {
+    // A version is publishable only if BOTH it and its parent model are. Checking the version
+    // alone leaves the model's status unenforced, and the two are set independently.
+    if (
+      !ctx.user.isModerator &&
+      (constants.modPublishOnlyStatuses.includes(version.status) ||
+        constants.modPublishOnlyStatuses.includes(version.model.status))
+    ) {
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
 
@@ -1261,8 +1266,11 @@ export async function publishPrivateModelVersionHandler({
     ...input,
     select: {
       id: true,
+      status: true,
       uploadType: true,
-      model: { select: { id: true, publishedAt: true, availability: true, userId: true } },
+      model: {
+        select: { id: true, publishedAt: true, availability: true, userId: true, status: true },
+      },
       files: {
         select: {
           id: true,
@@ -1286,6 +1294,16 @@ export async function publishPrivateModelVersionHandler({
 
   if (version.model.availability !== Availability.Private) {
     throw throwBadRequestError('Model is not private');
+  }
+
+  // The same status check the public publish path performs, on both the version and its model. A
+  // private model is a different audience, not a different set of publishing rules.
+  if (
+    !ctx.user.isModerator &&
+    (constants.modPublishOnlyStatuses.includes(version.status) ||
+      constants.modPublishOnlyStatuses.includes(version.model.status))
+  ) {
+    throw throwAuthorizationError('You are not authorized to publish this model version');
   }
 
   // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
