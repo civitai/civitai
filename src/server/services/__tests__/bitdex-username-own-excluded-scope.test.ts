@@ -74,6 +74,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { getImagesFromSearch } from '../image.service';
+import { usernameSchema } from '~/shared/zod/username.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 redisMock.redis.get.mockResolvedValue('[]');
@@ -367,10 +368,44 @@ describe('#3929 — userId/username precedence and normalisation', () => {
     serve({ main: page([otherCreatorPublicDoc]), ownExcluded: page([callerOwnPrivateDoc]) });
     const callerInput = authedInput({ username: OTHER_CREATOR_USERNAME });
 
-    await getImagesFromSearch(callerInput);
+    const result = await getImagesFromSearch(callerInput);
 
+    // On its own, `userId === undefined` is VACUOUS: "the resolution never ran"
+    // and "the resolution ran and copied" both leave it undefined, so a mutant
+    // deleting the resolution outright would pass.
+    //
+    // 🔴 The obvious repair — `expect(findUnique).toHaveBeenCalled()` — does
+    // NOT fix it, measured: `getImagesFromBitdexPreFilter` performs its own
+    // `username → userId` lookup, which no such mutant touches, so the
+    // assertion is satisfied by the wrong call site and stays green.
+    //
+    // What actually discriminates is asserting the resolution had its EFFECT
+    // as well as leaving no trace: correctly scoped (no second pass, only the
+    // creator's own document) AND the caller's object untouched. That fails
+    // when the resolution is absent, and fails when it mutates in place.
+    expect(ownExcludedCalls()).toHaveLength(0);
+    expect(ids(result.data)).toEqual([101]);
     expect(callerInput.userId).toBeUndefined();
     expect(callerInput.username).toBe(OTHER_CREATOR_USERNAME);
+  });
+
+  // PREMISE GUARD — pins something OUTSIDE this file, and deliberately so.
+  //
+  // The comment above argues that adding `.trim()` to the resolution would be
+  // a provable no-op. That argument rests entirely on `usernameSchema`'s
+  // shape, which nothing here owns, so the argument can rot silently while
+  // every test stays green.
+  //
+  // 🔴 Be exact about what this does and does not buy. It does NOT kill a
+  // `.trim()` added to image.service.ts — no realistic fixture can, because
+  // padding never reaches the service. It fails when the REASON that mutant is
+  // equivalent stops holding: if usernameSchema ever accepts padding, or
+  // reorders `.trim()` ahead of the regex.
+  it('premise: usernameSchema rejects a padded handle rather than trimming it', () => {
+    expect(usernameSchema.safeParse('  SoMeOtHeRcReAtOr  ').success).toBe(false);
+    // Positive control — the same handle unpadded parses, so the assertion
+    // above is about the padding and not about the handle being invalid.
+    expect(usernameSchema.safeParse('SoMeOtHeRcReAtOr').success).toBe(true);
   });
 });
 

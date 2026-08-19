@@ -3149,9 +3149,13 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // The handle is passed to the lookup verbatim — no lowercasing. Case
   // semantics stay whatever the column's collation already decides, and the
   // BitDex and Meili legs keep agreeing about which account a handle names.
-  // (Trimming is not a concern reachable from the request surface:
-  // `usernameSchema` runs `.trim()` before this is ever called, and its
-  // `^[A-Za-z0-9_]*$` regex rejects whitespace outright.)
+  // (Trimming is not a concern reachable from the request surface.
+  // `usernameSchema` is `.regex(/^[A-Za-z0-9_]*$/).trim()` and the REGEX RUNS
+  // FIRST — that ordering is what makes padding unreachable, since a padded
+  // handle is rejected outright rather than trimmed into a valid one. The
+  // ordering is pinned by a premise guard in
+  // `src/server/services/__tests__/bitdex-username-own-excluded-scope.test.ts`,
+  // because this argument rests on a file this one does not own.)
   //
   // Normally this costs no extra round trip: `getImagesFromBitdexPreFilter`
   // guards its own resolution on `!userId`, so handing it the resolved input
