@@ -129,9 +129,6 @@ export function saveAnnouncement(cookie: string, form: AnnouncementForm) {
       content: form.content,
       domain: form.domain,
       profileOnly: form.profileOnly,
-      // Round-tripped, not defaulted: the endpoint writes `disabled: input.disabled ?? false`, so
-      // omitting it would silently republish an announcement a moderator had taken down.
-      disabled: form.disabled,
       startsAt: form.startsAt?.toISOString() ?? null,
       endsAt: form.endsAt?.toISOString() ?? null,
       ...(form.linkUrl && form.linkText

@@ -39,7 +39,6 @@ export const announcementFormSchema = z
     content: z.string().trim().min(1, 'Add a message').max(CONTENT_MAX),
     domain: domainList,
     profileOnly: checkbox,
-    disabled: checkbox,
     startsAt: optionalDate,
     endsAt: optionalDate,
     linkUrl: optionalText(2048),

@@ -126,9 +126,6 @@
   {#if announcement}<input type="hidden" name="id" value={announcement.id} />{/if}
   <input type="hidden" name="domain" value={domains.join(',')} />
   <input type="hidden" name="profileOnly" value={profileOnly ? 'on' : 'false'} />
-  <!-- A moderator take-down lives in this column and there is no control for it here, so it has to
-       survive the round trip. -->
-  <input type="hidden" name="disabled" value={announcement?.disabled ? 'on' : 'false'} />
   {#if cover}
     <input type="hidden" name="coverKey" value={cover.key} />
     <input type="hidden" name="coverWidth" value={cover.width ?? ''} />
