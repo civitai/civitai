@@ -239,6 +239,10 @@ import {
   recordBitdexError,
   recordSortAtOnlyHolds,
 } from '~/server/bitdex/compare';
+import {
+  recordBitdexPrimaryResult,
+  type BitdexQueryFailureReason,
+} from '~/server/metrics/bitdex-feed-serve.metrics';
 
 // --- BitDex native filter helpers ---
 const _int = (v: number): Value => ({ Integer: v });
@@ -3126,6 +3130,13 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // queue and is shown a different population, with nothing signalling that the
   // wrong question was answered. Declining is the honest containment; answering
   // properly means changing what the query asks for, which is not this PR.
+  // 🔴 Deliberately BEFORE any outcome is recorded, and deliberately not
+  // recorded itself. This declines the request without issuing a single BitDex
+  // query, so it is not a served page, not an empty index and not a failure — it
+  // is a policy choice. Counting it as a fallback would make the served ratio
+  // sag every time a moderator opened one of these queues. The denominator of
+  // `bitdex_primary_result_total` is therefore "requests that engaged BitDex",
+  // which the metric's help string states.
   if (input.isModerator && (input.scheduled || input.notPublished)) return null;
 
   // Resolve `username` → `userId` BEFORE anything reads the creator scope.
@@ -3191,6 +3202,29 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // every username-addressed request. Pinned by a test.
     input = { ...input, userId: targetUser.id };
   }
+
+  // Which cohort this run belongs to. Read once so the three emit points below
+  // cannot disagree, and computed here rather than at each call so a later
+  // caller-mode cannot be added to one of them and missed by the others.
+  const serveMode = opts.serving ? ('primary' as const) : ('shadow' as const);
+
+  // 🔴 THE PER-REQUEST PREDICATE: did ANY BitDex call in this request fail?
+  //
+  // Not "did the last call fail" and not "did the main pass fail". A request
+  // issues 1-4 calls — the paginating main pass plus, for a signed-in caller on
+  // the first page, an own-content pass that runs in PARALLEL. If the
+  // own-content pass failed while the main pass legitimately came back empty,
+  // the page is not known to be empty: the documents that would have filled it
+  // are exactly the ones the failed call was fetching. Collapsing that into
+  // `fallback_empty` would report the one case this instrument exists to find as
+  // the healthy one.
+  //
+  // Read AFTER `await ownExcludedPromise` below, which is where both passes have
+  // settled and which already precedes the `!data.length` guard.
+  let anyQueryFailed = false;
+  const noteQueryFailure = () => {
+    anyQueryFailed = true;
+  };
 
   const limit = input.limit ?? 100;
   // Opt-in to one's own not-yet-published content. Read once so the main
@@ -3294,7 +3328,8 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       500,
       undefined,
       undefined,
-      true
+      true,
+      noteQueryFailure
     );
   }
 
@@ -3317,8 +3352,8 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
 
   while (pass < MAX_PASSES && accumulated.length < limit) {
     const result = await (firstPage
-      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor)
-      : getImagesFromBitdexPreFilter(input, true, lastCursor));
+      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor, noteQueryFailure)
+      : getImagesFromBitdexPreFilter(input, true, lastCursor, noteQueryFailure));
     if (skipBudgetStartedAt === 0) skipBudgetStartedAt = Date.now();
     firstPage = false;
 
@@ -3533,6 +3568,15 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // cost the user nothing.
     recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, 'fallback');
 
+    // 🔴 THE SPLIT THIS PR EXISTS FOR. Both branches return the same `null` and
+    // land the user on the same Meilisearch page; what differs is whether the
+    // emptiness is TRUSTWORTHY. `fallback_empty` says every call succeeded and
+    // the index had nothing — routine, and the bulk of today's fallback volume.
+    // `fallback_error` says at least one call in this request failed, so nobody
+    // knows what was in the index. Before this line the two were the same
+    // observable, which is why a BitDex outage looked exactly like a quiet index.
+    recordBitdexPrimaryResult(anyQueryFailed ? 'fallback_error' : 'fallback_empty', serveMode);
+
     // ⚠️ A cursored request does not fall back cleanly — the Meili path parses
     // cursors as `offset|entryTimestamp` (:2594) and a `bdx:{…}` cursor fails
     // both `isNumber` guards, so offset degrades to 0. An earlier revision of
@@ -3548,6 +3592,12 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   data = data.slice(0, limit);
 
   recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, opts.serving ? 'serving' : 'shadow');
+
+  // Recorded on the RESULT, not on the flag: a request can serve a full page
+  // while one of its calls failed (a failed own-content pass alongside a healthy
+  // main pass), and that is a served page. `anyQueryFailed` only decides which
+  // KIND of empty an empty result is; it never demotes a page that exists.
+  recordBitdexPrimaryResult('served', serveMode);
 
   const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
   console.log(
@@ -3608,6 +3658,12 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     } catch (err) {
       console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
       recordBitdexError(err);
+      // Distinct from `fallback_error`, and the distinction is the point: the
+      // client never throws, so nothing that reaches here came from BitDex being
+      // unhealthy. This is the application's own map/merge/sort code throwing —
+      // a different team's page. It reads a flat zero today, which is what makes
+      // it a usable tripwire rather than a redundant series.
+      recordBitdexPrimaryResult('fallback_exception', 'primary');
     }
     // Fall through to Meili if BitDex fails
   }
@@ -3650,7 +3706,13 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
             });
           }
         })
-        .catch((err) => recordBitdexError(err))
+        .catch((err) => {
+          recordBitdexError(err);
+          // Same meaning as the primary arm above, in the cohort where nothing
+          // reaches a user. Recorded so an app-side throw is visible BEFORE the
+          // cohort is flipped, rather than only once it is serving.
+          recordBitdexPrimaryResult('fallback_exception', 'shadow');
+        })
     );
   }
 
@@ -4547,7 +4609,12 @@ export function mapBitdexDoc(doc: Record<string, unknown>) {
 export async function getImagesFromBitdexPreFilter(
   input: ImageSearchInput,
   includeDocs?: boolean | string[],
-  cursor?: any
+  cursor?: any,
+  // Threaded through to the client so the per-request outcome in
+  // fetchBitdexPrimary can tell "this page is empty" from "we do not know
+  // whether this page is empty" (#3930). Optional: the internal comparison
+  // endpoint calls this with `input` alone and is unaffected.
+  onFailure?: (reason: BitdexQueryFailureReason) => void
 ) {
   let { postIds = [] } = input;
   const {
@@ -4780,7 +4847,8 @@ export async function getImagesFromBitdexPreFilter(
     limit,
     cursor,
     cursor ? undefined : offset,
-    includeDocs
+    includeDocs,
+    onFailure
   );
   return result;
 }
