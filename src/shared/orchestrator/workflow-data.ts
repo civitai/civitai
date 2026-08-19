@@ -81,6 +81,11 @@ export class WorkflowData {
     return this.metadata?.remixOfId;
   }
 
+  /** The step carrying the source generation an enhancement workflow was run on, if any. */
+  get sourceLineageStep(): StepData | undefined {
+    return this.steps.find((step) => step.metadata?.sourceLineage === true);
+  }
+
   /** All succeeded, non-blocked, non-hidden outputs across all steps. */
   get succeededOutput() {
     return this.steps.flatMap((s) => s.succeededOutput);
