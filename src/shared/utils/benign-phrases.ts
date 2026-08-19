@@ -16,11 +16,18 @@ const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // detector matched "emma,,,, stone" while the strip did not, so a whitelisted phrase went
 // back to tripping the gate on ordinary prompt punctuation — the exact bug this PR fixes.
 //
-// The bound was added on the reasoning that unbounded strips more, which is the right instinct
-// on a whitelist and the wrong conclusion here: `[^a-zA-Z0-9]+` cannot cross an alphanumeric
-// character, so it can only ever consume punctuation and whitespace, never a word the next
-// check needed to read. If a bound is ever genuinely wanted, derive it from audit-base.ts
-// rather than restating a number, and pin the two matchers agreeing at the boundary.
+// The bound was added on the reasoning that unbounded strips more. That instinct is the right
+// one to carry on a whitelist, but it has to yield to shadowing — and note what the class is
+// NOT: `[^a-zA-Z0-9]` excludes only ASCII alphanumerics, so it happily consumes non-ASCII
+// LETTERS. This separator can therefore swallow text that reads as a word.
+//
+// 🔴 What keeps that closed is that callers strip the NORMALIZED copy — `normalizeText` folds
+// accented Latin to ASCII, and those letters then break the separator run themselves. That is
+// load-bearing, not tidiness: move a strip back ahead of `normalizeText` and this reopens.
+// (Non-decomposable scripts stay non-ASCII through normalization; see the private note.)
+//
+// If a bound is ever genuinely wanted, derive it from audit-base.ts rather than restating a
+// number, and pin the two matchers agreeing at the boundary.
 export function buildBenignPhraseRegex(phrases: string[]): RegExp | null {
   const cleaned = phrases.map((p) => p.trim()).filter((p) => p.length > 0);
   if (!cleaned.length) return null;
