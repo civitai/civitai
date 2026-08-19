@@ -1,22 +1,17 @@
-import { useMemo } from 'react';
-import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { resolveChatTheme } from '~/shared/constants/chat-theme';
 import { trpc } from '~/utils/trpc';
 
 /**
- * The theme to paint the chat window with, and the entitlement the picker needs
- * to know what is locked.
+ * The theme to paint the chat window with, and whether the picker should show
+ * the membership ones as available.
  */
 export function useChatTheme() {
+  const currentUser = useCurrentUser();
   const { data: settings } = trpc.chat.getUserSettings.useQuery();
-  const { data: cosmetics } = useQueryUserCosmetics();
 
-  const ownedSlugs = useMemo(
-    () => (cosmetics?.chatTheme ?? []).map((x) => x.data?.slug).filter((x): x is string => !!x),
-    [cosmetics?.chatTheme]
-  );
+  const isMember = !!currentUser && (currentUser.tier !== 'free' || !!currentUser.isModerator);
+  const theme = resolveChatTheme(settings?.theme, isMember);
 
-  const theme = resolveChatTheme(settings?.theme, ownedSlugs);
-
-  return { theme, ownedSlugs, selectedSlug: settings?.theme };
+  return { theme, isMember, selectedSlug: settings?.theme };
 }

@@ -334,14 +334,14 @@ function ChatThemePicker({
   value: ChatThemeSlug | undefined;
   onChange: (slug: ChatThemeSlug) => void;
 }) {
-  const { ownedSlugs } = useChatTheme();
+  const { isMember } = useChatTheme();
   const selected = value ?? CHAT_THEME_DEFAULT;
 
   return (
     <>
       <Group gap={7} wrap="wrap" role="group" aria-label="Chat theme">
         {chatThemes.map((theme) => {
-          const locked = !theme.free && !ownedSlugs.includes(theme.slug);
+          const locked = !theme.free && !isMember;
           return (
             <UnstyledButton
               key={theme.slug}
@@ -364,7 +364,7 @@ function ChatThemePicker({
       </Group>
       <Text size="xs" c="dimmed">
         Themes reskin <b>your</b> chat window only — the other side sees their own. Everything past
-        Civitai comes with a membership.
+        Civitai comes with a membership, and reverts to Civitai if one lapses.
       </Text>
     </>
   );

@@ -69,9 +69,4 @@ export type StickerCosmetic = Omit<SimpleCosmetic, 'data'> & {
   data: { slug: string; url: string; animated?: boolean; uses?: number; pricePerUse?: number };
 };
 
-/** The palette itself lives in code; the grant only names it. */
-export type ChatThemeCosmetic = Omit<SimpleCosmetic, 'data'> & {
-  data: { slug: string };
-};
-
 export type WithClaimKey<T> = T & { claimKey: string };

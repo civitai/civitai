@@ -49,7 +49,6 @@ import type {
 import { usersSearchIndex } from '~/server/search-index';
 import type {
   BadgeCosmetic,
-  ChatThemeCosmetic,
   ContentDecorationCosmetic,
   StickerCosmetic,
   NamePlateCosmetic,
@@ -1210,8 +1209,6 @@ export const getUserCosmeticsHandler = async ({
           });
         else if (type === CosmeticType.Sticker)
           acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
-        else if (type === CosmeticType.ChatTheme)
-          acc.chatTheme.push({ ...sharedData, data: data as ChatThemeCosmetic['data'] });
 
         return acc;
       },
@@ -1222,7 +1219,6 @@ export const getUserCosmeticsHandler = async ({
         profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
         contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
         sticker: [] as WithClaimKey<StickerCosmetic>[],
-        chatTheme: [] as WithClaimKey<ChatThemeCosmetic>[],
       }
     );
 

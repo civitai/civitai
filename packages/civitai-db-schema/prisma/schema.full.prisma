@@ -4107,6 +4107,9 @@ enum CosmeticType {
   ProfileDecoration
   ProfileBackground
   Sticker
+  // Applied, unused. Chat themes come with a membership; a cosmetic-granted
+  // theme is the shape a later pass would want, and an enum value cannot be
+  // dropped without recreating the type.
   ChatTheme
 }
 

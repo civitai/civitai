@@ -1,11 +1,7 @@
 /**
  * Chat themes reskin the chat window for the person who picked one — the other
- * side of a conversation sees their own. Everything but the default is a
- * membership perk, granted as a `ChatTheme` cosmetic.
- *
- * The palettes live here rather than in the cosmetic's `data` so a cosmetic
- * record never becomes a channel for arbitrary CSS: the grant carries a slug,
- * and an unrecognized slug resolves to the default.
+ * side of a conversation sees their own. Everything but the default comes with
+ * a membership, for as long as the membership lasts.
  */
 export const CHAT_THEME_DEFAULT = 'default';
 
@@ -15,7 +11,7 @@ export type ChatThemeSlug = (typeof chatThemeSlugs)[number];
 export type ChatTheme = {
   slug: ChatThemeSlug;
   name: string;
-  /** Free for everyone; the rest need the matching cosmetic. */
+  /** Free for everyone; the rest need an active membership. */
   free: boolean;
   /** Rendered as the picker's swatch: window colour, then accent. */
   swatch: [string, string];
@@ -124,11 +120,12 @@ export function isChatThemeSlug(value: unknown): value is ChatThemeSlug {
 
 /**
  * The theme actually rendered. Entitlement is resolved here, at render, rather
- * than by revoking a stored choice: a membership that lapses drops the window
- * back to the default on its own, and picks the theme back up if it returns.
+ * than by rewriting a stored choice when a membership lapses: the window drops
+ * back to the default on its own, and picks the theme back up on renewal
+ * without the member having to set it again.
  */
-export function resolveChatTheme(slug: string | undefined, ownedSlugs: string[]): ChatTheme {
+export function resolveChatTheme(slug: string | undefined, isMember: boolean): ChatTheme {
   const theme = isChatThemeSlug(slug) ? bySlug.get(slug) : undefined;
   if (!theme) return bySlug.get(CHAT_THEME_DEFAULT)!;
-  return theme.free || ownedSlugs.includes(theme.slug) ? theme : bySlug.get(CHAT_THEME_DEFAULT)!;
+  return theme.free || isMember ? theme : bySlug.get(CHAT_THEME_DEFAULT)!;
 }

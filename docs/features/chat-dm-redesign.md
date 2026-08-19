@@ -257,15 +257,16 @@ side of the thread; without it, a report filed today can be rendered unreviewabl
 
 A theme is a palette applied as CSS variables on the chat window and nothing else — the other
 side of a conversation sees their own. `default` is free; `citron`, `bubblegum` and `terminal`
-each need the matching `ChatTheme` cosmetic.
+come with any active membership.
 
-The palettes live in `src/shared/constants/chat-theme.ts`, not in the cosmetic's `data`. The
-cosmetic carries only a slug, so a cosmetic record can never become a channel for arbitrary CSS,
-and an unrecognized slug renders as the default.
+The palettes live in `src/shared/constants/chat-theme.ts`. The *choice* is a chat user setting;
+the *entitlement* is the membership, and the two are resolved against each other at render
+(`resolveChatTheme`). That is what makes a lapse self-correcting: the window falls back to the
+default with nothing to revoke, and picks the theme back up on renewal without the member having
+to set it again.
 
-The *choice* is a chat user setting; the *entitlement* is the cosmetic. Resolution happens at
-render (`resolveChatTheme`), which is what makes a lost grant self-correcting: the window falls
-back to the default with no revoke job, and picks the theme back up if the grant returns.
+Themes reach the chrome, the message rows and the type, not just accent colours — but every token
+they move resolves to the stock value in the default palette, so the unthemed window is unchanged.
 
 A named theme is a fixed palette in both colour schemes. Picking Terminal is picking the terminal
 look, not a preference the light/dark setting gets to reinterpret; only `default` follows the
@@ -276,14 +277,10 @@ app's own tokens.
 - **Sticker asset spec** — emoji are fixed at 128×128 (D6). Stickers render far larger and need
   their own numbers before any creator uploads one. Belongs in `cosmeticImageRequirements`.
   Tracked in `868kk3t0t`.
-- **Chat theme tier map** — the three themes exist as `ChatTheme` cosmetics and the window
-  renders whichever one the user owns and picked, but nothing grants them yet. Which tier gets
-  which theme is a product call; the mockup assumed two for any membership with Terminal as
-  Gold-exclusive. Until it lands, `/api/testing/chat-themes` grants one to a single account.
-- **Chat themes at lapsed membership** — the seeded cosmetics are `permanentUnlock = true`,
-  following the Civitai precedent that a grant is never clawed back; Discord revokes Nitro themes
-  on lapse. Entitlement is resolved at render, so flipping to revoke-on-lapse needs only the
-  grant removed — no stored choice to clean up. Product call, tracked in `868kk3t0t`.
+- **Per-tier chat themes** — all three themes come with any membership. The mockup had Terminal
+  as Gold-exclusive; splitting them by tier is a product call, and `resolveChatTheme` takes the
+  entitlement as an argument, so it is a one-line change when someone decides. Granting themes as
+  cosmetics instead (`CosmeticType.ChatTheme`, applied but unused) is the same call.
 - **Status banner** — the 2026-06-04 outage generated 11 tickets in a day and was never
   acknowledged in-product. Surfacing the existing incident feed inside the chat panel is on the
   card but not scheduled here.
