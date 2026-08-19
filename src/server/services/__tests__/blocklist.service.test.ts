@@ -223,10 +223,22 @@ describe('what an edit writes into the cache', () => {
   // live answer for a month. Reverting to `data: result` leaves every read-side test green,
   // so this is the only thing standing between that bug and a re-introduction.
   const twoRows = () => {
-    dbMock.dbWrite.blocklist.findMany.mockImplementation(async () => [
-      { id: 1, type: BlocklistType.EmailDomain, data: ['a.example', 'b.example'] },
-      { id: 8, type: BlocklistType.EmailDomain, data: ['c.example'] },
-    ]);
+    // Deliberately the SAME order-and-where-honouring fake as the read tests: a fake that
+    // returns a fixed array would make `id: 1` below the fixture's answer rather than the
+    // code's.
+    dbMock.dbWrite.blocklist.findMany.mockImplementation(
+      async (args?: { where?: { type?: string }; orderBy?: { id?: 'asc' | 'desc' } }) => {
+        const rows = [
+          { id: 8, type: BlocklistType.EmailDomain, data: ['c.example'] },
+          { id: 1, type: BlocklistType.EmailDomain, data: ['a.example', 'b.example'] },
+        ];
+        const type = args?.where?.type;
+        const filtered = type ? rows.filter((row) => row.type === type) : [...rows];
+        const direction = args?.orderBy?.id;
+        if (!direction) return filtered;
+        return filtered.sort((a, b) => (direction === 'desc' ? b.id - a.id : a.id - b.id));
+      }
+    );
     dbMock.dbWrite.blocklist.findUnique.mockResolvedValue({ data: ['c.example'] });
     dbMock.dbWrite.blocklist.update.mockResolvedValue({
       id: 8,

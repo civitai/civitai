@@ -483,9 +483,9 @@ export function createProfanityFilter(
 // distinct whitelist. Keyed rather than a single instance because the moderator list can
 // change; the common case (one list for the whole session) still allocates once. Lives here
 // rather than in the hook that needed it first, so server callers can reach it too.
-// Bounded: a browser tab holds at most the pre-load (static) filter and the loaded one, and
-// each matcher measures ~132 KB. The cap is what keeps that true if the query config ever
-// loosens from `staleTime: Infinity` and moderator edits start producing new keys.
+// Bounded: each matcher measures ~132 KB, and the list is refetched hourly, so a long-lived
+// tab DOES see new keys as moderators edit — the cap is load-bearing, not defensive. A tab
+// normally holds the pre-load (static) filter and the current one.
 const MAX_CACHED_FILTERS = 2;
 const filtersByWhitelist = new Map<string, SimpleProfanityFilter>();
 export function getProfanityFilter(

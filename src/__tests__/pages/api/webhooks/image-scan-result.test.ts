@@ -695,6 +695,14 @@ describe('image-scan-result webhook - pipeline tests', () => {
   });
 
   describe('moderator benign phrases reach the POI tagger', () => {
+    // The file's own `beforeEach` is `vi.clearAllMocks()`, which clears calls but NOT
+    // implementations — so the one a test below installs would leak into anything appended
+    // after this describe. Harmless while this is the last block, which is exactly the kind
+    // of "harmless" that stops being true without anyone noticing.
+    beforeEach(() => {
+      mockStripBenignPhrases.mockImplementation(async (text?: string) => text ?? '');
+    });
+
     const seedImageWithPrompt = (id: number, prompt: string) => {
       imageDbState.set(id, {
         id,

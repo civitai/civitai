@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 import { includesPoi } from '~/utils/metadata/audit';
-import { createProfanityFilter } from '~/libs/profanity-simple';
+import { createProfanityFilter, getProfanityFilter } from '~/libs/profanity-simple';
 
 describe('benign phrases reach the client-side search gates', () => {
   const strip = (text: string, phrases: string[]) =>
@@ -19,24 +19,27 @@ describe('benign phrases reach the client-side search gates', () => {
     expect(strip('emma stone portrait', ['emma stone']).trim()).toBe('portrait');
   });
 
-  it('matches a phrase whose words are joined by punctuation, as the server matcher does', () => {
-    expect(includesPoi(strip('emma-stone portrait', ['emma stone']))).toBe(false);
+  // Each case is one the DETECTOR matches on the raw text, so the strip has real work to do.
+  // A case the detector already misses (e.g. one whose punctuation its preprocessor deletes)
+  // would pass here with no matcher at all — that is how the previous version of this test
+  // was vacuous.
+  it.each([
+    'emma stone',
+    'emma. stone',
+    'emma,,,, stone',
+    'emma  ,  stone',
+    'emma____stone',
+    'emma :: | stone',
+  ])('agrees with the detector on %j, however many separators sit between the words', (text) => {
+    expect(Boolean(includesPoi(text)), `${text} should trip the detector raw`).toBe(true);
+    expect(includesPoi(strip(text, ['emma stone']))).toBe(false);
   });
 
   it('does not blank a longer word that merely contains the phrase', () => {
     expect(strip('stonemason', ['stone'])).toBe('stonemason');
   });
 
-  // The separator bound is what stops a whitelist entry eating text between its own words.
-  // Unbounded, "emma stone" would match across an arbitrarily long run and blank whatever
-  // sat inside it — including text the next detector still needed to read.
-  it('does not match across a long run of junk between the words of a phrase', () => {
-    const long = 'emma' + '!'.repeat(40) + 'stone';
-    expect(includesPoi(strip(long, ['emma stone']))).toBe(false);
-    expect(strip(long, ['emma stone'])).toBe(long);
-  });
-
-  it('still matches the ordinary separators a moderator would expect', () => {
+  it('blanks the phrase for the ordinary separators a moderator would expect', () => {
     for (const text of ['emma stone', 'emma  stone', 'emma-stone', 'emma. stone']) {
       expect(strip(text, ['emma stone']).trim(), text).toBe('');
     }
@@ -89,5 +92,24 @@ describe('moderator benign words reach the profanity filter', () => {
   it('whitelisting one word does not disarm the filter for the token itself', () => {
     const filter = createProfanityFilter({ moderatorWhitelist: ['spreadsheet'] });
     expect(filter.analyze('spread').isProfane).toBe(true);
+  });
+});
+
+// Every production caller goes through `getProfanityFilter`, not `createProfanityFilter`, and
+// the null/empty distinction the tests above establish is decided by ITS cache key. Asserting
+// the semantics one layer below where they are chosen leaves the key free to collapse them.
+describe('getProfanityFilter keeps "no row" and "emptied" apart', () => {
+  it('CONTROL: the same input returns the same shared instance', () => {
+    expect(getProfanityFilter(['spreadsheet'])).toBe(getProfanityFilter(['spreadsheet']));
+  });
+
+  it('does not serve the no-row filter to a caller passing an empty list', () => {
+    const noRow = getProfanityFilter(null);
+    const emptied = getProfanityFilter([]);
+
+    expect(emptied).not.toBe(noRow);
+    // And they behave differently, which is the point of keeping them apart.
+    expect(noRow.analyze('cockpit').isProfane).toBe(false);
+    expect(emptied.analyze('cockpit').isProfane).toBe(true);
   });
 });

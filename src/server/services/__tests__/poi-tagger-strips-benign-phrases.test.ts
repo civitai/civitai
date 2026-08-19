@@ -16,6 +16,23 @@ import path from 'path';
  * So this is a source-level guard, and it is deliberately about the SHAPE of the call rather
  * than its behaviour: a behavioural test proves the copy it drives, and the failure mode here
  * is the copy nobody drove.
+ *
+ * TWO LIMITS, stated because a guard whose edges are undocumented gets read as covering more
+ * than it does:
+ *
+ * 1. The enclosing-scope check walks back to the nearest `function ` keyword, so it does not
+ *    understand an arrow function or a class method — one of those would inherit the previous
+ *    declaration's strip and pass. Both taggers are `function` declarations today; a new one
+ *    written as an arrow needs the strip INLINE at the call to be checked properly.
+ * 2. Scope is the two files that WRITE A TAG from a POI hit, which is this guard's title. Two
+ *    other server-side `includesPoi` calls read a raw prompt and are deliberately NOT covered,
+ *    because neither writes a tag:
+ *      - `services/apps/shared-content-safety.ts` — throws `SharedContentBlockedError('poi')`,
+ *        so a whitelisted proper noun hard-refuses the content rather than mislabelling it.
+ *      - `services/orchestrator/orchestration-new.service.ts` — a second POI decision on the
+ *        generation path, beside the `auditPromptServer` one that does strip.
+ *    Both are real gaps in the whitelist's reach, and both are follow-up work rather than
+ *    oversights — they are named here so the two-file list does not read as settled.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -26,8 +43,24 @@ const TAG_WRITING_SCAN_FILES = [
 ];
 
 const POI_CALL = /includesPoi\(/g;
-/** Enough of the call to see an inline `stripBenignPhrases(...)` wrapper. */
-const CALL_WINDOW = 200;
+
+/**
+ * The argument list of one `includesPoi(` call — paren-balanced, so it ends at that call's own
+ * closing paren. A fixed-size forward window was tried and is wrong: it reads past the end of
+ * the call, so an unrelated `stripBenignPhrases` on the NEXT statement satisfies it, and both
+ * of these files contain several. Balancing means only this call's own argument counts.
+ */
+function callArguments(source: string, start: number) {
+  let depth = 0;
+  for (let i = source.indexOf('(', start); i < source.length; i++) {
+    if (source[i] === '(') depth++;
+    else if (source[i] === ')') {
+      depth--;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return source.slice(start);
+}
 
 function readSource(rel: string) {
   const source = readFileSync(path.join(REPO_ROOT, rel), 'utf8');
@@ -54,15 +87,15 @@ describe('POI taggers read the benign-stripped prompt', () => {
       const source = readSource(rel);
 
       for (const match of source.matchAll(POI_CALL)) {
-        const window = source.slice(match.index, match.index + CALL_WINDOW);
-        const call = window.split(/\r?\n/)[0].trim();
+        const argumentList = callArguments(source, match.index);
+        const call = argumentList.split(/\r?\n/)[0].trim();
 
         // Two ways to be safe, and the identifier alone can decide neither: the audit
         // functions shadow `prompt` with the stripped copy, so the safe call and the unsafe
         // one are spelled identically.
         //   - the strip is inline in the call itself, or
         //   - the ENCLOSING function stripped before reaching it.
-        const inlineStrip = window.includes('stripBenignPhrases');
+        const inlineStrip = argumentList.includes('stripBenignPhrases');
         const declaration = source.lastIndexOf('function ', match.index);
         const strippedInScope = source
           .slice(declaration, match.index)
