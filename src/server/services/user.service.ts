@@ -2820,10 +2820,27 @@ export async function patchUserSettings(
   for (const [key, value] of mergeInto) {
     // `settings->$key` reads the CURRENT column inside the same statement — that is
     // what makes the nested merge atomic rather than a read-modify-write.
+    //
+    // 🔴 The `jsonb_typeof` test is the same guard, and for the same reason, as the one
+    // in `setAlertDismissed` below. Nothing enforces a shape on a JSON column, and
+    // `jsonb || jsonb` does NOT raise on a non-object — it CONCATENATES, so a stored
+    // `{"chat": 7}` merges to `{"chat": [7, {...}]}` and every later write appends
+    // another element. That is unbounded growth in the column plus permanently
+    // undefined reads for that key, from a value no statement here would reject.
+    //
+    // The direction matters: a plain `COALESCE` would make this primitive SELF-WORSENING
+    // where the whole-key `set` it replaced was self-healing (a rewrite overwrote the bad
+    // value). Treating a non-object as absent restores that property — the next write
+    // repairs the row. This is hardening, not a live fix: sampled prod rows are 100%
+    // objects for every key written this way, but `mergeInto` is now the designated
+    // nested-write primitive for `chat`, `features`, `creatorShop`, `gallerySettings`
+    // and `tourSettings`, so the gap would be inherited five times over.
     const k = bind(key);
     expr =
       `(${expr} || jsonb_build_object(${k}::text, ` +
-      `COALESCE(settings->${k}::text, '{}'::jsonb) || ${bind(JSON.stringify(value))}::jsonb))`;
+      `CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
+      `THEN settings->${k}::text ELSE '{}'::jsonb END ` +
+      `|| ${bind(JSON.stringify(value))}::jsonb))`;
   }
   // `jsonb - text[]` drops every listed key in one go, so the names bind as one array.
   if (remove) expr = `(${expr} - ${bind(remove)}::text[])`;

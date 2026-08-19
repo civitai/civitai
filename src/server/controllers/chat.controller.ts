@@ -37,7 +37,7 @@ import {
 } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
-import { getUserSettings, setUserSetting } from '~/server/services/user.service';
+import { getUserSettings, patchUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
 import {
   throwAuthorizationError,
@@ -107,20 +107,43 @@ export const setUserSettingsHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { chat = {}, features } = await getUserSettings(userId);
-    const newChat = { ...chat, ...input };
+    // `features` is still READ, but only to decide whether to reopen — never to build
+    // the value written. A stale read here is idempotent (setting `chat: true` when it
+    // already is), never a lost write.
+    const { features } = await getUserSettings(userId);
 
     // `features.chat === false` reads as `nobody` (resolveDmPolicy), so leaving it
     // set would silently override any policy chosen here and the picker would
     // appear to do nothing.
     const reopenChat = !!input.dmPolicy && input.dmPolicy !== 'nobody' && features?.chat === false;
 
-    await setUserSetting(userId, {
-      chat: newChat,
-      ...(reopenChat ? { features: { ...features, chat: true } } : {}),
+    // Merged in Postgres, over the stored column — `settings->'chat'` is read inside the
+    // UPDATE, so nothing about the object is carried through JS. This used to read the
+    // blob via `getUserSettings` (Redis, 4h TTL), merge in JS and write the whole `chat`
+    // object back, which REPLACED the key: every sub-key reverted to the snapshot and any
+    // chat setting written in between was discarded. Reachable in ordinary use because the
+    // sub-keys are written from different surfaces — `NewChat` writes `acknowledged` on
+    // terms acceptance while `ChatList` writes `muteSounds`/`replaceBadWords` — so two
+    // requests carrying disjoint keys is the normal case. See the getUserSettings contract.
+    //
+    // 🔴 The `features` reopen (#4119) goes through the SAME atomic merge. It arrived as
+    // `{ ...features, chat: true }`, which rebuilds the whole `features` object from that
+    // same 4h-TTL snapshot — the exact read-modify-write this change removes, one key
+    // over, and it would have silently discarded any other `features.*` sub-key written
+    // in between. `mergeInto` touches only `features.chat` and leaves every sibling
+    // sub-key alone, so both writes in this handler are now atomic rather than one of
+    // each.
+    const settings = await patchUserSettings(userId, {
+      mergeInto: {
+        chat: input,
+        ...(reopenChat ? { features: { chat: true } } : {}),
+      },
+      location: 'chat.controller:setUserSettings',
     });
 
-    return newChat;
+    // Returned from `RETURNING settings`, so the client's query cache is primed with what
+    // the database actually holds rather than with a merge computed off a stale snapshot.
+    return (settings.chat ?? {}) as UserSettingsChat;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
