@@ -153,9 +153,31 @@ export function AppTransferOffersView({
          * recipient can neither accept nor understand. Unreachable while the service can
          * only send the constant or `null`, and reachable the moment a second reason is
          * added by someone who has no way to know the two branches differ. `blocked` is
-         * the single test; `!== null` is the one that matches the field's type.
+         * the single test.
+         *
+         * 🔴 LOOSE `!= null`, DELIBERATELY — IT FAILS OPEN ON AN ABSENT FIELD. The two
+         * checks are behaviourally identical for every value the TYPE permits (`string`
+         * or `null`) and differ on one the type does not: `undefined`. `!== null` would
+         * score a MISSING field as blocked, so an older API pool that does not send
+         * `acceptBlockedReason` yet would make this bundle refuse EVERY pending offer,
+         * with an empty explanation and Decline still live. That skew is structural here,
+         * not hypothetical: the bundle and the tRPC API are served by separate pools that
+         * roll independently, so new-client/old-server is a state every deploy passes
+         * through. And because the banner is otherwise unreachable (see the reachability
+         * note in `app-ownership-transfer.service.ts`), a mid-roll false refusal would be
+         * the ONLY way a real user ever sees it.
+         *
+         * Failing OPEN is the right direction: the server refuses an unacceptable
+         * transfer anyway — both gates are unchanged and authoritative — so the cost of
+         * a missed banner is one honest error toast, while the cost of a false banner is
+         * blocking a transfer that would have succeeded.
+         *
+         * This also matches how this file already treats the wire 118 lines up, where
+         * `expiresAt`/`createdAt` are widened because "a component that hard-required
+         * `Date` would be making a claim about the wire that this file cannot settle".
+         * The same is true of a field's presence.
          */
-        const blocked = transfer.acceptBlockedReason !== null;
+        const blocked = transfer.acceptBlockedReason != null;
         const blockedReason = transfer.acceptBlockedReason;
         return (
           <Paper
@@ -204,9 +226,20 @@ export function AppTransferOffersView({
                   the product", so this is gap-closure ahead of traffic.)
 
                   The message is the SERVER's own constant, verbatim, not a paraphrase: the
-                  recipient reads the same sentence the mutation would have returned. It
-                  states a constraint and instructs NOTHING, because there is no unlink
-                  path in the product for them OR the owner to pursue. */}
+                  recipient reads the same sentence the mutation would have returned, and it
+                  instructs nothing.
+
+                  🔴 THE STATED REASON FOR THAT — "there is no unlink path in the product" —
+                  IS REFUTED, and this comment used to repeat it. An owner CAN unlink today,
+                  by deleting the OAuth client: the relation is `onDelete: SetNull` and
+                  `oauth-client.router::delete` has no referencing-listing check. What is
+                  still true is the part that matters HERE: the RECIPIENT cannot do it — they
+                  own neither the listing nor the client — so a remedy addressed to them
+                  would still be a dead end, and the copy stays as it is. Whether the OWNER's
+                  copy should now name that route is a PRODUCT decision, deliberately not
+                  taken in this change; the constant's own rationale in
+                  `shared/constants/app-transfer.constants.ts` rests on the refuted premise
+                  and is flagged rather than edited here. */}
               {blocked ? (
                 <Alert
                   color="yellow"

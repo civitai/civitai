@@ -37,10 +37,14 @@ import type * as TrpcModule from '~/utils/trpc';
  *
  * The SHAPE of the payload is not out of frame, though — not any more. `TransferRow` is
  * `IncomingTransferRow`, so deleting `acceptBlockedReason` from the service's
- * `IncomingTransferView` is now 9 `tsc` errors IN THIS FILE (measured; it was ZERO while
- * the fixture carried its own hand-written type, which is the anti-pattern this PR removes
- * from the container). Two instruments, two different hops — a `select` line and a field —
- * and neither sees the other's.
+ * `IncomingTransferView` now FAILS TO COMPILE IN THIS FILE, under BOTH `tsconfig.json` and
+ * `tsconfig.tests.json`. Measured, and the load-bearing part is the transition rather than
+ * the size: it was ZERO errors here while the fixture carried its own hand-written type —
+ * the anti-pattern this PR removes from the container. (An earlier version of this comment
+ * quoted an exact count. It rotted within one commit, which is the argument against putting
+ * a number here at all: the invariant is "this file notices", not "this file emits N".)
+ * Two instruments, two different hops — a `select` line and a field — and neither sees the
+ * other's.
  *
  * 🔴 THE SERVER GATES ARE UNCHANGED AND REMAIN THE ENFORCEMENT. Everything below is an
  * addition in front of them, running on data the client could lie to itself about.
@@ -228,9 +232,11 @@ describe('🔴 AN OFFER THE SERVER WILL REFUSE — said so before the click', ()
     // such a regex matches whatever the message body says. Assert on the BODY, which the
     // title cannot supply.
     await expect.element(blocked).toHaveTextContent(/split ownership/i);
-    // 🔴 AND IT INSTRUCTS NOTHING. There is no unlink path in the product — for the
-    // recipient least of all, who does not own the listing — so a remedy here would be a
-    // permanent dead end. Pinned on the RENDERED text, not just on the constant.
+    // 🔴 AND IT INSTRUCTS NOTHING. Note the reason is NOT "no unlink path exists" — one
+    // does (deleting the OAuth client cascades `SetNull`); that premise is refuted and the
+    // View's comment records it. The reason is that the RECIPIENT cannot take it: they own
+    // neither the listing nor the client, so a remedy addressed to them is a dead end
+    // whatever the owner can do. Pinned on the RENDERED text, not just on the constant.
     await expect.element(blocked).not.toHaveTextContent(/unlink/i);
   });
 
@@ -341,6 +347,51 @@ describe('🔴 AN OFFER THE SERVER WILL REFUSE — said so before the click', ()
     await expect.element(page.getByTestId('apps-transfer-accept-aot_empty')).toBeDisabled();
     // …and Decline stays the way out, exactly as on a normally-blocked card.
     await expect.element(page.getByTestId('apps-transfer-decline-aot_empty')).toBeEnabled();
+  });
+
+  /**
+   * 🔴 A MISSING FIELD MUST FAIL **OPEN** — the deploy-skew arm, and the one case the type
+   * system cannot describe, which is exactly why it needs a test.
+   *
+   * The bundle and the tRPC API are served by pools that roll INDEPENDENTLY, so every
+   * deploy passes through a window where this component runs against an API that predates
+   * `acceptBlockedReason`. The field then arrives ABSENT, not `null`. Under a strict
+   * `!== null` the card scores as BLOCKED: every pending offer refused, with an empty
+   * explanation, for offers that are perfectly fine — and since the banner is otherwise
+   * unreachable, that mid-roll false refusal would be the only time a real user ever saw
+   * it. Under `!= null` the card is ordinary and the server stays the enforcement, which
+   * is the direction that cannot invent a refusal.
+   *
+   * 🔴 THE CAST IS THE POINT, not a shortcut. `TransferRow` correctly forbids a missing
+   * field, so the only way to express "what an older server actually sends" is to step
+   * outside the type — a payload the CURRENT contract cannot produce and a PREVIOUS one
+   * did. Deleting the cast would delete the scenario.
+   *
+   * 🔴 CONTROL / INVARIANT GUARD, LABELLED — this PASSES at `origin/main`, and measured so
+   * rather than assumed (5 failed / 8 passed at base; this arm is one of the 8). It passes
+   * there for a trivial reason: base has no banner and no disable at all, so an absent
+   * field is acceptable by construction. It is therefore NOT regression coverage for the
+   * shipped defect — the arms above are. Its job is to hold the fail-OPEN direction against
+   * a future tightening, and mutant (q) (`!= null` → `!== null`) is what earns it: (q) dies
+   * here and NOWHERE else in the suite.
+   */
+  test('🔴 an ABSENT reason (old API, new bundle) leaves the offer ACCEPTABLE — fail open', async () => {
+    const legacyRow = offer({ transferId: 'aot_legacy' }) as Partial<TransferRow>;
+    delete legacyRow.acceptBlockedReason;
+    expect('acceptBlockedReason' in legacyRow).toBe(false);
+    state.transfers = [legacyRow as TransferRow];
+    renderWithProviders(<AppInvitesPage />);
+
+    // Positive control FIRST: the card rendered at all, so the absences below are real
+    // absences and not an un-awaited render (`elements()` is synchronous).
+    const accept = page.getByTestId('apps-transfer-accept-aot_legacy');
+    await expect.element(accept).toBeInTheDocument();
+    await expect.element(accept).toBeEnabled();
+    expect(page.getByTestId('apps-transfer-blocked-aot_legacy').elements()).toHaveLength(0);
+
+    // …and it genuinely submits, so "enabled" is not a button that quietly does nothing.
+    await userEvent.click(accept.element());
+    expect(state.acceptCalls).toEqual([{ transferId: 'aot_legacy' }]);
   });
 
   test('the offer still renders as an offer — name, deadline and all', async () => {

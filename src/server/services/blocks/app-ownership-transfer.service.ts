@@ -707,18 +707,42 @@ export type IncomingTransferView = {
    * saying "a revision approve can LINK an OAuth client while the offer is open". That
    * sentence was inherited rather than checked, and an enumeration of every writer of
    * `AppListing.connectClientId` does not support it:
-   *   - the ONLY non-null write is `submitExternalListing`'s `create` of a BRAND-NEW row,
-   *     where the schema makes the field required — a listing is BORN linked;
+   *   - the ONLY non-null write is `submitExternalListing`'s `create` of a BRAND-NEW row.
+   *     What makes it mandatory there is the ZOD INPUT (`submitExternalListingSchema`'s
+   *     `connectClientId: z.string().min(1).max(64)`), NOT the database: the Prisma column
+   *     is `connectClientId String?` — NULLABLE, no default. Worth stating precisely,
+   *     because a reader who believes the column is NOT NULL concludes it can never become
+   *     null, and the next bullet is exactly that happening. Either way: a listing is BORN
+   *     linked;
    *   - `beginListingRevision` copies `parent.connectClientId` onto the shadow, the approve
    *     merge copies `shadow.connectClientId` back onto the parent, and in between
    *     `buildListingPatchData` never assigns the column and `updateListingPatchSchema` has
    *     no such key — so the revision round trip returns the value it started with;
-   *   - no raw SQL, nested relation write, or spread writes it.
+   *   - no raw SQL, nested relation write, or spread writes it — but see the caveat below,
+   *     because that list is about STATEMENTS and does not exhaust WRITERS.
    * So a listing cannot ACQUIRE a link, and `initiateTransfer` refuses to open an offer on
    * one that was born with it. The blocked state is therefore not producible through the
-   * product as it stands — it needs a direct DB write, a migration, or a future unlink/link
-   * flow. (Caveat: that enumeration is textual plus call-site based; a fully dynamic key or
-   * a runtime-assembled raw UPDATE would evade it. None was found.)
+   * product as it stands — it needs a direct DB write, a migration, or a future LINK flow.
+   *
+   * 🔴 CAVEAT, AND IT IS A CLASS THE ENUMERATION STRUCTURALLY CANNOT SEE: A WRITER CAN LIVE
+   * IN THE SCHEMA RATHER THAN AT A CALL SITE. The relation is declared
+   * `onDelete: SetNull`, so deleting the `OauthClient` row issues
+   * `UPDATE app_listings SET connect_client_id = NULL` on every listing referencing it —
+   * and `oauth-client.router::delete` performs exactly that delete with NO check for a
+   * referencing `AppListing` (its only guard, `rejectAppBlockClient`, covers App*Block*
+   * clients, which these are not). That is a product-reachable, OWNER-INITIATED UNLINK
+   * that exists today, and no grep over `data:` payloads or raw SQL would ever find it.
+   *
+   * It does NOT change the conclusion above: a referential SetNull only ever moves the
+   * column non-null → null, so it can only UNBLOCK. What it does change is a consequence
+   * worth knowing: `acceptBlockedReason` can go STALE IN THE SAFE DIRECTION — an offer
+   * rendered blocked whose client was deleted since the read would now succeed on accept.
+   * The recipient sees a stale refusal until the query refetches; the server, which is the
+   * enforcement, correctly allows it. A stale block is a delay; a stale allow would be a
+   * lie, and this cascade cannot produce one.
+   *
+   * (The enumeration is otherwise textual plus call-site based, so it would also miss a
+   * fully dynamic key or a runtime-assembled raw UPDATE. Neither construct exists.)
    *
    * 🔴 WHICH IS A REASON TO SHIP THIS, NOT TO SKIP IT — but as GAP-CLOSURE AHEAD OF
    * TRAFFIC, not as a live bug fix, and it should not be described as one. The accept-time
