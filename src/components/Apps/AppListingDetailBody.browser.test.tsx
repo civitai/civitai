@@ -41,7 +41,8 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string },
   // Items the mocked `appListings.listAvailable` returns to the related rail.
   relatedItems: [] as unknown[],
-  // Every `recordRecentlyOpenedApp(...)` argument seen this test, in order.
+  // Every `recordRecentlyOpenedApp(...)` CALL seen this test, in order —
+  // `{ app, ownerId }`, because the owner is now half the contract (#4048).
   recorded: [] as unknown[],
   // What the mocked `user.getCreator` resolves to (the SmartCreatorCard's data).
   creator: null as null | Record<string, unknown>,
@@ -62,9 +63,12 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
   const actual = await importOriginal<typeof RecentsMod>();
   return {
     ...actual,
-    recordRecentlyOpenedApp: (app: Parameters<typeof actual.recordRecentlyOpenedApp>[0]) => {
-      mocks.recorded.push(app);
-      return actual.recordRecentlyOpenedApp(app);
+    recordRecentlyOpenedApp: (
+      app: Parameters<typeof actual.recordRecentlyOpenedApp>[0],
+      ownerId: Parameters<typeof actual.recordRecentlyOpenedApp>[1]
+    ) => {
+      mocks.recorded.push({ app, ownerId });
+      return actual.recordRecentlyOpenedApp(app, ownerId);
     },
   };
 });
@@ -166,6 +170,12 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
 
 // Import AFTER the mocks are declared (vi.mock is hoisted, imports are not).
 const { AppListingDetailBody } = await import('./AppListingDetailBody');
+// The store itself, through the same partial mock (the readers are the REAL
+// implementations — only the writer is wrapped above), so the owner-scoping
+// assertions below read what the component actually persisted.
+const { clearRecentlyOpenedApps, getRecentlyOpenedApps } = await import(
+  '~/components/Apps/recentlyOpenedAppsStore'
+);
 
 beforeEach(async () => {
   mocks.currentUser = null;
@@ -1189,6 +1199,36 @@ describe('AppListingDetailBody', () => {
     expect(mocks.recorded).toHaveLength(0); // a VIEW records nothing
     await withoutNavigating(() => userEvent.click(cta));
     expect(mocks.recorded).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 BEHAVIOURAL COVER FOR THE CALL-SITE LEDGER (#4048).
+   *
+   * `recentsCallSites.test.ts` proves this module CALLS the store with a
+   * session-shaped owner expression; it cannot prove the expression reads the
+   * VIEWER. This does: a real click, a mounted session, and the entry readable
+   * by that account and by no other.
+   *
+   * The viewer id (77) is deliberately distinct from `base().creator.id` (5) —
+   * the plausible copy-paste is to stamp the listing's CREATOR, and against a
+   * fixture where the two coincide that mutant survives.
+   */
+  test('🔴 the recorded write is OWNED by the mounted session, not by anyone else', async () => {
+    clearRecentlyOpenedApps();
+    mocks.currentUser = { id: 77, username: 'viewer' };
+    const detail = offsite();
+    const { within } = await renderScoped(<AppListingDetailBody detail={detail} />);
+    const cta = within.getByTestId('apps-listing-open-live');
+    await expect.element(cta).toBeInTheDocument();
+    await withoutNavigating(() => userEvent.click(cta));
+
+    expect(mocks.recorded).toHaveLength(1);
+    expect((mocks.recorded[0] as { ownerId: unknown }).ownerId).toBe(77);
+    // …and the store agrees: only that account reads it back.
+    expect(getRecentlyOpenedApps(77).map((r) => r.id)).toEqual([detail.id]);
+    expect(getRecentlyOpenedApps(5)).toEqual([]); // the listing's creator
+    expect(getRecentlyOpenedApps(null)).toEqual([]); // the anonymous bucket
+    clearRecentlyOpenedApps();
   });
 
   test('🔴 the banner records recents exactly as the Open CTA does — i.e. not on click at all', async () => {

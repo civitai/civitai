@@ -19,6 +19,7 @@ import {
   recordRecentlyOpenedApp,
   type RecentApp,
 } from '~/components/Apps/recentlyOpenedAppsStore';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ListingCard, ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
@@ -77,6 +78,7 @@ const SORT_OPTIONS: { value: ListingSort; label: string }[] = [
 
 export function AppListingsMarketplaceBody() {
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const { filters, setFilters, hasPendingWrite } = useAppsStoreQueryParams();
   const { kind, category, sort } = filters;
 
@@ -180,9 +182,17 @@ export function AppListingsMarketplaceBody() {
   // BELOW the search/sort/filter controls precisely because of this one-frame
   // late hydration — see the comment at its render site.
   const [recents, setRecents] = useState<RecentApp[]>([]);
+  // 🔴 Keyed by ACCOUNT (#4048). localStorage is per browser PROFILE, not per
+  // account, and nothing clears it on an account switch — a profile that had
+  // been a moderator session rendered six on-site apps here for a viewer whose
+  // server scope returns none of them, every one of which 404s on its detail
+  // page. The store now returns only what the CURRENT viewer wrote (`null` =
+  // signed out, its own bucket). `ownerId` is in the dep list so an in-SPA
+  // sign-in / sign-out / switch re-reads rather than keeping the stale rail.
+  const ownerId = currentUser?.id ?? null;
   useEffect(() => {
-    setRecents(getRecentlyOpenedApps());
-  }, []);
+    setRecents(getRecentlyOpenedApps(ownerId));
+  }, [ownerId]);
   // The rail's ENTRIES are derived further down — `recentEntries` needs the
   // loaded listings (`items`) to reconcile stale persisted entries against, and
   // those are not available until after the query below. See it there.
@@ -193,16 +203,19 @@ export function AppListingsMarketplaceBody() {
   // store dedups, so double-recording is harmless.
   function handleOpenRecent(entry: ResolvedRecentApp) {
     setRecents(
-      recordRecentlyOpenedApp({
-        id: entry.id,
-        slug: entry.slug,
-        kind: entry.kind,
-        hasPage: entry.hasPage,
-        ...(entry.blockId ? { blockId: entry.blockId } : {}),
-        ...(entry.externalUrl ? { externalUrl: entry.externalUrl } : {}),
-        ...(entry.name ? { name: entry.name } : {}),
-        ...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {}),
-      })
+      recordRecentlyOpenedApp(
+        {
+          id: entry.id,
+          slug: entry.slug,
+          kind: entry.kind,
+          hasPage: entry.hasPage,
+          ...(entry.blockId ? { blockId: entry.blockId } : {}),
+          ...(entry.externalUrl ? { externalUrl: entry.externalUrl } : {}),
+          ...(entry.name ? { name: entry.name } : {}),
+          ...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {}),
+        },
+        ownerId
+      )
     );
   }
 

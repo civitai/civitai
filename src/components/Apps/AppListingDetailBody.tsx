@@ -433,6 +433,11 @@ function ScreenshotGallery({
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
+  // The recents store is ACCOUNT-scoped (#4048): every write carries the id of
+  // the viewer who made it, so a later account in the same browser profile does
+  // not inherit this one's history. Read here rather than passed down as a prop
+  // — this is the component that owns the recording click.
+  const recentsOwnerId = useCurrentUser()?.id ?? null;
 
   // 🔴 Resolve the glyph INSIDE each branch, from the mode that branch has
   // already established — never once up front from `action.mode`. `href` is
@@ -476,7 +481,7 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
           // following this link IS the moment the app is opened, and it leaves
           // the SPA — so it is the only chance to record the open. A detail-page
           // VIEW never records.
-          onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail))}
+          onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail), recentsOwnerId)}
         >
           {action.label}
         </Button>
