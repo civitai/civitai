@@ -263,7 +263,12 @@ function ImageContent({
 
   const isVideo = image?.type === 'video';
 
+  // dragstart carries no pointerType, and android chrome fires it for a long-press
+  // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
+  const pointerType = useRef('mouse');
+
   const handleDragStart = (event: React.DragEvent) => {
+    if (pointerType.current !== 'mouse') return;
     allowNativeDragStart(event);
     const media = event.target;
     if (!(media instanceof HTMLImageElement) && !(media instanceof HTMLVideoElement)) return;
@@ -279,6 +284,7 @@ function ImageContent({
       {(safe) => (
         <div
           ref={setRef}
+          onPointerDownCapture={(event) => (pointerType.current = event.pointerType)}
           onDragStartCapture={handleDragStart}
           className="relative flex size-full items-center justify-center"
         >
