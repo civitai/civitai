@@ -1,8 +1,27 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   createResilientSearchClient,
+  isMeiliApiError,
   isMeiliCommunicationError,
+  MEILI_QUERY_ERROR_TYPE,
 } from '~/components/Search/resilientSearchClient';
+
+// The SDK's `faro` export is a bare `{}` until `initializeFaro` runs, which never happens
+// in test — so the reporting path has to be driven by standing an `api` on it.
+const { faro } = vi.hoisted(() => ({ faro: {} as Record<string, unknown> }));
+vi.mock('@grafana/faro-web-sdk', () => ({ faro }));
+
+const pushError = vi.fn();
+let consoleError: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  pushError.mockClear();
+  for (const key of Object.keys(faro)) delete faro[key];
+  Object.assign(faro, { api: { pushError } });
+  consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+});
+
+afterEach(() => consoleError.mockRestore());
 
 // Minimal fake requests shaped like what react-instantsearch passes through.
 const twoRequests = [
@@ -19,6 +38,19 @@ const okResponse = {
 const commError = Object.assign(new Error('NetworkError when attempting to fetch resource'), {
   name: 'MeiliSearchCommunicationError',
 });
+
+// What Meilisearch answers with when a query names an attribute it can't filter on —
+// the `/search/comics` bug this split exists for.
+const apiError = Object.assign(new Error('Attribute `genre` is not filterable.'), {
+  name: 'MeiliSearchApiError',
+  code: 'invalid_search_facets',
+  type: 'invalid_request',
+  httpStatus: 400,
+});
+
+// `@meilisearch/instant-meilisearch`'s `.search` rethrows as `new Error(e_1)`, so on
+// the real `/search` path the class, `code` and `httpStatus` are gone by the time we see it.
+const rewrappedApiError = new Error(String(apiError));
 
 function makeClient(overrides: Record<string, any> = {}) {
   return {
@@ -44,6 +76,45 @@ describe('isMeiliCommunicationError', () => {
     expect(isMeiliCommunicationError(null)).toBe(false);
     expect(isMeiliCommunicationError(undefined)).toBe(false);
     expect(isMeiliCommunicationError(new Error('invalid_request: bad filter'))).toBe(false);
+  });
+
+  it('does not match a query the server answered and rejected', () => {
+    expect(isMeiliCommunicationError(apiError)).toBe(false);
+    expect(isMeiliCommunicationError(rewrappedApiError)).toBe(false);
+  });
+});
+
+describe('isMeiliApiError', () => {
+  it('matches a MeiliSearchApiError by name', () => {
+    expect(isMeiliApiError(apiError)).toBe(true);
+  });
+
+  it('matches the adapter-rewrapped form, where only the message survives', () => {
+    expect(rewrappedApiError.name).toBe('Error'); // the class really is gone
+    expect('httpStatus' in rewrappedApiError).toBe(false);
+    expect(isMeiliApiError(rewrappedApiError)).toBe(true);
+  });
+
+  it('matches a bare 4xx httpStatus, and only a 4xx', () => {
+    expect(isMeiliApiError({ httpStatus: 400 })).toBe(true);
+    expect(isMeiliApiError({ httpStatus: 404 })).toBe(true);
+    expect(isMeiliApiError({ httpStatus: 500 })).toBe(false);
+    expect(isMeiliApiError({ httpStatus: '400' })).toBe(false);
+  });
+
+  it('lets a present httpStatus outrank the name — a Meili 5xx is not our bug', () => {
+    const serverError = Object.assign(new Error('internal'), {
+      name: 'MeiliSearchApiError',
+      httpStatus: 500,
+    });
+    expect(isMeiliApiError(serverError)).toBe(false);
+  });
+
+  it('does not match a communication error or a falsy value', () => {
+    expect(isMeiliApiError(commError)).toBe(false);
+    expect(isMeiliApiError(new Error(String(commError)))).toBe(false);
+    expect(isMeiliApiError(null)).toBe(false);
+    expect(isMeiliApiError(undefined)).toBe(false);
   });
 });
 
@@ -102,6 +173,8 @@ describe('createResilientSearchClient — communication error fallback', () => {
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(commError);
     expect(onSuccess).not.toHaveBeenCalled();
+    // An outage is not an app bug — it must not land in the RUM error stream.
+    expect(pushError).not.toHaveBeenCalled();
   });
 
   it('retries a transient comm error exactly once, then falls back', async () => {
@@ -146,7 +219,10 @@ describe('createResilientSearchClient — communication error fallback', () => {
 
     expect(search).toHaveBeenCalledTimes(1); // no retry for non-transient errors
     expect(result.results).toHaveLength(2);
+    // Unclassifiable — neither a known comm error nor a Meili API rejection. It keeps the
+    // pre-split behaviour (banner, no report) so the fallback direction stays conservative.
     expect(onError).toHaveBeenCalledWith(badQueryError);
+    expect(pushError).not.toHaveBeenCalled();
   });
 
   it('handles an empty requests array without crashing', async () => {
@@ -156,6 +232,71 @@ describe('createResilientSearchClient — communication error fallback', () => {
     );
     const result = await client.search!([] as any);
     expect(result.results).toEqual([]);
+  });
+});
+
+describe('createResilientSearchClient — Meili rejected OUR query (4xx)', () => {
+  it.each([
+    ['a structured MeiliSearchApiError', apiError],
+    ['the adapter-rewrapped form', rewrappedApiError],
+  ])('%s: empty results, no availability banner, reported instead', async (_label, thrown) => {
+    const onError = vi.fn();
+    const onSuccess = vi.fn();
+    const search = vi.fn().mockRejectedValue(thrown);
+
+    const client = createResilientSearchClient(makeClient({ search }), {
+      onError,
+      onSuccess,
+      retryDelayMs: 0,
+    });
+    const result = await client.search!(twoRequests);
+
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0].hits).toEqual([]);
+    // The whole point: search WAS reachable, so the "temporarily unavailable" banner is a lie.
+    expect(onError).not.toHaveBeenCalled();
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(search).toHaveBeenCalledTimes(1); // retrying a malformed query can't help
+    expect(pushError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+
+  it('tags the RUM beacon and carries the indexes, never the query', async () => {
+    const client = createResilientSearchClient(
+      makeClient({ search: vi.fn().mockRejectedValue(apiError) }),
+      { retryDelayMs: 0 }
+    );
+    await client.search!(twoRequests);
+
+    expect(pushError).toHaveBeenCalledWith(apiError, {
+      type: MEILI_QUERY_ERROR_TYPE,
+      context: { code: 'invalid_search_facets', httpStatus: '400', indexes: 'models,images' },
+    });
+    expect(JSON.stringify(pushError.mock.calls[0][1])).not.toContain('cat');
+  });
+
+  it('reports the same failing query ONCE, not once per keystroke', async () => {
+    const client = createResilientSearchClient(
+      makeClient({ search: vi.fn().mockRejectedValue(apiError) }),
+      { retryDelayMs: 0 }
+    );
+
+    for (let i = 0; i < 5; i++) await client.search!(twoRequests);
+
+    expect(pushError).toHaveBeenCalledTimes(1);
+  });
+
+  it('still reports when Faro is not initialised (bare `{}` export)', async () => {
+    for (const key of Object.keys(faro)) delete faro[key];
+
+    const client = createResilientSearchClient(
+      makeClient({ search: vi.fn().mockRejectedValue(apiError) }),
+      { retryDelayMs: 0 }
+    );
+    const result = await client.search!(twoRequests);
+
+    expect(result.results).toHaveLength(2);
+    expect(consoleError).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -175,6 +316,20 @@ describe('createResilientSearchClient — searchForFacetValues', () => {
       { facetHits: [], exhaustiveFacetsCount: true, processingTimeMS: 0 },
     ]);
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('splits the same way on a 4xx — empty facets, reported, no banner', async () => {
+    const onError = vi.fn();
+    const base = makeClient({ searchForFacetValues: vi.fn().mockRejectedValue(apiError) });
+    const client = createResilientSearchClient(base, { onError, retryDelayMs: 0 });
+
+    const result = await client.searchForFacetValues!([
+      { indexName: 'models', params: {} },
+    ] as any);
+
+    expect(result).toEqual([{ facetHits: [], exhaustiveFacetsCount: true, processingTimeMS: 0 }]);
+    expect(onError).not.toHaveBeenCalled();
+    expect(pushError).toHaveBeenCalledTimes(1);
   });
 
   it('passes facet results through on success', async () => {
