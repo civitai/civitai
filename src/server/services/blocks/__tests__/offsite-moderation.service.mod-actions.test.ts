@@ -315,6 +315,11 @@ describe('delistListing', () => {
     const OFFSITE_OWNER = 722;
     const OFFSITE_REASON = 'destination page collects card details';
 
+    const LOCKED_ID = 'apl_locked_target';
+    const LOCKED_SLUG = 'self-pulled-widget';
+    const LOCKED_OWNER = 833;
+    const LOCKED_REASON = 'confirmed trademark impersonation';
+
     it('ON-SITE: notifies the owner with app-listing-hidden carrying the mod reason', async () => {
       mockRead.appListing.findUnique.mockResolvedValueOnce({
         ...onsiteListing('approved'),
@@ -355,6 +360,42 @@ describe('delistListing', () => {
         where: { id: BLOCK_ID, status: 'approved' },
         data: { status: 'suspended' },
       });
+    });
+
+    /**
+     * 🔴 The pre-state is `removed`, NOT `approved` — this is the ENFORCED-TAKEDOWN
+     * variant: the owner had self-unpublished, and this delist makes the last event a
+     * mod takedown, which is what permanently forbids `republishOwnListing`. It is the
+     * delist the owner most needs told about, and it is the case a status-gated notify
+     * would silently skip while every `approved`-pre-state test stayed green.
+     */
+    it('ON-SITE, already REMOVED: the enforced-takedown delist still notifies the owner', async () => {
+      mockRead.appListing.findUnique.mockResolvedValueOnce({
+        ...onsiteListing('removed'),
+        id: LOCKED_ID,
+        slug: LOCKED_SLUG,
+        name: 'Self Pulled Widget',
+        userId: LOCKED_OWNER,
+      });
+
+      await delistListing({
+        input: { appListingId: LOCKED_ID, reason: LOCKED_REASON },
+        reviewerUserId: REVIEWER,
+      });
+
+      expect(mockNotify).toHaveBeenCalledTimes(1);
+      expect(mockNotify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'app-listing-hidden',
+          userId: LOCKED_OWNER,
+          details: expect.objectContaining({
+            slug: LOCKED_SLUG,
+            name: 'Self Pulled Widget',
+            listingId: LOCKED_ID,
+            reason: LOCKED_REASON,
+          }),
+        })
+      );
     });
 
     it('OFF-SITE: still notifies its own owner with its own reason (pinned, not dropped)', async () => {
