@@ -521,7 +521,12 @@ export default function ModelDetailsV2({
   });
   const handleUnpublishModel = async () => {
     try {
-      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch({ id });
+      // The client's global default is `staleTime: Infinity` (`src/utils/trpc.ts`), and `fetchQuery`
+      // applies it — so without this the dialog can show a Buzz figure cached from an earlier open.
+      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch(
+        { id },
+        { staleTime: 0 }
+      );
       const exemptNote =
         refund.exemptBuyerCount > 0
           ? ` ${refund.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access and are not refunded.`
