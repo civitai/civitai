@@ -74,7 +74,7 @@ export async function getMyAnnouncements(userId: number): Promise<AnnouncementRo
       id: row.id,
       title: row.title,
       content: row.content,
-      domain: row.domain as string[],
+      domain: [...new Set(row.domain as string[])],
       startsAt: row.startsAt,
       endsAt: row.endsAt,
       disabled: row.disabled,

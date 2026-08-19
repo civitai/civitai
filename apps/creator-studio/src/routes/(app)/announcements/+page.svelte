@@ -8,23 +8,26 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  let editing = $state<AnnouncementRow | null>(null);
+  // The id, not the row: a save invalidates `data`, and holding the old object would keep the
+  // composer editing a snapshot that no longer matches what is stored.
+  let editingId = $state<number | null>(null);
   let composing = $state(false);
 
+  const editing = $derived(data.announcements.find((a) => a.id === editingId) ?? null);
   const open = $derived(composing || editing !== null);
 
   function startNew() {
-    editing = null;
+    editingId = null;
     composing = true;
   }
 
   function startEdit(announcement: AnnouncementRow) {
-    editing = announcement;
+    editingId = announcement.id;
     composing = true;
   }
 
   function close() {
-    editing = null;
+    editingId = null;
     composing = false;
   }
 </script>
@@ -45,7 +48,7 @@
   <AllowanceNotice allowance={data.allowance} error={data.allowanceError} />
 
   {#if open}
-    {#key editing?.id ?? 'new'}
+    {#key editingId ?? 'new'}
       <AnnouncementComposer
         announcement={editing}
         allowance={data.allowance}

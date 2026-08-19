@@ -1,12 +1,14 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { enhance, applyAction } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import type { ActionResult } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Switch } from '@civitai/ui/components/ui/switch/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import {
     CONTENT_MAX,
     DEFAULT_DOMAIN,
@@ -33,8 +35,8 @@
     onDone: () => void;
   } = $props();
 
-  // Seeded once from the prop; the parent keys this component on the announcement being edited, so a
-  // different subject remounts rather than merging into a half-typed draft.
+  // Only the initial field values are frozen; everything rendered below reads the live prop, so a
+  // row refreshed under us cannot leave a stale id in the hidden input.
   const seed = untrack(() => announcement);
 
   const toLocalInput = (value: Date | string | null | undefined) => {
@@ -46,7 +48,7 @@
   let title = $state(seed?.title ?? '');
   let content = $state(seed?.content ?? '');
   let domains = $state<AnnouncementDomain[]>(
-    seed?.domain?.length ? (seed.domain as AnnouncementDomain[]) : [DEFAULT_DOMAIN]
+    seed?.domain?.length ? [...new Set(seed.domain as AnnouncementDomain[])] : [DEFAULT_DOMAIN]
   );
   let profileOnly = $state(seed?.profileOnly ?? false);
   let startsAt = $state(toLocalInput(seed?.startsAt));
@@ -61,18 +63,19 @@
   const allowState = $derived(allowance ? allowanceState(allowance) : null);
   // Profile-only never spends a slot, so it stays postable in every allowance state.
   const blocked = $derived(!profileOnly && allowState !== null && allowState !== 'available');
+  // The migrated profile banners carry no subject, and the server requires one on every write.
+  const needsTitle = $derived(!!announcement && announcement.title.trim() === '');
 
-  function toggleDomain(domain: AnnouncementDomain) {
-    if (domain === 'all') {
-      domains = ['all'];
+  function setDomains(next: string[]) {
+    if (!next.length) {
+      domains = [DEFAULT_DOMAIN];
       return;
     }
-    const without = domains.filter((d) => d !== domain && d !== 'all');
-    domains = domains.includes(domain)
-      ? without.length
-        ? without
-        : [DEFAULT_DOMAIN]
-      : [...without, domain];
+    // `all` is every audience, so pairing it with a specific one is a contradiction; whichever was
+    // just added wins.
+    const added = next.filter((d) => !domains.includes(d as AnnouncementDomain));
+    if (added.includes('all')) domains = ['all'];
+    else domains = next.filter((d) => d !== 'all') as AnnouncementDomain[];
   }
 
   async function onCoverChange(event: Event) {
@@ -83,7 +86,9 @@
     coverError = null;
     uploading = true;
     try {
-      cover = await uploadCover(file);
+      const next = await uploadCover(file);
+      if (cover) URL.revokeObjectURL(cover.previewUrl);
+      cover = next;
     } catch (e) {
       coverError = e instanceof Error ? e.message : 'The image could not be uploaded.';
       input.value = '';
@@ -96,6 +101,9 @@
     submitting = true;
     return async ({ result }: { result: ActionResult }) => {
       submitting = false;
+      // A custom callback replaces the default one, which invalidates before it applies. Without
+      // this the list and the allowance count keep showing pre-write state.
+      if (result.type === 'success') await invalidateAll();
       await applyAction(result);
       if (result.type === 'success') onDone();
     };
@@ -109,10 +117,10 @@
   class="rounded-xl border border-dark-4 bg-dark-6 p-5"
 >
   <h2 class="text-base font-semibold text-white">
-    {seed ? 'Edit announcement' : 'New announcement'}
+    {announcement ? 'Edit announcement' : 'New announcement'}
   </h2>
 
-  {#if seed}<input type="hidden" name="id" value={seed.id} />{/if}
+  {#if announcement}<input type="hidden" name="id" value={announcement.id} />{/if}
   <input type="hidden" name="domain" value={domains.join(',')} />
   <input type="hidden" name="profileOnly" value={profileOnly ? 'on' : 'false'} />
   {#if cover}
@@ -134,7 +142,13 @@
         placeholder="What are you announcing?"
         required
       />
-      <span class="text-xs text-dark-2">{title.length}/{TITLE_MAX}</span>
+      {#if needsTitle}
+        <span class="text-xs text-dark-2">
+          This profile message has no subject yet — add one to save it.
+        </span>
+      {:else}
+        <span class="text-xs text-dark-2">{title.length}/{TITLE_MAX}</span>
+      {/if}
     </div>
 
     <div class="flex flex-col gap-1.5">
@@ -154,13 +168,12 @@
     <div class="flex flex-col gap-1.5">
       <Label for="announcement-cover">Cover image</Label>
       <div class="flex items-center gap-3">
-        <input
+        <Input
           id="announcement-cover"
           type="file"
           accept={COVER_ACCEPT}
           onchange={onCoverChange}
           disabled={uploading}
-          class="text-sm text-dark-2 file:mr-3 file:rounded-md file:border-0 file:bg-dark-4 file:px-3 file:py-1.5 file:text-sm file:text-white"
         />
         {#if uploading}<span class="text-sm text-dark-2">Uploading…</span>{/if}
       </div>
@@ -170,31 +183,31 @@
           alt=""
           class="mt-2 h-28 w-auto rounded-lg border border-dark-4"
         />
-      {:else if seed?.coverUrl}
+      {:else if announcement?.coverUrl}
         <p class="text-xs text-dark-2">A cover is already set. Choosing a file replaces it.</p>
       {/if}
       {#if coverError}<p class="text-sm text-red-300">{coverError}</p>{/if}
     </div>
 
-    <div class="flex flex-col gap-1.5">
-      <Label>Where it shows</Label>
-      <div class="flex flex-wrap gap-2">
+    <fieldset class="flex flex-col gap-1.5">
+      <legend class="text-sm font-medium text-white">Where it shows</legend>
+      <ToggleGroup
+        type="multiple"
+        variant="outline"
+        spacing={2}
+        value={domains}
+        onValueChange={setDomains}
+      >
         {#each DOMAIN_COLORS as domain (domain)}
-          <button
-            type="button"
-            onclick={() => toggleDomain(domain)}
-            class="rounded-lg border px-3 py-1.5 text-left text-sm transition-colors {domains.includes(
-              domain
-            )
-              ? 'border-blue-4 bg-blue-4/10 text-white'
-              : 'border-dark-4 text-dark-2 hover:border-dark-3'}"
-          >
-            <span class="block font-medium">{DOMAIN_LABELS[domain].label}</span>
-            <span class="block text-xs text-dark-2">{DOMAIN_LABELS[domain].hint}</span>
-          </button>
+          <ToggleGroupItem value={domain} aria-label={DOMAIN_LABELS[domain].label}>
+            {DOMAIN_LABELS[domain].label}
+          </ToggleGroupItem>
         {/each}
-      </div>
-    </div>
+      </ToggleGroup>
+      <span class="text-xs text-dark-2">
+        {domains.map((d) => DOMAIN_LABELS[d].hint).join(' · ')}
+      </span>
+    </fieldset>
 
     <div class="grid gap-4 sm:grid-cols-2">
       <div class="flex flex-col gap-1.5">
@@ -250,7 +263,7 @@
 
     <div class="flex gap-2">
       <Button type="submit" disabled={submitting || uploading || blocked}>
-        {submitting ? 'Saving…' : seed ? 'Save changes' : 'Post announcement'}
+        {submitting ? 'Saving…' : announcement ? 'Save changes' : 'Post announcement'}
       </Button>
       <Button type="button" variant="ghost" onclick={onDone}>Cancel</Button>
     </div>

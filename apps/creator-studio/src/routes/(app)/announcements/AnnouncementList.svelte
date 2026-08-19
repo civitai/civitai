@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance, applyAction } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import type { ActionResult } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
@@ -39,7 +40,13 @@
     deletingId = id;
     return async ({ result }: { result: ActionResult }) => {
       deletingId = null;
-      confirmingId = null;
+      // A custom callback replaces the default one, which invalidates before it applies — without
+      // this the deleted row stays on screen and reads as a silent failure. The confirmation stays
+      // open on failure so the error is next to the row it belongs to.
+      if (result.type === 'success') {
+        confirmingId = null;
+        await invalidateAll();
+      }
       await applyAction(result);
     };
   };
@@ -67,7 +74,9 @@
         {/if}
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-2">
-            <h3 class="truncate font-semibold text-white">{announcement.title}</h3>
+            {#if announcement.title}
+              <h3 class="truncate font-semibold text-white">{announcement.title}</h3>
+            {/if}
             <span class="rounded-full border border-dark-4 px-2 py-0.5 text-xs text-dark-2">
               {status(announcement)}
             </span>
@@ -76,7 +85,7 @@
                 Profile only
               </span>
             {/if}
-            {#each announcement.domain as domain (domain)}
+            {#each announcement.domain as domain, i (`${announcement.id}:${i}`)}
               <span class="rounded-full border border-dark-4 px-2 py-0.5 text-xs text-dark-2">
                 {DOMAIN_LABELS[domain as AnnouncementDomain]?.label ?? domain}
               </span>
