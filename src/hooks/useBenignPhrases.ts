@@ -5,8 +5,9 @@ import { trpc } from '~/utils/trpc';
 /**
  * The moderator benign lists, for gates that run in the browser. Search queries Meili
  * from the client, so the POI / minor / profanity checks there have no server hop to
- * strip on — see `getClientBenignLists`. Edge-cached for an hour server-side and held
- * indefinitely per session, so a moderator edit reaches a search box within the hour.
+ * strip on — see `getClientBenignLists`. Edge-cached for an hour server-side and refetched
+ * hourly per session, so both an addition and a REMOVAL reach an open search box in about
+ * that.
  */
 export function useBenignPhrases() {
   // Finite staleTime, deliberately. The reason a moderator DELETES a benign phrase is that it
@@ -23,7 +24,12 @@ export function useBenignPhrases() {
 
   return useMemo(
     () => ({
-      profanityWords: profanityWords ?? [],
+      // `?? null`, NOT `?? []`. The two mean different things downstream: `null` is "no
+      // moderator row, use the list shipped in the bundle", `[]` is "a moderator deleted every
+      // entry, honour that". Collapsing them here would re-read three ordinary states — before
+      // the query resolves, after a failed fetch, and before the seed migration is applied —
+      // as a deliberate emptying, dropping the ~450 shipped words on every one of them.
+      profanityWords: profanityWords ?? null,
       /**
        * Whether the fetch has SETTLED — not whether it succeeded. Until it settles, `strip` is
        * the identity function and the gates judge the RAW query; that direction is safe (they

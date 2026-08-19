@@ -43,9 +43,19 @@ export const systemRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(async ({ ctx }) => {
       const lists = await getClientBenignLists();
-      // A fail-open result is a 200 the edge would otherwise hold for an hour. Zero the TTL
-      // so the next request retries instead of pinning empty whitelists site-wide.
-      if (!lists.available && ctx.cache) ctx.cache.skip = true;
+      // A fail-open result is a 200 the edge would otherwise hold for an hour, pinning empty
+      // whitelists site-wide off one transient error. `ctx.cache.skip` does NOT work from
+      // here: `edgeCacheIt` reads it to compute the TTL BEFORE it calls this resolver, so it
+      // is only usable by something upstream of the procedure. `canCache` is read after.
+      //
+      // All three, not just `canCache`: with `canCache: false` the middleware skips the block
+      // that assigns the TTLs, so they keep the context defaults — which for an ANONYMOUS
+      // caller are 60, not 0, and `s-maxage=60` would still go out.
+      if (!lists.available && ctx.cache) {
+        ctx.cache.canCache = false;
+        ctx.cache.edgeTTL = 0;
+        ctx.cache.browserTTL = 0;
+      }
       return lists;
     }),
   getDbKV: publicProcedure
