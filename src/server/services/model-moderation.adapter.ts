@@ -1,4 +1,5 @@
 import { uniq } from 'lodash-es';
+import type { XGuardModerationOutput } from '@civitai/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -64,14 +65,18 @@ export function isModelTextNsfw({ triggeredLabels }: { triggeredLabels?: string[
   return (triggeredLabels ?? []).some((label) => LEVEL_LABEL_SET.has(label.toLowerCase()));
 }
 
-/** Union of `matchedTerms.text` across the labels that actually triggered. */
-function collectMatchedTerms(output: {
-  results?: Array<{ label: string; matchedTerms?: { text?: string[] } }>;
-  triggeredLabels?: string[];
-}): string[] {
-  const triggered = new Set((output.triggeredLabels ?? []).map((l) => l.toLowerCase()));
+/**
+ * Union of `matchedTerms.text` across the labels that actually triggered. The webhook passes the
+ * raw `XGuardModerationOutput`, whose `results` cover all 15 submitted labels — not just the ones
+ * that fired — so the `triggered` filter below is load-bearing, not defensive.
+ */
+function collectMatchedTerms({
+  results,
+  triggeredLabels,
+}: Pick<XGuardModerationOutput, 'results' | 'triggeredLabels'>): string[] {
+  const triggered = new Set((triggeredLabels ?? []).map((l) => l.toLowerCase()));
   return uniq(
-    (output.results ?? [])
+    (results ?? [])
       .filter((r) => triggered.has(r.label.toLowerCase()))
       .flatMap((r) => r.matchedTerms?.text ?? [])
   );
@@ -117,23 +122,30 @@ export const modelModerationAdapter: ModerationAdapter = {
     const stored = model.lockedProperties ?? [];
     // A stored lock is a moderator's call: minor-flagging sets nsfw:false and locks it.
     // Same condition the profanity branch uses, so behaviour is identical to today.
-    if (stored.includes('nsfw')) return;
+    if (stored.includes('nsfw')) {
+      // A prior call may have written nsfw:true and then died before this ran — EntityModeration
+      // is already Succeeded by then, so nothing else revisits the row. Repair the drift on any
+      // replayed callback; idempotent single-row SQL, so a no-op when nsfw is already false.
+      if (model.nsfw) await updateModelNsfwLevels([entityId]);
+      return;
+    }
 
     const meta = (model.meta ?? {}) as ModelMeta;
+    const nextMeta: ModelMeta = {
+      ...meta,
+      textModeration: {
+        matchedTerms: collectMatchedTerms(output),
+        triggeredLabels: triggeredLabels ?? [],
+        scannedAt: new Date().toISOString(),
+      },
+    };
 
     await dbWrite.model.update({
       where: { id: entityId },
       data: {
         nsfw: true,
         lockedProperties: uniq([...stored, 'nsfw']),
-        meta: {
-          ...meta,
-          textModeration: {
-            matchedTerms: collectMatchedTerms(output as never),
-            triggeredLabels: triggeredLabels ?? [],
-            scannedAt: new Date().toISOString(),
-          },
-        } as never,
+        meta: nextMeta,
       },
     });
 

@@ -80,6 +80,10 @@ describe('modelModerationAdapter.applyResult', () => {
   });
 
   // T4 — a stored lock is a moderator's call. Minor-flagging sets nsfw:false and locks it.
+  // FINDING 1 — a locked nsfw:true row can still be stuck at SFW browsing level / stale in
+  // search if a prior call wrote nsfw and died before running updateModelNsfwLevels; since
+  // EntityModeration is already Succeeded by then, a replayed callback is the only thing that
+  // gets another chance to repair it. nsfw:false has no drift to repair.
   it.each([false, true])('does not write when nsfw is locked (stored nsfw=%s)', async (nsfw) => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({
       id: 1,
@@ -92,6 +96,31 @@ describe('modelModerationAdapter.applyResult', () => {
     await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
 
     expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+    if (nsfw) {
+      expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
+    } else {
+      expect(updateModelNsfwLevels).not.toHaveBeenCalled();
+    }
+  });
+
+  // FINDING 2 — every other fixture uses lockedProperties: [], which cannot distinguish
+  // `uniq([...stored, 'nsfw'])` from a flat `['nsfw']` that would silently wipe an existing lock.
+  it('preserves an existing non-nsfw lock entry when adding the nsfw lock', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      id: 1,
+      nsfw: false,
+      lockedProperties: ['poi'],
+      meta: {},
+      userId: 99,
+    });
+
+    await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
+
+    expect(dbMock.dbWrite.model.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ lockedProperties: ['poi', 'nsfw'] }),
+      })
+    );
   });
 
   // T5 — the shadow phase must not apply.
@@ -134,6 +163,56 @@ describe('modelModerationAdapter.applyResult', () => {
     const data = dbMock.dbWrite.model.update.mock.calls[0][0].data;
     expect(data.meta.textModeration.matchedTerms).toEqual(['matched phrase']);
     expect(data.meta.textModeration.triggeredLabels).toEqual(['Suggestive']);
+  });
+
+  // FINDING 3 — `okOutput` builds `results` from exactly `triggeredLabels`, so every result is a
+  // triggered one there; that can't exercise the filter that is collectMatchedTerms's whole reason
+  // to exist. The real webhook passes the RAW XGuardModerationOutput (not the slimmed one), so
+  // `results` carries all 15 submitted labels, including non-triggered ones that may still carry
+  // matchedTerms — and label casing between `results` and `triggeredLabels` is not guaranteed to
+  // match.
+  it('excludes matchedTerms from non-triggered labels and matches triggered ones case-insensitively', async () => {
+    const output = {
+      blocked: false,
+      triggeredLabels: ['explicit', 'Suggestive'],
+      results: [
+        {
+          label: 'Explicit',
+          score: 0.9,
+          threshold: 0.5,
+          matchedTerms: { text: ['explicit term'], positivePrompt: [], negativePrompt: [] },
+        },
+        // Casing differs from `triggeredLabels` above — must still match.
+        {
+          label: 'SUGGESTIVE',
+          score: 0.9,
+          threshold: 0.5,
+          matchedTerms: { text: ['suggestive term'], positivePrompt: [], negativePrompt: [] },
+        },
+        // Not triggered (score < threshold) but still carries matchedTerms, as the raw payload
+        // does — must be excluded.
+        {
+          label: 'NSFW',
+          score: 0.1,
+          threshold: 0.5,
+          matchedTerms: { text: ['should be excluded'], positivePrompt: [], negativePrompt: [] },
+        },
+      ],
+    } as never;
+
+    await modelModerationAdapter.applyResult?.({
+      entityId: 1,
+      workflowId: 'wf-1',
+      blocked: false,
+      triggeredLabels: ['explicit', 'Suggestive'],
+      output,
+    });
+
+    const data = dbMock.dbWrite.model.update.mock.calls[0][0].data;
+    expect([...data.meta.textModeration.matchedTerms].sort()).toEqual([
+      'explicit term',
+      'suggestive term',
+    ]);
   });
 });
 
