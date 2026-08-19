@@ -205,6 +205,40 @@ function paidAccessCache(entityType: PaidAccessEntityType) {
 }
 
 /**
+ * Which of these models currently have a sale running, and when the soonest one ends.
+ *
+ * Fetched separately from the models themselves. The feed query has several FROM variants and is a hot
+ * path, and a sale is time-varying data that would have to be re-indexed at every window edge to ride
+ * along in the search document — so it rides in neither. One batched lookup keyed by the ids already on
+ * screen, the way cosmetics and version images are already fetched.
+ *
+ * Same predicate as the resolver, for the same reasons: permanent gates only (a timed early-access
+ * window is never discounted), and the sale's author must own the model.
+ */
+export async function getActiveSalesForModels(
+  modelIds: number[],
+  now: Date = new Date()
+): Promise<Record<number, { endsAt: Date }>> {
+  if (!modelIds.length) return {};
+  const rows = await dbRead.$queryRaw<{ modelId: number; endsAt: Date }[]>`
+    SELECT mv."modelId" AS "modelId", MIN(s."endsAt") AS "endsAt"
+    FROM "ModelVersionSaleItem" si
+    JOIN "ModelVersionSale" s ON s.id = si."saleId"
+    JOIN "ModelVersion" mv ON mv.id = si."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+    WHERE mv."modelId" IN (${Prisma.join(modelIds)})
+      AND mv.status = 'Published'::"ModelStatus"
+      AND pa."timeframeDays" IS NULL
+      AND s."userId" = m."userId"
+      AND s."startsAt" <= ${now} AND s."endsAt" > ${now}
+      AND (s."canceledAt" IS NULL OR s."canceledAt" > ${now})
+    GROUP BY mv."modelId"
+  `;
+  return Object.fromEntries(rows.map((r) => [Number(r.modelId), { endsAt: r.endsAt }]));
+}
+
+/**
  * Sales for ONE version, read from the PRIMARY. The charge path must never price from the cached window:
  * entries live an hour with SWR off and Creator Studio's cache bust is fire-and-forget, so a cancelled sale
  * could otherwise keep discounting real purchases long after the creator ended it.

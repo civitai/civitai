@@ -97,7 +97,10 @@ function ModelCardContent({ data }: Props) {
     [isEarlyAccess, isUpdated, theme, colorScheme]
   );
 
-  const { useModelVersionRedirect, activeBaseModels } = useModelCardContext();
+  const { useModelVersionRedirect, activeBaseModels, salesByModelId } = useModelCardContext();
+  // Absent until the batched lookup lands, so the badge appears a beat after the card — deliberate: a
+  // sale is worth an extra request, not a slower feed.
+  const onSale = !!salesByModelId?.[data.id];
   const cardBaseModels = getCardBaseModels(
     data as Parameters<typeof getCardBaseModels>[0],
     activeBaseModels
@@ -162,6 +165,14 @@ function ModelCardContent({ data }: Props) {
               baseModel={data.version.baseModel}
               baseModels={cardBaseModels}
             />
+
+            {onSale && (
+              <Badge className={cardClasses.chip} variant="filled" radius="xl" color="green">
+                <Text c="white" size="xs" tt="capitalize">
+                  On sale
+                </Text>
+              </Badge>
+            )}
 
             {(isNew || isUpdated || isEarlyAccess) && (
               <Badge
