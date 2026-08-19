@@ -3,15 +3,19 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { REWARD_CONFIG_CONFLICT } from '~/shared/constants/reward-config.constants';
 import {
+  configFromStoredValue,
   getStoredRewardConfig,
   invalidateRewardConfigCache,
   MAX_AWARD_AMOUNT,
   MAX_CAP,
+  resolveFromConfig,
   resolveRewardConfig,
   REWARD_CONFIG_KEY,
   rewardOverrideSchema,
   setRewardConfig,
+  storedViewOf,
 } from '~/server/rewards/reward-config';
+import { buildRewardsPayload } from '~/components/Rewards/reward-config-panel.utils';
 
 // The compiled definition's values. Every fallback below asserts against THIS
 // object rather than a repeated literal, so a fallback that lands on some other
@@ -676,5 +680,110 @@ describe('getStoredRewardConfig', () => {
     await getStoredRewardConfig();
 
     expect(findUniqueWrite).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The panel builds the row and the grant path reads it, and nothing else sits
+// between them. Driving the REAL builder into the REAL writer and out through the
+// REAL resolver is the only place the two halves are checked against each other —
+// each half's own tests pass with the row shape they happen to agree on.
+describe('the round trip a moderator makes', () => {
+  const panelRow = {
+    type: 'testReward',
+    capOverridable: true,
+    defaults: { awardAmount: DEFAULTS.awardAmount, cap: DEFAULTS.cap },
+    effective: { enabled: false, awardAmount: DEFAULTS.awardAmount, cap: DEFAULTS.cap },
+  };
+
+  it('switches a stored-off reward on, and the row still names it', async () => {
+    storedConfig({ rewards: { testReward: { enabled: false } } });
+    expect((await resolve()).enabled).toBe(false);
+
+    const payload = buildRewardsPayload({
+      rewards: [panelRow],
+      overrides: { testReward: { enabled: false } },
+      rows: { testReward: { enabled: true, awardAmount: '', cap: '' } },
+    });
+
+    // 🔴 This assertion, not the one below it, is what catches the defect.
+    //
+    // An absent entry resolves to enabled exactly as `{enabled:true}` does, so a
+    // builder that DROPS the reward on the way in still ends this test with the
+    // reward paying. That is precisely why the production bug was invisible: the
+    // row emptied itself and everything kept working, with nothing left to show
+    // an operator that they had decided anything.
+    expect(payload.testReward).toEqual({ enabled: true });
+
+    const written = await setRewardConfig({ rewards: payload }, 1);
+    invalidateRewardConfigCache();
+    storedConfig(written);
+
+    expect(await resolve()).toMatchObject({
+      enabled: true,
+      awardAmount: DEFAULTS.awardAmount,
+      cap: DEFAULTS.cap,
+    });
+  });
+
+  it('turns it back off through the same path', async () => {
+    storedConfig({ rewards: { testReward: { enabled: true } } });
+
+    const payload = buildRewardsPayload({
+      rewards: [{ ...panelRow, effective: { ...panelRow.effective, enabled: true } }],
+      overrides: { testReward: { enabled: true } },
+      rows: { testReward: { enabled: false, awardAmount: '', cap: '' } },
+    });
+
+    const written = await setRewardConfig({ rewards: payload }, 1);
+    invalidateRewardConfigCache();
+    storedConfig(written);
+
+    expect((await resolve()).enabled).toBe(false);
+  });
+});
+
+// The panel sends the hash it was last given as `expectedHash`. A writer that
+// hands back the hash it LOADED describes a row that no longer exists, and the
+// caller's next save is refused as somebody else's edit — a conflict dialog on a
+// screen with one person in front of it.
+describe('the hash a save hands back', () => {
+  it('is accepted by the next save, while the pre-write hash is refused', async () => {
+    storedConfig({ rewards: {} });
+    const before = (await getStoredRewardConfig()).hash;
+
+    const written = await setRewardConfig({ rewards: { testReward: { enabled: false } } }, 1);
+    const after = storedViewOf(written).hash;
+    // The row that is now on disk, for both attempts below.
+    findUniqueWrite.mockResolvedValue({ value: written });
+
+    // The control: without it this passes for a writer that returns a hash the
+    // guard ignores entirely.
+    await expect(setRewardConfig({ rewards: {} }, 1, { expectedHash: before })).rejects.toThrow(
+      REWARD_CONFIG_CONFLICT.stale
+    );
+
+    await expect(
+      setRewardConfig({ rewards: { testReward: { enabled: true } } }, 1, { expectedHash: after })
+    ).resolves.toBeDefined();
+  });
+});
+
+// The 60s per-pod memo is correct for the grant path — it runs on every reward
+// grant — and wrong for a moderator's screen, which is why the operator views
+// resolve a config they read themselves. Someone reading only the incident could
+// reasonably conclude "the cache was the bug" and delete it; the first assertion
+// here is what stops that, and the second is what would fail if the operator view
+// ever picked it up again.
+describe('the grant path keeps its cache while the operator view reads through', () => {
+  it('serves the memoised answer to a grant while a fresh read already sees the change', async () => {
+    storedConfig({ rewards: { testReward: { enabled: false } } });
+    expect((await resolve()).enabled).toBe(false);
+
+    storedConfig({ rewards: { testReward: { enabled: true } } });
+
+    expect((await resolve()).enabled).toBe(false);
+
+    const fresh = configFromStoredValue((await getStoredRewardConfig()).value);
+    expect(resolveFromConfig(fresh, 'testReward', DEFAULTS).enabled).toBe(true);
   });
 });

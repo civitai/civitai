@@ -61,6 +61,14 @@ const untouched = () => ({
   imagePostedToModel: row(),
 });
 
+// What an untouched form now writes: every reward records its switch, and only
+// its switch.
+const allOn = () => ({
+  dailyBoost: { enabled: true },
+  goodContent: { enabled: true },
+  imagePostedToModel: { enabled: true },
+});
+
 describe('initialDrafts', () => {
   // 🔴 The malformed row is the whole reason this feature exists, and it is the
   // one where `storedOverrides` returns `{}`. Seeding the switch from that
@@ -167,8 +175,8 @@ describe('buildRewardsPayload', () => {
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides, rows })).toEqual({
       dailyBoost: { enabled: false },
-      goodContent: { awardAmount: 1 },
-      imagePostedToModel: { awardAmount: 60 },
+      goodContent: { enabled: true, awardAmount: 1 },
+      imagePostedToModel: { enabled: true, awardAmount: 60 },
     });
   });
 
@@ -188,11 +196,17 @@ describe('buildRewardsPayload', () => {
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides, rows: untouched() })).toEqual({
       futureReward: { awardAmount: 5 },
+      ...allOn(),
     });
   });
 
-  it('writes nothing for a reward left at its defaults', () => {
-    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows: untouched() })).toEqual({});
+  // The amounts still follow the differs-from-the-default rule — nothing is
+  // written for an untouched award or cap — but `enabled` is recorded either way,
+  // because its default is ON and an absent entry cannot say a decision was made.
+  it('writes only the explicit on for a reward left at its defaults', () => {
+    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows: untouched() })).toEqual(
+      allOn()
+    );
   });
 
   it('removes an override when its input is cleared', () => {
@@ -200,14 +214,15 @@ describe('buildRewardsPayload', () => {
     const rows = { ...untouched(), goodContent: row({ awardAmount: '', cap: '50' }) };
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides, rows })).toEqual({
-      goodContent: { cap: 50 },
+      ...allOn(),
+      goodContent: { enabled: true, cap: 50 },
     });
   });
 
   it('never writes a cap the operator typed for a reward with multiple caps', () => {
     const rows = { ...untouched(), imagePostedToModel: row({ cap: '9999' }) };
 
-    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows })).toEqual({});
+    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows })).toEqual(allOn());
   });
 
   // No input is rendered for that reward, so an ordinary save about something
@@ -217,20 +232,35 @@ describe('buildRewardsPayload', () => {
     const overrides = { imagePostedToModel: { cap: 5000 } };
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides, rows: untouched() })).toEqual({
-      imagePostedToModel: { cap: 5000 },
+      ...allOn(),
+      imagePostedToModel: { enabled: true, cap: 5000 },
     });
   });
 
-  it('records only the off state, never an explicit on', () => {
+  // 🔴 The defect this replaced: only the `false` was ever written, so switching a
+  // reward ON deleted its override, and with nothing else differing from the
+  // compiled defaults the reward left the payload entirely. In production that
+  // emptied the row — two rewards turned on, `{"rewards":{}}` written — and the
+  // panel then had nothing to show for the save.
+  //
+  // `enabled: true` and an absent entry resolve identically at the grant path, so
+  // this changes what is RECORDED, not what pays. That is the point: the row is
+  // the only place a decision to enable can live.
+  it('records an explicit on for a reward switched back on', () => {
+    const overrides = { dailyBoost: { enabled: false } };
     const rows = { ...untouched(), dailyBoost: row({ enabled: true }) };
 
-    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows })).toEqual({});
+    const payload = buildRewardsPayload({ rewards: REWARDS, overrides, rows });
+
+    expect(payload.dailyBoost).toEqual({ enabled: true });
+    expect(Object.keys(payload)).toContain('dailyBoost');
   });
 
   it('coerces the inputs to numbers, since they are strings in the form', () => {
     const rows = { ...untouched(), goodContent: row({ awardAmount: '2', cap: '100' }) };
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows }).goodContent).toEqual({
+      enabled: true,
       awardAmount: 2,
       cap: 100,
     });
@@ -240,6 +270,7 @@ describe('buildRewardsPayload', () => {
     const rows = { ...untouched(), goodContent: row({ awardAmount: '0' }) };
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows }).goodContent).toEqual({
+      enabled: true,
       awardAmount: 0,
     });
   });
@@ -288,7 +319,8 @@ describe('buildSetInput', () => {
     const rows = { ...untouched(), goodContent: row({ awardAmount: '2' }) };
 
     expect(buildSetInput({ rewards: REWARDS, overrides: {}, rows, hash: 'h' }).rewards).toEqual({
-      goodContent: { awardAmount: 2 },
+      ...allOn(),
+      goodContent: { enabled: true, awardAmount: 2 },
     });
   });
 });

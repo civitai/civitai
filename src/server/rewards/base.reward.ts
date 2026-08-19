@@ -13,8 +13,8 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
-import type { ResolvedRewardConfig } from '~/server/rewards/reward-config';
-import { resolveRewardConfig } from '~/server/rewards/reward-config';
+import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
+import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
@@ -516,19 +516,33 @@ export function createBuzzEvent<T>({
 
   /**
    * The operator's answer to "which rewards are on, and at what amounts?".
-   * Resolves through the same `resolveConfig` the grant path uses, so what it
-   * reports and what gets paid cannot drift.
+   * Resolves through the same rules the grant path uses, so what it reports and
+   * what gets paid cannot drift.
+   *
+   * 🔴 Takes the stored config rather than reading it, and the argument is
+   * required on purpose. The grant path's `resolveConfig` memoises per pod for a
+   * minute; an operator view that quietly picked that up would report a
+   * minute-old answer on whichever pod served it, which is the state this
+   * signature exists to make unrepresentable. Callers read the row themselves.
    */
-  const describeConfig = async () => {
-    const config = await resolveConfig();
+  const describeConfig = async (config: RewardConfig) => {
+    const resolved = resolveFromConfig(config, type, {
+      awardAmount,
+      cap: defaultCap,
+      capOverridable,
+    });
     return {
       type,
       visible,
       onDemand: isOnDemand,
       capOverridable,
       defaults: { awardAmount, cap: defaultCap },
-      effective: { enabled: config.enabled, awardAmount: config.awardAmount, cap: config.cap },
-      rejected: config.rejected,
+      effective: {
+        enabled: resolved.enabled,
+        awardAmount: resolved.awardAmount,
+        cap: resolved.cap,
+      },
+      rejected: resolved.rejected,
     };
   };
 

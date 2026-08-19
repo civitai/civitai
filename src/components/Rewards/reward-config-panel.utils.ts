@@ -130,10 +130,20 @@ export function buildRewardsPayload({
       );
 
     const entry: StoredOverride = {};
+    // 🔴 `enabled` is written either way, and is the one field that does not
+    // follow the differs-from-the-default rule below.
+    //
+    // Its compiled default is ON and there is no compiled OFF, so "no entry" and
+    // "an operator turned this on" are the same row. Writing only the `false`
+    // meant switching a reward on DELETED its override — and if nothing else on
+    // that reward differed from its defaults, dropped the reward from the payload
+    // entirely, leaving no record that anyone decided anything. Two rewards
+    // turned on that way emptied the row in production and read back as a save
+    // that never happened.
+    entry.enabled = row.enabled;
     // Only what DIFFERS from the compiled default is stored, so a later change to
     // that default flows through instead of being frozen behind an override
     // written months earlier. An empty input therefore removes the override.
-    if (!row.enabled) entry.enabled = false;
     if (row.awardAmount !== '') entry.awardAmount = Number(row.awardAmount);
 
     if (reward.capOverridable) {
