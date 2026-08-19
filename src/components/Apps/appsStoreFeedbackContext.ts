@@ -10,7 +10,11 @@ import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.co
  * category, sort and the free-text search box all live in the query string (see
  * `useAppsStoreQueryParams`). So the context is a straight read of the resolved
  * filter state, and it is deliberately built HERE rather than inline in the page:
- * the clipping below is load-bearing and needs to be reachable by a test.
+ * the normalisation below is load-bearing and needs to be reachable by a test.
+ *
+ * `query` is the one value that is neither a closed set nor bounded, so it is the
+ * only one that gets normalised — trimmed (a STORAGE-SHAPE decision, see below) and
+ * then clipped (a VALIDITY one).
  *
  * 🔴 WHY `query` IS CLIPPED. `feedbackContextSchema.filters` bounds each value at
  * `FEEDBACK_FILTER_VALUE_MAX_LENGTH`, and a zod `max()` REJECTS — it does not
@@ -25,7 +29,29 @@ import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.co
  */
 
 /**
- * Clip `value` to the schema bound WITHOUT splitting a surrogate pair.
+ * Trim `value`, then clip it to the schema bound WITHOUT splitting a surrogate pair.
+ *
+ * WHY TRIM, AND WHY IT HAD TO BE DECIDED BEFORE ROWS ACCUMULATED. `resolveAppsStoreFilters`
+ * trims only to TEST emptiness and then keeps the original, so `'  upscale  '` reaches this
+ * builder with its whitespace intact and would be stored as a value distinct from
+ * `'upscale'` — fragmenting every later `GROUP BY` over the column, and irreversibly so
+ * once rows carrying both shapes exist.
+ *
+ * That surrounding whitespace is provably NOT signal: the store's own matcher is
+ * `debouncedSearch.trim().toLowerCase()` (`AppListingsMarketplaceBody.tsx`), so a leading or
+ * trailing space cannot change which listings the reporter was looking at and therefore
+ * cannot be the behaviour any report describes. Dropping it loses nothing and is what makes
+ * the stored terms comparable.
+ *
+ * CASE IS DELIBERATELY KEPT. The matcher lowercases too, so case is equally irrelevant to
+ * matching — but unlike whitespace it is worth reading (`'BitDex'` names the app the
+ * reporter typed), and `lower()` recovers grouping at read time whereas folded case cannot
+ * be recovered at all. Normalise away only what can never be wanted back.
+ *
+ * ORDER MATTERS: trim, then clip, then the surrogate guard. Trimming first means the bound
+ * applies to the real term rather than to whitespace that is about to be discarded, and
+ * `trim` removes only whitespace so it can never split a pair or create the lone surrogate
+ * the guard below exists for.
  *
  * 🔴 `slice` cuts on UTF-16 code units, not characters, and the bound is a unit count.
  * An astral-plane character (any emoji) occupies two units, so a clip point that falls
@@ -41,8 +67,8 @@ import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.co
  * low surrogate could only have followed it, and the slice removed everything after.
  * Dropping it is therefore the whole fix, and it cannot touch a well-formed clip.
  */
-const clipFilterValue = (value: string) =>
-  value.slice(0, FEEDBACK_FILTER_VALUE_MAX_LENGTH).replace(/[\uD800-\uDBFF]$/, '');
+const normalizeFilterValue = (value: string) =>
+  value.trim().slice(0, FEEDBACK_FILTER_VALUE_MAX_LENGTH).replace(/[\uD800-\uDBFF]$/, '');
 
 export function buildAppsStoreFeedbackContext({
   filters,
@@ -64,7 +90,7 @@ export function buildAppsStoreFeedbackContext({
       // is a different claim from "the viewer had no category selected".
       category: filters.category ?? 'none',
       sort: filters.sort,
-      query: clipFilterValue(filters.query),
+      query: normalizeFilterValue(filters.query),
     },
   };
 }

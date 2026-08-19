@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { buildAppsStoreFeedbackContext } from '~/components/Apps/appsStoreFeedbackContext';
-import { APPS_STORE_DEFAULTS } from '~/components/Apps/appsStoreQueryParams';
+import {
+  APPS_STORE_DEFAULTS,
+  resolveAppsStoreFilters,
+} from '~/components/Apps/appsStoreQueryParams';
 import { createFeedbackSchema } from '~/server/schema/feedback.schema';
 import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 
@@ -72,6 +75,111 @@ describe('buildAppsStoreFeedbackContext', () => {
     const context = buildAppsStoreFeedbackContext({ filters: filters() });
     expect(context?.path).toBeUndefined();
     expect(throughSchema(context)?.filters?.kind).toBe('all');
+  });
+
+  /**
+   * 🔴 THE STORAGE-SHAPE CASE. Decided while the table held no rows, because it stops
+   * being free the moment it does: a column carrying both `'upscale'` and `'  upscale  '`
+   * fragments every later aggregate over it, and no later change can un-mix the rows.
+   *
+   * `resolveAppsStoreFilters` trims only to TEST emptiness and then keeps the original,
+   * so the untrimmed term really does reach this builder — the first assertion below
+   * pins that premise rather than assuming it.
+   *
+   * Whitespace is droppable because it is provably not signal: the store's matcher is
+   * `debouncedSearch.trim().toLowerCase()`, so surrounding space cannot change which
+   * listings the reporter saw. Case survives that same argument but is KEPT, because it
+   * is readable and `lower()` recovers grouping at read time while folded case is gone
+   * for good. The case control below is what makes that a decision instead of an
+   * accident — it fails against a `.toLowerCase()` in the builder.
+   */
+  describe('the search term is TRIMMED for storage, but not case-folded', () => {
+    // The premise. If `resolveAppsStoreFilters` ever starts trimming, this goes red and
+    // the trim in the builder becomes redundant rather than silently load-bearing.
+    it('receives an untrimmed term from the store filter resolver', () => {
+      expect(resolveAppsStoreFilters({ query: '  upscale  ' }).query).toBe('  upscale  ');
+    });
+
+    it('drops surrounding whitespace so two spellings of one term agree', () => {
+      const padded = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '  upscale  ' }),
+      });
+      const bare = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: 'upscale' }),
+      });
+
+      expect(padded?.filters?.query).toBe('upscale');
+      expect(padded?.filters?.query).toBe(bare?.filters?.query);
+      expect(throughSchema(padded)?.filters?.query).toBe('upscale');
+    });
+
+    // Tabs/newlines reach `?query=` through a paste or a hand-edited address bar, and
+    // `\s` is what the matcher's own `trim()` removes — so pin the same class, not just
+    // the space character.
+    it('drops tabs and newlines too, not just spaces', () => {
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '\t\n upscale \n\t' }),
+      });
+      expect(context?.filters?.query).toBe('upscale');
+    });
+
+    /**
+     * CONTROL 1 — interior whitespace must survive. A fix that reached for
+     * `replace(/\s/g, '')` rather than `trim()` would pass every assertion above and
+     * silently destroy every multi-word search term.
+     */
+    it('keeps whitespace INSIDE the term', () => {
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '  anime upscale  ' }),
+      });
+      expect(context?.filters?.query).toBe('anime upscale');
+    });
+
+    /**
+     * CONTROL 2 — case is NOT folded. This is the assertion that pins the half of the
+     * decision we chose not to take; it fails the moment someone "finishes the job"
+     * with a `.toLowerCase()`.
+     */
+    it('preserves the case the reporter typed', () => {
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '  BitDex  ' }),
+      });
+      expect(context?.filters?.query).toBe('BitDex');
+    });
+
+    /**
+     * CONTROL 3 — trimming must not disturb the empty case. `''` is the explicit
+     * "searched for nothing" marker (same reading as `category: 'none'`), and a
+     * whitespace-only term already resolves to it upstream.
+     */
+    it('leaves the empty term as the empty string', () => {
+      expect(resolveAppsStoreFilters({ query: '   ' }).query).toBe('');
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '   ' }),
+      });
+      expect(context?.filters).toHaveProperty('query');
+      expect(context?.filters?.query).toBe('');
+    });
+
+    /**
+     * The trim runs BEFORE the clip, so the bound applies to the real term rather than
+     * to whitespace about to be discarded. Clip-then-trim gives 195 characters here;
+     * trim-then-clip gives the full 200.
+     */
+    it('applies the bound to the term, not to the padding around it', () => {
+      const query = `     ${'q'.repeat(FEEDBACK_FILTER_VALUE_MAX_LENGTH + 50)}     `;
+      const context = buildAppsStoreFeedbackContext({ path: '/apps', filters: filters({ query }) });
+
+      expect(context?.filters?.query).toHaveLength(FEEDBACK_FILTER_VALUE_MAX_LENGTH);
+      expect(context?.filters?.query).toBe('q'.repeat(FEEDBACK_FILTER_VALUE_MAX_LENGTH));
+      expect(() => throughSchema(context)).not.toThrow();
+    });
   });
 
   describe('the search term is CLIPPED to the schema bound, not passed through', () => {
