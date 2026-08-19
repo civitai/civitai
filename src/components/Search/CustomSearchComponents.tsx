@@ -450,14 +450,7 @@ export const ApplyCustomFilter = ({
 }: { filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
   const filters = useMemo(() => joinFilterClauses(_filters), [_filters]);
 
-  const { refine } = useConfigure({ ...props, filters });
-
-  // `refine` REPLACES this widget's search parameters, so anything omitted here (hitsPerPage, …) is
-  // dropped from the request rather than left alone.
-  useEffect(() => {
-    refine({ ...props, filters });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
+  useConfigure({ ...props, filters });
 
   return null;
 };
