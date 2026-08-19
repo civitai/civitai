@@ -1,3 +1,11 @@
+import { uniq } from 'lodash-es';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
+import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
+import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { submitTextModeration } from '~/server/services/text-moderation.service';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { removeTags } from '~/utils/string-helpers';
 
 export const MODEL_MODERATION_ENTITY_TYPE = 'Model';
@@ -55,3 +63,92 @@ export function buildModelModerationText(model: {
 export function isModelTextNsfw({ triggeredLabels }: { triggeredLabels?: string[] }): boolean {
   return (triggeredLabels ?? []).some((label) => LEVEL_LABEL_SET.has(label.toLowerCase()));
 }
+
+/** Union of `matchedTerms.text` across the labels that actually triggered. */
+function collectMatchedTerms(output: {
+  results?: Array<{ label: string; matchedTerms?: { text?: string[] } }>;
+  triggeredLabels?: string[];
+}): string[] {
+  const triggered = new Set((output.triggeredLabels ?? []).map((l) => l.toLowerCase()));
+  return uniq(
+    (output.results ?? [])
+      .filter((r) => triggered.has(r.label.toLowerCase()))
+      .flatMap((r) => r.matchedTerms?.text ?? [])
+  );
+}
+
+export const modelModerationAdapter: ModerationAdapter = {
+  resolveContent: async (ids) => {
+    const rows = await dbRead.model.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, description: true },
+    });
+    return new Map(rows.map((r) => [r.id, buildModelModerationText(r)]));
+  },
+
+  submit: ({ entityId, content }) =>
+    submitTextModeration({
+      entityType: MODEL_MODERATION_ENTITY_TYPE,
+      entityId,
+      content,
+      labels: [...MODEL_MODERATION_SCAN_LABELS],
+      priority: 'low',
+      recordForReview: true,
+    }),
+
+  // `output.blocked` is deliberately unread. The submit sends fifteen labels this adapter does
+  // not act on beyond the three level labels, several with Block or Review actions
+  // orchestrator-side, so honouring `blocked` would let an unacted label change the outcome.
+  // Recompute locally from the level labels instead.
+  applyResult: async ({ entityId, triggeredLabels, output }) => {
+    if (!isModelTextNsfw({ triggeredLabels })) return;
+
+    if (!(await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD_APPLY, String(entityId))))
+      return;
+
+    const model = await dbRead.model.findUnique({
+      where: { id: entityId },
+      select: { id: true, nsfw: true, lockedProperties: true, meta: true, userId: true },
+    });
+    // Deleted between submit and callback — a bare update would throw P2025 and fail the
+    // moderation callback, which the orchestrator would then retry forever.
+    if (!model) return;
+
+    const stored = model.lockedProperties ?? [];
+    // A stored lock is a moderator's call: minor-flagging sets nsfw:false and locks it.
+    // Same condition the profanity branch uses, so behaviour is identical to today.
+    if (stored.includes('nsfw')) return;
+
+    const meta = (model.meta ?? {}) as ModelMeta;
+
+    await dbWrite.model.update({
+      where: { id: entityId },
+      data: {
+        nsfw: true,
+        lockedProperties: uniq([...stored, 'nsfw']),
+        meta: {
+          ...meta,
+          textModeration: {
+            matchedTerms: collectMatchedTerms(output as never),
+            triggeredLabels: triggeredLabels ?? [],
+            scannedAt: new Date().toISOString(),
+          },
+        } as never,
+      },
+    });
+
+    await updateModelNsfwLevels([entityId]);
+
+    logToAxiom({
+      name: 'model-text-moderation',
+      type: 'info',
+      message: 'nsfw flag applied',
+      modelId: entityId,
+      triggeredLabels,
+    }).catch(() => null);
+  },
+
+  // No applyFailure. A model's visibility does not gate on its text scan, so a terminal
+  // failure leaves it as-is and the EntityModeration row is enough for the retry cron.
+  // The omission is deliberate — do not add an empty hook.
+};
