@@ -92,7 +92,8 @@ type PaidAccessCacheRow = {
 async function getSalesFor(
   db: typeof dbRead | typeof dbWrite,
   entityType: PaidAccessEntityType,
-  entityIds: number[]
+  entityIds: number[],
+  ownerByEntityId: Map<number, number> = new Map()
 ): Promise<Map<number, CachedSale[]>> {
   const out = new Map<number, CachedSale[]>();
   if (entityType !== 'ModelVersion' || !entityIds.length) return out;
@@ -107,6 +108,7 @@ async function getSalesFor(
       sale: {
         select: {
           id: true,
+          userId: true,
           discountType: true,
           discountAmount: true,
           startsAt: true,
@@ -116,7 +118,14 @@ async function getSalesFor(
       },
     },
   });
+  // Who may reprice a version is re-checked HERE, not trusted from the row. Sales are authored in a
+  // different application, so without this the main app treats any sale row as authoritative over any
+  // version id it names — a mutation whose only ownership guard lives outside this codebase.
+  const ownerOfVersion = new Map(
+    entityIds.map((id) => [id, ownerByEntityId.get(id) ?? null] as const)
+  );
   for (const item of items) {
+    if (item.sale.userId !== ownerOfVersion.get(item.modelVersionId)) continue;
     const list = out.get(item.modelVersionId) ?? [];
     list.push({
       id: item.sale.id,
@@ -157,7 +166,18 @@ function createPaidAccessCache(entityType: PaidAccessEntityType) {
         where: { entityType, entityId: { in: entityIds } },
         select: { entityId: true, ownerId: true, endsAt: true, timeframeDays: true, terms: true },
       });
-      const salesByVersion = await getSalesFor(db, entityType, entityIds);
+      // Sales cover PERMANENT paid access only, never a timed early-access window. Enforced here rather
+      // than at authoring because the gate type is mutable after a sale exists — a creator can switch a
+      // permanent gate to a timed one, so an authoring-time refusal cannot hold this invariant.
+      // Passing gated ids rather than every requested id also keeps the query off the ~99.6% of versions
+      // that carry no gate at all, and skips it entirely for an all-free batch.
+      const permanentIds = rows.filter((r) => r.timeframeDays == null).map((r) => r.entityId);
+      const salesByVersion = await getSalesFor(
+        db,
+        entityType,
+        permanentIds,
+        new Map(rows.map((r) => [r.entityId, r.ownerId]))
+      );
       return rows.reduce((acc, r) => {
         acc[r.entityId.toString()] = {
           entityId: r.entityId,
@@ -189,10 +209,25 @@ function paidAccessCache(entityType: PaidAccessEntityType) {
  * could otherwise keep discounting real purchases long after the creator ended it.
  */
 export async function getFreshSalesForVersion(
-  modelVersionId: number
+  modelVersionId: number,
+  ownerId: number
 ): Promise<ModelVersionSaleWindow[]> {
-  const byVersion = await getSalesFor(dbWrite, 'ModelVersion', [modelVersionId]);
+  const byVersion = await getSalesFor(
+    dbWrite,
+    'ModelVersion',
+    [modelVersionId],
+    new Map([[modelVersionId, ownerId]])
+  );
   return (byVersion.get(modelVersionId) ?? []).map(hydrateSale);
+}
+
+/** Sales that may price a gate: none at all unless the gate is permanent. See getSalesFor's note. */
+export async function getFreshSalesForPermanentGate(
+  modelVersionId: number,
+  permanent: boolean,
+  ownerId: number
+): Promise<ModelVersionSaleWindow[]> {
+  return permanent ? getFreshSalesForVersion(modelVersionId, ownerId) : [];
 }
 
 /** Decorate a bounded set of entity ids with their PaidAccess row (absent = free). */

@@ -28,6 +28,9 @@ CREATE TABLE "ModelVersionSaleItem" (
 -- The creator's month-to-date sale-day budget is read by (userId, startsAt); the resolver reads by version.
 CREATE INDEX "ModelVersionSale_userId_startsAt_idx" ON "ModelVersionSale"("userId", "startsAt");
 CREATE INDEX "ModelVersionSaleItem_modelVersionId_idx" ON "ModelVersionSaleItem"("modelVersionId");
+-- The resolver filters the sale side on endsAt > now. Rows are never deleted, so without this the scan
+-- grows monotonically while the live set stays small.
+CREATE INDEX "ModelVersionSale_endsAt_idx" ON "ModelVersionSale"("endsAt");
 
 ALTER TABLE "ModelVersionSaleItem"
   ADD CONSTRAINT "ModelVersionSaleItem_saleId_fkey"

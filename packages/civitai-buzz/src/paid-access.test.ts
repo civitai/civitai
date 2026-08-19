@@ -422,19 +422,21 @@ describe('scheduled sales — discountedTerms', () => {
     expect(generationPrice(out)).toBe(400);
   });
 
-  it('never drives a price below zero when a fixed discount exceeds it', () => {
+  it('never drives a price below the 1-Buzz floor when a fixed discount exceeds it', () => {
     const out = discountedTerms(
       { download: { price: 500 }, generation: { price: 100 } },
       [sale({ discountType: 'Fixed', discountAmount: 300 })],
       now
     );
     expect(out.download?.price).toBe(200);
-    expect(paidGenerationGrant(out)?.price).toBe(0);
+    // 1, not 0: a zero-Buzz purchase writes no ledger row and the refund path reads amounts back from it.
+    expect(paidGenerationGrant(out)?.price).toBe(1);
   });
 
-  it('rounds a percentage in the buyer’s favour, never charging more than the undiscounted price', () => {
+  it('floors a fractional percentage, leaving the part-Buzz remainder with the seller', () => {
     const out = discountedTerms({ download: { price: 33 } }, [sale({ discountAmount: 33 })], now);
-    // 33 * 33% = 10.89 -> 10 off, not 11: a rounding error must not take LESS off than advertised.
+    // 33 * 33% = 10.89 -> 10 off, so the buyer pays 23 rather than 22. An integer currency has to break
+    // the tie somewhere; this pins WHICH way, so a later switch to Math.round is a visible change.
     expect(out.download?.price).toBe(23);
   });
 
@@ -509,6 +511,21 @@ describe('scheduled sales — the sale-day budget', () => {
     });
     expect(saleDaysUsed([crossing], at('2026-03-15T00:00:00Z'))).toBe(5);
     expect(saleDaysUsed([crossing], at('2026-04-15T00:00:00Z'))).toBe(0);
+  });
+
+  it('does not count the same calendar month of a DIFFERENT year', () => {
+    // Without the year check, March 2025 would spend March 2026's budget.
+    const lastYear = window({
+      startsAt: at('2025-03-01T00:00:00Z'),
+      endsAt: at('2025-03-08T00:00:00Z'),
+    });
+    expect(saleDaysUsed([lastYear], at('2026-03-15T00:00:00Z'))).toBe(0);
+    expect(saleDaysUsed([lastYear], at('2025-03-15T00:00:00Z'))).toBe(7);
+  });
+
+  it('charges the full window when a cancel lands after it had already closed', () => {
+    // A cancel recorded after endsAt returns nothing — the sale ran its length.
+    expect(saleDaysCharged(window({ canceledAt: at('2026-03-20T00:00:00Z') }))).toBe(7);
   });
 
   it('gives an unknown or lapsed tier the FREE allowance rather than none', () => {

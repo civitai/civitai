@@ -463,19 +463,48 @@ export const MIN_CREATOR_SCORE_FOR_SALE = 10_000;
 /** How far ahead a sale may be scheduled, so next month's promo can be prepared from the back half of this one. */
 export const MAX_SALE_LEAD_DAYS = 14;
 
-/** Sale-days a tier gets. An unknown or lapsed tier gets the FREE allowance rather than 0, as with access caps. */
-export function maxSaleDays(tier: string | null | undefined): number {
-  return (tier ? SALE_DAYS_BY_TIER[tier] : undefined) ?? SALE_DAYS_BY_TIER.free;
+/**
+ * KeyValue row both apps read the sale limits from, so a limit can move without a deploy and a pricing page
+ * can state it without hard-coding it. The tables above are the defaults when the row is absent or partial.
+ */
+export const SALE_LIMITS_KEY = 'sale-limits';
+
+export type SaleLimitOverrides = {
+  saleDaysByTier?: Record<string, number>;
+  minCreatorScore?: number;
+  maxLeadDays?: number;
+};
+
+/**
+ * Sale-days a tier gets. An unknown or lapsed tier gets the FREE allowance rather than 0, as with access
+ * caps — a lapse must not retroactively invalidate a scheduled sale.
+ */
+export function maxSaleDays(
+  tier: string | null | undefined,
+  overrides?: SaleLimitOverrides
+): number {
+  const table = { ...SALE_DAYS_BY_TIER, ...(overrides?.saleDaysByTier ?? {}) };
+  return (tier ? table[tier] : undefined) ?? table.free;
 }
+
+export const minCreatorScoreForSale = (overrides?: SaleLimitOverrides): number =>
+  overrides?.minCreatorScore ?? MIN_CREATOR_SCORE_FOR_SALE;
+
+export const maxSaleLeadDays = (overrides?: SaleLimitOverrides): number =>
+  overrides?.maxLeadDays ?? MAX_SALE_LEAD_DAYS;
 
 /** Live at `now`: started, not yet ended, not cancelled before this moment. */
 export const isSaleActive = (sale: ModelVersionSaleWindow, now: Date = new Date()): boolean =>
   sale.startsAt <= now && sale.endsAt > now && (sale.canceledAt == null || sale.canceledAt > now);
 
 /**
- * What one sale takes off a price. Percent is floored so a rounding error can never charge MORE than the
- * undiscounted price, and the result floors at 0 — a fixed discount larger than the price makes it free
- * rather than negative.
+ * What one sale takes off a price. `Math.min(price, off)` is what keeps a fixed discount from making a
+ * price negative; the outer `Math.max(0, …)` floors it at free.
+ *
+ * Percent is FLOORED, which rounds the leftover in the seller's favour — 33% of 33 takes 10 off, not 11,
+ * so the buyer pays 23. That is deliberate (an integer currency has to break the tie somewhere and the
+ * creator is the one being paid), but it is the opposite of what "in the buyer's favour" would mean, so
+ * do not switch this to Math.round on the assumption it is a wash.
  */
 export function saleDiscountFor(price: number, sale: ModelVersionSaleWindow): number {
   if (price <= 0) return 0;
@@ -510,6 +539,28 @@ export function bestSaleFor(
   return best;
 }
 
+/** Buzz a sale can never take a purchase below. */
+export const MIN_SALE_PRICE = 1;
+
+/**
+ * One price with the best active sale applied. The charge and every display path call THIS — the repo has
+ * already paid for the alternative once (see computePackAmountDue: "the button subtracted a discount the
+ * server never applied"), and two implementations of the same arithmetic had already diverged here on the
+ * floor before a review caught it.
+ *
+ * Floors at 1, not 0: a zero-Buzz purchase writes no ledger row, and the 30-day refund path reads amounts
+ * back from the ledger, so a free purchase would be unrefundable and invisible to reporting.
+ */
+export function discountedPrice(
+  price: number,
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  now: Date = new Date()
+): number {
+  const sale = bestSaleFor(price, sales, now);
+  if (!sale) return price;
+  return Math.max(MIN_SALE_PRICE, price - saleDiscountFor(price, sale));
+}
+
 /**
  * Terms with any active sale applied — what a buyer pays. Compose OVER cappedTerms, never under: the tier
  * ceiling decides what the creator may charge, and the sale comes off what the buyer would actually have
@@ -526,10 +577,7 @@ export function discountedTerms(
 ): ModelVersionTerms {
   if (!sales?.length) return terms;
   const paidGen = paidGenerationGrant(terms);
-  const discount = (price: number) => {
-    const sale = bestSaleFor(price, sales, now);
-    return sale ? price - saleDiscountFor(price, sale) : price;
-  };
+  const discount = (price: number) => discountedPrice(price, sales, now);
   return {
     ...terms,
     ...(terms.download ? { download: { ...terms.download, price: discount(terms.download.price) } } : {}),
@@ -574,7 +622,8 @@ export function saleDaysUsed(
 export function remainingSaleDays(
   tier: string | null | undefined,
   sales: ModelVersionSaleWindow[] | undefined | null,
-  month: Date
+  month: Date,
+  overrides?: SaleLimitOverrides
 ): number {
-  return Math.max(0, maxSaleDays(tier) - saleDaysUsed(sales, month));
+  return Math.max(0, maxSaleDays(tier, overrides) - saleDaysUsed(sales, month));
 }
