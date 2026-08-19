@@ -19,6 +19,7 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import type { Draft } from '~/components/Rewards/reward-config-panel.utils';
 import {
+  applySavedRewardConfig,
   buildSetInput,
   initialDrafts,
   isStaleConflict,
@@ -58,10 +59,12 @@ export function RewardConfigPanel() {
   };
 
   const setMutation = trpc.rewardConfig.set.useMutation({
-    onSuccess: async () => {
-      setDrafts(null);
-      setConflict(null);
-      await queryUtils.rewardConfig.get.invalidate();
+    onSuccess: (saved) => {
+      applySavedRewardConfig(saved, {
+        setDrafts,
+        setConflict,
+        cache: queryUtils.rewardConfig.get,
+      });
       showSuccessNotification({ message: 'Reward config saved.' });
     },
     onError: (saveError) => {
