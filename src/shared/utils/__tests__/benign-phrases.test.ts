@@ -48,6 +48,26 @@ describe('benign phrases reach the client-side search gates', () => {
     expect(strip(withLetters, ['emma stone'])).toBe(withLetters);
   });
 
+  // Letters are not the only thing a detection list holds: every entry surviving normalization
+  // in `blocklist.json` is an emoji, carrying no `\p{L}` at all. Those are out of reach today
+  // only because of which list `auditMetaData` selects on `nsfw === false` — a coincidence
+  // between two files that do not reference each other.
+  it.each([
+    ['an emoji', 'emma \u{1F600} stone'],
+    ['non-ASCII digits', 'emma १२ stone'],
+  ])('refuses to strip when the gap holds %s', (_label, text) => {
+    expect(strip(text, ['emma stone'])).toBe(text);
+  });
+
+  // …and the other half of that: non-ASCII PUNCTUATION is not content, so it must still strip.
+  // A "whitespace or ASCII punctuation only" predicate would fail these two.
+  it.each(['emma—stone', 'emma、stone'])(
+    'CONTROL: still strips across the non-ASCII punctuation gap %j',
+    (text) => {
+      expect(strip(text, ['emma stone']).trim()).toBe('');
+    }
+  );
+
   it('CONTROL: the same shape with a punctuation-only gap still strips', () => {
     expect(strip('emma ,, stone', ['emma stone']).trim()).toBe('');
   });
