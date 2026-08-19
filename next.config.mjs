@@ -198,6 +198,7 @@ export default defineNextConfig(
       '@civitai/telemetry',
       '@civitai/auth',
       '@civitai/notifications',
+      '@civitai/moderation',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [

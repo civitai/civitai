@@ -1,8 +1,6 @@
-import type { MantineColor } from '@mantine/core';
 import * as z from 'zod';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ExternalModerationType } from '~/server/common/enums';
-import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
@@ -154,55 +152,10 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportStickerPlacementSchema,
 ]);
 
-export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;
-export const setReportStatusSchema = z.object({
-  id: z.number(),
-  status: z.enum(ReportStatus),
-});
-
-export type BulkUpdateReportStatusInput = z.infer<typeof bulkUpdateReportStatusSchema>;
-export const bulkUpdateReportStatusSchema = z.object({
-  ids: z.number().array(),
-  status: z.enum(ReportStatus),
-});
-
-export type GetReportsInput = z.infer<typeof getReportsSchema>;
-export const getReportsSchema = getAllQuerySchema.extend({
-  type: z.enum(ReportEntity),
-  filters: z
-    .object({
-      id: z.string(),
-      value: z.unknown(),
-    })
-    .array()
-    .optional(),
-  sort: z
-    .object({
-      id: z.string(),
-      desc: z.boolean(),
-    })
-    .array()
-    .optional(),
-});
-
 export type GetReportCountInput = z.infer<typeof getReportCount>;
 export const getReportCount = z.object({
   type: z.enum(ReportEntity),
   statuses: z.enum(ReportStatus).array(),
-});
-
-export const reportStatusColorScheme: Record<ReportStatus, MantineColor> = {
-  [ReportStatus.Unactioned]: 'green',
-  [ReportStatus.Actioned]: 'red',
-  [ReportStatus.Processing]: 'orange',
-  [ReportStatus.Pending]: 'yellow',
-};
-
-export type UpdateReportSchema = z.infer<typeof updateReportSchema>;
-export const updateReportSchema = z.object({
-  id: z.number(),
-  status: z.enum(ReportStatus),
-  internalNotes: z.string().nullish(),
 });
 
 export type CreateEntityAppealInput = z.output<typeof createEntityAppealSchema>;

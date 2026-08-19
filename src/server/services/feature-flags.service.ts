@@ -282,7 +282,6 @@ const featureFlags = createFeatureFlags({
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
-  reviewTrainingData: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
     toggleable: true,
@@ -411,7 +410,6 @@ const featureFlags = createFeatureFlags({
   datapacketRead: ['public'],
   modelVersionPopularity: ['mod'],
   kinguinIframe: ['dev'],
-  trainingModelsModeration: ['granted'],
   serviceStatus: ['granted'],
   cashManagement: { availability: ['granted'], fliptKey: 'feature-cash-management' },
   auctionsMod: ['granted'],

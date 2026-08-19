@@ -55,6 +55,9 @@ export function createClickhouseClient(
     host: config.host,
     username: config.username,
     password: config.password,
+    // Without the retry, a keep-alive socket the server closed while idle is handed to the next
+    // request and fails with ECONNRESET ("socket hang up") instead of reconnecting.
+    keep_alive: { enabled: true, socket_ttl: 2500, retry_on_expired_socket: true },
     clickhouse_settings: {
       async_insert: 1,
       wait_for_async_insert: 0,

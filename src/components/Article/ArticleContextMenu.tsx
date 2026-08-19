@@ -8,7 +8,6 @@ import {
   IconFlag,
   IconPencil,
   IconRadar2,
-  IconRecycle,
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -49,10 +48,6 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 
   const atDetailsPage = router.pathname === '/articles/[id]/[[...slug]]';
   const showUnpublish = atDetailsPage && article.status === ArticleStatus.Published;
-  const showRestore =
-    isModerator &&
-    ((atDetailsPage && article.status === ArticleStatus.Unpublished) ||
-      article.status === ArticleStatus.UnpublishedViolation);
   const features = useFeatureFlags();
 
   const { rescan: handleRescanArticle, isLoading: isRescanning } = useRescanArticle();
@@ -111,34 +106,6 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         onError(error) {
           showErrorNotification({
             title: 'Failed to unpublish article',
-            error: new Error(error.message),
-          });
-        },
-      }
-    );
-  };
-
-  const restoreArticleMutation = trpc.article.restore.useMutation();
-  const handleRestoreArticle = () => {
-    restoreArticleMutation.mutate(
-      { id: article.id },
-      {
-        async onSuccess(result) {
-          showSuccessNotification({
-            title: 'Article restored',
-            message: 'Successfully restored article',
-          });
-
-          queryUtils.article.getById.setData({ id: article.id }, (old) => {
-            if (!old) return old;
-            return { ...old, ...result, metadata: result.metadata ?? old.metadata };
-          });
-
-          await queryUtils.article.getInfinite.invalidate();
-        },
-        onError(error) {
-          showErrorNotification({
-            title: 'Failed to restore article',
             error: new Error(error.message),
           });
         },
@@ -240,27 +207,6 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                   </Menu.Item>
                 )}
               </>
-            )}
-            {showRestore && (
-              <Menu.Item
-                color="green"
-                leftSection={
-                  restoreArticleMutation.isPending ? (
-                    <Loader size={14} />
-                  ) : (
-                    <IconRecycle size={14} stroke={1.5} />
-                  )
-                }
-                onClick={(e: React.MouseEvent) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleRestoreArticle();
-                }}
-                disabled={restoreArticleMutation.isPending}
-                closeMenuOnClick={false}
-              >
-                Restore
-              </Menu.Item>
             )}
             <Menu.Item
               component={Link}

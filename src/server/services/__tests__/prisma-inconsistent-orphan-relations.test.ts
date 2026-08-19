@@ -148,8 +148,8 @@ describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', 
 
 // --- article.getById (shared articleDetailSelect) --------------------------
 // The article 500 comes from the `tags.tag` required relation in the shared
-// `articleDetailSelect`, reused by getArticleById, getModeratorArticles, the
-// search indexer, and the outbound webhook. The fix lives in the selector, so
+// `articleDetailSelect`, reused by getArticleById, the search indexer, and the
+// outbound webhook. The fix lives in the selector, so
 // we assert the selector shape directly.
 
 describe('articleDetailSelect — orphaned TagsOnArticle.tag', () => {

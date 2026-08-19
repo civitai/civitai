@@ -5298,6 +5298,14 @@ export interface Outbox {
   attempts: number | null;
 }
 
+export interface AppPageAccess {
+  app: string;
+  path: string;
+  roles: string[];
+  updatedById: number | null;
+  updatedAt: Date;
+}
+
 export interface PlacementSpace {
   id: number;
   surface: string;

@@ -22,7 +22,7 @@
   <div class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6">
     <table class="w-full text-sm">
       <thead>
-        <tr class="border-b border-dark-4 text-left text-xs uppercase tracking-wider text-dark-3">
+        <tr class="border-b border-dark-4 text-left text-xs uppercase tracking-wider text-dark-2">
           <th class="px-4 py-3 font-semibold">Route</th>
           <th class="px-4 py-3 text-right font-semibold">Visits</th>
           <th class="px-4 py-3 text-right font-semibold">Mods</th>
@@ -47,7 +47,7 @@
               <a
                 href={href(route.location)}
                 aria-label={`Breakdown for ${route.location}`}
-                class="block text-dark-3 hover:text-dark-0"
+                class="block text-dark-2 hover:text-dark-0"
               >
                 <IconChevronRight size={16} />
               </a>
