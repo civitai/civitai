@@ -102,6 +102,11 @@
           {#if confirmingId === announcement.id}
             <form method="POST" action="?/delete" use:enhance={() => removed(announcement.id)}>
               <input type="hidden" name="id" value={announcement.id} />
+              {#if !announcement.profileOnly}
+                <p class="mb-2 max-w-48 text-right text-xs text-dark-2">
+                  Deleting does not return the slot it used.
+                </p>
+              {/if}
               <div class="flex gap-2">
                 <Button
                   type="submit"

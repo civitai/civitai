@@ -77,13 +77,14 @@ export const deleteAnnouncementSchema = z.object({
   id: z.preprocess((v) => Number(v), z.number().int().positive()),
 });
 
-// The allowance is JSON off another service, and its numbers are not guaranteed: a creator with no
-// score row serialises as `null` (NaN does too), which crashed the notice on `toLocaleString`.
-// Parsing here keeps every screen downstream working with plain numbers.
-export const count = z
-  .number()
-  .nullish()
-  .transform((v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0));
+// The allowance is JSON off another service and its numbers arrive in three shapes: a number, a
+// numeric string (the creator score comes back quoted), and `null` — which is what a NaN score
+// serialises to, and what crashed the notice on `toLocaleString`. Everything downstream gets a
+// finite number or 0.
+export const count = z.union([z.number(), z.string(), z.null(), z.undefined()]).transform((v) => {
+  const n = typeof v === 'string' ? Number(v) : v;
+  return typeof n === 'number' && Number.isFinite(n) ? n : 0;
+});
 
 export const allowanceSchema = z.object({
   eligible: z.boolean(),

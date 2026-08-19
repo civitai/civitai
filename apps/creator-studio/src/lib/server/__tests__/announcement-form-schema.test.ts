@@ -128,11 +128,18 @@ describe('allowanceSchema', () => {
   // The live endpoint returned `score: null` for a real creator — `Number(NaN)` serialises that way —
   // and the notice then crashed on `.toLocaleString()`.
   it('turns a null or non-finite count into 0 rather than passing it on', () => {
-    for (const value of [null, undefined]) {
+    for (const value of [null, undefined, 'not a number']) {
       const result = allowanceSchema.safeParse(payload({ score: value }));
       expect(result.success).toBe(true);
       if (result.success) expect(result.data.score).toBe(0);
     }
+  });
+
+  // The live endpoint quotes the creator score.
+  it('accepts a numeric string', () => {
+    const result = allowanceSchema.safeParse(payload({ score: '444574' }));
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.score).toBe(444574);
   });
 
   it('rejects a payload that is missing the fields the screens read', () => {
