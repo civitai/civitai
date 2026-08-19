@@ -13,6 +13,7 @@
     offViewCount,
     exportHref,
     onAction,
+    salesEnabled = false,
     onSelectAllMatching,
     onClear,
   }: {
@@ -22,6 +23,8 @@
     offViewCount: number;
     exportHref: string;
     onAction: (action: BulkAction) => void;
+    /** Scheduled sales are behind a flag; the bar must not offer what the action would refuse. */
+    salesEnabled?: boolean;
     onSelectAllMatching: () => void;
     onClear: () => void;
   } = $props();
@@ -80,6 +83,11 @@
         <DropdownMenu.GroupHeading>Set</DropdownMenu.GroupHeading>
         <DropdownMenu.Item onSelect={() => onAction('fee')}>Licensing fee…</DropdownMenu.Item>
         <DropdownMenu.Item onSelect={() => onAction('paidAccess')}>Paid access…</DropdownMenu.Item>
+        {#if salesEnabled}
+          <DropdownMenu.Item onSelect={() => onAction('scheduleSale')}>
+            Schedule a sale…
+          </DropdownMenu.Item>
+        {/if}
         <DropdownMenu.Item onSelect={() => onAction('usageControl')}>
           Usage control…
         </DropdownMenu.Item>

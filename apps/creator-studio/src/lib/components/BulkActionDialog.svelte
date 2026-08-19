@@ -19,9 +19,12 @@
   import UsageControlPicker from '$lib/components/monetization/UsageControlPicker.svelte';
   import LicensingFeeFields from '$lib/components/monetization/LicensingFeeFields.svelte';
   import PaidAccessFields from '$lib/components/monetization/PaidAccessFields.svelte';
+  import SaleFields from '$lib/components/monetization/SaleFields.svelte';
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
   import type { PaidAccessContext, PaidAccessFormValue } from '$lib/monetization/paid-access-form';
   import { resolveGateEligibility } from '$lib/monetization/gate-eligibility';
+  import { resolveSaleDraft, type SaleDraftInput } from '$lib/monetization/sales';
+  import type { ModelVersionSaleWindow, SaleLimitOverrides } from '@civitai/buzz';
   import type { CapTier } from '@civitai/buzz';
   import {
     BULK_ACTION_FORM,
@@ -42,6 +45,9 @@
     accessCapFor,
     caps,
     feeCapsByType,
+    creatorScore,
+    sales,
+    saleLimits,
   }: {
     action: BulkAction | null;
     versionIds: number[];
@@ -54,6 +60,12 @@
     accessCapFor: (tier: CapTier) => number | null;
     /** Per model/media type caps across the selection, lowest first. */
     feeCapsByType: { label: string; cap: number }[];
+    /** Aggregate creator score — sales are gated on it at every tier. */
+    creatorScore: number;
+    /** The creator's own recent sale windows. null = not loaded, which blocks scheduling. */
+    sales: ModelVersionSaleWindow[] | null;
+    /** Operator-moved sale limits; defaults apply for anything absent. */
+    saleLimits: SaleLimitOverrides;
     caps: {
       tier: string;
       permanentUsed: number;
@@ -85,6 +97,13 @@
     donationGoal: undefined,
   });
   let genMode = $state<'bundled' | 'separate' | 'free'>('bundled');
+  let sale = $state<SaleDraftInput & { name: string }>({
+    name: '',
+    type: 'Percent',
+    amount: undefined,
+    startDate: '',
+    endDate: '',
+  });
   let affirmed = $state(false);
   let confirmText = $state('');
   let submitting = $state(false);
@@ -134,6 +153,9 @@
       images = String(DEFAULT_FEE_IMAGES);
       usageControl = 'Download';
       genMode = 'bundled';
+      sale = { name: '', type: 'Percent', amount: undefined, startDate: '', endDate: '' };
+      earlyAccessCount = 0;
+      minCoveredPrice = undefined;
       ea = {
         timeframe: Math.min(7, caps.maxEarlyAccessDays || Infinity),
         // Permanent is the only choice that's legal for every version regardless of publish state, and
@@ -196,6 +218,66 @@
       .finally(() => (loadingPublished = false));
   });
 
+  // Selected versions already gated as early access, which a sale can't cover. Resolved on the server
+  // for the same reason as the two previews above: "select all matching" reaches versions this page
+  // never loaded. Unlike them this one carries a sequence guard, so a slow answer for an earlier
+  // selection can't land on top of a newer one.
+  let earlyAccessCount = $state(0);
+  // undefined = not known (a failed or not-yet-run preview), null = nothing in the selection is priced.
+  // The two must stay distinct: treating unknown as "no floor" waves through a discount nothing checked.
+  let minCoveredPrice = $state<number | null | undefined>(undefined);
+  let loadingSalePreview = $state(false);
+  let salePreviewRequest = 0;
+  $effect(() => {
+    if (action !== 'scheduleSale' || versionIds.length === 0) {
+      earlyAccessCount = 0;
+      minCoveredPrice = undefined;
+      return;
+    }
+    const seq = ++salePreviewRequest;
+    const body = new FormData();
+    body.set('versionIds', versionIds.join(','));
+    loadingSalePreview = true;
+    fetch('?/salePreview', { method: 'POST', body })
+      .then((r) => r.text())
+      .then((r) => {
+        if (seq !== salePreviewRequest) return;
+        const parsed = deserialize(r);
+        earlyAccessCount = parsed.type === 'success' ? Number(parsed.data?.earlyAccess ?? 0) : 0;
+        if (parsed.type !== 'success') {
+          minCoveredPrice = undefined;
+          return;
+        }
+        const min = parsed.data?.minCoveredPrice;
+        minCoveredPrice = min == null ? null : Number(min);
+      })
+      .catch(() => {
+        if (seq !== salePreviewRequest) return;
+        earlyAccessCount = 0;
+        minCoveredPrice = undefined;
+      })
+      .finally(() => {
+        if (seq === salePreviewRequest) loadingSalePreview = false;
+      });
+  });
+
+  const saleDraft = $derived(
+    resolveSaleDraft(sale, {
+      selectedCount: count,
+      earlyAccessCount,
+      creatorScore,
+      // capTier, never caps.tier: the display label keeps a lapsed membership's name while cap math
+      // has to treat it as free.
+      tier: capTier,
+      minCoveredPrice,
+      overrides: saleLimits,
+      // A null sale list is "not known", never "nothing used" — an assumed-empty budget would read as
+      // a full allowance and let the form offer a sale the server refuses.
+      sales,
+      resolving: loadingSalePreview,
+    })
+  );
+
   const eligibility = $derived(
     resolveGateEligibility({
       selectedCount: count,
@@ -231,7 +313,12 @@
   const confirmWord = $derived(action === 'clearFee' ? 'clear' : 'remove');
   const confirmed = $derived(!destructive || confirmText.trim().toLowerCase() === confirmWord);
   const affirmationOk = $derived(!affirmable || !needsAffirmation || affirmed);
-  const canApply = $derived(count > 0 && confirmed && affirmationOk && !submitting);
+  // The server re-checks every rule; this only keeps the creator from submitting something it will
+  // refuse. A sale also needs a parseable window, a discount and the budget to cover it.
+  const saleReady = $derived(
+    action !== 'scheduleSale' || (saleDraft.eligibility.canSchedule && (sale.amount ?? 0) > 0)
+  );
+  const canApply = $derived(count > 0 && confirmed && affirmationOk && saleReady && !submitting);
 
   // Permanent access consumes tier slots; the server rejects an over-cap selection, so say so here first.
   const overSlots = $derived(action === 'paidAccess' && count > permanentSlotsLeft);
@@ -255,7 +342,7 @@
           updated: Number(d.updated ?? d.cleared ?? d.removed ?? d.usageUpdated ?? 0),
           // The action only fails outright when NOTHING succeeded, so a run that skipped or failed most
           // of the selection still lands here and has to say so.
-          skipped: Number(d.skippedPublished ?? 0),
+          skipped: Number(d.skippedPublished ?? d.skippedEarlyAccess ?? 0),
           failed: Number(d.failed ?? 0),
         });
         // Selection is deliberately kept: a successful write is exactly what moves rows out of the
@@ -314,10 +401,18 @@
             <Alert.Title>Not everything in your selection changed</Alert.Title>
             <Alert.Description>
               {#if applied.skipped > 0}
-                <p>
-                  {applied.skipped} had already been published, so an early-access window couldn't start
-                  on {applied.skipped === 1 ? 'it' : 'them'}. Permanent paid access still can.
-                </p>
+                {#if applied.kind === 'scheduleSale'}
+                  <p>
+                    {applied.skipped}
+                    {applied.skipped === 1 ? 'is' : 'are'} in early access, which prices itself out when
+                    the window closes — a sale can't run on top of one.
+                  </p>
+                {:else}
+                  <p>
+                    {applied.skipped} had already been published, so an early-access window couldn't start
+                    on {applied.skipped === 1 ? 'it' : 'them'}. Permanent paid access still can.
+                  </p>
+                {/if}
               {/if}
               {#if applied.failed > 0}
                 <p>
@@ -469,6 +564,14 @@
                 </Alert.Root>
               {/if}
             {/if}
+          {:else if action === 'scheduleSale'}
+            <SaleFields
+              bind:sale
+              draft={saleDraft}
+              selectedCount={count}
+              {creatorScore}
+              overrides={saleLimits}
+            />
           {:else if action === 'clearFee'}
             <p class="text-sm text-dark-1">
               Removes the licensing fee from {count} version{count === 1 ? '' : 's'}. They stop

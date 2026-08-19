@@ -644,6 +644,11 @@ export const PaidAccessEntityType = {
   ComicChapter: 'ComicChapter',
 } as const;
 export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
+export const SaleDiscountType = {
+  Fixed: 'Fixed',
+  Percent: 'Percent',
+} as const;
+export type SaleDiscountType = (typeof SaleDiscountType)[keyof typeof SaleDiscountType];
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',
   Approved: 'Approved',

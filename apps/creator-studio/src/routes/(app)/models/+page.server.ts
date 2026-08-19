@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
-import { raisesOverCap } from '@civitai/buzz';
+import { minCreatorScoreForSale, raisesOverCap } from '@civitai/buzz';
 import type { PageServerLoad, Actions } from './$types';
 import {
   getCreatorModels,
@@ -39,7 +39,26 @@ import {
   versionsLosingFreeGeneration,
 } from '$lib/server/monetization/paid-access';
 import { checkbox } from '$lib/server/monetization/form-fields';
-import { resolveModelsScore, TEST_MODELS_SCORE_COOKIE } from '$lib/server/creator-score';
+import {
+  resolveCreatorScore,
+  resolveModelsScore,
+  TEST_CREATOR_SCORE_COOKIE,
+  TEST_MODELS_SCORE_COOKIE,
+} from '$lib/server/creator-score';
+import {
+  cancelSale,
+  cheapestCoveredPrice,
+  countEarlyAccessVersions,
+  deepenSale,
+  getCreatorSales,
+  getManageableSales,
+  getSalesByVersion,
+  scheduleSale,
+  shortenSale,
+  versionIdsForSale,
+} from '$lib/server/monetization/sales';
+import { getFlipt } from '$lib/server/flipt';
+import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
 import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
   earlyAccessDaysForScore,
@@ -75,6 +94,42 @@ const modelsQuerySchema = z.object({
 });
 
 // A year — the page-size preference should stick.
+// Sale scheduling. Dates arrive as ISO instants the form already resolved to UTC midnight, so nothing
+// here has to guess a timezone. The window rules (lead time, budget, zero-floor) are enforced in
+// scheduleSale against the primary — this only shapes the input.
+const scheduleSaleSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .max(60)
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+  discountType: z.enum(['Fixed', 'Percent']),
+  discountAmount: z.coerce.number().int().positive(),
+  startsAt: z.coerce.date(),
+  endsAt: z.coerce.date(),
+});
+
+const saleIdSchema = z.coerce.number().int().positive();
+
+// Every sale action gates on the flag, not just scheduling. Otherwise turning the flag off as a kill
+// switch stops new sales while leaving editing of existing ones live, which is the opposite of what a
+// kill switch is for.
+const salesOff = async (userId: number) =>
+  !(await getFlipt().isEnabled('scheduled-model-sales', String(userId)));
+
+// Only the directions a running sale may move: earlier end, deeper discount. The refusal is enforced in
+// each UPDATE's WHERE clause, so these schemas shape input rather than decide policy.
+const shortenSaleSchema = z.object({
+  saleId: saleIdSchema,
+  lastDay: z.coerce.date(),
+});
+
+const deepenSaleSchema = z.object({
+  saleId: saleIdSchema,
+  discountAmount: z.coerce.number().int().positive(),
+});
+
 const PAGE_SIZE_MAX_AGE = 60 * 60 * 24 * 365;
 function resolvePageSize(psParam: number | undefined, cookieVal: string | undefined): number {
   const opts = PAGE_SIZE_OPTIONS as readonly number[];
@@ -99,7 +154,14 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     cookies.set(PAGE_SIZE_COOKIE, String(perPage), { path: '/', maxAge: PAGE_SIZE_MAX_AGE });
   }
 
-  const [result, modelsScore, permanentUsed, earlyAccessUsed] = await Promise.all([
+  const [
+    result,
+    modelsScore,
+    permanentUsed,
+    earlyAccessUsed,
+    creatorScore,
+    salesEnabled,
+  ] = await Promise.all([
     getCreatorModels({
       userId: locals.user.id,
       q,
@@ -122,11 +184,42 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     ),
     countPermanentAccessVersions(locals.user.id),
     countActiveEarlyAccessVersions(locals.user.id),
+    resolveCreatorScore(
+      locals.user.id,
+      !!locals.user.isModerator,
+      cookies.get(TEST_CREATOR_SCORE_COOKIE)
+    ),
+    // Per-user entityId so the feature can open to a few creators before everyone. `isEnabled` rather
+    // than `getBoolean`: only the former honours FLIPT_LOCAL_OVERRIDES, so this is togglable locally.
+    getFlipt().isEnabled('scheduled-model-sales', String(locals.user.id)),
   ]);
+
+  // Sales are read ONLY when the feature is on. Migrations here are applied by hand, so on any
+  // environment where the sale tables have not been created yet an unconditional read makes /models
+  // throw for every creator — flag on or off. The flag has to gate the reads, not just the UI.
+  const [sales, manageableSales, salesByVersion, saleLimits] = salesEnabled
+    ? await Promise.all([
+        getCreatorSales(locals.user.id),
+        getManageableSales(locals.user.id),
+        getSalesByVersion(
+          locals.user.id,
+          result.models.flatMap((m) => m.versions.map((v) => v.id))
+        ),
+        getSaleLimitOverrides(),
+      ])
+    : [[], [], {}, {}];
   const permanentCap = maxPermanentAccessModels(cappedTier(membership));
   return {
     ...result,
     perPage,
+    salesEnabled,
+    creatorScore,
+    // The creator's own recent sale windows. The form computes the budget from these with the same
+    // @civitai/buzz helper the write refuses on, so the number shown and the number enforced are one.
+    sales,
+    manageableSales,
+    salesByVersion,
+    saleLimits,
     pageSizeOptions: PAGE_SIZE_OPTIONS,
     // `tier` is the display label; `capTier` is what cap math must use — a lapsed membership keeps its
     // tier string but is capped at free. null cap = unlimited (Infinity would not survive serialization).
@@ -396,6 +489,129 @@ export const actions: Actions = {
     return {
       preview: true,
       published: await countPreviouslyPublished(locals.user.id, versionIds.data),
+    };
+  },
+
+  // What the sale form needs about a selection it can't see: how much of it is early access (a sale
+  // can't cover that) and the cheapest price among the rest (a fixed discount must stay under it).
+  // Resolved here rather than on screen because "select all matching" reaches versions the page never
+  // loaded.
+  salePreview: async ({ request, locals, cookies }) => {
+    if (await salesOff(locals.user.id))
+      return fail(403, { error: 'Scheduled sales are not available yet.' });
+    const form = await request.formData();
+    const parsed = versionIdsSchema.safeParse(form.get('versionIds'));
+    if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
+    const [earlyAccess, minCoveredPrice] = await Promise.all([
+      countEarlyAccessVersions(locals.user.id, parsed.data),
+      cheapestCoveredPrice(
+        locals.user.id,
+        parsed.data,
+        cappedTier(resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE)))
+      ),
+    ]);
+    return { earlyAccess, minCoveredPrice };
+  },
+
+  cancelSale: async ({ request, locals }) => {
+    if (await salesOff(locals.user.id))
+      return fail(403, { error: 'Scheduled sales are not available yet.' });
+    const form = await request.formData();
+    const parsed = saleIdSchema.safeParse(form.get('saleId'));
+    if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
+    const result = await cancelSale(locals.user.id, parsed.data);
+    if (!result.ok) return fail(400, { error: result.error });
+    await bustVersionCache(request.headers.get('cookie') ?? '', result.versionIds);
+    return { cancelled: true };
+  },
+
+  shortenSale: async ({ request, locals }) => {
+    if (await salesOff(locals.user.id))
+      return fail(403, { error: 'Scheduled sales are not available yet.' });
+    const form = await request.formData();
+    const parsed = shortenSaleSchema.safeParse(Object.fromEntries(form));
+    if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
+    // The picked day is the sale's new LAST day, inclusive — the same reading the scheduling form uses,
+    // and the panel renders `endsAt - 1 day` back. Posting it through as the exclusive boundary would
+    // silently end the sale a day earlier than the creator picked.
+    const endsAt = new Date(parsed.data.lastDay.getTime() + 86_400_000);
+    const result = await shortenSale(locals.user.id, parsed.data.saleId, endsAt);
+    if (!result.ok) return fail(400, { error: result.error });
+    await bustVersionCache(request.headers.get('cookie') ?? '', result.versionIds);
+    return { shortened: true };
+  },
+
+  deepenSale: async ({ request, locals, cookies }) => {
+    if (await salesOff(locals.user.id))
+      return fail(403, { error: 'Scheduled sales are not available yet.' });
+    const form = await request.formData();
+    const parsed = deepenSaleSchema.safeParse(Object.fromEntries(form));
+    if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+    const result = await deepenSale(
+      locals.user.id,
+      parsed.data.saleId,
+      parsed.data.discountAmount,
+      cappedTier(membership)
+    );
+    if (!result.ok) return fail(400, { error: result.error });
+    await bustVersionCache(request.headers.get('cookie') ?? '', result.versionIds);
+    return { deepened: true };
+  },
+
+  bulkScheduleSale: async ({ request, locals, cookies }) => {
+    if (await salesOff(locals.user.id))
+      return fail(403, { error: 'Scheduled sales are not available yet.' });
+
+    const form = await request.formData();
+    const ids = versionIdsSchema.safeParse(form.get('versionIds'));
+    if (!ids.success) return fail(400, { error: firstError(ids.error) });
+    // Object.fromEntries, never a hand-listed literal: a field added to the schema later would never
+    // reach it, and every refine guarding that field would pass vacuously.
+    const parsed = scheduleSaleSchema.safeParse(Object.fromEntries(form));
+    if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
+
+    // The score floor is a server rule, not a form hint — the form only renders the progress bar.
+    const creatorScore = await resolveCreatorScore(
+      locals.user.id,
+      !!locals.user.isModerator,
+      cookies.get(TEST_CREATOR_SCORE_COOKIE)
+    );
+    const saleLimits = await getSaleLimitOverrides();
+    const minScore = minCreatorScoreForSale(saleLimits);
+    if (creatorScore < minScore)
+      return fail(403, {
+        error: `Sales unlock at a creator score of ${minScore.toLocaleString()}.`,
+      });
+
+    // cappedTier, not displayTier: a lapsed membership keeps its label but must be capped at free.
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+    const result = await scheduleSale(
+      locals.user.id,
+      ids.data,
+      cappedTier(membership),
+      {
+        name: parsed.data.name,
+        discountType: parsed.data.discountType,
+        discountAmount: parsed.data.discountAmount,
+        startsAt: parsed.data.startsAt,
+        endsAt: parsed.data.endsAt,
+      },
+      saleLimits
+    );
+    if (!result.ok) return fail(400, { error: result.error });
+
+    // The sale row is invisible to the main app's paid-access cache until this runs — same reason the
+    // licensing-fee and usage-control writes bust, and here a missed bust is the difference between a
+    // sale existing and not.
+    await bustVersionCache(
+      request.headers.get('cookie') ?? '',
+      await versionIdsForSale(result.saleId)
+    );
+
+    return {
+      updated: result.covered,
+      skippedEarlyAccess: result.skippedEarlyAccess,
     };
   },
 

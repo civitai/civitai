@@ -41,6 +41,7 @@
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
   import BulkBar from '$lib/components/BulkBar.svelte';
+  import SalesPanel from '$lib/components/monetization/SalesPanel.svelte';
   import BulkActionDialog from '$lib/components/BulkActionDialog.svelte';
   import type { BulkAction } from '$lib/monetization/bulk-actions';
   import { maxPaidAccessPrice } from '$lib/monetization/paid-access';
@@ -636,6 +637,17 @@
   </div>
 {/if}
 
+{#if data.salesEnabled}
+  <div class="mb-3">
+    <SalesPanel
+      sales={data.manageableSales}
+      allSales={data.sales}
+      capTier={tier}
+      overrides={data.saleLimits}
+    />
+  </div>
+{/if}
+
 {#if data.total > 0 || selected.size > 0}
   <BulkBar
     count={selected.size}
@@ -644,6 +656,7 @@
     {offViewCount}
     {exportHref}
     onAction={(a) => (bulkAction = a)}
+    salesEnabled={data.salesEnabled}
     onSelectAllMatching={() => {
       for (const id of data.matchingVersionIds) selected.add(id);
     }}
@@ -663,6 +676,9 @@
   suggestedFee={bulkSuggested}
   needsAffirmation={selectionNeedsAffirmation}
   permanentSlotsLeft={remainingPermanentSlots - newSlotsUsed + selected.size}
+  creatorScore={data.creatorScore}
+  sales={data.sales}
+  saleLimits={data.saleLimits}
 />
 
 {#if data.models.length === 0}
@@ -878,7 +894,12 @@
         </section>
 
         {#key editing.id}
-          <PaidAccessEditor version={editing} onClose={() => (editing = null)} caps={data.caps} />
+          <PaidAccessEditor
+            version={editing}
+            onClose={() => (editing = null)}
+            caps={data.caps}
+            sales={data.salesByVersion[editing.id]}
+          />
         {/key}
       </div>
     {/if}
