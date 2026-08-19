@@ -23,6 +23,13 @@ import {
   maxPermanentAccessModels,
   tierCapRows,
   type ModelVersionTerms,
+  type ModelVersionSaleWindow,
+  discountedTerms,
+  maxSaleDays,
+  remainingSaleDays,
+  saleDaysCharged,
+  saleDaysUsed,
+  SALE_DAYS_BY_TIER,
 } from './paid-access';
 import {
   MAX_LICENSING_FEE,
@@ -381,5 +388,137 @@ describe('shouldUpsellCap — nudge only when the ceiling is actually in the way
     expect(shouldUpsellCap({ value: 99999, cap: Infinity, tier: 'silver' })).toBe(false);
     expect(shouldUpsellCap({ value: 0, cap: 0, tier: 'free' })).toBe(false);
     expect(shouldUpsellCap({ value: 5, cap: 0, tier: 'free' })).toBe(false);
+  });
+});
+
+describe('scheduled sales — discountedTerms', () => {
+  const at = (iso: string) => new Date(iso);
+  const sale = (over: Partial<ModelVersionSaleWindow> = {}): ModelVersionSaleWindow => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAt: at('2026-03-01T00:00:00Z'),
+    endsAt: at('2026-03-08T00:00:00Z'),
+    canceledAt: null,
+    ...over,
+  });
+  const now = at('2026-03-02T00:00:00Z');
+
+  it('discounts BOTH the download price and a separate generation price', () => {
+    const out = discountedTerms(
+      { download: { price: 500 }, generation: { price: 100 } },
+      [sale()],
+      now
+    );
+    expect(out.download?.price).toBe(400);
+    expect(paidGenerationGrant(out)?.price).toBe(80);
+  });
+
+  it('leaves a generation tier with no price of its own alone, so it keeps following the discounted download price', () => {
+    const terms: ModelVersionTerms = { download: { price: 500 }, generation: { trialLimit: 3 } };
+    const out = discountedTerms(terms, [sale()], now);
+    expect(paidGenerationGrant(out)?.price).toBeUndefined();
+    expect(generationPrice(out)).toBe(400);
+  });
+
+  it('never drives a price below zero when a fixed discount exceeds it', () => {
+    const out = discountedTerms(
+      { download: { price: 500 }, generation: { price: 100 } },
+      [sale({ discountType: 'Fixed', discountAmount: 300 })],
+      now
+    );
+    expect(out.download?.price).toBe(200);
+    expect(paidGenerationGrant(out)?.price).toBe(0);
+  });
+
+  it('rounds a percentage in the buyer’s favour, never charging more than the undiscounted price', () => {
+    const out = discountedTerms({ download: { price: 33 } }, [sale({ discountAmount: 33 })], now);
+    // 33 * 33% = 10.89 -> 10 off, not 11: a rounding error must not take LESS off than advertised.
+    expect(out.download?.price).toBe(23);
+  });
+
+  it('applies the deepest discount when two sales overlap on one version', () => {
+    const out = discountedTerms(
+      { download: { price: 1000 } },
+      [
+        sale({ id: 1, discountAmount: 10 }),
+        sale({ id: 2, discountType: 'Fixed', discountAmount: 250 }),
+      ],
+      now
+    );
+    expect(out.download?.price).toBe(750);
+  });
+
+  it('ignores a sale that has not started, has ended, or was cancelled before now', () => {
+    const terms: ModelVersionTerms = { download: { price: 500 } };
+    const notStarted = sale({ startsAt: at('2026-03-05T00:00:00Z') });
+    const ended = sale({ endsAt: at('2026-03-01T12:00:00Z') });
+    const cancelled = sale({ canceledAt: at('2026-03-01T12:00:00Z') });
+    for (const s of [notStarted, ended, cancelled]) {
+      expect(discountedTerms(terms, [s], now).download?.price).toBe(500);
+    }
+  });
+
+  it('composes OVER cappedTerms: the sale comes off what the buyer is actually billed', () => {
+    // A lapsed gold creator stores 5000 but is billed the free cap of 500. 20% off must be 400 —
+    // discounting first would give 4000, which the cap then flattens back to 500 and the sale vanishes.
+    const stored: ModelVersionTerms = { download: { price: 5000 } };
+    const gate = { permanent: true } as const;
+    const billed = discountedTerms(cappedTerms(stored, 'free', gate), [sale()], now);
+    expect(billed.download?.price).toBe(400);
+
+    const wrongOrder = cappedTerms(discountedTerms(stored, [sale()], now), 'free', gate);
+    expect(wrongOrder.download?.price).toBe(500);
+  });
+});
+
+describe('scheduled sales — the sale-day budget', () => {
+  const at = (iso: string) => new Date(iso);
+  const window = (over: Partial<ModelVersionSaleWindow> = {}): ModelVersionSaleWindow => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAt: at('2026-03-01T00:00:00Z'),
+    endsAt: at('2026-03-08T00:00:00Z'),
+    canceledAt: null,
+    ...over,
+  });
+
+  it('charges the full scheduled length while the sale stands', () => {
+    expect(saleDaysCharged(window())).toBe(7);
+  });
+
+  it('returns everything when a sale is cancelled before it starts', () => {
+    expect(saleDaysCharged(window({ canceledAt: at('2026-02-27T00:00:00Z') }))).toBe(0);
+  });
+
+  it('returns the untaken tail when a sale is cancelled part-way through', () => {
+    expect(saleDaysCharged(window({ canceledAt: at('2026-03-03T00:00:00Z') }))).toBe(2);
+  });
+
+  it('rounds a part-day up, so a run of short sales cannot slice past the budget', () => {
+    const half = window({ endsAt: at('2026-03-01T12:00:00Z') });
+    expect(saleDaysCharged(half)).toBe(1);
+  });
+
+  it('counts a month-crossing sale against the month it STARTS in, and only that month', () => {
+    const crossing = window({
+      startsAt: at('2026-03-30T00:00:00Z'),
+      endsAt: at('2026-04-04T00:00:00Z'),
+    });
+    expect(saleDaysUsed([crossing], at('2026-03-15T00:00:00Z'))).toBe(5);
+    expect(saleDaysUsed([crossing], at('2026-04-15T00:00:00Z'))).toBe(0);
+  });
+
+  it('gives an unknown or lapsed tier the FREE allowance rather than none', () => {
+    expect(maxSaleDays('gold')).toBe(30);
+    expect(maxSaleDays(null)).toBe(SALE_DAYS_BY_TIER.free);
+    expect(maxSaleDays('nonsense')).toBe(SALE_DAYS_BY_TIER.free);
+  });
+
+  it('never reports negative remaining days after a downgrade', () => {
+    const spent = [window({ startsAt: at('2026-03-01T00:00:00Z'), endsAt: at('2026-03-29T00:00:00Z') })];
+    expect(remainingSaleDays('gold', spent, at('2026-03-15T00:00:00Z'))).toBe(2);
+    expect(remainingSaleDays('free', spent, at('2026-03-15T00:00:00Z'))).toBe(0);
   });
 });

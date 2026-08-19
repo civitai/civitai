@@ -86,6 +86,7 @@ import type {
   CsamReportType,
   Availability,
   PaidAccessEntityType,
+  SaleDiscountType,
   EntityCollaboratorStatus,
   ClubAdminPermission,
   ChatMemberStatus,
@@ -2934,6 +2935,22 @@ export type ModelVersionMonetization = {
   currency: Generated<Currency>;
   unitAmount: number | null;
 };
+export type ModelVersionSale = {
+  id: Generated<number>;
+  userId: number;
+  name: string | null;
+  discountType: SaleDiscountType;
+  discountAmount: number;
+  startsAt: Timestamp;
+  endsAt: Timestamp;
+  canceledAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type ModelVersionSaleItem = {
+  saleId: number;
+  modelVersionId: number;
+};
 export type ModelVersionSponsorshipSettings = {
   id: Generated<number>;
   modelVersionMonetizationId: number;
@@ -4446,6 +4463,8 @@ export type DB = {
   ModelVersionExploration: ModelVersionExploration;
   ModelVersionMetric: ModelVersionMetric;
   ModelVersionMonetization: ModelVersionMonetization;
+  ModelVersionSale: ModelVersionSale;
+  ModelVersionSaleItem: ModelVersionSaleItem;
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
   NewOrderPlayer: NewOrderPlayer;
