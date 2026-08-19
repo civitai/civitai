@@ -41,6 +41,8 @@ export type AnnouncementRow = {
   profileOnly: boolean;
   createdAt: Date;
   coverUrl: string | null;
+  /** A slot was spent on this announcement — deleting it does not give the slot back. */
+  spentSlot: boolean;
   coverNsfwLevel: number | null;
   link: string | null;
   linkText: string | null;
@@ -54,7 +56,15 @@ export async function getMyAnnouncements(userId: number): Promise<AnnouncementRo
     .selectFrom('Announcement as a')
     .leftJoin('Image as i', 'i.id', 'a.coverId')
     .where('a.userId', '=', userId)
-    .select([
+    .select((eb) => [
+      eb
+        .exists(
+          eb
+            .selectFrom('AnnouncementSpend as s')
+            .select('s.id')
+            .whereRef('s.announcementId', '=', 'a.id')
+        )
+        .as('spentSlot'),
       'a.id',
       'a.title',
       'a.content',
@@ -84,6 +94,7 @@ export async function getMyAnnouncements(userId: number): Promise<AnnouncementRo
       disabled: row.disabled,
       profileOnly: row.profileOnly,
       createdAt: row.createdAt,
+      spentSlot: row.spentSlot === true,
       coverUrl: row.coverUrl ?? null,
       coverNsfwLevel: row.coverNsfwLevel ?? null,
       link: action?.link ?? null,

@@ -103,7 +103,9 @@
               <input type="hidden" name="id" value={announcement.id} />
               {#if deleteError?.id === announcement.id}
                 <p class="mb-2 max-w-48 text-right text-sm text-red-300">{deleteError.message}</p>
-              {:else if !announcement.profileOnly}
+                <!-- Keyed on the spend ledger, not on `profileOnly`: an announcement that notified
+                     and was later switched to profile-only still consumed its slot. -->
+              {:else if announcement.spentSlot}
                 <p class="mb-2 max-w-48 text-right text-xs text-dark-2">
                   Deleting does not return the slot it used.
                 </p>
