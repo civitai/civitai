@@ -9,6 +9,7 @@
  */
 
 import { stdin } from 'process';
+import { execFileSync } from 'child_process';
 
 // `prettier --write <targets>`: the incident was a repo-WIDE rewrite, not formatting a directory
 // this change owns. Read the targets instead of matching `--write`, so a scoped path just runs.
@@ -131,6 +132,36 @@ const DANGEROUS_PATTERNS = [
   },
 ];
 
+/** `svelte-kit sync`, or the `check` script that runs it. Split out so the selftest can cover it offline. */
+export function isSvelteSyncCommand(command) {
+  // `check(?![\w:-])` rather than `check\b`: \b sits happily before a hyphen, so the original matched
+  // any `pnpm run check-*` script — none of which run svelte-kit sync.
+  return /svelte-kit\s+sync|pnpm\s+(?:run\s+)?check(?![\w:-])/i.test(command);
+}
+
+/**
+ * True unless the dev-server daemon positively reports no running sessions — the only answer that can
+ * prove the collision this guard exists for is impossible right now.
+ *
+ * curl rather than fetch: the hook is a short-lived script and this must not leave a pending socket
+ * holding the process open. One second, and every failure path returns true.
+ */
+export function devServersMayBeRunning() {
+  try {
+    const out = execFileSync('curl', ['-s', '--max-time', '1', DAEMON_SESSIONS_URL], {
+      encoding: 'utf8',
+      timeout: 2000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const sessions = JSON.parse(out)?.sessions;
+    return !Array.isArray(sessions) || sessions.length > 0;
+  } catch {
+    return true;
+  }
+}
+
+const DAEMON_SESSIONS_URL = `http://127.0.0.1:${process.env.DEV_DAEMON_PORT || 9444}/sessions`;
+
 // Expensive or historically destructive, but sometimes legitimate — confirm rather than block.
 const GUARDED_PATTERNS = [
   {
@@ -142,9 +173,17 @@ const GUARDED_PATTERNS = [
       'was slow, with the matching remedy. Or add --max-time <seconds>.',
   },
   {
-    pattern: /svelte-kit\s+sync|pnpm\s+(run\s+)?check\b/i,
+    // The hazard is a COLLISION, not the command: sync rewrites ~690 files under .svelte-kit/ while a
+    // Vite dev server watches them. With no dev server up there is nothing to collide with — and
+    // `$types` goes stale whenever a load's RETURN SHAPE changes, not only when the route tree does, so
+    // the legitimate case recurs through a normal day's work. Asking every time taught people to click
+    // through it, and a guard people click through is not guarding.
+    //
+    // Fails CLOSED: only a daemon that positively reports zero sessions skips the prompt. Unreachable,
+    // slow or unparseable answers ask exactly as before.
+    check: (command) => isSvelteSyncCommand(command) && devServersMayBeRunning(),
     reason:
-      '`svelte-kit sync` regenerates ~690 files under .svelte-kit/, which the Vite dev server watches — the collision that froze this window repeatedly. Use `pnpm run typecheck` unless the route tree changed.',
+      '`svelte-kit sync` regenerates ~690 files under .svelte-kit/, which the Vite dev server watches — the collision that froze this window repeatedly. A dev server is running now. Use `pnpm run typecheck` unless the route tree changed.',
   },
   {
     // Only the unscoped shapes ask. `prettier --write src/components/Sticker/` runs.
