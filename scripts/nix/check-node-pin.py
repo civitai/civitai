@@ -82,10 +82,14 @@ def main() -> int:
 
     failures: list[str] = []
 
-    # N1 - the flake's node must satisfy the repo's own engines range. pnpm
-    # enforces that range on install, so a flake outside it hands the developer a
-    # shell that cannot install the project. This is the assertion that was
-    # failing before the flake moved to node 24.
+    # N1 - the flake's node must satisfy the repo's own engines range.
+    #
+    # Worth being precise about why this needs a guard at all: engines.node is
+    # ADVISORY. Measured with both controls, pnpm 10.34.5 under node 26.7.0
+    # against `>=24.0.0 <25` prints `WARN Unsupported engine` and exits 0. So
+    # nothing in the install path was ever going to catch this, which is exactly
+    # how the flake sat two majors below the declared range without complaint.
+    # This is the assertion that was red before the flake moved to node 24.
     if not engines_node:
         failures.append("N1: package.json has no engines.node; nothing to check the flake against")
     elif not nodesemver.satisfies(args.flake_node, engines_node, loose=False):

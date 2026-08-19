@@ -6,7 +6,10 @@ We've migrated from npm to pnpm for package management. Follow these steps to up
 
 ## Prerequisites
 
-- **Node.js 18.x or later** (required)
+- **Node.js `24.19.0`** — the exact version in [`.nvmrc`](../.nvmrc). `package.json`
+  declares `engines.node: ">=24.0.0 <25"`, so anything outside that major is
+  refused at install time. (This line used to say "18.x or later", which has not
+  been true for a long time.)
 - **pnpm 10.28.1** (the version specified in `package.json`)
 
 Install pnpm globally:
