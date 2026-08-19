@@ -6,7 +6,7 @@
  * only mentions a port must all run untouched.
  */
 
-import { unboundedDevRequest } from './check-writable.mjs';
+import { isSvelteSyncCommand, unboundedDevRequest } from './check-writable.mjs';
 
 let failures = 0;
 const check = (name, cmd, expectBlocked) => {
@@ -49,6 +49,24 @@ check('curl to other local port', 'curl http://localhost:8080/thing', false);
 check('no curl at all', 'node .claude/skills/dev-server/cli.mjs probe /home', false);
 check('mentions the port only', 'echo "the dev server is on localhost:3000"', false);
 check('probe command itself', 'node cli.mjs probe /home --port 3000', false);
+
+// `svelte-kit sync` — the MATCH is unchanged; what changed is that matching alone no longer asks. The
+// prompt now also requires a dev server to be running, since that collision is the whole hazard.
+const sync = (name, cmd, expectMatch) => {
+  const matched = isSvelteSyncCommand(cmd);
+  const pass = matched === expectMatch;
+  if (!pass) failures++;
+  console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}  matched=${matched} want=${expectMatch}`);
+};
+
+sync('bare sync', 'pnpm exec svelte-kit sync', true);
+sync('sync behind a cd', 'cd apps/creator-studio && pnpm exec svelte-kit sync', true);
+sync('the check script, which runs sync', 'pnpm run check', true);
+sync('check with no run', 'pnpm check', true);
+// Not sync: these must never ask, and `typecheck` is the remedy the reason text recommends.
+sync('typecheck', 'pnpm run typecheck', false);
+sync('a script merely NAMED check-something', 'pnpm run check-generated', false);
+sync('vitest', 'pnpm exec vitest run', false);
 
 console.log(failures ? `\n${failures} FAILURES` : '\nall green');
 process.exit(failures ? 1 : 0);
