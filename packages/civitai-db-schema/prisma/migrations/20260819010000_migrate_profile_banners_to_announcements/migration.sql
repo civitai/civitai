@@ -16,16 +16,23 @@
 -- instead is both slower (a correlated scan per profile, which times out on prod-sized data)
 -- and wrong once someone edits a migrated announcement.
 --
--- The marker is a metadata key the app's zod schema does not declare, so it is stripped the
--- first time a creator edits the announcement. That is fine for the re-run gate, which only
--- has to hold during the run, but it does mean the reverse below misses rows a creator has
--- already edited.
+-- No creator path can write or preserve this marker: upsertCreatorAnnouncementSchema takes no
+-- metadata field at all, and creator-announcement.service.ts rebuilds metadata from scratch
+-- and writes it wholesale. So nothing hand-authored is ever caught by the gate or the reverse
+-- below. Equally, the marker is dropped the first time a creator edits their announcement.
+-- That is fine for a gate that only has to hold during the run, but it does mean the reverse
+-- misses rows a creator has already adopted.
 --
 -- Counts (prod, 2026-08-19), for the runbook's before/after check:
 -- First statement inserts 25,655: 27,806 rows hold a non-empty "message", 1,379 of those
 -- sit on deleted users, leaving 26,427 live, and 772 of those contain HTML and are skipped.
 -- Second statement inserts 4: 29 rows hold a non-NULL "sfwMessage", 24 of those are empty
 -- strings or on a deleted user, and 1 of the remaining 5 contains HTML.
+--
+-- These are a snapshot, not a target: creators keep editing their banners, so the first
+-- number drifts upward (it had already moved to 25,657 within the afternoon). Check the
+-- result for the right order of magnitude and a single-digit second statement — an exact
+-- match is not expected and a mismatch on its own is not a fault.
 --
 -- Banners containing HTML are SKIPPED, not stripped and not migrated as-is (Justin's call,
 -- 2026-08-19). An announcement renders through CustomMarkdown with allowedElements ['a']
