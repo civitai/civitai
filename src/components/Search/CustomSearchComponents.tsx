@@ -46,10 +46,9 @@ import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
-import { Flags } from '~/shared/utils/flags';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isDefined } from '~/utils/type-guards';
+import { buildBrowsingLevelFilters, joinFilterClauses } from './search-filters';
 import styles from './CustomSearchComponents.module.scss';
 
 // const useStyles = createStyles((theme) => ({
@@ -268,15 +267,10 @@ export const BrowsingLevelFilter = ({
 }: { attributeName: string; filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
   const browsingLevel = useBrowsingLevelDebounced();
 
-  const filters = useMemo(() => {
-    const browsingLevelArray = Flags.instanceToArray(browsingLevel);
-    const browsingLevelFilter = attributeName
-      ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
-      : null;
-    const filterList = Array.isArray(_filters) ? _filters : [_filters];
-
-    return [...filterList, browsingLevelFilter].filter(isDefined);
-  }, [browsingLevel, attributeName, _filters]);
+  const filters = useMemo(
+    () => buildBrowsingLevelFilters({ attributeName, browsingLevel, filters: _filters }),
+    [browsingLevel, attributeName, _filters]
+  );
 
   return <ApplyCustomFilter filters={filters} {...props} />;
 };
@@ -445,10 +439,7 @@ export const ApplyCustomFilter = ({
   filters: _filters,
   ...props
 }: { filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
-  const filters = useMemo(() => {
-    const filterList = Array.isArray(_filters) ? _filters : _filters ? [_filters] : [];
-    return filterList.map((f) => `(${f})`).join(' AND ');
-  }, [_filters]);
+  const filters = useMemo(() => joinFilterClauses(_filters), [_filters]);
 
   const { refine } = useConfigure({ ...props, filters });
 
