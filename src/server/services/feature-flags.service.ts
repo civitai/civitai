@@ -382,7 +382,6 @@ const featureFlags = createFeatureFlags({
   canBuyBuzz: ['public'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
-  paddleAdjustments: ['granted'],
   announcements: ['granted'],
   blocklists: ['granted'],
   toolSearch: ['public'],
