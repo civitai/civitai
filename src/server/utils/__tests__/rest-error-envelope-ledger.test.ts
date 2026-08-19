@@ -325,7 +325,6 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'admin/temp/clamp-publishedat-bumps.ts',
   'admin/temp/dedupe-official-files.ts',
   'admin/temp/migrate-article-images.ts',
-  'admin/temp/migrate-model-flags.ts',
   'admin/temp/remove-deprecated-base-models.ts',
   'admin/test.ts',
   'admin/update-freshdesk-customer.ts',
