@@ -417,7 +417,15 @@ describe('the advisory locks have exactly one call site', () => {
    * which files it was happy with.
    */
   const ADVISORY_LOCK = /pg_advisory/;
-  const ALLOWED = ['services/article.service.ts', 'services/free-placement.service.ts'];
+  // creator-announcement takes one to serialise a creator's announcement-allowance spend:
+  // the cap is a count-then-insert, so without it two concurrent saves both see the same
+  // free slot. Classed two-arg form (0x414e0001), so it cannot collide with the bare
+  // article ids article.service.ts locks on.
+  const ALLOWED = [
+    'services/article.service.ts',
+    'services/creator-announcement.service.ts',
+    'services/free-placement.service.ts',
+  ];
 
   it('is taken only inside createFreePlacement', () => {
     const root = path.resolve(__dirname, '../..');

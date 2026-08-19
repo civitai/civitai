@@ -166,6 +166,22 @@ export type Announcement = {
   endsAt: Timestamp | null;
   metadata: unknown | null;
   disabled: Generated<boolean>;
+  /**
+   * Author. Null is Civitai itself; the sitewide caches select on null, so a
+   * non-null row can never reach the global banner.
+   */
+  userId: number | null;
+  coverId: number | null;
+  /**
+   * Profile-only rows never enter the announcements feed and never notify.
+   */
+  profileOnly: Generated<boolean>;
+};
+export type AnnouncementSpend = {
+  id: Generated<number>;
+  userId: number;
+  announcementId: number | null;
+  createdAt: Generated<Timestamp>;
 };
 export type AnnouncementUser = {
   announcementId: number;
@@ -3916,6 +3932,11 @@ export type User = {
   settings: Generated<unknown | null>;
   publicSettings: Generated<unknown | null>;
 };
+export type UserAnnouncementMute = {
+  userId: number;
+  creatorId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type UserCosmetic = {
   userId: number;
   cosmeticId: number;
@@ -4245,6 +4266,7 @@ export type DB = {
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
+  AnnouncementSpend: AnnouncementSpend;
   AnnouncementUser: AnnouncementUser;
   Answer: Answer;
   AnswerMetric: AnswerMetric;
@@ -4525,6 +4547,7 @@ export type DB = {
   Tool: Tool;
   TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;
+  UserAnnouncementMute: UserAnnouncementMute;
   UserCosmetic: UserCosmetic;
   UserCosmeticShopItemResale: UserCosmeticShopItemResale;
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;

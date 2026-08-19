@@ -1,10 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
 import type { Actions, PageServerLoad } from './$types';
 import { getCreatorScore } from '$lib/server/creator-score';
 import { getGetPaidEstimate } from '$lib/server/creator-program';
-
-const MAIN_APP_URL = env.CIVITAI_APP_URL || 'https://civitai.com';
+import { callMainApp } from '$lib/server/main-app';
 
 // The Studio gates monetization on Creator Program membership (B1), so a CP member has nothing to join here —
 // send them home. Non-CP members (incl. paying members who haven't cleared the score bar) still see the pitch,
@@ -24,18 +22,17 @@ export const load: PageServerLoad = async ({ parent, locals }) => {
 // the shared session cookie. On success the session now has CP membership, so the load above redirects home.
 export const actions: Actions = {
   join: async ({ request }) => {
-    const cookie = request.headers.get('cookie') ?? '';
-    let res: Response;
-    try {
-      res = await fetch(`${MAIN_APP_URL}/api/v1/creator-program/join`, {
+    const result = await callMainApp(
+      '/api/v1/creator-program/join',
+      request.headers.get('cookie') ?? '',
+      {
         method: 'POST',
-        headers: { cookie },
-      });
-    } catch {
-      return fail(502, { error: 'Could not reach the membership service. Please try again.' });
-    }
-    if (res.ok) redirect(303, '/join/welcome');
-    const data = (await res.json().catch(() => null)) as { error?: string } | null;
-    return fail(res.status, { error: data?.error ?? 'Could not join the Creator Program.' });
+        parse: false,
+        unreachable: 'Could not reach the membership service. Please try again.',
+      }
+    );
+
+    if (result.ok) redirect(303, '/join/welcome');
+    return fail(result.status, { error: result.error });
   },
 };

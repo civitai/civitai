@@ -615,6 +615,10 @@ model User {
   appOwnershipTransfersFrom          AppOwnershipTransfer[]     @relation("AppOwnershipTransferFrom")
   appOwnershipTransfersTo            AppOwnershipTransfer[]     @relation("AppOwnershipTransferTo")
   targetedAnnouncements              AnnouncementUser[]
+  authoredAnnouncements              Announcement[]             @relation("authoredAnnouncements")
+  announcementSpends                 AnnouncementSpend[]        @relation("announcementSpends")
+  announcementMutesGiven             UserAnnouncementMute[]     @relation("announcementMutesGiven")
+  announcementMutesReceived          UserAnnouncementMute[]     @relation("announcementMutesReceived")
   placementSuspension                PlacementSuspension?       @relation("PlacementSuspensionUser")
   placementsReceived                 Placement[]                @relation("PlacementOwner")
   placementsMade                     Placement[]                @relation("PlacementPlacer")
@@ -1788,6 +1792,7 @@ model Image {
   connections         ImageConnection[]
   UserProfile         UserProfile[]
   userProfileSfwCover UserProfile[]         @relation("UserProfileSfwCoverImage")
+  announcementCovers  Announcement[]        @relation("AnnouncementCover")
   clubCover           Club[]                @relation("coverImage")
   clubHeader          Club[]                @relation("headerImage")
   clubAvatar          Club[]                @relation("avatarImage")
@@ -4081,7 +4086,48 @@ model Announcement {
   endsAt      DateTime?
   metadata    Json?
   disabled    Boolean            @default(false)
+  /// Author. Null is Civitai itself; the sitewide caches select on null, so a
+  /// non-null row can never reach the global banner.
+  userId      Int?
+  user        User?              @relation("authoredAnnouncements", fields: [userId], references: [id], onDelete: Cascade)
+  coverId     Int?
+  cover       Image?             @relation("AnnouncementCover", fields: [coverId], references: [id], onDelete: SetNull)
+  /// Profile-only rows never enter the announcements feed and never notify.
+  profileOnly Boolean            @default(false)
   targetUsers AnnouncementUser[]
+  spends      AnnouncementSpend[]
+
+  @@index([userId, startsAt])
+}
+
+/// One spent announcement slot. Deliberately outlives the announcement it paid for:
+/// counting live announcements would return the slot on delete, making the cap
+/// refundable and therefore not a cap.
+model AnnouncementSpend {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  announcementId Int?
+  createdAt      DateTime      @default(now())
+  user           User          @relation("announcementSpends", fields: [userId], references: [id], onDelete: Cascade)
+  announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
+
+  /// The migration writes this as a PARTIAL unique (WHERE "announcementId" IS NOT NULL).
+  /// Same behaviour — Postgres already treats NULLs as distinct — so do not "correct"
+  /// either artifact to match the other.
+  @@unique([announcementId])
+  @@index([userId, createdAt])
+}
+
+/// A follower silencing one creator's announcements without unfollowing them.
+model UserAnnouncementMute {
+  userId    Int
+  creatorId Int
+  createdAt DateTime @default(now())
+  user      User     @relation("announcementMutesGiven", fields: [userId], references: [id], onDelete: Cascade)
+  creator   User     @relation("announcementMutesReceived", fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@id([userId, creatorId])
+  @@index([creatorId])
 }
 
 /// Allowlist of users an announcement targets. No rows = shown to everyone.
