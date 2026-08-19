@@ -93,7 +93,7 @@ export const actions: Actions = {
       userRestrictionId: input.userRestrictionId,
       status: input.status,
       userId: row.userId,
-      moderatorId: locals.user!.id,
+      moderatorId: locals.user.id,
     });
     return result.ok ? { success: true } : fail(400, { error: result.error });
   },
@@ -121,7 +121,7 @@ export const actions: Actions = {
       detailsExternal: input.detailsExternal || undefined,
       removeMedia: input.removeMedia,
       removeModels: input.removeModels,
-      moderatorId: locals.user!.id,
+      moderatorId: locals.user.id,
     });
     if (!banned.ok) return fail(400, { error: banned.error });
 
@@ -138,7 +138,7 @@ export const actions: Actions = {
       userRestrictionId: input.userRestrictionId,
       status: 'Upheld',
       userId: row.userId,
-      moderatorId: locals.user!.id,
+      moderatorId: locals.user.id,
     });
     return resolved.ok
       ? { success: true }
@@ -172,7 +172,7 @@ export const actions: Actions = {
       }));
     if (!matches.length) return fail(400, { error: 'None of the selected triggers still exist.' });
 
-    const saved = await saveSuspiciousMatches(matches, locals.user!.id);
+    const saved = await saveSuspiciousMatches(matches, locals.user.id);
     return { success: true, savedCount: saved };
   },
 };

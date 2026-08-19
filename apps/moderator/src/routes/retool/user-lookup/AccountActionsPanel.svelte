@@ -2,7 +2,6 @@
   import BanConfirmForm from '$lib/components/BanConfirmForm.svelte';
   import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
-  import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import type { LayoutData } from './$types';

@@ -1,7 +1,6 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { createSessionClient } from '@civitai/auth';
 import {
-  PERMISSIONS,
   applyGrants,
   resolvePermissions,
   canAccess,

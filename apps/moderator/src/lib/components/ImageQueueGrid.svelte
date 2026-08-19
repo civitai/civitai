@@ -2,6 +2,10 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import type { Snippet } from 'svelte';
+  // Used by the `generics=` attribute on the script tag above. ESLint cannot see that as a usage and
+  // reports it unused — deleting it is a build error, not a cleanup.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  import type { MediaType } from '$lib/media/edge-url';
   import type { SvelteSet } from 'svelte/reactivity';
   import { IconExternalLink } from '@tabler/icons-svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -9,7 +13,6 @@
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
-  import type { MediaType } from '$lib/media/edge-url';
 
   const RATING_BADGE: Record<number, string> = {
     [NsfwLevel.PG]: 'bg-green-600 text-white',
@@ -56,9 +59,12 @@
   const key = (item: T) => keyOf?.(item) ?? item.id;
 
   function toggle(item: T) {
+    // `selected` is optional — a queue rendered without it has no selection to toggle. Returning is
+    // the honest reading of that; asserting it away would throw on the one caller that omits it.
+    if (!selected) return;
     const k = key(item);
-    if (selected!.has(k)) selected!.delete(k);
-    else selected!.add(k);
+    if (selected.has(k)) selected.delete(k);
+    else selected.add(k);
   }
 
   function goNext() {

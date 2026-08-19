@@ -45,7 +45,6 @@ import {
   denied,
   PERMISSIONS,
   permissionByKey,
-  permissionById,
   type PermissionId,
   type PermissionSet,
   permissionKey,

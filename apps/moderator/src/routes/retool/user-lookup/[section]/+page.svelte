@@ -176,7 +176,6 @@
       <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
     {:else if section === 'notifications'}
       <NotificationsPanel
-        {account}
         userId={result.identity.id}
         canAct={data.canAct}
         onSuccess={() => (version += 1)}

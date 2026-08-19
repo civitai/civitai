@@ -2,7 +2,6 @@
   import { FormState } from '$lib/form-state.svelte';
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { LINK_CLASS, dateTime, plainText } from '$lib/format';
   import { commentV2Url, entityUrl, modelCommentUrl } from '$lib/entity-url';
   import type { Account } from './user-account';

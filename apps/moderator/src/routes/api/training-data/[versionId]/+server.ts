@@ -51,18 +51,20 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
 
   // The zip is evidence; who pulled it is worth having, and this is the only record on our side.
   void recordModActivity({
-    userId: locals.user!.id,
+    userId: locals.user.id,
     entityType: 'modelVersion',
     entityId: versionId,
     activity: 'trainingData:download',
   });
 
+  // Read once and reuse: forwarded only when the upstream sent it, since a wrong or absent
+  // content-length on a streamed body is worse than none.
+  const contentLength = upstream.headers.get('content-length');
+
   return new Response(upstream.body, {
     headers: {
       'content-type': upstream.headers.get('content-type') ?? 'application/zip',
-      ...(upstream.headers.get('content-length')
-        ? { 'content-length': upstream.headers.get('content-length')! }
-        : {}),
+      ...(contentLength ? { 'content-length': contentLength } : {}),
       'content-disposition': `attachment; filename="${(
         name ?? `training-data-${versionId}.zip`
       ).replace(/"/g, '')}"`,

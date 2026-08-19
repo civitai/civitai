@@ -6,7 +6,6 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@civitai/ui/components/ui/sheet/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { verdictFromAnswer, type ScanContent } from '$lib/scanner-audit';
   import { computeHighlightSegments, HIGHLIGHT_STYLES, getScannerLabelPolicy } from '@civitai/mod-utils';
   import type { PageData } from './$types';

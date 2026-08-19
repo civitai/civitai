@@ -2,7 +2,6 @@
   import { HIGHLIGHT_MARK } from '$lib/prompt-highlight';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import type {
-    PromptHighlightCategory,
     PromptHighlightResult,
     PromptSegment,
   } from '@civitai/mod-utils/prompt-audit';

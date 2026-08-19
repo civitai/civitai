@@ -8,7 +8,7 @@ import { runEvaluation } from '../../../../../xguard-lab/eval-core';
 // Policy editor. Every save is a NEW version, never an update in place: `eval_run.policy_id`
 // points at a specific row, so editing one would silently rewrite what a past run measured.
 
-export const load: PageServerLoad = async ({ locals, url, params }) => {
+export const load: PageServerLoad = async ({ locals, params }) => {
   requireAccess(locals.user, '/xguard');
 
   const label = await getLabDb()

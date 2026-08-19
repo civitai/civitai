@@ -21,7 +21,7 @@ export function requireIdParam(
 ): number {
   if (!locals.user) error(403, 'Not signed in.');
   const paths = Array.isArray(pagePath) ? pagePath : [pagePath];
-  if (!paths.some((path) => canAccess(locals.user!, path)))
+  if (!paths.some((path) => canAccess(locals.user, path)))
     error(403, 'You do not have access to this page.');
 
   const id = Number(raw);

@@ -1,5 +1,4 @@
 import { getClickhouse } from './clickhouse';
-import { dbRead } from './db';
 import { usersByIds } from './users.service';
 
 const TABLE = 'moderator_page_views';

@@ -9,7 +9,6 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { Capped, Notification } from './user-account';
   import { dateTime } from '$lib/format';
-  import type { Account } from './user-account';
   import ListCard from './ListCard.svelte';
 
   // `details` keys vary by notification type — the notifications service stores a raw payload and the
@@ -26,12 +25,10 @@
   };
 
   let {
-    account,
     userId,
     canAct,
     onSuccess,
   }: {
-    account: Promise<Account> | null;
     userId: number;
     canAct: boolean;
     onSuccess: () => void;

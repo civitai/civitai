@@ -119,7 +119,7 @@ export const actions: Actions = {
       detailsExternal: input.detailsExternal || undefined,
       removeMedia: input.removeMedia,
       removeModels: input.removeModels,
-      moderatorId: locals.user!.id,
+      moderatorId: locals.user.id,
     });
     return result.ok ? { success: true } : fail(400, { error: result.error });
   }),

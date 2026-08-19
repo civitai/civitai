@@ -29,7 +29,7 @@ const rule = async (event: RequestEvent, approve: boolean) => {
   const result = await moderateTrainingData({
     modelVersionId: versionId.data,
     approve,
-    moderatorId: event.locals.user!.id,
+    moderatorId: event.locals.user.id,
   });
   if (!result.ok) return fail(400, { error: result.error });
 

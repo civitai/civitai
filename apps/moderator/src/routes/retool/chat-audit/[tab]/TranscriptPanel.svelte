@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { LINK_CLASS, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import MessageMeta from './MessageMeta.svelte';
   import ListFilterBar from '$lib/components/ListFilterBar.svelte';

@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { civitaiAppUrl } from './civitai-url';
-import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { VIOLATION_LABELS } from '$lib/violations';
