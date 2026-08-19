@@ -86,6 +86,10 @@ BEGIN;
 -- 1095630849 is ANNOUNCEMENT_LOCK_CLASS (0x414e0001) from creator-announcement.service.ts,
 -- written in decimal because hex integer literals need Postgres 16. The app locks
 -- (class, userId) with a real user id, so (class, 0) cannot collide with a creator saving.
+--
+-- Keep the TWO-argument form. The one-argument form is a different keyspace entirely, and
+-- article.service.ts already locks in it on bare article ids — a one-arg lock here would
+-- collide with whichever article shares this number.
 SELECT pg_advisory_xact_lock(1095630849::int, 0::int);
 
 INSERT INTO "Announcement" ("userId", "title", "content", "color", "domain", "startsAt", "profileOnly", "disabled", "metadata", "createdAt", "updatedAt")
