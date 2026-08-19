@@ -4111,6 +4111,9 @@ model AnnouncementSpend {
   user           User          @relation("announcementSpends", fields: [userId], references: [id], onDelete: Cascade)
   announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
 
+  /// The migration writes this as a PARTIAL unique (WHERE "announcementId" IS NOT NULL).
+  /// Same behaviour — Postgres already treats NULLs as distinct — so do not "correct"
+  /// either artifact to match the other.
   @@unique([announcementId])
   @@index([userId, createdAt])
 }

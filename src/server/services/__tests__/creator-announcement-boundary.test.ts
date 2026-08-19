@@ -456,7 +456,7 @@ describe('an omitted field means leave it alone', () => {
     expect(data.title).toBe(validInput.title);
   });
 
-  it('still honours an explicit disabled on an update', async () => {
+  it('ignores a disabled the caller tries to send, so a moderated row stays down', async () => {
     dbMock.dbRead.announcement.findFirst.mockResolvedValue({
       id: 9,
       coverId: null,
@@ -468,7 +468,7 @@ describe('an omitted field means leave it alone', () => {
     const data = (
       dbMock.dbWrite.announcement.update.mock.calls[0][0] as { data: Record<string, unknown> }
     ).data;
-    expect(data.disabled).toBe(true);
+    expect(data.disabled).toBeUndefined();
   });
 
   it('defaults a new announcement to enabled', async () => {
@@ -525,5 +525,46 @@ describe('branches the fix round added and left uncovered', () => {
       dbMock.dbRead.announcement.findMany.mock.calls[0][0] as { where: { disabled?: boolean } }
     ).where;
     expect(where.disabled).toBeUndefined();
+  });
+});
+
+describe('a row crossing into notifying starts its life then', () => {
+  it('stamps startsAt when the creator gave none', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue({
+      id: 9,
+      coverId: null,
+      profileOnly: true,
+    } as never);
+
+    const before = Date.now();
+    await upsertCreatorAnnouncement({ ...validInput, id: 9, profileOnly: false, userId: AUTHOR });
+
+    const data = (tx.announcement.update.mock.calls[0][0] as { data: { startsAt: Date } }).data;
+
+    // The fan-out selects COALESCE(startsAt, createdAt) inside a 30-minute floor. A draft
+    // written an hour ago keeps its old timestamp, is charged a slot, and is then picked
+    // up by nobody — the creator pays and reaches no one, with no error anywhere.
+    expect(data.startsAt).toBeInstanceOf(Date);
+    expect(data.startsAt.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it('keeps a schedule the creator did choose', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue({
+      id: 9,
+      coverId: null,
+      profileOnly: true,
+    } as never);
+    const scheduled = new Date('2026-12-01T00:00:00.000Z');
+
+    await upsertCreatorAnnouncement({
+      ...validInput,
+      id: 9,
+      profileOnly: false,
+      startsAt: scheduled,
+      userId: AUTHOR,
+    });
+
+    const data = (tx.announcement.update.mock.calls[0][0] as { data: { startsAt: Date } }).data;
+    expect(data.startsAt).toEqual(scheduled);
   });
 });

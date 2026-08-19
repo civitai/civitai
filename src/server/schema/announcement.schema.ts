@@ -95,7 +95,10 @@ export const upsertCreatorAnnouncementSchema = z.object({
   domain: z.array(domainColorEnum).nonempty().default([DomainColor.all]),
   startsAt: z.date().nullish(),
   endsAt: z.date().nullish(),
-  disabled: z.boolean().optional(),
+  // No `disabled`. Nothing can distinguish a row a creator hid from one a moderator took
+  // down, so accepting the field lets a creator restore a moderated announcement by
+  // sending `disabled: false` — for free, since that path spends no slot. Creators end an
+  // announcement by deleting it or by setting an endsAt.
   /** Shows on the author's profile only: no feed, no notification, no allowance spent. */
   profileOnly: z.boolean().default(false),
   coverImage: imageSchema.optional(),
