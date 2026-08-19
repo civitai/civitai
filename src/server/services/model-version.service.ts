@@ -755,6 +755,17 @@ export const upsertModelVersion = async ({
       );
     }
 
+    // `status` is client-settable on this route, so an edit-and-save could take a published version
+    // down and skip the refund obligation that unpublishModelVersionById enforces. Route the
+    // transition rather than duplicating the gate — this is an editor, not a take-down.
+    const unpublishing =
+      data.status === ModelStatus.Unpublished || data.status === ModelStatus.UnpublishedViolation;
+    if (unpublishing && existingVersion.status === ModelStatus.Published) {
+      throw throwBadRequestError(
+        'Use the unpublish action to unpublish a version — it settles any refunds owed to buyers.'
+      );
+    }
+
     const mergedMeta =
       metaInput || rightsAffirmation
         ? {

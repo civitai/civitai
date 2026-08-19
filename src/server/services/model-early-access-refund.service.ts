@@ -231,16 +231,19 @@ export const refundModelEarlyAccessPurchases = async ({
     } catch (error) {
       logToAxiom({
         type: 'error',
-        name: 'model-unpublish-early-access-refund',
-        message: `Failed to refund early access purchases for model ${modelId}`,
+        name: `${scope}-unpublish-early-access-refund`,
+        message: `Failed to refund early access purchases for ${scope} ${
+          scope === 'version' ? purchase.modelVersionId : modelId
+        }`,
         error,
+        scope,
         modelId,
         modelVersionId: purchase.modelVersionId,
         buyerId: purchase.buyerId,
         refundedCount,
       });
       throw throwBadRequestError(
-        `Failed to refund early access buyers (${refundedCount} of ${requirement.purchases.length} refunded). The model was not unpublished — please try again.`
+        `Failed to refund early access buyers (${refundedCount} of ${requirement.purchases.length} refunded). The ${scope} was not unpublished — please try again.`
       );
     }
   }

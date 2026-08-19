@@ -463,6 +463,14 @@ describe('unpublishModelById — early access refund gate', () => {
     await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, refundEarlyAccess: true });
 
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledTimes(2);
+    // The buyer reads this line in their Buzz history, so it has to name what was taken down.
+    // Nothing else pins the model wording — the scope argument defaults, and a flipped default
+    // is invisible to every other assertion in both refund suites.
+    expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining('(model unpublished)'),
+      })
+    );
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ externalTransactionIdPrefix: 'tx-1' })
     );

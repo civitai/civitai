@@ -48,6 +48,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   materializePaidAccessEndsAt: vi.fn(),
   writePaidAccessForModelVersion: vi.fn(),
   getPaidAccess: vi.fn(),
+  assertPaidAccessInput: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
@@ -83,14 +84,19 @@ vi.mock('~/server/services/monetization-rights.service', () => ({
   resolveRightsAffirmation: vi.fn(),
 }));
 
-import { unpublishModelVersionById } from '~/server/services/model-version.service';
-import { getModelVersionEarlyAccessRefundRequirement } from '~/server/services/model-early-access-refund.service';
+import {
+  unpublishModelVersionById,
+  upsertModelVersion,
+} from '~/server/services/model-version.service';
+import {
+  getModelVersionEarlyAccessRefundRequirement,
+  toEarlyAccessRefundSummary,
+} from '~/server/services/model-early-access-refund.service';
 import type { SessionUser } from '~/types/session';
 
 const MODEL_ID = 42;
 const OWNER_ID = 7;
 const VERSION_ID = 100;
-const OTHER_VERSION_ID = 101;
 const BUYER_ID = 555;
 
 const HOUR = 60 * 60 * 1000;
@@ -121,7 +127,10 @@ function seedPurchase({
   mockGetMultiAccountTransactionsByPrefix.mockResolvedValue([{ amount, accountType: 'yellow' }]);
   mockGetUserBuzzAccountByAccountTypes.mockResolvedValue({ yellow: balance });
   dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({ modelId: MODEL_ID });
-  dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({ name: 'Test Model', userId: OWNER_ID });
+  dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
+    name: 'Test Model',
+    userId: OWNER_ID,
+  });
 }
 
 function seedUnpublishWrites() {
@@ -135,7 +144,9 @@ function seedUnpublishWrites() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: typeof mockTx) => unknown) => fn(mockTx));
+  dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: typeof mockTx) => unknown) =>
+    fn(mockTx)
+  );
   seedUnpublishWrites();
 });
 
@@ -173,6 +184,57 @@ describe('getModelVersionEarlyAccessRefundRequirement', () => {
   });
 });
 
+// The gate on unpublishModelVersionById is worth nothing if another owner-reachable route can take
+// the version down without it. `status` is client-settable on the editor route, which is one.
+describe('upsertModelVersion — cannot unpublish through the editor', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+      id: VERSION_ID,
+      status: 'Published',
+      meta: null,
+      model: { id: MODEL_ID, userId: OWNER_ID, meta: null, availability: 'Public' },
+      monetization: null,
+    });
+  });
+
+  it('refuses a published → unpublished transition and names the route that settles refunds', async () => {
+    await expect(
+      upsertModelVersion({ id: VERSION_ID, status: 'Unpublished' } as never)
+    ).rejects.toThrowError(/Use the unpublish action/);
+
+    expect(dbMock.dbWrite.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses the violation status too — same door, different value', async () => {
+    await expect(
+      upsertModelVersion({ id: VERSION_ID, status: 'UnpublishedViolation' } as never)
+    ).rejects.toThrowError(/Use the unpublish action/);
+
+    expect(dbMock.dbWrite.modelVersion.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('toEarlyAccessRefundSummary', () => {
+  // This is what stands between the requirement and the client: the raw requirement carries every
+  // buyer's id and their buzz transaction ids, and returning it unchanged would ship both.
+  it('reduces the requirement to counts, keeping no buyer identity', async () => {
+    seedPurchase();
+
+    const summary = toEarlyAccessRefundSummary(
+      await getModelVersionEarlyAccessRefundRequirement({ id: VERSION_ID })
+    );
+
+    expect(summary).toEqual({
+      purchaseCount: 1,
+      buyerCount: 1,
+      totalBuzz: 300,
+      exemptBuyerCount: 0,
+    });
+    expect(JSON.stringify(summary)).not.toContain(String(BUYER_ID));
+    expect(JSON.stringify(summary)).not.toContain('tx-1');
+  });
+});
+
 describe('unpublishModelVersionById — refund gate', () => {
   it('refuses the unpublish when the owner has not consented to refunding', async () => {
     seedPurchase();
@@ -181,9 +243,11 @@ describe('unpublishModelVersionById — refund gate', () => {
       /without refunding buyers/
     );
 
-    // The point of the gate: the version is still published and nobody has been charged.
+    // The point of the gate: the version is still published, nobody has been charged, and no
+    // grant has been revoked — revoking before the consent check would otherwise stay green.
     expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.entityAccess.deleteMany).not.toHaveBeenCalled();
   });
 
   it('refunds the buyer, revokes the grant, then unpublishes when the owner consents', async () => {
@@ -195,6 +259,9 @@ describe('unpublishModelVersionById — refund gate', () => {
       externalTransactionIdPrefix: 'tx-1',
       description: 'Refund early access purchase: Test Model (version unpublished)',
     });
+    // Counts, not just shape: a refund issued twice debits the owner twice and pays the buyer
+    // twice, and every assertion above passes while it happens.
+    expect(mockRefundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.entityAccess.deleteMany).toHaveBeenCalledWith({
       where: {
         accessToId: VERSION_ID,
@@ -213,6 +280,11 @@ describe('unpublishModelVersionById — refund gate', () => {
       unpublishModelVersionById({ id: VERSION_ID, refundEarlyAccess: true, user: owner })
     ).rejects.toThrowError(/300 yellow Buzz but the account only has 100/);
 
+    // The throw has to come BEFORE the refunds. Checking affordability after paying everyone out
+    // drives the owner's account negative — the ledger exempts refunds from its own sufficiency
+    // check — and still throws, so asserting only the error message cannot tell the two apart.
+    expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.entityAccess.deleteMany).not.toHaveBeenCalled();
     expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
   });
 
@@ -236,31 +308,30 @@ describe('unpublishModelVersionById — refund gate', () => {
     expect(dbMock.dbWrite.paidAccess.findMany).not.toHaveBeenCalled();
   });
 
-  it('prices the refund from this version alone, not from its siblings', async () => {
+  // Scoping lives in a SQL `where` that the db mock does not implement, so no fixture here can
+  // demonstrate it by outcome — a sibling row comes back whatever the query said, and a test that
+  // asserted the total would pass for the wrong reason. What IS observable is the set of ids this
+  // path asks about, so that is what these assert. The behavioural half — a sibling's buyers never
+  // entering the refund — is only provable against a real database.
+  it('asks about this version alone, so a sibling can never enter the gate lookup', async () => {
     seedPurchase();
-    dbMock.dbWrite.entityAccess.findMany.mockResolvedValue([
-      {
-        accessToId: VERSION_ID,
-        accessorId: BUYER_ID,
-        meta: { 'download-buzzTransactionId': 'tx-1' },
-        addedAt: boughtRecently(),
-      },
-      {
-        accessToId: OTHER_VERSION_ID,
-        accessorId: BUYER_ID,
-        meta: { 'download-buzzTransactionId': 'tx-2' },
-        addedAt: boughtRecently(),
-      },
-    ]);
 
     await expect(unpublishModelVersionById({ id: VERSION_ID, user: owner })).rejects.toThrowError(
       /without refunding buyers/
     );
 
-    // Only this version's gate is read, so a sibling's buyers can never be dragged into the total.
+    expect(dbMock.dbWrite.modelVersion.findMany).toHaveBeenCalledWith({
+      where: { id: VERSION_ID },
+      select: { id: true, meta: true },
+    });
     expect(dbMock.dbWrite.paidAccess.findMany).toHaveBeenCalledWith({
       where: { entityType: 'ModelVersion', entityId: { in: [VERSION_ID] } },
       select: { entityId: true, endsAt: true },
     });
+    expect(dbMock.dbWrite.entityAccess.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ accessToId: { in: [VERSION_ID] } }),
+      })
+    );
   });
 });

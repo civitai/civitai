@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
-import pLimit from 'p-limit';
 import dayjs from '~/shared/utils/dayjs';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
@@ -111,14 +110,6 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
-import {
-  getMultiAccountTransactionsByPrefix,
-  getUserBuzzAccountByAccountTypes,
-  refundMultiAccountTransaction,
-} from '~/server/services/buzz.service';
-import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
-import { BuzzTypes } from '~/shared/constants/buzz.constants';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -148,7 +139,6 @@ import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
-  throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
@@ -182,7 +172,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 import { isPaidAccessActive } from '@civitai/buzz';
-import { isWithinPaidAccessRefundWindow } from '~/server/utils/early-access-helpers';
 import {
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
@@ -2780,10 +2769,10 @@ import {
   refundModelEarlyAccessPurchases,
 } from '~/server/services/model-early-access-refund.service';
 
-export {
-  getModelEarlyAccessRefundRequirement,
-  getModelVersionEarlyAccessRefundRequirement,
-} from '~/server/services/model-early-access-refund.service';
+// Re-exported for the callers that predate the extraction. The version-scoped entry point is
+// deliberately NOT re-exported here — reaching it through this module is what would put the
+// model-version → model import edge back.
+export { getModelEarlyAccessRefundRequirement } from '~/server/services/model-early-access-refund.service';
 export type { ModelEarlyAccessRefundRequirement } from '~/server/services/model-early-access-refund.service';
 
 export const unpublishModelById = async ({
