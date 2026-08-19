@@ -49,10 +49,11 @@ improvement gets moved down here rather than copied.
 - [x] **Sub-permissions per app.** *"We need sub-permissions per app too or something. Some mods need to
       be able to edit email/username."* Retool has a single "Enable Edits" toggle; the ask was for real
       per-capability grants. Built 2026-08-14 — [`page-feature-permissions.md`](page-feature-permissions.md).
-      It turned out **not** to need a model change: `AppPageAccess` is `(app, path) → roles[]`, so a
-      feature is a row keyed `<pagePath>#<featureKey>`.
-      No migration to apply: each capability declares `defaultRoles`, and the app writes them the first
-      time it finds the row missing.
+      It turned out **not** to need a model change: `AppPageAccess` is `(app, path) → roles[]`, so an
+      action grant is a row keyed `grant:<id>`.
+      **Reshaped 2026-08-19:** the first version keyed rows by page and seeded `defaultRoles`, which is
+      what silently zeroed five of them; permissions no longer name a page and there are no defaults, so a
+      new one is held by nobody until ticked on `/admin`.
 - [ ] 🎥 **Widen access to the mass ban tool** once it exists — *"That's good for other mods to have
       access to this too."* (Building it at all is parity; who can reach it is this.)
 

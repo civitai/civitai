@@ -12,21 +12,38 @@ provenance is the only reason it differs from the standard at all.
 - **Route access is gated centrally** in `hooks.server.ts` against the `NAVIGATION` tree in
   `$lib/server/access.ts` — register a page there rather than checking per-page. Gate the action on the
   page's own path, never on a parent group node (a group's grant is the union of its children).
-- **A page-level permission and an action-level permission are different things**, and the app has both.
-  Reaching a lookup page is an investigation permission; acting on an account is not. For an action that
-  only some holders of a page should have, add an entry to `CAPABILITIES` in `access.ts` and gate with
-  `canUse(user, CAPABILITIES.x)` — never a hand-rolled role check, and never an extra `&&` at the call
-  site. Every term of the gate belongs in the declaration (`path`, plus `requires` for other pages the
-  action needs), because `whoami` and `/admin` read the same object: a term left at one call site makes
-  the diagnostic disagree with the action it is meant to explain. **That entry is the whole job** — the
-  `/admin` tree, the storage key, the refusal wording and the default grant all derive from it, and no
-  migration is needed. Background and the current list:
+- **Page grants and action grants are two INDEPENDENT axes.** A page grant is what a role may OPEN,
+  enforced centrally in `hooks.server.ts`. A permission is what a role may DO, declared in
+  `$lib/permissions.ts` as `{ id, label }` and granted to roles on `/admin`. An action sits behind both,
+  and they are composed where the action runs — never welded together in the declaration.
+
+  🔴 **Do not give a permission a page.** They used to: each named the page it lived on plus the pages it
+  required, and the check demanded all of them. `/users` was never built past a placeholder, so five
+  permissions seeded to nobody, could not be granted (any `/admin` save re-trimmed them), and silently
+  became admin-only — identity editing, the moderator toggle, Buzz send and mass ban, off for every
+  non-admin with nothing reporting it. Which pages exist is not a permissions question. Background:
   [`docs/moderator-app/page-feature-permissions.md`](../../docs/moderator-app/page-feature-permissions.md).
-- **`CAPABILITIES[x].id` is a stored value — renaming one orphans its grants.** Grants are keyed
-  `capability:<id>`, deliberately never the page's URL, so retiring the `/retool/` prefix cannot switch
-  permissions off. Treat an id like a column name; add `defaultRoles` instead of a seed migration, and
-  the app writes it the first time it sees the row missing (intersected with the roles holding `path`,
-  so it can never pre-arm anyone). A row that already exists is never touched.
+
+- **Gate an action with the resolved set, never a hand-rolled role check.** `locals.grants` is a
+  `PermissionSet` resolved once per request in `hooks.server.ts` (after `applyGrants` — before it the
+  store is empty and everyone resolves to `{}`) and handed to the client by the root layout, so both
+  sides read one answer:
+
+  ```ts
+  // form action — the permission is part of the signature, not a line to remember
+  sendBuzz: requiresGrant('user.buzz.send', async ({ request, locals }) => { … })
+  // anywhere else, server or client
+  if (!locals.grants['user.buzz.send']) …      {#if data.grants['user.buzz.send']}
+  ```
+
+  Absent means not held, which is also what an unloaded store looks like — both read false, so it fails
+  closed. A mistyped id does not compile.
+
+- **A permission's `id` is a stored value — changing one orphans its grants.** Rows are keyed
+  `grant:<id>`, deliberately never the page's URL, so retiring the `/retool/` prefix cannot switch
+  permissions off. Treat an id like a column name. There are **no default roles**: a new permission is
+  held by nobody until someone ticks it on `/admin`, exactly like a new page. Seeding defaults is what
+  the old model did, and intersecting them against an ungranted page is how they arrived at nobody.
 - **A new page is unreachable until granted.** It has no `AppPageAccess` row, so only `moderator:admin`
   can see it until someone ticks the boxes on `/admin`. Say so in the handover.
 - **The role list is the auth hub's, never a constant here.** `$lib/server/roles.ts` reads the hub's

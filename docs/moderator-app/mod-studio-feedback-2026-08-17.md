@@ -21,6 +21,12 @@ Reporter identities, message links and quotes are deliberately absent: this repo
 > **Update this file in the same commit as the fix**, with a one-line outcome and the sha. An unticked box
 > with no note reads as "nobody looked", which is the failure mode this file exists to prevent.
 
+> **Open items from this round have moved** to
+> [`mod-studio-feedback-2026-08-19.md`](mod-studio-feedback-2026-08-19.md), so there is one live list
+> rather than boxes to tick in two files. They keep the date they were first raised. What stays here is
+> the record of what this round reported and what shipped — moved items appear below as plain bullets
+> with their reasoning intact, and no checkbox.
+
 **Items are not announced back to the reporters individually.** Replying per item as things land adds
 noise for a team who mostly want the tool to work, so release notes carry what changed and this file
 carries the state. A ticked box therefore means shipped — not "shipped and acknowledged" — and an item
@@ -140,7 +146,7 @@ the `Report` table, and so is blind to every queue that resolves no report.
         the way the sidebar already did.
       - Downleveled is deliberately still uncounted: it is a ClickHouse log that only grows, so a badge
         on it would never fall.
-- [ ] **User Lookup unavailable for the staff role.** Not a defect — it is the `/admin` grant still
+- **User Lookup unavailable for the staff role.** Not a defect — it is the `/admin` grant still
       outstanding in [`permissions-handoff.md`](permissions-handoff.md). Nothing to build.
 
 ## Round 2026-08-18 — the image queues are a review screen, not an action screen
@@ -216,15 +222,16 @@ reported on 08-16 and 08-17 starts from untouched.
       The tracker genuinely did list 9 of 13 subtasks, and sections 1.4 and 1.10 are still absent from
       [`retool-migration-tasks.md`](retool-migration-tasks.md) — but subtasks are not apps, and nothing
       now suggests an unported one.
-- [ ] **Repoint the four lookup env vars off Retool** — handover blocker
+- **Repoint the four lookup env vars off Retool** — handover blocker
       [5b](retool-migration-handover.md). Config only; both post and model target Bulk Image Manager,
       which is already ported.
-- [ ] **Finish the environment and database steps** — handover blockers
+- **Finish the environment and database steps** — handover blockers
       [#1–#4](retool-migration-handover.md). What is actually outstanding is narrower than that list
       reads; see [§ Environment status](#environment-status) below.
-- [ ] **Ship the dependent main-app deploy.** Flagged as blocking in three separate releases. Until it
-      goes out, issue/void strike, timed-mute expiry, overturn/uphold on pending restrictions, and the
-      minor-hash-match buttons all error.
+- [x] **Ship the dependent main-app deploy.** Shipped (confirmed 08-19). `origin/main` carries the
+      moderator endpoints the spoke calls, and the 08-19 round contains a strike that ISSUED rather than
+      erroring — the symptom this item predicted, now gone. Its successor is a strike that issues but does
+      not display, in the [2026-08-19 round](mod-studio-feedback-2026-08-19.md).
 
 **Permission grants have moved** to [`permissions-handoff.md`](permissions-handoff.md) — re-enabling
 User Lookup, granting the five newer pages, Chat Audit access, and confirming the sub-permission
@@ -243,7 +250,7 @@ verifying individually.
 
 | Item | Local state | Note |
 | --- | --- | --- |
-| `CIVITAI_MOD_API_KEY` | **absent** | Blocks striking and bulk comment/review actions; they refuse up front rather than failing mid-write |
+| `CIVITAI_MOD_API_KEY` | **retired 08-19** | **Do NOT provision.** The spoke authenticates as the acting moderator instead; nothing reads this variable and it is gone from the code and from `.env.example` |
 | `RETOOL_DATABASE_URL` | set | Needs confirming in every deployed env — without it notes/strikes/mutes read the wrong database |
 | 3 SQL migrations | see below | Each is `CREATE INDEX CONCURRENTLY`, so each runs outside a transaction |
 
@@ -277,7 +284,7 @@ verifying individually.
       `/comments/v2/<id>` resolver, which redirects with the comment pinned. The resolver also fixes two
       cases a built URL cannot reach — entity types with no standalone page (previously unlinked grey
       text) and replies past the first page of a long thread.
-      - [ ] The same report mentioned the comment rows being "funky" to read. Not addressed — it was a
+      - The same report mentioned the comment rows being "funky" to read. Not addressed — it was a
             screenshot, and the layout complaint isn't reconstructable from the text.
 - [x] **Bulk Image Manager showed at most 200 images with no way to page further.** A size control now
       offers 200 / 500 / 1000, carried in the URL as `limit` so a batch stays shareable, and preserved
@@ -285,7 +292,7 @@ verifying individually.
       addressed a different need — this was about *seeing* past 200, and the only route to the rest was an
       account-wide purge, which is not a review.
       Past 1000 the purge remains the answer; the truncation banner now says so.
-- [ ] `reportedUser` renders greyed out on reports. Suspected downstream of User Lookup being disabled —
+- `reportedUser` renders greyed out on reports. Suspected downstream of User Lookup being disabled —
       confirm it clears when that is re-enabled, otherwise it is its own defect. **Blocked on the `/admin`
       re-enable in P0**, not investigable before it.
 - [x] **Comics review → block returned a 500.** The action `await`ed the moderation call unguarded, so
@@ -295,7 +302,7 @@ verifying individually.
       - [x] **The worse half, unreported:** the panel was marked "Blocked" optimistically and **never
             reverted on failure**. On the exact 500 that was reported, the card showed a verdict, the
             panel was untouched, and the moderator moved on. See the sweep below.
-      - [ ] Not addressed: why banned users' comics are queued for review at all. Raised as a possible
+      - Not addressed: why banned users' comics are queued for review at all. Raised as a possible
             better fix; it is a queue-predicate question, not this defect.
 - [x] **Deleting an image returned a 500 but succeeded.** Closed by `fix(moderator): don't fail a
       moderation action on its side effects` (08-12) — `blockImage` ran five side effects, three of which
@@ -322,19 +329,19 @@ verifying individually.
 
 These block work below them and cannot be resolved by writing code.
 
-- [ ] **`ReToolActions` vs `ModActivity`** — two mod-action logs that nothing reconciles. A recommendation
+- **`ReToolActions` vs `ModActivity`** — two mod-action logs that nothing reconciles. A recommendation
       exists (2026-08-11): migrate as a read-only archive, do **not** merge, because the user id is embedded
       in free text and matched with `LIKE`, so merging would invent attribution that later reads as real.
       See [`retool-db-cutover.md`](retool-db-cutover.md). Needs a yes.
-- [ ] **Two strike systems** — this app writes the Retool-era `UserStrikes`, not the main app's newer
+- **Two strike systems** — this app writes the Retool-era `UserStrikes`, not the main app's newer
       `Strike`.
-- [ ] **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** — add them to the
+- **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** — add them to the
       schema, or accept the raw `sql` read.
-- [ ] **`FrontPageTimers` / `RatingChanges`** — the two schemas Front Page Audit needs before it can resume
+- **`FrontPageTimers` / `RatingChanges`** — the two schemas Front Page Audit needs before it can resume
       or log. The sweep works without them; the shared resume point and the audit trail do not.
-- [ ] **Confirm the sub-permission defaults** shipped on 08-14: buzz send and email edit as senior-only,
+- **Confirm the sub-permission defaults** shipped on 08-14: buzz send and email edit as senior-only,
       granting cosmetics as admin-only. The last was chosen to match Retool and has not been confirmed.
-- [ ] **How queue sweeps get tracked** — a new table, or an extension of `ModActivity`. Blocks the
+- **How queue sweeps get tracked** — a new table, or an extension of `ModActivity`. Blocks the
       remaining queue requests below.
 
 ## P3 — improvements, after parity
@@ -370,7 +377,7 @@ to [`post-migration-backlog.md`](post-migration-backlog.md) once confirmed.
 - [x] "Most Reported" leads the page — it is above the queue board, on the reasoning that a pile-up on
       one item is a live incident while the counts are a backlog
 - [x] Reporter count per item — the table's first column
-- [ ] **Show "recently worked" and "time sweeps" beside the queues they describe.** Both render, but as
+- **Show "recently worked" and "time sweeps" beside the queues they describe.** Both render, but as
       their own panels rather than per queue row, and that is deliberate: **the report-source labels and
       the sidebar's count keys are named independently, and three of them do not correspond**, so there
       is no key to attach a row to. Blocked on the same P2 decision the requester raised in the same
@@ -413,12 +420,12 @@ to [`post-migration-backlog.md`](post-migration-backlog.md) once confirmed.
 - [x] **Removal options mirror the site** on the multi-select removal UIs — Bulk Image Manager and User
       Reports both offer `VIOLATION_TYPES`, which matches the main app's `ViolationType` enum entry for
       entry, alongside the canned reasons.
-      - [ ] The `/images/*` triage queues are **not** included, and this is a decision rather than an
+      - The `/images/*` triage queues are **not** included, and this is a decision rather than an
             oversight. Their bulk block goes through `blockImage` — the report-driven path, shared with
             Comics Review — not `removeImages`, which is what carries a violation type. Giving them the
             reason list means moving them onto a different endpoint with different side effects and a
             different audit trail. Worth doing deliberately, not as a UI tweak.
-- [ ] **Link a report to the site it originated from — not implementable here.** `Report` has no origin
+- **Link a report to the site it originated from — not implementable here.** `Report` has no origin
       column, and `createReport` writes only `reportType` into `details`, so the fact is never recorded
       anywhere. It needs a main-app change to capture the host at report time before this app can show
       it. The reporter filed it as a "for future" ask, which is the right classification.
@@ -428,14 +435,14 @@ to [`post-migration-backlog.md`](post-migration-backlog.md) once confirmed.
 Recorded here because they were raised in this channel, but each is a main-app change, a policy call, or
 both. None can be closed by this app.
 
-- [ ] The "Admin Attention" report reason is too vague to action — remove it or merge it. Changes the
+- The "Admin Attention" report reason is too vague to action — remove it or merge it. Changes the
       main app's `ReportReason` and what reporters are offered; the requester also flagged an unknown,
       whether it still matters to the guardian score.
-- [ ] The mod changelog modal disappears once a model is unpublished, so the changes and the unpublish
+- The mod changelog modal disappears once a model is unpublished, so the changes and the unpublish
       reason become unreadable exactly when they matter most. Main-app model page.
-- [ ] Unpublished articles have no republish path; authors are told to contact support and the article
+- Unpublished articles have no republish path; authors are told to contact support and the article
       page does not even say that. Main app plus a support-process decision.
-- [ ] A model marked as depicting a minor can still receive a new version containing X-rated images.
+- A model marked as depicting a minor can still receive a new version containing X-rated images.
       Main-app filtering behaviour, reported here only because it surfaced during moderation.
 
 ---
@@ -468,6 +475,9 @@ requests from that round. Dashboard gained an urgent-content banner.
 
 **08-14 (v0.0.24–v0.0.26)** — Sub-permissions: individual actions inside a page can be gated, granted per
 role on the permissions page, and a capability now honours every page it requires rather than only its own.
+**Superseded 08-19:** that last clause was the defect, not the feature — requiring the page meant an
+ungranted `/users` silently zeroed five permissions and made them ungrantable. Page grants and action
+grants are independent now (`e14a5428dd`); the rest of the entry still stands.
 `/admin` reads its role columns from the auth hub, so a role created there gets a column without a deploy,
 and its refusals stay visible instead of being hidden behind the unsaved-changes line.
 

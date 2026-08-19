@@ -299,8 +299,9 @@ Open, with the evidence each audit produced:
       where it was, and the user is never told which way it went.
       `resolveUserRestriction` in the main app is the single write path that does all of that, and it
       was reachable only from the tRPC moderator router — i.e. not from this app at all. So this needed
-      **a new main-app endpoint**: `POST /api/mod/restriction/resolve`, in the
-      same `defineRetoolEndpoint` family as `strike`/`user`. The Admin section shows Overturn / Uphold
+      **a new main-app endpoint**: `POST /api/mod/restriction/resolve`, built on
+      `defineModeratorEndpoint` (originally the `defineRetoolEndpoint` family, deleted with Retool on
+      2026-08-19). The Admin section shows Overturn / Uphold
       with an optional message **above** the mute toggle whenever the latest restriction is Pending, and
       says why unmuting alone is not the same thing.
       Verified end to end against a seeded Pending row on 1290051: `status = Overturned`, `resolvedBy`
@@ -1182,11 +1183,14 @@ Filed against the page ported in §0, by the mod who uses it on bot chains.
       only narrower control was `isSenior`, hand-rolled at three call sites — with `updateIdentity`
       carrying no local gate at all. §0 had the same shape open for Bulk Ban (*"gate it, then widen
       deliberately"*) and §1b hand-rolled the same senior gate for `ToggleMod`.
-      **Solved once, for all of them.** `CAPABILITIES` in `access.ts` declares each capability, stored
-      as an `AppPageAccess` row keyed `<pagePath>#<featureKey>` — no schema change — and `canUse(user,
-      CAPABILITIES.x)` replaces every `isSenior` call site, which is now deleted. Access is
-      conjunctive: the page grant is still required, plus anything in the capability's `requires`.
-      `/admin` renders a tri-state tree.
+      **Solved once, for all of them.** A declaration replaces every `isSenior` call site, which is now
+      deleted, and `/admin` grants it per role — no schema change, since `AppPageAccess` already stores
+      `(app, path) → roles[]`.
+      🔴 **Reshaped 2026-08-19.** As first built, access was CONJUNCTIVE — the capability required its
+      page plus everything in its `requires` — and that is what broke it: `/users` was never built, so
+      five capabilities seeded to nobody and became admin-only with nothing reporting it. Page grants and
+      action grants are independent now, keyed `grant:<id>`, with no defaults and no tri-state tree.
+      See [`page-feature-permissions.md`](page-feature-permissions.md).
       Design confirmed on two recorded calls: 2026-08-07 (`1535334993470033991`, 42:00) landed the
       model, 2026-08-14 (`1537865483989295196`) fixed the UI and named the capabilities.
       ~~Blocked on §12g's Timed Mutes split~~ — that split shipped 2026-08-13, so `admin` and `mutes`
