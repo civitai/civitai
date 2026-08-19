@@ -13,7 +13,8 @@ const optionalText = (max: number) =>
 
 const optionalNumber = z.preprocess(numberish, z.number().finite().optional());
 
-// `datetime-local` gives a local wall-clock string; an empty box clears the date.
+// The composer converts the picker's wall-clock value to an ISO instant in the creator's own
+// browser, so what arrives here is zoned and unambiguous. An empty value clears the date.
 const optionalDate = z.preprocess(
   (v) => (typeof v === 'string' && v.trim() !== '' ? new Date(v) : null),
   z.date().nullable()
@@ -52,8 +53,10 @@ export const announcementFormSchema = z
     coverMimeType: optionalText(100),
     coverSizeKB: optionalNumber,
   })
-  .refine((v) => !v.linkUrl || /^https?:\/\//i.test(v.linkUrl), {
-    message: 'Button link must start with http:// or https://',
+  // A path resolves on whichever site the reader is on, which is the point. `//host` is
+  // protocol-relative and leaves the site despite looking like a path, so it is not one.
+  .refine((v) => !v.linkUrl || /^https?:\/\//i.test(v.linkUrl) || /^\/(?!\/)/.test(v.linkUrl), {
+    message: 'Button link must be a full https:// URL or a path like /models/123',
     path: ['linkUrl'],
   })
   .refine((v) => !!v.linkUrl === !!v.linkText, {

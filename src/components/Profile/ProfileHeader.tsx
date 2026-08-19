@@ -135,7 +135,7 @@ export function ProfileHeader({ username }: { username: string }) {
   if (isMobile) {
     return (
       <div className="flex flex-col gap-3">
-        {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} />}
+        {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
         {renderMessage()}
         <div className="flex flex-col">
           {renderCoverImage()}
@@ -154,7 +154,7 @@ export function ProfileHeader({ username }: { username: string }) {
   return (
     <Stack>
       {renderCoverImage()}
-      {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} />}
+      {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
       {renderMessage()}
     </Stack>
   );

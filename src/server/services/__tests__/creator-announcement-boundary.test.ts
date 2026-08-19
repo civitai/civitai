@@ -12,6 +12,11 @@ vi.mock('~/server/services/cover-image.service', () => ({
 }));
 vi.mock('~/server/services/util.service', () => ({ isImageOwner: vi.fn(async () => true) }));
 vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
+// The real host list comes from SERVER_DOMAIN_* env, which the test env does not set — an
+// empty list would make every link "not ours" and the assertions below vacuous.
+vi.mock('~/server/utils/server-domain', () => ({
+  getAllServerHosts: () => ['civitai-dev.green', 'civitai-dev.blue', 'civitai-dev.red'],
+}));
 vi.mock('~/server/services/announcement-allowance.service', () => ({
   getAnnouncementAllowance: vi.fn(async () => ({
     eligible: true,
@@ -27,6 +32,7 @@ vi.mock('~/server/services/announcement-allowance.service', () => ({
 
 import { upsertCreatorAnnouncementSchema } from '~/server/schema/announcement.schema';
 import {
+  toDomainRelativeLink,
   deleteCreatorAnnouncement,
   getCreatorAnnouncements,
   getFollowedAnnouncements,
@@ -597,5 +603,32 @@ describe('the action link accepts a path without accepting an escape', () => {
 
   it('rejects a bare word that is neither', () => {
     expect(link('models/123')).toBe(false);
+  });
+});
+
+describe('a link to one of our own domains becomes a path', () => {
+  it('strips the domain so the button resolves where the reader is', () => {
+    expect(toDomainRelativeLink('https://civitai-dev.green/models/123')).toBe('/models/123');
+    expect(toDomainRelativeLink('https://civitai-dev.blue/models/123?tab=gallery#top')).toBe(
+      '/models/123?tab=gallery#top'
+    );
+  });
+
+  it('keeps a path as a path', () => {
+    expect(toDomainRelativeLink('/models/123')).toBe('/models/123');
+  });
+
+  it('leaves someone else’s domain completely alone', () => {
+    // Rewriting an external link to a path would silently point it at our own site.
+    expect(toDomainRelativeLink('https://example.com/models/123')).toBe(
+      'https://example.com/models/123'
+    );
+    expect(toDomainRelativeLink('https://notcivitai-dev.green/x')).toBe(
+      'https://notcivitai-dev.green/x'
+    );
+  });
+
+  it('turns our bare domain into the site root rather than an empty string', () => {
+    expect(toDomainRelativeLink('https://civitai-dev.green')).toBe('/');
   });
 });

@@ -12,6 +12,8 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { ANNOUNCEMENT_IMAGE_WIDTH } from '~/components/Announcements/announcement-image';
 import type { CreatorAnnouncement as CreatorAnnouncementModel } from '~/components/Announcements/creator-announcement.types';
 
+export const DEFAULT_ANNOUNCEMENT_TITLE = 'Creator announcement';
+
 export function CreatorAnnouncement({
   announcement,
   actions,
@@ -26,8 +28,13 @@ export function CreatorAnnouncement({
   const { cover } = announcement;
   const buttons = announcement.metadata?.actions ?? [];
   const color = theme.colors[announcement.color]?.[4] ?? theme.colors.blue[4];
-  // Migrated profile banners have no title; a blank heading slot keeps its padding.
-  const heading = [announcement.emoji, announcement.title].filter(Boolean).join(' ').trim();
+  // Migrated profile banners carry no title — they were bio text, not announcements — so
+  // they fall back to a generic one rather than rendering a card with no heading. Applied
+  // at render, not stored: the row keeps what the creator actually wrote, and a creator
+  // who later titles it simply overrides this.
+  const heading =
+    [announcement.emoji, announcement.title].filter(Boolean).join(' ').trim() ||
+    DEFAULT_ANNOUNCEMENT_TITLE;
 
   return (
     <TwCard

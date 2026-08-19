@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { allowanceSchema, announcementFormSchema } from '../announcements-schema';
+import { DOMAIN_CHIPS } from '../../announcements';
 
 // A complete, valid submission as the action receives it — Object.fromEntries(FormData), so every
 // value is a string. Each test overrides only the field it is about.
@@ -65,17 +66,44 @@ describe('announcementFormSchema', () => {
     ).toBe(true);
   });
 
-  it('rejects a button link that is not http(s)', () => {
-    expect(messages({ linkUrl: 'javascript:alert(1)', linkText: 'Go' })).toContain(
-      'Button link must start with http:// or https://'
-    );
+  it('accepts a site-relative path, so a link resolves on whichever site the reader is on', () => {
+    const result = parse({ linkUrl: '/models/123', linkText: 'See the model' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.linkUrl).toBe('/models/123');
+  });
+
+  it('rejects links that leave the site while looking like they do not', () => {
+    const bad = 'Button link must be a full https:// URL or a path like /models/123';
+    // Protocol-relative: reads as a path, resolves to another host.
+    expect(messages({ linkUrl: '//evil.example/models', linkText: 'Go' })).toContain(bad);
+    expect(messages({ linkUrl: 'javascript:alert(1)', linkText: 'Go' })).toContain(bad);
+    expect(messages({ linkUrl: 'models/123', linkText: 'Go' })).toContain(bad);
+  });
+
+  // The composer converts the picker's wall-clock value to an instant in the creator's browser, so
+  // the action must read a zoned value and never re-interpret a bare local string in the server's
+  // zone. A UTC+10 creator picking 10:00 must not be stored as 10:00 UTC.
+  it('stores the instant the creator picked, not a server reading of the wall clock', () => {
+    const result = parse({ startsAt: '2026-09-01T10:00:00.000+10:00' });
+    expect(result.success).toBe(true);
+    if (result.success)
+      expect(result.data.startsAt?.toISOString()).toBe('2026-09-01T00:00:00.000Z');
+  });
+
+  it('rejects an unparseable date rather than storing an invalid one', () => {
+    expect(parse({ startsAt: 'sometime next week' }).success).toBe(false);
   });
 
   it('rejects an end date at or before the start date', () => {
-    expect(messages({ startsAt: '2026-09-01T10:00', endsAt: '2026-08-01T10:00' })).toContain(
-      'End date must be after the start date'
-    );
-    expect(parse({ startsAt: '2026-08-01T10:00', endsAt: '2026-09-01T10:00' }).success).toBe(true);
+    expect(
+      messages({
+        startsAt: '2026-09-01T10:00:00.000Z',
+        endsAt: '2026-08-01T10:00:00.000Z',
+      })
+    ).toContain('End date must be after the start date');
+    expect(
+      parse({ startsAt: '2026-08-01T10:00:00.000Z', endsAt: '2026-09-01T10:00:00.000Z' }).success
+    ).toBe(true);
   });
 
   it('rejects a cover key that is not the uploader UUID', () => {
@@ -154,5 +182,27 @@ describe('allowanceSchema', () => {
       expect(allowanceSchema.safeParse(payload({ [field]: null })).success).toBe(false);
       expect(allowanceSchema.safeParse(payload({ [field]: 'lots' })).success).toBe(false);
     }
+  });
+});
+
+// The colour names do not match the sites they serve, and one colour is unreachable, so the picker's
+// mapping is the kind of thing that has to be pinned rather than read.
+describe('domain chips', () => {
+  it('maps each site to the colour that actually serves it', () => {
+    expect(DOMAIN_CHIPS.map((c) => [c.host, c.color])).toEqual([
+      ['civitai.com', 'green'],
+      ['civitai.red', 'blue'],
+    ]);
+  });
+
+  // SERVER_DOMAIN_RED is also civitai.red and getRequestDomainColor takes the first match of
+  // ['green','blue','red'], so a row written as `red` is valid, saves, and is then invisible.
+  it('cannot express `red`, which no request resolves to', () => {
+    expect(DOMAIN_CHIPS.some((c) => c.color === 'red')).toBe(false);
+  });
+
+  it('offers no everywhere chip, since both chips already are everywhere', () => {
+    expect(DOMAIN_CHIPS).toHaveLength(2);
+    expect(DOMAIN_CHIPS.some((c) => c.color === 'all')).toBe(false);
   });
 });

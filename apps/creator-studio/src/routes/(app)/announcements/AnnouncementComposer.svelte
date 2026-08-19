@@ -11,9 +11,8 @@
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import {
     CONTENT_MAX,
-    DEFAULT_DOMAIN,
-    DOMAIN_COLORS,
-    DOMAIN_LABELS,
+    DEFAULT_DOMAINS,
+    DOMAIN_CHIPS,
     LINK_TEXT_MAX,
     TITLE_MAX,
     allowanceState,
@@ -21,7 +20,8 @@
     type AnnouncementDomain,
   } from '$lib/announcements';
   import type { AnnouncementRow } from '$lib/server/announcements';
-  import { COVER_ACCEPT, uploadCover, type CoverUpload } from './cover-upload';
+  import CoverField from './CoverField.svelte';
+  import type { CoverUpload } from './cover-upload';
 
   let {
     announcement = null,
@@ -39,30 +39,46 @@
   // row refreshed under us cannot leave a stale id in the hidden input.
   const seed = untrack(() => announcement);
 
+  // `datetime-local` is wall-clock with no zone. Server-rendered it would format in the SERVER's
+  // zone, so the effect below re-seeds it in the browser, and what actually posts is the ISO
+  // instant derived there. No bare local string ever reaches the action.
   const toLocalInput = (value: Date | string | null | undefined) => {
     if (!value) return '';
     const date = new Date(value);
     return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
   };
 
+  const toInstant = (local: string) => {
+    if (!local) return '';
+    const date = new Date(local);
+    return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+  };
+
   let title = $state(seed?.title ?? '');
   let content = $state(seed?.content ?? '');
   let domains = $state<AnnouncementDomain[]>(
-    seed?.domain?.length ? [...new Set(seed.domain as AnnouncementDomain[])] : [DEFAULT_DOMAIN]
+    seed?.domain?.length ? [...new Set(seed.domain as AnnouncementDomain[])] : [...DEFAULT_DOMAINS]
   );
   let profileOnly = $state(seed?.profileOnly ?? false);
-  let startsAt = $state(toLocalInput(seed?.startsAt));
-  let endsAt = $state(toLocalInput(seed?.endsAt));
+  let startsLocal = $state(toLocalInput(seed?.startsAt));
+  let endsLocal = $state(toLocalInput(seed?.endsAt));
   let linkUrl = $state(seed?.link ?? '');
   let linkText = $state(seed?.linkText ?? '');
-  let coverFiles = $state<FileList | undefined>(undefined);
   let cover = $state<CoverUpload | null>(null);
-  let coverError = $state<string | null>(null);
-  let uploading = $state(false);
   let submitting = $state(false);
 
+  // Re-seed in the creator's own zone; the server rendered these in its own.
+  $effect(() => {
+    untrack(() => {
+      startsLocal = toLocalInput(seed?.startsAt);
+      endsLocal = toLocalInput(seed?.endsAt);
+    });
+  });
+
+  const startsAt = $derived(toInstant(startsLocal));
+  const endsAt = $derived(toInstant(endsLocal));
+
   const allowState = $derived(allowance ? allowanceState(allowance) : null);
-  // Profile-only never spends a slot, so it stays postable in every allowance state.
   // A slot is spent on the profile-only → notifying transition, so editing an announcement that
   // already notifies costs nothing and must stay possible once the allowance is used up.
   const spendsSlot = $derived(!profileOnly && (!announcement || announcement.profileOnly));
@@ -70,39 +86,10 @@
   // The migrated profile banners carry no subject, and the server requires one on every write.
   const needsTitle = $derived(!!seed && seed.title.trim() === '' && title.trim() === '');
 
-  // The blob outlives the component otherwise — the replacement path is handled in onCoverChange.
-  $effect(() => () => {
-    if (cover) URL.revokeObjectURL(cover.previewUrl);
-  });
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   function setDomains(next: string[]) {
-    if (!next.length) {
-      domains = [DEFAULT_DOMAIN];
-      return;
-    }
-    // `all` is every audience, so pairing it with a specific one is a contradiction; whichever was
-    // just added wins.
-    const added = next.filter((d) => !domains.includes(d as AnnouncementDomain));
-    if (added.includes('all')) domains = ['all'];
-    else domains = next.filter((d) => d !== 'all') as AnnouncementDomain[];
-  }
-
-  async function onCoverChange() {
-    const file = coverFiles?.[0];
-    if (!file) return;
-
-    coverError = null;
-    uploading = true;
-    try {
-      const next = await uploadCover(file);
-      if (cover) URL.revokeObjectURL(cover.previewUrl);
-      cover = next;
-    } catch (e) {
-      coverError = e instanceof Error ? e.message : 'The image could not be uploaded.';
-      coverFiles = undefined;
-    } finally {
-      uploading = false;
-    }
+    domains = (next.length ? next : [...DEFAULT_DOMAINS]) as AnnouncementDomain[];
   }
 
   const submit = () => {
@@ -126,6 +113,8 @@
   {#if announcement}<input type="hidden" name="id" value={announcement.id} />{/if}
   <input type="hidden" name="domain" value={domains.join(',')} />
   <input type="hidden" name="profileOnly" value={profileOnly ? 'on' : 'false'} />
+  <input type="hidden" name="startsAt" value={startsAt} />
+  <input type="hidden" name="endsAt" value={endsAt} />
   {#if cover}
     <input type="hidden" name="coverKey" value={cover.key} />
     <input type="hidden" name="coverWidth" value={cover.width ?? ''} />
@@ -136,7 +125,16 @@
 
   <div class="mt-4 flex flex-col gap-4">
     <div class="flex flex-col gap-1.5">
-      <Label for="announcement-title">Subject</Label>
+      <div class="flex items-baseline justify-between gap-2">
+        <Label for="announcement-title">Subject</Label>
+        <span class="text-xs text-dark-2">
+          {#if needsTitle}
+            This profile message has no subject yet — add one to save it.
+          {:else}
+            {title.length}/{TITLE_MAX}
+          {/if}
+        </span>
+      </div>
       <Input
         id="announcement-title"
         name="title"
@@ -145,17 +143,13 @@
         placeholder="What are you announcing?"
         required
       />
-      {#if needsTitle}
-        <span class="text-xs text-dark-2">
-          This profile message has no subject yet — add one to save it.
-        </span>
-      {:else}
-        <span class="text-xs text-dark-2">{title.length}/{TITLE_MAX}</span>
-      {/if}
     </div>
 
     <div class="flex flex-col gap-1.5">
-      <Label for="announcement-content">Message</Label>
+      <div class="flex items-baseline justify-between gap-2">
+        <Label for="announcement-content">Message</Label>
+        <span class="text-xs text-dark-2">{content.length}/{CONTENT_MAX}</span>
+      </div>
       <Textarea
         id="announcement-content"
         name="content"
@@ -165,33 +159,9 @@
         placeholder="Tell your followers what is happening."
         required
       />
-      <span class="text-xs text-dark-2">{content.length}/{CONTENT_MAX}</span>
     </div>
 
-    <div class="flex flex-col gap-1.5">
-      <Label for="announcement-cover">Cover image</Label>
-      <div class="flex items-center gap-3">
-        <Input
-          id="announcement-cover"
-          type="file"
-          accept={COVER_ACCEPT}
-          bind:files={coverFiles}
-          onchange={onCoverChange}
-          disabled={uploading}
-        />
-        {#if uploading}<span class="text-sm text-dark-2">Uploading…</span>{/if}
-      </div>
-      {#if cover}
-        <img
-          src={cover.previewUrl}
-          alt=""
-          class="mt-2 h-28 w-auto rounded-lg border border-dark-4"
-        />
-      {:else if announcement?.coverUrl}
-        <p class="text-xs text-dark-2">A cover is already set. Choosing a file replaces it.</p>
-      {/if}
-      {#if coverError}<p class="text-sm text-red-300">{coverError}</p>{/if}
-    </div>
+    <CoverField bind:cover existingUrl={announcement?.coverUrl} />
 
     <fieldset class="flex flex-col gap-1.5">
       <legend class="text-sm font-medium text-white">Where it shows</legend>
@@ -202,37 +172,43 @@
         bind:value={domains}
         onValueChange={setDomains}
       >
-        {#each DOMAIN_COLORS as domain (domain)}
-          <ToggleGroupItem value={domain} aria-label={DOMAIN_LABELS[domain].label}>
-            {DOMAIN_LABELS[domain].label}
-          </ToggleGroupItem>
+        {#each DOMAIN_CHIPS as chip (chip.color)}
+          <ToggleGroupItem value={chip.color} aria-label={chip.label}>{chip.label}</ToggleGroupItem>
         {/each}
       </ToggleGroup>
       <span class="text-xs text-dark-2">
-        {domains.map((d) => DOMAIN_LABELS[d]?.hint ?? d).join(' · ')}
+        {DOMAIN_CHIPS.filter((c) => domains.includes(c.color))
+          .map((c) => c.host)
+          .join(' · ')}
       </span>
     </fieldset>
 
     <div class="grid gap-4 sm:grid-cols-2">
       <div class="flex flex-col gap-1.5">
         <Label for="announcement-starts">Starts</Label>
-        <Input
-          id="announcement-starts"
-          name="startsAt"
-          type="datetime-local"
-          bind:value={startsAt}
-        />
+        <Input id="announcement-starts" type="datetime-local" bind:value={startsLocal} />
       </div>
       <div class="flex flex-col gap-1.5">
         <Label for="announcement-ends">Ends</Label>
-        <Input id="announcement-ends" name="endsAt" type="datetime-local" bind:value={endsAt} />
+        <Input id="announcement-ends" type="datetime-local" bind:value={endsLocal} />
       </div>
+      <span class="text-xs text-dark-2 sm:col-span-2">
+        Your local time{timeZone ? ` (${timeZone})` : ''}. Leave both empty to show it from now on.
+      </span>
     </div>
 
     <div class="grid gap-4 sm:grid-cols-2">
       <div class="flex flex-col gap-1.5">
         <Label for="announcement-link">Button link (optional)</Label>
-        <Input id="announcement-link" name="linkUrl" bind:value={linkUrl} placeholder="https://" />
+        <Input
+          id="announcement-link"
+          name="linkUrl"
+          bind:value={linkUrl}
+          placeholder="/models/123 or https://…"
+        />
+        <span class="text-xs text-dark-2">
+          A path like <code>/models/123</code> opens on whichever site the reader is on.
+        </span>
       </div>
       <div class="flex flex-col gap-1.5">
         <Label for="announcement-link-text">Button text</Label>
@@ -266,7 +242,7 @@
     {#if error}<p class="text-sm text-red-300">{error}</p>{/if}
 
     <div class="flex gap-2">
-      <Button type="submit" disabled={submitting || uploading || blocked}>
+      <Button type="submit" disabled={submitting || blocked}>
         {submitting ? 'Saving…' : announcement ? 'Save changes' : 'Post announcement'}
       </Button>
       <Button type="button" variant="ghost" onclick={onDone}>Cancel</Button>

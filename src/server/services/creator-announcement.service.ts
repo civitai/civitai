@@ -8,6 +8,7 @@ import { getAnnouncementAllowance } from '~/server/services/announcement-allowan
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { getAllServerHosts } from '~/server/utils/server-domain';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
 
@@ -209,6 +210,32 @@ async function assertOwnedAnnouncement(id: number, userId: number, isModerator =
   return existing;
 }
 
+/**
+ * A link to one of our own domains becomes a path, so the button resolves on whichever
+ * domain the reader is on — a creator pasting a civitai.com URL should not send every
+ * civitai.red reader across to the other site.
+ *
+ * Server-side rather than in the zod schema on purpose: the host list comes from
+ * `getAllServerHosts`, which reads server env, and the announcement schema is imported by
+ * client components.
+ *
+ * Anything not ours is left exactly as typed.
+ */
+export function toDomainRelativeLink(link: string) {
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    return link; // already a path; the schema has checked its shape
+  }
+
+  const host = url.host.toLowerCase();
+  const ours = getAllServerHosts().some((h) => h.toLowerCase() === host);
+  if (!ours) return link;
+
+  return `${url.pathname}${url.search}${url.hash}` || '/';
+}
+
 export async function upsertCreatorAnnouncement({
   userId,
   isModerator = false,
@@ -242,7 +269,11 @@ export async function upsertCreatorAnnouncement({
     ...(input.action
       ? {
           actions: [
-            { type: 'button' as const, link: input.action.link, linkText: input.action.linkText },
+            {
+              type: 'button' as const,
+              link: toDomainRelativeLink(input.action.link),
+              linkText: input.action.linkText,
+            },
           ],
         }
       : {}),
