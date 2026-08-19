@@ -434,8 +434,7 @@
       "utf-8-validate"
     ],
     "patchedDependencies": {
-      "@mantine/hooks": "patches/@mantine__hooks.patch",
-      "next@16.3.1": "patches/next@16.3.1.patch"
+      "@mantine/hooks": "patches/@mantine__hooks.patch"
     }
   }
 }
