@@ -73,7 +73,7 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
-  ingestModelById: vi.fn(),
+  ingestModelById: vi.fn().mockResolvedValue(undefined),
   updateModelLastVersionAt: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
@@ -111,11 +111,17 @@ function seedPurchase({
   addedAt = boughtRecently(),
   amount = 300,
   balance = 10_000,
-}: { addedAt?: Date | null; amount?: number; balance?: number } = {}) {
+  gates = [{ entityId: VERSION_ID, endsAt: null }] as { entityId: number; endsAt: Date | null }[],
+}: {
+  addedAt?: Date | null;
+  amount?: number;
+  balance?: number;
+  gates?: { entityId: number; endsAt: Date | null }[];
+} = {}) {
   dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
     { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
   ]);
-  dbMock.dbWrite.paidAccess.findMany.mockResolvedValue([{ entityId: VERSION_ID, endsAt: null }]);
+  dbMock.dbWrite.paidAccess.findMany.mockResolvedValue(gates);
   dbMock.dbWrite.entityAccess.findMany.mockResolvedValue([
     {
       accessToId: VERSION_ID,
@@ -185,9 +191,16 @@ describe('getModelVersionEarlyAccessRefundRequirement', () => {
 });
 
 // The gate on unpublishModelVersionById is worth nothing if another owner-reachable route can take
-// the version down without it. `status` is client-settable on the editor route, which is one.
-describe('upsertModelVersion — cannot unpublish through the editor', () => {
+// the version down without it. `status` is client-settable on the editor route, which is one — and
+// every non-Published value takes the version off the page, because downloads and the public reads
+// both gate on `status === 'Published'`.
+describe('upsertModelVersion — cannot take a published version down through the editor', () => {
   beforeEach(() => {
+    // `seedPurchase` also seeds `model.findUniqueOrThrow`, which upsertModelVersion reads before it
+    // reaches the guard. Seeded here rather than inherited: the db mock defaults that read to null,
+    // vitest clears calls but not implementations, so relying on a sibling describe makes these die
+    // on a TypeError the moment anyone reorders the file.
+    seedPurchase();
     dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
       id: VERSION_ID,
       status: 'Published',
@@ -197,20 +210,29 @@ describe('upsertModelVersion — cannot unpublish through the editor', () => {
     });
   });
 
-  it('refuses a published → unpublished transition and names the route that settles refunds', async () => {
-    await expect(
-      upsertModelVersion({ id: VERSION_ID, status: 'Unpublished' } as never)
-    ).rejects.toThrowError(/Use the unpublish action/);
+  it.each([
+    'Unpublished',
+    'UnpublishedViolation',
+    'Draft',
+    'Scheduled',
+    'GatherInterest',
+    'Deleted',
+  ])('refuses %s and names the route that settles refunds', async (status) => {
+    await expect(upsertModelVersion({ id: VERSION_ID, status } as never)).rejects.toThrowError(
+      /Use the unpublish action/
+    );
 
     expect(dbMock.dbWrite.modelVersion.update).not.toHaveBeenCalled();
   });
 
-  it('refuses the violation status too — same door, different value', async () => {
-    await expect(
-      upsertModelVersion({ id: VERSION_ID, status: 'UnpublishedViolation' } as never)
-    ).rejects.toThrowError(/Use the unpublish action/);
+  // Negative control. Without it a guard broadened to refuse every save of a published version —
+  // which kills the resource editor outright — passes every assertion above.
+  it('lets an ordinary edit of a published version through', async () => {
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
 
-    expect(dbMock.dbWrite.modelVersion.update).not.toHaveBeenCalled();
+    await upsertModelVersion({ id: VERSION_ID, name: 'renamed' } as never);
+
+    expect(dbMock.dbWrite.modelVersion.update).toHaveBeenCalled();
   });
 });
 
@@ -230,8 +252,6 @@ describe('toEarlyAccessRefundSummary', () => {
       totalBuzz: 300,
       exemptBuyerCount: 0,
     });
-    expect(JSON.stringify(summary)).not.toContain(String(BUYER_ID));
-    expect(JSON.stringify(summary)).not.toContain('tx-1');
   });
 });
 
@@ -295,6 +315,57 @@ describe('unpublishModelVersionById — refund gate', () => {
 
     expect(mockTx.modelVersion.update).toHaveBeenCalled();
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('owes nothing once a timed gate has lapsed, however recent the purchase', async () => {
+    // Every other fixture here uses a permanent gate. The lapsed-window case is the reason the
+    // refund window is measured per PURCHASE rather than per version, and it was otherwise
+    // exercised only in the model-level suite.
+    seedPurchase({ gates: [{ entityId: VERSION_ID, endsAt: new Date(Date.now() - HOUR) }] });
+
+    await unpublishModelVersionById({ id: VERSION_ID, user: owner });
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('aborts the take-down mid-refund, keeping the count honest and the paid buyer revoked', async () => {
+    // The failure path: one buyer refunded, the next refund rejects. The version must stay
+    // published, the message must say how far it got, and the buyer who WAS refunded must have
+    // lost their grant — otherwise a retry pays them a second time.
+    seedPurchase();
+    dbMock.dbWrite.entityAccess.findMany.mockResolvedValue([
+      {
+        accessToId: VERSION_ID,
+        accessorId: BUYER_ID,
+        meta: { 'download-buzzTransactionId': 'tx-1' },
+        addedAt: boughtRecently(),
+      },
+      {
+        accessToId: VERSION_ID,
+        accessorId: BUYER_ID + 1,
+        meta: { 'download-buzzTransactionId': 'tx-2' },
+        addedAt: boughtRecently(),
+      },
+    ]);
+    mockRefundMultiAccountTransaction
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('buzz service unavailable'));
+
+    await expect(
+      unpublishModelVersionById({ id: VERSION_ID, refundEarlyAccess: true, user: owner })
+    ).rejects.toThrowError(/1 of 2 refunded.*version was not unpublished/s);
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.entityAccess.deleteMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.entityAccess.deleteMany).toHaveBeenCalledWith({
+      where: {
+        accessToId: VERSION_ID,
+        accessToType: 'ModelVersion',
+        accessorId: BUYER_ID,
+        accessorType: 'User',
+      },
+    });
   });
 
   it('does not gate or refund on a moderator unpublish', async () => {

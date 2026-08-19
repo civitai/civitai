@@ -85,9 +85,11 @@ describe('applyModelMonetizationPolicy', () => {
 });
 
 // The helper being right protects nothing if the write doesn't use it. Both shipped bugs were exactly
-// that — the policy was correct and the call site read a pre-strip copy — and no test in this repo
-// exercises `upsertModelVersion`, so a revert of either line stays green above. Structural, and it fails
-// on the omission itself; the same guard the Creator Studio bulk action needed for the same reason.
+// that — the policy was correct and the call site read a pre-strip copy — and nothing exercises
+// `upsertModelVersion` against the policy, so a revert of either line stays green above.
+// (model-version.unpublish-refund.service.test.ts now calls the function, but only far enough to
+// reach the take-down guard.) Structural, and it fails on the omission itself; the same guard the
+// Creator Studio bulk action needed for the same reason.
 describe('upsertModelVersion consumes the policy result', () => {
   const source = () =>
     readFileSync(

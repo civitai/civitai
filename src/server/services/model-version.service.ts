@@ -755,14 +755,26 @@ export const upsertModelVersion = async ({
       );
     }
 
-    // `status` is client-settable on this route, so an edit-and-save could take a published version
-    // down and skip the refund obligation that unpublishModelVersionById enforces. Route the
-    // transition rather than duplicating the gate — this is an editor, not a take-down.
-    const unpublishing =
-      data.status === ModelStatus.Unpublished || data.status === ModelStatus.UnpublishedViolation;
-    if (unpublishing && existingVersion.status === ModelStatus.Published) {
+    // `status` is client-settable on this route (`z.enum(ModelStatus)`, unconstrained) and rides the
+    // general `...data` spread into the update, so an edit-and-save could move a published version to
+    // any other status. Downloads and the public reads both gate on `status === 'Published'`, so
+    // EVERY other value takes the version off the page — Draft as surely as Unpublished — and none of
+    // them computes the refund that unpublishModelVersionById owes its buyers. So this refuses
+    // LEAVING Published rather than listing the values that do it: an enumeration of forbidden
+    // statuses is not a control, and ModelStatus has eight members.
+    //
+    // ⚠️ This closes the take-down, NOT every way this route can defeat the gate. The same save
+    // clears the PaidAccess row when `paidAccess` is omitted (writePaidAccessForModelVersion →
+    // deleteMany), and the requirement returns empty with no active gate — so one save then an
+    // ordinary unpublish still refunds nobody. That is tracked separately; do not read this guard
+    // as "the editor can no longer strand a buyer".
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.status !== undefined &&
+      data.status !== ModelStatus.Published
+    ) {
       throw throwBadRequestError(
-        'Use the unpublish action to unpublish a version — it settles any refunds owed to buyers.'
+        'Use the unpublish action to take a published version down — it settles any refunds owed to buyers.'
       );
     }
 
