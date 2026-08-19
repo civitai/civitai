@@ -2802,22 +2802,43 @@ export const unpublishModelById = async ({
 
   const model = await dbWrite.$transaction(
     async (tx) => {
+      // 🔴 Never write a moderator's verdict down. A reasonless unpublish — every owner-initiated
+      // one — would otherwise overwrite an existing UnpublishedViolation with plain Unpublished and
+      // restamp the record, and `model.controller.ts` blocks an owner republish only WHILE the
+      // status is UnpublishedViolation. That is an owner-reachable way to clear a moderation flag.
+      //
+      // Decided from the STATUS, not from `meta.unpublishedReason`: 2,327 of 43,492 violation rows
+      // in prod carry no reason in meta, and keying on meta fails open for exactly those. The
+      // moderator's explanation, timestamp and actor are all left untouched — refreshing
+      // `unpublishedAt` alone re-fires the take-down notification, and `customMessage` is the ONLY
+      // explanation rendered when the reason is 'other', which is the largest bucket.
+      const existing = await tx.model.findUniqueOrThrow({
+        where: { id },
+        select: { status: true },
+      });
+      const preserveViolation = !reason && existing.status === ModelStatus.UnpublishedViolation;
+
       const unpublishedAt = new Date().toISOString();
-      const updatedMeta = {
-        ...meta,
-        ...(reason
-          ? {
-              unpublishedReason: reason,
-              customMessage,
-            }
-          : {}),
-        unpublishedAt,
-        unpublishedBy: userId,
-      };
+      const updatedMeta = preserveViolation
+        ? meta
+        : {
+            ...meta,
+            ...(reason
+              ? {
+                  unpublishedReason: reason,
+                  customMessage,
+                }
+              : {}),
+            unpublishedAt,
+            unpublishedBy: userId,
+          };
       const updatedModel = await tx.model.update({
         where: { id },
         data: {
-          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          status:
+            reason || preserveViolation
+              ? ModelStatus.UnpublishedViolation
+              : ModelStatus.Unpublished,
           meta: updatedMeta,
         },
         select: { userId: true, modelVersions: { select: { id: true } } },

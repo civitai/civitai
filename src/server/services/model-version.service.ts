@@ -1662,6 +1662,11 @@ export const publishModelVersionById = async ({
 /**
  * Whether unpublishing this version takes the whole model down with it.
  *
+ * It removes the SURPRISE, not the state: unpublishing a Published version while a Scheduled one
+ * waits leaves the model up (correct — a release is coming), and unpublishing that scheduled version
+ * afterwards takes the early return, so a model can still end up published with nothing live under
+ * it in two ordinary steps. Closing that needs a rule about scheduled versions, not a bigger count.
+ *
  * 🔴 Read from the PRIMARY. On a replica this decides a take-down against lagged rows: stale-low
  * unpublishes a model whose sibling has just been published, and stale-high leaves a model
  * Published with nothing published under it — the state the cascade exists to prevent.

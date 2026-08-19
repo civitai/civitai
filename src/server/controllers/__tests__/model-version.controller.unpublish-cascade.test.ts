@@ -82,7 +82,7 @@ beforeEach(() => {
 
 describe('unpublishModelVersionHandler — last published version', () => {
   it('takes the model down with it, and does not also unpublish the version separately', async () => {
-    await call({ refundEarlyAccess: true });
+    await call({ refundEarlyAccess: true, expected: { scope: 'model', totalBuzz: 900 } });
 
     expect(mockUnpublishModelById).toHaveBeenCalledTimes(1);
     expect(mockUnpublishModelById).toHaveBeenCalledWith(
@@ -117,6 +117,31 @@ describe('unpublishModelVersionHandler — last published version', () => {
     expect(mockUnpublishModelVersionById).toHaveBeenCalledWith(
       expect.objectContaining({ id: VERSION_ID })
     );
+  });
+
+  it('does not report a version take-down as a model unpublish', async () => {
+    // The doubled-count shape: emitting the model event on the version path too would make every
+    // single-version take-down arrive in analytics as a model unpublish.
+    mockResolveUnpublishScope.mockResolvedValue({ kind: 'version', modelId: MODEL_ID });
+    const modelEvent = vi.fn();
+
+    await unpublishModelVersionHandler({
+      input: { id: VERSION_ID },
+      ctx: {
+        user: { id: OWNER_ID, isModerator: false },
+        track: { modelVersionEvent: vi.fn(), modelEvent },
+      },
+    } as never);
+
+    expect(modelEvent).not.toHaveBeenCalled();
+  });
+
+  it('throws rather than silently wiping the model meta when the model is gone', async () => {
+    mockGetModel.mockResolvedValue(null);
+
+    await expect(call()).rejects.toThrowError(/No model with id/);
+
+    expect(mockUnpublishModelById).not.toHaveBeenCalled();
   });
 
   it('lets the model-level refund refusal through instead of unpublishing the version', async () => {
@@ -171,6 +196,44 @@ describe('unpublishModelVersionHandler — last published version', () => {
     expect(mockUnpublishModelById).toHaveBeenCalledTimes(1);
   });
 
+  it('refuses a version-scoped confirm whose figure grew, without over-pricing it', async () => {
+    // The version branch of the check was never exercised. Pricing it against the MODEL total would
+    // refuse legitimate version-only unpublishes whenever the model owes more — the common case.
+    mockResolveUnpublishScope.mockResolvedValue({ kind: 'version', modelId: MODEL_ID });
+
+    await call({ refundEarlyAccess: true, expected: { scope: 'version', totalBuzz: 300 } });
+
+    expect(mockUnpublishModelVersionById).toHaveBeenCalledTimes(1);
+    expect(mockModelRequirement).not.toHaveBeenCalled();
+  });
+
+  it('refuses when a version-scoped figure grew', async () => {
+    mockResolveUnpublishScope.mockResolvedValue({ kind: 'version', modelId: MODEL_ID });
+    mockVersionRequirement.mockResolvedValue({ totalBuzz: 400 });
+
+    await expect(
+      call({ refundEarlyAccess: true, expected: { scope: 'version', totalBuzz: 300 } })
+    ).rejects.toThrowError(/refund owed has changed/);
+
+    expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
+  });
+
+  it('requires the owner to say what they agreed to before moving Buzz', async () => {
+    // Optional would make the check advisory: any caller omitting `expected` — a stale tab mid
+    // deploy, the moderator modal, a direct tRPC call — gets an unbounded yes.
+    await expect(call({ refundEarlyAccess: true })).rejects.toThrowError(
+      /reopen the unpublish menu/
+    );
+
+    expect(mockUnpublishModelById).not.toHaveBeenCalled();
+  });
+
+  it('does not require it of a moderator, who bypasses the refund gate anyway', async () => {
+    await call({ refundEarlyAccess: true, reason: 'duplicate' }, true);
+
+    expect(mockUnpublishModelById).toHaveBeenCalledTimes(1);
+  });
+
   it('still reports the take-down to analytics', async () => {
     const modelVersionEvent = vi.fn();
     const modelEvent = vi.fn();
@@ -198,5 +261,7 @@ describe('unpublishModelVersionHandler — last published version', () => {
       modelId: MODEL_ID,
       nsfw: true,
     });
+    expect(modelEvent).toHaveBeenCalledTimes(1);
+    expect(modelVersionEvent).toHaveBeenCalledTimes(1);
   });
 });

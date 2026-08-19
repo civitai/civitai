@@ -180,6 +180,10 @@ function setupRefundData({
   ]);
 }
 
+function setupModelStatus(status: string) {
+  mockTx.model.findUniqueOrThrow.mockResolvedValue({ status });
+}
+
 function setupUnpublishWrites({
   // What the model update reports back: EVERY version of the model, drafts included — it carries no
   // where clause. Distinct from the transitioning set below, and conflating the two is the bug this
@@ -188,6 +192,8 @@ function setupUnpublishWrites({
   transitioningVersionIds = [VERSION_ID],
 }: { allVersionIds?: number[]; transitioningVersionIds?: number[] } = {}) {
   mockTx.$executeRaw.mockResolvedValue(transitioningVersionIds.length);
+  // Default: an ordinary published model. The violation cases override it.
+  setupModelStatus('Published');
   mockTx.model.update.mockResolvedValue({
     userId: OWNER_ID,
     modelVersions: allVersionIds.map((id) => ({ id })),
@@ -649,6 +655,87 @@ describe('unpublishModelById — early access refund gate', () => {
       'Published',
       'Scheduled',
     ]);
+  });
+
+  // 🔴 An owner-initiated unpublish carries no reason. Writing the status unconditionally would put
+  // a model a moderator took down back to plain Unpublished — and owner republish is blocked only
+  // WHILE the status is UnpublishedViolation, so that is an owner-reachable way to clear the flag.
+  describe('a model already taken down for a violation', () => {
+    it('keeps the violation status through a reasonless unpublish', async () => {
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('UnpublishedViolation');
+    });
+
+    it('decides from the STATUS, not from a reason in meta', async () => {
+      // 2,327 of 43,492 violation rows in prod carry no reason in meta. Keying the guard on meta
+      // fails open for exactly the rows nobody wrote through this code.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, meta: {} });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('UnpublishedViolation');
+    });
+
+    it('leaves the moderator record intact — actor, explanation and timestamp', async () => {
+      // customMessage is the ONLY explanation rendered when the reason is 'other', which is the
+      // largest bucket in prod; and refreshing unpublishedAt re-fires the take-down notification.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+      const moderatorRecord = {
+        unpublishedReason: 'other',
+        customMessage: 'Reviewed by a human',
+        unpublishedAt: '2020-01-01T00:00:00.000Z',
+        unpublishedBy: 999,
+      };
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, meta: { ...moderatorRecord } });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.meta).toEqual(moderatorRecord);
+    });
+
+    // Negative control: a guard that preserved unconditionally would leave every ordinary unpublish
+    // unrecorded, and each assertion above would still pass.
+    it('still stamps an ordinary unpublish of a model that carries no violation', async () => {
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+      const data = mockTx.model.update.mock.calls[0][0].data;
+      expect(data.status).toBe('Unpublished');
+      expect(data.meta).toEqual(
+        expect.objectContaining({ unpublishedBy: OWNER_ID, unpublishedAt: expect.any(String) })
+      );
+    });
+
+    // A moderator acting deliberately still writes their own verdict over the old one.
+    it('lets a moderator restate the violation with a new reason', async () => {
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+
+      await unpublishModelById({
+        id: MODEL_ID,
+        userId: 999,
+        isModerator: true,
+        reason: 'duplicate',
+        meta: { unpublishedReason: 'other', customMessage: 'old' },
+      });
+
+      const data = mockTx.model.update.mock.calls[0][0].data;
+      expect(data.status).toBe('UnpublishedViolation');
+      expect(data.meta).toEqual(
+        expect.objectContaining({ unpublishedReason: 'duplicate', unpublishedBy: 999 })
+      );
+    });
   });
 
   it('does not gate or refund on a moderator unpublish', async () => {

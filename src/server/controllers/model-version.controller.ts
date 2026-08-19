@@ -778,10 +778,22 @@ export const unpublishModelVersionHandler = async ({
     // dialog's read and this one, which is what `expected` below is for.
     const scope = await resolveUnpublishScope(id);
 
+    // A consent check, NOT atomicity: the window between the dialog's read and this one is still
+    // unguarded. What it refuses is proceeding on a figure the creator never saw.
     // Refuse rather than proceed when the world moved between pricing and confirming. Only the
     // directions that cost the creator something are refused: a widening scope (one version becomes
     // the whole model) or a larger debit than they saw. Narrowing is harmless — the copy was
     // pessimistic, nothing extra is taken.
+    if (!ctx.user.isModerator && input.refundEarlyAccess && !input.expected) {
+      // Optional `expected` would make this advisory rather than a control: any caller omitting it —
+      // a tab holding the pre-deploy bundle, the moderator modal, a direct tRPC call — gets an
+      // unbounded yes with the scope free to widen. Stale clients are the normal state during a
+      // deploy, which is exactly when this ships.
+      throw throwBadRequestError(
+        'Please reopen the unpublish menu and confirm again — this request did not say what refund it was agreeing to.'
+      );
+    }
+
     if (input.expected && !ctx.user.isModerator) {
       const priced = input.expected;
       if (priced.scope === 'version' && scope.kind === 'model') {
@@ -803,23 +815,14 @@ export const unpublishModelVersionHandler = async ({
     if (scope.kind === 'model') {
       const model = await getModel({
         id: scope.modelId,
-        select: { meta: true, nsfw: true, status: true },
+        select: { meta: true, nsfw: true },
       });
       if (!model) throw throwNotFoundError(`No model with id ${scope.modelId}`);
 
-      // 🔴 Never downgrade a status this call did not set. An owner-initiated unpublish carries no
-      // reason, so writing the status unconditionally would overwrite a moderator's
-      // UnpublishedViolation with a plain Unpublished — and `model.controller.ts` only blocks an
-      // owner republish while the status IS UnpublishedViolation. That is an owner-reachable path to
-      // clear a moderation flag, via a draft published under a model a moderator already took down.
-      const preserveViolation =
-        !input.reason && (model.status as ModelStatus) === ModelStatus.UnpublishedViolation;
-
+      // A model already at UnpublishedViolation keeps that status and the moderator's record —
+      // unpublishModelById decides that from the status it reads, so both callers get it.
       await unpublishModelById({
         ...input,
-        ...(preserveViolation
-          ? { reason: (model.meta as ModelMeta | null)?.unpublishedReason }
-          : {}),
         id: scope.modelId,
         meta: (model.meta as ModelMeta | null) ?? undefined,
         userId: ctx.user.id,
