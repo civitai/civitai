@@ -243,7 +243,7 @@ mirroring what generation tools emit; this fills the one entry that was missing.
 | Change | Where |
 |---|---|
 | `SHA256_12` enum value | `schema.full.prisma`, migration `20260819000000_model_file_hash_sha256_12` |
-| Derive it | One BEFORE INSERT trigger on `ModelFileHash` — `programmability/model_file_hash_triggers.sql`. Produces every truncated form (AutoV2, AutoV3, SHA256_12) in one place, replacing the standalone `truncate_autov3_hash`. In the DB because `/api/mod/reprocess-scan` is a second writer that bypasses `applyScanOutcome`. |
+| Derive it | `normalizeScanHashes()` in `src/server/services/model-file-scan.service.ts`, called by both `ModelFileHash` writers. It also truncates AutoV3, which `/api/mod/reprocess-scan` needs independently since it replays `rawScanResult` where AutoV3 is still full-length. |
 | Backfill existing files | `src/pages/api/admin/temp/backfill-sha256-12.ts` |
 | Detection SQL | **unchanged** |
 | Public API | **unchanged** — the new type is returned alongside the others, exactly as `AutoV2` (also a `SHA256` truncation) already is |
