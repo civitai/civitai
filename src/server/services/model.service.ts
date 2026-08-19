@@ -2839,7 +2839,7 @@ export const unpublishModelById = async ({
       // so stamping a draft tells the creator a version they never published was unpublished.
       // Status and meta move together under one snapshot, which makes "stamped iff transitioned"
       // structural rather than two predicates someone has to keep in step.
-      const transitioned = await tx.$queryRaw<{ id: number }[]>`
+      await tx.$executeRaw`
         UPDATE "ModelVersion"
         SET "status" = ${
           reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished
@@ -2848,18 +2848,20 @@ export const unpublishModelById = async ({
               ...(reason ? { unpublishedReason: reason, customMessage } : {}),
               unpublishedAt,
               unpublishedBy: userId,
-            })}::jsonb
+            })}::jsonb,
+            -- Prisma's @updatedAt does not apply to raw SQL, and there is no DB default or trigger.
+            -- Without this a taken-down version keeps a pre-take-down updatedAt, which is on the
+            -- public v1 payload via modelVersion.selector.
+            "updatedAt" = NOW()
         WHERE "modelId" = ${id}
           AND "status" IN (${ModelStatus.Published}::"ModelStatus", ${
         ModelStatus.Scheduled
       }::"ModelStatus")
-        RETURNING id
       `;
-      const transitionedVersionIds = transitioned.map((x) => x.id);
 
       // Deliberately the WIDE id list, unlike the statement above: a post attached to a version that
       // was already down can still be published, and `publishedAt IS NOT NULL` is what scopes this —
-      // not the id set. Narrowing it to the transitioned versions would leave those posts public.
+      // not the id set. Narrowing it to the versions this call took down would leave those posts public.
       await tx.$executeRaw`
         UPDATE "Post"
         SET "metadata"    = "metadata" || jsonb_build_object(

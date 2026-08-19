@@ -187,7 +187,7 @@ function setupUnpublishWrites({
   allVersionIds = [VERSION_ID, OTHER_VERSION_ID],
   transitioningVersionIds = [VERSION_ID],
 }: { allVersionIds?: number[]; transitioningVersionIds?: number[] } = {}) {
-  mockTx.$queryRaw.mockResolvedValue(transitioningVersionIds.map((id) => ({ id })));
+  mockTx.$executeRaw.mockResolvedValue(transitioningVersionIds.length);
   mockTx.model.update.mockResolvedValue({
     userId: OWNER_ID,
     modelVersions: allVersionIds.map((id) => ({ id })),
@@ -596,11 +596,15 @@ describe('unpublishModelById — early access refund gate', () => {
   // the static template segments. An assertion on the interpolated payload is byte-identical under
   // `meta = COALESCE(meta,'{}') || payload` and under `meta = payload`, which is the bug this code
   // exists to prevent.
+  // The take-down is the first $executeRaw in the transaction; the Post metadata update is the
+  // second. Found by its SQL rather than by position, so reordering cannot silently repoint these.
+  const takeDownCall = () =>
+    mockTx.$executeRaw.mock.calls.find(([strings]) =>
+      (strings as unknown as string[]).join('').includes('UPDATE "ModelVersion"')
+    );
   const takeDownSql = () =>
-    ((mockTx.$queryRaw.mock.calls[0]?.[0] ?? []) as unknown as string[])
-      .join('?')
-      .replace(/\s+/g, ' ');
-  const takeDownParams = () => mockTx.$queryRaw.mock.calls[0]?.slice(1) ?? [];
+    ((takeDownCall()?.[0] ?? []) as unknown as string[]).join('?').replace(/\s+/g, ' ');
+  const takeDownParams = () => takeDownCall()?.slice(1) ?? [];
 
   it('merges the unpublish keys into each version meta instead of replacing it', async () => {
     setupRefundData({ accessRows: [] });
@@ -618,6 +622,13 @@ describe('unpublishModelById — early access refund gate', () => {
       unpublishedAt: expect.any(String),
       unpublishedBy: OWNER_ID,
     });
+    // A reasoned take-down puts the VERSION at UnpublishedViolation, which the nested updateMany
+    // this replaced did not do — it always wrote plain Unpublished. That difference decides whether
+    // an owner can republish the version afterwards, and it is what restore-models has to match.
+    expect(takeDownParams()[0]).toBe('UnpublishedViolation');
+    expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('UnpublishedViolation');
+    // And the version's updatedAt is stamped — raw SQL gets no @updatedAt.
+    expect(takeDownSql()).toContain('"updatedAt" = NOW()');
   });
 
   it('takes down only the versions that were published or scheduled', async () => {
@@ -628,7 +639,7 @@ describe('unpublishModelById — early access refund gate', () => {
 
     const sql = takeDownSql();
     expect(sql).toContain('WHERE "modelId" = ?');
-    expect(sql).toContain('AND "status" IN (?::"ModelStatus", ?::"ModelStatus") RETURNING id');
+    expect(sql).toContain('AND "status" IN (?::"ModelStatus", ?::"ModelStatus")');
     // Exact, not substring: the params carry an ISO timestamp whose millisecond field makes a
     // substring search on a 3-digit id both flaky and misleading.
     expect(takeDownParams()).toEqual([
