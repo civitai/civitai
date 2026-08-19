@@ -2,7 +2,7 @@ import { z } from 'zod';
 // Relative, not `$lib`: this module is unit-tested by the app's node vitest project, which has no
 // SvelteKit plugin and cannot resolve the alias — an aliased import fails COLLECTION, which reads as
 // zero tests rather than as a failure.
-import { checkbox } from './monetization/form-fields';
+import { checkbox, numberish } from './form-fields';
 import { CONTENT_MAX, DOMAIN_COLORS, LINK_TEXT_MAX, TITLE_MAX } from '../announcements';
 
 const optionalText = (max: number) =>
@@ -11,10 +11,7 @@ const optionalText = (max: number) =>
     z.string().trim().max(max).optional()
   );
 
-const optionalNumber = z.preprocess(
-  (v) => (v === '' || v == null ? undefined : Number(v)),
-  z.number().finite().optional()
-);
+const optionalNumber = z.preprocess(numberish, z.number().finite().optional());
 
 // `datetime-local` gives a local wall-clock string; an empty box clears the date.
 const optionalDate = z.preprocess(
@@ -37,14 +34,12 @@ const domainList = z.preprocess(
 
 export const announcementFormSchema = z
   .object({
-    id: z.preprocess(
-      (v) => (v === '' || v == null ? undefined : Number(v)),
-      z.number().int().positive().optional()
-    ),
+    id: z.preprocess(numberish, z.number().int().positive().optional()),
     title: z.string().trim().min(1, 'Add a subject').max(TITLE_MAX),
     content: z.string().trim().min(1, 'Add a message').max(CONTENT_MAX),
     domain: domainList,
     profileOnly: checkbox,
+    disabled: checkbox,
     startsAt: optionalDate,
     endsAt: optionalDate,
     linkUrl: optionalText(2048),
@@ -86,18 +81,28 @@ export const count = z.union([z.number(), z.string(), z.null(), z.undefined()]).
   return typeof n === 'number' && Number.isFinite(n) ? n : 0;
 });
 
+// `limit` and `windowDays` decide whether the composer offers to post at all, so an absent or
+// unreadable value has to fail the parse and show "allowance unavailable" — coercing it to 0 would
+// render a confident "no slots left" for what is actually a broken upstream.
+const required = z.union([z.number(), z.string()]).transform((v, ctx) => {
+  const n = typeof v === 'string' ? Number(v) : v;
+  if (!Number.isFinite(n)) {
+    ctx.addIssue({ code: 'custom', message: 'Expected a number' });
+    return z.NEVER;
+  }
+  return n;
+});
+
 export const allowanceSchema = z.object({
   eligible: z.boolean(),
   tier: z.string(),
   score: count,
   minScore: count,
   used: count,
-  limit: count,
-  windowDays: count,
+  limit: required,
+  windowDays: required,
   nextAvailableAt: z
     .string()
     .nullish()
     .transform((v) => v ?? null),
 });
-
-export type AnnouncementAllowancePayload = z.infer<typeof allowanceSchema>;

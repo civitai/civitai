@@ -55,6 +55,7 @@
   let endsAt = $state(toLocalInput(seed?.endsAt));
   let linkUrl = $state(seed?.link ?? '');
   let linkText = $state(seed?.linkText ?? '');
+  let coverFiles = $state<FileList | undefined>(undefined);
   let cover = $state<CoverUpload | null>(null);
   let coverError = $state<string | null>(null);
   let uploading = $state(false);
@@ -62,9 +63,17 @@
 
   const allowState = $derived(allowance ? allowanceState(allowance) : null);
   // Profile-only never spends a slot, so it stays postable in every allowance state.
-  const blocked = $derived(!profileOnly && allowState !== null && allowState !== 'available');
+  // A slot is spent on the profile-only → notifying transition, so editing an announcement that
+  // already notifies costs nothing and must stay possible once the allowance is used up.
+  const spendsSlot = $derived(!profileOnly && (!announcement || announcement.profileOnly));
+  const blocked = $derived(spendsSlot && allowState !== null && allowState !== 'available');
   // The migrated profile banners carry no subject, and the server requires one on every write.
-  const needsTitle = $derived(!!announcement && announcement.title.trim() === '');
+  const needsTitle = $derived(!!seed && seed.title.trim() === '' && title.trim() === '');
+
+  // The blob outlives the component otherwise — the replacement path is handled in onCoverChange.
+  $effect(() => () => {
+    if (cover) URL.revokeObjectURL(cover.previewUrl);
+  });
 
   function setDomains(next: string[]) {
     if (!next.length) {
@@ -78,9 +87,8 @@
     else domains = next.filter((d) => d !== 'all') as AnnouncementDomain[];
   }
 
-  async function onCoverChange(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
+  async function onCoverChange() {
+    const file = coverFiles?.[0];
     if (!file) return;
 
     coverError = null;
@@ -91,7 +99,7 @@
       cover = next;
     } catch (e) {
       coverError = e instanceof Error ? e.message : 'The image could not be uploaded.';
-      input.value = '';
+      coverFiles = undefined;
     } finally {
       uploading = false;
     }
@@ -110,12 +118,7 @@
   };
 </script>
 
-<form
-  method="POST"
-  action="?/save"
-  use:enhance={submit}
-  class="rounded-xl border border-dark-4 bg-dark-6 p-5"
->
+<form method="POST" action="?/save" use:enhance={submit} class="cs-panel p-5">
   <h2 class="text-base font-semibold text-white">
     {announcement ? 'Edit announcement' : 'New announcement'}
   </h2>
@@ -123,6 +126,9 @@
   {#if announcement}<input type="hidden" name="id" value={announcement.id} />{/if}
   <input type="hidden" name="domain" value={domains.join(',')} />
   <input type="hidden" name="profileOnly" value={profileOnly ? 'on' : 'false'} />
+  <!-- A moderator take-down lives in this column and there is no control for it here, so it has to
+       survive the round trip. -->
+  <input type="hidden" name="disabled" value={announcement?.disabled ? 'on' : 'false'} />
   {#if cover}
     <input type="hidden" name="coverKey" value={cover.key} />
     <input type="hidden" name="coverWidth" value={cover.width ?? ''} />
@@ -172,6 +178,7 @@
           id="announcement-cover"
           type="file"
           accept={COVER_ACCEPT}
+          bind:files={coverFiles}
           onchange={onCoverChange}
           disabled={uploading}
         />
@@ -195,7 +202,7 @@
         type="multiple"
         variant="outline"
         spacing={2}
-        value={domains}
+        bind:value={domains}
         onValueChange={setDomains}
       >
         {#each DOMAIN_COLORS as domain (domain)}
@@ -205,7 +212,7 @@
         {/each}
       </ToggleGroup>
       <span class="text-xs text-dark-2">
-        {domains.map((d) => DOMAIN_LABELS[d].hint).join(' · ')}
+        {domains.map((d) => DOMAIN_LABELS[d]?.hint ?? d).join(' · ')}
       </span>
     </fieldset>
 

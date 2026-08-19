@@ -14,7 +14,10 @@
   let composing = $state(false);
 
   const editing = $derived(data.announcements.find((a) => a.id === editingId) ?? null);
-  const open = $derived(composing || editing !== null);
+  // A row deleted while its editor is open would otherwise leave the composer in create mode with
+  // the same content, so Save would post a second announcement and spend another slot.
+  const lost = $derived(editingId !== null && editing === null);
+  const open = $derived(!lost && (composing || editing !== null));
 
   function startNew() {
     editingId = null;
@@ -36,10 +39,10 @@
 
 <div class="flex flex-col gap-5">
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <div>
-      <h1 class="text-xl font-semibold text-white">Announcements</h1>
-      <p class="text-sm text-dark-2">Tell your followers what you are working on.</p>
-    </div>
+    <header class="page-header !mb-0">
+      <h1>Announcements</h1>
+      <p>Tell your followers what you are working on.</p>
+    </header>
     {#if !open}
       <Button onclick={startNew}>New announcement</Button>
     {/if}
@@ -52,7 +55,7 @@
       <AnnouncementComposer
         announcement={editing}
         allowance={data.allowance}
-        error={form?.scope === 'save' ? (form.error ?? null) : null}
+        error={form?.scope === 'save' && form.subject === editingId ? (form.error ?? null) : null}
         onDone={close}
       />
     {/key}
@@ -60,7 +63,9 @@
 
   <AnnouncementList
     announcements={data.announcements}
-    error={form?.scope === 'delete' ? (form.error ?? null) : null}
+    deleteError={form?.scope === 'delete'
+      ? { id: form.subject ?? null, message: form.error ?? '' }
+      : null}
     onEdit={startEdit}
   />
 </div>

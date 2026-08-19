@@ -18,7 +18,7 @@
   );
 </script>
 
-<div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+<div class="cs-panel p-5">
   {#if error || !allowance}
     <h2 class="text-sm font-semibold text-white">Allowance unavailable</h2>
     <p class="mt-1 text-sm text-dark-2">

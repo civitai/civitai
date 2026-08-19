@@ -146,4 +146,13 @@ describe('allowanceSchema', () => {
     expect(allowanceSchema.safeParse({ error: 'nope' }).success).toBe(false);
     expect(allowanceSchema.safeParse(payload({ eligible: 'yes' })).success).toBe(false);
   });
+
+  // Coercing these to 0 would render a confident "no slots left" for a broken upstream, which the
+  // creator cannot tell from a real exhaustion.
+  it('fails rather than zeroes the counts the composer gates on', () => {
+    for (const field of ['limit', 'windowDays']) {
+      expect(allowanceSchema.safeParse(payload({ [field]: null })).success).toBe(false);
+      expect(allowanceSchema.safeParse(payload({ [field]: 'lots' })).success).toBe(false);
+    }
+  });
 });

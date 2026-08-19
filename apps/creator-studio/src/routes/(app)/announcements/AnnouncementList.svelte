@@ -9,11 +9,12 @@
 
   let {
     announcements,
-    error = null,
+    deleteError = null,
     onEdit,
   }: {
     announcements: AnnouncementRow[];
-    error?: string | null;
+    /** Carries the row it belongs to, so a failure renders beside that row and nowhere else. */
+    deleteError?: { id: number | null; message: string } | null;
     onEdit: (announcement: AnnouncementRow) => void;
   } = $props();
 
@@ -42,7 +43,7 @@
       deletingId = null;
       // A custom callback replaces the default one, which invalidates before it applies — without
       // this the deleted row stays on screen and reads as a silent failure. The confirmation stays
-      // open on failure so the error is next to the row it belongs to.
+      // open on failure, which is where the error for that row renders.
       if (result.type === 'success') {
         confirmingId = null;
         await invalidateAll();
@@ -52,18 +53,16 @@
   };
 </script>
 
-{#if error}
-  <p class="text-sm text-red-300">{error}</p>
+{#if deleteError && !announcements.some((a) => a.id === deleteError?.id)}
+  <p class="text-sm text-red-300">{deleteError.message}</p>
 {/if}
 
 {#if announcements.length === 0}
-  <p class="rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm text-dark-2">
-    You have not posted any announcements yet.
-  </p>
+  <p class="cs-panel p-5 text-sm text-dark-2">You have not posted any announcements yet.</p>
 {:else}
   <ul class="flex flex-col gap-3">
     {#each announcements as announcement (announcement.id)}
-      <li class="flex gap-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+      <li class="cs-panel flex gap-4 p-5">
         {#if announcement.coverUrl}
           <EdgeImage
             src={announcement.coverUrl}
@@ -85,7 +84,7 @@
                 Profile only
               </span>
             {/if}
-            {#each announcement.domain as domain, i (`${announcement.id}:${i}`)}
+            {#each announcement.domain as domain (domain)}
               <span class="rounded-full border border-dark-4 px-2 py-0.5 text-xs text-dark-2">
                 {DOMAIN_LABELS[domain as AnnouncementDomain]?.label ?? domain}
               </span>
@@ -102,7 +101,9 @@
           {#if confirmingId === announcement.id}
             <form method="POST" action="?/delete" use:enhance={() => removed(announcement.id)}>
               <input type="hidden" name="id" value={announcement.id} />
-              {#if !announcement.profileOnly}
+              {#if deleteError?.id === announcement.id}
+                <p class="mb-2 max-w-48 text-right text-sm text-red-300">{deleteError.message}</p>
+              {:else if !announcement.profileOnly}
                 <p class="mb-2 max-w-48 text-right text-xs text-dark-2">
                   Deleting does not return the slot it used.
                 </p>

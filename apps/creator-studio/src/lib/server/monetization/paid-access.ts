@@ -7,6 +7,7 @@ import {
   type ModelVersionTerms,
 } from '@civitai/buzz';
 import { env } from '$env/dynamic/private';
+import { callMainApp } from '$lib/server/main-app';
 import { dbRead, dbWrite } from '$lib/server/db';
 import { mapWithConcurrency, MAIN_APP_WRITE_CONCURRENCY } from '$lib/server/concurrency';
 import {
@@ -18,10 +19,8 @@ import type { PaidAccessConfig } from '$lib/monetization/paid-access';
 
 // Paid access is written through the MAIN APP, not kysely: the write has real
 // side effects (donation-goal rows, buzzTransactionId bookkeeping, publish-state
-// guards, cache/search invalidation) that only the main app owns. We POST to its
-// REST endpoint, forwarding the caller's shared .civitai.com session cookie so it
-// authenticates + authorizes as that user. All validation lives server-side there.
-const MAIN_APP_URL = env.CIVITAI_APP_URL || 'https://civitai.com';
+// guards, cache/search invalidation) that only the main app owns. The call itself
+// is $lib/server/main-app.ts, which forwards the caller's session cookie.
 const ENDPOINT = '/api/v1/model-versions/early-access';
 
 export type { PaidAccessConfig } from '$lib/monetization/paid-access';
@@ -67,23 +66,18 @@ export async function setPaidAccessConfig(
         : null;
 
     // The main app only accepts a permanent config with the shared webhook token, so a direct user call can't.
-    const url = config?.permanent
-      ? `${MAIN_APP_URL}${ENDPOINT}?token=${encodeURIComponent(env.WEBHOOK_TOKEN ?? '')}`
-      : `${MAIN_APP_URL}${ENDPOINT}`;
-    const res = await fetch(url, {
+    const path = config?.permanent
+      ? `${ENDPOINT}?token=${encodeURIComponent(env.WEBHOOK_TOKEN ?? '')}`
+      : ENDPOINT;
+
+    const result = await callMainApp(path, cookie, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie },
-      body: JSON.stringify({ id: versionId, paidAccess, donationGoal, rightsAffirmed }),
+      body: { id: versionId, paidAccess, donationGoal, rightsAffirmed },
+      parse: false,
+      unreachable: 'Could not reach the model service. Please try again.',
     });
 
-    if (res.ok) return { ok: true };
-
-    const data = (await res.json().catch(() => null)) as { error?: string } | null;
-    return {
-      ok: false,
-      status: res.status,
-      error: data?.error ?? `Request failed (${res.status}).`,
-    };
+    return result.ok ? { ok: true } : { ok: false, status: result.status, error: result.error };
   } catch {
     return {
       ok: false,

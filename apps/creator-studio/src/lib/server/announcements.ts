@@ -1,15 +1,13 @@
 import type { SessionUser } from '@civitai/auth';
-import { env } from '$env/dynamic/private';
 import { dbRead } from '$lib/server/db';
+import { callMainApp, type MainAppResult } from '$lib/server/main-app';
 import { getFlipt } from '$lib/server/flipt';
 import type { AnnouncementAllowance } from '$lib/announcements';
 import { allowanceSchema, type AnnouncementForm } from './announcements-schema';
 
 // Announcement writes go through the MAIN APP, not kysely: the allowance check, the creator/sitewide
 // boundary and the cover `Image` row are all owned there, and duplicating any of them here would put a
-// second copy of the security-shaped code in a second app. We POST to its REST endpoints forwarding the
-// caller's shared .civitai.com session cookie, exactly as paid-access.ts does.
-const MAIN_APP_URL = env.CIVITAI_APP_URL || 'https://civitai.com';
+// second copy of the security-shaped code in a second app.
 
 export const ANNOUNCEMENTS_FLAG = 'creator-announcements';
 
@@ -17,13 +15,19 @@ export const ANNOUNCEMENTS_FLAG = 'creator-announcements';
  * 🔴 Must stay the same key AND the same Flipt-down posture as the main app's
  * `creatorAnnouncements` feature flag (availability ['mod'] + fliptKey). One flag drives both apps;
  * an app that fails to a different answer produces the half-visible state the single flag exists to
- * prevent. `getClientSync()` is null only when the client never initialised, which is what separates
- * "Flipt says off" from "Flipt is unreachable".
+ * prevent.
+ *
+ * The fallback keys on a null EVALUATION, not on the client being absent: `isEnabledSync` returns
+ * null for an unreachable client and for a flag that does not exist yet, which is the normal state
+ * of a feature that ships dark. `isEnabled` would collapse both to false and lock moderators out of
+ * a page the main app is already showing them.
  */
 export async function announcementsEnabled(user: SessionUser): Promise<boolean> {
   const flipt = getFlipt();
-  if (await flipt.isEnabled(ANNOUNCEMENTS_FLAG, String(user.id))) return true;
-  return flipt.getClientSync() === null && user.isModerator === true;
+  await flipt.ensureInitialized();
+
+  const evaluated = flipt.isEnabledSync(ANNOUNCEMENTS_FLAG, String(user.id));
+  return evaluated ?? user.isModerator === true;
 }
 
 export type AnnouncementRow = {
@@ -88,46 +92,9 @@ export async function getMyAnnouncements(userId: number): Promise<AnnouncementRo
   });
 }
 
-export type AnnouncementResult<T> =
-  { ok: true; data: T } | { ok: false; status: number; error: string };
-
-async function callMainApp<T>(
-  path: string,
-  cookie: string,
-  init?: { method?: string; body?: unknown }
-): Promise<AnnouncementResult<T>> {
-  try {
-    const res = await fetch(`${MAIN_APP_URL}${path}`, {
-      method: init?.method ?? 'GET',
-      headers: { 'content-type': 'application/json', cookie },
-      body: init?.body === undefined ? undefined : JSON.stringify(init.body),
-    });
-
-    if (res.ok) return { ok: true, data: (await res.json()) as T };
-
-    const data = (await res.json().catch(() => null)) as {
-      error?: string;
-      message?: string;
-    } | null;
-    return {
-      ok: false,
-      status: res.status,
-      error: data?.error ?? data?.message ?? `Request failed (${res.status}).`,
-    };
-  } catch {
-    return {
-      ok: false,
-      status: 502,
-      error: 'Could not reach the announcement service. Please try again.',
-    };
-  }
-}
-
 const ENDPOINT = '/api/v1/announcements';
 
-export async function getAllowance(
-  cookie: string
-): Promise<AnnouncementResult<AnnouncementAllowance>> {
+export async function getAllowance(cookie: string): Promise<MainAppResult<AnnouncementAllowance>> {
   const result = await callMainApp<unknown>(ENDPOINT, cookie);
   if (!result.ok) return result;
 
@@ -151,6 +118,9 @@ export function saveAnnouncement(cookie: string, form: AnnouncementForm) {
       content: form.content,
       domain: form.domain,
       profileOnly: form.profileOnly,
+      // Round-tripped, not defaulted: the endpoint writes `disabled: input.disabled ?? false`, so
+      // omitting it would silently republish an announcement a moderator had taken down.
+      disabled: form.disabled,
       startsAt: form.startsAt?.toISOString() ?? null,
       endsAt: form.endsAt?.toISOString() ?? null,
       ...(form.linkUrl && form.linkText
