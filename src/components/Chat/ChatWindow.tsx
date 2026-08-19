@@ -1,4 +1,4 @@
-import { Grid, useComputedColorScheme } from '@mantine/core';
+import { Grid } from '@mantine/core';
 import { registerCustomProtocol } from 'linkifyjs';
 import React from 'react';
 import { ChatList } from '~/components/Chat/ChatList';
@@ -34,7 +34,6 @@ function ChatWindowContent() {
   const existingChatId = useChatStore((state) => state.existingChatId);
   const isCreating = useChatStore((state) => state.isCreating);
   const isSettingsOpen = useChatStore((state) => state.isSettingsOpen);
-  const colorScheme = useComputedColorScheme('dark');
   const features = useFeatureFlags();
 
   const isMobile = useContainerSmallerThan(700);
@@ -55,13 +54,7 @@ function ChatWindowContent() {
   return (
     <Grid h="100%" classNames={{ inner: 'h-full' }} gutter={0} overflow="hidden">
       {/* List and Search Panel */}
-      <Grid.Col
-        span={{ base: 12, xs: 4 }}
-        style={{
-          borderRight: colorScheme === 'dark' ? '1px solid #373A40' : '1px solid #CED4DA',
-          height: '100%',
-        }}
-      >
+      <Grid.Col span={{ base: 12, xs: 4 }} h="100%" className={classes.rail}>
         <List />
       </Grid.Col>
       {/* Chat Panel */}

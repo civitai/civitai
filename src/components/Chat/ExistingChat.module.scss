@@ -4,7 +4,7 @@
   border-radius: 100px;
   border: 1px solid var(--chat-line);
   background-color: var(--chat-panel);
-  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+  color: var(--chat-text-dim);
   padding: 2px 12px;
   margin: 10px 0 4px;
   font-family: var(--mantine-font-family-monospace);
@@ -55,8 +55,13 @@
   overflow-wrap: break-word;
   width: fit-content;
   max-width: 100%;
-  font-size: 13.5px;
+  font-family: var(--chat-msg-font);
+  font-size: var(--chat-msg-size);
+  color: var(--chat-text);
   line-height: 1.5;
+  background-color: var(--chat-bubble);
+  padding: var(--chat-bubble-pad);
+  border-radius: var(--chat-bubble-radius);
 
   /* ChatMessageContent wraps every run in a Mantine <Text>, which writes its own
      font-size onto the span — so sizing this container alone changes nothing. */
@@ -93,7 +98,7 @@
 }
 
 .replyQuoteText {
-  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+  color: var(--chat-text-dim);
   font-size: 11.5px;
   line-height: 1.4;
   display: block;
@@ -107,6 +112,10 @@
     font-size: inherit;
     line-height: inherit;
   }
+}
+
+.mine {
+  background-color: var(--chat-bubble-me);
 }
 
 .editedTag {
@@ -126,8 +135,8 @@
   z-index: 5;
   border-radius: var(--mantine-radius-sm);
   border: 1px solid var(--chat-line);
-  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
-  box-shadow: 0 4px 14px light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 45%));
+  background-color: var(--chat-panel-strong);
+  box-shadow: 0 4px 14px light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 55%));
 
   .messageRow:hover &,
   .messageRow:focus-within & {
@@ -151,7 +160,8 @@
 .chatInput {
   border: none;
   background-color: transparent;
-  font-size: 13.5px;
+  font-family: var(--chat-msg-font);
+  font-size: var(--chat-msg-size);
   line-height: 1.45;
   min-height: 30px;
   padding: 7px 4px;
@@ -163,7 +173,7 @@
   gap: 6px;
   margin: 8px;
   padding: 4px 5px 4px 4px;
-  border-radius: 19px;
+  border-radius: var(--chat-radius);
   border: 1px solid var(--chat-line);
   background-color: var(--chat-panel);
 
@@ -180,7 +190,7 @@
    moment the field is empty. */
 .sendButton:disabled,
 .sendButton[data-disabled] {
-  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  background-color: var(--chat-panel);
   color: var(--chat-meta);
 }
 
@@ -204,7 +214,7 @@
   color: var(--chat-meta);
 
   b {
-    color: light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0));
+    color: var(--chat-text-dim);
     font-weight: 600;
   }
 }

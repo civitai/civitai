@@ -19,6 +19,32 @@
   --chat-bg: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
   --chat-send: var(--mantine-color-blue-filled);
 
+  /* Lifted above --chat-panel: popovers and the selected thread have to read as
+     nearer the reader than the rail they sit on. */
+  --chat-panel-strong: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
+  --chat-selected: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+
+  /* Body copy, and the quieter grade used for quoted text and inline labels. */
+  --chat-text: inherit;
+  --chat-text-dim: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+
+  /* A theme paints over the base colour rather than replacing it, so `none`
+     leaves --chat-bg showing through untouched. */
+  --chat-bg-image: none;
+
+  /* Type and geometry are as much of a skin as colour is — a terminal that is
+     merely green is a recolour, not a terminal. */
+  --chat-msg-font: inherit;
+  --chat-msg-size: 13.5px;
+  --chat-radius: 19px;
+
+  /* Off by default: the stock surface is flat rows, and a bubble is a thing a
+     theme opts into. Transparent with no padding leaves the row untouched. */
+  --chat-bubble: transparent;
+  --chat-bubble-me: transparent;
+  --chat-bubble-pad: 0;
+  --chat-bubble-radius: 0;
+
   /* Derived so a theme only has to name its accent — the quote and reply tints
      follow it instead of each carrying a hand-mixed colour. */
   --chat-accent-soft: color-mix(in srgb, var(--chat-accent) 12%, transparent);
@@ -26,6 +52,32 @@
 
 .surface.surface {
   background-color: var(--chat-bg);
+  background-image: var(--chat-bg-image);
+}
+
+/* The rail, the conversation header and the composer are the chrome around the
+   message canvas. In the default palette --chat-panel and --chat-bg resolve to
+   the same colour, so this is a no-op there and depth a theme can actually use
+   everywhere else. */
+.rail {
+  background-color: var(--chat-panel);
+  border-right: 1px solid var(--chat-line);
+}
+
+.convoHead {
+  background-color: var(--chat-panel);
+  border-bottom: 1px solid var(--chat-line);
+}
+
+.composerBar {
+  background-color: var(--chat-panel);
+  border-top: 1px solid var(--chat-line);
+}
+
+/* A default scrollbar is a strip of OS chrome sitting inside a skinned window. */
+.scroller {
+  scrollbar-width: thin;
+  scrollbar-color: var(--chat-line) transparent;
 }
 
 .themeOption {
@@ -91,8 +143,8 @@
   }
 
   &.selected {
-    background-color: light-dark(var(--mantine-color-blue-0), rgb(34 139 230 / 15%));
-    border-color: light-dark(var(--mantine-color-blue-3), var(--mantine-color-blue-8));
+    background-color: var(--chat-accent-soft);
+    border-color: var(--chat-accent);
   }
 }
 

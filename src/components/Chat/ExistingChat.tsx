@@ -6,7 +6,6 @@ import {
   Button,
   Center,
   createPolymorphicComponent,
-  Divider,
   Group,
   Image,
   Loader,
@@ -64,6 +63,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import sharedClasses from './Chat.module.scss';
 import classes from './ExistingChat.module.scss';
 import { Sticker } from '~/components/Sticker/Sticker';
 import { StickerPicker } from '~/components/Sticker/StickerPicker';
@@ -419,6 +419,7 @@ export function ExistingChat() {
           </Group>
         }
         maxHeight={44}
+        className={sharedClasses.convoHead}
         styles={{
           root: { textAlign: 'center' },
         }}
@@ -488,7 +489,6 @@ export function ExistingChat() {
           <ChatActions chatObj={thisChat} />
         </Group>
       </Spoiler>
-      <Divider mt="sm" />
       {!myMember ? (
         <Center h="100%">
           <Loader />
@@ -511,7 +511,12 @@ export function ExistingChat() {
           >
             <ScamWarningContent chatId={existingChatId!} />
           </DismissibleAlert>
-          <Box py="sm" style={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
+          <Box
+            py="sm"
+            className={sharedClasses.scroller}
+            style={{ flexGrow: 1, overflowY: 'auto' }}
+            ref={lastReadRef}
+          >
             {isRefetching || isLoading ? (
               <Center h="100%">
                 <Loader />
@@ -552,9 +557,8 @@ export function ExistingChat() {
               </Group>
             )}
           </Box>
-          <Divider />
           {myMember.status === ChatMemberStatus.Joined ? (
-            <>
+            <div className={sharedClasses.composerBar}>
               {!!editing && (
                 <Group px="sm" pt="xs" gap={8} wrap="nowrap" className={classes.replyStrip}>
                   <Text size="xs" c="yellow" fw={600}>
@@ -605,7 +609,7 @@ export function ExistingChat() {
                 setTypingStatus={setTypingStatus}
                 setTypingText={setTypingText}
               />
-            </>
+            </div>
           ) : (
             <Center p="sm">
               <Group>
@@ -1206,6 +1210,7 @@ function DisplayMessages({
                       >
                         <div
                           className={clsx(classes.messageText, {
+                            [classes.mine]: isMe,
                             [classes.stickerOnlyMessage]: isStickerOnlyContent(c.content),
                           })}
                         >
