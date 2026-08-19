@@ -313,6 +313,17 @@ export type ModelMeta = Partial<{
   commentsLocked: boolean;
   profanityMatches: string[];
   profanityEvaluation: Pick<ProfanityEvaluation, 'reason' | 'metrics'>;
+  /**
+   * XGuard text-moderation forensics. Surfaced to moderators through
+   * `getModelModerationDetail`; stripped from every client-facing path by
+   * `stripMinorHashMeta`. Sibling of `profanity`, not a replacement — a moderator
+   * looking at an older model needs to know which detector produced the terms.
+   */
+  textModeration: {
+    matchedTerms: string[];
+    triggeredLabels: string[];
+    scannedAt: string;
+  };
   minorFlagSnapshot: MinorFlagSnapshot;
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };

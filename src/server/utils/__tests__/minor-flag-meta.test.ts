@@ -180,3 +180,31 @@ describe('stripMinorHashMeta — accepted stamp', () => {
     expect(result).toHaveProperty('description', 'kept');
   });
 });
+
+describe('textModeration redaction', () => {
+  const meta = {
+    textModeration: {
+      matchedTerms: ['some matched phrase'],
+      triggeredLabels: ['Suggestive'],
+      scannedAt: '2026-08-19T00:00:00.000Z',
+    },
+    profanityMatches: ['badword'],
+  } as ModelMeta;
+
+  // Model.meta reaches clients by TWO paths: filterModelMetaForClient (moderator-aware) and
+  // stripMinorHashMeta called directly (model.service.ts:1651,2433 — NOT moderator-aware).
+  // The strip has to live in the function both paths share, or the second one leaks.
+  it('strips textModeration in stripMinorHashMeta itself', () => {
+    expect(stripMinorHashMeta(meta).textModeration).toBeUndefined();
+  });
+
+  it('strips it for moderators too — the moderator surface is getModelModerationDetail, which does not use this path', () => {
+    expect(filterModelMetaForClient(meta, true).textModeration).toBeUndefined();
+    expect(filterModelMetaForClient(meta, false).textModeration).toBeUndefined();
+  });
+
+  it('leaves unrelated keys intact', () => {
+    const result = stripMinorHashMeta({ ...meta, showcaseCollectionId: 7 } as ModelMeta);
+    expect(result.showcaseCollectionId).toBe(7);
+  });
+});
