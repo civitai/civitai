@@ -34,22 +34,37 @@ describe('benign phrases reach the client-side search gates', () => {
 });
 
 describe('moderator benign words reach the profanity filter', () => {
-  it('CONTROL: without the moderator list, a word containing a profanity token is flagged', () => {
-    expect(createProfanityFilter().analyze('spreadsheet').isProfane).toBe(true);
+  it('CONTROL: with no moderator list, the static whitelist is in effect', () => {
+    const filter = createProfanityFilter();
+    // `spreadsheet` is not in the static list, so it is flagged for containing `spread`.
+    expect(filter.analyze('spreadsheet').isProfane).toBe(true);
+    // `cockpit` IS in the static list and IS rescued by it (verified: 49 of the 424 static
+    // words are flagged without it, and this is one of them — most of the rest are already
+    // covered by obscenity's own recommended whitelist, so picking an arbitrary static word
+    // would have made this assertion vacuous).
+    expect(filter.analyze('cockpit').isProfane).toBe(false);
   });
 
   it('a moderator-whitelisted word is no longer flagged', () => {
-    const filter = createProfanityFilter({ extraWhitelist: ['spreadsheet'] });
+    const filter = createProfanityFilter({ moderatorWhitelist: ['spreadsheet'] });
     expect(filter.analyze('spreadsheet').isProfane).toBe(false);
   });
 
-  it('whitelisting one word does not disarm the filter for the token itself', () => {
-    const filter = createProfanityFilter({ extraWhitelist: ['spreadsheet'] });
-    expect(filter.analyze('spread').isProfane).toBe(true);
+  // The point of REPLACING rather than unioning: a moderator can take a word OUT. Under a
+  // union every static word stays whitelisted forever and the UI's Remove control is a
+  // silent no-op, since the seed migration copies the static list verbatim.
+  it('the moderator list REPLACES the static one, so removing an entry takes effect', () => {
+    const filter = createProfanityFilter({ moderatorWhitelist: ['spreadsheet'] });
+    expect(filter.analyze('cockpit').isProfane).toBe(true);
   });
 
-  it('keeps the words shipped in the static list', () => {
-    const filter = createProfanityFilter({ extraWhitelist: ['spreadsheet'] });
-    expect(filter.analyze('analysis').isProfane).toBe(false);
+  it('falls back to the static list when the moderator list is empty', () => {
+    const filter = createProfanityFilter({ moderatorWhitelist: [] });
+    expect(filter.analyze('cockpit').isProfane).toBe(false);
+  });
+
+  it('whitelisting one word does not disarm the filter for the token itself', () => {
+    const filter = createProfanityFilter({ moderatorWhitelist: ['spreadsheet'] });
+    expect(filter.analyze('spread').isProfane).toBe(true);
   });
 });

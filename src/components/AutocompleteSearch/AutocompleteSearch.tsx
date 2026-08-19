@@ -285,6 +285,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     const canPerformQuery = debouncedSearch
       ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(auditedSearch)
       : true;
+    // Raw text on purpose: this reads a different list (blocked NSFW words) which the benign
+    // phrases do not carve out, and it blocks rather than flags.
     const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
 
     if (isIllegalQuery) {

@@ -731,12 +731,22 @@ describe('image-scan-result webhook - pipeline tests', () => {
       mockStripBenignPhrases.mockImplementation(async (text?: string) =>
         (text ?? '').replace('emma stone', '')
       );
-      seedImageWithPrompt(31, 'emma stone');
+      // Two real POI names, only one whitelisted. `tom hanks` survives the strip and must
+      // still be tagged, which proves this run reached the tag write at all — otherwise an
+      // early throw would satisfy the negative assertion below with an empty array.
+      seedImageWithPrompt(31, 'emma stone and tom hanks');
 
       const req = runWebhook({ id: 31, status: 0, source: TagSource.WD14, tags: [] });
       await req.promise;
 
+      // Pins WHICH list is consulted. Pointing the strip at ProfanityBenignWord instead
+      // leaves the whole fix inert in production and every other assertion here green.
+      expect(mockStripBenignPhrases).toHaveBeenCalledWith(
+        'emma stone and tom hanks',
+        'PromptBenignPhrase'
+      );
       expect(requestedTagNames()).not.toContain('emma stone');
+      expect(requestedTagNames()).toContain('tom hanks');
     });
   });
 });

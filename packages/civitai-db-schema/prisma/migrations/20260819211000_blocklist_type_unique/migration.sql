@@ -1,0 +1,23 @@
+-- One Blocklist row per type.
+--
+-- 🔴 ORDERING: this FAILS while any type still has more than one row. Production had two
+-- `EmailDomain` rows (8292 entries and 3, with all 3 of the smaller row's domains absent
+-- from the larger). They were merged and the duplicate deleted on 2026-08-19, verified by
+-- read-back: one row, 8295 entries, 8295 distinct, and the application path confirmed
+-- reading it after the `system:blocklist:EmailDomain` cache key was purged. Run this only
+-- against an environment where that merge has happened; on a fresh environment seeded from
+-- the migrations there is nothing to merge and it applies cleanly.
+--
+-- Why it matters rather than being tidiness: the read picks one row and the Redis cache is
+-- keyed by type alone, so a second row's entries are silently unenforced and which row wins
+-- can change on an unrelated edit. `getBlocklistDTO` now reads deterministically and logs
+-- the duplicate, but only this constraint makes the state unrepresentable.
+--
+-- Check before applying, per environment:
+--   SELECT "type", count(*) FROM "Blocklist" GROUP BY "type" HAVING count(*) > 1;
+-- Expect zero rows. If it returns any, merge them first — do not drop a row to make this
+-- pass, since the loser's entries are exactly what was being missed.
+--
+-- Idempotent: re-running is a no-op once the index exists.
+
+CREATE UNIQUE INDEX IF NOT EXISTS "Blocklist_type_key" ON "Blocklist" ("type");

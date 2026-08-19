@@ -191,11 +191,25 @@ export async function stripBenignPhrases(text = '', type: BlocklistType) {
  * says nothing about what we block.
  */
 export async function getClientBenignLists() {
-  const [prompt, profanityWords] = await Promise.all([
-    getBlocklistData(BlocklistType.PromptBenignPhrase),
-    getBlocklistData(BlocklistType.ProfanityBenignWord),
-  ]);
-  return { prompt, profanityWords };
+  try {
+    const [prompt, profanityWords] = await Promise.all([
+      getBlocklistData(BlocklistType.PromptBenignPhrase),
+      getBlocklistData(BlocklistType.ProfanityBenignWord),
+    ]);
+    return { prompt, profanityWords };
+  } catch (error) {
+    // Fails OPEN to empty lists, and empty is the safe direction here: no whitelist means
+    // nothing is stripped, so the gates flag more rather than less. Unlike its neighbours in
+    // `system-cache` this read has no deadline wrapper, so a Redis or DB stall would
+    // otherwise reject into a 500 on an unauthenticated endpoint that every search box calls.
+    logToAxiom({
+      name: 'benign-lists-unavailable',
+      type: 'warning',
+      message: 'Serving empty benign lists to the client; search gates will not strip',
+      details: { error: error instanceof Error ? error.message : String(error) },
+    }).catch(() => undefined);
+    return { prompt: [] as string[], profanityWords: [] as string[] };
+  }
 }
 // #endregion
 

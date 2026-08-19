@@ -34,10 +34,17 @@ export interface ProfanityFilterOptions {
   /** How to replace profane words */
   replacementStyle: 'asterisk' | 'grawlix' | 'remove';
   /**
-   * Moderator-managed benign words (BlocklistType.ProfanityBenignWord), merged with the
-   * static list. Same semantics: a full word that innocently CONTAINS a profanity token.
+   * The moderator-managed benign words (`BlocklistType.ProfanityBenignWord`). When non-empty
+   * it REPLACES the static `whitelist-words.json` rather than adding to it, so a moderator
+   * can remove an entry and have that take effect — a union would make the Remove control in
+   * the blocklist UI a silent no-op for every word the static list also carries, which is all
+   * of them, since the seed migration copies it verbatim.
+   *
+   * Empty falls back to the static list, so an unapplied migration or an unreachable DB
+   * degrades to today's behaviour rather than to no whitelist at all (which would reinstate
+   * exactly the false positives this exists to stop).
    */
-  extraWhitelist: string[];
+  moderatorWhitelist: string[];
 }
 
 export interface ProfanityThresholdConfig {
@@ -117,12 +124,12 @@ export class SimpleProfanityFilter {
   constructor(options: Partial<ProfanityFilterOptions> = {}) {
     this.options = {
       replacementStyle: 'asterisk',
-      extraWhitelist: [],
+      moderatorWhitelist: [],
       ...options,
     };
 
-    const whitelist = this.options.extraWhitelist.length
-      ? [...whitelistWords, ...this.options.extraWhitelist]
+    const whitelist = this.options.moderatorWhitelist.length
+      ? this.options.moderatorWhitelist
       : whitelistWords;
 
     // Cache NSFW words once during construction
@@ -463,4 +470,27 @@ export function createProfanityFilter(
   options?: Partial<ProfanityFilterOptions>
 ): SimpleProfanityFilter {
   return new SimpleProfanityFilter(options);
+}
+
+// Constructing a filter builds the whole English dataset + matcher, so callers share one per
+// distinct whitelist. Keyed rather than a single instance because the moderator list can
+// change; the common case (one list for the whole session) still allocates once. Lives here
+// rather than in the hook that needed it first, so server callers can reach it too.
+// Bounded: a browser tab holds at most the pre-load (static) filter and the loaded one, and
+// each matcher measures ~132 KB. The cap is what keeps that true if the query config ever
+// loosens from `staleTime: Infinity` and moderator edits start producing new keys.
+const MAX_CACHED_FILTERS = 2;
+const filtersByWhitelist = new Map<string, SimpleProfanityFilter>();
+export function getProfanityFilter(moderatorWhitelist: string[] = []): SimpleProfanityFilter {
+  const key = moderatorWhitelist.join(',');
+  let filter = filtersByWhitelist.get(key);
+  if (!filter) {
+    filter = createProfanityFilter({ moderatorWhitelist });
+    if (filtersByWhitelist.size >= MAX_CACHED_FILTERS) {
+      const oldest = filtersByWhitelist.keys().next().value;
+      if (oldest !== undefined) filtersByWhitelist.delete(oldest);
+    }
+    filtersByWhitelist.set(key, filter);
+  }
+  return filter;
 }

@@ -7,12 +7,15 @@ import { TRPCError } from '@trpc/server';
 import {
   buildBenignPhraseRegex,
   getBlocklistDTO,
+  getClientBenignLists,
   stripBenignPhrases,
   throwOnBlockedLinkDomain,
+  upsertBlocklist,
 } from '../blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const redisGet = redisMock.redis.get;
 
 /** Make getBlocklistData return the given domains (already lower-cased in prod). */
@@ -118,23 +121,34 @@ describe('a type with more than one Blocklist row', () => {
   // The fake HONOURS orderBy. With a fixed array the "lowest id wins" assertion passes
   // whatever the query asks for, so the fake would be deciding the outcome instead of the
   // code — and flipping the real orderBy to desc would stay green.
+  // A row of ANOTHER type, with a LOWER id than either EmailDomain row. Without it the fake
+  // returns the same rows whatever `where` says, so dropping the type filter from the query
+  // stays green while production serves the link blocklist to an email-domain read.
   const rowsInDbOrder = [
     { id: 8, type: BlocklistType.EmailDomain, data: ['c.example'] },
     { id: 1, type: BlocklistType.EmailDomain, data: ['a.example', 'b.example'] },
+    { id: 0, type: BlocklistType.LinkDomain, data: ['wrong-list.example'] },
   ];
   const respectOrderBy = (rows: typeof rowsInDbOrder) =>
     dbMock.dbWrite.blocklist.findMany.mockImplementation(
-      async (args?: { orderBy?: { id?: 'asc' | 'desc' } }) => {
+      async (args?: { where?: { type?: string }; orderBy?: { id?: 'asc' | 'desc' } }) => {
+        // The fake honours BOTH `where` and `orderBy`. A fake that ignores an argument is a
+        // fake that decides the outcome the assertion is supposed to be testing.
+        const type = args?.where?.type;
+        const filtered = type ? rows.filter((row) => row.type === type) : [...rows];
         const direction = args?.orderBy?.id;
-        if (!direction) return [...rows];
-        return [...rows].sort((a, b) => (direction === 'desc' ? b.id - a.id : a.id - b.id));
+        if (!direction) return filtered;
+        return filtered.sort((a, b) => (direction === 'desc' ? b.id - a.id : a.id - b.id));
       }
     );
 
   const twoRows = () => respectOrderBy(rowsInDbOrder);
 
   it('CONTROL: a single row is returned as-is', async () => {
-    respectOrderBy([{ id: 1, type: BlocklistType.EmailDomain, data: ['a.example'] }]);
+    respectOrderBy([
+      { id: 1, type: BlocklistType.EmailDomain, data: ['a.example'] },
+      { id: 0, type: BlocklistType.LinkDomain, data: ['wrong-list.example'] },
+    ]);
 
     const result = await getBlocklistDTO({ type: BlocklistType.EmailDomain });
     expect(result.data).toEqual(['a.example']);
@@ -155,7 +169,38 @@ describe('a type with more than one Blocklist row', () => {
     await getBlocklistDTO({ type: BlocklistType.EmailDomain });
 
     expect(dbMock.dbWrite.blocklist.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: { id: 'asc' } })
+      expect.objectContaining({
+        where: { type: BlocklistType.EmailDomain },
+        orderBy: { id: 'asc' },
+      })
+    );
+  });
+
+  it('reports the duplicate rather than picking silently', async () => {
+    twoRows();
+    await getBlocklistDTO({ type: BlocklistType.EmailDomain });
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'blocklist-duplicate-rows',
+        type: 'error',
+        details: expect.objectContaining({ usedId: 1, ignoredIds: [8] }),
+      })
+    );
+  });
+
+  // The negative half matters on its own: this read gates account signup, so a report that
+  // fired on every read would be hot-path log spam rather than a signal.
+  it('CONTROL: reports nothing when the type has exactly one row', async () => {
+    respectOrderBy([
+      { id: 1, type: BlocklistType.EmailDomain, data: ['a.example'] },
+      { id: 0, type: BlocklistType.LinkDomain, data: ['wrong-list.example'] },
+    ]);
+
+    await getBlocklistDTO({ type: BlocklistType.EmailDomain });
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'blocklist-duplicate-rows' })
     );
   });
 
@@ -164,5 +209,87 @@ describe('a type with more than one Blocklist row', () => {
 
     const result = await getBlocklistDTO({ type: BlocklistType.EmailDomain });
     expect(result.data).toEqual([]);
+  });
+});
+
+describe('what an edit writes into the cache', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    redisGet.mockResolvedValue(null);
+  });
+
+  // The production incident was not the read: `upsertBlocklist` cached the row it had just
+  // written under a key scoped to the TYPE, so editing the duplicate row promoted it to the
+  // live answer for a month. Reverting to `data: result` leaves every read-side test green,
+  // so this is the only thing standing between that bug and a re-introduction.
+  const twoRows = () => {
+    dbMock.dbWrite.blocklist.findMany.mockImplementation(async () => [
+      { id: 1, type: BlocklistType.EmailDomain, data: ['a.example', 'b.example'] },
+      { id: 8, type: BlocklistType.EmailDomain, data: ['c.example'] },
+    ]);
+    dbMock.dbWrite.blocklist.findUnique.mockResolvedValue({ data: ['c.example'] });
+    dbMock.dbWrite.blocklist.update.mockResolvedValue({
+      id: 8,
+      type: BlocklistType.EmailDomain,
+      data: ['c.example', 'new.example'],
+    });
+  };
+
+  const cachedPayload = () => {
+    const call = redisMock.redis.set.mock.calls.at(-1);
+    return call ? JSON.parse(call[1] as string) : undefined;
+  };
+
+  it('caches the row that WINS the read, not the row that was just edited', async () => {
+    twoRows();
+
+    await upsertBlocklist({
+      id: 8,
+      type: BlocklistType.EmailDomain,
+      blocklist: ['new.example'],
+    });
+
+    const cached = cachedPayload();
+    expect(cached?.id).toBe(1);
+    expect(cached?.data).toEqual(['a.example', 'b.example']);
+  });
+
+  it('writes under a key scoped to the type', async () => {
+    twoRows();
+
+    await upsertBlocklist({
+      id: 8,
+      type: BlocklistType.EmailDomain,
+      blocklist: ['new.example'],
+    });
+
+    expect(redisMock.redis.set.mock.calls.at(-1)?.[0]).toBe('system:blocklist:EmailDomain');
+  });
+});
+
+describe('getClientBenignLists', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    redisGet.mockResolvedValue(null);
+  });
+
+  // Swapping the two fields of the returned object is invisible to a shape assertion, and
+  // in the browser it would feed prompt phrases to the profanity filter and single words to
+  // the phrase stripper — disarming both gates quietly. So the lists must be distinguishable.
+  it('returns each list under the field the client expects', async () => {
+    dbMock.dbWrite.blocklist.findMany.mockImplementation(
+      async (args?: { where?: { type?: string } }) => {
+        if (args?.where?.type === BlocklistType.PromptBenignPhrase)
+          return [{ id: 7, type: BlocklistType.PromptBenignPhrase, data: ['teen titans'] }];
+        if (args?.where?.type === BlocklistType.ProfanityBenignWord)
+          return [{ id: 9, type: BlocklistType.ProfanityBenignWord, data: ['spreadsheet'] }];
+        return [];
+      }
+    );
+
+    const result = await getClientBenignLists();
+
+    expect(result.prompt).toEqual(['teen titans']);
+    expect(result.profanityWords).toEqual(['spreadsheet']);
   });
 });

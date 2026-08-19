@@ -22,7 +22,7 @@ const blocklistDescriptions: Partial<Record<BlocklistType, string>> = {
   [BlocklistType.NegativeBenignPhrase]:
     'Same as Prompt Benign Phrase, but matched against the negative prompt — e.g. "mature content". Use for boilerplate negatives that trip the minor audit.',
   [BlocklistType.ProfanityBenignWord]:
-    'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "analysis" contains "anal". The whole word is exempted from the profanity filter, which powers search. One word per entry, not a phrase. Added to the list already shipped with the site rather than replacing it.',
+    'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "cockpit" contains "cock". The whole word is exempted from the profanity filter. One word per entry, not a phrase. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry here really does remove it. Applies to search; the generation gate still uses the shipped list.',
 };
 
 function BlocklistsPage() {
