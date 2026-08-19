@@ -120,6 +120,7 @@ import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   sleep,
+  throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
@@ -1659,6 +1660,50 @@ export const publishModelVersionById = async ({
   return version;
 };
 
+/**
+ * Whether unpublishing this version takes the whole model down with it.
+ *
+ * It removes the SURPRISE, not the state: unpublishing a Published version while a Scheduled one
+ * waits leaves the model up (correct — a release is coming), and unpublishing that scheduled version
+ * afterwards takes the early return, so a model can still end up published with nothing live under
+ * it in two ordinary steps. Closing that needs a rule about scheduled versions, not a bigger count.
+ *
+ * 🔴 Read from the PRIMARY. On a replica this decides a take-down against lagged rows: stale-low
+ * unpublishes a model whose sibling has just been published, and stale-high leaves a model
+ * Published with nothing published under it — the state the cascade exists to prevent.
+ *
+ * The dialog and the mutation both call this, so what a creator consents to and what the server
+ * does come from one answer rather than two that have to agree.
+ */
+export type UnpublishScope = 'model' | 'version';
+
+export const resolveUnpublishScope = async (
+  id: number
+): Promise<{ kind: UnpublishScope; modelId: number }> => {
+  const version = await dbWrite.modelVersion.findUniqueOrThrow({
+    where: { id },
+    select: { modelId: true, status: true },
+  });
+  // A version that is not itself published cannot be the last published one; treating it as such
+  // would run a full model unpublish off an edit to a draft.
+  if (version.status !== ModelStatus.Published)
+    return { kind: 'version', modelId: version.modelId };
+
+  // Scheduled counts as a sibling. unpublishModelById takes Published AND Scheduled versions down,
+  // so cascading past a pending release would silently unpublish tomorrow's launch on a confirm
+  // whose copy said "this is the only published version" — true, and not what the creator agreed to.
+  // Leaving the model published with a scheduled release under it is the correct outcome: something
+  // is coming.
+  const liveSiblings = await dbWrite.modelVersion.count({
+    where: {
+      modelId: version.modelId,
+      status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
+      id: { not: id },
+    },
+  });
+  return { kind: liveSiblings === 0 ? 'model' : 'version', modelId: version.modelId };
+};
+
 export const unpublishModelVersionById = async ({
   id,
   reason,
@@ -1671,6 +1716,13 @@ export const unpublishModelVersionById = async ({
   // revokes its buyers' access, so recent purchases have to be refunded first. Moderators bypass it
   // exactly as they do in unpublishModelById.
   if (!user.isModerator) {
+    // Same rule as unpublishModelById: only a moderator gives a reason. Without it the preserve
+    // guard below has a precondition rather than an assumption on one half and not the other — an
+    // owner supplying a reason takes the non-preserve branch, overwrites a moderator's verdict and
+    // attribution on the version they took down, and re-fires the per-version notification.
+    if (reason || customMessage)
+      throw throwAuthorizationError('Only a moderator can give a reason for unpublishing.');
+
     const requirement = await getModelVersionEarlyAccessRefundRequirement({ id });
     if (requirement.purchases.length > 0) {
       if (!refundEarlyAccess) {
@@ -1689,22 +1741,45 @@ export const unpublishModelVersionById = async ({
   const unpublishedAt = new Date().toISOString();
   const version = await dbWrite.$transaction(
     async (tx) => {
+      // 🔴 Same rule as unpublishModelById, and this is the SHORTER path to the same place: a
+      // moderator takes one version down, the owner calls unpublish on it with no reason, and
+      // without this it lands at plain Unpublished with the owner as the actor — which is all the
+      // status-keyed republish gate checks. One call, no setup.
+      //
+      // Preserves any moderator-only status, not UnpublishedViolation alone: Deleted is the other
+      // one, and clearing it lets an owner republish a soft-deleted version.
+      const existing = await tx.modelVersion.findUniqueOrThrow({
+        where: { id },
+        select: { status: true },
+      });
+      const preserveModStatus =
+        !reason && constants.modPublishOnlyStatuses.includes(existing.status);
+
       const updatedVersion = await tx.modelVersion.update({
         where: { id },
         data: {
-          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          status: reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished,
 
-          meta: {
-            ...meta,
-            ...(reason
-              ? {
-                  unpublishedReason: reason,
-                  customMessage,
-                }
-              : {}),
-            unpublishedAt,
-            unpublishedBy: user.id,
-          },
+          // Untouched on the preserve path: the moderator's explanation is what the take-down
+          // notification and the model-page banner render, and refreshing unpublishedAt re-fires
+          // that notification against the creator with the owner named as the actor.
+          meta: preserveModStatus
+            ? (meta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined
+            : {
+                ...meta,
+                ...(reason
+                  ? {
+                      unpublishedReason: reason,
+                      customMessage,
+                    }
+                  : {}),
+                unpublishedAt,
+                unpublishedBy: user.id,
+              },
         },
         select: { id: true, model: { select: { id: true, userId: true, nsfw: true } } },
       });

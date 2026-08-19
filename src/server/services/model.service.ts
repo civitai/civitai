@@ -2789,6 +2789,14 @@ export const unpublishModelById = async ({
   isModerator?: boolean;
 }) => {
   if (!isModerator) {
+    // The guard below reasons from "an owner-initiated unpublish carries no reason". `reason` is a
+    // plain optional input, so without this that is an assumption rather than a precondition: an
+    // owner supplying one takes the non-preserve branch and overwrites the moderator's verdict,
+    // explanation and attribution — no republish escape, but the record destroyed by the person it
+    // is against, and the take-down notification re-fired.
+    if (reason || customMessage)
+      throw throwAuthorizationError('Only a moderator can give a reason for unpublishing.');
+
     const requirement = await getModelEarlyAccessRefundRequirement({ id });
     if (requirement.purchases.length > 0) {
       if (!refundEarlyAccess) {
@@ -2802,22 +2810,47 @@ export const unpublishModelById = async ({
 
   const model = await dbWrite.$transaction(
     async (tx) => {
+      // 🔴 Never write a moderator's verdict down. A reasonless unpublish — every owner-initiated
+      // one — would otherwise overwrite an existing UnpublishedViolation with plain Unpublished and
+      // restamp the record, and `model.controller.ts` blocks an owner republish only WHILE the
+      // status is UnpublishedViolation. That is an owner-reachable way to clear a moderation flag.
+      //
+      // Decided from the STATUS, not from `meta.unpublishedReason`: 2,327 of 43,492 violation rows
+      // in prod carry no reason in meta, and keying on meta fails open for exactly those. The
+      // moderator's explanation, timestamp and actor are all left untouched — refreshing
+      // `unpublishedAt` alone re-fires the take-down notification, and `customMessage` is the ONLY
+      // explanation rendered when the reason is 'other', which is the largest bucket.
+      const existing = await tx.model.findUniqueOrThrow({
+        where: { id },
+        select: { status: true },
+      });
+      // Any moderator-only status, not UnpublishedViolation alone: Deleted is the other one, and
+      // clearing it lets an owner republish a soft-deleted model.
+      const preserveModStatus =
+        !reason && constants.modPublishOnlyStatuses.includes(existing.status);
+
       const unpublishedAt = new Date().toISOString();
-      const updatedMeta = {
-        ...meta,
-        ...(reason
-          ? {
-              unpublishedReason: reason,
-              customMessage,
-            }
-          : {}),
-        unpublishedAt,
-        unpublishedBy: userId,
-      };
+      const updatedMeta = preserveModStatus
+        ? meta
+        : {
+            ...meta,
+            ...(reason
+              ? {
+                  unpublishedReason: reason,
+                  customMessage,
+                }
+              : {}),
+            unpublishedAt,
+            unpublishedBy: userId,
+          };
       const updatedModel = await tx.model.update({
         where: { id },
         data: {
-          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          status: reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished,
           meta: updatedMeta,
         },
         select: { userId: true, modelVersions: { select: { id: true } } },
@@ -2834,6 +2867,11 @@ export const unpublishModelById = async ({
       // and then delete the version past every guard. `updateMany` cannot write a different value
       // per row, hence raw SQL.
       //
+      // On a preserved take-down the status follows the model but the NARRATIVE does not: merging
+      // unpublishedAt into version meta re-fires the per-version notification —
+      // unpublish.notifications.ts selects on that meta with no status predicate — naming the owner
+      // as the actor of a moderator's decision.
+      //
       // 🔴 And the keys must land on exactly the versions this call takes down. They are what
       // unpublish.notifications.ts selects on — meta alone, no status predicate, keyed per version —
       // so stamping a draft tells the creator a version they never published was unpublished.
@@ -2842,13 +2880,21 @@ export const unpublishModelById = async ({
       await tx.$executeRaw`
         UPDATE "ModelVersion"
         SET "status" = ${
-          reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished
+          reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished
         }::"ModelStatus",
-            "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify({
-              ...(reason ? { unpublishedReason: reason, customMessage } : {}),
-              unpublishedAt,
-              unpublishedBy: userId,
-            })}::jsonb,
+            "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(
+              preserveModStatus
+                ? {}
+                : {
+                    ...(reason ? { unpublishedReason: reason, customMessage } : {}),
+                    unpublishedAt,
+                    unpublishedBy: userId,
+                  }
+            )}::jsonb,
             -- Prisma's @updatedAt does not apply to raw SQL, and there is no DB default or trigger.
             -- Without this a taken-down version keeps a pre-take-down updatedAt, which is on the
             -- public v1 payload via modelVersion.selector.

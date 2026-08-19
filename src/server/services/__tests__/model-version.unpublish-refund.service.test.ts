@@ -14,7 +14,7 @@ const { mockTx } = vi.hoisted(() => ({
   // Separate from the write client on purpose: modelVersion.update is asserted as "inside the
   // transaction", which collapses if $transaction hands back dbWrite itself.
   mockTx: {
-    modelVersion: { update: vi.fn() },
+    modelVersion: { update: vi.fn(), findUniqueOrThrow: vi.fn() },
     $executeRaw: vi.fn(),
   },
 }));
@@ -144,6 +144,8 @@ function seedPurchase({
 }
 
 function seedUnpublishWrites() {
+  // Read inside the transaction, so it is the tx client and not dbWrite.
+  mockTx.modelVersion.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
   mockTx.modelVersion.update.mockResolvedValue({
     id: VERSION_ID,
     model: { id: MODEL_ID, userId: OWNER_ID, nsfw: false },
@@ -266,6 +268,108 @@ describe('toEarlyAccessRefundSummary', () => {
       totalBuzz: 300,
       exemptBuyerCount: 0,
     });
+  });
+});
+
+// 🔴 The shorter path to the same bypass the model-level guard closes: a moderator takes ONE
+// version down, the owner unpublishes that version with no reason, and without this it lands at
+// plain Unpublished with the owner as the actor — which is all the status-keyed republish gate
+// checks. One call, no setup.
+describe('unpublishModelVersionById — a version already taken down by a moderator', () => {
+  const seedStatus = (status: string) => {
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([]);
+    mockTx.modelVersion.update.mockResolvedValue({
+      id: VERSION_ID,
+      model: { id: MODEL_ID, userId: OWNER_ID, nsfw: false },
+    });
+    mockTx.modelVersion.findUniqueOrThrow.mockResolvedValue({ status });
+    dbMock.dbWrite.post.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([]);
+  };
+
+  it.each(['UnpublishedViolation', 'Deleted'])(
+    'keeps %s through a reasonless owner unpublish',
+    async (status) => {
+      seedStatus(status);
+
+      await unpublishModelVersionById({ id: VERSION_ID, user: owner });
+
+      expect(mockTx.modelVersion.update.mock.calls[0][0].data.status).toBe(status);
+    }
+  );
+
+  it('leaves the moderator record intact rather than restamping it', async () => {
+    seedStatus('UnpublishedViolation');
+    const moderatorRecord = {
+      unpublishedReason: 'other',
+      customMessage: 'Reviewed by a human',
+      unpublishedAt: '2020-01-01T00:00:00.000Z',
+      unpublishedBy: 999,
+    };
+
+    await unpublishModelVersionById({ id: VERSION_ID, user: owner, meta: { ...moderatorRecord } });
+
+    expect(mockTx.modelVersion.update.mock.calls[0][0].data.meta).toEqual(moderatorRecord);
+  });
+
+  // 🔴 The `!reason` conjunct. Without it a moderator restating a verdict on an
+  // already-UnpublishedViolation version — or taking a Deleted one down with a fresh reason — has
+  // their new verdict silently discarded: old status kept, meta untouched, no error.
+  it('lets a moderator restate the verdict on a version already taken down', async () => {
+    seedStatus('UnpublishedViolation');
+
+    await unpublishModelVersionById({
+      id: VERSION_ID,
+      user: moderator,
+      reason: 'duplicate',
+      customMessage: 'new note',
+      meta: { unpublishedReason: 'other', customMessage: 'old' },
+    });
+
+    const data = mockTx.modelVersion.update.mock.calls[0][0].data;
+    expect(data.status).toBe('UnpublishedViolation');
+    expect(data.meta).toEqual({
+      unpublishedReason: 'duplicate',
+      customMessage: 'new note',
+      unpublishedAt: expect.any(String),
+      unpublishedBy: moderator.id,
+    });
+  });
+
+  it('refuses a reason from someone who is not a moderator', async () => {
+    // Otherwise the preserve guard's precondition holds on the model half and is merely assumed
+    // here — and this is the half whose meta the per-version notification selects on.
+    seedStatus('UnpublishedViolation');
+
+    await expect(
+      unpublishModelVersionById({ id: VERSION_ID, user: owner, reason: 'duplicate' })
+    ).rejects.toThrowError(/Only a moderator/);
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('writes no meta at all when the caller passed none', async () => {
+    // Pins the `?? undefined` on the preserve path: `?? {}` would write an empty object over the
+    // moderator's record rather than leaving the column alone.
+    seedStatus('UnpublishedViolation');
+
+    await unpublishModelVersionById({ id: VERSION_ID, user: owner });
+
+    expect(mockTx.modelVersion.update.mock.calls[0][0].data.meta).toBeUndefined();
+  });
+
+  // Negative control: preserving unconditionally would leave every ordinary version unpublish
+  // unrecorded, and each assertion above would still pass.
+  it('still stamps an ordinary unpublish of a published version', async () => {
+    seedStatus('Published');
+
+    await unpublishModelVersionById({ id: VERSION_ID, user: owner });
+
+    const data = mockTx.modelVersion.update.mock.calls[0][0].data;
+    expect(data.status).toBe('Unpublished');
+    expect(data.meta).toEqual(
+      expect.objectContaining({ unpublishedBy: OWNER_ID, unpublishedAt: expect.any(String) })
+    );
   });
 });
 

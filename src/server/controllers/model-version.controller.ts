@@ -33,7 +33,11 @@ import type {
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import type { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
+import type {
+  DeclineReviewSchema,
+  ModelMeta,
+  UnpublishModelSchema,
+} from '~/server/schema/model.schema';
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getStaticContent } from '~/server/services/content.service';
@@ -53,11 +57,20 @@ import {
   publishModelVersionById,
   queryModelVersions,
   toggleNotifyModelVersion,
+  resolveUnpublishScope,
   unpublishModelVersionById,
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
-import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
+import {
+  getModel,
+  queueModelEarlyAccessReindex,
+  unpublishModelById,
+} from '~/server/services/model.service';
+import {
+  getModelEarlyAccessRefundRequirement,
+  getModelVersionEarlyAccessRefundRequirement,
+} from '~/server/services/model-early-access-refund.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
   handleLogError,
@@ -676,7 +689,7 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        model: { select: { userId: true, nsfw: true } },
+        model: { select: { userId: true, nsfw: true, status: true } },
       },
     });
 
@@ -693,8 +706,13 @@ export const publishModelVersionHandler = async ({
 
     const versionMeta = version.meta as ModelVersionMeta | null;
 
-    // Prevent non-moderators from re-publishing versions unpublished for violations
-    if (!ctx.user.isModerator && constants.modPublishOnlyStatuses.includes(version.status)) {
+    // A version is publishable only if BOTH it and its parent model are. Checking the version
+    // alone leaves the model's status unenforced, and the two are set independently.
+    if (
+      !ctx.user.isModerator &&
+      (constants.modPublishOnlyStatuses.includes(version.status) ||
+        constants.modPublishOnlyStatuses.includes(version.model.status))
+    ) {
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
 
@@ -754,6 +772,84 @@ export const unpublishModelVersionHandler = async ({
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     const meta = (version.meta as ModelVersionMeta | null) || {};
+
+    // The last live version takes the model with it, rather than leaving a model published with
+    // nothing under it. Delegating instead of unpublishing both in turn is what keeps it whole:
+    // unpublishModelById already unpublishes every published version and runs the model-scoped
+    // refund gate, so a refusal happens before anything moves.
+    //
+    // The resolver is the same one the dialog priced itself from and reads the primary, so the two
+    // agree for a fixed database state — NOT unconditionally: a sibling can go down between the
+    // dialog's read and this one, which is what `expected` below is for.
+    const scope = await resolveUnpublishScope(id);
+
+    // A consent check, NOT atomicity: the window between the dialog's read and this one is still
+    // unguarded. What it refuses is proceeding on a figure the creator never saw.
+    // Refuse rather than proceed when the world moved between pricing and confirming. Only the
+    // directions that cost the creator something are refused: a widening scope (one version becomes
+    // the whole model) or a larger debit than they saw. Narrowing is harmless — the copy was
+    // pessimistic, nothing extra is taken.
+    if (!ctx.user.isModerator && input.refundEarlyAccess && !input.expected) {
+      // Optional `expected` would make this advisory rather than a control: any caller omitting it —
+      // a tab holding the pre-deploy bundle, the moderator modal, a direct tRPC call — gets an
+      // unbounded yes with the scope free to widen. Stale clients are the normal state during a
+      // deploy, which is exactly when this ships.
+      throw throwBadRequestError(
+        'Please reopen the unpublish menu and confirm again — this request did not say what refund it was agreeing to.'
+      );
+    }
+
+    if (input.expected && !ctx.user.isModerator) {
+      const priced = input.expected;
+      if (priced.scope === 'version' && scope.kind === 'model') {
+        throw throwBadRequestError(
+          'Another version was taken down while this dialog was open, so unpublishing this one now takes the whole model with it. Please reopen the menu to see what that costs.'
+        );
+      }
+      const requirement =
+        scope.kind === 'model'
+          ? await getModelEarlyAccessRefundRequirement({ id: scope.modelId })
+          : await getModelVersionEarlyAccessRefundRequirement({ id });
+      if (requirement.totalBuzz > priced.totalBuzz) {
+        throw throwBadRequestError(
+          `The refund owed has changed since this dialog was opened — ${requirement.totalBuzz.toLocaleString()} Buzz rather than ${priced.totalBuzz.toLocaleString()}. Please reopen the menu to confirm the new amount.`
+        );
+      }
+    }
+
+    if (scope.kind === 'model') {
+      const model = await getModel({
+        id: scope.modelId,
+        select: { meta: true, nsfw: true },
+      });
+      if (!model) throw throwNotFoundError(`No model with id ${scope.modelId}`);
+
+      // A model already at UnpublishedViolation keeps that status and the moderator's record —
+      // unpublishModelById decides that from the status it reads, so both callers get it.
+      await unpublishModelById({
+        ...input,
+        id: scope.modelId,
+        meta: (model.meta as ModelMeta | null) ?? undefined,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+
+      ctx.track.modelVersionEvent({
+        type: 'Unpublish',
+        modelVersionId: id,
+        modelId: scope.modelId,
+        nsfw: model.nsfw,
+      });
+      // The identical effect arriving through unpublishModelHandler emits this, so without it a
+      // model unpublish reached from the version menu is missing from any count of model unpublishes.
+      ctx.track.modelEvent({
+        type: 'Unpublish',
+        modelId: scope.modelId,
+        nsfw: model.nsfw,
+      });
+      await dataForModelsCache.refresh(scope.modelId);
+      return getVersionById({ id, select: { id: true, status: true, modelId: true } });
+    }
 
     const updatedVersion = await unpublishModelVersionById({ ...input, meta, user: ctx.user });
 
@@ -1170,8 +1266,11 @@ export async function publishPrivateModelVersionHandler({
     ...input,
     select: {
       id: true,
+      status: true,
       uploadType: true,
-      model: { select: { id: true, publishedAt: true, availability: true, userId: true } },
+      model: {
+        select: { id: true, publishedAt: true, availability: true, userId: true, status: true },
+      },
       files: {
         select: {
           id: true,
@@ -1195,6 +1294,16 @@ export async function publishPrivateModelVersionHandler({
 
   if (version.model.availability !== Availability.Private) {
     throw throwBadRequestError('Model is not private');
+  }
+
+  // The same status check the public publish path performs, on both the version and its model. A
+  // private model is a different audience, not a different set of publishing rules.
+  if (
+    !ctx.user.isModerator &&
+    (constants.modPublishOnlyStatuses.includes(version.status) ||
+      constants.modPublishOnlyStatuses.includes(version.model.status))
+  ) {
+    throw throwAuthorizationError('You are not authorized to publish this model version');
   }
 
   // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
