@@ -95,7 +95,11 @@ describe('the expression BrowsingLevelFilter hands to ApplyCustomFilter', () => 
 
   it('is unchanged for a normal browsing level', () => {
     const filters = joinFilterClauses(
-      buildBrowsingLevelFilters({ attributeName, browsingLevel: pg | pg13, filters: ['type=Model'] })
+      buildBrowsingLevelFilters({
+        attributeName,
+        browsingLevel: pg | pg13,
+        filters: ['type=Model'],
+      })
     );
 
     expect(filters).toBe('(type=Model) AND (nsfwLevel=1 OR nsfwLevel=2)');
