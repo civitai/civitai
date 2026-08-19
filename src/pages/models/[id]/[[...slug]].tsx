@@ -521,10 +521,8 @@ export default function ModelDetailsV2({
   });
   const handleUnpublishModel = async () => {
     try {
-      // staleTime 0: this is the number of buyers and the amount of Buzz the owner is consenting to
-      // move out of their account, so it is computed fresh. `fetch` serves a cached entry otherwise,
-      // and a purchase landing between two openings of this dialog would have them confirm one
-      // figure while the server acts on another.
+      // The client's global default is `staleTime: Infinity` (`src/utils/trpc.ts`), and `fetchQuery`
+      // applies it — so without this the dialog can show a Buzz figure cached from an earlier open.
       const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch(
         { id },
         { staleTime: 0 }
