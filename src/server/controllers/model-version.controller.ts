@@ -754,6 +754,7 @@ export const unpublishModelVersionHandler = async ({
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     const meta = (version.meta as ModelVersionMeta | null) || {};
+
     const updatedVersion = await unpublishModelVersionById({ ...input, meta, user: ctx.user });
 
     // Send event in background

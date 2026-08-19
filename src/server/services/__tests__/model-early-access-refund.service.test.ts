@@ -27,7 +27,7 @@ const { mockTx } = vi.hoisted(() => ({
 }));
 
 // Both entry points read and write on dbWrite throughout — `modelVersion.findMany`
-// (model.service:2806), `paidAccess.findMany` (:2815), `entityAccess.findMany` (:2825) and
+// (model.service:2806), `entityAccess.findMany` and
 // `.deleteMany` (:2915), `model.findUniqueOrThrow` (:2877), `$transaction` (:2967),
 // `post.findMany` (:3028), `image.findMany` (:3032) — so the old alias's split was never exercised.
 const mockDbRead = dbMock.dbRead;
@@ -170,6 +170,8 @@ function setupRefundData({
   spentFrom = {} as Record<string, string>,
 } = {}) {
   mockDbWrite.modelVersion.findMany.mockResolvedValue(versions);
+  // 🔴 Still seeded although the requirement no longer reads PaidAccess — see the note in
+  // model-version.unpublish-refund.service.test.ts. Removing it defuses the gate-state tests.
   mockDbWrite.paidAccess.findMany.mockResolvedValue(gates);
   mockDbWrite.entityAccess.findMany.mockResolvedValue(accessRows);
   mockGetMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
@@ -193,7 +195,7 @@ beforeEach(() => {
 });
 
 describe('getModelEarlyAccessRefundRequirement', () => {
-  it('returns nothing and skips the gate lookup when no version was ever purchased', async () => {
+  it('returns nothing and reads no grants when no version was ever purchased', async () => {
     mockDbWrite.modelVersion.findMany.mockResolvedValue([
       { id: VERSION_ID, meta: null },
       { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: false } },
@@ -208,25 +210,37 @@ describe('getModelEarlyAccessRefundRequirement', () => {
       totalsByAccount: {},
       exemptBuyerCount: 0,
     });
-    expect(mockDbWrite.paidAccess.findMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
   });
 
-  it('ignores versions whose early access window has already lapsed', async () => {
+  // Inverted deliberately. This asserted that a lapsed window exempts the seller; it no longer does,
+  // because the gate's state is something the creator can change and a purchase is not. A lapsed
+  // early-access window bought the buyer some days of access, not the right to lose the version.
+  it('still owes a refund when the early access window has lapsed but the purchase is recent', async () => {
     setupRefundData({ gates: [{ entityId: VERSION_ID, endsAt: past() }] });
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
     expect(result).toEqual({
-      purchases: [],
-      buyerCount: 0,
-      totalBuzz: 0,
-      totalsByAccount: {},
+      purchases: [{ modelVersionId: VERSION_ID, buyerId: BUYER_ID, buzzTransactionIds: ['tx-1'] }],
+      buyerCount: 1,
+      totalBuzz: 300,
+      totalsByAccount: { yellow: 300 },
       exemptBuyerCount: 0,
     });
-    expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
   });
 
-  it('only looks at grants on versions whose gate is still active', async () => {
+  // The hole this predicate exists to close: clearing the gate is one ordinary editor save away.
+  it('still owes a refund when the gate row is gone entirely', async () => {
+    setupRefundData({ gates: [] });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.buyerCount).toBe(1);
+    expect(result.totalBuzz).toBe(300);
+  });
+
+  it('looks at grants on every purchased version, whatever its gate says', async () => {
     setupRefundData({
       versions: [
         { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
@@ -242,7 +256,7 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     expect(mockDbWrite.entityAccess.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ accessToId: { in: [VERSION_ID] } }),
+        where: expect.objectContaining({ accessToId: { in: [VERSION_ID, OTHER_VERSION_ID] } }),
       })
     );
     expect(result.purchases).toEqual([
@@ -463,6 +477,14 @@ describe('unpublishModelById — early access refund gate', () => {
     await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, refundEarlyAccess: true });
 
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledTimes(2);
+    // The buyer reads this line in their Buzz history, so it has to name what was taken down.
+    // Nothing else pins the model wording — the scope argument defaults, and a flipped default
+    // is invisible to every other assertion in both refund suites.
+    expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining('(model unpublished)'),
+      })
+    );
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ externalTransactionIdPrefix: 'tx-1' })
     );
@@ -556,13 +578,33 @@ describe('unpublishModelById — early access refund gate', () => {
     expect(mockTx.model.update).toHaveBeenCalled();
   });
 
+  // The gate rests entirely on hadEarlyAccessPurchase now that PaidAccess is out of the predicate,
+  // and this is the one operation that used to destroy it: the version rows were written with the
+  // MODEL's meta object, replacing the column. An owner could unpublish, shedding the flag, and then
+  // delete the version with every guard that reads it gone.
+  it('merges the unpublish keys into each version meta instead of replacing it', async () => {
+    setupRefundData({ accessRows: [] });
+    setupUnpublishWrites();
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+    // The Prisma updateMany must not carry meta at all — a version's own meta cannot come from the
+    // model, and updateMany cannot write a different value per row.
+    const modelUpdate = mockTx.model.update.mock.calls[0][0];
+    expect(modelUpdate.data.modelVersions.updateMany.data).toEqual({ status: 'Unpublished' });
+    expect(modelUpdate.data.modelVersions.updateMany.data).not.toHaveProperty('meta');
+    // The keys land through a jsonb merge instead.
+    expect(mockTx.$executeRaw).toHaveBeenCalled();
+  });
+
   it('does not gate or refund on a moderator unpublish', async () => {
     setupRefundData();
     setupUnpublishWrites();
 
     await unpublishModelById({ id: MODEL_ID, userId: 1, isModerator: true });
 
-    expect(mockDbWrite.paidAccess.findMany).not.toHaveBeenCalled();
+    // A moderator take-down must not even price the refund — that read is the owner's gate.
+    expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(mockTx.model.update).toHaveBeenCalled();
   });

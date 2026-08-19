@@ -24,6 +24,7 @@ import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.ut
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { getModelUrl } from '~/utils/string-helpers';
+import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -150,6 +151,71 @@ export function ModelVersionMenu({
     },
   });
 
+  const unpublishVersionMutation = trpc.modelVersion.unpublish.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id: modelId });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Unable to unpublish version',
+      });
+    },
+  });
+
+  const handleUnpublishVersion = async () => {
+    try {
+      // staleTime 0: the cached figure is what the owner is consenting to move Buzz over, and a
+      // purchase can land between opening the menu twice.
+      const refund = await queryUtils.modelVersion.getEarlyAccessRefundRequirement.fetch(
+        { id: modelVersionId },
+        { staleTime: 0 }
+      );
+      const exemptNote =
+        refund.exemptBuyerCount > 0
+          ? ` ${refund.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access to this version and are not refunded.`
+          : '';
+
+      if (refund.purchaseCount > 0) {
+        dialogStore.trigger({
+          id: 'unpublish-version-refund',
+          component: ConfirmDialog,
+          props: {
+            title: 'Refund early access buyers',
+            message: `${
+              refund.buyerCount
+            } member(s) bought access to this version in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing it now will refund them a total of ${refund.totalBuzz.toLocaleString()} Buzz from your account and revoke their access to it.${exemptNote} Do you want to continue?`,
+            labels: { cancel: 'Cancel', confirm: 'Refund & Unpublish' },
+            confirmProps: { color: 'yellow' },
+            onConfirm: () =>
+              unpublishVersionMutation.mutate({ id: modelVersionId, refundEarlyAccess: true }),
+          },
+        });
+        return;
+      }
+
+      dialogStore.trigger({
+        id: 'unpublish-version',
+        component: ConfirmDialog,
+        props: {
+          title: 'Unpublish version',
+          message:
+            refund.exemptBuyerCount > 0
+              ? `${refund.exemptBuyerCount} member(s) bought access to this version, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access to it and are not refunded, and nothing is taken from your account. Do you want to continue?`
+              : 'This version will be hidden from the model page and can be published again later. Do you want to continue?',
+          labels: { cancel: 'Cancel', confirm: 'Unpublish' },
+          confirmProps: { color: 'yellow' },
+          onConfirm: () => unpublishVersionMutation.mutate({ id: modelVersionId }),
+        },
+      });
+    } catch (error) {
+      showErrorNotification({
+        error: error as Error,
+        title: 'Unable to check early access purchases',
+      });
+    }
+  };
+
   const handleDeleteVersion = () => {
     dialogStore.trigger({
       id: 'delete-version',
@@ -207,6 +273,19 @@ export function ModelVersionMenu({
             }}
           >
             Delete version
+          </Menu.Item>
+        )}
+        {!currentUser?.isModerator && published && (
+          <Menu.Item
+            color="yellow"
+            leftSection={<IconPlaylistX size={14} stroke={1.5} />}
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleUnpublishVersion();
+            }}
+          >
+            Unpublish version
           </Menu.Item>
         )}
         {currentUser?.isModerator && published && (
