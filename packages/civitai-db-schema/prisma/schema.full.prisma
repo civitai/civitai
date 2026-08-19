@@ -4170,6 +4170,10 @@ enum CosmeticType {
   ProfileDecoration
   ProfileBackground
   Sticker
+  // Applied, unused. Chat themes come with a membership; a cosmetic-granted
+  // theme is the shape a later pass would want, and an enum value cannot be
+  // dropped without recreating the type.
+  ChatTheme
 }
 
 enum CosmeticSource {
@@ -5288,6 +5292,12 @@ enum ChatMemberStatus {
   Kicked
 }
 
+enum ChatNotifyLevel {
+  All
+  Mentions
+  None
+}
+
 model ChatMember {
   id                  Int              @id @default(autoincrement())
   createdAt           DateTime         @default(now()) // doubles as invited_at
@@ -5302,12 +5312,17 @@ model ChatMember {
   leftAt              DateTime? // do we need a rejoin option?
   kickedAt            DateTime?
   unkickedAt          DateTime? // TODO maybe remove
+  filteredAt          DateTime? // reached this member via Requests rather than their inbox
+  notifyLevel         ChatNotifyLevel @default(All)
+  pinnedAt            DateTime?
+  clearedAt           DateTime? // this member's clean-slate watermark; messages before it are hidden from them only
 
   user              User         @relation(fields: [userId], references: [id])
   chat              Chat         @relation(fields: [chatId], references: [id])
   lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
 
   @@index([userId, status, isMuted])
+  @@index([userId, status, filteredAt])
 }
 
 enum ChatMessageType {
@@ -5327,7 +5342,7 @@ model ChatMessage {
   contentType        ChatMessageType @default(Markdown)
   referenceMessageId Int?
   editedAt           DateTime?
-  // TODO deletedAt DateTime
+  deletedAt          DateTime? // hidden from both sides; the row is retained for moderation
 
   user             User         @relation(fields: [userId], references: [id])
   chat             Chat         @relation(fields: [chatId], references: [id])
@@ -5335,6 +5350,8 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+
+  @@index([chatId, id])
 }
 
 model BuildGuide {
@@ -6440,57 +6457,12 @@ model UserStat {
 /// @view
 
 model UserRank {
-  user                         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId                       Int     @id
-  downloadCountDayRank         Int?    @default(0)
-  downloadCountWeekRank        Int?    @default(0)
-  downloadCountMonthRank       Int?    @default(0)
-  downloadCountYearRank        Int?    @default(0)
-  downloadCountAllTimeRank     Int?    @default(0)
-  ratingCountDayRank           Int?    @default(0)
-  ratingCountWeekRank          Int?    @default(0)
-  ratingCountMonthRank         Int?    @default(0)
-  ratingCountYearRank          Int?    @default(0)
-  ratingCountAllTimeRank       Int?    @default(0)
-  followerCountDayRank         Int?    @default(0)
-  followerCountWeekRank        Int?    @default(0)
-  followerCountMonthRank       Int?    @default(0)
-  followerCountYearRank        Int?    @default(0)
-  followerCountAllTimeRank     Int?    @default(0)
-  ratingDayRank                Int?    @default(0)
-  ratingWeekRank               Int?    @default(0)
-  ratingMonthRank              Int?    @default(0)
-  ratingYearRank               Int?    @default(0)
-  ratingAllTimeRank            Int?    @default(0)
-  favoriteCountDayRank         Int?    @default(0)
-  favoriteCountWeekRank        Int?    @default(0)
-  favoriteCountMonthRank       Int?    @default(0)
-  favoriteCountYearRank        Int?    @default(0)
-  favoriteCountAllTimeRank     Int?    @default(0)
-  answerCountDayRank           Int?    @default(0)
-  answerCountWeekRank          Int?    @default(0)
-  answerCountMonthRank         Int?    @default(0)
-  answerCountYearRank          Int?    @default(0)
-  answerCountAllTimeRank       Int?    @default(0)
-  answerAcceptCountDayRank     Int?    @default(0)
-  answerAcceptCountWeekRank    Int?    @default(0)
-  answerAcceptCountMonthRank   Int?    @default(0)
-  answerAcceptCountYearRank    Int?    @default(0)
-  answerAcceptCountAllTimeRank Int?    @default(0)
-  thumbsUpCountDayRank         Int?    @default(0)
-  thumbsUpCountWeekRank        Int?    @default(0)
-  thumbsUpCountMonthRank       Int?    @default(0)
-  thumbsUpCountYearRank        Int?    @default(0)
-  thumbsUpCountAllTimeRank     Int?    @default(0)
-  thumbsDownCountDayRank       Int?    @default(0)
-  thumbsDownCountWeekRank      Int?    @default(0)
-  thumbsDownCountMonthRank     Int?    @default(0)
-  thumbsDownCountYearRank      Int?    @default(0)
-  thumbsDownCountAllTimeRank   Int?    @default(0)
-  leaderboardRank              Int?
-  leaderboardId                String?
-  leaderboardTitle             String?
-  leaderboardCosmetic          String?
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId              Int     @id
+  leaderboardRank     Int?
+  leaderboardId       String?
+  leaderboardTitle    String?
+  leaderboardCosmetic String?
 }
 
 /// @view

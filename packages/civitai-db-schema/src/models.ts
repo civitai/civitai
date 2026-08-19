@@ -108,7 +108,7 @@ export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
 
-export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker";
+export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
@@ -167,6 +167,8 @@ export type EntityCollaboratorStatus = "Pending" | "Approved" | "Rejected";
 export type ClubAdminPermission = "ManageMemberships" | "ManageTiers" | "ManagePosts" | "ManageClub" | "ManageResources" | "ViewRevenue" | "WithdrawRevenue";
 
 export type ChatMemberStatus = "Invited" | "Joined" | "Ignored" | "Left" | "Kicked";
+
+export type ChatNotifyLevel = "All" | "Mentions" | "None";
 
 export type ChatMessageType = "Markdown" | "Image" | "Video" | "Audio" | "Embed";
 
@@ -3473,6 +3475,10 @@ export interface ChatMember {
   leftAt: Date | null;
   kickedAt: Date | null;
   unkickedAt: Date | null;
+  filteredAt: Date | null;
+  notifyLevel: ChatNotifyLevel;
+  pinnedAt: Date | null;
+  clearedAt: Date | null;
   user?: User;
   chat?: Chat;
   lastViewedMessage?: ChatMessage | null;
@@ -3487,6 +3493,7 @@ export interface ChatMessage {
   contentType: ChatMessageType;
   referenceMessageId: number | null;
   editedAt: Date | null;
+  deletedAt: Date | null;
   user?: User;
   chat?: Chat;
   referenceMessage?: ChatMessage | null;
@@ -4303,51 +4310,6 @@ export interface UserStat {
 export interface UserRank {
   user?: User;
   userId: number;
-  downloadCountDayRank: number | null;
-  downloadCountWeekRank: number | null;
-  downloadCountMonthRank: number | null;
-  downloadCountYearRank: number | null;
-  downloadCountAllTimeRank: number | null;
-  ratingCountDayRank: number | null;
-  ratingCountWeekRank: number | null;
-  ratingCountMonthRank: number | null;
-  ratingCountYearRank: number | null;
-  ratingCountAllTimeRank: number | null;
-  followerCountDayRank: number | null;
-  followerCountWeekRank: number | null;
-  followerCountMonthRank: number | null;
-  followerCountYearRank: number | null;
-  followerCountAllTimeRank: number | null;
-  ratingDayRank: number | null;
-  ratingWeekRank: number | null;
-  ratingMonthRank: number | null;
-  ratingYearRank: number | null;
-  ratingAllTimeRank: number | null;
-  favoriteCountDayRank: number | null;
-  favoriteCountWeekRank: number | null;
-  favoriteCountMonthRank: number | null;
-  favoriteCountYearRank: number | null;
-  favoriteCountAllTimeRank: number | null;
-  answerCountDayRank: number | null;
-  answerCountWeekRank: number | null;
-  answerCountMonthRank: number | null;
-  answerCountYearRank: number | null;
-  answerCountAllTimeRank: number | null;
-  answerAcceptCountDayRank: number | null;
-  answerAcceptCountWeekRank: number | null;
-  answerAcceptCountMonthRank: number | null;
-  answerAcceptCountYearRank: number | null;
-  answerAcceptCountAllTimeRank: number | null;
-  thumbsUpCountDayRank: number | null;
-  thumbsUpCountWeekRank: number | null;
-  thumbsUpCountMonthRank: number | null;
-  thumbsUpCountYearRank: number | null;
-  thumbsUpCountAllTimeRank: number | null;
-  thumbsDownCountDayRank: number | null;
-  thumbsDownCountWeekRank: number | null;
-  thumbsDownCountMonthRank: number | null;
-  thumbsDownCountYearRank: number | null;
-  thumbsDownCountAllTimeRank: number | null;
   leaderboardRank: number | null;
   leaderboardId: string | null;
   leaderboardTitle: string | null;
