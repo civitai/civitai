@@ -4,7 +4,7 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import type { InstantSearchRoutingParser } from './base';
-import { searchParamsSchema } from './base';
+import { parseSearchParams, searchParamsSchema, stringArrayParamSchema } from './base';
 
 export const ImagesSearchIndexSortBy = [
   IMAGES_SEARCH_INDEX,
@@ -23,24 +23,12 @@ const imageSearchParamsSchema = searchParamsSchema
     index: z.literal('images'),
     createdAt: z.string(),
     sortBy: z.enum(ImagesSearchIndexSortBy),
-    baseModel: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    aspectRatio: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    tags: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    tools: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    techniques: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    users: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
+    baseModel: stringArrayParamSchema,
+    aspectRatio: stringArrayParamSchema,
+    tags: stringArrayParamSchema,
+    tools: stringArrayParamSchema,
+    techniques: stringArrayParamSchema,
+    users: stringArrayParamSchema,
   })
   .partial();
 
@@ -52,9 +40,10 @@ export type ImageSearchParams = z.output<typeof imageSearchParamsSchema>;
 
 export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
-    const imageSearchIndexResult = imageSearchParamsSchema.safeParse(QS.parse(location.search));
-    const imageSearchIndexData: ImageSearchParams | Record<string, string[]> =
-      imageSearchIndexResult.success ? imageSearchIndexResult.data : {};
+    const imageSearchIndexData = parseSearchParams(
+      imageSearchParamsSchema,
+      QS.parse(location.search)
+    );
 
     return { [IMAGES_SEARCH_INDEX]: removeEmpty(imageSearchIndexData) };
   },

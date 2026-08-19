@@ -1,5 +1,9 @@
 import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
-import { searchParamsSchema } from '~/components/Search/parsers/base';
+import {
+  parseSearchParams,
+  searchParamsSchema,
+  stringArrayParamSchema,
+} from '~/components/Search/parsers/base';
 import * as z from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -21,12 +25,8 @@ const articleSearchParamsSchema = searchParamsSchema
   .extend({
     index: z.literal('articles'),
     sortBy: z.enum(ArticlesSearchIndexSortBy),
-    tags: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    users: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
+    tags: stringArrayParamSchema,
+    users: stringArrayParamSchema,
   })
   .partial();
 
@@ -34,9 +34,10 @@ export type ArticleSearchParams = z.output<typeof articleSearchParamsSchema>;
 
 export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
-    const articleSearchIndexResult = articleSearchParamsSchema.safeParse(QS.parse(location.search));
-    const articleSearchIndexData: ArticleSearchParams | Record<string, string[]> =
-      articleSearchIndexResult.success ? articleSearchIndexResult.data : {};
+    const articleSearchIndexData = parseSearchParams(
+      articleSearchParamsSchema,
+      QS.parse(location.search)
+    );
 
     return { [ARTICLES_SEARCH_INDEX]: removeEmpty(articleSearchIndexData) };
   },
