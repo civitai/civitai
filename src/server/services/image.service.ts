@@ -3146,15 +3146,27 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // the two forms of the same request address different creators depending on
   // which backend answered.
   //
-  // The handle is passed to the lookup verbatim — no lowercasing, no trimming.
-  // Case semantics stay whatever the column's collation already decides, and
-  // the BitDex and Meili legs keep agreeing about which account a handle names.
+  // The handle is passed to the lookup verbatim — no lowercasing. Case
+  // semantics stay whatever the column's collation already decides, and the
+  // BitDex and Meili legs keep agreeing about which account a handle names.
+  // (Trimming is not a concern reachable from the request surface:
+  // `usernameSchema` runs `.trim()` before this is ever called, and its
+  // `^[A-Za-z0-9_]*$` regex rejects whitespace outright.)
   //
-  // This costs no extra round trip. `getImagesFromBitdexPreFilter` guards its
-  // own resolution on `!userId`, so handing it the resolved input makes that a
-  // no-op — and it runs once PER PASS, so one lookup here replaces up to
-  // MAX_PASSES + MAX_EMPTIED_PAGES of them. Same client (`dbRead`) and same
-  // query as the one it replaces, so replica-lag behaviour is unchanged.
+  // Normally this costs no extra round trip: `getImagesFromBitdexPreFilter`
+  // guards its own resolution on `!userId`, so handing it the resolved input
+  // makes that a no-op — and it runs once PER PASS, so one lookup here replaces
+  // up to MAX_PASSES + MAX_EMPTIED_PAGES of them. The one exception is
+  // `hidden: true`, whose branch sits BEFORE that resolution and can return
+  // null without reaching it; such a request now pays one lookup it previously
+  // skipped.
+  //
+  // Same client (`dbRead`) and same query as the resolution it replaces, so
+  // this path's replica-lag behaviour is unchanged. It does NOT have the
+  // `dbRead ?? dbWrite` fallback the Meili-side sites have — deliberately, to
+  // keep a primary read off the feed hot path. On a replica miss the effect is
+  // strictly better than before: BitDex declines and the Meili leg, which does
+  // have the fallback, resolves and answers.
   if (input.username && !input.userId) {
     const targetUser = await dbRead.user.findUnique({
       where: { username: input.username },
@@ -3167,6 +3179,12 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // pass had already been issued, so `data` was non-empty and BitDex served
     // the caller their own private images under a creator who does not exist.
     if (!targetUser) return null;
+    // A NEW object, never an in-place mutation. `getImagesFromSearch` hands the
+    // caller's own `input` to the Meili leg after this function returns null,
+    // and to the shadow comparator; writing `userId` into it would rob the
+    // Meili leg of its own `dbRead ?? dbWrite` resolution and its NotFound, and
+    // would flip the shadow comparator's `hasFilters` from false to true for
+    // every username-addressed request. Pinned by a test.
     input = { ...input, userId: targetUser.id };
   }
 
@@ -3392,9 +3410,19 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // That separation is exactly what #3929 broke: the decision was computed
     // from a field that had not been resolved yet, and nothing downstream
     // re-checked it. With the resolution above in place no live caller reaches
-    // this clause, so it is a structural guard rather than a second fix — but
-    // it is the guard that makes any future entry point arriving here with an
-    // unresolved creator fail closed instead of open.
+    // this clause, so it is a structural guard rather than a second fix.
+    //
+    // 🔴 Be precise about what it does and does not catch, because the obvious
+    // reading is backwards. It catches a RESOLVED creator that reaches the
+    // merge past a wrong upstream decision — e.g. `skipOwnExcluded` recomputed
+    // from a stale pre-resolution binding. It does NOT catch an UNRESOLVED
+    // creator: `input.userId` is falsy in that case, so this clause is skipped
+    // entirely and the merge fails OPEN. That is measured, not assumed —
+    // deleting the resolution above while leaving this clause in place still
+    // serves the caller's own private image on another creator's feed. The two
+    // guards are therefore SEQUENTIAL, not independent: this one only has
+    // anything to test once the resolution has run. Do not cite it as coverage
+    // for a caller that arrives here with no creator resolved.
     if (input.userId) ownDocs = ownDocs.filter((d) => d.userId === input.userId);
     if (input.modelVersionId) {
       ownDocs = ownDocs.filter(

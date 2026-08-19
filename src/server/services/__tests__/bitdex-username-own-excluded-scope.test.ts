@@ -85,9 +85,9 @@ const CURRENT_USER_ID = 42;
 const OTHER_CREATOR_ID = 7;
 const THIRD_PARTY_ID = 13;
 
-const OTHER_CREATOR_USERNAME = 'some-other-creator';
-const CALLER_USERNAME = 'the-caller-themselves';
-const MISSING_USERNAME = 'no-such-handle';
+const OTHER_CREATOR_USERNAME = 'SomeOtherCreator';
+const CALLER_USERNAME = 'TheCallerThemselves';
+const MISSING_USERNAME = 'NoSuchHandle_42';
 
 /**
  * Both BitDex passes go through the same `queryBitdex`, so the fake has to tell
@@ -331,12 +331,20 @@ describe('#3929 — userId/username precedence and normalisation', () => {
     expect(ids(result.data)).toEqual([777]);
   });
 
-  // INVARIANT GUARD. The handle is looked up verbatim — no lowercasing, no
-  // trimming — so whatever the column's collation already decides about case
-  // keeps deciding it, and the BitDex and Meili legs cannot disagree about
-  // which account a handle names.
-  it('the handle reaches the lookup byte-for-byte, uncased and untrimmed', async () => {
-    const MIXED = '  SoMe-Other-Creator  ';
+  // INVARIANT GUARD. The handle is looked up verbatim — no lowercasing — so
+  // whatever the column's collation already decides about case keeps deciding
+  // it, and the BitDex and Meili legs cannot disagree about which account a
+  // handle names.
+  //
+  // Case is the only normalisation worth pinning here. Trimming is NOT
+  // reachable from the request surface: `usernameSchema` is
+  // `.regex(/^[A-Za-z0-9_]*$/).trim()`, and the regex runs FIRST, so a
+  // whitespace-padded handle is rejected outright rather than trimmed. Every
+  // fixture in this file is deliberately schema-valid for the same reason — a
+  // hyphenated handle could never reach this code from a real request, and a
+  // guard proven only on input the schema rejects proves less than it looks.
+  it('the handle reaches the lookup byte-for-byte, uncased', async () => {
+    const MIXED = 'SoMeOtHeRcReAtOr';
     usernamesResolveTo({ [MIXED]: OTHER_CREATOR_ID });
     serve({ main: page([otherCreatorPublicDoc]), ownExcluded: page([callerOwnPrivateDoc]) });
 
@@ -346,6 +354,23 @@ describe('#3929 — userId/username precedence and normalisation', () => {
       where: { username: MIXED },
       select: { id: true },
     });
+  });
+
+  // The resolution writes a NEW input object rather than mutating the caller's.
+  // `getImagesFromSearch` hands its own `input` to the Meili leg after this
+  // function declines, and to the shadow comparator. An in-place `input.userId
+  // = …` would rob the Meili leg of its own `dbRead ?? dbWrite` resolution and
+  // its NotFound, and would flip the shadow comparator's `hasFilters` from
+  // false to true for every username-addressed request — neither of which any
+  // other assertion in this file would notice.
+  it('does not write the resolved userId back into the caller’s input object', async () => {
+    serve({ main: page([otherCreatorPublicDoc]), ownExcluded: page([callerOwnPrivateDoc]) });
+    const callerInput = authedInput({ username: OTHER_CREATOR_USERNAME });
+
+    await getImagesFromSearch(callerInput);
+
+    expect(callerInput.userId).toBeUndefined();
+    expect(callerInput.username).toBe(OTHER_CREATOR_USERNAME);
   });
 });
 
