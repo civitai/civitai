@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * Unpublishing a model's last published version would otherwise leave the model published with
  * nothing under it — a state the model page, the listings and search all have to render, and one
- * nobody chose. The handler delegates to the model unpublish instead of doing both in turn, so the
- * model-scoped refund gate decides before anything moves: a refusal cannot leave the version down
- * and the model up.
+ * nobody chose. The handler delegates to the model unpublish instead of doing both in turn.
+ *
+ * Scope note: `unpublishModelById` is mocked here, so this file is evidence about DELEGATION and
+ * about the consent re-check — not about the refund gate itself, which is covered in
+ * model-early-access-refund.service.test.ts.
  */
 
 const {
@@ -14,12 +16,16 @@ const {
   mockGetVersionById,
   mockGetModel,
   mockResolveUnpublishScope,
+  mockModelRequirement,
+  mockVersionRequirement,
 } = vi.hoisted(() => ({
   mockUnpublishModelById: vi.fn(),
   mockUnpublishModelVersionById: vi.fn(),
   mockGetVersionById: vi.fn(),
   mockGetModel: vi.fn(),
   mockResolveUnpublishScope: vi.fn(),
+  mockModelRequirement: vi.fn(),
+  mockVersionRequirement: vi.fn(),
 }));
 
 vi.mock('~/server/services/model-version.service', () => ({
@@ -31,6 +37,10 @@ vi.mock('~/server/services/model.service', () => ({
   getModel: mockGetModel,
   queueModelEarlyAccessReindex: vi.fn(),
   unpublishModelById: mockUnpublishModelById,
+}));
+vi.mock('~/server/services/model-early-access-refund.service', () => ({
+  getModelEarlyAccessRefundRequirement: mockModelRequirement,
+  getModelVersionEarlyAccessRefundRequirement: mockVersionRequirement,
 }));
 // Reached at import through the orchestrator caller, which throws without a token. Nothing on this
 // path calls it.
@@ -50,14 +60,14 @@ const call = (input: Record<string, unknown> = {}, isModerator = false) =>
     input: { id: VERSION_ID, ...input },
     ctx: {
       user: { id: OWNER_ID, isModerator },
-      track: { modelVersionEvent: vi.fn() },
+      track: { modelVersionEvent: vi.fn(), modelEvent: vi.fn() },
     },
   } as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetVersionById.mockResolvedValue({ id: VERSION_ID, meta: null, modelId: MODEL_ID });
-  mockGetModel.mockResolvedValue({ meta: null });
+  mockGetModel.mockResolvedValue({ meta: null, nsfw: true, status: 'Published' });
   mockUnpublishModelVersionById.mockResolvedValue({
     id: VERSION_ID,
     model: { id: MODEL_ID, userId: OWNER_ID, nsfw: false },
@@ -66,6 +76,8 @@ beforeEach(() => {
   // Reset the implementation, not just the calls: vi.clearAllMocks() leaves a mockRejectedValue in
   // place, so the refusal test below would otherwise poison every test declared after it.
   mockUnpublishModelById.mockResolvedValue(undefined);
+  mockModelRequirement.mockResolvedValue({ totalBuzz: 900 });
+  mockVersionRequirement.mockResolvedValue({ totalBuzz: 300 });
 });
 
 describe('unpublishModelVersionHandler — last published version', () => {
@@ -86,7 +98,7 @@ describe('unpublishModelVersionHandler — last published version', () => {
     expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
   });
 
-  it('carries the moderator flag through, so a mod take-down still bypasses the gate', async () => {
+  it('carries the moderator flag and the reason through to the model unpublish', async () => {
     await call({ reason: 'duplicate' }, true);
 
     expect(mockUnpublishModelById).toHaveBeenCalledWith(
@@ -123,17 +135,68 @@ describe('unpublishModelVersionHandler — last published version', () => {
     expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
   });
 
+  // `refundEarlyAccess: true` is a yes with no ceiling. Between pricing the dialog and confirming
+  // it, a sibling can go down — widening a version take-down into a whole model, and debiting the
+  // creator against a figure they never saw.
+  it('refuses when the scope widened while the dialog was open', async () => {
+    await expect(
+      call({ refundEarlyAccess: true, expected: { scope: 'version', totalBuzz: 300 } })
+    ).rejects.toThrowError(/takes the whole model with it/);
+
+    expect(mockUnpublishModelById).not.toHaveBeenCalled();
+    expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the refund owed grew beyond what was shown', async () => {
+    await expect(
+      call({ refundEarlyAccess: true, expected: { scope: 'model', totalBuzz: 500 } })
+    ).rejects.toThrowError(/refund owed has changed/);
+
+    expect(mockUnpublishModelById).not.toHaveBeenCalled();
+  });
+
+  // Negative control: a check that refused whenever `expected` was present would block every
+  // ordinary unpublish, and both assertions above would still pass.
+  it('proceeds when the priced figure still holds', async () => {
+    await call({ refundEarlyAccess: true, expected: { scope: 'model', totalBuzz: 900 } });
+
+    expect(mockUnpublishModelById).toHaveBeenCalledTimes(1);
+  });
+
+  it('proceeds when the debit shrank — the copy was pessimistic, nothing extra is taken', async () => {
+    mockModelRequirement.mockResolvedValue({ totalBuzz: 100 });
+
+    await call({ refundEarlyAccess: true, expected: { scope: 'model', totalBuzz: 900 } });
+
+    expect(mockUnpublishModelById).toHaveBeenCalledTimes(1);
+  });
+
   it('still reports the take-down to analytics', async () => {
-    const track = vi.fn();
+    const modelVersionEvent = vi.fn();
+    const modelEvent = vi.fn();
     await unpublishModelVersionHandler({
       input: { id: VERSION_ID },
-      ctx: { user: { id: OWNER_ID, isModerator: false }, track: { modelVersionEvent: track } },
+      ctx: {
+        user: { id: OWNER_ID, isModerator: false },
+        track: { modelVersionEvent, modelEvent },
+      },
     } as never);
 
-    // The cascade branch returns early; without an explicit event a last-version take-down is
-    // invisible to analytics, because unpublishModelById fires no version event of its own.
-    expect(track).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'Unpublish', modelVersionId: VERSION_ID })
-    );
+    // The cascade branch returns early; without explicit events a last-version take-down is
+    // invisible to analytics, because unpublishModelById fires none of its own. Every field is
+    // pinned: objectContaining on type alone left a wrong modelId and a hardcoded nsfw green.
+    expect(modelVersionEvent).toHaveBeenCalledWith({
+      type: 'Unpublish',
+      modelVersionId: VERSION_ID,
+      modelId: MODEL_ID,
+      nsfw: true,
+    });
+    // The identical effect through unpublishModelHandler emits a model event, so a model unpublish
+    // reached from the version menu must appear in the same count.
+    expect(modelEvent).toHaveBeenCalledWith({
+      type: 'Unpublish',
+      modelId: MODEL_ID,
+      nsfw: true,
+    });
   });
 });

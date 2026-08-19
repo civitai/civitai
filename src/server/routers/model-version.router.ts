@@ -20,14 +20,7 @@ import {
   upsertModelVersionHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
-import {
-  getModelEarlyAccessRefundRequirement,
-  getModelVersionEarlyAccessRefundRequirement,
-  toEarlyAccessRefundSummary,
-} from '~/server/services/model-early-access-refund.service';
-import type { UnpublishScope } from '~/server/services/model-version.service';
-import { resolveUnpublishScope } from '~/server/services/model-version.service';
+import { getUnpublishImpact } from '~/server/routers/model-version.unpublish-impact';
 import {
   mergeVersionsSchema,
   deleteExplorationPromptSchema,
@@ -201,14 +194,7 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
-    .query(async ({ input }): Promise<EarlyAccessRefundSummary & { scope: UnpublishScope }> => {
-      const scope = await resolveUnpublishScope(input.id);
-      const requirement =
-        scope.kind === 'model'
-          ? await getModelEarlyAccessRefundRequirement({ id: scope.modelId })
-          : await getModelVersionEarlyAccessRefundRequirement(input);
-      return { ...toEarlyAccessRefundSummary(requirement), scope: scope.kind };
-    }),
+    .query(({ input }) => getUnpublishImpact(input.id)),
   upsertExplorationPrompt: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(upsertExplorationPromptSchema)

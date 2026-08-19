@@ -67,6 +67,10 @@ import {
   queueModelEarlyAccessReindex,
   unpublishModelById,
 } from '~/server/services/model.service';
+import {
+  getModelEarlyAccessRefundRequirement,
+  getModelVersionEarlyAccessRefundRequirement,
+} from '~/server/services/model-early-access-refund.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
   handleLogError,
@@ -764,18 +768,60 @@ export const unpublishModelVersionHandler = async ({
 
     const meta = (version.meta as ModelVersionMeta | null) || {};
 
-    // The last published version takes the model with it, rather than leaving a model published with
+    // The last live version takes the model with it, rather than leaving a model published with
     // nothing under it. Delegating instead of unpublishing both in turn is what keeps it whole:
     // unpublishModelById already unpublishes every published version and runs the model-scoped
-    // refund gate, so a refusal happens before anything moves. Same resolver the dialog priced
-    // itself from, read from the primary, so consent and effect cannot diverge.
+    // refund gate, so a refusal happens before anything moves.
+    //
+    // The resolver is the same one the dialog priced itself from and reads the primary, so the two
+    // agree for a fixed database state — NOT unconditionally: a sibling can go down between the
+    // dialog's read and this one, which is what `expected` below is for.
     const scope = await resolveUnpublishScope(id);
+
+    // Refuse rather than proceed when the world moved between pricing and confirming. Only the
+    // directions that cost the creator something are refused: a widening scope (one version becomes
+    // the whole model) or a larger debit than they saw. Narrowing is harmless — the copy was
+    // pessimistic, nothing extra is taken.
+    if (input.expected && !ctx.user.isModerator) {
+      const priced = input.expected;
+      if (priced.scope === 'version' && scope.kind === 'model') {
+        throw throwBadRequestError(
+          'Another version was taken down while this dialog was open, so unpublishing this one now takes the whole model with it. Please reopen the menu to see what that costs.'
+        );
+      }
+      const requirement =
+        scope.kind === 'model'
+          ? await getModelEarlyAccessRefundRequirement({ id: scope.modelId })
+          : await getModelVersionEarlyAccessRefundRequirement({ id });
+      if (requirement.totalBuzz > priced.totalBuzz) {
+        throw throwBadRequestError(
+          `The refund owed has changed since this dialog was opened — ${requirement.totalBuzz.toLocaleString()} Buzz rather than ${priced.totalBuzz.toLocaleString()}. Please reopen the menu to confirm the new amount.`
+        );
+      }
+    }
+
     if (scope.kind === 'model') {
-      const model = await getModel({ id: scope.modelId, select: { meta: true } });
+      const model = await getModel({
+        id: scope.modelId,
+        select: { meta: true, nsfw: true, status: true },
+      });
+      if (!model) throw throwNotFoundError(`No model with id ${scope.modelId}`);
+
+      // 🔴 Never downgrade a status this call did not set. An owner-initiated unpublish carries no
+      // reason, so writing the status unconditionally would overwrite a moderator's
+      // UnpublishedViolation with a plain Unpublished — and `model.controller.ts` only blocks an
+      // owner republish while the status IS UnpublishedViolation. That is an owner-reachable path to
+      // clear a moderation flag, via a draft published under a model a moderator already took down.
+      const preserveViolation =
+        !input.reason && (model.status as ModelStatus) === ModelStatus.UnpublishedViolation;
+
       await unpublishModelById({
         ...input,
+        ...(preserveViolation
+          ? { reason: (model.meta as ModelMeta | null)?.unpublishedReason }
+          : {}),
         id: scope.modelId,
-        meta: (model?.meta as ModelMeta | null) ?? undefined,
+        meta: (model.meta as ModelMeta | null) ?? undefined,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       });
@@ -784,7 +830,14 @@ export const unpublishModelVersionHandler = async ({
         type: 'Unpublish',
         modelVersionId: id,
         modelId: scope.modelId,
-        nsfw: false,
+        nsfw: model.nsfw,
+      });
+      // The identical effect arriving through unpublishModelHandler emits this, so without it a
+      // model unpublish reached from the version menu is missing from any count of model unpublishes.
+      ctx.track.modelEvent({
+        type: 'Unpublish',
+        modelId: scope.modelId,
+        nsfw: model.nsfw,
       });
       await dataForModelsCache.refresh(scope.modelId);
       return getVersionById({ id, select: { id: true, status: true, modelId: true } });

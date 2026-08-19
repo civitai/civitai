@@ -1683,10 +1683,19 @@ export const resolveUnpublishScope = async (
   if (version.status !== ModelStatus.Published)
     return { kind: 'version', modelId: version.modelId };
 
-  const publishedSiblings = await dbWrite.modelVersion.count({
-    where: { modelId: version.modelId, status: ModelStatus.Published, id: { not: id } },
+  // Scheduled counts as a sibling. unpublishModelById takes Published AND Scheduled versions down,
+  // so cascading past a pending release would silently unpublish tomorrow's launch on a confirm
+  // whose copy said "this is the only published version" — true, and not what the creator agreed to.
+  // Leaving the model published with a scheduled release under it is the correct outcome: something
+  // is coming.
+  const liveSiblings = await dbWrite.modelVersion.count({
+    where: {
+      modelId: version.modelId,
+      status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
+      id: { not: id },
+    },
   });
-  return { kind: publishedSiblings === 0 ? 'model' : 'version', modelId: version.modelId };
+  return { kind: liveSiblings === 0 ? 'model' : 'version', modelId: version.modelId };
 };
 
 export const unpublishModelVersionById = async ({

@@ -196,8 +196,14 @@ export function ModelVersionMenu({
             } member(s) bought access to ${subject} in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing now will refund them a total of ${impact.totalBuzz.toLocaleString()} Buzz from your account and revoke their access.${exemptNote} Do you want to continue?`,
             labels: { cancel: 'Cancel', confirm: 'Refund & Unpublish' },
             confirmProps: { color: 'yellow' },
+            // Echo back what this dialog priced. The server refuses if the scope widened or the
+            // debit grew while the dialog was open, rather than acting on a stale yes.
             onConfirm: () =>
-              unpublishVersionMutation.mutate({ id: modelVersionId, refundEarlyAccess: true }),
+              unpublishVersionMutation.mutate({
+                id: modelVersionId,
+                refundEarlyAccess: true,
+                expected: { scope: impact.scope, totalBuzz: impact.totalBuzz },
+              }),
           },
         });
         return;
@@ -216,7 +222,11 @@ export function ModelVersionMenu({
               : 'This version will be hidden from the model page and can be published again later. Do you want to continue?',
           labels: { cancel: 'Cancel', confirm: 'Unpublish' },
           confirmProps: { color: 'yellow' },
-          onConfirm: () => unpublishVersionMutation.mutate({ id: modelVersionId }),
+          onConfirm: () =>
+            unpublishVersionMutation.mutate({
+              id: modelVersionId,
+              expected: { scope: impact.scope, totalBuzz: impact.totalBuzz },
+            }),
         },
       });
     } catch (error) {

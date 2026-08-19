@@ -99,13 +99,20 @@ describe('resolveUnpublishScope', () => {
     });
   });
 
-  it('counts only OTHER published versions of the same model', async () => {
+  it('counts a Scheduled sibling as live, so a pending release is never taken down', async () => {
     dbMock.dbWrite.modelVersion.count.mockResolvedValue(0);
 
     await resolveUnpublishScope(VERSION_ID);
 
+    // unpublishModelById takes Published AND Scheduled versions down, so counting only Published
+    // would cascade past a pending release and unpublish tomorrow's launch on a confirm whose copy
+    // said "this is the only published version".
     expect(dbMock.dbWrite.modelVersion.count).toHaveBeenCalledWith({
-      where: { modelId: MODEL_ID, status: 'Published', id: { not: VERSION_ID } },
+      where: {
+        modelId: MODEL_ID,
+        status: { in: ['Published', 'Scheduled'] },
+        id: { not: VERSION_ID },
+      },
     });
   });
 
