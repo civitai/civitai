@@ -22,9 +22,12 @@ import {
 import { getByIdSchema } from '~/server/schema/base.schema';
 import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import {
+  getModelEarlyAccessRefundRequirement,
   getModelVersionEarlyAccessRefundRequirement,
   toEarlyAccessRefundSummary,
 } from '~/server/services/model-early-access-refund.service';
+import type { UnpublishScope } from '~/server/services/model-version.service';
+import { resolveUnpublishScope } from '~/server/services/model-version.service';
 import {
   mergeVersionsSchema,
   deleteExplorationPromptSchema,
@@ -188,14 +191,24 @@ export const modelVersionRouter = router({
     .input(unpublishModelSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelVersionHandler),
-  getEarlyAccessRefundRequirement: protectedProcedure
+  // Priced at the scope the unpublish will ACTUALLY run at. Taking down the last published version
+  // takes the model with it, and the model-scoped requirement covers every version — including
+  // siblings already down that still hold refundable grants, which a moderator take-down leaves in
+  // place. A dialog priced per-version there would show a creator one figure and debit another, and
+  // when the version figure is zero and the model figure is not, the mutation refuses with no way
+  // to consent. `scope` is what the dialog words itself from; it is not decoration.
+  getUnpublishImpact: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
-    .query(
-      async ({ input }): Promise<EarlyAccessRefundSummary> =>
-        toEarlyAccessRefundSummary(await getModelVersionEarlyAccessRefundRequirement(input))
-    ),
+    .query(async ({ input }): Promise<EarlyAccessRefundSummary & { scope: UnpublishScope }> => {
+      const scope = await resolveUnpublishScope(input.id);
+      const requirement =
+        scope.kind === 'model'
+          ? await getModelEarlyAccessRefundRequirement({ id: scope.modelId })
+          : await getModelVersionEarlyAccessRefundRequirement(input);
+      return { ...toEarlyAccessRefundSummary(requirement), scope: scope.kind };
+    }),
   upsertExplorationPrompt: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(upsertExplorationPromptSchema)

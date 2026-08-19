@@ -1659,6 +1659,36 @@ export const publishModelVersionById = async ({
   return version;
 };
 
+/**
+ * Whether unpublishing this version takes the whole model down with it.
+ *
+ * 🔴 Read from the PRIMARY. On a replica this decides a take-down against lagged rows: stale-low
+ * unpublishes a model whose sibling has just been published, and stale-high leaves a model
+ * Published with nothing published under it — the state the cascade exists to prevent.
+ *
+ * The dialog and the mutation both call this, so what a creator consents to and what the server
+ * does come from one answer rather than two that have to agree.
+ */
+export type UnpublishScope = 'model' | 'version';
+
+export const resolveUnpublishScope = async (
+  id: number
+): Promise<{ kind: UnpublishScope; modelId: number }> => {
+  const version = await dbWrite.modelVersion.findUniqueOrThrow({
+    where: { id },
+    select: { modelId: true, status: true },
+  });
+  // A version that is not itself published cannot be the last published one; treating it as such
+  // would run a full model unpublish off an edit to a draft.
+  if (version.status !== ModelStatus.Published)
+    return { kind: 'version', modelId: version.modelId };
+
+  const publishedSiblings = await dbWrite.modelVersion.count({
+    where: { modelId: version.modelId, status: ModelStatus.Published, id: { not: id } },
+  });
+  return { kind: publishedSiblings === 0 ? 'model' : 'version', modelId: version.modelId };
+};
+
 export const unpublishModelVersionById = async ({
   id,
   reason,

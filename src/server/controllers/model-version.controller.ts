@@ -33,7 +33,11 @@ import type {
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import type { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
+import type {
+  DeclineReviewSchema,
+  ModelMeta,
+  UnpublishModelSchema,
+} from '~/server/schema/model.schema';
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getStaticContent } from '~/server/services/content.service';
@@ -53,11 +57,16 @@ import {
   publishModelVersionById,
   queryModelVersions,
   toggleNotifyModelVersion,
+  resolveUnpublishScope,
   unpublishModelVersionById,
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
-import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
+import {
+  getModel,
+  queueModelEarlyAccessReindex,
+  unpublishModelById,
+} from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
   handleLogError,
@@ -754,6 +763,32 @@ export const unpublishModelVersionHandler = async ({
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     const meta = (version.meta as ModelVersionMeta | null) || {};
+
+    // The last published version takes the model with it, rather than leaving a model published with
+    // nothing under it. Delegating instead of unpublishing both in turn is what keeps it whole:
+    // unpublishModelById already unpublishes every published version and runs the model-scoped
+    // refund gate, so a refusal happens before anything moves. Same resolver the dialog priced
+    // itself from, read from the primary, so consent and effect cannot diverge.
+    const scope = await resolveUnpublishScope(id);
+    if (scope.kind === 'model') {
+      const model = await getModel({ id: scope.modelId, select: { meta: true } });
+      await unpublishModelById({
+        ...input,
+        id: scope.modelId,
+        meta: (model?.meta as ModelMeta | null) ?? undefined,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+
+      ctx.track.modelVersionEvent({
+        type: 'Unpublish',
+        modelVersionId: id,
+        modelId: scope.modelId,
+        nsfw: false,
+      });
+      await dataForModelsCache.refresh(scope.modelId);
+      return getVersionById({ id, select: { id: true, status: true, modelId: true } });
+    }
 
     const updatedVersion = await unpublishModelVersionById({ ...input, meta, user: ctx.user });
 

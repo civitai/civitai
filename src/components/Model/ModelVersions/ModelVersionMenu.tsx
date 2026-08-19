@@ -166,25 +166,34 @@ export function ModelVersionMenu({
   const handleUnpublishVersion = async () => {
     try {
       // staleTime 0: the cached figure is what the owner is consenting to move Buzz over, and a
-      // purchase can land between opening the menu twice.
-      const refund = await queryUtils.modelVersion.getEarlyAccessRefundRequirement.fetch(
+      // purchase can land between opening the menu twice. The server prices this at the scope the
+      // unpublish will actually run at — taking down the last published version takes the model —
+      // so `scope` decides the wording rather than the caller assuming.
+      const impact = await queryUtils.modelVersion.getUnpublishImpact.fetch(
         { id: modelVersionId },
         { staleTime: 0 }
       );
+      const cascades = impact.scope === 'model';
+      const subject = cascades ? 'this model' : 'this version';
       const exemptNote =
-        refund.exemptBuyerCount > 0
-          ? ` ${refund.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access to this version and are not refunded.`
+        impact.exemptBuyerCount > 0
+          ? ` ${impact.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access and are not refunded.`
           : '';
+      // Said before the money, because it is the part that surprises: the creator opened a menu on
+      // one version.
+      const cascadeNote = cascades
+        ? 'This is the only published version, so unpublishing it takes the whole model down with it — every version, its posts, and any active auction bids. '
+        : '';
 
-      if (refund.purchaseCount > 0) {
+      if (impact.purchaseCount > 0) {
         dialogStore.trigger({
           id: 'unpublish-version-refund',
           component: ConfirmDialog,
           props: {
-            title: 'Refund early access buyers',
-            message: `${
-              refund.buyerCount
-            } member(s) bought access to this version in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing it now will refund them a total of ${refund.totalBuzz.toLocaleString()} Buzz from your account and revoke their access to it.${exemptNote} Do you want to continue?`,
+            title: cascades ? 'Unpublish model & refund buyers' : 'Refund early access buyers',
+            message: `${cascadeNote}${
+              impact.buyerCount
+            } member(s) bought access to ${subject} in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing now will refund them a total of ${impact.totalBuzz.toLocaleString()} Buzz from your account and revoke their access.${exemptNote} Do you want to continue?`,
             labels: { cancel: 'Cancel', confirm: 'Refund & Unpublish' },
             confirmProps: { color: 'yellow' },
             onConfirm: () =>
@@ -198,10 +207,12 @@ export function ModelVersionMenu({
         id: 'unpublish-version',
         component: ConfirmDialog,
         props: {
-          title: 'Unpublish version',
+          title: cascades ? 'Unpublish model' : 'Unpublish version',
           message:
-            refund.exemptBuyerCount > 0
-              ? `${refund.exemptBuyerCount} member(s) bought access to this version, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access to it and are not refunded, and nothing is taken from your account. Do you want to continue?`
+            impact.exemptBuyerCount > 0
+              ? `${cascadeNote}${impact.exemptBuyerCount} member(s) bought access to ${subject}, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access and are not refunded, and nothing is taken from your account. Do you want to continue?`
+              : cascades
+              ? `${cascadeNote}Do you want to continue?`
               : 'This version will be hidden from the model page and can be published again later. Do you want to continue?',
           labels: { cancel: 'Cancel', confirm: 'Unpublish' },
           confirmProps: { color: 'yellow' },
