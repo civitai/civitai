@@ -135,11 +135,20 @@ describe('buildAppsStoreFeedbackContext', () => {
      * prevent. NBSP is the COMMON real case: pasting a term out of a rendered page carries
      * U+00A0, not a space.
      *
-     * Pinned against the same set the store's own matcher strips, so the two cannot drift:
-     * `String.prototype.trim` removes WhiteSpace + LineTerminator, which includes NBSP
-     * (U+00A0), BOM (U+FEFF), CR, VT/FF, LS/PS (U+2028/9) and ideographic space (U+3000).
+     * The set is `String.prototype.trim`'s own: WhiteSpace + LineTerminator, which includes
+     * NBSP (U+00A0), BOM (U+FEFF), CR, VT/FF, LS/PS (U+2028/9) and ideographic space
+     * (U+3000). \u26A0\uFE0F Nothing here EXERCISES the store's matcher, so this table does not
+     * enforce that the two stay in step \u2014 if `AppListingsMarketplaceBody.tsx:331` stopped
+     * using `trim()`, no assertion in this file would go red. It pins our side only.
      */
-    it.each([
+    const TRIMMED_CHARS: [string, string][] = [
+      // The ASCII three belong in the table too, not only in the mixed-padding case above:
+      // leaving them out left interior TAB unpinned, and `replace(/\t+/g, ' ')` survived a
+      // fully green suite on exactly that hole. The table IS the class — nothing here is
+      // "covered elsewhere".
+      ['space', ' '],
+      ['tab', '\t'],
+      ['newline', '\n'],
       ['NBSP', '\u00A0'],
       ['BOM / ZWNBSP', '\uFEFF'],
       ['ideographic space', '\u3000'],
@@ -147,7 +156,10 @@ describe('buildAppsStoreFeedbackContext', () => {
       ['vertical tab', '\v'],
       ['form feed', '\f'],
       ['line separator', '\u2028'],
-    ])('drops %s padding, not just ASCII whitespace', (_label, pad) => {
+      ['paragraph separator', '\u2029'],
+    ];
+
+    it.each(TRIMMED_CHARS)('drops %s padding, not just ASCII whitespace', (_label, pad) => {
       const context = buildAppsStoreFeedbackContext({
         path: '/apps',
         filters: filters({ query: `${pad}upscale${pad}` }),
@@ -156,23 +168,82 @@ describe('buildAppsStoreFeedbackContext', () => {
     });
 
     /**
+     * \uD83D\uDD34 THE SAME BLIND SPOT, ONE POSITION OVER. The table above places each exotic
+     * character only in the PADDING, so the term's INTERIOR is ASCII in every fixture \u2014
+     * and a fixture whose interior cannot contain the character cannot observe an
+     * implementation that rewrites it there. Four mutants survived a fully green suite on
+     * exactly that gap, including `replace(/\uFEFF/g, '')` (a global BOM strip, a very
+     * common real idiom) and `replace(/\u00A0/g, ' ')`.
+     *
+     * Trimming the ends and rewriting the middle are different decisions: this change
+     * takes the first and explicitly declines the second, because the middle is what the
+     * reporter actually typed. So every character the table trims at the ends must be
+     * proven to SURVIVE in the interior.
+     */
+    it.each(TRIMMED_CHARS)('keeps %s INSIDE the term, where it is not padding', (_label, ch) => {
+      const query = `up${ch}scale`;
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+    });
+
+    /**
+     * \uD83D\uDD34 NO UNICODE NORMALISATION. `.normalize('NFKC')` is the plausible "tidy the term"
+     * addition and it is a storage-shape REWRITE, not a tidy: it maps fullwidth `\uFF22\uFF49\uFF54`
+     * to `Bit`, folding characters the reporter deliberately typed. The module doc says
+     * "normalise away only what can never be wanted back"; nothing tested that until now,
+     * and both `NFKC` and `NFC` survived the suite.
+     */
+    it('does not Unicode-normalise the term (NFKC would fold fullwidth)', () => {
+      const query = '\uFF22\uFF49\uFF54\uFF44\uFF45\uFF58'; // fullwidth "Bitdex"
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+      expect(context?.filters?.query).not.toBe('Bitdex');
+    });
+
+    /**
+     * The fullwidth fixture above cannot see `.normalize('NFC')` \u2014 fullwidth characters
+     * are already NFC-stable, so that mutant survives it. NFC's real effect is COMPOSING a
+     * decomposed sequence, so it takes a decomposed fixture to observe. This is the
+     * common real input: text pasted from macOS is frequently NFD.
+     */
+    it('does not compose a decomposed term (NFC)', () => {
+      const query = 'cafe\u0301'; // "cafe" + COMBINING ACUTE \u2014 NFD, composes to "caf\u00E9"
+      expect(query.normalize('NFC')).not.toBe(query); // the fixture can see NFC at all
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+    });
+
+    /**
      * CONTROL 1 — interior whitespace must survive, RUNS INCLUDED. A fix that reached for
      * `replace(/\s/g, '')` rather than `trim()` would pass every assertion above and
      * silently destroy every multi-word search term.
      *
-     * 🔴 The interior run is DOUBLE-spaced on purpose. With a single interior space this
-     * fixture cannot distinguish `trim()` from `trim()` + an interior collapse
+     * 🔴 The interior runs are of DIFFERENT LENGTHS on purpose. With a single interior
+     * space this fixture cannot distinguish `trim()` from `trim()` + an interior collapse
      * (`replace(/\s+/g, ' ')`) — both yield `'anime upscale'` — so that mutant survived a
      * fully green suite. Collapsing runs is a different storage-shape decision than
      * trimming (it silently rewrites what the reporter typed) and is not one this change
      * takes, so the fixture has to be able to see it.
+     *
+     * Carrying BOTH a 2-run and a 3-run kills the whole width-indexed family in one
+     * fixture: a collapse written `/\s+/`, `/\s\s+/`, `/\s{2}/` or `/\s{3,}/` moves at
+     * least one of the two runs. A single 2-run left `/\s{3,}/` alive.
      */
-    it('keeps whitespace INSIDE the term, including repeated runs', () => {
+    it('keeps whitespace INSIDE the term, including runs of differing length', () => {
       const context = buildAppsStoreFeedbackContext({
         path: '/apps',
-        filters: filters({ query: '  anime  upscale  ' }),
+        filters: filters({ query: '  anime  upscale   pro  ' }),
       });
-      expect(context?.filters?.query).toBe('anime  upscale');
+      expect(context?.filters?.query).toBe('anime  upscale   pro');
     });
 
     /**

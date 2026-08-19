@@ -68,7 +68,10 @@ import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.co
  * Dropping it is therefore the whole fix, and it cannot touch a well-formed clip.
  */
 const normalizeFilterValue = (value: string) =>
-  value.trim().slice(0, FEEDBACK_FILTER_VALUE_MAX_LENGTH).replace(/[\uD800-\uDBFF]$/, '');
+  value
+    .trim()
+    .slice(0, FEEDBACK_FILTER_VALUE_MAX_LENGTH)
+    .replace(/[\uD800-\uDBFF]$/, '');
 
 export function buildAppsStoreFeedbackContext({
   filters,
