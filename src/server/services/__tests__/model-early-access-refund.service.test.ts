@@ -11,6 +11,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // default hands the callback `dbMock.dbWrite`, which would collapse that into the direct calls.
 const { mockTx } = vi.hoisted(() => ({
   mockTx: {
+    $queryRaw: vi.fn(),
     model: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
@@ -179,10 +180,17 @@ function setupRefundData({
   ]);
 }
 
-function setupUnpublishWrites() {
+function setupUnpublishWrites({
+  // What the model update reports back: EVERY version of the model, drafts included — it carries no
+  // where clause. Distinct from the transitioning set below, and conflating the two is the bug this
+  // fixture exists to expose.
+  allVersionIds = [VERSION_ID, OTHER_VERSION_ID],
+  transitioningVersionIds = [VERSION_ID],
+}: { allVersionIds?: number[]; transitioningVersionIds?: number[] } = {}) {
+  mockTx.$executeRaw.mockResolvedValue(transitioningVersionIds.length);
   mockTx.model.update.mockResolvedValue({
     userId: OWNER_ID,
-    modelVersions: [{ id: VERSION_ID }],
+    modelVersions: allVersionIds.map((id) => ({ id })),
   });
   mockDbWrite.model.findUniqueOrThrow.mockResolvedValue({ name: 'Test Model', userId: OWNER_ID });
   mockDbWrite.post.findMany.mockResolvedValue([]);
@@ -582,19 +590,65 @@ describe('unpublishModelById — early access refund gate', () => {
   // and this is the one operation that used to destroy it: the version rows were written with the
   // MODEL's meta object, replacing the column. An owner could unpublish, shedding the flag, and then
   // delete the version with every guard that reads it gone.
+  // The take-down is one raw statement: status and meta together, scoped by the model and the two
+  // statuses. These read the SQL itself, because the two properties that matter — that meta is
+  // MERGED rather than replaced, and that the WHERE picks the transitioning rows — live entirely in
+  // the static template segments. An assertion on the interpolated payload is byte-identical under
+  // `meta = COALESCE(meta,'{}') || payload` and under `meta = payload`, which is the bug this code
+  // exists to prevent.
+  // The take-down is the first $executeRaw in the transaction; the Post metadata update is the
+  // second. Found by its SQL rather than by position, so reordering cannot silently repoint these.
+  const takeDownCall = () =>
+    mockTx.$executeRaw.mock.calls.find(([strings]) =>
+      (strings as unknown as string[]).join('').includes('UPDATE "ModelVersion"')
+    );
+  const takeDownSql = () =>
+    ((takeDownCall()?.[0] ?? []) as unknown as string[]).join('?').replace(/\s+/g, ' ');
+  const takeDownParams = () => takeDownCall()?.slice(1) ?? [];
+
   it('merges the unpublish keys into each version meta instead of replacing it', async () => {
+    setupRefundData({ accessRows: [] });
+    setupUnpublishWrites();
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, reason: 'duplicate' });
+
+    expect(takeDownSql()).toContain(
+      `SET "status" = ?::"ModelStatus", "meta" = COALESCE("meta", '{}'::jsonb) ||`
+    );
+    // Every key the notification and the audit trail read, not just the one that is easiest to find.
+    expect(JSON.parse(takeDownParams()[1] as string)).toEqual({
+      unpublishedReason: 'duplicate',
+      customMessage: undefined,
+      unpublishedAt: expect.any(String),
+      unpublishedBy: OWNER_ID,
+    });
+    // A reasoned take-down puts the VERSION at UnpublishedViolation, which the nested updateMany
+    // this replaced did not do — it always wrote plain Unpublished. That difference decides whether
+    // an owner can republish the version afterwards, and it is what restore-models has to match.
+    expect(takeDownParams()[0]).toBe('UnpublishedViolation');
+    expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('UnpublishedViolation');
+    // And the version's updatedAt is stamped — raw SQL gets no @updatedAt.
+    expect(takeDownSql()).toContain('"updatedAt" = NOW()');
+  });
+
+  it('takes down only the versions that were published or scheduled', async () => {
     setupRefundData({ accessRows: [] });
     setupUnpublishWrites();
 
     await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
 
-    // The Prisma updateMany must not carry meta at all — a version's own meta cannot come from the
-    // model, and updateMany cannot write a different value per row.
-    const modelUpdate = mockTx.model.update.mock.calls[0][0];
-    expect(modelUpdate.data.modelVersions.updateMany.data).toEqual({ status: 'Unpublished' });
-    expect(modelUpdate.data.modelVersions.updateMany.data).not.toHaveProperty('meta');
-    // The keys land through a jsonb merge instead.
-    expect(mockTx.$executeRaw).toHaveBeenCalled();
+    const sql = takeDownSql();
+    expect(sql).toContain('WHERE "modelId" = ?');
+    expect(sql).toContain('AND "status" IN (?::"ModelStatus", ?::"ModelStatus")');
+    // Exact, not substring: the params carry an ISO timestamp whose millisecond field makes a
+    // substring search on a 3-digit id both flaky and misleading.
+    expect(takeDownParams()).toEqual([
+      'Unpublished',
+      expect.any(String),
+      MODEL_ID,
+      'Published',
+      'Scheduled',
+    ]);
   });
 
   it('does not gate or refund on a moderator unpublish', async () => {
