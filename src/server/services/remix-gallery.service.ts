@@ -419,12 +419,6 @@ export async function actOnRemixGallerySubmission({
   isModerator?: boolean;
   asModerator?: boolean;
 }) {
-  // A moderator on someone else's gallery is moderating whatever they claim —
-  // there is no creator role available to them there. On their own, it is the
-  // claim that decides, so the default stays the creator rules everyone else
-  // gets. `isModerator` is the permission; `asModerator` only chooses between
-  // two things this caller is already allowed to do.
-  const actingAsModerator = isModerator && asModerator;
   const placement = await dbWrite.placement.findUnique({
     where: { id: placementId },
     select: {
@@ -489,7 +483,12 @@ export async function actOnRemixGallerySubmission({
     // must not wait. On their own gallery they are exempt only when they asked
     // to be — otherwise a moderator would silently never be held to the wait
     // their own submitters were promised.
-    const isModeratorTakedown = isModerator && (placement.ownerId !== userId || actingAsModerator);
+    //
+    // `isModerator` is the permission and `asModerator` only picks between two
+    // things this caller may already do, so the claim is read INSIDE the role
+    // check rather than beside it. On someone else's gallery there is no
+    // creator role to go back to, so the claim is not asked for.
+    const isModeratorTakedown = isModerator && (placement.ownerId !== userId || asModerator);
     if (!isModeratorTakedown) {
       // Falls back to `createdAt` rather than skipping when `resolvedAt` is
       // absent. Gating the check on the column being set made this fail OPEN:
