@@ -22,7 +22,7 @@ import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
-import { getUserSettings, setUserSetting } from '~/server/services/user.service';
+import { getUserSettings, patchUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
 import {
   throwAuthorizationError,
@@ -62,12 +62,23 @@ export const setUserSettingsHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { chat = {} } = await getUserSettings(userId);
-    const newChat = { ...chat, ...input };
 
-    await setUserSetting(userId, { chat: newChat });
+    // Merged in Postgres, over the stored column — `settings->'chat'` is read inside the
+    // UPDATE, so nothing about the object is carried through JS. This used to read the
+    // blob via `getUserSettings` (Redis, 4h TTL), merge in JS and write the whole `chat`
+    // object back, which REPLACED the key: every sub-key reverted to the snapshot and any
+    // chat setting written in between was discarded. Reachable in ordinary use because the
+    // sub-keys are written from different surfaces — `NewChat` writes `acknowledged` on
+    // terms acceptance while `ChatList` writes `muteSounds`/`replaceBadWords` — so two
+    // requests carrying disjoint keys is the normal case. See the getUserSettings contract.
+    const settings = await patchUserSettings(userId, {
+      mergeInto: { chat: input },
+      location: 'chat.controller:setUserSettings',
+    });
 
-    return newChat;
+    // Returned from `RETURNING settings`, so the client's query cache is primed with what
+    // the database actually holds rather than with a merge computed off a stale snapshot.
+    return (settings.chat ?? {}) as UserSettingsChat;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
