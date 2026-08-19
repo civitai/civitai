@@ -64,11 +64,23 @@ async function valuesByLabelKey(name: string): Promise<Record<string, number>> {
   const snapshot: Record<string, number> = {};
   for (const v of values) {
     snapshot[`${v.labels.outcome ?? ''}|${v.labels.mode ?? ''}|${v.labels.reason ?? ''}`] = Number(
-      v.value
+      v.value ?? 0
     );
   }
   return snapshot;
 }
+
+/**
+ * Reads a possibly-ABSENT key as 0.
+ *
+ * This is what removes the dependency on `seedAllSeries` having materialised
+ * every series — not a `??` on the value above, which would be a no-op, since
+ * `Number()` returns `NaN` rather than anything nullish. Absent-vs-zero is the
+ * distinction that matters here: without this, a not-yet-materialised child
+ * compares `undefined !== 0` and reads as "moved". The `beforeEach` makes that
+ * unreachable today; the sibling suite decouples anyway and so does this.
+ */
+const at = (snapshot: Record<string, number>, k: string) => snapshot[k] ?? 0;
 
 const EXPECTED_RESULT_SERIES = BITDEX_SERVE_OUTCOMES.length * BITDEX_SERVE_MODES.length;
 
@@ -96,9 +108,9 @@ describe('the record functions drop label values outside their union', () => {
     recordBitdexPrimaryResult('served', 'primary');
 
     const after = await valuesByLabelKey('bitdex_primary_result_total');
-    expect(after['served|primary|'] - before['served|primary|']).toBe(1);
+    expect(at(after, 'served|primary|') - at(before, 'served|primary|')).toBe(1);
     // And nothing else moved, so the read path resolves the right child.
-    const moved = Object.keys(after).filter((k) => after[k] !== before[k]);
+    const moved = Object.keys(after).filter((k) => at(after, k) !== at(before, k));
     expect(moved).toEqual(['served|primary|']);
   });
 
@@ -108,7 +120,7 @@ describe('the record functions drop label values outside their union', () => {
     recordBitdexQueryFailure('http_4xx');
 
     const after = await valuesByLabelKey('bitdex_query_failures_total');
-    expect(after['||http_4xx'] - before['||http_4xx']).toBe(1);
+    expect(at(after, '||http_4xx') - at(before, '||http_4xx')).toBe(1);
   });
 
   it('an unknown OUTCOME with a valid mode is dropped — no new series', async () => {
@@ -162,7 +174,7 @@ describe('the record functions drop label values outside their union', () => {
     expect(Object.keys(after)).toHaveLength(EXPECTED_RESULT_SERIES);
     // ...AND no existing series moved. A relabel to `served` would satisfy the
     // first check and fail this one, which is the whole point of the case.
-    const moved = Object.keys(after).filter((k) => after[k] !== before[k]);
+    const moved = Object.keys(after).filter((k) => at(after, k) !== at(before, k));
     expect(moved).toEqual([]);
   });
 
@@ -173,6 +185,6 @@ describe('the record functions drop label values outside their union', () => {
 
     const after = await valuesByLabelKey('bitdex_query_failures_total');
     expect(Object.keys(after)).toHaveLength(BITDEX_QUERY_FAILURE_REASONS.length);
-    expect(Object.keys(after).filter((k) => after[k] !== before[k])).toEqual([]);
+    expect(Object.keys(after).filter((k) => at(after, k) !== at(before, k))).toEqual([]);
   });
 });

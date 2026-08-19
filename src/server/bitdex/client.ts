@@ -129,6 +129,14 @@ export interface BitdexQueryResult {
  * @param onFailure - invoked with the failure classification when this call
  *   returns null for any reason OTHER than a successful empty result. Never
  *   invoked on success. Must not throw; it is called on the feed hot path.
+ *
+ *   🔴 IT IS NOT A GUARANTEE THAT A REQUEST LEFT THE PROCESS. The
+ *   `unconfigured` arm fires it before any `fetch` — no endpoint means no call
+ *   to make — which is asserted by the `not.toHaveBeenCalled()` case in the
+ *   client suite. A caller using this as "a call happened" evidence (as
+ *   `fetchBitdexPrimary` does) is therefore also counting the misconfigured
+ *   deployment. That is deliberate there: a missing endpoint is a real
+ *   degradation, and the tripwire should fire on it rather than go quiet.
  */
 export async function queryBitdex(
   indexName: string,
@@ -197,7 +205,9 @@ export async function queryBitdex(
     clearTimeout(timeout);
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error(`[BitDex] Query failed ${res.status} (${Date.now() - start}ms): ${errText.slice(0, 500)}`);
+      console.error(
+        `[BitDex] Query failed ${res.status} (${Date.now() - start}ms): ${errText.slice(0, 500)}`
+      );
       // 4xx and 5xx are split because they have different owners: a 4xx is
       // almost always something this application sent (the field-the-index-does-
       // not-know case), a 5xx is the backend. A non-2xx below 400 cannot
@@ -215,13 +225,16 @@ export async function queryBitdex(
       },
       () => res.json()
     );
-    console.log('[BitDex] result:', JSON.stringify({
-      ms: Date.now() - start,
-      matched: result.total_matched,
-      ids: result.ids?.length ?? 0,
-      docs: result.documents?.length ?? 0,
-      elapsed_us: result.elapsed_us,
-    }));
+    console.log(
+      '[BitDex] result:',
+      JSON.stringify({
+        ms: Date.now() - start,
+        matched: result.total_matched,
+        ids: result.ids?.length ?? 0,
+        docs: result.documents?.length ?? 0,
+        elapsed_us: result.elapsed_us,
+      })
+    );
     return result;
   } catch (err) {
     console.error(`[BitDex] Query error:`, err);

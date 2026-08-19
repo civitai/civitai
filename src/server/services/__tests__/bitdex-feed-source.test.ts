@@ -390,23 +390,26 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
   });
 
   /**
-   * 🔴 THE SAME DEFECT ONE DOOR DOWN, AND THE LIKELIER ONE.
+   * 🔴 THE SAME DEFECT ONE DOOR DOWN — FOR AN ANONYMOUS CALLER.
    *
    * `limit: 0` is not the only way to reach the empty-result guard without
    * contacting BitDex. `getImagesFromBitdexPreFilter` has FIVE early
-   * `return null` paths that never reach the client at all —
-   * hidden-with-no-hidden-images, an unresolvable username,
-   * followed-with-zero-follows, newCreators-with-none. A guard that counted LOOP
-   * ENTRY rather than evidence of an actual call passed the `limit: 0` test and
-   * still over-counted every one of these.
+   * `return null` paths that never reach the client at all: `hidden` with no
+   * signed-in user, `hidden` with no hidden images, an unresolvable username,
+   * followed-with-zero-follows, and newCreators-with-none. A guard that counted
+   * LOOP ENTRY rather than evidence of an actual call over-counted all of them.
    *
-   * That matters more than the case that prompted the guard: a brand-new account
-   * opening the Following feed walks one of these doors, which is ordinary
-   * traffic, not an exotic input.
+   * ⚠️ READ THE SCOPE, because an earlier revision of this comment overstated it
+   * and the case below is the one that flatters the claim. The exclusion holds
+   * when the FEED query is the only query the request makes — i.e. an anonymous
+   * caller, or any paginated request — because `skipOwnExcluded` is then true.
+   * For a SIGNED-IN caller on the first page the own-content pass is issued
+   * regardless, so a call does go out and the request IS recorded. The sibling
+   * case below pins exactly that, so this pair cannot drift back into the
+   * absolute claim.
    *
-   * `hidden` with an anonymous caller is the cleanest of them to drive — it
-   * returns at the first line of that block with no database round trip — and it
-   * exercises the same `return null` shape as the other four.
+   * Anonymous `hidden` is the cleanest of the five to drive — it returns at the
+   * first line of that block with no database round trip.
    */
   it('🔴 PRIMARY where the query builder returns early issues NO BitDex query, so nothing is recorded', async () => {
     getFliptVariantMock.mockResolvedValue('primary');
@@ -421,6 +424,53 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
     expect(queryBitdexMock).not.toHaveBeenCalled();
     expect(result.source).toBe('meili');
     expect(seriesThatMoved(before, after)).toEqual([]);
+  });
+
+  /**
+   * 🔴 THE CASE THAT REFUTES THE ABSOLUTE VERSION OF THE CLAIM ABOVE, PINNED SO
+   * IT CANNOT BE RE-ASSERTED.
+   *
+   * A signed-in caller on the first page opening the Following feed with zero
+   * follows: the FEED query returns early inside the builder and never reaches
+   * the client — but `skipOwnExcluded` is false for any signed-in first-page
+   * request, so the own-content pass IS issued, completes, and counts. One call
+   * went out, so the request is recorded as `fallback_empty`.
+   *
+   * That is defensible under the stated denominator — "requests that ENGAGED the
+   * backend" — and it is deliberately NOT changed here. What was wrong was the
+   * claim that all five doors are excluded: `currentUserId` is a PRECONDITION of
+   * two of them (`hidden`-with-no-hidden-images, followed-with-zero-follows), so
+   * for those two the exclusion can never apply at all.
+   *
+   * Measured before being written: `calls=1 ownCalls=1
+   * moved=["fallback_empty|primary"]`.
+   *
+   * 🔴 This is also the ONLY killing case for `if (ownExcluded)
+   * bitdexCallsObserved++` — the third observation site, which had no mutation
+   * killing it. Delete that line and this case goes red, because the request then
+   * looks like it made no calls at all.
+   */
+  it('🔴 PRIMARY, signed-in, followed-with-zero-follows: the own-content pass still counts', async () => {
+    getFliptVariantMock.mockResolvedValue('primary');
+    queryBitdexMock.mockResolvedValue({ documents: [], cursor: undefined });
+    const before = await readOutcomes();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: CURRENT_USER_ID,
+      followed: true,
+    });
+
+    const after = await readOutcomes();
+    // The state this case exists to build: exactly ONE call went out, and it was
+    // the own-content pass — the feed query returned early inside the builder.
+    // Asserting the shape, not just the count, so a fixture that accidentally
+    // issued a feed query could not satisfy it.
+    expect(queryBitdexMock.mock.calls).toHaveLength(1);
+    expect(isOwnExcludedQuery(queryBitdexMock.mock.calls[0][1])).toBe(true);
+
+    expect(result.source).toBe('meili');
+    expect(seriesThatMoved(before, after)).toEqual([key('fallback_empty', 'primary')]);
   });
 
   it('SHADOW, BitDex answers with documents → served{mode="shadow"} +1 (Meili still serves the user)', async () => {

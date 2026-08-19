@@ -44,17 +44,28 @@
 // moderator opened a queue. The consequence to hold onto: `sum(…)` here is the
 // count of requests that ENGAGED the backend, not the count of feed requests.
 //
-// The same exclusion covers every OTHER way a request can reach the empty-result
-// guard without contacting the backend — and there are more of them than the one
-// that prompted the guard. `fetchBitdexPrimary` gates on evidence that a call
-// actually happened (see `bitdexCallsObserved` there), so ALL of these are out:
-// a `limit` that collapses the fetch loop before its first iteration; and the
-// query builder's own early returns — hidden-with-no-hidden-images, an
-// unresolvable username, followed-with-zero-follows, newCreators-with-none. That
-// last one is a brand-new account opening the Following feed, i.e. ordinary
-// traffic, not an exotic input. The hand-driven internal comparison endpoint is
-// outside it too, by passing no callback: its calls reach
-// `bitdex_query_failures_total` but never this counter.
+// The same exclusion covers other ways a request can reach the empty-result
+// guard without contacting the backend. `fetchBitdexPrimary` gates on evidence
+// that a call actually happened (see `bitdexCallsObserved` there), which covers
+// a `limit` that collapses the fetch loop before its first iteration, and the
+// query builder's five early returns — `hidden` with no signed-in user, `hidden`
+// with no hidden images, an unresolvable username, followed-with-zero-follows,
+// newCreators-with-none.
+//
+// ⚠️ BUT ONLY WHEN THE FEED QUERY IS THE REQUEST'S ONLY QUERY, i.e. an anonymous
+// caller or any paginated request. An earlier revision of this note claimed all
+// five doors are excluded outright; MEASUREMENT REFUTED THAT. A signed-in caller
+// on the FIRST page also issues the own-content pass, which goes out regardless
+// of what the feed query does — so that request made a call and IS counted, even
+// though its feed query never left the process. `currentUserId` is in fact a
+// PRECONDITION of two of the five doors, so for those the exclusion can never
+// apply. Counting such a request is correct under "requests that ENGAGED the
+// backend"; it simply is not the same set as "requests whose FEED query went
+// out", and a dashboard must not read it as the latter.
+//
+// The hand-driven internal comparison endpoint is outside the denominator too,
+// by passing no callback: its calls reach `bitdex_query_failures_total` but
+// never this counter.
 //
 // ⚠️ SCOPE OF THAT GUARANTEE, stated precisely because it is an invariant now.
 // It covers `served`, `fallback_empty` and `fallback_error` — the three outcomes
@@ -248,6 +259,8 @@ export function ensureRegisterBitdexFeedServeMetrics(
     'APP-EMITTED (the web application, not the BitDex service, which exports its own bitdex_* families from a different scrape target). ' +
       'Feed requests that issued at least one query against BitDex, by what the application then did with the answer. ' +
       'One increment = one request, NOT one page shown to a user (shadow requests reach nobody) and NOT every request routed to the primary path: the moderator queues declined before any query is issued are deliberately outside this denominator. ' +
+      'TWO documented exceptions to that denominator, both deliberate: outcome=fallback_exception is emitted from the caller catch arms and is NOT gated on a query having been issued (it means the application threw on this path, which is worth paging on even if it threw before the first call); and a deployment with no endpoint configured reports a failure without a request leaving the process, so it records fallback_error rather than going quiet. ' +
+      'Also note a request whose FEED query returned early can still be counted when a signed-in first-page caller issued the parallel own-content query, so this is "requests that engaged the backend", not "requests whose feed query went out". ' +
       'outcome (served = BitDex answered and its documents were returned; fallback_empty = every query succeeded and the merged post-filtered result was still empty, so the index genuinely had nothing — not a defect; fallback_error = the result was empty AND at least one query in the request failed, so the emptiness is untrustworthy; fallback_exception = the application code itself threw while handling the response — page the app team, not the backend team). ' +
       'mode (primary = BitDex served the user or its failure sent the request to Meilisearch; shadow = the same path ran in the background for comparison and Meilisearch served the user regardless).',
     ['outcome', 'mode']

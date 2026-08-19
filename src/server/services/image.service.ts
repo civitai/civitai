@@ -3228,30 +3228,51 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // COUNTED FROM EVIDENCE THAT A CALL HAPPENED, NOT FROM LOOP ENTRY. An earlier
   // revision incremented just before calling `getImagesFromBitdexPreFilter`,
   // which was wrong in a way that looked right: that function has FIVE early
-  // `return null` paths that never reach `queryBitdex` — hidden-with-no-hidden-
-  // images, an unresolvable username, followed-with-zero-follows, and
-  // newCreators-with-none. A brand-new account opening the Following feed walks
-  // one of them, which is a great deal more likely than the `limit: 0` case that
-  // prompted the guard. Counting on entry re-created the same overcount one door
-  // down.
+  // `return null` paths that never reach `queryBitdex` — `hidden` with no
+  // signed-in user, `hidden` with no hidden images, an unresolvable username,
+  // followed-with-zero-follows, and newCreators-with-none. Counting on entry
+  // re-created the same overcount one door down.
   //
-  // The two observations that together mean "a call was made", and nothing else
-  // does: the client reported a FAILURE (it only does so from inside a call), or
-  // it handed back a NON-NULL result (it returns null on every failure, so
-  // non-null implies a completed call). Exactly one of the two fires per call, so
-  // this cannot double-count, and neither fires on an early return.
+  // ⚠️ SCOPE, because an earlier revision of this comment claimed all five are
+  // excluded and MEASUREMENT REFUTED IT. The exclusion holds only when the feed
+  // query is the request's ONLY query — an anonymous caller, or any paginated
+  // request — because `skipOwnExcluded` is true there. For a SIGNED-IN caller on
+  // the first page the own-content pass is issued regardless of what the feed
+  // query does, so a call goes out and the request IS recorded. Measured on
+  // signed-in + `followed` with zero follows: one call, `fallback_empty`
+  // recorded. Worse for the old claim, `currentUserId` is a PRECONDITION of two
+  // of the five doors, so for those the exclusion can never apply at all.
+  // Counting that request is defensible — a call did go out — and is deliberately
+  // left as is. Both cases are pinned in bitdex-feed-source.test.ts so this
+  // cannot drift back to the absolute.
+  //
+  // The two observations that mean "a call was made": the client reported a
+  // FAILURE, or it handed back a NON-NULL result (it returns null on every
+  // failure). At most one fires per call, so this cannot double-count.
+  //
+  // ⚠️ Neither is exhaustive, in opposite directions, and both are accepted:
+  //   • `unconfigured` fires the failure callback WITHOUT a request leaving the
+  //     process (the client returns before any fetch — pinned by the
+  //     `not.toHaveBeenCalled()` assertion in the client suite). So a
+  //     misconfigured deployment counts as a call and records `fallback_error`.
+  //     Deliberate: a missing endpoint is a real degradation and that is exactly
+  //     when the tripwire should fire, not go quiet.
+  //   • A completed call whose body decodes to a FALSY value (`0`, `""`, `null`
+  //     via `res.json()`, which is returned unfiltered) is non-null-by-contract
+  //     but falsy here, so neither observation fires and the call is NOT counted.
+  //     That is an UNDER-count, the worse direction, since the served ratio
+  //     silently improves. Not reachable against a backend that returns an
+  //     object; noted because the converse was previously stated as absolute.
   //
   // Why it matters: recording a request that never contacted BitDex inflates the
   // FALLBACK side of the exact ratio a roll-forward/rollback decision is read
-  // from, and contradicts this metric's own help string. (Reachability is
-  // measured; organic frequency is NOT.)
+  // from. (Reachability is measured; organic frequency is NOT.)
   let bitdexCallsObserved = 0;
 
   let anyQueryFailed = false;
   const noteQueryFailure = () => {
     anyQueryFailed = true;
-    // A failure report is proof a call was made — it is emitted from inside the
-    // client, past every early return above it.
+    // Evidence of a call, with the `unconfigured` exception noted above.
     bitdexCallsObserved++;
   };
 
