@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { getCreatorRequirements } from '~/server/services/creator-program.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 
 export const ANNOUNCEMENTS_CONFIG_KEY = 'announcements:config';
 
@@ -12,7 +13,7 @@ export type AnnouncementTier = (typeof ANNOUNCEMENT_TIERS)[number];
  * anti-spam posture can move without a deploy — the same posture as
  * `placement:config`. A malformed or missing row falls back to these defaults
  * rather than throwing: announcements failing closed on a bad config edit would
- * take the feature out entirely, and every value is clamped anyway.
+ * take the feature out entirely, and every value is range-checked before it is used.
  *
  * 🔴 Read this, never restate the defaults. A surface that quotes a compiled
  * number while the row says something else tells the creator a limit they do not
@@ -33,17 +34,7 @@ const capSchema = z.object({
   count: z.number().int().min(0).max(100),
 });
 
-const announcementsConfigSchema = z
-  .object({
-    minScore: z.number().int().min(0),
-    caps: z.object({
-      free: capSchema.optional(),
-      bronze: capSchema.optional(),
-      silver: capSchema.optional(),
-      gold: capSchema.optional(),
-    }),
-  })
-  .partial();
+const minScoreSchema = z.number().int().min(0);
 
 export type AnnouncementAllowance = {
   /** Creator score clears the floor. False means no slots at any tier. */
@@ -58,21 +49,31 @@ export type AnnouncementAllowance = {
   nextAvailableAt: Date | null;
 };
 
+/**
+ * Each field is parsed on its own, and a bad one falls back alone. A single safeParse over
+ * the whole row discards every value when any one of them is malformed — so one mistyped
+ * cap would also throw away a good minScore sitting beside it, silently, in the direction
+ * of the compiled default.
+ */
 async function getConfig() {
+  let value: Record<string, unknown> = {};
   try {
     const row = await dbRead.keyValue.findUnique({ where: { key: ANNOUNCEMENTS_CONFIG_KEY } });
-    const parsed = announcementsConfigSchema.safeParse(row?.value ?? {});
-    if (parsed.success) {
-      return {
-        minScore: parsed.data.minScore ?? DEFAULTS.minScore,
-        caps: { ...DEFAULTS.caps, ...parsed.data.caps },
-      };
-    }
+    if (row?.value && typeof row.value === 'object') value = row.value as Record<string, unknown>;
   } catch {
     // Fall through to defaults.
   }
 
-  return { minScore: DEFAULTS.minScore, caps: { ...DEFAULTS.caps } };
+  const minScore = minScoreSchema.safeParse(value.minScore);
+  const storedCaps = (value.caps ?? {}) as Record<string, unknown>;
+
+  const caps: Record<AnnouncementTier, { days: number; count: number }> = { ...DEFAULTS.caps };
+  for (const tier of ANNOUNCEMENT_TIERS) {
+    const parsed = capSchema.safeParse(storedCaps[tier]);
+    if (parsed.success) caps[tier] = parsed.data;
+  }
+
+  return { minScore: minScore.success ? minScore.data : DEFAULTS.minScore, caps };
 }
 
 function toAnnouncementTier(membership: string | null | undefined): AnnouncementTier {
@@ -92,9 +93,16 @@ function toAnnouncementTier(membership: string | null | undefined): Announcement
  * to someone who will never be eligible is lying to them.
  */
 export async function getAnnouncementAllowance(userId: number): Promise<AnnouncementAllowance> {
-  const [config, requirements] = await Promise.all([getConfig(), getCreatorRequirements(userId)]);
+  // Tier through getCapTier, not through getCreatorRequirements: the latter accepts
+  // `incomplete` subscriptions, so a lapsed payment kept its paid caps. getCapTier is the
+  // helper every other monetization cap resolves through.
+  const [config, requirements, capTier] = await Promise.all([
+    getConfig(),
+    getCreatorRequirements(userId),
+    getCapTier(userId),
+  ]);
 
-  const tier = toAnnouncementTier(requirements?.membership);
+  const tier = toAnnouncementTier(capTier);
   const cap = config.caps[tier] ?? DEFAULTS.caps[tier];
   // Two coercions, both load-bearing. getCreatorRequirements returns score as
   // { min, current }, so Number() on the object itself is NaN and NaN >= minScore is
@@ -129,9 +137,4 @@ export async function getAnnouncementAllowance(userId: number): Promise<Announce
         ? null
         : new Date(oldest.getTime() + cap.days * 24 * 60 * 60 * 1000),
   };
-}
-
-export async function assertCanPostAnnouncement(userId: number) {
-  const allowance = await getAnnouncementAllowance(userId);
-  return { allowed: allowance.eligible && allowance.used < allowance.limit, allowance };
 }

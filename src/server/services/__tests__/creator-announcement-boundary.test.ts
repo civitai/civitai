@@ -11,6 +11,7 @@ vi.mock('~/server/services/cover-image.service', () => ({
   resolveCoverImageId: vi.fn(async () => 555),
 }));
 vi.mock('~/server/services/util.service', () => ({ isImageOwner: vi.fn(async () => true) }));
+vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
 vi.mock('~/server/services/announcement-allowance.service', () => ({
   getAnnouncementAllowance: vi.fn(async () => ({
     eligible: true,
@@ -32,8 +33,16 @@ import {
   upsertCreatorAnnouncement,
 } from '../creator-announcement.service';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 const AUTHOR = 101;
+
+type TxMock = {
+  $executeRaw: ReturnType<typeof vi.fn>;
+  announcement: Record<'create' | 'update' | 'findUnique', ReturnType<typeof vi.fn>>;
+  announcementSpend: Record<'count' | 'create', ReturnType<typeof vi.fn>>;
+};
+let tx: TxMock;
 
 const validInput = {
   title: 'New LoRA is up',
@@ -44,18 +53,26 @@ const validInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // The spend check runs inside a transaction behind a per-creator advisory lock, so the
-  // callback has to actually execute for the cap to be exercised at all.
+  // A DISTINCT tx object, not dbWrite itself: handing the callback dbWrite makes
+  // inside-the-transaction and outside-it the same observation, so moving a write out of
+  // the transaction changes nothing any assertion can see.
+  tx = {
+    $executeRaw: vi.fn(async () => 1),
+    announcement: {
+      create: vi.fn(async () => ({ id: 55 })),
+      update: vi.fn(async () => ({ id: 9 })),
+      findUnique: vi.fn(async () => ({ profileOnly: true, spends: [] })),
+    },
+    announcementSpend: { count: vi.fn(async () => 0), create: vi.fn(async () => ({ id: 1 })) },
+  };
   dbMock.dbWrite.$transaction.mockImplementation(async (fn: unknown) =>
-    (fn as (tx: unknown) => Promise<unknown>)(dbMock.dbWrite)
+    (fn as (t: unknown) => Promise<unknown>)(tx)
   );
-  dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
-  dbMock.dbWrite.announcementSpend.count.mockResolvedValue(0 as never);
-  dbMock.dbWrite.announcementSpend.create.mockResolvedValue({ id: 1 } as never);
   dbMock.dbWrite.announcement.create.mockResolvedValue({ id: 1 } as never);
   dbMock.dbWrite.announcement.update.mockResolvedValue({ id: 1 } as never);
   dbMock.dbWrite.announcement.delete.mockResolvedValue({ id: 1 } as never);
   dbMock.dbRead.announcement.findMany.mockResolvedValue([] as never);
+  vi.mocked(amIBlockedByUser).mockResolvedValue(false as never);
   dbMock.dbRead.announcement.findFirst.mockResolvedValue({
     id: 1,
     coverId: null,
@@ -97,9 +114,7 @@ describe('creator announcement service pins the author and the surface', () => {
   it('writes the caller as author and a metadata blob with no type', async () => {
     await upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR });
 
-    const args = dbMock.dbWrite.announcement.create.mock.calls[0][0] as {
-      data: Record<string, unknown>;
-    };
+    const args = tx.announcement.create.mock.calls[0][0] as { data: Record<string, unknown> };
 
     expect(args.data.userId).toBe(AUTHOR);
     expect(args.data.title).toBe(validInput.title);
@@ -164,7 +179,7 @@ describe('the allowance gates a notifying announcement and not a profile-only on
     });
     // Re-counted inside the transaction rather than trusted from the read above, so two
     // concurrent creates cannot both pass on the same stale count.
-    dbMock.dbWrite.announcementSpend.count.mockResolvedValue(1 as never);
+    tx.announcementSpend.count.mockResolvedValue(1);
 
     await expect(upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR })).rejects.toThrow(
       /Next available/
@@ -338,7 +353,7 @@ describe('the allowance cannot be walked around', () => {
     // The flip is the moment it gains an audience, so it pays here. Checking only for a
     // new row let a creator mint free profile-only rows and flip them into fan-outs.
     expect(getAnnouncementAllowance).toHaveBeenCalledWith(AUTHOR);
-    expect(dbMock.dbWrite.announcementSpend.create).toHaveBeenCalled();
+    expect(tx.announcementSpend.create).toHaveBeenCalled();
   });
 
   it('does not charge twice for editing an announcement that already notified', async () => {
@@ -351,26 +366,72 @@ describe('the allowance cannot be walked around', () => {
     await upsertCreatorAnnouncement({ ...validInput, id: 9, userId: AUTHOR });
 
     expect(getAnnouncementAllowance).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.announcementSpend.create).not.toHaveBeenCalled();
+    expect(tx.announcementSpend.create).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.announcement.update).toHaveBeenCalled();
   });
 
   it('records the spend against the row it paid for', async () => {
-    dbMock.dbWrite.announcement.create.mockResolvedValue({ id: 55 } as never);
-
     await upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR });
 
-    expect(dbMock.dbWrite.announcementSpend.create).toHaveBeenCalledWith({
+    expect(tx.announcementSpend.create).toHaveBeenCalledWith({
       data: { userId: AUTHOR, announcementId: 55 },
     });
   });
 
-  it('takes a per-creator lock before counting, so two creates cannot both pass', async () => {
+  it('locks on THIS creator, before the count, inside the transaction', async () => {
     await upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR });
 
-    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalled();
-    const [strings] = dbMock.dbWrite.$executeRaw.mock.calls[0] as unknown as [TemplateStringsArray];
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalled();
+    expect(tx.$executeRaw).toHaveBeenCalled();
+
+    const [strings, ...values] = tx.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...number[]
+    ];
     expect(strings.join('')).toContain('pg_advisory_xact_lock');
+    // The key is an interpolation, so joining the strings alone cannot see it — a lock on
+    // a constant would look identical.
+    expect(values).toContain(AUTHOR);
+
+    // Ordering, not mere presence: a lock taken after the count serialises nothing.
+    const lockOrder = tx.$executeRaw.mock.invocationCallOrder[0];
+    const countOrder = tx.announcementSpend.count.mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(countOrder);
+  });
+
+  it('refuses on the transactional re-count even when the earlier read said a slot was free', async () => {
+    // The pre-read is outside the lock and can be stale. Only the in-transaction count can
+    // stop the second of two concurrent creates, so this is the assertion that proves the
+    // re-count is load-bearing rather than decorative.
+    vi.mocked(getAnnouncementAllowance).mockResolvedValueOnce({
+      eligible: true,
+      tier: 'free',
+      score: 50_000,
+      minScore: 10_000,
+      used: 0,
+      limit: 1,
+      windowDays: 30,
+      nextAvailableAt: null,
+    });
+    tx.announcementSpend.count.mockResolvedValue(1);
+
+    await expect(upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR })).rejects.toThrow();
+    expect(tx.announcement.create).not.toHaveBeenCalled();
+  });
+
+  it('charges once when a stale replica read still calls the row profile-only', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue({
+      id: 9,
+      coverId: null,
+      profileOnly: true,
+    } as never);
+    // The writer knows better: this row already flipped and already paid.
+    tx.announcement.findUnique.mockResolvedValue({ profileOnly: false, spends: [{ id: 1 }] });
+
+    await upsertCreatorAnnouncement({ ...validInput, id: 9, profileOnly: false, userId: AUTHOR });
+
+    expect(tx.announcementSpend.create).not.toHaveBeenCalled();
+    expect(tx.announcement.update).toHaveBeenCalled();
   });
 });
 
@@ -413,9 +474,56 @@ describe('an omitted field means leave it alone', () => {
   it('defaults a new announcement to enabled', async () => {
     await upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR });
 
-    const data = (
-      dbMock.dbWrite.announcement.create.mock.calls[0][0] as { data: Record<string, unknown> }
-    ).data;
+    const data = (tx.announcement.create.mock.calls[0][0] as { data: Record<string, unknown> })
+      .data;
     expect(data.disabled).toBe(false);
+  });
+});
+
+describe('branches the fix round added and left uncovered', () => {
+  it('returns nothing to a viewer the author has blocked', async () => {
+    vi.mocked(amIBlockedByUser).mockResolvedValue(true as never);
+
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR, viewerId: 999 });
+
+    expect(rows).toEqual([]);
+    // Not merely filtered afterwards — the query is never issued.
+    expect(dbMock.dbRead.announcement.findMany).not.toHaveBeenCalled();
+  });
+
+  it('does not ask about a block when the author is looking at their own profile', async () => {
+    await getCreatorAnnouncements({ userId: AUTHOR, viewerId: AUTHOR });
+
+    expect(amIBlockedByUser).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.announcement.findMany).toHaveBeenCalled();
+  });
+
+  it('hides disabled and out-of-window rows from a public read', async () => {
+    await getCreatorAnnouncements({ userId: AUTHOR });
+
+    const where = (
+      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as {
+        where: {
+          disabled?: boolean;
+          OR?: { startsAt?: unknown }[];
+          AND?: { OR: { endsAt?: unknown }[] }[];
+        };
+      }
+    ).where;
+
+    // Without these an announcement a moderator disabled, or one scheduled for next week,
+    // renders publicly and nothing goes red.
+    expect(where.disabled).toBe(false);
+    expect(where.OR).toBeDefined();
+    expect(where.AND?.[0].OR).toBeDefined();
+  });
+
+  it('shows the author their own hidden rows when asked', async () => {
+    await getCreatorAnnouncements({ userId: AUTHOR, includeHidden: true });
+
+    const where = (
+      dbMock.dbRead.announcement.findMany.mock.calls[0][0] as { where: { disabled?: boolean } }
+    ).where;
+    expect(where.disabled).toBeUndefined();
   });
 });

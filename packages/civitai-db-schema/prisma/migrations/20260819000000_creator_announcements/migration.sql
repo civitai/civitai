@@ -1,5 +1,9 @@
 -- Creator announcements (CU 868ktjte1).
--- Applied by hand, like every migration here.
+--
+-- Applied by hand, like every migration here. 🔴 Run it with ON_ERROR_STOP:
+--   psql -v ON_ERROR_STOP=1 -f migration.sql
+-- Without it psql continues past a failure, and a timed-out FK or an INVALID index leaves
+-- the app running with the constraint simply absent.
 
 -- ADD CONSTRAINT takes SHARE ROW EXCLUSIVE on the REFERENCED table, which conflicts with
 -- every write to Image and User. Without a timeout one long transaction stalls all of
@@ -57,5 +61,12 @@ ALTER TABLE "AnnouncementSpend"
 -- The allowance counts spends in a rolling window per creator.
 CREATE INDEX "AnnouncementSpend_userId_createdAt_idx"
   ON "AnnouncementSpend"("userId", "createdAt");
+
+-- The FK is ON DELETE SET NULL, so every announcement delete looks for spends pointing at
+-- it. Unique as well as indexed: one announcement can only ever have spent one slot, which
+-- is the constraint that stops a replica-lagged second save charging the same row twice.
+CREATE UNIQUE INDEX "AnnouncementSpend_announcementId_key"
+  ON "AnnouncementSpend"("announcementId")
+  WHERE "announcementId" IS NOT NULL;
 
 RESET lock_timeout;

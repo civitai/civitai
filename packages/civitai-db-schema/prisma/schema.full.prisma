@@ -4111,6 +4111,7 @@ model AnnouncementSpend {
   user           User          @relation("announcementSpends", fields: [userId], references: [id], onDelete: Cascade)
   announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
 
+  @@unique([announcementId])
   @@index([userId, createdAt])
 }
 

@@ -9,8 +9,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.mock('~/server/services/creator-program.service', () => ({
   getCreatorRequirements: vi.fn(),
 }));
+vi.mock('~/server/services/subscriptions.service', () => ({ getCapTier: vi.fn() }));
 
 import { getCreatorRequirements } from '~/server/services/creator-program.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import { getAnnouncementAllowance } from '../announcement-allowance.service';
 
 const USER = 42;
@@ -29,6 +31,7 @@ beforeEach(() => {
   dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null as never);
   dbMock.dbRead.announcementSpend.findMany.mockResolvedValue([] as never);
   vi.mocked(getCreatorRequirements).mockResolvedValue(requirements({}) as never);
+  vi.mocked(getCapTier).mockResolvedValue(null as never);
 });
 
 describe('the score floor', () => {
@@ -67,9 +70,7 @@ describe('the tier caps Justin set', () => {
     ['silver', 'silver', 1, 7],
     ['gold', 'gold', 2, 7],
   ])('%s membership gets %s: %i per %i days', async (membership, tier, limit, windowDays) => {
-    vi.mocked(getCreatorRequirements).mockResolvedValue(
-      requirements({ membership: membership as string }) as never
-    );
+    vi.mocked(getCapTier).mockResolvedValue((membership ?? null) as never);
 
     const allowance = await getAnnouncementAllowance(USER);
 
@@ -79,9 +80,7 @@ describe('the tier caps Justin set', () => {
   });
 
   it('treats an unrecognised membership as free rather than as a tier with no cap', async () => {
-    vi.mocked(getCreatorRequirements).mockResolvedValue(
-      requirements({ membership: 'founder' }) as never
-    );
+    vi.mocked(getCapTier).mockResolvedValue('founder' as never);
 
     const allowance = await getAnnouncementAllowance(USER);
 
@@ -124,9 +123,7 @@ describe('the KeyValue override', () => {
       key: 'announcements:config',
       value: { caps: { free: { days: 3, count: 3 } } },
     } as never);
-    vi.mocked(getCreatorRequirements).mockResolvedValue(
-      requirements({ membership: 'gold' }) as never
-    );
+    vi.mocked(getCapTier).mockResolvedValue('gold' as never);
 
     const allowance = await getAnnouncementAllowance(USER);
 
@@ -164,9 +161,7 @@ describe('spend counting', () => {
   });
 
   it('leaves nextAvailableAt null while a slot is free', async () => {
-    vi.mocked(getCreatorRequirements).mockResolvedValue(
-      requirements({ membership: 'gold' }) as never
-    );
+    vi.mocked(getCapTier).mockResolvedValue('gold' as never);
     dbMock.dbRead.announcementSpend.findMany.mockResolvedValue([
       { createdAt: new Date() },
     ] as never);
@@ -202,5 +197,53 @@ describe('score arrives from a raw ::numeric', () => {
     // NaN would serialise to null over JSON and crash any .toLocaleString() downstream.
     expect(allowance.score).toBe(0);
     expect(allowance.eligible).toBe(false);
+  });
+});
+
+describe('the tier comes from the cap helper, not from the creator-program row', () => {
+  it('ignores a membership getCreatorRequirements reports for an incomplete subscription', async () => {
+    // getCreatorRequirements accepts status IN ('incomplete','active'); getCapTier treats
+    // incomplete as a bad state. Reading the former gave a lapsed payment its paid caps.
+    vi.mocked(getCreatorRequirements).mockResolvedValue(
+      requirements({ membership: 'gold' }) as never
+    );
+    vi.mocked(getCapTier).mockResolvedValue(null as never);
+
+    const allowance = await getAnnouncementAllowance(USER);
+
+    expect(allowance.tier).toBe('free');
+    expect(allowance.limit).toBe(1);
+  });
+});
+
+describe('a malformed config field falls back alone', () => {
+  it('keeps a good minScore when one cap is malformed', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'announcements:config',
+      value: { minScore: 777, caps: { free: { days: 'many', count: 4 } } },
+    } as never);
+    vi.mocked(getCreatorRequirements).mockResolvedValue(requirements({ current: 800 }) as never);
+
+    const allowance = await getAnnouncementAllowance(USER);
+
+    // A single safeParse over the whole row would have discarded the good minScore too,
+    // silently, in the direction of the stricter compiled default.
+    expect(allowance.minScore).toBe(777);
+    expect(allowance.eligible).toBe(true);
+    expect(allowance.limit).toBe(1);
+    expect(allowance.windowDays).toBe(30);
+  });
+
+  it('keeps a good cap when minScore is malformed', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'announcements:config',
+      value: { minScore: 'lots', caps: { free: { days: 5, count: 3 } } },
+    } as never);
+
+    const allowance = await getAnnouncementAllowance(USER);
+
+    expect(allowance.minScore).toBe(10_000);
+    expect(allowance.limit).toBe(3);
+    expect(allowance.windowDays).toBe(5);
   });
 });

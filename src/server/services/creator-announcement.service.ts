@@ -11,6 +11,11 @@ import { amIBlockedByUser } from '~/server/services/user.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
 
+// Two-arg classed form, as free-placement uses: the one-arg form shares an int4 keyspace
+// with `article.service.ts`, which locks on a bare articleId, so a hashed key could collide
+// with an unrelated article's lock.
+const ANNOUNCEMENT_LOCK_CLASS = 0x414e0001;
+
 const creatorAnnouncementSelect = {
   id: true,
   title: true,
@@ -165,7 +170,9 @@ export async function getFollowedAnnouncements({
         // followed it, so the follow edge alone is not consent to keep appearing.
         engagingUsers: { none: { targetUserId: userId, type: UserEngagementType.Block } },
         // Both conditions are on engagedUsers, so they go in AND rather than as two keys
-        // of the same object — a repeated key silently drops the first.
+        // of the same object. A repeated key here is TS1117 and would not compile; the
+        // hazard is the sibling `where`, where a spread between two keys makes the same
+        // mistake legal and silent.
         AND: [
           { engagedUsers: { some: { userId, type: UserEngagementType.Follow } } },
           {
@@ -294,7 +301,24 @@ export async function upsertCreatorAnnouncement({
   return dbWrite.$transaction(async (tx) => {
     // Serialises this creator's spend checks against each other. Without it the check is
     // read-then-write and two concurrent creates both see the same free slot.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`announcement-allowance:${userId}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ANNOUNCEMENT_LOCK_CLASS}::int, ${userId}::int)`;
+
+    // Re-read the row on the WRITER inside the lock. `existing` came from dbRead, and
+    // within replica lag it still says profileOnly, so a second save would compute
+    // wasNotifying=false and charge the same announcement twice.
+    const current = existing
+      ? await tx.announcement.findUnique({
+          where: { id: existing.id },
+          select: { profileOnly: true, spends: { select: { id: true }, take: 1 } },
+        })
+      : null;
+    if (current && (!current.profileOnly || current.spends.length > 0)) {
+      return tx.announcement.update({
+        where: { id: existing!.id },
+        data,
+        select: creatorAnnouncementSelect,
+      });
+    }
 
     const windowStart = new Date(Date.now() - allowance.windowDays * 24 * 60 * 60 * 1000);
     const spent = await tx.announcementSpend.count({
@@ -313,7 +337,10 @@ export async function upsertCreatorAnnouncement({
     const announcement = existing
       ? await tx.announcement.update({
           where: { id: existing.id },
-          data,
+          // A row crossing into notifying starts its life now. The fan-out selects on
+          // COALESCE(startsAt, createdAt) inside a 30-minute floor, so a draft written
+          // an hour ago would be charged a slot and then picked up by nobody.
+          data: { ...data, startsAt: data.startsAt ?? new Date() },
           select: creatorAnnouncementSelect,
         })
       : await tx.announcement.create({

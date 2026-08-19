@@ -72,13 +72,22 @@ describe('creator announcement fan-out', () => {
 });
 
 describe('blocks are honoured, as in every other follow-derived fan-out', () => {
-  it('excludes a recipient on either side of a block', () => {
+  it('ties each direction to its own type list, not merely to being present', () => {
     const sql = query();
 
-    // Both directions in one clause — the helper's shape, which is also what keeps it
-    // to two primary-key lookups rather than a secondary-index scan per candidate.
-    expect(sql).toContain("blk.type IN ('Block', 'Hide')");
-    expect(sql).toMatch(/blk\."userId" = ue\."userId" AND blk\."targetUserId" = la\.author_id/);
-    expect(sql).toMatch(/blk\."userId" = la\.author_id AND blk\."targetUserId" = ue\."userId"/);
+    // 🔴 The asymmetry IS the semantics. Swapping the two arguments to notBlockedBetween
+    // leaves both direction pairs present and 'Block','Hide' still somewhere in the
+    // string, so assertions that check only for presence pass for the inverted clause.
+    // Each direction is pinned to its own type list here.
+    //
+    // The recipient blocking OR hiding the creator stops it.
+    expect(sql).toMatch(
+      /blk\."userId" = ue\."userId" AND blk\."targetUserId" = la\.author_id AND blk\.type IN \('Block', 'Hide'\)/
+    );
+    // The creator's side stops it only on a Block — hiding a follower is not a request to
+    // stop being announced to.
+    expect(sql).toMatch(
+      /blk\."userId" = la\.author_id AND blk\."targetUserId" = ue\."userId" AND blk\.type = 'Block'/
+    );
   });
 });

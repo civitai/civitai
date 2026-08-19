@@ -3,8 +3,8 @@
 --
 -- Counts at the time of writing (prod), for the runbook's before/after check:
 -- 26,403 rows inserted by the first statement (non-empty "message", live user; 27,776
--- non-empty overall, 1,373 of them on deleted users), and 28 by the second (non-NULL
--- "sfwMessage": 5 with text, 23 empty-string).
+-- non-empty overall, 1,373 of them on deleted users), and 5 by the second (28 rows hold a
+-- non-NULL "sfwMessage", but 23 of those are empty strings and are not inserted).
 --
 -- Nothing here notifies anyone: profileOnly rows are excluded from the feed and from the
 -- notification fan-out by construction, and no spend is recorded for them.
@@ -60,7 +60,12 @@ SELECT
   now()
 FROM "UserProfile" p
 JOIN "User" u ON u.id = p."userId"
+-- IS NOT NULL decides the DOMAIN SPLIT above, because that is what the live rule tests.
+-- It must NOT decide whether a row is inserted: 23 profiles hold an empty-string
+-- sfwMessage, and inserting those produces an announcement with no content — an empty
+-- bordered card where green shows nothing today.
 WHERE p."sfwMessage" IS NOT NULL
+  AND p."sfwMessage" <> ''
   AND u."deletedAt" IS NULL;
 
 -- The columns are NOT dropped here. They stay until the carousel has been observed
