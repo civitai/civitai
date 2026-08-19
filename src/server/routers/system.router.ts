@@ -41,7 +41,13 @@ export const systemRouter = router({
   getBenignPhrases: publicProcedure
     .meta({ requiredScope: TokenScope.Full })
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
-    .query(() => getClientBenignLists()),
+    .query(async ({ ctx }) => {
+      const lists = await getClientBenignLists();
+      // A fail-open result is a 200 the edge would otherwise hold for an hour. Zero the TTL
+      // so the next request retries instead of pinning empty whitelists site-wide.
+      if (!lists.available && ctx.cache) ctx.cache.skip = true;
+      return lists;
+    }),
   getDbKV: publicProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(z.object({ key: z.enum(PUBLIC_DB_KV_KEYS) }))

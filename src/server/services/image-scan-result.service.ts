@@ -747,7 +747,10 @@ async function processTags({
     // path; `getTagsFromIncomingTags` in the webhook is the legacy twin of this function
     // and needs the same treatment.
     const realPersonName = includesPoi(
-      await stripBenignPhrases(prompt, BlocklistType.PromptBenignPhrase)
+      // Normalized first, as both audit paths do. Stripping the raw text while the audit that
+      // runs next reads the normalized copy means two different alphabets decide what counts
+      // as whitelisted for the same prompt.
+      await stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase)
     );
     if (realPersonName) {
       const tagName =

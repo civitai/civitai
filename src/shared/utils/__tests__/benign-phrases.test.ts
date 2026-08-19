@@ -27,6 +27,21 @@ describe('benign phrases reach the client-side search gates', () => {
     expect(strip('stonemason', ['stone'])).toBe('stonemason');
   });
 
+  // The separator bound is what stops a whitelist entry eating text between its own words.
+  // Unbounded, "emma stone" would match across an arbitrarily long run and blank whatever
+  // sat inside it — including text the next detector still needed to read.
+  it('does not match across a long run of junk between the words of a phrase', () => {
+    const long = 'emma' + '!'.repeat(40) + 'stone';
+    expect(includesPoi(strip(long, ['emma stone']))).toBe(false);
+    expect(strip(long, ['emma stone'])).toBe(long);
+  });
+
+  it('still matches the ordinary separators a moderator would expect', () => {
+    for (const text of ['emma stone', 'emma  stone', 'emma-stone', 'emma. stone']) {
+      expect(strip(text, ['emma stone']).trim(), text).toBe('');
+    }
+  });
+
   it('returns null for an empty list so callers can skip the replace', () => {
     expect(buildBenignPhraseRegex([])).toBeNull();
     expect(buildBenignPhraseRegex(['   '])).toBeNull();
@@ -58,9 +73,17 @@ describe('moderator benign words reach the profanity filter', () => {
     expect(filter.analyze('cockpit').isProfane).toBe(true);
   });
 
-  it('falls back to the static list when the moderator list is empty', () => {
-    const filter = createProfanityFilter({ moderatorWhitelist: [] });
+  it('falls back to the static list when there is NO moderator row', () => {
+    const filter = createProfanityFilter({ moderatorWhitelist: null });
     expect(filter.analyze('cockpit').isProfane).toBe(false);
+  });
+
+  // `[]` and `null` are different states and must not collapse: an empty row is a moderator
+  // having deleted every entry, which is the strongest possible "do not whitelist" intent.
+  // Restoring the ~450 shipped words over the top of that would be the opposite of the ask.
+  it('honours an EMPTY moderator row instead of restoring the static list', () => {
+    const filter = createProfanityFilter({ moderatorWhitelist: [] });
+    expect(filter.analyze('cockpit').isProfane).toBe(true);
   });
 
   it('whitelisting one word does not disarm the filter for the token itself', () => {

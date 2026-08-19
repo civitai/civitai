@@ -1,12 +1,10 @@
 -- One Blocklist row per type.
 --
--- 🔴 ORDERING: this FAILS while any type still has more than one row. Production had two
--- `EmailDomain` rows (8292 entries and 3, with all 3 of the smaller row's domains absent
--- from the larger). They were merged and the duplicate deleted on 2026-08-19, verified by
--- read-back: one row, 8295 entries, 8295 distinct, and the application path confirmed
--- reading it after the `system:blocklist:EmailDomain` cache key was purged. Run this only
--- against an environment where that merge has happened; on a fresh environment seeded from
--- the migrations there is nothing to merge and it applies cleanly.
+-- 🔴 ORDERING: this FAILS while any type still has more than one row. One type had a
+-- duplicate row in production; the rows were merged and the duplicate removed on 2026-08-19
+-- before this migration was written. Run this only against an environment where that merge
+-- has happened; on a fresh environment seeded from the migrations there is nothing to merge
+-- and it applies cleanly.
 --
 -- Why it matters rather than being tidiness: the read picks one row and the Redis cache is
 -- keyed by type alone, so a second row's entries are silently unenforced and which row wins

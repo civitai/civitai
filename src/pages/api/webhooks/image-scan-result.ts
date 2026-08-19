@@ -636,7 +636,10 @@ async function getTagsFromIncomingTags({
     // path strips (`auditImageScanResults`) — without this a whitelisted proper noun
     // is still written as a confidence-100 tag, which reaches the search index.
     const realPersonName = includesPoi(
-      await stripBenignPhrases(prompt, BlocklistType.PromptBenignPhrase)
+      // Normalized first, as both audit paths do. Stripping the raw text while the audit that
+      // runs next reads the normalized copy means two different alphabets decide what counts
+      // as whitelisted for the same prompt.
+      await stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase)
     );
     if (realPersonName) {
       const tagName =

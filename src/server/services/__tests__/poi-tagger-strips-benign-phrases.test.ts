@@ -33,7 +33,11 @@ function readSource(rel: string) {
   const source = readFileSync(path.join(REPO_ROOT, rel), 'utf8');
   // Fail closed: an empty or moved file must not read as "no offending call sites".
   expect(source.length, `${rel} is empty or unreadable`).toBeGreaterThan(1000);
-  return source;
+  // Comments are stripped before scanning. They sit between the call and its argument, so a
+  // few explanatory lines would otherwise push the real code out of the inspection window and
+  // fail a call that is perfectly correct — and widening the window to compensate is what
+  // would let it start seeing UNRELATED code further down and pass something unsafe.
+  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\r\n]*/g, ' ');
 }
 
 describe('POI taggers read the benign-stripped prompt', () => {

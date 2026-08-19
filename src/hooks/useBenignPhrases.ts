@@ -9,8 +9,12 @@ import { trpc } from '~/utils/trpc';
  * indefinitely per session, so a moderator edit reaches a search box within the hour.
  */
 export function useBenignPhrases() {
-  const { data, isSuccess } = trpc.system.getBenignPhrases.useQuery(undefined, {
-    staleTime: Infinity,
+  // Finite staleTime, deliberately. The reason a moderator DELETES a benign phrase is that it
+  // stripped too much — under `staleTime: Infinity` that deletion never reaches an open tab,
+  // so a revocation had no propagation bound at all while an addition was capped at the
+  // edge's hour.
+  const { data, isFetched } = trpc.system.getBenignPhrases.useQuery(undefined, {
+    staleTime: 60 * 60 * 1000,
     gcTime: Infinity,
   });
 
@@ -21,16 +25,20 @@ export function useBenignPhrases() {
     () => ({
       profanityWords: profanityWords ?? [],
       /**
-       * False until the lists arrive, during which `strip` is the identity function and the
-       * gates therefore judge the RAW query. That direction is safe — they flag more, not
-       * less — but a caller with a side effect (a tracking event, a report) should wait,
-       * because firing one for a phrase a moderator has whitelisted is the thing this exists
-       * to stop.
+       * Whether the fetch has SETTLED — not whether it succeeded. Until it settles, `strip` is
+       * the identity function and the gates judge the RAW query; that direction is safe (they
+       * flag more, not less), but a caller with a side effect — a tracking event, a report —
+       * should wait, since firing one for a phrase a moderator whitelisted is the thing this
+       * exists to stop.
+       *
+       * On `isSuccess` this would stay false forever after a failed fetch, silently
+       * suppressing that side effect for the life of the session. A failed fetch means there
+       * IS no whitelist, which is exactly when there is no reason to withhold.
        */
-      loaded: isSuccess,
+      settled: isFetched,
       /** Blank whitelisted phrases before a detection check — never for display or query. */
       strip: (text: string | undefined) => stripBenignPhrasesWith(text, promptPattern),
     }),
-    [promptPattern, profanityWords, isSuccess]
+    [promptPattern, profanityWords, isFetched]
   );
 }

@@ -34,17 +34,19 @@ export interface ProfanityFilterOptions {
   /** How to replace profane words */
   replacementStyle: 'asterisk' | 'grawlix' | 'remove';
   /**
-   * The moderator-managed benign words (`BlocklistType.ProfanityBenignWord`). When non-empty
-   * it REPLACES the static `whitelist-words.json` rather than adding to it, so a moderator
-   * can remove an entry and have that take effect — a union would make the Remove control in
-   * the blocklist UI a silent no-op for every word the static list also carries, which is all
-   * of them, since the seed migration copies it verbatim.
+   * The moderator-managed benign words (`BlocklistType.ProfanityBenignWord`). It REPLACES the
+   * static `whitelist-words.json` rather than adding to it, so a moderator can remove an
+   * entry and have that take effect — a union would make the Remove control in the blocklist
+   * UI a silent no-op for every word the static list also carries, which is all of them,
+   * since the seed migration copies it verbatim.
    *
-   * Empty falls back to the static list, so an unapplied migration or an unreachable DB
-   * degrades to today's behaviour rather than to no whitelist at all (which would reinstate
-   * exactly the false positives this exists to stop).
+   * `null` means there is no moderator row (not migrated, or unreachable) and falls back to
+   * the static list, so that case degrades to today's behaviour rather than to no whitelist.
+   * An EMPTY ARRAY is different and is honoured as-is: it means a moderator deleted every
+   * entry, which is the strongest possible "do not whitelist" intent, and quietly restoring
+   * ~450 shipped words over the top of it would be the opposite of what they asked for.
    */
-  moderatorWhitelist: string[];
+  moderatorWhitelist: string[] | null;
 }
 
 export interface ProfanityThresholdConfig {
@@ -124,13 +126,11 @@ export class SimpleProfanityFilter {
   constructor(options: Partial<ProfanityFilterOptions> = {}) {
     this.options = {
       replacementStyle: 'asterisk',
-      moderatorWhitelist: [],
+      moderatorWhitelist: null,
       ...options,
     };
 
-    const whitelist = this.options.moderatorWhitelist.length
-      ? this.options.moderatorWhitelist
-      : whitelistWords;
+    const whitelist = this.options.moderatorWhitelist ?? whitelistWords;
 
     // Cache NSFW words once during construction
     this.nsfwWords = getCachedNsfwWords();
@@ -142,8 +142,15 @@ export class SimpleProfanityFilter {
     // Initialize whitelist mappings
     this.whitelistMappings = createWhitelistMappings(this.nsfwWords.originalWords, whitelist);
 
-    // Initialize whitelist Set for O(1) lookup during analysis
-    this.whitelistSet = new Set(whitelist.map((word) => word.toLowerCase()));
+    // Initialize whitelist Set for O(1) lookup during analysis. An entry equal to a profane
+    // word itself is dropped: `createWhitelistMappings` already refuses that case, but this
+    // set is what `analyze()` filters against, so without the same guard a single-token entry
+    // would disarm the filter for that exact word. Harmless while the list was a checked-in
+    // JSON file; this is the change that turns it into a text box.
+    const profaneWords = new Set(this.nsfwWords.originalWords.map((word) => word.toLowerCase()));
+    this.whitelistSet = new Set(
+      whitelist.map((word) => word.toLowerCase()).filter((word) => !profaneWords.has(word))
+    );
 
     this.initializeMatcher();
     this.initializeCensor();
@@ -481,8 +488,12 @@ export function createProfanityFilter(
 // loosens from `staleTime: Infinity` and moderator edits start producing new keys.
 const MAX_CACHED_FILTERS = 2;
 const filtersByWhitelist = new Map<string, SimpleProfanityFilter>();
-export function getProfanityFilter(moderatorWhitelist: string[] = []): SimpleProfanityFilter {
-  const key = moderatorWhitelist.join(',');
+export function getProfanityFilter(
+  moderatorWhitelist: string[] | null = null
+): SimpleProfanityFilter {
+  // `null` (no row) and `[]` (emptied by a moderator) mean different things, so they must not
+  // collide on the same cache key.
+  const key = moderatorWhitelist === null ? 'no-moderator-row' : `list:${moderatorWhitelist}`;
   let filter = filtersByWhitelist.get(key);
   if (!filter) {
     filter = createProfanityFilter({ moderatorWhitelist });

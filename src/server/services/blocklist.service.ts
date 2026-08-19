@@ -190,25 +190,38 @@ export async function stripBenignPhrases(text = '', type: BlocklistType) {
  * Public and edge-cached; these are phrases moderators have declared SAFE, so the list
  * says nothing about what we block.
  */
-export async function getClientBenignLists() {
+export type ClientBenignLists = {
+  prompt: string[];
+  /** `null` means "no moderator row", which is NOT the same as an empty one — see the filter. */
+  profanityWords: string[] | null;
+  /** False when the lists could not be read. The caller MUST NOT let the edge cache this. */
+  available: boolean;
+};
+
+export async function getClientBenignLists(): Promise<ClientBenignLists> {
   try {
-    const [prompt, profanityWords] = await Promise.all([
+    const [prompt, profanityRow] = await Promise.all([
       getBlocklistData(BlocklistType.PromptBenignPhrase),
-      getBlocklistData(BlocklistType.ProfanityBenignWord),
+      getBlocklistDTO({ type: BlocklistType.ProfanityBenignWord }),
     ]);
-    return { prompt, profanityWords };
+    // A row that EXISTS but is empty is a moderator having deleted every entry — the
+    // strongest possible "do not whitelist" intent. Only a MISSING row means "not migrated",
+    // which is the case that falls back to the list shipped in the bundle.
+    const profanityWords = profanityRow.id == null ? null : profanityRow.data;
+    return { prompt, profanityWords, available: true };
   } catch (error) {
-    // Fails OPEN to empty lists, and empty is the safe direction here: no whitelist means
-    // nothing is stripped, so the gates flag more rather than less. Unlike its neighbours in
-    // `system-cache` this read has no deadline wrapper, so a Redis or DB stall would
-    // otherwise reject into a 500 on an unauthenticated endpoint that every search box calls.
+    // Fails OPEN, and empty is the safe direction: nothing is stripped, so the gates flag
+    // more rather than less. `available: false` exists because the caller must then skip the
+    // edge cache — a 200 carrying empty lists would otherwise be held for an hour, and every
+    // session started in that window pins it for its whole life, reinstating globally the
+    // false positives this work removes. The throw it replaced was never cached.
     logToAxiom({
       name: 'benign-lists-unavailable',
       type: 'warning',
       message: 'Serving empty benign lists to the client; search gates will not strip',
       details: { error: error instanceof Error ? error.message : String(error) },
     }).catch(() => undefined);
-    return { prompt: [] as string[], profanityWords: [] as string[] };
+    return { prompt: [], profanityWords: null, available: false };
   }
 }
 // #endregion

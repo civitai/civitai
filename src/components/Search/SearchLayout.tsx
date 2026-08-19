@@ -172,7 +172,7 @@ export function SearchLayout({
     // function, so a moderator-whitelisted query still reads as illegal here — and firing a
     // CSAM tracking event for it is exactly the false positive this work exists to remove.
     // The gate itself still applies while loading; only the side effect waits.
-    if (!benignPhrases.loaded) return;
+    if (!benignPhrases.settled) return;
 
     const { sortBy: index } = parsedQuery || {};
     trackAction({
@@ -182,7 +182,7 @@ export function SearchLayout({
         index,
       },
     }).catch(() => undefined);
-  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy, benignPhrases.loaded]);
+  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy, benignPhrases.settled]);
 
   // Check profanity in search query
   const profanityAnalysis = useCheckProfanity(searchQuery, {
