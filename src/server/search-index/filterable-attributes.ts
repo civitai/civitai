@@ -66,7 +66,6 @@ export const modelsFilterableAttributes = [
   'versions.baseModel',
   'versions.hashes',
   'versions.id',
-  'availability',
   'cannotPromote',
   'poi',
   'minor',

@@ -37,6 +37,20 @@ describe('BROWSING_LEVEL_ATTRIBUTE', () => {
   });
 });
 
+describe('filterableAttributesByIndex', () => {
+  // Meilisearch dedupes on write, so a repeated entry leaves onIndexSetup's
+  // declared-vs-stored check unsatisfiable — it re-sends the settings on every run and
+  // the stored value can never match what it is compared against.
+  it.each(Object.entries(filterableAttributesByIndex))(
+    '%s declares each attribute once',
+    (indexName, attributes) => {
+      const duplicates = attributes.filter((a, i) => attributes.indexOf(a) !== i);
+
+      expect(duplicates, `${indexName} repeats ${duplicates.join(', ')}`).toEqual([]);
+    }
+  );
+});
+
 describe('an index with no browsing-level attribute', () => {
   it('contributes no clause, so nothing unfilterable reaches Meilisearch', () => {
     expect(buildBrowsingLevelClause(BROWSING_LEVEL_ATTRIBUTE.tools, 5)).toBeNull();
