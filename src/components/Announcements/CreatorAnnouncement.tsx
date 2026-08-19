@@ -44,7 +44,7 @@ export function CreatorAnnouncement({
       {...props}
     >
       {cover && (
-        <div className="relative min-h-40 w-40 shrink-0 @max-md:hidden">
+        <div className="relative min-h-40 w-40 shrink-0 @max-xs:hidden">
           <ImageGuard2 image={{ ...cover, nsfwLevel: announcement.nsfwLevel ?? cover.nsfwLevel }}>
             {(safe) =>
               !safe ? (

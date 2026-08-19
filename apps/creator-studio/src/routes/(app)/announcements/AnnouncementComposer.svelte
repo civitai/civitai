@@ -63,6 +63,30 @@
   let startsLocal = $state(toLocalInput(seed?.startsAt));
   let endsLocal = $state(toLocalInput(seed?.endsAt));
   let linkUrl = $state(seed?.link ?? '');
+
+  // Shows the creator the adaptation the server performs on save: a link to one of our own
+  // domains is stored as a path so it opens on whichever site the reader is on. This is the
+  // visible half only — `toDomainRelativeLink` on the server is what actually decides, and
+  // it reads the real host list from server env, which the browser has no business knowing.
+  const OWN_HOSTS = ['civitai.com', 'civitai.red', 'civitaired.com'];
+
+  function truncateOwnDomain() {
+    const value = linkUrl.trim();
+    if (!value) return;
+
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return; // already a path
+    }
+
+    const host = url.host.toLowerCase();
+    const ours = OWN_HOSTS.includes(host) || host === window.location.host.toLowerCase();
+    if (!ours) return;
+
+    linkUrl = `${url.pathname}${url.search}${url.hash}` || '/';
+  }
   let linkText = $state(seed?.linkText ?? '');
   let cover = $state<CoverUpload | null>(null);
   let submitting = $state(false);
@@ -204,11 +228,9 @@
           id="announcement-link"
           name="linkUrl"
           bind:value={linkUrl}
+          onblur={truncateOwnDomain}
           placeholder="/models/123 or https://…"
         />
-        <span class="text-xs text-dark-2">
-          A path like <code>/models/123</code> opens on whichever site the reader is on.
-        </span>
       </div>
       <div class="flex flex-col gap-1.5">
         <Label for="announcement-link-text">Button text</Label>

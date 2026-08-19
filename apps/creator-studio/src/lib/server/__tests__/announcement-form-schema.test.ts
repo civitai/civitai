@@ -198,11 +198,15 @@ describe('domain chips', () => {
   // SERVER_DOMAIN_RED is also civitai.red and getRequestDomainColor takes the first match of
   // ['green','blue','red'], so a row written as `red` is valid, saves, and is then invisible.
   it('cannot express `red`, which no request resolves to', () => {
-    expect(DOMAIN_CHIPS.some((c) => c.color === 'red')).toBe(false);
+    // Widened to string on purpose: the chip type no longer INCLUDES 'red', so comparing
+    // against it is a type error rather than a false assertion. That the type excludes it is
+    // the stronger guarantee; this keeps the runtime check honest without pretending the
+    // comparison is possible.
+    expect(DOMAIN_CHIPS.some((c) => (c.color as string) === 'red')).toBe(false);
   });
 
   it('offers no everywhere chip, since both chips already are everywhere', () => {
     expect(DOMAIN_CHIPS).toHaveLength(2);
-    expect(DOMAIN_CHIPS.some((c) => c.color === 'all')).toBe(false);
+    expect(DOMAIN_CHIPS.some((c) => (c.color as string) === 'all')).toBe(false);
   });
 });
