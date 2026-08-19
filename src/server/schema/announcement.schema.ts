@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { DomainColor } from '~/shared/utils/prisma/enums';
+import { imageSchema } from '~/server/schema/image.schema';
 
 export const domainColorEnum = z.enum(DomainColor);
 
@@ -72,4 +73,42 @@ export const getAnnouncementsPagedSchema = paginationSchema.extend({
 export type GetCurrentAnnouncementsSchema = z.infer<typeof getCurrentAnnouncementsSchema>;
 export const getCurrentAnnouncementsSchema = z.object({
   domain: domainColorEnum.optional(),
+});
+
+/**
+ * A creator's own announcement.
+ *
+ * 🔴 This schema is the boundary that keeps a creator off the sitewide surfaces, and it
+ * does it by omission: there is no `metadata.type` here, so `site` / `generator` /
+ * `training` are not expressible on this path at all — not rejected by a check someone can
+ * later loosen. `targetUserIds` and `notifyTargetedUsers` are absent for the same reason;
+ * a creator's audience is their followers, resolved at send time, never a supplied list.
+ *
+ * `domain` IS creator-settable: DomainColor selects an audience, it does not widen reach.
+ */
+export const upsertCreatorAnnouncementSchema = z.object({
+  id: z.number().optional(),
+  title: z.string().trim().min(1).max(120),
+  content: z.string().trim().min(1).max(5000),
+  emoji: z.string().max(8).optional(),
+  color: z.string().max(32).optional(),
+  domain: z.array(domainColorEnum).nonempty().default([DomainColor.all]),
+  startsAt: z.date().nullish(),
+  endsAt: z.date().nullish(),
+  disabled: z.boolean().optional(),
+  /** Shows on the author's profile only: no feed, no notification, no allowance spent. */
+  profileOnly: z.boolean().default(false),
+  coverImage: imageSchema.optional(),
+  action: z
+    .object({
+      link: z.string().url(),
+      linkText: z.string().trim().min(1).max(40),
+    })
+    .optional(),
+});
+export type UpsertCreatorAnnouncementSchema = z.infer<typeof upsertCreatorAnnouncementSchema>;
+
+export const getCreatorAnnouncementsSchema = z.object({
+  userId: z.number(),
+  limit: z.number().min(1).max(50).default(10),
 });

@@ -142,8 +142,13 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
   const { limit = DEFAULT_PAGE_SIZE, page } = data ?? {};
   const { take, skip } = getPagination(limit, page);
 
+  // The moderator list is the sitewide tool; creator-authored rows are not its
+  // subject and would swamp it. Moderating those needs its own surface.
+  const where: Prisma.AnnouncementWhereInput = { userId: null };
+
   const [items, count] = await dbRead.$transaction([
     dbRead.announcement.findMany({
+      where,
       skip,
       take,
       select: {
@@ -162,7 +167,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
       },
       orderBy: { startsAt: { sort: 'desc', nulls: 'last' } },
     }),
-    dbRead.announcement.count(),
+    dbRead.announcement.count({ where }),
   ]);
 
   return getPagingData(
@@ -336,6 +341,9 @@ async function getAnnouncements(domain?: DomainColor) {
     where: {
       ...activeAnnouncementWhere(now),
       domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
+      // Platform announcements only. This cache is global per domain, so an
+      // authored row reaching it would show one creator's post to everyone.
+      userId: null,
     },
     select: {
       createdAt: true,
