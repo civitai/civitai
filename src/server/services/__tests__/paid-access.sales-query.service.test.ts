@@ -105,9 +105,7 @@ describe('getSalesFor — which sales reach which version', () => {
   });
 
   it('asks for no sales on a ComicChapter gate', async () => {
-    paidAccessFindMany.mockResolvedValue([
-      { ...PERMANENT, terms: { access: { price: 10 } } },
-    ]);
+    paidAccessFindMany.mockResolvedValue([{ ...PERMANENT, terms: { access: { price: 10 } } }]);
 
     await getPaidAccess('ComicChapter', [1]);
 
