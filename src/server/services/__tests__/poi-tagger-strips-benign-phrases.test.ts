@@ -66,10 +66,11 @@ function readSource(rel: string) {
   const source = readFileSync(path.join(REPO_ROOT, rel), 'utf8');
   // Fail closed: an empty or moved file must not read as "no offending call sites".
   expect(source.length, `${rel} is empty or unreadable`).toBeGreaterThan(1000);
-  // Comments are stripped before scanning. They sit between the call and its argument, so a
-  // few explanatory lines would otherwise push the real code out of the inspection window and
-  // fail a call that is perfectly correct — and widening the window to compensate is what
-  // would let it start seeing UNRELATED code further down and pass something unsafe.
+  // Comments are stripped before scanning, and the reason is NOT the one this used to give:
+  // the fixed inspection window that comments could push code out of is gone, replaced by
+  // paren-balancing. The reason now is the scope check — a comment MENTIONING
+  // `stripBenignPhrases` anywhere between a function's declaration and the call would
+  // otherwise satisfy `strippedInScope` and pass a call that strips nothing.
   return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\r\n]*/g, ' ');
 }
 

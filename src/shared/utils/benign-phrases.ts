@@ -21,10 +21,12 @@ const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // NOT: `[^a-zA-Z0-9]` excludes only ASCII alphanumerics, so it happily consumes non-ASCII
 // LETTERS. This separator can therefore swallow text that reads as a word.
 //
-// 🔴 What keeps that closed is that callers strip the NORMALIZED copy — `normalizeText` folds
-// accented Latin to ASCII, and those letters then break the separator run themselves. That is
-// load-bearing, not tidiness: move a strip back ahead of `normalizeText` and this reopens.
-// (Non-decomposable scripts stay non-ASCII through normalization; see the private note.)
+// 🔴 What keeps that NARROW — not closed — is that callers strip the NORMALIZED copy:
+// `normalizeText` folds accented Latin to ASCII, and those letters then break the separator
+// run themselves. Load-bearing, not tidiness. Move a strip back ahead of `normalizeText` and
+// every accented spelling of every detection term becomes swallowable, which is a far larger
+// surface than what remains. What remains is scripts NFD cannot fold (CJK, Cyrillic, Greek,
+// …), reproduced against the real lists — private note has the input and the counts.
 //
 // If a bound is ever genuinely wanted, derive it from audit-base.ts rather than restating a
 // number, and pin the two matchers agreeing at the boundary.
