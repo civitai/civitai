@@ -53,6 +53,22 @@ const COMMUNICATION_ERROR_SUBSTRINGS = [
 
 const MEILI_API_ERROR_NAME = 'meilisearchapierror';
 
+// Substrings identifying a Meili 4xx that rejects the QUERY rather than the caller. An auth
+// (401/403), quota (402) or rate-limit (429) answer is a real availability/config incident and
+// must keep the "unavailable" path, so matching on 4xx alone is too broad.
+const QUERY_REJECTION_SUBSTRINGS = [
+  'invalid_search_',
+  'invalid_document_',
+  'not filterable',
+  'not sortable',
+  'filterable attributes',
+  'sortable attributes',
+  'was expecting an operation',
+  'reserved keyword',
+  'is missing the following closing delimiter',
+  'attributes for faceting',
+];
+
 /**
  * Faro exception `type` and console prefix for a Meili-rejected query. One token so
  * a Loki query and a `grep` of a browser console find the same thing.
@@ -88,20 +104,29 @@ export function isMeiliCommunicationError(err: unknown): boolean {
 }
 
 /**
- * True when Meili ANSWERED and rejected the request as malformed — the transport worked,
- * the query did not. `httpStatus` is authoritative when present, so a Meili 5xx stays on
- * the "unavailable" path; the name/message fallbacks exist because the adapter's `.search`
- * rethrows as `new Error(e_1)`, which drops the class, `code` and `httpStatus` and
- * leaves the original name only inside the message.
+ * True when Meili ANSWERED and rejected the QUERY as malformed — the transport worked and the
+ * credentials were fine, the query was not. Deliberately narrower than "any 4xx": a 401/403/429
+ * says something is wrong with the deployment rather than with this filter, so it stays on the
+ * `onError` path and keeps raising the availability banner.
+ *
+ * Requires both a Meili API error marker and a query-rejection shape, because the adapter's
+ * `.search` rethrows as `new Error(e_1)` — dropping the class, `code` and `httpStatus` and leaving
+ * the original name only inside the message. A 5xx is excluded outright when the status survives.
  */
 export function isMeiliApiError(err: unknown): boolean {
   if (!err) return false;
 
   const httpStatus = (err as { httpStatus?: unknown })?.httpStatus;
-  if (typeof httpStatus === 'number') return httpStatus >= 400 && httpStatus < 500;
+  if (typeof httpStatus === 'number' && (httpStatus < 400 || httpStatus >= 500)) return false;
 
-  if (toLowerString((err as { name?: unknown })?.name) === MEILI_API_ERROR_NAME) return true;
-  return toLowerString((err as { message?: unknown })?.message).includes(MEILI_API_ERROR_NAME);
+  const name = toLowerString((err as { name?: unknown })?.name);
+  const message = toLowerString((err as { message?: unknown })?.message);
+  if (name !== MEILI_API_ERROR_NAME && !message.includes(MEILI_API_ERROR_NAME)) return false;
+
+  const code = toLowerString((err as { code?: unknown })?.code);
+  return QUERY_REJECTION_SUBSTRINGS.some(
+    (needle) => code.includes(needle) || message.includes(needle)
+  );
 }
 
 function errorSignature(error: unknown): string {
@@ -188,7 +213,11 @@ export type ResilientSearchClientOptions = {
   retries?: number;
   /** Delay (ms) between the failed attempt and the retry. Default 250. */
   retryDelayMs?: number;
-  /** Invoked once when a search falls back to empty results because Meili was UNREACHABLE. */
+  /**
+   * Invoked once when a search falls back to empty results for anything other than a rejected
+   * query — Meili unreachable, an auth/quota/rate-limit answer, or an error we could not classify.
+   * Not "definitely an outage": unclassifiable failures land here so the fallback stays conservative.
+   */
   onError?: (error: unknown) => void;
   /** Invoked on every successful search — lets callers clear a prior "unavailable" state. */
   onSuccess?: () => void;

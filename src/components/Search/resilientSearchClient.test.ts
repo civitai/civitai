@@ -95,16 +95,25 @@ describe('isMeiliApiError', () => {
     expect(isMeiliApiError(rewrappedApiError)).toBe(true);
   });
 
-  it('matches a bare 4xx httpStatus, and only a 4xx', () => {
-    expect(isMeiliApiError({ httpStatus: 400 })).toBe(true);
-    expect(isMeiliApiError({ httpStatus: 404 })).toBe(true);
-    expect(isMeiliApiError({ httpStatus: 500 })).toBe(false);
+  it('needs a query-rejection shape, not merely a 4xx', () => {
+    expect(isMeiliApiError({ httpStatus: 400 })).toBe(false);
+    expect(isMeiliApiError({ httpStatus: 404 })).toBe(false);
     expect(isMeiliApiError({ httpStatus: '400' })).toBe(false);
   });
 
+  it('leaves auth, quota and rate-limit answers on the availability path', () => {
+    const meiliError = (message: string, httpStatus: number, code: string) =>
+      Object.assign(new Error(message), { name: 'MeiliSearchApiError', code, httpStatus });
+
+    expect(isMeiliApiError(meiliError('The provided API key is invalid.', 401, 'invalid_api_key'))).toBe(false);
+    expect(isMeiliApiError(meiliError('forbidden', 403, 'invalid_api_key'))).toBe(false);
+    expect(isMeiliApiError(meiliError('too many requests', 429, 'too_many_requests'))).toBe(false);
+  });
+
   it('lets a present httpStatus outrank the name — a Meili 5xx is not our bug', () => {
-    const serverError = Object.assign(new Error('internal'), {
+    const serverError = Object.assign(new Error('Attribute `genre` is not filterable.'), {
       name: 'MeiliSearchApiError',
+      code: 'invalid_search_facets',
       httpStatus: 500,
     });
     expect(isMeiliApiError(serverError)).toBe(false);
@@ -232,6 +241,24 @@ describe('createResilientSearchClient — communication error fallback', () => {
     );
     const result = await client.search!([] as any);
     expect(result.results).toEqual([]);
+  });
+
+  it('still raises the banner for an auth 4xx — a bad key is an incident, not a bad filter', async () => {
+    const authError = Object.assign(new Error('The provided API key is invalid.'), {
+      name: 'MeiliSearchApiError',
+      code: 'invalid_api_key',
+      httpStatus: 403,
+    });
+    const onError = vi.fn();
+    const client = createResilientSearchClient(
+      makeClient({ search: vi.fn().mockRejectedValue(authError) }),
+      { onError, retryDelayMs: 0 }
+    );
+
+    const result = await client.search!(twoRequests);
+
+    expect(result.results[0].hits).toEqual([]);
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 });
 
