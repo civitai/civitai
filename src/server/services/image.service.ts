@@ -4623,12 +4623,31 @@ export async function getImagesFromBitdexPreFilter(
     filters.push(_in('userId', newCreatorIds.map(_int)));
   }
 
-  // This builder is a parallel reimplementation of the Meili one and does not
-  // implement hubs. Returning null falls through to Meili, which does — the
-  // alternative is a BitDex-primary user silently getting the global feed while
-  // believing it is their hub. The controller also sets skipBitdex for hubs; this
-  // is the backstop for any caller that does not.
-  if (input.hubId) return null;
+  // Hubs are served here rather than declined, so they ride the BitDex migration
+  // instead of pinning themselves to Meili. Returning null anywhere below means
+  // "cannot serve this" and falls through to Meili — never "no filter", which
+  // would hand the caller the global feed as their hub.
+  if (input.hubId) {
+    const sources = await resolveHubSources({ hubId: input.hubId, userId: currentUserId });
+    if (!sources) return null;
+
+    // Collection membership is not a BitDex field. While collection sources are
+    // switched off this cannot happen; once they are enabled, a hub containing one
+    // has to go to Meili, because filtering on a field BitDex does not know 400s
+    // the whole query rather than just that clause.
+    if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length) return null;
+
+    const hubClauses: FilterClause[] = [];
+    if (sources.userIds.length) hubClauses.push(_in('userId', sources.userIds.map(_int)));
+    if (sources.modelVersionIds.length) {
+      const versionIds = sources.modelVersionIds.map(_int);
+      hubClauses.push(_in('postedToId', versionIds));
+      if (!hideAutoResources) hubClauses.push(_in('modelVersionIds', versionIds));
+      if (!hideManualResources) hubClauses.push(_in('modelVersionIdsManual', versionIds));
+    }
+    if (!hubClauses.length) return null;
+    filters.push(_or(...hubClauses));
+  }
 
   // --- NSFW Browsing Level ---
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;

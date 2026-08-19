@@ -311,18 +311,13 @@ export const getInfiniteImagesHandler = async ({
 
   // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
   // can only run when the index can serve the query.
-  //
-  // Hubs skip BitDex: its clause builder is a parallel reimplementation that does
-  // not implement the hub OR-group, and a missing filter there is not an error —
-  // the user would silently receive the global feed as their hub.
-  const bitdexMode =
-    requiresDbPath || input.hubId
-      ? null
-      : await getFliptVariant(
-          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-          user?.id?.toString() || 'anonymous',
-          buildFliptContext(user)
-        );
+  const bitdexMode = requiresDbPath
+    ? null
+    : await getFliptVariant(
+        FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+        user?.id?.toString() || 'anonymous',
+        buildFliptContext(user)
+      );
   const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
 
   // Use getAllImagesIndex when BitDex is active or the index can serve the query;
