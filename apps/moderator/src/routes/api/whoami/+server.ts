@@ -1,11 +1,11 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { createSessionClient } from '@civitai/auth';
 import {
-  CAPABILITIES,
+  PERMISSIONS,
   applyGrants,
+  resolvePermissions,
   canAccess,
-  canUse,
-  capabilityGrantsSnapshot,
+  permissionGrantsSnapshot,
   grantsSnapshot,
   pageAccessState,
   navForUser,
@@ -38,12 +38,13 @@ export const GET: RequestHandler = WebhookEndpoint(async ({ url }) => {
   const access = Object.fromEntries(
     pageAccessState().paths.map((path) => [path, canAccess(user, path)])
   );
-  // The page verdict and the capability verdict answer different questions, and a moderator who can open
-  // User Lookup but cannot send Buzz looks identical to one who cannot reach the page at all from the
-  // outside — which is the confusion this endpoint exists to settle.
-  const capabilities = Object.fromEntries(
-    Object.entries(CAPABILITIES).map(([name, capability]) => [name, canUse(user, capability)])
-  );
+  // The page verdict and the permission verdict answer different questions, and a moderator who can
+  // open User Lookup but cannot send Buzz looks identical to one who cannot reach the page at all from
+  // the outside — which is the confusion this endpoint exists to settle.
+  //
+  // Resolved for the SUBJECT, not the caller: this endpoint answers "what does user N hold", so reading
+  // `locals.grants` would report the moderator running the diagnostic instead.
+  const permissions = resolvePermissions(user);
 
   return json({
     userId,
@@ -52,9 +53,14 @@ export const GET: RequestHandler = WebhookEndpoint(async ({ url }) => {
       isModerator: user.isModerator === true,
       roles: user.roles ?? null,
     },
-    grants: { inProcess, loaded, effective: grantsSnapshot(), capabilities: capabilityGrantsSnapshot() },
+    grants: {
+      inProcess,
+      loaded,
+      effective: grantsSnapshot(),
+      permissions: permissionGrantsSnapshot(),
+    },
     access,
-    capabilities,
+    permissions,
     nav: navForUser(user).map((link) => link.path ?? link.label),
   });
 });

@@ -2,9 +2,8 @@ import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import {
-  capabilitySubsetEntries,
   isGrantable,
-  isGrantableCapability,
+  isGrantablePermission,
   pageAccessState,
   requireAccess,
 } from '$lib/server/access';
@@ -43,7 +42,7 @@ export const actions: Actions = {
 
     const entries: { path: string; roles: string[] }[] = [];
     for (const [path, roles] of Object.entries(changes)) {
-      if (!isGrantable(path) && !isGrantableCapability(path))
+      if (!isGrantable(path) && !isGrantablePermission(path))
         return fail(400, { error: `${path} is not editable.` });
       // The catalogue is re-read here, so a role deleted between load and save lands on an operator who
       // did nothing wrong. Name it and say the save is intact — "unknown role" reads as a bug in the page.
@@ -55,25 +54,7 @@ export const actions: Actions = {
       entries.push({ path, roles: [...new Set(roles)] });
     }
 
-    // `canUse` requires the page AND everything in `requires`, so a capability granted to a role missing
-    // any of them is inert — and not stably inert: granting the missing page later activates it with no
-    // second decision. Recomputed for EVERY capability, not just the submitted ones, because narrowing a
-    // page has to trim the capabilities under it and a caller naming only the page would leave them
-    // armed for whoever gets that page next. Enforced here rather than only in the tree, because the
-    // tree is not the only thing that writes these rows.
-    const stored = await readPageAccessGrants();
-    const pageEntries = entries.filter((e) => !isGrantableCapability(e.path));
-    const capabilityEntries = capabilitySubsetEntries(entries, stored);
-    const final = [...pageEntries, ...capabilityEntries];
-
-    // A submitted role the rule refused is worth saying out loud: silently storing fewer roles than the
-    // operator ticked, under a plain success, is how they conclude a grant took effect when it did not.
-    const trimmed = entries.filter((submitted) => {
-      const kept = capabilityEntries.find((e) => e.path === submitted.path);
-      return kept && kept.roles.length < submitted.roles.length;
-    }).length;
-
-    await setPageRoles({ entries: final, userId: locals.user.id });
-    return { success: true, count: final.length, trimmed };
+    await setPageRoles({ entries, userId: locals.user.id });
+    return { success: true, count: entries.length };
   },
 };

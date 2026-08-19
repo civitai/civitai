@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
-  import type { ActionResult } from '@sveltejs/kit';
+  import { enhance } from '$app/forms';
+  import { FormState } from '$lib/form-state.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -9,7 +8,6 @@
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { OnboardingStep, hasOnboardingStep } from '$lib/onboarding';
-  import type { FormResult } from './form-result';
   import { PROFILE_FIELDS } from './enforcement-options';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
@@ -26,7 +24,6 @@
     subscription,
     canAct,
     canEditIdentity,
-    form,
     civitaiUrl,
   }: {
     identity: Identity;
@@ -35,34 +32,19 @@
     subscription: Subscription;
     canAct: boolean;
     canEditIdentity: boolean;
-    form: FormResult;
     civitaiUrl: string;
   } = $props();
 
-  // Both forms on this panel: clearing profile text, and the Enable Edits identity form.
-  const error = $derived(
-    form?.scope === 'profile' || form?.scope === 'identity' ? form.error : null
-  );
-
+  // Both forms on this panel: clearing profile text, and the Enable Edits identity form. Local, so
+  // neither shows up in the four other panels that share this page.
   let clearing = $state(false);
-  let submitting = $state(false);
 
-  const afterWrite =
-    () =>
-    async ({ result }: { result: ActionResult }) => {
-      await applyAction(result);
-      if (result.type === 'success') {
-        clearing = false;
-        // The bio comes from `load`, so unlike the client-fetched panels this one does need it back.
-        await invalidateAll();
-      }
-      submitting = false;
-    };
-
-  const onSubmit = () => {
-    submitting = true;
-    return afterWrite();
-  };
+  // `reload` on both: the bio and the identity row come from `load`, so unlike the client-fetched
+  // panels this one does need the page data back after a write.
+  const clearForm = new FormState({
+    reload: true,
+    onSuccess: () => (clearing = false),
+  });
 
   const profileText = $derived(
     [
@@ -148,7 +130,12 @@
   let editUsername = $state('');
   let editEmail = $state('');
   let editName = $state('');
-  let saving = $state(false);
+  // Its own state, not shared with the clear-profile form below: a refusal from one belongs beside the
+  // form that produced it, and this one's was invisible while both shared a slot only the other wrote.
+  const editForm = new FormState({
+    reload: true,
+    onSuccess: () => (editing = false),
+  });
 
   const startEditing = () => {
     editUsername = identity.username ?? '';
@@ -157,16 +144,6 @@
     editing = true;
   };
 
-  const afterSave =
-    () =>
-    async ({ result }: { result: ActionResult }) => {
-      await applyAction(result);
-      if (result.type === 'success') {
-        editing = false;
-        await invalidateAll();
-      }
-      saving = false;
-    };
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -232,10 +209,7 @@
           <form
             method="POST"
             action="?/updateIdentity"
-            use:enhance={() => {
-              saving = true;
-              return afterSave();
-            }}
+            use:enhance={editForm.enhance}
             class="flex flex-wrap items-end gap-2"
           >
             <input type="hidden" name="userId" value={identity.id} />
@@ -251,8 +225,8 @@
               Full name
               <Input name="name" bind:value={editName} class="w-52" />
             </label>
-            <Button type="submit" size="sm" disabled={saving}>
-              {saving ? 'Saving…' : 'Save'}
+            <Button type="submit" size="sm" disabled={editForm.submitting}>
+              {editForm.submitting ? 'Saving…' : 'Save'}
             </Button>
             <Button type="button" size="sm" variant="outline" onclick={() => (editing = false)}>
               Cancel
@@ -262,6 +236,14 @@
             <p class="w-full text-xs text-dark-2">
               Requires the identity-edit permission; the API refuses it otherwise.
             </p>
+            {#if editForm.error}
+              <div
+                class="w-full rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+                role="alert"
+              >
+                {editForm.error}
+              </div>
+            {/if}
           </form>
         {/if}
       </div>
@@ -299,12 +281,12 @@
     </div>
   </dl>
 
-  {#if error}
+  {#if clearForm.error}
     <div
       class="mt-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
       role="alert"
     >
-      {error}
+      {clearForm.error}
     </div>
   {/if}
 
@@ -351,7 +333,7 @@
           Clear profile text
         </button>
       {:else if canAct}
-        <form method="POST" action="?/clearProfileText" use:enhance={onSubmit} class="mt-3">
+        <form method="POST" action="?/clearProfileText" use:enhance={clearForm.enhance} class="mt-3">
           <input type="hidden" name="userId" value={identity.id} />
           <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
             {#each PROFILE_FIELDS as [field, label] (field)}
@@ -360,7 +342,7 @@
                 {label}
               </label>
             {/each}
-            <Button type="submit" size="sm" variant="destructive" disabled={submitting}>Clear</Button>
+            <Button type="submit" size="sm" variant="destructive" disabled={clearForm.submitting}>Clear</Button>
             <Button type="button" size="sm" variant="outline" onclick={() => (clearing = false)}>
               Cancel
             </Button>

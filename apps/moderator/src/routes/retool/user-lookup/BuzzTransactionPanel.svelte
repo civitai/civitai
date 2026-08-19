@@ -5,8 +5,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as DropdownMenu from '@civitai/ui/components/ui/dropdown-menu/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import { writeEnhancer } from '$lib/form-action';
-  import type { FormResult } from './form-result';
+  import { FormState } from '$lib/form-state.svelte';
   import {
     BUZZ_ACTIONS,
     BUZZ_COLORS,
@@ -15,10 +14,7 @@
     BUZZ_SEND_REASONS,
   } from './enforcement-options';
 
-  let { userId, form, onWritten }: { userId: number; form: FormResult; onWritten: () => void } =
-    $props();
-
-  const error = $derived(form?.scope === 'buzz' ? form.error : null);
+  let { userId, onSuccess }: { userId: number; onSuccess: () => void } = $props();
 
   // Retool's BuzzTransferPopulate dropdown — canned amount, colour and reason per label. These exist
   // in no query; they were widget config, and moderators use them daily.
@@ -81,12 +77,10 @@
     if (!(reasons as readonly string[]).includes(reason)) reason = '';
   };
 
-  let submitting = $state(false);
-
   // EVERY field, not just amount and description — `entityId` would otherwise attach the next
-  // adjustment to the previous grant's entity. Goes through the page's enhancer shape so it does NOT
-  // invalidateAll: this panel's data comes from `/api/*`, and a reload re-runs the reaction scan.
-  const onSubmit = writeEnhancer({
+  // adjustment to the previous grant's entity. No `reload`: this panel's data comes from `/api/*`, so
+  // re-running the page load would re-run the reaction scan behind every write.
+  const buzz = new FormState({
     onSuccess: () => {
       action = 'send';
       reason = '';
@@ -95,9 +89,8 @@
       description = '';
       entityType = '';
       entityId = '';
-      onWritten();
+      onSuccess();
     },
-    busy: (v) => (submitting = v),
   });
 </script>
 
@@ -107,16 +100,16 @@
      negative is the fact needed WHILE choosing one. -->
 <div class="space-y-4">
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-    {#if error}
+    {#if buzz.error}
       <div
         class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
         role="alert"
       >
-        {error}
+        {buzz.error}
       </div>
     {/if}
 
-    <form method="POST" action="?/sendBuzz" use:enhance={onSubmit} class="space-y-3">
+    <form method="POST" action="?/sendBuzz" use:enhance={buzz.enhance} class="space-y-3">
       <input type="hidden" name="userId" value={userId} />
 
       <div>
@@ -202,8 +195,8 @@
         </div>
       </div>
 
-      <Button type="submit" class="w-full" disabled={submitting || !reason}>
-        {submitting ? 'Working…' : action === 'deduct' ? 'Deduct Buzz' : 'Send Buzz'}
+      <Button type="submit" class="w-full" disabled={buzz.submitting || !reason}>
+        {buzz.submitting ? 'Working…' : action === 'deduct' ? 'Deduct Buzz' : 'Send Buzz'}
       </Button>
     </form>
   </section>

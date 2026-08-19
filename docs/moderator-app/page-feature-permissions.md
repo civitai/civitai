@@ -28,7 +28,7 @@ remove buzz should be a me only"*, while buzz movement and balance stay visible 
 ## Model
 
 Every capability is declared once in `CAPABILITIES` (`$lib/capabilities.ts`) and stored as an
-`AppPageAccess` row keyed `capability:<id>` — `capability:user.buzz.send`.
+`AppPageAccess` row keyed `grant:<id>` — `grant:user.buzz.send`. (Renamed from `capability:` on 2026-08-18.)
 
 **The declarations are not server-only.** Components need the labels and the refusal wording too; while
 they lived under `$lib/server/` the client re-typed them and drifted — a Bulk Ban banner went on saying
@@ -37,7 +37,7 @@ is pure data over a literal and imports nothing back, so a component can use `de
 without pulling in server code. `$lib/server/access.ts` re-exports it, so gates still read as one API.
 
 **No schema migration.** `AppPageAccess` is already `(app, path) → roles[]`. A route path always starts
-with `/`, so the `capability:` prefix cannot collide with one; capability grants are kept in their own
+with `/`, so the `grant:` prefix cannot collide with one; action grants are kept in their own
 map anyway, and the prefix is the second line of defence rather than the first.
 
 **The id is a stored value, and deliberately contains no path.** The first version keyed rows
@@ -169,7 +169,7 @@ The `/admin` load and save do consult it, so a role retired in the hub stops bei
 the next save.
 
 A filter box narrows it, matching both labels and stored keys — so `buzz` finds the Buzz capabilities
-and `capability:` finds all of them, which is what you have in hand when reading a grant row. Matching
+and `grant:` finds all of them, which is what you have in hand when reading a grant row. Matching
 keeps its ancestors so a hit never appears without the page and section that give it meaning.
 
 **Filtering never changes an answer.** Every checkbox derives its state from the *unfiltered* node:

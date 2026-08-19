@@ -23,6 +23,9 @@ export const load: LayoutServerLoad = ({ locals, url, route }) => {
     user: user ? { id: user.id, username: user.username ?? null, image: user.image ?? null } : null,
     logoutUrl: env.AUTH_JWT_ISSUER ? hubLogoutUrl(env.AUTH_JWT_ISSUER, url.origin) : null,
     nav: navForUser(user),
+    // From the one place they were resolved. Every page reads permissions from here rather than
+    // re-deriving its own booleans.
+    grants: locals.grants,
     // The one place link destinations are decided — every page reads it from here.
     civitaiUrl: civitaiLinkUrl(),
   };

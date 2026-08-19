@@ -1,7 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { CAPABILITIES, canAccess, canUse, denied } from '$lib/server/access';
+import { canAccess, requiresGrant } from '$lib/server/access';
+import { denied } from '$lib/permissions';
 import { parseForm, parseIdList, parseIdListStrict, parseQuery } from '$lib/server/query';
 import { BAN_REASON_CODES, setBanned } from '$lib/server/user-actions.service';
 import { addUserNote } from '$lib/server/moderation-memory.service';
@@ -50,7 +51,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
   // Mass banning is the highest-blast-radius action in the app; Retool restricted this app to some
   // mods and the walkthrough treats widening it as a decision, not a default.
-  const canAct = canUse(locals.user, CAPABILITIES.massBan);
+  const canAct = !!locals.grants['bulk-ban.execute'];
 
   const fromNames = names ? await resolveUsernamesToIds(splitList(names)) : [];
   const userIds = [...new Set([...parseIdList(ids.replace(/[\s\n]+/g, ',')), ...fromNames])];
@@ -117,9 +118,7 @@ export const actions: Actions = {
    * consecutive failures. The cap is the safety property — without it a bad token or a downed endpoint
    * retries every account in the list rather than stopping after the first few.
    */
-  banAll: async ({ request, locals }) => {
-    if (!canUse(locals.user, CAPABILITIES.massBan)) return actionFail(denied(CAPABILITIES.massBan));
-
+  banAll: requiresGrant('bulk-ban.execute', async ({ request, locals }) => {
     const input = parseForm(
       z.object({
         userIds: z.string(),
@@ -182,7 +181,7 @@ export const actions: Actions = {
         ? `${failed.length} could not be banned: ${failed.slice(0, 20).join(', ')}`
         : undefined,
     };
-  },
+  }),
 
   /**
    * Retool's `button2` ("Add Notes"), which triggered `UserNotes` ALONE — it did not ban. Two things

@@ -1,11 +1,10 @@
 import { REDIS_SYS_KEYS, createLruCache, type RedisKeyTemplateSys } from '@civitai/redis';
 import {
   getPageAccessGrants,
-  insertMissingPageAccess,
   setPageAccessRoles,
   type PageAccessGrants,
 } from '@civitai/db-queries/page-access';
-import { APP, missingCapabilityRows } from './access';
+import { APP } from './access';
 import { dbRead, dbWrite } from './db';
 import { getSysRedis } from './redis';
 
@@ -51,71 +50,15 @@ async function readThrough(): Promise<PageAccessGrants> {
   } catch (e) {
     console.error('[page-access] cache read failed, falling back to Postgres', e);
   }
-  // The cheap check runs on the cache hit too. Returning early would leave a freshly deployed capability
-  // unseeded — and therefore admin-only — until the Redis entry expired, which is the whole window the
-  // deploy was supposed to close.
-  if (cached && !missingCapabilityRows(cached).length) return cached;
+  if (cached) return cached;
 
-  // Deliberately NOT seeded from `cached`. The seed narrows each default to the roles holding the pages
-  // it requires, and that row is permanent — nothing revisits it. A stale snapshot (a failed publish
-  // leaves one live for up to the TTL) would freeze a pre-revoke page grant into a capability row.
-  const fresh = await getPageAccessGrants(dbRead, APP);
-  const grants = await seedNewCapabilities(fresh);
-
-  // Skip the write-back when seeding failed and left the map untouched. Re-publishing identical content
-  // renews the TTL, and if a `setPageRoles` publish had already failed, that turns a stale entry into a
-  // permanently refreshed one — removing the expiry that is the last backstop for recovering it.
-  if (grants !== fresh || !cached) {
-    try {
-      await publish(grants);
-    } catch (e) {
-      console.error('[page-access] loaded grants, but caching them failed', e);
-    }
+  const grants = await getPageAccessGrants(dbRead, APP);
+  try {
+    await publish(grants);
+  } catch (e) {
+    console.error('[page-access] loaded grants, but caching them failed', e);
   }
   return grants;
-}
-
-// One seed at a time per process. `memo.fetch` stores the resolved value, not the promise, so concurrent
-// misses do not coalesce — without this, every gated request arriving in the unseeded window issues its
-// own INSERT to the primary, multiplied by pod count during a deploy. Idempotent either way; this keeps
-// a boot-time thundering herd off the write pool.
-let seeding: Promise<PageAccessGrants> | null = null;
-
-/**
- * Writes the declared default for any capability that has no row at all, so shipping a new one does not
- * silently revoke everybody until a human remembers to run SQL against each environment. That failure was
- * invisible — no error, no log, just moderators quietly unable to act — and it recurred once per
- * capability.
- *
- * Only ever INSERTs, and only where nothing is stored. A row that exists is a decision, including one
- * granting nobody, so `/admin` stays the authority from the first save onward. Costs one comparison in
- * the steady state: after a deploy seeds them, nothing is missing and this does no work.
- *
- * Best-effort — a failure leaves the capability admin-only and the next load tries again, which is the
- * same fail-closed state as an unseeded environment. It must not take down the request that triggered it.
- */
-function seedNewCapabilities(grants: PageAccessGrants): Promise<PageAccessGrants> {
-  const missing = missingCapabilityRows(grants);
-  if (!missing.length) return Promise.resolve(grants);
-  seeding ??= (async () => {
-    try {
-      const created = await insertMissingPageAccess(dbWrite, {
-        app: APP,
-        // Nobody performed this; attributing it to a moderator would put a name on a grant they never made.
-        userId: null,
-        entries: missing,
-      });
-      console.info(`[page-access] seeded ${created} newly declared capabilit(ies) with their defaults`);
-      // Read back from the primary: the rows were just written, and the replica may not have them yet.
-      return await getPageAccessGrants(dbWrite, APP);
-    } catch (e) {
-      console.error('[page-access] could not seed newly declared capabilities', e);
-      return grants;
-    } finally {
-      seeding = null;
-    }
-  })();
-  return seeding;
 }
 
 // The admin page edits grants, so it reads Postgres directly rather than the request cache — a stale or

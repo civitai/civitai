@@ -10,11 +10,10 @@
   import type { LayoutData } from './$types';
   import { LINK_CLASS } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import type { FormResult } from './form-result';
   import { fetchSupport } from './user-support';
   import { REWARDS_ELIGIBILITY } from './enforcement-options';
   import { BAN_REASONS } from '$lib/enforcement';
-  import { writeEnhancer } from '$lib/form-action';
+  import { FormState } from '$lib/form-state.svelte';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
 
@@ -23,11 +22,9 @@
     identity,
     canAct,
     canToggleModerator,
-    form,
-  }: { identity: Identity; canAct: boolean; canToggleModerator: boolean; form: FormResult } =
+  }: { identity: Identity; canAct: boolean; canToggleModerator: boolean; } =
     $props();
 
-  const error = $derived(form?.scope === 'account' ? form.error : null);
 
   let version = $state(0);
   let confirming = $state<'ban' | 'unban' | 'purge' | null>(null);
@@ -36,7 +33,6 @@
 
   // One flag for the whole panel: these actions all act on the same account, and none of them is safe to
   // interleave with another.
-  let submitting = $state(false);
 
   const support = $derived(browser ? fetchSupport(identity.id, version) : null);
   const mutesUrl = $derived(userLookupUrl(identity.id, 'mutes'));
@@ -48,7 +44,7 @@
   // already-in-that-state guard is blind for the length of that write: two quick clicks both pass it,
   // both POST, and because the endpoint TOGGLES, the second one unbans. Nothing on screen changes in
   // between, because the success path re-reads the replica.
-  const onSubmit = writeEnhancer({
+  const form = new FormState({
     reload: true,
     onSuccess: () => {
       confirming = null;
@@ -56,19 +52,18 @@
       purgeConfirm = '';
       version += 1;
     },
-    busy: (v) => (submitting = v),
   });
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h3 class="mb-1 text-sm font-semibold text-white">Account actions</h3>
 
-  {#if error}
+  {#if form.error}
     <div
       class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
       role="alert"
     >
-      {error}
+      {form.error}
     </div>
   {/if}
 
@@ -93,7 +88,7 @@
           A <strong>{identity.restrictionType ?? 'generation'}</strong> restriction on this account is
           awaiting a ruling. Unmuting alone leaves it Pending — rule on it here instead.
         </p>
-        <form method="POST" action="?/resolveRestriction" use:enhance={onSubmit} class="grid gap-2">
+        <form method="POST" action="?/resolveRestriction" use:enhance={form.enhance} class="grid gap-2">
           <input type="hidden" name="userRestrictionId" value={identity.restrictionId} />
           <input type="hidden" name="userId" value={identity.id} />
           <Input
@@ -103,7 +98,7 @@
           />
           <div class="flex flex-wrap gap-2">
             <!-- One field, two submits: a submit button contributes a single name/value pair. -->
-            <Button type="submit" name="status" value="Overturned" size="sm" disabled={submitting}>
+            <Button type="submit" name="status" value="Overturned" size="sm" disabled={form.submitting}>
               Overturn — lift it
             </Button>
             <Button
@@ -112,7 +107,7 @@
               value="Upheld"
               size="sm"
               variant="destructive"
-              disabled={submitting}
+              disabled={form.submitting}
             >
               Uphold — keep them muted
             </Button>
@@ -122,27 +117,27 @@
     {/if}
 
     <div class="flex flex-wrap gap-2">
-      <form method="POST" action="?/setMuted" use:enhance={onSubmit}>
+      <form method="POST" action="?/setMuted" use:enhance={form.enhance}>
         <input type="hidden" name="userId" value={identity.id} />
         <input type="hidden" name="muted" value={identity.muted ? 'false' : 'true'} />
-        <Button type="submit" size="sm" disabled={submitting}>
+        <Button type="submit" size="sm" disabled={form.submitting}>
           {identity.muted ? 'Unmute' : 'Mute'}
         </Button>
       </form>
 
-      <form method="POST" action="?/forceLogout" use:enhance={onSubmit}>
+      <form method="POST" action="?/forceLogout" use:enhance={form.enhance}>
         <input type="hidden" name="userId" value={identity.id} />
-        <Button type="submit" size="sm" disabled={submitting}>Force logout</Button>
+        <Button type="submit" size="sm" disabled={form.submitting}>Force logout</Button>
       </form>
 
-      <form method="POST" action="?/resetCaches" use:enhance={onSubmit}>
+      <form method="POST" action="?/resetCaches" use:enhance={form.enhance}>
         <input type="hidden" name="userId" value={identity.id} />
-        <Button type="submit" size="sm" disabled={submitting}>Reset subscription caches</Button>
+        <Button type="submit" size="sm" disabled={form.submitting}>Reset subscription caches</Button>
       </form>
 
-      <form method="POST" action="?/refreshSession" use:enhance={onSubmit}>
+      <form method="POST" action="?/refreshSession" use:enhance={form.enhance}>
         <input type="hidden" name="userId" value={identity.id} />
-        <Button type="submit" size="sm" disabled={submitting}>Refresh session</Button>
+        <Button type="submit" size="sm" disabled={form.submitting}>Refresh session</Button>
       </form>
 
       {#if identity.bannedAt}
@@ -162,7 +157,7 @@
           ? ` — currently ${identity.rewardsEligibility}`
           : ''}
       </h4>
-      <form method="POST" action="?/setRewardsEligibility" use:enhance={onSubmit} class="flex gap-2">
+      <form method="POST" action="?/setRewardsEligibility" use:enhance={form.enhance} class="flex gap-2">
         <input type="hidden" name="userId" value={identity.id} />
         {#each REWARDS_ELIGIBILITY as [value, label] (value)}
           <Button
@@ -171,7 +166,7 @@
             {value}
             size="sm"
             variant={identity.rewardsEligibility === value ? 'default' : 'outline'}
-            disabled={submitting}
+            disabled={form.submitting}
           >
             {label}
           </Button>
@@ -182,14 +177,14 @@
     {#if canToggleModerator}
       <div class="mt-4 border-t border-dark-4 pt-4">
         <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Moderator role</h4>
-        <form method="POST" action="?/toggleModerator" use:enhance={onSubmit} class="flex gap-2">
+        <form method="POST" action="?/toggleModerator" use:enhance={form.enhance} class="flex gap-2">
           <input type="hidden" name="userId" value={identity.id} />
           <input type="hidden" name="isModerator" value={identity.isModerator ? 'false' : 'true'} />
           <Button
             type="submit"
             size="sm"
             variant={identity.isModerator ? 'destructive' : 'default'}
-            disabled={submitting}
+            disabled={form.submitting}
           >
             {identity.isModerator ? 'Deactivate moderator' : 'Activate moderator'}
           </Button>
@@ -198,7 +193,7 @@
     {/if}
 
     {#if confirming === 'purge'}
-      <form method="POST" action="?/purgeContent" use:enhance={onSubmit} class="mt-4">
+      <form method="POST" action="?/purgeContent" use:enhance={form.enhance} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
         <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
           <p class="mb-2 text-sm text-white">
@@ -215,9 +210,10 @@
               type="submit"
               size="sm"
               variant="destructive"
-              disabled={submitting || purgeConfirm !== (identity.username ?? String(identity.id))}
+              disabled={form.submitting ||
+                purgeConfirm !== (identity.username ?? String(identity.id))}
             >
-              {submitting ? 'Working…' : 'Purge all content'}
+              {form.submitting ? 'Working…' : 'Purge all content'}
             </Button>
             <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
               Cancel
@@ -226,7 +222,7 @@
         </div>
       </form>
     {:else if confirming}
-      <form method="POST" action="?/setBanned" use:enhance={onSubmit} class="mt-4">
+      <form method="POST" action="?/setBanned" use:enhance={form.enhance} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
         <input type="hidden" name="ban" value={confirming === 'ban' ? 'true' : 'false'} />
         <div
@@ -272,10 +268,10 @@
             <Button
               type="submit"
               size="sm"
-              disabled={submitting}
+              disabled={form.submitting}
               variant={confirming === 'ban' ? 'destructive' : 'default'}
             >
-              {submitting ? 'Working…' : `Confirm ${confirming}`}
+              {form.submitting ? 'Working…' : `Confirm ${confirming}`}
             </Button>
             <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
               Cancel

@@ -1,4 +1,5 @@
 import type { SessionUser } from '@civitai/auth';
+import type { PermissionSet } from '$lib/permissions';
 
 // See https://svelte.dev/docs/kit/types#app.d.ts
 declare global {
@@ -14,6 +15,14 @@ declare global {
        * `user` is typed non-optional for the session paths that are the overwhelming majority, so a
        * helper reached from a token route must not assume it — check this first.
        */
+      /**
+       * The permissions this user holds, resolved once per request in `hooks.server.ts`.
+       *
+       * Page access is NOT here: it is enforced in the hook before any handler runs, so nothing
+       * downstream re-asks it. Always set — empty on token ingress — so no call site null-checks and
+       * the degenerate case fails closed.
+       */
+      grants: PermissionSet;
       tokenClient?: 'webhook';
     }
     // interface PageData {}

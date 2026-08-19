@@ -45,18 +45,18 @@
   let search = $state('');
   const query = $derived(search.trim().toLowerCase());
 
-  // Matches the label AND the stored key, so "buzz" finds the Buzz capabilities and "/retool" or
-  // "capability:" finds everything under that prefix — the key is what you have in hand when you are
+  // Matches the label AND the stored key, so "buzz" finds the Buzz actions and "/retool" or
+  // "grant:" finds everything under that prefix — the key is what you have in hand when you are
   // reading a grant row or an audit entry and want to know what it is.
   const matches = (node: AccessNode) =>
     node.label.toLowerCase().includes(query) || node.key.toLowerCase().includes(query);
 
   // The filter marks which rows to RENDER; it never rebuilds the tree. Cloning nodes with only their
   // matching children meant every checkbox had to remember to look the real node back up — and the one
-  // place that forgot let a page revoke cascade into capabilities the search was hiding. Here the nodes
+  // place that forgot let a page revoke cascade into actions the search was hiding. Here the nodes
   // are always the real ones, so that class of bug cannot be written.
   //
-  // A node is visible if it matches, an ancestor matches (so a matched page shows all its capabilities),
+  // A node is visible if it matches, an ancestor matches (so a matched group shows all its pages),
   // or a descendant matches (so a hit keeps the rows that give it context).
   function collectVisible(
     nodes: AccessNode[],
@@ -79,6 +79,7 @@
     if (!query) return null;
     const keys = new Set<string>();
     collectVisible(data.tree, false, keys);
+    collectVisible(data.actions, false, keys);
     return keys;
   });
 
@@ -87,14 +88,10 @@
   /** Rows the filter is showing. `null` while unfiltered — everything is visible then. */
   const shown = $derived(visible?.size ?? null);
 
-  // Groups open so the page still reads as the full list at a glance; a page's capabilities stay closed
-  // until asked for, which is the drill-down the tree exists to provide. While searching everything is
+  // Groups open so the page still reads as the full list at a glance. While searching everything is
   // open — a filtered tree whose only hit is collapsed reads as no results at all. The stored value is
   // still what gets toggled, so clearing the filter restores what the operator had open.
   const isOpen = (node: AccessNode) => (query ? true : expanded[node.key] ?? node.kind === 'group');
-
-  const capabilityKeysOf = (node: AccessNode) =>
-    node.children.filter((c) => c.kind === 'capability').map((c) => c.key);
 
   const pagesUnder = (node: AccessNode): AccessNode[] =>
     node.kind === 'page' ? [node] : node.children.flatMap(pagesUnder);
@@ -103,17 +100,10 @@
 
   type TriState = 'on' | 'off' | 'mixed';
 
-  // "Checked means everything under it is checked; a few means mixed" — so a page holding only some of
-  // its actions is mixed, not checked, and that mixedness propagates up to the section.
-  function pageState(node: AccessNode, role: string): TriState {
-    if (!has(node.key, role)) return 'off';
-    const capabilities = capabilityKeysOf(node);
-    if (!capabilities.length) return 'on';
-    return capabilities.every((key) => has(key, role)) ? 'on' : 'mixed';
-  }
+  // A page grants the page and nothing else: actions are their own list, granted separately.
+  const pageState = (node: AccessNode, role: string): TriState => (has(node.key, role) ? 'on' : 'off');
 
-  // A group stores nothing of its own; its box reports the pages under it, each of which already folds
-  // in its own actions via `pageState`.
+  // A group stores nothing of its own; its box reports the pages under it.
   function groupState(node: AccessNode, role: string): TriState {
     const states = pagesUnder(node).map((p) => pageState(p, role));
     // A section with no grantable pages is not "fully granted" — `every` on an empty array says it is.
@@ -135,19 +125,17 @@
     working = next;
   }
 
-  // Revoking cascades into a page's capabilities; granting never does. Granting a page must not hand over
-  // the actions inside it, or one click on "User Lookup" gives a volunteer Buzz send.
-  const pageKeys = (nodes: AccessNode[], on: boolean) =>
-    on ? nodes.map((p) => p.key) : nodes.flatMap((p) => [p.key, ...capabilityKeysOf(p)]);
-
   function togglePage(node: AccessNode, role: string) {
-    const on = pageState(node, role) === 'off';
-    setRoles(pageKeys([node], on), role, on);
+    setRoles([node.key], role, pageState(node, role) === 'off');
   }
 
   function toggleGroup(node: AccessNode, role: string) {
     const on = groupState(node, role) === 'off';
-    setRoles(pageKeys(pagesUnder(node), on), role, on);
+    setRoles(
+      pagesUnder(node).map((page) => page.key),
+      role,
+      on
+    );
   }
 
   const changes = $derived(
@@ -169,9 +157,6 @@
   // from colliding after the alphanumeric squash.
   const rowId = (key: string, role: string) =>
     `grant:${shortRole(role)}:${key.replace(/[^a-z0-9]+/gi, '-')}`;
-
-  const missingFor = (node: AccessNode, role: string) =>
-    (node.requires ?? []).filter((path) => !has(path, role));
 </script>
 
 <!-- Function bindings, never one-way props: `checked`/`indeterminate` are `$bindable` and the primitive
@@ -193,7 +178,7 @@
   {:else if node.kind === 'page'}
     {@const state = pageState(node, role)}
     {@const hidden = node.children.length !== childrenOf(node).length}
-    <!-- Locked when the filter hides any of its capabilities: revoking a page cascades into them, and a
+    <!-- Locked when the filter hides any of its permissions: revoking a page cascades into them, and a
          page whose capability rows are all filtered out renders childless — one click would revoke rows
          nobody can see. -->
     <Checkbox
@@ -206,19 +191,13 @@
       bind:indeterminate={() => state === 'mixed', () => {}}
     />
   {:else}
-    {@const missing = missingFor(node, role)}
-    {@const held = missing.length === 0}
-    <!-- Gated on EVERY page `canUse` requires, not just the one it sits under. Reasoning from the parent
-         alone offered a tick that saved, rendered checked, and still refused — because the role was
-         missing `/users`. Shows the effective grant, so it never ticks for a role that cannot use it. -->
+    <!-- A capability is granted on its own: holding the page it is listed under is not a condition of
+         it, so this never disables. Grouping under a page is presentation. -->
     <Checkbox
       id={rowId(node.key, role)}
-      aria-label={held
-        ? `${node.parentLabel}: ${node.label} — ${shortRole(role)}`
-        : `${node.parentLabel}: ${node.label} — ${shortRole(role)}, unavailable: grant ${missing.join(' and ')} to ${shortRole(role)} first`}
-      disabled={!held}
+      aria-label={`${node.label} — ${shortRole(role)}`}
       bind:checked={
-        () => held && has(node.key, role),
+        () => has(node.key, role),
         () => setRoles([node.key], role, !has(node.key, role))
       }
     />
@@ -229,7 +208,14 @@
   {@const open = isOpen(node)}
   <!-- Depth reaches assistive tech through the row header's text, not `aria-level`: that attribute is
        only honoured on rows inside a `treegrid`, so here it announced nothing at all. -->
-  <tr class="border-t border-dark-4/60" class:bg-dark-7={node.kind === 'group'}>
+  <!-- Striped: the row is a long horizontal run of identical boxes, and reading which role a tick
+       belongs to means tracking across it. `:nth-child` counts siblings in the tbody, so the banding
+       stays correct however deep the tree renders. A group's own shade wins over the stripe. -->
+  <tr
+    class="border-t border-dark-4/60 hover:bg-dark-7/70 {node.kind === 'group'
+      ? 'bg-dark-7'
+      : 'odd:bg-dark-7/40'}"
+  >
     <th
       scope="row"
       class="py-1.5 pr-4 text-left font-normal"
@@ -255,16 +241,17 @@
           >
             {node.label}
           </span>
-          {#if node.kind === 'page'}
-            <span class="text-xs text-dark-2">({node.children.length})</span>
-          {/if}
         </button>
       {:else}
         <span class="flex items-center gap-1 pl-4.5 text-dark-0">{node.label}</span>
       {/if}
     </th>
     {#each data.roles as role (role)}
-      <td class="min-w-24 px-3 py-1.5 text-center">{@render cell(node, role)}</td>
+      <!-- Flex, not `text-center`: the checkbox is a block-level button, which text alignment does not
+           move — it sat left of a column header centred over it. -->
+      <td class="min-w-24 px-3 py-1.5">
+        <div class="flex justify-center">{@render cell(node, role)}</div>
+      </td>
     {/each}
   </tr>
   {#if open}
@@ -274,13 +261,13 @@
   {/if}
 {/snippet}
 
-{#snippet matrix()}
+{#snippet matrix(nodes: AccessNode[], heading: string)}
   <table class="w-full min-w-xl text-sm">
     <caption class="sr-only">Pages and actions each moderator role is granted</caption>
     <thead class="sticky top-0 z-10 bg-dark-6">
       <tr class="border-b border-dark-4">
         <th scope="col" class="py-2 pl-4 text-left text-xs tracking-wide text-dark-2 uppercase">
-          Page
+          {heading}
         </th>
         <!-- Sized by content, never a fixed width: role names come from the hub at whatever length
              someone gave them, and the panel already scrolls horizontally. -->
@@ -295,7 +282,7 @@
       </tr>
     </thead>
     <tbody>
-      {#each data.tree.filter(isVisible) as node (node.key)}
+      {#each nodes.filter(isVisible) as node (node.key)}
         {@render row(node, 0)}
       {/each}
     </tbody>
@@ -305,11 +292,11 @@
 <header class="page-header">
   <h1>Permissions</h1>
   <p>
-    Each role has its own list of pages — they are independent, so granting a page to one role does
-    not grant it to any other. A page a role has not been granted is unreachable for that role.
-    Expand a page to grant individual actions inside it; those need the page as well, so revoking the
-    page revokes them. A half-filled box means the role holds the page but not every action in it —
-    tick the actions you want, since granting a page never grants the actions under it. Roles
+    Two independent kinds of grant. <strong class="font-medium">Page grants</strong> decide what a role
+    may OPEN — a page a role has not been granted is unreachable for it.
+    <strong class="font-medium">Action grants</strong>, in the second table, decide what a role may DO,
+    and are granted on their own: an action is not tied to a page, and granting or revoking a page never
+    changes one. Each role's grants are its own, so granting to one role grants to no other. Roles
     themselves are created and assigned in the auth hub — a new one appears here as a column with
     nothing granted, and holds nothing until you tick it.
   </p>
@@ -341,9 +328,8 @@
     {:else if dirty}
       {dirty} grant{dirty === 1 ? '' : 's'} changed — not saved yet.
     {:else if form?.count}
-      Saved {form.count} grant{form.count === 1 ? '' : 's'}.{form.trimmed
-        ? ` ${form.trimmed} dropped a role that lacked the required page.`
-        : ''} Applies within 30 seconds across all servers.
+      Saved {form.count} grant{form.count === 1 ? '' : 's'}. Applies within 30 seconds across all
+      servers.
     {:else}
       No unsaved changes. Saved changes apply within 30 seconds across all servers.
     {/if}
@@ -383,7 +369,24 @@
       names as well as their stored keys.
     </p>
   {:else}
-    {@render matrix()}
+    {@render matrix(data.tree, 'Page')}
+  {/if}
+</div>
+
+<!-- Actions are their own list, not rows under a page. A permission is granted on its own: holding the
+     page an action is used from is not a condition of holding the action, and one action can be reached
+     from more than one page. -->
+<h2 class="mt-6 mb-2 text-sm font-semibold text-white">Action grants</h2>
+<p class="mb-3 text-sm text-dark-2">
+  What a role may DO, granted independently of the pages it may open. An action still needs a page to
+  reach it, so a role holding an action but not the page that uses it holds something inert — that is a
+  grant to review, not something this screen prevents.
+</p>
+<div class="max-h-[60vh] overflow-auto rounded-xl border border-dark-4 bg-dark-6">
+  {#if data.actions.filter(isVisible).length === 0}
+    <p class="p-5 text-sm text-dark-2">No actions match <span class="text-dark-0">{search}</span>.</p>
+  {:else}
+    {@render matrix(data.actions, 'Action')}
   {/if}
 </div>
 

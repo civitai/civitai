@@ -2,7 +2,6 @@
   import { browser } from '$app/environment';
   import type { PageData } from './$types';
   import type { FormResult } from '../form-result';
-  import { writeEnhancer } from '$lib/form-action';
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
@@ -48,20 +47,14 @@
   // Bumped after a write so the derived fetches rebuild. The panels' data comes from `/api/*`, not
   // from `load`, so invalidating the page would not bring it back.
   let version = $state(0);
-  let submitting = $state(false);
 
   // One fetch per endpoint per section, shared by whichever panels the section renders. Fetching per
   // panel ran the account endpoint — including the 744M-row reaction scan — once per panel.
   const account = $derived(browser && result ? fetchAccount(result.identity.id, version) : null);
   const signals = $derived(browser && result ? fetchSignals(result.identity.id, version) : null);
 
-  // Panels reset their own local state through `onWritten`; the page owns only the refresh, because it
-  // owns the promises. See form-action.ts for why this does not invalidate.
-  const onSubmit = writeEnhancer({
-    onSuccess: () => (version += 1),
-    busy: (value) => (submitting = value),
-  });
-
+  // Panels own their own submit state and reset it themselves; the page owns only the refresh,
+  // because it owns the promises. See form-state.svelte.ts.
 </script>
 
 {#if result}
@@ -75,8 +68,7 @@
         curator={result.curator}
         subscription={result.subscription}
         canAct={data.canAct}
-        canEditIdentity={data.canEditIdentity}
-        {form}
+        canEditIdentity={!!data.grants['user.identity.edit']}
         civitaiUrl={data.civitaiUrl}
       />
       <!-- Both asked for by the mod team, twice by two people for the notes: the enforcement history
@@ -88,10 +80,9 @@
         userId={result.identity.id}
         paddleCustomerId={result.identity.paddleCustomerId}
         canAct={data.canAct}
-        error={form && 'scope' in form && form.scope === 'account' ? (form.error ?? null) : null}
         conflict={paddleConflict}
       />
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} {form} />
+      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
       <AddressesPanel {signals} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
            held nothing but a link list, and a tab per list is a click that buys nothing. -->
@@ -99,9 +90,7 @@
         {signals}
         userId={result.identity.id}
         canAct={data.canAct}
-        {form}
-        {onSubmit}
-        {submitting}
+        onSuccess={() => (version += 1)}
       />
     {:else if section === 'content'}
       <ContentCounts
@@ -114,9 +103,7 @@
         {account}
         userId={result.identity.id}
         canAct={data.canAct}
-        {form}
-        {onSubmit}
-        {submitting}
+        onSuccess={() => (version += 1)}
       />
     {:else if section === 'buzz'}
       <!-- Retool split these across two tabs. Granting or deducting Buzz is a judgement made AGAINST
@@ -125,12 +112,11 @@
            a long history. The form needs its own grant; the balances and history do not. -->
       <BuzzBalances {account} />
       <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
-        {#if data.canSendBuzz}
+        {#if data.grants['user.buzz.send']}
           <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
             <BuzzTransactionPanel
               userId={result.identity.id}
-              {form}
-              onWritten={() => (version += 1)}
+              onSuccess={() => (version += 1)}
             />
           </div>
         {/if}
@@ -146,10 +132,8 @@
         {account}
         userId={result.identity.id}
         canAct={data.canAct}
-        canGrantCosmetics={data.canGrantCosmetics}
-        {form}
-        {onSubmit}
-        {submitting}
+        canGrantCosmetics={!!data.grants['user.cosmetics.grant']}
+        onSuccess={() => (version += 1)}
       />
     {:else if section === 'generation'}
       <GenerationPanel {signals} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
@@ -162,10 +146,8 @@
         {account}
         userId={result.identity.id}
         canAct={data.canAct}
-        {form}
         civitaiUrl={data.civitaiUrl}
-        {onSubmit}
-        {submitting}
+        onSuccess={() => (version += 1)}
       />
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
@@ -181,10 +163,8 @@
         {account}
         userId={result.identity.id}
         canAct={data.canAct}
-        {form}
         civitaiUrl={data.civitaiUrl}
-        {onSubmit}
-        {submitting}
+        onSuccess={() => (version += 1)}
       />
     {:else if section === 'reactions'}
       <ReactionsPanel {account} />
@@ -193,24 +173,21 @@
     {:else if section === 'chat'}
       <ChatContactPanel modContact={result.modContact} />
     {:else if section === 'notes'}
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} {form} />
+      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
     {:else if section === 'notifications'}
       <NotificationsPanel
         {account}
         userId={result.identity.id}
         canAct={data.canAct}
-        {form}
-        {onSubmit}
-        {submitting}
+        onSuccess={() => (version += 1)}
       />
     {:else if section === 'mutes'}
-      <TimedMutesPanel identity={result.identity} canAct={data.canAct} {form} />
+      <TimedMutesPanel identity={result.identity} canAct={data.canAct} />
     {:else}
       <AccountActionsPanel
         identity={result.identity}
         canAct={data.canAct}
-        canToggleModerator={data.canToggleModerator}
-        {form}
+        canToggleModerator={!!data.grants['user.moderator.toggle']}
       />
     {/if}
   {/key}

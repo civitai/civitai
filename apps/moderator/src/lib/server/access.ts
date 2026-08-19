@@ -1,4 +1,4 @@
-import { error } from '@sveltejs/kit';
+import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/kit';
 import type { SessionUser } from '@civitai/auth';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 
@@ -38,28 +38,21 @@ export type NavLink = {
   children?: NavLink[];
 };
 
-// Capability declarations live in `$lib/capabilities.ts` — components need the labels and refusal
+// Permission declarations live in `$lib/permissions.ts` — components need the labels and refusal
 // wording too, and a server-only home is what let the client re-type them and drift. Re-exported so the
 // gate and the declarations still read as one API at the call sites.
 import {
-  ALL_CAPABILITIES,
-  capabilitiesOn,
-  capabilityByKey,
-  capabilityKey,
-  isCapabilityKey,
-  requiredPaths,
-  type Capability,
-} from '$lib/capabilities';
-
-export {
-  CAPABILITIES,
-  capabilityKey,
-  capabilitySubsetEntries,
   denied,
-  missingCapabilityRows,
-  requiredPaths,
-  type Capability,
-} from '$lib/capabilities';
+  PERMISSIONS,
+  permissionByKey,
+  permissionById,
+  type PermissionId,
+  type PermissionSet,
+  permissionKey,
+  isPermissionKey,
+} from '$lib/permissions';
+
+export { PERMISSIONS, permissionKey, denied, type Permission } from '$lib/permissions';
 
 export const NAVIGATION: NavLink[] = [
   { path: '/', label: 'Dashboard' },
@@ -142,9 +135,6 @@ export const NAVIGATION: NavLink[] = [
       {
         path: '/retool/user-lookup',
         label: 'User Lookup',
-        // Reading an account is the page; acting on one is not. Buzz movement, balance and bounties
-        // stay ungated — only the send/deduct action and the bank rows are restricted. The capabilities
-        // themselves are declared in CAPABILITIES and attach by path; there is nothing to wire here.
       },
       { path: '/retool/image-lookup', label: 'Image Lookup' },
       { path: '/retool/article-lookup', label: 'Article Lookup' },
@@ -178,23 +168,23 @@ export const NAVIGATION: NavLink[] = [
 // apart from pages rather than filtered out at every read: `grants` drives route gating, and a key that
 // can never be a route has no business in it.
 let stored: Partial<Record<string, Role[]>> = {};
-let storedCapabilities: Partial<Record<string, Role[]>> = {};
+let storedPermissions: Partial<Record<string, Role[]>> = {};
 
 export function applyGrants(map: Record<string, string[]>): void {
   const nextPages: Partial<Record<string, Role[]>> = {};
-  const nextCapabilities: Partial<Record<string, Role[]>> = {};
+  const nextPermissions: Partial<Record<string, Role[]>> = {};
   // Checked against the super role only, never the hub's role catalogue: this runs on every gated request,
   // and a grant filtered against a catalogue that failed to load would revoke the app. A grant naming a
   // role nobody holds — a deleted one — matches nobody anyway.
   for (const [key, roles] of Object.entries(map)) {
     const allowed = roles.filter(isStorableRole);
-    if (isCapabilityKey(key)) {
-      if (isGrantableCapability(key)) nextCapabilities[key] = allowed;
+    if (isPermissionKey(key)) {
+      if (isGrantablePermission(key)) nextPermissions[key] = allowed;
     } else if (isGrantable(key)) nextPages[key] = allowed;
   }
-  if (sameGrants(nextPages, stored) && sameGrants(nextCapabilities, storedCapabilities)) return;
+  if (sameGrants(nextPages, stored) && sameGrants(nextPermissions, storedPermissions)) return;
   stored = nextPages;
-  storedCapabilities = nextCapabilities;
+  storedPermissions = nextPermissions;
   grants = collectGrants(NAVIGATION);
 }
 
@@ -274,27 +264,33 @@ export function navForUser(user: RoleUser): NavLink[] {
 }
 
 /**
- * Whether a role may use one capability inside a page. Conjunctive by design: losing the page loses
- * every feature on it, and ticking a feature for a role that cannot open the page grants nothing.
+ * What this user holds, resolved once so both sides read the same answer. Granted permissions only —
+ * see `PermissionSet`.
  *
- * An undeclared or unstored feature allows nobody, so a load failure and a deliberate revoke both fail
- * closed — the same rule pages already run on.
+ * 🔴 Call this AFTER `applyGrants`. Before it the store is empty and everyone resolves to `{}` — safe,
+ * since an absent key reads false everywhere, but silently.
+ *
+ * The super role is MATERIALISED rather than short-circuited, so the record that reaches the client
+ * shows an admin exactly what the server would let them do.
  */
-export function canUse(user: RoleUser, capability: Capability): boolean {
-  if (isSuper(user)) return true;
-  if (!canAccess(user, capability.path)) return false;
-  // Every term of the gate, so the answer is the same wherever it is asked. When `requires` lived at the
-  // call sites instead, `whoami` reported a capability the action then refused — on the endpoint whose
-  // whole job is settling that question.
-  if (capability.requires.some((path) => !canAccess(user, path))) return false;
-  const roles = storedCapabilities[capabilityKey(capability.id)] ?? [];
-  return (user?.roles ?? []).some((r) => roles.includes(r));
+export function resolvePermissions(user: RoleUser): PermissionSet {
+  const out: PermissionSet = {};
+  const roles = user?.roles ?? [];
+  const superUser = isSuper(user);
+  for (const permission of PERMISSIONS) {
+    const granted = storedPermissions[permissionKey(permission.id)] ?? [];
+    if (superUser || roles.some((r) => granted.includes(r))) out[permission.id] = true;
+  }
+  return out;
 }
 
 /** The effective feature→roles map, for diagnostics. Pair with `grantsSnapshot`. */
-export function capabilityGrantsSnapshot(): Record<string, Role[]> {
+export function permissionGrantsSnapshot(): Record<string, Role[]> {
   return Object.fromEntries(
-    ALL_CAPABILITIES.map((c) => capabilityKey(c.id)).map((key) => [key, [...(storedCapabilities[key] ?? [])]])
+    PERMISSIONS.map((p) => permissionKey(p.id)).map((key) => [
+      key,
+      [...(storedPermissions[key] ?? [])],
+    ])
   );
 }
 
@@ -339,15 +335,7 @@ export function childLinks(groupPath: string, user: RoleUser): NavLink[] {
 export type AccessNode = {
   key: string;
   label: string;
-  kind: 'group' | 'page' | 'capability';
-  // Every page a capability row needs, not just the one it sits under. `canUse` requires all of them, so
-  // a UI reasoning about the parent alone offers a tick that saves, renders checked, and still refuses.
-  requires?: string[];
-  parent?: string;
-  // A capability's label is only unique within its page — "Grant cosmetics" the capability and "Grant
-  // Cosmetics" the page are one string to a screen reader, on a screen where ticking the wrong box is
-  // the failure mode.
-  parentLabel?: string;
+  kind: 'group' | 'page' | 'permission';
   children: AccessNode[];
 };
 
@@ -364,15 +352,24 @@ export function pageAccessState(edit?: {
   roles: readonly Role[];
 }): {
   tree: AccessNode[];
+  /**
+   * Action grants, FLAT and beside the page tree rather than under it. A permission is granted on its
+   * own — nesting it under a page is what let an ungranted page revoke it, and made a permission
+   * surfaced on two pages inexpressible.
+   */
+  actions: AccessNode[];
   granted: Record<string, Role[]>;
   /** Every routable path in the tree, groups included — what `whoami` reports verdicts for. */
   paths: string[];
 } {
   const from = edit
     ? Object.fromEntries(
-        Object.entries(edit.grants).map(([p, r]) => [p, r.filter((role) => edit.roles.includes(role))])
+        Object.entries(edit.grants).map(([p, r]) => [
+          p,
+          r.filter((role) => edit.roles.includes(role)),
+        ])
       )
-    : { ...stored, ...storedCapabilities };
+    : { ...stored, ...storedPermissions };
   const granted: Record<string, Role[]> = {};
   const paths: string[] = [];
 
@@ -389,38 +386,31 @@ export function pageAccessState(edit?: {
         // A section whose every child is ungrantable would render as an empty header with a checkbox
         // that addresses nothing. It is still a real route, so it is still reported in `paths`.
         paths.push(link.path);
-        if (children.length) out.push({ key: link.path, label: link.label, kind: 'group', children });
+        if (children.length)
+          out.push({ key: link.path, label: link.label, kind: 'group', children });
         continue;
       }
       const path = link.path;
       paths.push(path);
       if (!isGrantable(path)) continue;
       granted[path] = from[path] ?? [];
-      const capabilities = capabilitiesOn(path).map((capability): AccessNode => {
-        const key = capabilityKey(capability.id);
-        granted[key] = from[key] ?? [];
-        return {
-          key,
-          label: capability.label,
-          kind: 'capability',
-          requires: requiredPaths(capability),
-          parent: path,
-          parentLabel: link.label,
-          children: [],
-        };
-      });
-      out.push({ key: path, label: link.label, kind: 'page', children: capabilities });
+      out.push({ key: path, label: link.label, kind: 'page', children: [] });
     }
     return out;
   };
 
-  return { tree: walk([...NAVIGATION].sort(byNavOrder)), granted, paths };
+  const actions = PERMISSIONS.map((permission): AccessNode => {
+    const key = permissionKey(permission.id);
+    granted[key] = from[key] ?? [];
+    return { key, label: permission.label, kind: 'permission', children: [] };
+  });
+
+  return { tree: walk([...NAVIGATION].sort(byNavOrder)), actions, granted, paths };
 }
 
-/** A capability is grantable exactly when it is declared and the page it sits under is itself grantable. */
-export function isGrantableCapability(key: string): boolean {
-  const capability = capabilityByKey(key);
-  return !!capability && isGrantable(capability.path);
+/** A permission is grantable exactly when it is declared and the page it sits under is itself grantable. */
+export function isGrantablePermission(key: string): boolean {
+  return !!permissionByKey(key);
 }
 
 // A link with children is a section, and a section is reachable exactly when one of its pages is — there
@@ -429,4 +419,21 @@ export function isGrantable(path: string): boolean {
   if (UNRESTRICTED_PATHS.has(path) || SUPER_ONLY_PATHS.has(path)) return false;
   const item = findNavItem(path);
   return !!item && (!item.children || !!item.sharedAccess);
+}
+
+/**
+ * Gates a form action on a grant, so the permission is part of the action's signature rather than a
+ * line someone can forget to write — a missing guard is invisible in review, a missing wrapper is not.
+ *
+ * Returns `fail`, never `throw error()`: throwing renders the nearest error boundary, which unmounts
+ * the page and takes the operator's in-progress edits with it.
+ */
+export function requiresGrant<E extends RequestEvent, R>(
+  id: PermissionId,
+  handler: (event: E) => R
+) {
+  return (event: E): R | ActionFailure<{ scope: 'denied'; error: string }> =>
+    event.locals.grants[id]
+      ? handler(event)
+      : fail(403, { scope: 'denied' as const, error: denied(id) });
 }

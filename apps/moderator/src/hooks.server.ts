@@ -1,7 +1,7 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { guard } from '$lib/server/auth';
-import { applyGrants, canAccess } from '$lib/server/access';
+import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken } from '$lib/server/webhook-endpoint';
 import { logAxiomError } from '$lib/server/axiom';
@@ -33,6 +33,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (token instanceof Response) return token;
     if (token === 'webhook') {
       event.locals.tokenClient = token;
+      event.locals.grants = {};
       return resolve(event);
     }
   }
@@ -49,6 +50,8 @@ export const handle: Handle = async ({ event, resolve }) => {
   event.locals.user = result.user;
 
   applyGrants(await loadPageAccessGrants());
+  // After applyGrants, never before: the resolver reads the store it just populated.
+  event.locals.grants = resolvePermissions(result.user);
 
   // Global role-tier gate — one place covering loads, actions, and endpoints. Keyed on the concrete
   // pathname (not route.id) so a dynamic route like /images/[slug] gates per-slug: /images/csam →

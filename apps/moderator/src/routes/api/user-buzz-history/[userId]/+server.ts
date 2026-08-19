@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUserIdParam } from '$lib/server/api-guard';
-import { CAPABILITIES, canUse } from '$lib/server/access';
+
 import { getBuzzHistory } from '$lib/server/user-account.service';
 
 // Its own endpoint rather than folded into /api/user-account: this reads a 1.5B-row ClickHouse table
@@ -19,7 +19,7 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   // moderator list stale in three other places.
   return json(
     await getBuzzHistory(userId, days, {
-      includeBank: canUse(locals.user, CAPABILITIES.viewBankBuzz),
+      includeBank: !!locals.grants['user.buzz.bank'],
     })
   );
 };

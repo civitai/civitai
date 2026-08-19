@@ -1,12 +1,11 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { applyAction, enhance } from '$app/forms';
-  import type { ActionResult } from '@sveltejs/kit';
+  import { enhance } from '$app/forms';
+  import { FormState } from '$lib/form-state.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { LINK_CLASS, dateTime } from '$lib/format';
-  import type { FormResult } from './form-result';
   import { fetchMemory } from './user-memory';
   import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
   import { STRIKE_REASONS } from '$lib/moderation-reasons';
@@ -14,15 +13,12 @@
   let {
     userId,
     canAct,
-    form,
-  }: { userId: number; canAct: boolean; form: FormResult } = $props();
+  }: { userId: number; canAct: boolean } = $props();
 
   const FLAGS = [
     ['spamWhitelist', 'Spam whitelist', 'Exempt from spam heuristics.'],
     ['deservedMute', 'Deserved mute', 'A past mute was judged earned.'],
   ] as const;
-
-  const error = $derived(form?.scope === 'notes' ? form.error : null);
 
   // Bumped after a write so the derived promise refetches — the data lives in the moderator database,
   // not in `data`, so invalidating the page load would not bring it back.
@@ -34,36 +30,32 @@
   let adding = $state(false);
   let striking = $state(false);
   let strikeReason = $state('');
-  let submitting = $state(false);
 
-  // applyAction populates `form` — without it "You can only edit your own notes." never reaches the UI
-  // and a rejected edit looks like a successful one.
-  //
-  // Deliberately NOT invalidateAll(): nothing a note write changes comes from `load`, and invalidating
-  // re-runs all eight lookup queries plus the account fetch behind them, including a 744M-row scan.
-  const afterWrite =
-    () =>
-    async ({ result }: { result: ActionResult }) => {
-      await applyAction(result);
-      if (result.type === 'success') {
-        editing = null;
-        adding = false;
-        striking = false;
-        version += 1;
-      }
-      // A strike that recorded but could not notify comes back as a failure carrying the message.
-      // The row exists, so the list has to refetch even though this is not a success.
+  // One per column, so each card shows only its own refusal. No `reload` on either: nothing these
+  // write comes from `load`, and invalidating re-runs all eight lookup queries plus the account fetch
+  // behind them, including a 744M-row scan.
+  const notesForm = new FormState({
+    onSuccess: () => {
+      editing = null;
+      adding = false;
+      version += 1;
+    },
+  });
+
+  const strikeForm = new FormState({
+    onSuccess: () => {
+      striking = false;
+      version += 1;
+    },
+    // A strike that recorded but could not notify comes back as a failure carrying the message. The
+    // row exists, so the list has to refetch even though this is not a success.
+    onSettled: (result) => {
       if (result.type === 'failure' && result.status === 200) {
         striking = false;
         version += 1;
       }
-      submitting = false;
-    };
-
-  const onSubmit = () => {
-    submitting = true;
-    return afterWrite();
-  };
+    },
+  });
 </script>
 
 <section class="mb-4 grid gap-4 lg:grid-cols-2">
@@ -75,21 +67,21 @@
       {/if}
     </div>
 
-    {#if error}
+    {#if notesForm.error}
       <div
         class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
         role="alert"
       >
-        {error}
+        {notesForm.error}
       </div>
     {/if}
 
     {#if adding}
-      <form method="POST" action="?/addNote" use:enhance={onSubmit} class="mb-4">
+      <form method="POST" action="?/addNote" use:enhance={notesForm.enhance} class="mb-4">
         <input type="hidden" name="userId" value={userId} />
         <Textarea name="notes" rows={3} placeholder="What should the next moderator know?" required />
         <div class="mt-2 flex gap-2">
-          <Button type="submit" size="sm" disabled={submitting}>Save</Button>
+          <Button type="submit" size="sm" disabled={notesForm.submitting}>Save</Button>
           <Button type="button" size="sm" variant="outline" onclick={() => (adding = false)}>
             Cancel
           </Button>
@@ -109,11 +101,11 @@
             <div class="flex items-baseline gap-2">
               <Badge variant={on ? 'default' : 'secondary'}>{label}: {on ? 'yes' : 'no'}</Badge>
               {#if canAct}
-                <form method="POST" action="?/setModerationFlag" use:enhance={onSubmit}>
+                <form method="POST" action="?/setModerationFlag" use:enhance={notesForm.enhance}>
                   <input type="hidden" name="userId" value={userId} />
                   <input type="hidden" name="flag" value={flag} />
                   <input type="hidden" name="value" value={on ? 'false' : 'true'} />
-                  <button type="submit" disabled={submitting} class="text-xs {LINK_CLASS}">
+                  <button type="submit" disabled={notesForm.submitting} class="text-xs {LINK_CLASS}">
                     {on ? 'clear' : 'set'}
                   </button>
                 </form>
@@ -133,11 +125,11 @@
           {#each result.notes as note (note.id)}
             <li class="border-b border-dark-4 pb-3 last:border-0 last:pb-0">
               {#if editing === note.id}
-                <form method="POST" action="?/editNote" use:enhance={onSubmit}>
+                <form method="POST" action="?/editNote" use:enhance={notesForm.enhance}>
                   <input type="hidden" name="id" value={note.id} />
                   <Textarea name="notes" rows={3} value={note.notes ?? ''} required />
                   <div class="mt-2 flex gap-2">
-                    <Button type="submit" size="sm" disabled={submitting}>Save</Button>
+                    <Button type="submit" size="sm" disabled={notesForm.submitting}>Save</Button>
                     <Button
                       type="button"
                       size="sm"
@@ -182,24 +174,22 @@
     </div>
     <p class="mb-3 text-xs text-dark-2">Issuing a strike notifies the user.</p>
 
-    <!-- Strike failures share the `notes` scope, and the notes card is the other column — a
-         "recorded but not notified" message rendered only there is nowhere near the form. -->
-    {#if error}
+    {#if strikeForm.error}
       <div
         class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
         role="alert"
       >
-        {error}
+        {strikeForm.error}
       </div>
     {/if}
 
     {#if striking}
-      <form method="POST" action="?/addStrike" use:enhance={onSubmit} class="mb-4">
+      <form method="POST" action="?/addStrike" use:enhance={strikeForm.enhance} class="mb-4">
         <input type="hidden" name="userId" value={userId} />
         <CannedReasonPicker reasons={STRIKE_REASONS} idPrefix="strike" bind:value={strikeReason} />
         <div class="mt-2 flex gap-2">
-          <Button type="submit" size="sm" variant="destructive" disabled={submitting}>
-            {submitting ? 'Working…' : 'Issue strike'}
+          <Button type="submit" size="sm" variant="destructive" disabled={strikeForm.submitting}>
+            {strikeForm.submitting ? 'Working…' : 'Issue strike'}
           </Button>
           <Button type="button" size="sm" variant="outline" onclick={() => (striking = false)}>
             Cancel

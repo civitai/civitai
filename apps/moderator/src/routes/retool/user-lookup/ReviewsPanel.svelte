@@ -1,12 +1,11 @@
 <script lang="ts">
+  import { FormState } from '$lib/form-state.svelte';
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { LINK_CLASS, dateTime, plainText } from '$lib/format';
   import type { Account } from './user-account';
-  import type { SubmitFunction } from '@sveltejs/kit';
-  import type { FormResult } from './form-result';
-  import ListCard from './ListCard.svelte';
+      import ListCard from './ListCard.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
 
@@ -57,31 +56,29 @@
     account,
     userId,
     canAct,
-    form,
     civitaiUrl,
-    onSubmit,
-    submitting,
+    onSuccess,
   }: {
     account: Promise<Account> | null;
     userId: number;
     canAct: boolean;
-    form: FormResult;
     civitaiUrl: string;
-    onSubmit: SubmitFunction;
-    submitting: boolean;
+    onSuccess: () => void;
   } = $props();
 
-  const error = $derived(form?.scope === 'content' ? form.error : null);
+  // Called through, not captured: reading the prop inside the closure is what stops a re-passed
+  // callback being ignored (svelte’s `state_referenced_locally`).
+  const form = new FormState({ onSuccess: () => onSuccess() });
   const modelUrl = (modelId: number | null) => (modelId ? `${civitaiUrl}/models/${modelId}` : null);
   const CHECKBOX = 'accent-blue-500 mr-1';
 </script>
 
-{#if error}
+{#if form.error}
   <div
     class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
     role="alert"
   >
-    {error}
+    {form.error}
   </div>
 {/if}
 
@@ -105,7 +102,7 @@
           />
         {/snippet}
         {#snippet children(limit)}
-          <form method="POST" action="?/contentAction" use:enhance={onSubmit}>
+          <form method="POST" action="?/contentAction" use:enhance={form.enhance}>
             <input type="hidden" name="userId" value={userId} />
             <input type="hidden" name="kind" value="reviews" />
             <ul class="space-y-1 text-sm">
@@ -147,12 +144,12 @@
                   value="delete"
                   count={selectedReviews.length}
                   noun="review"
-                  {submitting}
+                  submitting={form.submitting}
                 />
-                <Button type="submit" name="op" value="exclude" size="sm" variant="outline" disabled={submitting}>
+                <Button type="submit" name="op" value="exclude" size="sm" variant="outline" disabled={form.submitting}>
                   Exclude
                 </Button>
-                <Button type="submit" name="op" value="include" size="sm" variant="outline" disabled={submitting}>
+                <Button type="submit" name="op" value="include" size="sm" variant="outline" disabled={form.submitting}>
                   Include
                 </Button>
               </div>

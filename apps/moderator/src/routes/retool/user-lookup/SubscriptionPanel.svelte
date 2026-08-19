@@ -5,7 +5,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import type { LayoutData } from './$types';
   import { dateTime, LINK_CLASS } from '$lib/format';
-  import { writeEnhancer } from '$lib/form-action';
+  import { FormState } from '$lib/form-state.svelte';
 
   type Subscription = NonNullable<LayoutData['result']>['subscription'];
 
@@ -14,24 +14,21 @@
     userId,
     paddleCustomerId,
     canAct,
-    error = null,
     conflict = null,
   }: {
     subscription: Subscription;
     userId: number;
     paddleCustomerId: string | null;
     canAct: boolean;
-    error?: string | null;
     /** The account already holding the id that was submitted, when there is one. */
     conflict?: { id: number; username: string | null; paddleCustomerId: string } | null;
   } = $props();
 
   let linking = $state(false);
-  let submitting = $state(false);
-  const onSubmit = writeEnhancer({
+
+  const form = new FormState({
     reload: true,
     onSuccess: () => (linking = false),
-    busy: (value) => (submitting = value),
   });
 </script>
 
@@ -88,10 +85,10 @@
     </div>
 
     {#if canAct && linking}
-      {#if error}
-        <p class="mt-2 text-sm text-red-300" role="alert">{error}</p>
+      {#if form.error}
+        <p class="mt-2 text-sm text-red-300" role="alert">{form.error}</p>
       {/if}
-      <form method="POST" action="?/linkPaddle" use:enhance={onSubmit} class="mt-2 grid gap-2">
+      <form method="POST" action="?/linkPaddle" use:enhance={form.enhance} class="mt-2 grid gap-2">
         <input type="hidden" name="userId" value={userId} />
         <Input
           name="paddleCustomerId"
@@ -111,7 +108,7 @@
           <input type="hidden" name="takeFrom" value={conflict.id} />
         {/if}
         <div class="flex flex-wrap gap-2">
-          <Button type="submit" size="sm" disabled={submitting}>
+          <Button type="submit" size="sm" disabled={form.submitting}>
             {conflict ? 'Unlink there and link here' : 'Link'}
           </Button>
           {#if paddleCustomerId}
@@ -121,7 +118,7 @@
               value="1"
               size="sm"
               variant="destructive"
-              disabled={submitting}
+              disabled={form.submitting}
             >
               Unlink
             </Button>

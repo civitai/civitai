@@ -1,32 +1,29 @@
 <script lang="ts">
+  import { FormState } from '$lib/form-state.svelte';
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { LINK_CLASS } from '$lib/format';
-  import type { SubmitFunction } from '@sveltejs/kit';
-  import type { FormResult } from './form-result';
-  import { safeHref, type Signals } from './signals';
+      import { safeHref, type Signals } from './signals';
   import { LINK_TYPES } from './enforcement-options';
 
   let {
     signals,
     userId,
     canAct,
-    form,
-    onSubmit,
-    submitting,
+    onSuccess,
   }: {
     signals: Promise<Signals> | null;
     userId: number;
     canAct: boolean;
-    form: FormResult;
-    onSubmit: SubmitFunction;
-    submitting: boolean;
+    onSuccess: () => void;
   } = $props();
 
-  const error = $derived(form?.scope === 'socials' ? form.error : null);
+  // Called through, not captured: reading the prop inside the closure is what stops a re-passed
+  // callback being ignored (svelte’s `state_referenced_locally`).
+  const form = new FormState({ onSuccess: () => onSuccess() });
 
   let adding = $state(false);
   let linkType = $state('Social');
@@ -40,17 +37,17 @@
     {/if}
   </div>
 
-  {#if error}
+  {#if form.error}
     <div
       class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
       role="alert"
     >
-      {error}
+      {form.error}
     </div>
   {/if}
 
   {#if adding}
-    <form method="POST" action="?/addSocial" use:enhance={onSubmit} class="mb-3">
+    <form method="POST" action="?/addSocial" use:enhance={form.enhance} class="mb-3">
       <input type="hidden" name="userId" value={userId} />
       <div class="flex flex-wrap items-end gap-2">
         <Input name="url" placeholder="https://…" class="min-w-48 flex-1" required />
@@ -62,7 +59,7 @@
             {/each}
           </Select.Content>
         </Select.Root>
-        <Button type="submit" size="sm" disabled={submitting}>Add link</Button>
+        <Button type="submit" size="sm" disabled={form.submitting}>Add link</Button>
         <Button type="button" size="sm" variant="outline" onclick={() => (adding = false)}>
           Cancel
         </Button>
@@ -99,7 +96,7 @@
                     <span class="break-all text-dark-0">{link.url}</span>
                   {/if}
                   {#if canAct}
-                    <form method="POST" action="?/removeSocial" use:enhance={onSubmit}>
+                    <form method="POST" action="?/removeSocial" use:enhance={form.enhance}>
                       <input type="hidden" name="id" value={link.id} />
                       <input type="hidden" name="userId" value={userId} />
                       <button type="submit" class="text-xs {LINK_CLASS}">remove</button>

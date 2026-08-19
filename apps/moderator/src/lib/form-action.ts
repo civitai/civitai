@@ -45,11 +45,26 @@ export function writeEnhancer(opts: {
   /** Set ONLY when the page's own `load` data changes — a report queue, an identity row. Panels fed
    *  by `/api/*` must leave this off, or every write re-runs the whole page load behind them. */
   reload?: boolean;
+  /**
+   * The submitting panel's own error slot: the message on a refusal, `null` on success.
+   *
+   * This is what lets a page hold many forms without a discriminator. SvelteKit's `form` prop is
+   * PAGE-level, so every panel sees every other panel's failure and each had to filter by a `scope`
+   * the server stamped — miss the scope and the refusal renders in three panels, or in none.
+   */
+  onResult?: (error: string | null) => void;
 }): SubmitFunction {
   return () => {
     opts.busy?.(true);
     return async ({ result, update }) => {
-      await update({ reset: true, invalidateAll: opts.reload ?? false });
+      // Reset on success ONLY. Clearing the fields after a refusal throws away what the operator
+      // typed, on the one path where they need it back to fix and resubmit.
+      await update({ reset: result.type === 'success', invalidateAll: opts.reload ?? false });
+      opts.onResult?.(
+        result.type === 'failure'
+          ? (result.data?.error as string | undefined) ?? 'Something went wrong.'
+          : null
+      );
       if (result.type === 'success') opts.onSuccess?.();
       opts.busy?.(false);
     };

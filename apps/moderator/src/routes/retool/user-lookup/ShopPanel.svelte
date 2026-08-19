@@ -1,43 +1,40 @@
 <script lang="ts">
+  import { FormState } from '$lib/form-state.svelte';
   import { enhance } from '$app/forms';
-  import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { dateTime, num } from '$lib/format';
   import type { Account } from './user-account';
-  import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
-  import { CAPABILITIES, denied } from '$lib/capabilities';
+  import { denied } from '$lib/permissions';
 
   let {
     account,
     userId,
     canAct,
     canGrantCosmetics,
-    form,
-    onSubmit,
-    submitting,
+    onSuccess,
   }: {
     account: Promise<Account> | null;
     userId: number;
     canAct: boolean;
     canGrantCosmetics: boolean;
-    form: FormResult;
-    onSubmit: SubmitFunction;
-    submitting: boolean;
+    onSuccess: () => void;
   } = $props();
 
-  const error = $derived(form?.scope === 'shop' ? form.error : null);
+  // Called through, not captured: reading the prop inside the closure is what stops a re-passed
+  // callback being ignored (svelte’s `state_referenced_locally`).
+  const form = new FormState({ onSuccess: () => onSuccess() });
   let grantId = $state('');
 </script>
 
-{#if error}
+{#if form.error}
   <div
     class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
     role="alert"
   >
-    {error}
+    {form.error}
   </div>
 {/if}
 
@@ -64,14 +61,14 @@
                 {#if p.refunded}
                   <Badge variant="secondary">refunded</Badge>
                 {:else if canAct}
-                  <form method="POST" action="?/refundPurchase" use:enhance={onSubmit}>
+                  <form method="POST" action="?/refundPurchase" use:enhance={form.enhance}>
                     <input type="hidden" name="userId" value={userId} />
                     <input
                       type="hidden"
                       name="buzzTransactionId"
                       value={p.buzzTransactionId}
                     />
-                    <Button type="submit" size="xs" variant="destructive" disabled={submitting}>
+                    <Button type="submit" size="xs" variant="destructive" disabled={form.submitting}>
                       Refund
                     </Button>
                   </form>
@@ -88,11 +85,11 @@
           Badges this account does not already hold ({result.availableBadges.length}).
         </p>
         {#if !canGrantCosmetics}
-          <p class="text-sm text-dark-2">{denied(CAPABILITIES.grantCosmetics)}</p>
+          <p class="text-sm text-dark-2">{denied('user.cosmetics.grant')}</p>
         {:else if result.availableBadges.length === 0}
           <p class="text-sm text-dark-2">This account already holds every badge.</p>
         {:else}
-          <form method="POST" action="?/grantCosmetic" use:enhance={onSubmit}>
+          <form method="POST" action="?/grantCosmetic" use:enhance={form.enhance}>
             <input type="hidden" name="userId" value={userId} />
             <div class="flex flex-wrap items-end gap-2">
               <Select.Root type="single" name="cosmeticId" bind:value={grantId}>
@@ -106,7 +103,7 @@
                   {/each}
                 </Select.Content>
               </Select.Root>
-              <Button type="submit" size="sm" disabled={!grantId || submitting}>Grant</Button>
+              <Button type="submit" size="sm" disabled={!grantId || form.submitting}>Grant</Button>
             </div>
           </form>
         {/if}

@@ -1,6 +1,6 @@
 <script lang="ts">
+  import { FormState } from '$lib/form-state.svelte';
   import { enhance } from '$app/forms';
-  import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -10,7 +10,6 @@
   import type { Capped, Notification } from './user-account';
   import { dateTime } from '$lib/format';
   import type { Account } from './user-account';
-  import type { FormResult } from './form-result';
   import ListCard from './ListCard.svelte';
 
   // `details` keys vary by notification type — the notifications service stores a raw payload and the
@@ -30,16 +29,12 @@
     account,
     userId,
     canAct,
-    form,
-    onSubmit,
-    submitting,
+    onSuccess,
   }: {
     account: Promise<Account> | null;
     userId: number;
     canAct: boolean;
-    form: FormResult;
-    onSubmit: SubmitFunction;
-    submitting: boolean;
+    onSuccess: () => void;
   } = $props();
 
   // Retool's "Number of Notifs". Fetched separately from the account bundle so changing it does not
@@ -62,7 +57,9 @@
       : null
   );
 
-  const error = $derived(form?.scope === 'notify' ? form.error : null);
+  // Called through, not captured: reading the prop inside the closure is what stops a re-passed
+  // callback being ignored (svelte’s `state_referenced_locally`).
+  const form = new FormState({ onSuccess: () => onSuccess() });
   let sending = $state(false);
 </script>
 
@@ -78,19 +75,19 @@
     Chat.
   </p>
 
-  {#if error}
+  {#if form.error}
     <div
       class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
       role="alert"
     >
-      {error}
+      {form.error}
     </div>
   {/if}
 
   {#if !canAct}
     <p class="text-sm text-dark-2">Sending requires the Users permission.</p>
   {:else if sending}
-    <form method="POST" action="?/sendNotification" use:enhance={onSubmit}>
+    <form method="POST" action="?/sendNotification" use:enhance={form.enhance}>
       <input type="hidden" name="userId" value={userId} />
       <Textarea name="message" rows={3} placeholder="What should this user be told?" required />
       <!-- Retool's `notificationLink`. Live on the receiving end already: `system-announcement`'s
@@ -102,8 +99,8 @@
         placeholder="Link (optional) — e.g. /safety or /generate"
       />
       <div class="mt-2 flex gap-2">
-        <Button type="submit" size="sm" disabled={submitting}>
-          {submitting ? 'Sending…' : 'Send'}
+        <Button type="submit" size="sm" disabled={form.submitting}>
+          {form.submitting ? 'Sending…' : 'Send'}
         </Button>
         <Button type="button" size="sm" variant="outline" onclick={() => (sending = false)}>
           Cancel
