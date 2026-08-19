@@ -2814,6 +2814,17 @@ export const unpublishModelById = async ({
         unpublishedAt,
         unpublishedBy: userId,
       };
+      // The ids actually transitioning, captured BEFORE the update while the statuses still say so.
+      // `updatedModel.modelVersions` is every version of the model — drafts, training rows, versions
+      // taken down months ago — and stamping the unpublish keys onto those sends the creator a
+      // "version unpublished" notification for each one: unpublish.notifications.ts selects on the
+      // meta alone, with no status predicate, keyed per modelVersionId.
+      const transitioningVersions = await tx.modelVersion.findMany({
+        where: { modelId: id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
+        select: { id: true },
+      });
+      const transitioningVersionIds = transitioningVersions.map((x) => x.id);
+
       const updatedModel = await tx.model.update({
         where: { id },
         data: {
@@ -2836,8 +2847,9 @@ export const unpublishModelById = async ({
       // meta wholesale, and `hadEarlyAccessPurchase` went with it. That flag is the only pre-filter
       // on the refund requirement and the guard on both delete paths, so wiping it turned an
       // unpublish into a way to shed the refund obligation and then delete the version freely.
-      // updateMany cannot write a different value per row, hence raw SQL.
-      if (versionIds.length > 0) {
+      // updateMany cannot write a different value per row, hence raw SQL. Scoped to the versions
+      // this call is actually taking down, not to every version on the model.
+      if (transitioningVersionIds.length > 0) {
         await tx.$executeRaw`
           UPDATE "ModelVersion"
           SET "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify({
@@ -2845,7 +2857,7 @@ export const unpublishModelById = async ({
             unpublishedAt,
             unpublishedBy: userId,
           })}::jsonb
-          WHERE id IN (${Prisma.join(versionIds)})
+          WHERE id IN (${Prisma.join(transitioningVersionIds)})
         `;
       }
       await tx.$executeRaw`
