@@ -3343,6 +3343,17 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       .filter((d) => !mainIds.has(d.id));
 
     // Content-scope filtering — narrow unscoped results to the current view
+    //
+    // A hub is not expressible here: this pass fetches the viewer's own excluded
+    // content unscoped, and the narrowing below enumerates scalar inputs only, so
+    // a hub's source set has nothing to match against. Dropping the pass entirely
+    // is the fail-closed choice — the alternative is the viewer's own private,
+    // blocked and unscanned images from anywhere in their account appearing in a
+    // hub they may have composed entirely from other creators. It also keeps the
+    // two backends agreeing: Meili carries these carve-outs inside clauses ANDed
+    // with the hub group, so they stay hub-scoped there.
+    if (input.hubId) ownDocs = [];
+
     if (input.modelVersionId) {
       ownDocs = ownDocs.filter(
         (d) =>
@@ -3582,6 +3593,16 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
+  // The fifth filter builder, and the one with no hub clause. Unreachable today
+  // only because the REST zod for /api/v1/images does not declare `hubId` and
+  // strips unknown keys — the same accident the hideChallenges comment above
+  // describes. Adding the key to that schema without a clause here would serve an
+  // unfiltered feed from one of three branches, so fail loudly instead.
+  if (input.hubId)
+    throw new Error(
+      'getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path'
+    );
+
   try {
     const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
       id: input.currentUserId,

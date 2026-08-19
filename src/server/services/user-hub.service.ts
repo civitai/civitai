@@ -6,7 +6,12 @@ import type {
 } from '~/server/schema/user-hub.schema';
 import { HUB_COLLECTION_SOURCES_ENABLED, hubLimits } from '~/server/schema/user-hub.schema';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { CollectionReadConfiguration, UserHubSourceType } from '~/shared/utils/prisma/enums';
+import {
+  CollectionReadConfiguration,
+  MetricTimeframe,
+  UserHubSourceType,
+} from '~/shared/utils/prisma/enums';
+import { ImageSort } from '~/server/common/enums';
 import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 
@@ -61,6 +66,9 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
     return dbWrite.userHub.create({
       data: {
         ...data,
+        sort: data.sort ?? ImageSort.Newest,
+        period: data.period ?? MetricTimeframe.AllTime,
+        mediaTypes: data.mediaTypes ?? [],
         userId,
         index: count,
         sources: { create: sources.map(({ id: _, ...source }) => source) },
@@ -103,6 +111,8 @@ export type ResolvedHubSources = {
   userIds: number[];
   modelVersionIds: number[];
   collectionIds: number[];
+  /** True when a Model source expanded past the id cap and was trimmed. */
+  truncated: boolean;
 };
 
 // Resolves a hub to the id sets its feed filter is built from. Returns null when
@@ -127,18 +137,27 @@ export async function resolveHubSources({
     hub.sources.filter((s) => s.type === type).map((s) => s.targetId);
 
   const modelIds = byType(UserHubSourceType.Model);
+  // Newest first, so a truncated expansion keeps the versions people are actually
+  // posting to rather than an arbitrary slice.
   const versionsOfModels = modelIds.length
     ? await dbRead.modelVersion.findMany({
         where: { modelId: { in: modelIds } },
         select: { id: true },
+        orderBy: { id: 'desc' },
+        take: hubLimits.resolvedVersionIds + 1,
       })
     : [];
 
+  const explicitVersionIds = byType(UserHubSourceType.ModelVersion);
+  const allVersionIds = [...new Set([...explicitVersionIds, ...versionsOfModels.map((v) => v.id)])];
+  // Explicit ModelVersion sources are kept whole — the user picked those by hand.
+  // Only the expansion is trimmed.
+  const modelVersionIds = allVersionIds.slice(0, hubLimits.resolvedVersionIds);
+
   return {
     userIds: byType(UserHubSourceType.User),
-    modelVersionIds: [
-      ...new Set([...byType(UserHubSourceType.ModelVersion), ...versionsOfModels.map((v) => v.id)]),
-    ],
+    modelVersionIds,
+    truncated: allVersionIds.length > modelVersionIds.length,
     collectionIds: byType(UserHubSourceType.Collection),
   };
 }
@@ -175,11 +194,15 @@ async function assertHubSourcesUsable({
     select: { id: true, name: true, read: true, metadata: true },
   });
 
-  const permissions = await getUserCollectionPermissionsByIds({ ids: collectionIds, userId });
+  // Returns a POSITIONAL array aligned with `ids`, not an id-keyed map. Indexing
+  // it by collection id reads an unrelated slot — almost always undefined, which
+  // fails closed and so hid the fact that the permission check never ran.
+  const permissionList = await getUserCollectionPermissionsByIds({ ids: collectionIds, userId });
+  const permissions = new Map(collectionIds.map((id, index) => [id, permissionList[index]]));
 
   for (const id of collectionIds) {
     const collection = collections.find((c) => c.id === id);
-    if (!collection || !permissions[id]?.read)
+    if (!collection || !permissions.get(id)?.read)
       throw throwNotFoundError(`Collection ${id} not found`);
 
     if (collection.read === CollectionReadConfiguration.Private)

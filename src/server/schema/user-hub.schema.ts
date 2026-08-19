@@ -7,6 +7,13 @@ export const hubLimits = {
   sourcesPerHub: 50,
   nameLength: 60,
   aliasLength: 60,
+  // Caps the RESOLVED ids, which is a different quantity from the source count:
+  // one Model source expands to every version of that model, and each version id
+  // is then repeated across three filter arms. Measured on prod, the feed's
+  // filter cost is linear at ~0.5ms per id — 3,867 ids (reachable by adding 50
+  // high-version models from the UI) took 2.9-5.6s and produced a 502 against the
+  // 5s deadline. 800 ids, the realistic "models I actually use" case, is ~830ms.
+  resolvedVersionIds: 750,
 } as const;
 
 // `collectionIds` is declared on the metrics-images index but is NOT yet a live
@@ -41,9 +48,13 @@ export const userHubSourceSchema = z.object({
 export const upsertUserHubSchema = z.object({
   id: z.number().optional(),
   name: z.string().trim().min(1).max(hubLimits.nameLength),
-  sort: hubSortSchema.default(ImageSort.Newest),
-  period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
-  mediaTypes: z.array(z.enum(MediaType)).default([]),
+  // Deliberately NOT `.default()`. These are applied to an UPDATE, so a default
+  // means "an omitted field is silently overwritten" rather than "left alone" —
+  // which reset a user's sort and period every time they toggled a source off.
+  // Creation defaults live in the service, where the create branch can be explicit.
+  sort: hubSortSchema.optional(),
+  period: z.enum(MetricTimeframe).optional(),
+  mediaTypes: z.array(z.enum(MediaType)).optional(),
   sources: z.array(userHubSourceSchema).max(hubLimits.sourcesPerHub).default([]),
 });
 

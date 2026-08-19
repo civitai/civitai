@@ -16,7 +16,12 @@ vi.mock('~/server/services/collection.service', () => ({
 
 import { resolveHubSources, upsertUserHub } from '~/server/services/user-hub.service';
 import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
-import { CollectionReadConfiguration, UserHubSourceType } from '~/shared/utils/prisma/enums';
+import {
+  CollectionReadConfiguration,
+  MetricTimeframe,
+  UserHubSourceType,
+} from '~/shared/utils/prisma/enums';
+import { ImageSort } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const findFirstHub = dbMock.dbRead.userHub.findFirst;
 const findManyCollections = dbMock.dbRead.collection.findMany;
@@ -82,6 +87,42 @@ describe('resolveHubSources', () => {
   });
 });
 
+describe('upsertUserHub', () => {
+  it('creates a creator-only hub', async () => {
+    // The negative control for every rejection below, and the only thing standing
+    // between us and a mutation that makes EVERY upsert throw. Without it,
+    // `if (!collectionIds.length) return` -> `< 0` kills the shipped feature and
+    // the suite still prints all-green.
+    dbMock.dbRead.userHub.count.mockResolvedValue(0);
+    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7 });
+
+    await upsertUserHub({
+      name: 'creators only',
+      sources: [{ type: UserHubSourceType.User, targetId: 10, enabled: true, index: 0 }],
+      userId: 5,
+    });
+
+    expect(dbMock.dbWrite.userHub.create).toHaveBeenCalledTimes(1);
+    const arg = dbMock.dbWrite.userHub.create.mock.calls[0][0];
+    expect(arg.data.userId).toBe(5);
+    expect(arg.data.sources.create).toHaveLength(1);
+  });
+
+  it('applies creation defaults without them leaking into updates', async () => {
+    // sort/period/mediaTypes carry no zod default any more: a default on an UPDATE
+    // silently overwrote fields the caller had not sent, which reset the user's
+    // sort every time they toggled a source. Create must still get real values.
+    dbMock.dbRead.userHub.count.mockResolvedValue(0);
+    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 8 });
+
+    await upsertUserHub({ name: 'defaults', sources: [], userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.create.mock.calls[0][0];
+    expect(arg.data.sort).toBe(ImageSort.Newest);
+    expect(arg.data.period).toBe(MetricTimeframe.AllTime);
+  });
+});
+
 describe('upsertUserHub collection sources', () => {
   const hubInput = (targetId: number) => ({
     name: 'hub',
@@ -92,22 +133,25 @@ describe('upsertUserHub collection sources', () => {
     userId: 5,
   });
 
-  it('refuses every collection while the index attribute is not live', async () => {
-    // The guard sits before the per-collection checks, so this fires for a
-    // collection that would otherwise be perfectly usable.
-    findManyCollections.mockResolvedValue([
-      { id: 44, name: 'Fine', read: CollectionReadConfiguration.Public, metadata: {} },
-    ]);
-    permissionsMock.mockResolvedValue({ 44: { read: true } });
+  it.skipIf(HUB_COLLECTION_SOURCES_ENABLED)(
+    'refuses every collection while the index attribute is not live',
+    async () => {
+      // The guard sits before the per-collection checks, so this fires for a
+      // collection that would otherwise be perfectly usable.
+      findManyCollections.mockResolvedValue([
+        { id: 44, name: 'Fine', read: CollectionReadConfiguration.Public, metadata: {} },
+      ]);
+      permissionsMock.mockResolvedValue([{ read: true }]);
 
-    await expect(upsertUserHub(hubInput(44))).rejects.toThrow(/cannot be added to a hub yet/i);
-  });
+      await expect(upsertUserHub(hubInput(44))).rejects.toThrow(/cannot be added to a hub yet/i);
+    }
+  );
 
   it.skipIf(!HUB_COLLECTION_SOURCES_ENABLED)('refuses a private collection', async () => {
     findManyCollections.mockResolvedValue([
       { id: 40, name: 'Secret', read: CollectionReadConfiguration.Private, metadata: {} },
     ]);
-    permissionsMock.mockResolvedValue({ 40: { read: true } });
+    permissionsMock.mockResolvedValue([{ read: true }]);
 
     await expect(upsertUserHub(hubInput(40))).rejects.toThrow(/private/i);
   });
@@ -123,7 +167,7 @@ describe('upsertUserHub collection sources', () => {
           metadata: { forcedBrowsingLevel: 3 },
         },
       ]);
-      permissionsMock.mockResolvedValue({ 41: { read: true } });
+      permissionsMock.mockResolvedValue([{ read: true }]);
 
       await expect(upsertUserHub(hubInput(41))).rejects.toThrow(/content ratings/i);
     }
@@ -135,7 +179,7 @@ describe('upsertUserHub collection sources', () => {
       findManyCollections.mockResolvedValue([
         { id: 42, name: 'Theirs', read: CollectionReadConfiguration.Public, metadata: {} },
       ]);
-      permissionsMock.mockResolvedValue({ 42: { read: false } });
+      permissionsMock.mockResolvedValue([{ read: false }]);
 
       await expect(upsertUserHub(hubInput(42))).rejects.toThrow(/not found/i);
     }
@@ -147,7 +191,7 @@ describe('upsertUserHub collection sources', () => {
       findManyCollections.mockResolvedValue([
         { id: 43, name: 'Fine', read: CollectionReadConfiguration.Public, metadata: {} },
       ]);
-      permissionsMock.mockResolvedValue({ 43: { read: true } });
+      permissionsMock.mockResolvedValue([{ read: true }]);
 
       // Proves the three rejections above are not passing for free — the same call
       // shape reaches the write path when the collection is usable.

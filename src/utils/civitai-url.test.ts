@@ -114,6 +114,17 @@ describe('parseCivitaiUrlSafe', () => {
     expect(parseCivitaiUrlSafe('https://evil.example/models/123')).toBeNull();
     // The unanchored regexes elsewhere in the repo accept this; we must not.
     expect(parseCivitaiUrlSafe('https://evil.example/?x=civitai.com/models/123')).toBeNull();
+    // These are what the (^|\.) anchor and the trailing $ actually stop. Without
+    // them the anchors can be deleted with the whole suite still green, because
+    // `evil.example` above is rejected by the domain body alone and proves nothing.
+    expect(parseCivitaiUrlSafe('https://fakecivitai.com/models/123')).toBeNull();
+    expect(parseCivitaiUrlSafe('https://evil-civitai.red/models/123')).toBeNull();
+    expect(parseCivitaiUrlSafe('https://civitai.com.evil.io/models/123')).toBeNull();
+  });
+
+  it('rejects an id too large to be a safe integer', () => {
+    // Covers Number.isSafeInteger; without it this returns modelId: 1e20.
+    expect(parseCivitaiUrlSafe('https://civitai.com/models/99999999999999999999')).toBeNull();
   });
 
   it('accepts a runtime host passed by the caller', () => {
