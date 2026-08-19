@@ -25,6 +25,7 @@ import {
   type ModelVersionTerms,
   type ModelVersionSaleWindow,
   discountedTerms,
+  bestSaleFor,
   maxSaleDays,
   remainingSaleDays,
   saleDaysCharged,
@@ -520,5 +521,69 @@ describe('scheduled sales — the sale-day budget', () => {
     const spent = [window({ startsAt: at('2026-03-01T00:00:00Z'), endsAt: at('2026-03-29T00:00:00Z') })];
     expect(remainingSaleDays('gold', spent, at('2026-03-15T00:00:00Z'))).toBe(2);
     expect(remainingSaleDays('free', spent, at('2026-03-15T00:00:00Z'))).toBe(0);
+  });
+});
+
+describe('scheduled sales — percent and fixed have no order until applied to a price', () => {
+  const at = (iso: string) => new Date(iso);
+  const now = at('2026-03-02T00:00:00Z');
+  const base = { startsAt: at('2026-03-01T00:00:00Z'), endsAt: at('2026-03-08T00:00:00Z'), canceledAt: null };
+  const percent: ModelVersionSaleWindow = { id: 1, discountType: 'Percent', discountAmount: 20, ...base };
+  const fixed: ModelVersionSaleWindow = { id: 2, discountType: 'Fixed', discountAmount: 250, ...base };
+
+  it('picks the FIXED sale on a cheap version and the PERCENT sale on an expensive one, from the same pair', () => {
+    // 1000: fixed takes 250, percent takes 200 -> fixed wins.
+    expect(discountedTerms({ download: { price: 1000 } }, [percent, fixed], now).download?.price).toBe(750);
+    // 2000: fixed still takes 250, percent takes 400 -> percent wins. The winner INVERTS on base price,
+    // so a comparison done before knowing the price would get one of these two wrong.
+    expect(discountedTerms({ download: { price: 2000 } }, [percent, fixed], now).download?.price).toBe(1600);
+  });
+
+  it('picks per PRICE, not per version: one sale can win the download tier and the other the generation tier', () => {
+    const out = discountedTerms(
+      { download: { price: 2000 }, generation: { price: 1000 } },
+      [percent, fixed],
+      now
+    );
+    expect(out.download?.price).toBe(1600);
+    expect(paidGenerationGrant(out)?.price).toBe(750);
+  });
+});
+
+describe('scheduled sales — the resolver DECLINES to discount', () => {
+  const at = (iso: string) => new Date(iso);
+  const now = at('2026-03-02T00:00:00Z');
+  const terms: ModelVersionTerms = { download: { price: 500 }, generation: { price: 100 } };
+
+  // Negative controls. Without these, every "the discount applied" test above would still pass if the
+  // resolver discounted unconditionally — which is the failure that charges every buyer less, forever.
+  it('returns the terms untouched when there are no sales at all', () => {
+    expect(discountedTerms(terms, [], now)).toEqual(terms);
+    expect(discountedTerms(terms, undefined, now)).toEqual(terms);
+    expect(discountedTerms(terms, null, now)).toEqual(terms);
+  });
+
+  it('returns the terms untouched when every sale is out of window', () => {
+    const over = {
+      id: 1,
+      discountType: 'Percent' as const,
+      discountAmount: 50,
+      startsAt: at('2026-01-01T00:00:00Z'),
+      endsAt: at('2026-01-08T00:00:00Z'),
+      canceledAt: null,
+    };
+    expect(discountedTerms(terms, [over], now)).toEqual(terms);
+  });
+
+  it('bestSaleFor returns nothing rather than a zero-value sale', () => {
+    const zeroOff = {
+      id: 1,
+      discountType: 'Percent' as const,
+      discountAmount: 0,
+      startsAt: at('2026-03-01T00:00:00Z'),
+      endsAt: at('2026-03-08T00:00:00Z'),
+      canceledAt: null,
+    };
+    expect(bestSaleFor(500, [zeroOff], now)).toBeUndefined();
   });
 });

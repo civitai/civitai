@@ -237,6 +237,8 @@ describe('earlyAccessPurchase — a scheduled sale is priced from the PRIMARY, n
     });
 
     expect(charged()).toBe(400);
+    // Exactly one charge. Asserting only the amount would stay green if the buyer were billed twice.
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 
   it('charges full price the moment a sale is cancelled, even though the cached gate still carries it', async () => {
@@ -265,5 +267,33 @@ describe('earlyAccessPurchase — a scheduled sale is priced from the PRIMARY, n
     });
 
     expect(charged()).toBe(500);
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves NO money when a sale is live but the purchase is refused', async () => {
+    // The negative control for the two above: a live sale must not become a reason money moves. Without
+    // this, a resolver that charged before validating would pass every assertion in this file.
+    seed();
+    mockGetFreshSalesForVersion.mockResolvedValue([liveSale]);
+    mockDbWrite.modelVersion.findUnique.mockResolvedValue({
+      id: VERSION_ID,
+      status: 'Draft',
+      name: 'v1',
+      meta: {},
+      baseModel: 'SDXL 1.0',
+      model: { id: 1, name: 'Model', userId: OWNER, nsfw: false },
+    });
+
+    await expect(
+      earlyAccessPurchase({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        type: 'download',
+        buzzType: 'yellow',
+      })
+    ).rejects.toThrow();
+
+    expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.entityAccess.upsert).not.toHaveBeenCalled();
   });
 });
