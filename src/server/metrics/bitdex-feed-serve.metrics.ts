@@ -43,6 +43,21 @@
 // failure, and counting it as one would make the served ratio sag whenever a
 // moderator opened a queue. The consequence to hold onto: `sum(…)` here is the
 // count of requests that ENGAGED the backend, not the count of feed requests.
+// Two other populations are outside it for the same reason: a request whose
+// `limit` collapses the fetch loop before it runs (externally reachable, and
+// explicitly guarded in `fetchBitdexPrimary`), and the hand-driven internal
+// comparison endpoint, which passes no callback so its calls reach
+// `bitdex_query_failures_total` but never this counter.
+//
+// 🔴 THIS COUNTER ALONE CANNOT SEE EVERY DEGRADATION, AND AN ALERT BUILT ON IT
+// ALONE WILL BE GREEN THROUGH ONE OF THEM. A request whose own-content pass
+// fails while the main pass stays healthy still SERVES A PAGE — so it is
+// recorded, correctly, as `served` — but the user has silently lost their own
+// private/blocked/unpublished content from that page. The served ratio reads
+// 100% throughout; only `bitdex_query_failures_total` moves. Demoting such a
+// request was considered and rejected: it would make `served` mean "served and
+// perfect", which no threshold can interpret. ⇒ ANY dashboard or alert over this
+// family MUST read BOTH counters.
 //
 // `mode` is free signal rather than a second metric. The same code path runs in
 // shadow, where the outcome previews what selecting the primary path for that

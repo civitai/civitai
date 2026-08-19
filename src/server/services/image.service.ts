@@ -3226,6 +3226,27 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     anyQueryFailed = true;
   };
 
+  // 🔴 HOW MANY QUERIES THIS REQUEST ACTUALLY ISSUED, because it can be ZERO and
+  // the empty-result guard below cannot tell.
+  //
+  // `limit: 0` is externally reachable — the feed schema accepts it
+  // (`z.number().min(0)`) — and it collapses the pass loop's
+  // `accumulated.length < limit` condition on the FIRST evaluation, so the loop
+  // body never runs. With `skipOwnExcluded` also true (an anonymous caller),
+  // BitDex is never contacted at all, and yet `data` is empty, so the
+  // `!data.length` guard fires and would record a `fallback_empty` for a request
+  // that asked BitDex nothing.
+  //
+  // That is not a rounding error in the wrong direction: it inflates the
+  // FALLBACK side of the exact ratio a roll-forward/rollback decision is made
+  // on, and it would silently contradict this metric's own help string, which
+  // states the denominator as "requests that issued at least one query". A
+  // metric whose stated meaning and behaviour disagree is worse than no metric,
+  // so the behaviour is fixed here rather than the sentence being softened to
+  // match. (Reachability is measured; organic frequency is NOT — this is a
+  // correctness fix, not a claim about how often it happens.)
+  let queriesIssued = 0;
+
   const limit = input.limit ?? 100;
   // Opt-in to one's own not-yet-published content. Read once so the main
   // post-filter and the own-excluded merge below cannot disagree about it.
@@ -3331,6 +3352,7 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       true,
       noteQueryFailure
     );
+    queriesIssued++;
   }
 
   // Main loop: fetch pages, post-filter, accumulate until we have enough.
@@ -3351,6 +3373,7 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   const stats: PostFilterStats = { publicationHolds: 0, sortAtOnlyIds: new Set<number>() };
 
   while (pass < MAX_PASSES && accumulated.length < limit) {
+    queriesIssued++;
     const result = await (firstPage
       ? getImagesFromBitdexPreFilter(input, true, bitdexCursor, noteQueryFailure)
       : getImagesFromBitdexPreFilter(input, true, lastCursor, noteQueryFailure));
@@ -3575,7 +3598,13 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // `fallback_error` says at least one call in this request failed, so nobody
     // knows what was in the index. Before this line the two were the same
     // observable, which is why a BitDex outage looked exactly like a quiet index.
-    recordBitdexPrimaryResult(anyQueryFailed ? 'fallback_error' : 'fallback_empty', serveMode);
+    //
+    // Gated on `queriesIssued` for the reason given at its declaration: a
+    // request that never contacted BitDex is neither of these things, and
+    // recording it would make this counter's denominator disagree with its own
+    // help string.
+    if (queriesIssued > 0)
+      recordBitdexPrimaryResult(anyQueryFailed ? 'fallback_error' : 'fallback_empty', serveMode);
 
     // ⚠️ A cursored request does not fall back cleanly — the Meili path parses
     // cursors as `offset|entryTimestamp` (:2594) and a `bdx:{…}` cursor fails
@@ -3597,6 +3626,19 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // while one of its calls failed (a failed own-content pass alongside a healthy
   // main pass), and that is a served page. `anyQueryFailed` only decides which
   // KIND of empty an empty result is; it never demotes a page that exists.
+  //
+  // 🔴 THE CONSEQUENCE, STATED SO NOBODY HAS TO REDERIVE IT FROM AN ALERT THAT
+  // LOOKS FINE. If the own-content pass fails PERSISTENTLY while the main pass
+  // stays healthy, users silently lose their own private / blocked / unpublished
+  // content from their feed — a real, user-visible degradation — and THIS
+  // counter reads 100% `served` throughout, because a page was in fact served.
+  // That is a deliberate choice (a served page is a served page; demoting it
+  // would make `served` mean "served and perfect", which no threshold could then
+  // interpret), but it means `bitdex_primary_result_total` ALONE cannot see this
+  // failure. `bitdex_query_failures_total` is the only counter that moves.
+  //
+  // ⇒ Any dashboard or alert built on this family MUST watch BOTH counters. One
+  // keyed on the served ratio alone will stay green straight through this.
   recordBitdexPrimaryResult('served', serveMode);
 
   const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;

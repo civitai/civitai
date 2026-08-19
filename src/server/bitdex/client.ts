@@ -110,9 +110,14 @@ export interface BitdexQueryResult {
  * are still in scope; once this function returns, that information is gone.
  *
  * Deliberately an OPTIONAL, ADDITIVE last parameter rather than a change of
- * return type: the return contract is depended on by three consumers on the
- * highest-traffic feed path, and a discriminated union would have rewritten
- * every one of them — plus every test mock — in the same commit that changes the
+ * return type. Counting precisely, because two different numbers are true and
+ * conflating them has already caused confusion: `queryBitdex` has exactly TWO
+ * direct call sites, both in `image.service.ts` (the parallel own-content pass
+ * in `fetchBitdexPrimary`, and the one inside `getImagesFromBitdexPreFilter`).
+ * The `null` RETURN CONTRACT, however, is interpreted by THREE consumers, because
+ * `getImagesFromBitdexPreFilter` is itself re-exported and called from
+ * `~/pages/api/internal/bitdex-compare.ts` — so a discriminated union would have
+ * rewritten all three, plus every test mock, in the same commit that changes the
  * behaviour, which is precisely the commit you want to be able to read. It
  * reverts by deleting one argument.
  *
@@ -220,7 +225,13 @@ export async function queryBitdex(
     return result;
   } catch (err) {
     console.error(`[BitDex] Query error:`, err);
-    const aborted = err instanceof Error && err.name === 'AbortError';
+    // Duck-typed on `name` rather than `err instanceof Error`. A real abort here
+    // is a `DOMException`, and while THIS runtime happens to make DOMException an
+    // Error subclass (measured), that is a WebIDL detail we should not be
+    // depending on — if it were ever false, every timeout would silently
+    // reclassify as `network`, which is the wrong team paged and no error
+    // anywhere. The narrowing below cannot throw on null/undefined.
+    const aborted = (err as { name?: unknown } | null | undefined)?.name === 'AbortError';
     return fail(aborted ? 'timeout' : phase === 'parse' ? 'parse' : 'network');
   } finally {
     // 🔴 The leak. Before this, the only `clearTimeout` was the eager one above,

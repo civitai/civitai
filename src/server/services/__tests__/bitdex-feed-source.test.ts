@@ -117,6 +117,36 @@ const baseInput = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ImageSearchInput isn't exported
 } as any;
 
+const CURRENT_USER_ID = 42;
+
+/**
+ * Both BitDex passes go through the same `queryBitdex`, so a fake has to tell
+ * them apart from their arguments or it answers the same thing to both and every
+ * assertion keyed on the difference is meaningless.
+ *
+ * The main pass filters availability with `Not(Eq(availability, Private))`; the
+ * own-content pass asks for the OPPOSITE inside an `Or`. Keying on that `Or`
+ * distinguishes them STRUCTURALLY rather than by call order or argument
+ * position, both of which are incidental and would silently stop discriminating
+ * if the parallel pass were reordered. Same discriminator as
+ * `bitdex-empty-fallback.test.ts`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw BitDex filter clauses
+type Clause = any;
+function isOwnExcludedQuery(filters: unknown): boolean {
+  if (!Array.isArray(filters)) return false;
+  return filters.some(
+    (clause: Clause) =>
+      Array.isArray(clause?.Or) &&
+      clause.Or.some(
+        (member: Clause) =>
+          Array.isArray(member?.Eq) &&
+          member.Eq[0] === 'availability' &&
+          member.Eq[1]?.String === 'Private'
+      )
+  );
+}
+
 describe('getImagesFromSearch — reported source names the backend that served the page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -266,6 +296,84 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
     const after = await readOutcomes();
     expect(result.source).toBe('meili');
     expect(seriesThatMoved(before, after)).toEqual([key('fallback_exception', 'primary')]);
+  });
+
+  /**
+   * 🔴 THE SEAM THE OTHER CASES CANNOT REACH, AND THE REASON THEY CANNOT.
+   *
+   * Every case above runs ANONYMOUSLY (`currentUserId: undefined`), which makes
+   * `skipOwnExcluded` true — so the parallel own-content pass is NEVER ISSUED and
+   * exactly one BitDex call happens per request. With one call in play, "any call
+   * in this request failed" and "the main call failed" are byte-identical in
+   * behaviour, so the whole justification for the per-request predicate sat
+   * unexercised and a mutant that stopped threading the callback into the
+   * own-content pass survived a fully green run. Fixture collapse: the fixture
+   * could not distinguish the two implementations because it only ever built one
+   * of the two states.
+   *
+   * This case builds the state that separates them: a SIGNED-IN caller, whose
+   * own-content pass FAILS while the main pass succeeds and legitimately returns
+   * nothing. The main call reports no failure at all — so an implementation that
+   * only watched the main call would record `fallback_empty` and declare the page
+   * genuinely empty, when the documents that would have filled it are exactly the
+   * ones the failed call was fetching.
+   */
+  it('🔴 PRIMARY, signed-in, the OWN-CONTENT pass fails while the main pass is empty → fallback_error', async () => {
+    getFliptVariantMock.mockResolvedValue('primary');
+
+    const calls: Array<{ ownExcluded: boolean; failed: boolean }> = [];
+    queryBitdexMock.mockImplementation(async (...args: unknown[]) => {
+      const ownExcluded = isOwnExcludedQuery(args[1]);
+      const onFailure = args.find((a) => typeof a === 'function') as
+        | ((reason: string) => void)
+        | undefined;
+      calls.push({ ownExcluded, failed: ownExcluded });
+      if (ownExcluded) {
+        // Only the own-content pass fails. The main pass below succeeds.
+        onFailure?.('http_5xx');
+        return null;
+      }
+      return { documents: [], cursor: undefined };
+    });
+
+    const before = await readOutcomes();
+    const result = await getImagesFromSearch({ ...baseInput, currentUserId: CURRENT_USER_ID });
+    const after = await readOutcomes();
+
+    // The fixture is only meaningful if BOTH passes actually ran and only the
+    // own-content one failed — assert the state was built before reading the
+    // conclusion off it, or a silently-skipped second pass would make this case
+    // pass for the same reason the anonymous ones do.
+    expect(calls.filter((c) => c.ownExcluded)).toHaveLength(1);
+    expect(calls.filter((c) => !c.ownExcluded).length).toBeGreaterThanOrEqual(1);
+    expect(calls.filter((c) => !c.ownExcluded).every((c) => !c.failed)).toBe(true);
+
+    expect(result.source).toBe('meili');
+    expect(seriesThatMoved(before, after)).toEqual([key('fallback_error', 'primary')]);
+  });
+
+  /**
+   * The denominator this counter's help string claims — "requests that issued at
+   * least one query" — has to be true of the code, not just of the sentence.
+   * `limit: 0` is externally reachable (the feed schema accepts `min(0)`) and
+   * collapses the pass loop before its first iteration; anonymously, the
+   * own-content pass is skipped too, so BitDex is never contacted. The empty
+   * result must NOT be recorded as a fallback, or the served ratio a rollout
+   * decision reads is biased downward by requests that asked BitDex nothing.
+   */
+  it('🔴 PRIMARY with limit 0 issues NO BitDex query, so nothing is recorded', async () => {
+    getFliptVariantMock.mockResolvedValue('primary');
+    const before = await readOutcomes();
+
+    const result = await getImagesFromSearch({ ...baseInput, limit: 0 });
+
+    const after = await readOutcomes();
+    // Positive control on the premise: this asserts the zero-query state was
+    // actually built. Without it, "no series moved" would also be satisfied by a
+    // counter that had simply stopped working.
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+    expect(result.source).toBe('meili');
+    expect(seriesThatMoved(before, after)).toEqual([]);
   });
 
   it('SHADOW, BitDex answers with documents → served{mode="shadow"} +1 (Meili still serves the user)', async () => {

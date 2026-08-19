@@ -115,13 +115,60 @@ describe('queryBitdex classifies every null it returns', () => {
     expect(moved).toEqual(['network']);
   });
 
-  it('an abort → timeout, NOT network', async () => {
+  /**
+   * A real abort rejects with a `DOMException`, not a plain `Error`. A fixture
+   * built from `new Error()` with the name reassigned cannot tell the difference,
+   * so it would keep passing even if the classification depended on a prototype
+   * relationship that does not hold — measured here, `DOMException` IS an `Error`
+   * subclass on this runtime, but that is a WebIDL detail and not something the
+   * classification should rest on. Using the real type is what makes this case
+   * evidence about production rather than about the fixture.
+   */
+  it('a real DOMException abort → timeout, NOT network', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new DOMException('The operation was aborted', 'AbortError'))
+    );
+    const { reasons, moved } = await observe();
+    expect(reasons).toEqual(['timeout']);
+    expect(moved).toEqual(['timeout']);
+  });
+
+  it('a plain Error named AbortError → timeout too (the classification is duck-typed)', async () => {
     const abort = new Error('The operation was aborted');
     abort.name = 'AbortError';
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abort));
     const { reasons, moved } = await observe();
     expect(reasons).toEqual(['timeout']);
     expect(moved).toEqual(['timeout']);
+  });
+
+  it('a non-Error thrown value cannot crash the classifier', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(undefined));
+    const { reasons, moved } = await observe();
+    expect(reasons).toEqual(['network']);
+    expect(moved).toEqual(['network']);
+  });
+
+  /**
+   * 🔴 THE BOUNDARY. The split is `status >= 500`, and fixtures of 503 and 400
+   * sit either side of it without ever landing ON it — so `>= 500` → `> 500`
+   * survived a fully green run, silently reclassifying every HTTP 500 (the single
+   * most common server error) as a client error and pointing an operator at the
+   * wrong team. Exactly 500 is the only value that separates the two operators.
+   */
+  it('exactly 500 → http_5xx, not http_4xx', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(errorResponse(500)));
+    const { reasons, moved } = await observe();
+    expect(reasons).toEqual(['http_5xx']);
+    expect(moved).toEqual(['http_5xx']);
+  });
+
+  it('499 → http_4xx, the other side of the same boundary', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(errorResponse(499)));
+    const { reasons, moved } = await observe();
+    expect(reasons).toEqual(['http_4xx']);
+    expect(moved).toEqual(['http_4xx']);
   });
 
   it('a 2xx whose body will not decode → parse, NOT network', async () => {
