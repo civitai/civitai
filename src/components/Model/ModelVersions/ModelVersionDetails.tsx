@@ -97,7 +97,7 @@ import {
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { getModelVersionActionLayout } from '~/components/Model/ModelVersions/model-version-layout';
 import ModelVersionDonationGoal from '~/components/Model/ModelVersions/ModelVersionDonationGoal';
-import { ModelVersionSaleBadge } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
+import { ModelVersionSaleBanner } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
@@ -545,11 +545,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           </Group>
         </Group>
       </Card.Section>
-      {saleForViewer ? (
-        <Card.Section className="px-4 pt-2">
-          <ModelVersionSaleBadge sale={saleForViewer} isOwner={isOwnerOrMod} />
-        </Card.Section>
-      ) : null}
       <Card.Section>
         <DownloadVariantDropdown
           files={filesVisible}
@@ -701,6 +696,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </Group>
                 </Stack>
               )}
+              <ModelVersionSaleBanner sale={saleForViewer} isOwner={isOwnerOrMod} />
               {downloadSection}
             </Stack>
           ) : (
@@ -973,6 +969,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </AlertWithIcon>
               )}
               {/* Download Section */}
+              <ModelVersionSaleBanner sale={saleForViewer} isOwner={isOwnerOrMod} />
               {downloadSection}
             </Stack>
           )}

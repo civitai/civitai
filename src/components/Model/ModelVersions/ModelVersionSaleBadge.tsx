@@ -1,4 +1,4 @@
-import { Group, Text, Tooltip } from '@mantine/core';
+import { Card, Group, Text, Tooltip } from '@mantine/core';
 import { IconTag } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ModelVersionTerms } from '@civitai/buzz';
@@ -88,5 +88,47 @@ export function ModelVersionSaleBadge({
         </Text>
       </Group>
     </Tooltip>
+  );
+}
+
+/**
+ * The prominent form, for the model page: a sale is a reason to act now, so it sits above the download
+ * card rather than inside it, where it read as one more line of card furniture.
+ */
+export function ModelVersionSaleBanner({
+  sale,
+  isOwner,
+}: {
+  sale: SaleDisplay | null | undefined;
+  isOwner?: boolean;
+}) {
+  if (!sale) return null;
+
+  const listPrice = sale.listTerms.download?.price;
+  const endsAt = new Date(sale.endsAt);
+
+  return (
+    <Card withBorder p="sm" className="border-green-6 bg-green-0 dark:bg-green-9/20">
+      <Group gap="xs" wrap="nowrap" justify="space-between">
+        <Group gap={8} wrap="nowrap">
+          <IconTag size={20} className="text-green-7 dark:text-green-4" />
+          <div>
+            <Text size="sm" fw={700} className="text-green-7 dark:text-green-4">
+              {isOwner ? 'Your sale is running' : 'On sale'} —{' '}
+              <SaleDiscountLabel sale={sale} size="sm" />
+            </Text>
+            <Text size="xs" c="dimmed">
+              {isOwner ? 'Ends ' : 'Ends '}
+              {formatDate(endsAt, 'MMM D, YYYY h:mm A')}
+            </Text>
+          </div>
+        </Group>
+        {!isOwner && listPrice != null && (
+          <Text size="sm" c="dimmed" td="line-through" className="whitespace-nowrap">
+            {listPrice.toLocaleString()} Buzz
+          </Text>
+        )}
+      </Group>
+    </Card>
   );
 }
