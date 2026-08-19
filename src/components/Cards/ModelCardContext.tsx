@@ -24,6 +24,21 @@ export const useModelCardContext = () => {
  * query is a hot path and a sale is time-varying, so indexing it would mean re-indexing at every window
  * edge. Same shape as how cosmetics and version images are already fetched after the fact.
  */
+/**
+ * The sale for ONE model, for a card rendered outside any provider — home blocks, collections, related
+ * models, search results. tRPC batches concurrent queries into a single HTTP request, so a grid of cards
+ * still costs one round trip, and the per-model result is cached by react-query for the whole page.
+ *
+ * A container that already has the map (the main feed) passes it down instead, and this stays disabled.
+ */
+export const useModelSaleBadge = (modelId: number, skip: boolean) => {
+  const { data } = trpc.model.getActiveSales.useQuery(
+    { ids: [modelId] },
+    { enabled: !skip, staleTime: 60_000 }
+  );
+  return data?.[modelId];
+};
+
 export const useModelSaleBadges = (modelIds: number[]) => {
   const ids = useMemo(() => [...new Set(modelIds)].sort((a, b) => a - b), [modelIds]);
   const { data } = trpc.model.getActiveSales.useQuery(

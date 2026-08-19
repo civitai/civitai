@@ -215,13 +215,39 @@ function paidAccessCache(entityType: PaidAccessEntityType) {
  * Same predicate as the resolver, for the same reasons: permanent gates only (a timed early-access
  * window is never discounted), and the sale's author must own the model.
  */
-export async function getActiveSalesForModels(
-  modelIds: number[],
-  now: Date = new Date()
-): Promise<
-  Record<number, { endsAt: Date; discountType: SaleDiscountKind; discountAmount: number }>
-> {
-  if (!modelIds.length) return {};
+type CachedModelSale = {
+  modelId: number;
+  endsAtMs: number;
+  discountType: SaleDiscountKind;
+  discountAmount: number;
+};
+
+// Same bucket-per-entity pattern as the other model-side caches, and the same rule as the gate cache:
+// what is cached is the sale WINDOW, never "is on sale". A boolean would go stale at exactly the two
+// moments that matter. Short TTL because a creator cancelling wants the badge gone quickly, and unlike
+// the price this is only a label — the charge never reads it.
+function createModelSaleCache() {
+  return createCachedObject<CachedModelSale>({
+    key: `${REDIS_KEYS.CACHES.PAID_ACCESS}:ModelSales`,
+    idKey: 'modelId',
+    ttl: CacheTTL.xs,
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const modelIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
+      const rows = await querySalesForModels(modelIds);
+      return Object.fromEntries(rows.map((r) => [String(r.modelId), r]));
+    },
+  });
+}
+
+let modelSaleCacheInstance: ReturnType<typeof createModelSaleCache> | undefined;
+function modelSaleCache() {
+  return (modelSaleCacheInstance ??= createModelSaleCache());
+}
+
+async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[]> {
+  if (!modelIds.length) return [];
+  const now = new Date();
   const rows = await dbRead.$queryRaw<
     { modelId: number; endsAt: Date; discountType: SaleDiscountKind; discountAmount: number }[]
   >`
@@ -237,16 +263,41 @@ export async function getActiveSalesForModels(
       AND mv.status = 'Published'::"ModelStatus"
       AND pa."timeframeDays" IS NULL
       AND s."userId" = m."userId"
-      AND s."startsAt" <= ${now} AND s."endsAt" > ${now}
+      AND s."endsAt" > ${now}
       AND (s."canceledAt" IS NULL OR s."canceledAt" > ${now})
     ORDER BY mv."modelId", s."endsAt"
   `;
-  return Object.fromEntries(
-    rows.map((r) => [
-      Number(r.modelId),
-      { endsAt: r.endsAt, discountType: r.discountType, discountAmount: r.discountAmount },
-    ])
-  );
+  return rows.map((r) => ({
+    modelId: Number(r.modelId),
+    endsAtMs: r.endsAt.getTime(),
+    discountType: r.discountType,
+    discountAmount: r.discountAmount,
+  }));
+}
+
+export async function getActiveSalesForModels(
+  modelIds: number[],
+  now: Date = new Date()
+): Promise<
+  Record<number, { endsAt: Date; discountType: SaleDiscountKind; discountAmount: number }>
+> {
+  if (!modelIds.length) return {};
+  const cached = await modelSaleCache().fetch(modelIds);
+  const out: Record<
+    number,
+    { endsAt: Date; discountType: SaleDiscountKind; discountAmount: number }
+  > = {};
+  for (const row of Object.values(cached)) {
+    if (!row) continue;
+    // Evaluated per request, not baked into the cached value: the window is the durable fact.
+    if (row.endsAtMs <= now.getTime()) continue;
+    out[row.modelId] = {
+      endsAt: new Date(row.endsAtMs),
+      discountType: row.discountType,
+      discountAmount: row.discountAmount,
+    };
+  }
+  return out;
 }
 
 /**
