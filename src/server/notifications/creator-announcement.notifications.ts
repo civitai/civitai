@@ -48,6 +48,9 @@ export const creatorAnnouncementNotifications = createNotificationProcessor({
             'creatorId', la.author_id
           ) details
         FROM live_announcements la
+        -- Index-only scan on UserEngagement_type_targetUserId_idx, which exists in prod
+        -- but is NOT declared in schema.full.prisma. A database built from the schema
+        -- alone seq-scans 11.7M rows here.
         JOIN "UserEngagement" ue
           ON ue."targetUserId" = la.author_id AND ue.type = 'Follow'
         -- The per-creator escape hatch: silences one author without unfollowing them.
