@@ -76,3 +76,27 @@ export type AnnouncementForm = z.infer<typeof announcementFormSchema>;
 export const deleteAnnouncementSchema = z.object({
   id: z.preprocess((v) => Number(v), z.number().int().positive()),
 });
+
+// The allowance is JSON off another service, and its numbers are not guaranteed: a creator with no
+// score row serialises as `null` (NaN does too), which crashed the notice on `toLocaleString`.
+// Parsing here keeps every screen downstream working with plain numbers.
+export const count = z
+  .number()
+  .nullish()
+  .transform((v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0));
+
+export const allowanceSchema = z.object({
+  eligible: z.boolean(),
+  tier: z.string(),
+  score: count,
+  minScore: count,
+  used: count,
+  limit: count,
+  windowDays: count,
+  nextAvailableAt: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
+});
+
+export type AnnouncementAllowancePayload = z.infer<typeof allowanceSchema>;

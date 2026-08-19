@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { announcementFormSchema } from '../announcements-schema';
+import { allowanceSchema, announcementFormSchema } from '../announcements-schema';
 
 // A complete, valid submission as the action receives it — Object.fromEntries(FormData), so every
 // value is a string. Each test overrides only the field it is about.
@@ -103,5 +103,40 @@ describe('the save action parses the whole form', () => {
 
   it('feeds announcementFormSchema from Object.fromEntries', () => {
     expect(source).toContain('announcementFormSchema.safeParse(Object.fromEntries(form))');
+  });
+});
+
+describe('allowanceSchema', () => {
+  const payload = (over: Record<string, unknown> = {}) => ({
+    eligible: false,
+    tier: 'silver',
+    score: 12_000,
+    minScore: 10_000,
+    used: 0,
+    limit: 1,
+    windowDays: 7,
+    nextAvailableAt: null,
+    ...over,
+  });
+
+  it('reads a well-formed allowance', () => {
+    const result = allowanceSchema.safeParse(payload());
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.score).toBe(12_000);
+  });
+
+  // The live endpoint returned `score: null` for a real creator — `Number(NaN)` serialises that way —
+  // and the notice then crashed on `.toLocaleString()`.
+  it('turns a null or non-finite count into 0 rather than passing it on', () => {
+    for (const value of [null, undefined]) {
+      const result = allowanceSchema.safeParse(payload({ score: value }));
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.score).toBe(0);
+    }
+  });
+
+  it('rejects a payload that is missing the fields the screens read', () => {
+    expect(allowanceSchema.safeParse({ error: 'nope' }).success).toBe(false);
+    expect(allowanceSchema.safeParse(payload({ eligible: 'yes' })).success).toBe(false);
   });
 });

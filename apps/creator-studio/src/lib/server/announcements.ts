@@ -3,7 +3,7 @@ import { env } from '$env/dynamic/private';
 import { dbRead } from '$lib/server/db';
 import { getFlipt } from '$lib/server/flipt';
 import type { AnnouncementAllowance } from '$lib/announcements';
-import type { AnnouncementForm } from './announcements-schema';
+import { allowanceSchema, type AnnouncementForm } from './announcements-schema';
 
 // Announcement writes go through the MAIN APP, not kysely: the allowance check, the creator/sitewide
 // boundary and the cover `Image` row are all owned there, and duplicating any of them here would put a
@@ -125,8 +125,21 @@ async function callMainApp<T>(
 
 const ENDPOINT = '/api/v1/announcements';
 
-export function getAllowance(cookie: string) {
-  return callMainApp<AnnouncementAllowance>(ENDPOINT, cookie);
+export async function getAllowance(
+  cookie: string
+): Promise<AnnouncementResult<AnnouncementAllowance>> {
+  const result = await callMainApp<unknown>(ENDPOINT, cookie);
+  if (!result.ok) return result;
+
+  const parsed = allowanceSchema.safeParse(result.data);
+  if (!parsed.success)
+    return {
+      ok: false,
+      status: 502,
+      error: 'The announcement service returned an unreadable allowance.',
+    };
+
+  return { ok: true, data: parsed.data };
 }
 
 export function saveAnnouncement(cookie: string, form: AnnouncementForm) {
