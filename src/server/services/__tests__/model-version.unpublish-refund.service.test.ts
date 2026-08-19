@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 // The refund gate on unpublishModelVersionById. Unpublishing a version revokes its buyers' access,
 // so the same obligation the model-level unpublish enforces has to hold at version scope — the gate
@@ -210,20 +211,18 @@ describe('upsertModelVersion — cannot take a published version down through th
     });
   });
 
-  it.each([
-    'Unpublished',
-    'UnpublishedViolation',
-    'Draft',
-    'Scheduled',
-    'GatherInterest',
-    'Deleted',
-  ])('refuses %s and names the route that settles refunds', async (status) => {
-    await expect(upsertModelVersion({ id: VERSION_ID, status } as never)).rejects.toThrowError(
-      /Use the unpublish action/
-    );
+  // Derived, not listed. A hand-written list in a test whose whole argument is that enumerations
+  // rot had already lost `Training`, and would lose a ninth member the same way.
+  it.each(Object.values(ModelStatus).filter((status) => status !== ModelStatus.Published))(
+    'refuses %s and names the route that settles refunds',
+    async (status) => {
+      await expect(upsertModelVersion({ id: VERSION_ID, status } as never)).rejects.toThrowError(
+        /Use the unpublish action/
+      );
 
-    expect(dbMock.dbWrite.modelVersion.update).not.toHaveBeenCalled();
-  });
+      expect(dbMock.dbWrite.modelVersion.update).not.toHaveBeenCalled();
+    }
+  );
 
   // Negative control. Without it a guard broadened to refuse every save of a published version —
   // which kills the resource editor outright — passes every assertion above.
@@ -231,6 +230,18 @@ describe('upsertModelVersion — cannot take a published version down through th
     dbMock.dbWrite.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
 
     await upsertModelVersion({ id: VERSION_ID, name: 'renamed' } as never);
+
+    expect(dbMock.dbWrite.modelVersion.update).toHaveBeenCalled();
+  });
+
+  // The control for the clause the others cannot see. Dropping `data.status !== Published` turns the
+  // guard into "refuse any save of a published version that carries a status", which every case
+  // above still passes — and which breaks declineReviewHandler, since it spreads the version's own
+  // Published status back in on a review decision.
+  it('lets a save that carries the current status through', async () => {
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+
+    await upsertModelVersion({ id: VERSION_ID, status: 'Published', name: 'renamed' } as never);
 
     expect(dbMock.dbWrite.modelVersion.update).toHaveBeenCalled();
   });
@@ -384,6 +395,11 @@ describe('unpublishModelVersionById — refund gate', () => {
   // asserted the total would pass for the wrong reason. What IS observable is the set of ids this
   // path asks about, so that is what these assert. The behavioural half — a sibling's buyers never
   // entering the refund — is only provable against a real database.
+  //
+  // The first two assertions carry the claim. The third (`entityAccess.findMany`) cannot fail while
+  // the fixture holds one version: its `in` array is `activeGateVersionIds`, so dropping the
+  // active-gate filter still prints `[VERSION_ID]`. Kept because it becomes load-bearing the moment
+  // a second version enters the fixture — do not count it as coverage today.
   it('asks about this version alone, so a sibling can never enter the gate lookup', async () => {
     seedPurchase();
 
