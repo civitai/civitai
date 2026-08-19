@@ -372,7 +372,7 @@ export async function setRewardConfig(
   config: z.infer<typeof rewardConfigSchema>,
   userId: number,
   { expectedHash, force = false }: { expectedHash?: string; force?: boolean } = {}
-) {
+): Promise<unknown> {
   const value = storedRewardConfigSchema.parse(config);
 
   // The primary, for the reason given on `getStoredRewardConfig`: a guard that
@@ -395,7 +395,17 @@ export async function setRewardConfig(
   if (expectedHash !== undefined && expectedHash !== rewardConfigHash(previous))
     throw throwConflictError(REWARD_CONFIG_CONFLICT.stale);
 
-  await dbWrite.keyValue.upsert({
+  // 🔴 Returns the row as POSTGRES stored it, not the object we sent.
+  //
+  // `value` is jsonb, which canonicalises key order (by length, then bytes) while
+  // `rewardConfigHash` is `JSON.stringify`, which is insertion-ordered. A hash
+  // taken from the in-memory object therefore describes a row that does not exist
+  // — the caller sends it back as `expectedHash` on their next save, the guard
+  // compares it against a hash of the row read back through jsonb, and refuses a
+  // lone moderator's second consecutive save as somebody else's edit. Verified on
+  // prod: `'{"enabled":true,"awardAmount":5,"cap":9}'::jsonb::text` returns
+  // `{"cap": 9, "enabled": true, "awardAmount": 5}`.
+  const written = await dbWrite.keyValue.upsert({
     where: { key: REWARD_CONFIG_KEY },
     create: { key: REWARD_CONFIG_KEY, value },
     update: { value },
@@ -411,15 +421,19 @@ export async function setRewardConfig(
     message: 'Reward config updated',
     userId,
     previous: JSON.stringify(previous ?? null),
-    value: JSON.stringify(value),
+    value: JSON.stringify(written.value),
   }).catch(() => null);
 
   invalidateRewardConfigCache();
   // Seed the fallback from what was just written. Clearing it and leaving it null
   // means a failed read on this pod moments later falls back to compiled defaults
   // — re-enabling the very reward this call just turned off.
-  lastGoodConfig = buildConfig(value.rewards ?? {});
-  return value;
+  // Through the same parser every other reader uses. `buildConfig` starts after the
+  // envelope, so the two agree only because `value` just came out of the schema —
+  // and a change to either salvage rule would have this pod's failure fallback
+  // built by different code from the same bytes than the config it just showed.
+  lastGoodConfig = configFromStoredValue(written.value);
+  return written.value;
 }
 
 /**

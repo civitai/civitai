@@ -23,6 +23,26 @@ import { buildRewardsPayload } from '~/components/Rewards/reward-config-panel.ut
 // here instead of passing on a coincidence.
 const DEFAULTS = { awardAmount: 10, cap: 30, capOverridable: true } as const;
 
+// 🔴 Models the jsonb round trip, which is where the hash bug lived. `KeyValue.value`
+// is jsonb: Postgres canonicalises key order (shortest key first, then bytewise) and
+// hands back a DIFFERENT insertion order than the one written, while
+// `rewardConfigHash` is `JSON.stringify` and is insertion-ordered. A fake that echoes
+// the object it was given makes the write and the read agree by construction — and a
+// test standing on that fake passes for code that hands the operator a hash for a row
+// that does not exist. Reversing the key order is enough: any reordering breaks a
+// stringify-based hash. Postgres's own rule is used rather than any reordering,
+// because it is IDEMPOTENT — reading a row twice must give the same order, and a fake
+// that merely flips the order gives back the original on the second pass.
+const asJsonb = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(asJsonb);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, entry]) => [key, asJsonb(entry)])
+  );
+};
+
 const findUnique = dbMock.dbRead.keyValue.findUnique;
 const findUniqueWrite = dbMock.dbWrite.keyValue.findUnique;
 // The hot read path (`resolveRewardConfig`) uses the replica; the version guard
@@ -40,6 +60,10 @@ beforeEach(() => {
   invalidateRewardConfigCache();
   findUnique.mockResolvedValue(null);
   findUniqueWrite.mockResolvedValue(null);
+  dbMock.dbWrite.keyValue.upsert.mockImplementation(async ({ update }: any) => ({
+    key: REWARD_CONFIG_KEY,
+    value: asJsonb(update.value),
+  }));
 });
 
 afterEach(() => {
@@ -766,14 +790,34 @@ describe('the hash a save hands back', () => {
       setRewardConfig({ rewards: { testReward: { enabled: true } } }, 1, { expectedHash: after })
     ).resolves.toBeDefined();
   });
+
+  // 🔴 The hash has to describe the row POSTGRES holds, not the object we sent it.
+  // `value` is jsonb and reorders keys; `rewardConfigHash` is `JSON.stringify` and
+  // does not. Hashing the in-memory object hands the panel a token for a row that
+  // never existed, and the moderator's NEXT save is refused as somebody else's edit
+  // — on a screen with one person in front of it, every time, forever.
+  it('describes the row as Postgres stored it, not the object it was sent', async () => {
+    storedConfig({ rewards: {} });
+    const row = { rewards: { testReward: { enabled: false, awardAmount: 4, cap: 8 } } };
+
+    const handedToTheClient = storedViewOf(await setRewardConfig(row, 1)).hash;
+
+    // What any later reader — including the guard itself — computes for that row.
+    findUniqueWrite.mockResolvedValue({ value: asJsonb(row) });
+    expect((await getStoredRewardConfig()).hash).toBe(handedToTheClient);
+  });
 });
 
 // The 60s per-pod memo is correct for the grant path — it runs on every reward
 // grant — and wrong for a moderator's screen, which is why the operator views
 // resolve a config they read themselves. Someone reading only the incident could
 // reasonably conclude "the cache was the bug" and delete it; the first assertion
-// here is what stops that, and the second is what would fail if the operator view
-// ever picked it up again.
+// here is what stops that.
+//
+// ⚠️ The second assertion is NOT the other half. It calls the resolver directly and
+// stays green for a router that goes back to the memo — what catches that is
+// `reward-config.router.test.ts`'s "resolves the rewards from the row it just read".
+// Kept only to show the two answers diverging at the same instant.
 describe('the grant path keeps its cache while the operator view reads through', () => {
   it('serves the memoised answer to a grant while a fresh read already sees the change', async () => {
     storedConfig({ rewards: { testReward: { enabled: false } } });

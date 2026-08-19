@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  applySavedRewardConfig,
   buildRewardsPayload,
   buildSetInput,
   initialDrafts,
@@ -253,7 +254,6 @@ describe('buildRewardsPayload', () => {
     const payload = buildRewardsPayload({ rewards: REWARDS, overrides, rows });
 
     expect(payload.dailyBoost).toEqual({ enabled: true });
-    expect(Object.keys(payload)).toContain('dailyBoost');
   });
 
   it('coerces the inputs to numbers, since they are strings in the form', () => {
@@ -353,5 +353,37 @@ describe('the panel covers every override field', () => {
     expect([...PANEL_OVERRIDE_FIELDS].sort()).toEqual(
       Object.keys(rewardOverrideSchema.shape).sort()
     );
+  });
+});
+
+// The step the incident was about. Reverting this to a refetch typechecks, and
+// nothing else in the repo observes it: the panel has no test file, so the failure
+// mode is a moderator watching their own save do nothing.
+describe('applySavedRewardConfig', () => {
+  const panel = () => ({
+    setDrafts: vi.fn(),
+    setConflict: vi.fn(),
+    cache: { setData: vi.fn(), invalidate: vi.fn() },
+  });
+
+  it('seeds the cache from the response and never refetches', () => {
+    const saved = { stored: { value: { rewards: {} }, malformed: false, hash: 'h1' }, rewards: [] };
+    const p = panel();
+
+    applySavedRewardConfig(saved, p);
+
+    expect(p.cache.setData).toHaveBeenCalledWith(undefined, saved);
+    // The addressable half: a refetch here answers from a pod that never saw the
+    // write, which is the whole defect.
+    expect(p.cache.invalidate).not.toHaveBeenCalled();
+  });
+
+  it('clears the draft and the conflict, so the form stops reporting both', () => {
+    const p = panel();
+
+    applySavedRewardConfig({ stored: { value: {}, malformed: false, hash: '' }, rewards: [] }, p);
+
+    expect(p.setDrafts).toHaveBeenCalledWith(null);
+    expect(p.setConflict).toHaveBeenCalledWith(null);
   });
 });

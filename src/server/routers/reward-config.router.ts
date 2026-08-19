@@ -1,5 +1,4 @@
-import * as rewardImports from '~/server/rewards';
-import type { RewardConfig } from '~/server/rewards/reward-config';
+import { describeRewards } from '~/server/rewards/describe-rewards';
 import {
   configFromStoredValue,
   getStoredRewardConfig,
@@ -8,20 +7,6 @@ import {
   storedViewOf,
 } from '~/server/rewards/reward-config';
 import { moderatorProcedure, router } from '~/server/trpc';
-
-/**
- * 🔴 Resolves against a config the caller passes in, which is read UNCACHED.
- *
- * `resolveRewardConfig` memoises per pod for `CONFIG_TTL_MS`, which is right for
- * the grant path and wrong here: `invalidateRewardConfigCache` only clears the
- * pod that served the write, so on ~100 pods a moderator's read-back after a save
- * lands on a stale pod ~99% of the time and their save reads as a no-op.
- */
-async function describeRewards(config: RewardConfig) {
-  return (
-    await Promise.all(Object.values(rewardImports).map((x) => x.describeConfig(config)))
-  ).sort((a, b) => a.type.localeCompare(b.type));
-}
 
 export const rewardConfigRouter = router({
   // `stored` is the row as written — raw, and flagged when it would not survive

@@ -108,8 +108,12 @@ export function createBuzzEvent<T>({
   const defaultCap =
     'cap' in buzzEvent ? buzzEvent.cap : capEntries.length === 1 ? capEntries[0].amount : undefined;
 
-  const resolveConfig = () =>
-    resolveRewardConfig(type, { awardAmount, cap: defaultCap, capOverridable });
+  // One literal for both readers. `resolveConfig` is what pays and `describeConfig`
+  // is what the operator is shown; a field added to one and not the other is the
+  // drift this whole design exists to prevent, and TypeScript only catches it for
+  // a required field.
+  const configDefaults = { awardAmount, cap: defaultCap, capOverridable };
+  const resolveConfig = () => resolveRewardConfig(type, configDefaults);
 
   const getUserRewardDetails = async (userId: number) => {
     const config = await resolveConfig();
@@ -526,11 +530,7 @@ export function createBuzzEvent<T>({
    * signature exists to make unrepresentable. Callers read the row themselves.
    */
   const describeConfig = async (config: RewardConfig) => {
-    const resolved = resolveFromConfig(config, type, {
-      awardAmount,
-      cap: defaultCap,
-      capOverridable,
-    });
+    const resolved = resolveFromConfig(config, type, configDefaults);
     return {
       type,
       visible,

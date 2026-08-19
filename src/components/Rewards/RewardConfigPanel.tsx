@@ -19,6 +19,7 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import type { Draft } from '~/components/Rewards/reward-config-panel.utils';
 import {
+  applySavedRewardConfig,
   buildSetInput,
   initialDrafts,
   isStaleConflict,
@@ -58,16 +59,12 @@ export function RewardConfigPanel() {
   };
 
   const setMutation = trpc.rewardConfig.set.useMutation({
-    // 🔴 Seeds from the mutation's own response instead of refetching. The
-    // switches render what the grant path RESOLVED, and that resolution is
-    // memoised per pod for a minute — but the write invalidates only the pod that
-    // served it, and production runs ~100 of them. A refetch therefore answers
-    // from a stale pod almost every time, showing the moderator their own save as
-    // if it had not happened. `set` returns the config it wrote for this reason.
     onSuccess: (saved) => {
-      setDrafts(null);
-      setConflict(null);
-      queryUtils.rewardConfig.get.setData(undefined, saved);
+      applySavedRewardConfig(saved, {
+        setDrafts,
+        setConflict,
+        cache: queryUtils.rewardConfig.get,
+      });
       showSuccessNotification({ message: 'Reward config saved.' });
     },
     onError: (saveError) => {

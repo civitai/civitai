@@ -190,6 +190,33 @@ export function buildSetInput({
 }
 
 /**
+ * What a successful save does with its own response, extracted so the step the
+ * incident was actually about is not the one untested step in the panel.
+ *
+ * 🔴 Seeds the cache from the response instead of invalidating it. The switches
+ * render what the grant path RESOLVED, and that resolution is memoised per pod for
+ * a minute while a write invalidates only the pod that served it — so on ~100 pods
+ * a refetch here answers from a stale pod almost every time and shows the operator
+ * their own save as if it had not happened.
+ *
+ * `invalidate` is taken as a parameter it never calls, so a test can assert it was
+ * not called: a refetch reintroduced here is otherwise invisible to everything
+ * except a moderator watching their save do nothing.
+ */
+export function applySavedRewardConfig<T>(
+  saved: T,
+  panel: {
+    setDrafts: (drafts: null) => void;
+    setConflict: (conflict: null) => void;
+    cache: { setData: (input: undefined, value: T) => void; invalidate: () => unknown };
+  }
+) {
+  panel.setDrafts(null);
+  panel.setConflict(null);
+  panel.cache.setData(undefined, saved);
+}
+
+/**
  * The panel renders one input per field here. Driving it off the server's list
  * means a field added to `rewardOverrideSchema` and not to the panel fails a
  * test rather than being silently deleted from the row on the next save.

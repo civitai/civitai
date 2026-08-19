@@ -112,7 +112,11 @@ describe('rewardConfig.get', () => {
 
     const result = await caller.get();
 
-    expect(result.stored).toMatchObject({ value: { rewards: {} }, malformed: false });
+    // Every field, `hash` included: it is the token the panel hands back as
+    // `expectedHash`, so a `get` returning a hash that is not the row's makes the
+    // guard refuse every save as somebody else's edit, on a screen with one person
+    // in front of it. `toMatchObject` here passed for a `get` returning `hash: ''`.
+    expect(result.stored).toEqual({ value: { rewards: {} }, malformed: false, hash: 'h0' });
     expect(result.rewards).toHaveLength(1);
     expect(result.rewards[0]).toMatchObject({ type: 'testReward', rejected: [] });
   });

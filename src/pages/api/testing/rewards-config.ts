@@ -21,7 +21,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as rewardImports from '~/server/rewards';
+import { describeRewards } from '~/server/rewards/describe-rewards';
 import {
   configFromStoredValue,
   getStoredRewardConfig,
@@ -33,14 +33,10 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const stored = await getStoredRewardConfig();
-  const config = configFromStoredValue(stored.value);
-  const rewards = await Promise.all(
-    Object.values(rewardImports).map((x) => x.describeConfig(config))
-  );
 
   return res.status(200).json({
     key: REWARD_CONFIG_KEY,
     bounds: { awardAmount: [0, MAX_AWARD_AMOUNT], cap: [0, MAX_CAP] },
-    rewards: rewards.sort((a, b) => a.type.localeCompare(b.type)),
+    rewards: await describeRewards(configFromStoredValue(stored.value)),
   });
 });
