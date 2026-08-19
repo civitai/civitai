@@ -164,3 +164,36 @@ export const modelModerationAdapter: ModerationAdapter = {
   // failure leaves it as-is and the EntityModeration row is enough for the retry cron.
   // The omission is deliberate — do not add an empty hook.
 };
+
+/**
+ * Fire-and-forget submit for the model write path. Owns its own flag check and error
+ * handling so `upsertModel` gets a single awaitable that can never fail the save.
+ */
+export async function submitModelTextModeration(model: {
+  id: number;
+  name: string;
+  description?: string | null;
+}): Promise<void> {
+  const content = buildModelModerationText(model);
+  if (!content) return;
+
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD, String(model.id)))) return;
+
+  try {
+    await submitTextModeration({
+      entityType: MODEL_MODERATION_ENTITY_TYPE,
+      entityId: model.id,
+      content,
+      labels: [...MODEL_MODERATION_SCAN_LABELS],
+      priority: 'low',
+      recordForReview: true,
+    });
+  } catch (e) {
+    logToAxiom({
+      name: 'model-text-moderation',
+      type: 'error',
+      message: (e as Error).message,
+      modelId: model.id,
+    }).catch(() => null);
+  }
+}

@@ -104,6 +104,7 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -2430,6 +2431,15 @@ export const upsertModel = async (
       // dashboard refresh right after create reads from primary.
       await preventReplicationLag('userTrainingModels', userId);
     }
+
+    // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
+    // moderation outage can never fail a model save.
+    submitModelTextModeration({
+      id: result.id,
+      name: data.name,
+      description: data.description,
+    }).catch(() => null);
+
     return { ...result, meta: stripMinorHashMeta(modelMeta) };
   } else {
     if (!beforeUpdate) return null;
@@ -2571,6 +2581,15 @@ export const upsertModel = async (
     // read against the replication window. Fail-open (the helper swallows Redis
     // errors); the only post-commit write left in this branch.
     await bustPublicModelResponseCache(result.id);
+
+    // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
+    // moderation outage can never fail a model save. `result` carries the post-update
+    // name/description, not the pre-update values in `beforeUpdate`.
+    submitModelTextModeration({
+      id: result.id,
+      name: result.name,
+      description: result.description,
+    }).catch(() => null);
 
     return withoutMinorHashMeta(result);
   }
