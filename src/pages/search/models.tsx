@@ -65,7 +65,7 @@ const RenderFilters = () => {
 
   return (
     <>
-      <BrowsingLevelFilter filters={filters} attributeName="nsfwLevel" />
+      <BrowsingLevelFilter indexKey="models" filters={filters} />
       <SortBy
         title="Sort models by"
         items={[

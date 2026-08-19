@@ -5,24 +5,24 @@ import {
   joinFilterClauses,
 } from '~/components/Search/search-filters';
 
-const attributeName = 'nsfwLevel';
+const attribute = 'nsfwLevel' as const;
 const pg = 1;
 const pg13 = 2;
 const r = 4;
 
 describe('buildBrowsingLevelClause', () => {
   it('emits the same OR chain it has always emitted for a multi-bit level', () => {
-    expect(buildBrowsingLevelClause(attributeName, pg | pg13 | r)).toBe(
+    expect(buildBrowsingLevelClause(attribute, pg | pg13 | r)).toBe(
       'nsfwLevel=1 OR nsfwLevel=2 OR nsfwLevel=4'
     );
   });
 
   it('emits a single equality for a single-bit level', () => {
-    expect(buildBrowsingLevelClause(attributeName, pg)).toBe('nsfwLevel=1');
+    expect(buildBrowsingLevelClause(attribute, pg)).toBe('nsfwLevel=1');
   });
 
   it('emits no clause for an empty browsing level', () => {
-    expect(buildBrowsingLevelClause(attributeName, 0)).toBeNull();
+    expect(buildBrowsingLevelClause(attribute, 0)).toBeNull();
   });
 
   it('emits no clause without an attribute name', () => {
@@ -33,20 +33,20 @@ describe('buildBrowsingLevelClause', () => {
 describe('buildBrowsingLevelFilters', () => {
   it('appends the browsing clause after the caller filters', () => {
     expect(
-      buildBrowsingLevelFilters({ attributeName, browsingLevel: pg, filters: ['type=Model'] })
+      buildBrowsingLevelFilters({ attribute, browsingLevel: pg, filters: ['type=Model'] })
     ).toEqual(['type=Model', 'nsfwLevel=1']);
   });
 
   it('accepts a single filter string', () => {
     expect(
-      buildBrowsingLevelFilters({ attributeName, browsingLevel: pg, filters: 'type=Model' })
+      buildBrowsingLevelFilters({ attribute, browsingLevel: pg, filters: 'type=Model' })
     ).toEqual(['type=Model', 'nsfwLevel=1']);
   });
 
   it('drops the browsing clause entirely for an empty browsing level', () => {
-    expect(buildBrowsingLevelFilters({ attributeName, browsingLevel: 0 })).toEqual([]);
+    expect(buildBrowsingLevelFilters({ attribute, browsingLevel: 0 })).toEqual([]);
     expect(
-      buildBrowsingLevelFilters({ attributeName, browsingLevel: 0, filters: ['type=Model'] })
+      buildBrowsingLevelFilters({ attribute, browsingLevel: 0, filters: ['type=Model'] })
     ).toEqual(['type=Model']);
   });
 });
@@ -77,7 +77,7 @@ describe('joinFilterClauses', () => {
 describe('the expression BrowsingLevelFilter hands to ApplyCustomFilter', () => {
   it('is empty, not "()", when the browsing level is empty', () => {
     const filters = joinFilterClauses(
-      buildBrowsingLevelFilters({ attributeName, browsingLevel: 0 })
+      buildBrowsingLevelFilters({ attribute, browsingLevel: 0 })
     );
 
     expect(filters).toBe('');
@@ -86,7 +86,7 @@ describe('the expression BrowsingLevelFilter hands to ApplyCustomFilter', () => 
 
   it('keeps only the caller filters when the browsing level is empty', () => {
     const filters = joinFilterClauses(
-      buildBrowsingLevelFilters({ attributeName, browsingLevel: 0, filters: ['type=Model'] })
+      buildBrowsingLevelFilters({ attribute, browsingLevel: 0, filters: ['type=Model'] })
     );
 
     expect(filters).toBe('(type=Model)');
@@ -96,7 +96,7 @@ describe('the expression BrowsingLevelFilter hands to ApplyCustomFilter', () => 
   it('is unchanged for a normal browsing level', () => {
     const filters = joinFilterClauses(
       buildBrowsingLevelFilters({
-        attributeName,
+        attribute,
         browsingLevel: pg | pg13,
         filters: ['type=Model'],
       })
