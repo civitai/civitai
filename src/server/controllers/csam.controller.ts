@@ -20,9 +20,14 @@ export async function createCsamReportHandler({
   input: CreateCsamReportSchema;
   ctx: ProtectedContext;
 }) {
-  const { userId, imageIds = [], details, type } = input;
-  const reportedById = ctx.user.id;
-  await createCsamReport({ ...input, reportedById });
+  return fileCsamReport({ ...input, reportedById: ctx.user.id });
+}
+
+/** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
+ *  it with the acting moderator's id rather than a fabricated tRPC context. */
+export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
+  const { userId, imageIds = [], details, type, reportedById } = input;
+  await createCsamReport(input);
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
