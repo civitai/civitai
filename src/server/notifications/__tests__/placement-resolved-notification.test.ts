@@ -164,9 +164,17 @@ describe('both resolved types honour their own setting', () => {
   // There is no global opt-out filter on this path — createNotificationsBulk
   // does no settings lookup — so a processor that omits this clause cannot be
   // muted at all, however its toggle renders.
-  it.each(['sticker-placement-resolved', 'remix-gallery-resolved'])('%s', async (type) => {
-    expect(await query(type)).toContain(
-      `WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = '${type}')`
+  // String.raw, because a plain template literal eats every backslash — `\s` becomes `s` and the
+  // pattern silently stops meaning what it reads as.
+  const gate = (type: string) =>
+    new RegExp(
+      String.raw`WHERE\s+NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+"UserNotificationSettings"` +
+        String.raw`\s+WHERE\s+"userId"\s*=\s*data\."userId"\s+AND\s+type\s*=\s*'${type}'\s*\)`
     );
+
+  it.each(['sticker-placement-resolved', 'remix-gallery-resolved'])('%s', async (type) => {
+    // Whitespace-tolerant, because a literal pins the clause's LAYOUT: the same correct SQL passed
+    // on one line and failed split across two, so both verdicts said nothing about the gate.
+    expect(await query(type)).toMatch(gate(type));
   });
 });

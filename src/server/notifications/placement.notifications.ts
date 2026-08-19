@@ -67,8 +67,7 @@ export const placementNotifications = createNotificationProcessor({
       FROM data
       -- A row means opted OUT. There is no global filter — every processor that
       -- honours its own toggle writes this clause itself — so without it the
-      -- setting renders, saves, and does nothing. Kept on one line because the
-      -- notification-settings-polarity guard matches the clause as a literal.
+      -- setting renders, saves, and does nothing.
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'sticker-placement-pending')
     `,
   },
@@ -180,8 +179,7 @@ export const placementNotifications = createNotificationProcessor({
           --
           -- Inside the CTE and against p."ownerId", which is the recipient; the
           -- projected "userId" outside the CTE is the same value and would work
-          -- there too. Kept on one line either way, because the polarity guard
-          -- matches the clause as a literal.
+          -- there too.
           AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = p."ownerId" AND type = 'remix-gallery-pending')
       )
       SELECT
@@ -337,9 +335,11 @@ export const placementNotifications = createNotificationProcessor({
       -- A row means opted OUT. This type shipped without the clause, so its
       -- toggle rendered, saved, and changed nothing -- there is no global filter
       -- on this path (createNotificationsBulk does no settings lookup), so a
-      -- processor that omits it is unmuteable. Kept on one line because the
-      -- polarity guard matches the clause as a literal.
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'remix-gallery-resolved')
+      -- processor that omits it is unmuteable.
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "UserNotificationSettings"
+        WHERE "userId" = data."userId" AND type = 'remix-gallery-resolved'
+      )
     `,
   },
 
