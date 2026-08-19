@@ -303,7 +303,8 @@ export async function getActiveEarlyAccessModelIds(): Promise<number[]> {
 
 // Permanent gates only. `timeframeDays IS NULL` is the discriminator, not `endsAt`:
 // a timed gate carries a NULL `endsAt` until it is materialized at publish, so
-// keying off `endsAt` would sweep in pending early access.
+// keying off `endsAt` would sweep in pending early access. The rule is owned by
+// `paid-access.service.ts` — change it there and here together.
 export async function getPermanentPaidAccessModelIds(): Promise<number[]> {
   const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
     SELECT DISTINCT mv."modelId"

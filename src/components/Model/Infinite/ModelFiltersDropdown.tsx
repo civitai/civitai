@@ -247,23 +247,23 @@ export function DumbModelFiltersDropdown({
         )}
 
         <Group gap={8} mb={4}>
+          {/* The shop pins the access filter on, and the two gate kinds are
+              disjoint, so neither toggle can do anything useful there. */}
           {!hideEarlyAccess && (
-            <FilterChip
-              checked={mergedFilters.earlyAccess}
-              onChange={(checked) => patchPending({ earlyAccess: checked })}
-            >
-              <span>Early Access</span>
-            </FilterChip>
-          )}
-          {/* Same gate as Early Access: the shop pins the access filter on, and
-              the two gate kinds are disjoint, so offering both there ANDs to nothing. */}
-          {!hideEarlyAccess && (
-            <FilterChip
-              checked={mergedFilters.paidAccess}
-              onChange={(checked) => patchPending({ paidAccess: checked })}
-            >
-              <span>Paid Access</span>
-            </FilterChip>
+            <>
+              <FilterChip
+                checked={mergedFilters.earlyAccess}
+                onChange={(checked) => patchPending({ earlyAccess: checked })}
+              >
+                <span>Early Access</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.paidAccess}
+                onChange={(checked) => patchPending({ paidAccess: checked })}
+              >
+                <span>Paid Access</span>
+              </FilterChip>
+            </>
           )}
           {flags.imageGeneration && (
             <FilterChip

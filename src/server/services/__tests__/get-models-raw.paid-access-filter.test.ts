@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 // STATIC import, same reasoning as get-models-raw.transient-503.test.ts: model.service
 // is a ~4800-line module whose cold transform would otherwise be charged to the first
 // test's timeout budget rather than to collection.
-import { getModelsRaw } from '~/server/services/model.service';
+import { getModelsRaw, getPermanentPaidAccessModelIds } from '~/server/services/model.service';
+import { getAllModelsSchema } from '~/server/schema/model.schema';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 redisMock.redis.packed.get.mockImplementation(async () => null);
@@ -51,6 +53,19 @@ describe('getModelsRaw — paidAccess filter', () => {
     expect(sql).toContain('"timeframeDays" IS NULL');
   });
 
+  // Substring containment cannot see polarity or correlation on its own. Without
+  // these three, `NOT EXISTS`, a dropped `pamv."modelId" = m.id` (which makes the
+  // subquery uncorrelated, so every model matches as soon as one gate exists
+  // anywhere) and a dropped status check all leave the suite green.
+  it('emits a correlated, positive EXISTS over published versions only', async () => {
+    const sql = await sqlFor({ paidAccess: true });
+    expect(sql).not.toContain('NOT EXISTS');
+    expect(sql).toContain('AND pamv."modelId" = m.id');
+    expect(sql).toContain(
+      `AND pamv.status = 'Published'::"ModelStatus" AND pa."timeframeDays" IS NULL`
+    );
+  });
+
   it('does NOT reuse the early-access `endsAt > NOW()` predicate', async () => {
     const sql = await sqlFor({ paidAccess: true });
     expect(sql).not.toContain('"endsAt" > NOW()');
@@ -66,5 +81,37 @@ describe('getModelsRaw — paidAccess filter', () => {
     const sql = await sqlFor({});
     expect(sql).not.toContain('"timeframeDays" IS NULL');
     expect(sql).not.toContain('"endsAt" > NOW()');
+  });
+});
+
+/**
+ * The Prisma path is a SECOND copy of the same discriminator, reached by the
+ * moderator `getModelsPagedSimple` surface. Swapping it to `endsAt > NOW()` went
+ * unnoticed repo-wide before this test existed.
+ */
+describe('getPermanentPaidAccessModelIds', () => {
+  it('selects permanent gates on `timeframeDays`, never on `endsAt`', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
+    await getPermanentPaidAccessModelIds();
+
+    // Zero interpolations in that template, so joining the strings IS the statement.
+    const sql = (dbMock.dbRead.$queryRaw.mock.calls[0][0] as unknown as string[]).join('');
+    expect(sql).toContain('"timeframeDays" IS NULL');
+    expect(sql).not.toContain('"endsAt"');
+    expect(sql).toContain(`mv.status = 'Published'::"ModelStatus"`);
+  });
+});
+
+describe('getAllModelsSchema — paidAccess over raw query strings', () => {
+  // The REST endpoint parses req.query, where z.coerce.boolean() turns the STRING
+  // 'false' into true and silently switches the filter on.
+  it('parses `?paidAccess=false` as false, not true', () => {
+    const parsed = getAllModelsSchema.parse({ paidAccess: 'false' });
+    expect(parsed.paidAccess).toBe(false);
+  });
+
+  it('still parses `?paidAccess=true` and a real boolean as true', () => {
+    expect(getAllModelsSchema.parse({ paidAccess: 'true' }).paidAccess).toBe(true);
+    expect(getAllModelsSchema.parse({ paidAccess: true }).paidAccess).toBe(true);
   });
 });
