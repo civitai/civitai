@@ -2150,7 +2150,10 @@ async function main() {
               return;
             }
             res.writeHead(200);
-            res.end(JSON.stringify({ logs }));
+            // `dropped` rides along so a caller reading logs directly — `test logs`, a pasted
+            // excerpt — can tell a fragment from a whole run. The waiters warn; this is the same
+            // fact for everyone else.
+            res.end(JSON.stringify({ logs, dropped: testQueue.droppedFor(runId) }));
             return;
           }
 

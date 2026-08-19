@@ -269,6 +269,13 @@ Things worth knowing before you rely on it:
   nonzero telling you to re-request — it will not poll forever against a daemon that has forgotten
   you.
 - **Position is exact**, not an estimate: it is the index in one ordered list.
+- **The log window holds the last 2000 lines, and says when it clipped.** A run that emits
+  more than that loses its oldest lines, so a late `test wait` or a `test logs` read can be a
+  fragment. Both waiters print `WARNING: this log is INCOMPLETE …` naming how many lines went,
+  and `logsDropped` is on the run view — a non-zero value means do not quote what you see as
+  the whole run. A live waiter that has been streaming from the start is unaffected.
+- **The exit code is `exitCodeFor`'s, in both waiters.** `test wait` and `pnpm run test:unit:run`
+  read the same rule, so a run killed by a signal reports 1 from either, never a shell 255.
 
 ## Session Object
 

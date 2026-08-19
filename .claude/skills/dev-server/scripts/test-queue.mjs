@@ -166,6 +166,9 @@ export class TestQueue {
       timedOut: false,
       logs: [],
       logIndex: 0,
+      // Counted, not just done. A reader cannot tell a clipped log from a whole one, so the
+      // number of lines the window threw away has to travel with the run.
+      logsDropped: 0,
     };
     this.runs.set(run.id, run);
     this.order.push(run.id);
@@ -190,6 +193,11 @@ export class TestQueue {
     if (!run) return null;
     run.touchedAt = this.now();
     return run.logs.filter((entry) => entry.index > since);
+  }
+
+  /** How many of a run's lines the window has thrown away, for readers that fetch logs directly. */
+  droppedFor(id) {
+    return this.runs.get(id)?.logsDropped ?? 0;
   }
 
   cancel(id, reason = 'cancelled') {
@@ -357,7 +365,10 @@ export class TestQueue {
 
   addLog(run, level, message) {
     run.logs.push({ index: run.logIndex++, level, message, at: this.now() });
-    if (run.logs.length > MAX_LOG_LINES) run.logs.shift();
+    if (run.logs.length > MAX_LOG_LINES) {
+      run.logs.shift();
+      run.logsDropped += 1;
+    }
   }
 
   positionOf(id) {
@@ -385,6 +396,9 @@ export class TestQueue {
       exitCode: run.exitCode,
       error: run.error,
       logIndex: run.logIndex,
+      // How many lines this run emitted that the window no longer holds. Non-zero means every
+      // reader of these logs — waiter, `test logs`, a pasted excerpt — is looking at a fragment.
+      logsDropped: run.logsDropped,
       waitCommand: `${this.waitCommand} ${run.id}`,
     };
   }
