@@ -35,8 +35,12 @@ import { describe, it, expect } from 'vitest';
  *     own owner matching, the legacy drop, and that a write persists the owner.
  *   - `AppListingDetailBody.browser.test.tsx` (browser, preview-only) — a REAL
  *     component click reaching the store with the mounted session's id.
- * Five of the six sites have no behavioural cover at all in the node project;
- * they are pinned against REVERSION here, not against a wrong-argument call.
+ * Stated exactly, because the gap is the point: NONE of the six sites has
+ * behavioural cover in the node project. Two of them — `MarketplaceBody` and
+ * `AppListingDetailBody` — have it in the BROWSER project, which is
+ * preview-only and does not block a merge. So in CI all six are pinned by this
+ * file alone, against REVERSION and against a hardcoded owner, never against a
+ * wrong-argument call that still has the right shape.
  */
 
 const SRC = path.resolve(__dirname, '../../..');
