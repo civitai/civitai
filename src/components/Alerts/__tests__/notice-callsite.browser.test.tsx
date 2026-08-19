@@ -125,6 +125,11 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => mocks.state.features,
+  // `useFeatureNotice` imports this to answer a notice's `audience`. It must be
+  // present here even for the sites that declare none: an omitted export fails
+  // the whole file at COLLECTION, which reports as "no tests" rather than as a
+  // red test — see the AppProvider note below.
+  useOptionalFeatureFlags: () => mocks.state.features,
   useFeatureFlagsReady: () => true,
 }));
 
@@ -163,7 +168,10 @@ import { ReferralDashboardFull } from '~/components/Referrals/ReferralDashboardF
 beforeEach(() => {
   mocks.state.settings = { dismissedAlerts: [] };
   mocks.state.currentUser = { id: 1 };
-  mocks.state.features = {};
+  // `remixGallery` on by default: `remixGalleryExplainer` declares it as its
+  // `audience`, so a user without it is — correctly — not shown the notice at
+  // all, and every dismissal case below would have nothing to click.
+  mocks.state.features = { remixGallery: true };
   mocks.state.mutateCalls = [];
 });
 
@@ -315,6 +323,60 @@ describe('RemixGallery / RemixGalleryExplainer', () => {
     );
 
     await expect.element(page.getByTestId('remix-sentinel')).toBeVisible();
+    expect(document.querySelectorAll('[aria-label="Dismiss"]')).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // AUDIENCE. This notice is the first to declare one, so these two cases are
+  // the rendered-DOM statement of the whole feature: the announcement reaches
+  // the people who have the thing and nobody else.
+  //
+  // 🔴 They are NOT the gate. This project (`component`) is not what CI runs;
+  // the same claim is asserted against the hook's return value in
+  // `useFeatureNotice.audience.test.ts`, in the `unit` project, and THAT is the
+  // one that blocks a merge. These exist because a real render through the real
+  // component is the only place the composition
+  // `hasSettings && !isDismissed && isInAudience` is exercised end to end.
+  // ---------------------------------------------------------------------------
+  test('renders nothing for a user outside the `remixGallery` rollout', async () => {
+    // Nothing else changes: settings resolved, notice never dismissed. The flag
+    // is the only variable, which is what makes this attributable to it.
+    mocks.state.features = { remixGallery: false };
+    renderWithProviders(
+      <>
+        <RemixGalleryExplainer />
+        <span data-testid="remix-audience-sentinel">mounted</span>
+      </>
+    );
+
+    await expect.element(page.getByTestId('remix-audience-sentinel')).toBeVisible();
+    expect(document.querySelectorAll('[aria-label="Dismiss"]')).toHaveLength(0);
+    expect(document.body.textContent).not.toContain('remix gallery');
+  });
+
+  test('renders for a user inside the `remixGallery` rollout', async () => {
+    // The positive control for the case above. Without it, "nothing rendered"
+    // is indistinguishable from a component that renders nothing ever.
+    mocks.state.features = { remixGallery: true };
+    renderWithProviders(<RemixGalleryExplainer />);
+
+    await expect.element(page.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+    expect(document.body.textContent).toContain('remix gallery');
+  });
+
+  test('an unrelated flag being on does not put a user in the audience', async () => {
+    // Pins that the gate reads `remixGallery` specifically rather than "some
+    // flag is set" — a distinct fixture flag, and one that is not the constant
+    // the assertion names.
+    mocks.state.features = { remixGallery: false, imageCardInfoButton: true };
+    renderWithProviders(
+      <>
+        <RemixGalleryExplainer />
+        <span data-testid="remix-unrelated-sentinel">mounted</span>
+      </>
+    );
+
+    await expect.element(page.getByTestId('remix-unrelated-sentinel')).toBeVisible();
     expect(document.querySelectorAll('[aria-label="Dismiss"]')).toHaveLength(0);
   });
 });

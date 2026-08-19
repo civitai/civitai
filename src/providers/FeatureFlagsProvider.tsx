@@ -18,6 +18,17 @@ export const useFeatureFlags = () => {
   return context;
 };
 /**
+ * The resolved flags, or `null` outside the provider.
+ *
+ * `useFeatureFlags` throws there, which is right for a component that cannot do
+ * its job without flags. It is wrong for shared machinery that merely wants to
+ * ASK — `useFeatureNotice` runs at every notice call site, and making it throw
+ * would turn "this notice has no audience, so flags are irrelevant" into a
+ * crash. Callers must decide what a `null` means for them; the notice hook
+ * fails closed (see `isNoticeAudienceMatched`).
+ */
+export const useOptionalFeatureFlags = () => useContext(FeatureFlagsCtx);
+/**
  * True once the per-user feature-flag overlay is known (or there is no logged-in
  * user). Use to defer rendering UI whose visibility depends on user flags, so it
  * doesn't flash against the anonymous SSR snapshot.
