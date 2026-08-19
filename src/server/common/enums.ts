@@ -342,12 +342,16 @@ export enum StripeConnectStatus {
   Rejected = 'Rejected',
 }
 
+// Tipalti's own spelling. The webhook stores `eventData.status` verbatim into
+// UserPaymentConfiguration.tipaltiAccountStatus, so these ARE the stored strings — normalising
+// their casing here silently breaks every comparison. INTERNAL_VALUE is Tipalti's sentinel for
+// a status this API version does not expose.
 export enum TipaltiStatus {
   PendingOnboarding = 'PendingOnboarding',
-  Active = 'ACTIVE',
-  Suspended = 'SUSPENDED',
-  Blocked = 'BLOCKED',
-  BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
+  Active = 'Active',
+  Suspended = 'Suspended',
+  Blocked = 'Blocked',
+  BlockedByProvider = 'BlockedByProvider',
   InternalValue = 'INTERNAL_VALUE',
 }
 
