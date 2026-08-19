@@ -127,16 +127,52 @@ describe('buildAppsStoreFeedbackContext', () => {
     });
 
     /**
-     * CONTROL 1 — interior whitespace must survive. A fix that reached for
-     * `replace(/\s/g, '')` rather than `trim()` would pass every assertion above and
-     * silently destroy every multi-word search term.
+     * 🔴 THE PADDING CLASS MUST BE `trim()`'s, NOT ASCII. Every fixture above pads with
+     * space/tab/newline, and a fixture that cannot contain an exotic space cannot observe
+     * a narrowed whitespace class — a hand-rolled
+     * `replace(/^[ \t\n]+|[ \t\n]+$/g, '')` passes all of them while leaving NBSP-padded
+     * terms untrimmed, reintroducing exactly the fragmentation this change exists to
+     * prevent. NBSP is the COMMON real case: pasting a term out of a rendered page carries
+     * U+00A0, not a space.
+     *
+     * Pinned against the same set the store's own matcher strips, so the two cannot drift:
+     * `String.prototype.trim` removes WhiteSpace + LineTerminator, which includes NBSP
+     * (U+00A0), BOM (U+FEFF), CR, VT/FF, LS/PS (U+2028/9) and ideographic space (U+3000).
      */
-    it('keeps whitespace INSIDE the term', () => {
+    it.each([
+      ['NBSP', '\u00A0'],
+      ['BOM / ZWNBSP', '\uFEFF'],
+      ['ideographic space', '\u3000'],
+      ['carriage return', '\r'],
+      ['vertical tab', '\v'],
+      ['form feed', '\f'],
+      ['line separator', '\u2028'],
+    ])('drops %s padding, not just ASCII whitespace', (_label, pad) => {
       const context = buildAppsStoreFeedbackContext({
         path: '/apps',
-        filters: filters({ query: '  anime upscale  ' }),
+        filters: filters({ query: `${pad}upscale${pad}` }),
       });
-      expect(context?.filters?.query).toBe('anime upscale');
+      expect(context?.filters?.query).toBe('upscale');
+    });
+
+    /**
+     * CONTROL 1 — interior whitespace must survive, RUNS INCLUDED. A fix that reached for
+     * `replace(/\s/g, '')` rather than `trim()` would pass every assertion above and
+     * silently destroy every multi-word search term.
+     *
+     * 🔴 The interior run is DOUBLE-spaced on purpose. With a single interior space this
+     * fixture cannot distinguish `trim()` from `trim()` + an interior collapse
+     * (`replace(/\s+/g, ' ')`) — both yield `'anime upscale'` — so that mutant survived a
+     * fully green suite. Collapsing runs is a different storage-shape decision than
+     * trimming (it silently rewrites what the reporter typed) and is not one this change
+     * takes, so the fixture has to be able to see it.
+     */
+    it('keeps whitespace INSIDE the term, including repeated runs', () => {
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query: '  anime  upscale  ' }),
+      });
+      expect(context?.filters?.query).toBe('anime  upscale');
     });
 
     /**
