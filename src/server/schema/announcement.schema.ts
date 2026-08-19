@@ -104,7 +104,28 @@ export const upsertCreatorAnnouncementSchema = z.object({
   coverImage: imageSchema.optional(),
   action: z
     .object({
-      link: z.string().url(),
+      // An absolute URL, or a site-relative path so one announcement resolves on whichever
+      // domain the viewer is on (/models/123 works on both .com and .red).
+      //
+      // 🔴 The relative branch is deliberately `/` followed by something that is not `/`.
+      // A scheme-relative `//evil.com` is a fully external link that merely looks relative,
+      // and `javascript:` / `data:` URIs are excluded by requiring http(s) on the absolute
+      // branch rather than by blacklisting schemes.
+      link: z
+        .string()
+        .trim()
+        .refine(
+          (value) =>
+            /^\/(?!\/)/.test(value) ||
+            (() => {
+              try {
+                return ['http:', 'https:'].includes(new URL(value).protocol);
+              } catch {
+                return false;
+              }
+            })(),
+          { message: 'Enter a full https:// link or a path beginning with /' }
+        ),
       linkText: z.string().trim().min(1).max(40),
     })
     .optional(),

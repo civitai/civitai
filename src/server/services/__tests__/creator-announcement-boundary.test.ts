@@ -568,3 +568,34 @@ describe('a row crossing into notifying starts its life then', () => {
     expect(data.startsAt).toEqual(scheduled);
   });
 });
+
+describe('the action link accepts a path without accepting an escape', () => {
+  const link = (value: string) =>
+    upsertCreatorAnnouncementSchema.safeParse({
+      ...validInput,
+      action: { link: value, linkText: 'Go' },
+    }).success;
+
+  it('accepts a site-relative path, so one announcement works on both domains', () => {
+    expect(link('/models/123')).toBe(true);
+    expect(link('/user/someone?tab=models')).toBe(true);
+  });
+
+  it('accepts an absolute http(s) url', () => {
+    expect(link('https://civitai.com/models/123')).toBe(true);
+  });
+
+  it('rejects a scheme-relative url, which is external while looking relative', () => {
+    // //evil.com is the one that matters: it starts with / and leaves the site.
+    expect(link('//evil.com/phish')).toBe(false);
+  });
+
+  it('rejects script and data URIs', () => {
+    expect(link('javascript:alert(1)')).toBe(false);
+    expect(link('data:text/html,<script>alert(1)</script>')).toBe(false);
+  });
+
+  it('rejects a bare word that is neither', () => {
+    expect(link('models/123')).toBe(false);
+  });
+});
