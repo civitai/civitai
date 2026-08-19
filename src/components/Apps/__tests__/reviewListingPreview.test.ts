@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
 import {
   buildListingCardPreview,
   buildListingDetailPreview,
@@ -49,7 +50,12 @@ describe('buildListingCardPreview', () => {
     // No reviews on an unapproved listing.
     expect(card.recommend.recommendPct).toBeNull();
     expect(card.reviewCount).toBe(0);
-    expect(card.kindData).toEqual({ kind: 'onsite', appBlockId: null, hasPage: false, liveUrl: '' });
+    expect(card.kindData).toEqual({
+      kind: 'onsite',
+      appBlockId: null,
+      hasPage: false,
+      liveUrl: '',
+    });
   });
 
   it('an external (offsite) row → offsite kindData with the external url + sub-kind', () => {
@@ -90,7 +96,9 @@ describe('buildListingCardPreview', () => {
   });
 
   it('falls back to the slug when the listing (or its name) is absent', () => {
-    expect(buildListingCardPreview(row({ id: 'r4', appListing: null, slug: 'sx' })).name).toBe('sx');
+    expect(buildListingCardPreview(row({ id: 'r4', appListing: null, slug: 'sx' })).name).toBe(
+      'sx'
+    );
   });
 
   it('passes resolved image URLs straight through when provided', () => {
@@ -114,7 +122,12 @@ describe('buildListingDetailPreview', () => {
     // serialId only feeds the comments thread, which preview omits.
     expect(detail.serialId).toBe(0);
     expect(detail.screenshots).toEqual([]);
-    expect(detail.kindData).toEqual({ kind: 'onsite', appBlockId: null, hasPage: false, liveUrl: '' });
+    expect(detail.kindData).toEqual({
+      kind: 'onsite',
+      appBlockId: null,
+      hasPage: false,
+      liveUrl: '',
+    });
   });
 
   it('an external row carries the connectClientId (null) + externalUrl on kindData', () => {
@@ -144,5 +157,70 @@ describe('buildListingDetailPreview', () => {
     });
     expect(detail.coverUrl).toBe('https://cdn/cover.png');
     expect(detail.screenshots).toEqual([{ url: 'https://cdn/s1.png', caption: 'one' }]);
+  });
+});
+
+/**
+ * 🔴 THE SEAM — this builder's fabricated scalars vs the rail that renders them.
+ *
+ * Both halves were individually tested and individually right, and the defect lived
+ * BETWEEN them: this module substitutes the publish request's SUBMISSION time for the
+ * required `updatedAt`, and `buildListingDetailRows` rendered that value under the
+ * label "Updated". Neither module's own suite could see it — one never loads the rail,
+ * the other never loads this builder. So the composition is asserted here, with the
+ * SUBMISSION TIMESTAMP as the thing that must not appear.
+ *
+ * The `installCount: 0` half is the same shape: a structural zero this builder emits,
+ * which the rail printed as `Installs: 0` while the header chips (which decided the
+ * same question correctly) showed nothing.
+ */
+describe('🔴 SEAM: nothing the preview builder FABRICATES reaches the details rail', () => {
+  const SUBMITTED = '2026-01-01T00:00:00Z';
+  /** A marker formatter — the rendered date is identifiable no matter the locale. */
+  const fmt = (iso: string) => `formatted:${iso}`;
+
+  const previewDetail = () => buildListingDetailPreview(row({ id: 'seam', kind: 'onsite' }));
+
+  it('POSITIVE CONTROL: the builder really does fabricate both scalars', () => {
+    // Without this, the assertions below could pass because the builder stopped
+    // emitting the fields at all — a different change, and not the one under test.
+    const detail = previewDetail();
+    expect(detail.updatedAt).toBe(new Date(SUBMITTED).toISOString());
+    expect(detail.installCount).toBe(0);
+  });
+
+  it('POSITIVE CONTROL: rendered in the LIVE posture, both fabricated values DO show', () => {
+    // The rail is not blind to these values in general — which is what makes their
+    // absence in `preview` a fact about the posture rather than about the rail.
+    const rows = buildListingDetailRows(previewDetail(), { formatDate: fmt });
+    expect(rows.find((r) => r.key === 'updated')?.value).toBe(
+      `formatted:${new Date(SUBMITTED).toISOString()}`
+    );
+    expect(rows.find((r) => r.key === 'installs')?.value).toBe('0');
+  });
+
+  it('🔴 in `preview` the submission time is NOT rendered, under any label', () => {
+    const rows = buildListingDetailRows(previewDetail(), { preview: true, formatDate: fmt });
+    const submittedIso = new Date(SUBMITTED).toISOString();
+    // The formatted value, the raw ISO string, and the row key — three shapes the same
+    // date could arrive in.
+    expect(rows.map((r) => r.value)).not.toContain(`formatted:${submittedIso}`);
+    expect(rows.map((r) => r.value)).not.toContain(submittedIso);
+    expect(rows.find((r) => r.key === 'updated')).toBeUndefined();
+    expect(rows.map((r) => r.label)).not.toContain('Updated');
+  });
+
+  it('🔴 in `preview` the structural zero install count is NOT rendered', () => {
+    const rows = buildListingDetailRows(previewDetail(), { preview: true, formatDate: fmt });
+    expect(rows.find((r) => r.key === 'installs')).toBeUndefined();
+    expect(rows.map((r) => r.value)).not.toContain('0');
+    expect(rows.map((r) => r.label)).not.toContain('Installs');
+  });
+
+  it('🔴 the preview rail states ONLY what the posture can state honestly', () => {
+    // The whole row set, pinned — so a future row carrying another fabricated scalar
+    // has to be added here deliberately.
+    const rows = buildListingDetailRows(previewDetail(), { preview: true, formatDate: fmt });
+    expect(rows.map((r) => r.key)).toEqual(['kind', 'category', 'rating']);
   });
 });

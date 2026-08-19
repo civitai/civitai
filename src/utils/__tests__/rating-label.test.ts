@@ -237,18 +237,48 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
   const LADDER_LABEL_THRESHOLD = 3;
 
   /**
-   * 🔴 KNOWN, DELIBERATELY-TOLERATED SECOND LADDER — a FOLLOW-UP, not an exemption.
+   * 🔴 A DECIDED DIVERGENCE — the follow-up was worked, and the answer was "separate".
    *
-   * `pages/3d-models/[id]/[[...slug]].tsx` defines `sentimentLabel`, a drifted third
-   * ladder on a 0–100 scale with different bands and a sixth label ("Too few reviews").
-   * It PREDATES this module's extraction and consolidating it is out of scope for the
-   * change that added this guard — folding a 0–100 ladder with different bands into the
-   * 0–1 one is a behaviour change to a live page, not a refactor.
+   * `pages/3d-models/[id]/[[...slug]].tsx` defines `sentimentLabel`: a second ladder on
+   * a 0–100 integer scale, with a sixth label ("Too few reviews") and NO count-widening
+   * of the word itself. The entry used to read "not yet consolidated". It was
+   * consolidated-or-not on the evidence below, and the answer is NOT.
    *
-   * It is listed HERE, explicitly, rather than dodged by weakening the scan: the scan
-   * DOES flag it (asserted below, so this entry can never rot into dead weight), and
-   * when the consolidation lands, removing the file's own ladder makes that assertion
-   * fail and this entry has to come out with it.
+   * 🔴 THE MEASUREMENT. Both ladders were evaluated over the whole input grid
+   * (`pct` 0…100 × `count` 1…1000, 101,000 cells), comparing the word case-insensitively:
+   *
+   *     agree 86.2% · disagree 13.8% (13.5% ignoring the `< 5` floor)
+   *
+   * and every disagreement is in one of two places, at every count below 500:
+   *
+   *     n ∈ [5, 9]   : 0–19%  Overwhelmingly negative → Mixed
+   *                    80–94% Very positive          → Positive
+   *                    95–100% Overwhelmingly positive → Positive
+   *     n ∈ [10, 49] : 0–19%  Overwhelmingly negative → Negative      (+ the same top two)
+   *     n ∈ [50, 499]: 0–19%  Overwhelmingly negative → Very Negative
+   *                    95–100% Overwhelmingly positive → Very Positive
+   *     n >= 600     : NO disagreement anywhere on the row.
+   *
+   * That shape is the whole argument. The disagreement is not drift and not sloppiness:
+   * it is precisely THIS module's count-widening, which reserves "Overwhelmingly …" for
+   * >= 500 reviews. The 3D page's own comment says its bands are "scaled down to fit the
+   * typical Civitai review volume", and the two ladders become IDENTICAL once the count
+   * clears ~500 — i.e. they differ only where a 3D model actually lives. Migrating that
+   * caller would silently re-word live verdicts: a 6/6-recommend model drops from
+   * "Overwhelmingly positive" to "Positive", a 0/60 one softens from "Overwhelmingly
+   * negative" to "Very Negative".
+   *
+   * 🔴 AND IT CANNOT BE EXPRESSED BY WIDENING THIS LADDER. The scale (0–100 vs 0–1) and
+   * the sixth label are both easy — an argument each. The irreducible difference is
+   * STRUCTURAL: here the WORD depends on the review count, there it does not. One band
+   * set cannot be both, so "extend the shared ladder" degrades into a ladder FACTORY
+   * with two configs — two ladders in one file, which is the drift this module exists to
+   * prevent, with an indirection added on top.
+   *
+   * The entry stays listed HERE, explicitly, rather than dodged by weakening the scan:
+   * the scan DOES flag it (asserted below, so this entry can never rot into dead
+   * weight), and if that page's ladder is ever removed or rewritten to import this one,
+   * the assertion fails and this entry has to come out with it.
    */
   const KNOWN_UNSHARED_LADDERS = ['pages/3d-models/[id]/[[...slug]].tsx'];
 
@@ -352,6 +382,29 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
     expect(
       quotedLadderLabels(`const k = { positive: 'positive', negative: 'negative' };`).length
     ).toBeLessThan(LADDER_LABEL_THRESHOLD);
+  });
+
+  /**
+   * INVARIANT GUARD — not regression coverage, and labelled as such.
+   *
+   * It cannot have been red before this change, because it pins a property that was
+   * already true. What it buys is that the *reason* recorded above stops being prose:
+   * the divergence is justified by the sixth label and the 0–100 scale, so if the 3D
+   * page's ladder ever loses them, the justification no longer describes the code and
+   * this fails rather than quietly becoming stale.
+   */
+  it('INVARIANT: the shared ladder structurally cannot express the 3d page label set', () => {
+    // The sixth label is not in this ladder's alphabet, and cannot be — this ladder has
+    // no insufficient-data band at all (its contract puts the zero-review short-circuit
+    // on the CALLER; see `getRatingLabel`'s param docs).
+    expect(LADDER_LABELS).not.toContain('Too few reviews');
+    expect(fs.readFileSync(path.resolve(SRC, LADDER_MODULE), 'utf8')).not.toMatch(
+      /(["'`])Too few reviews\1/
+    );
+
+    // …and the divergent caller still carries it, as a whole quoted literal.
+    const text = fs.readFileSync(path.resolve(SRC, KNOWN_UNSHARED_LADDERS[0]), 'utf8');
+    expect(text).toMatch(/(["'`])Too few reviews\1/);
   });
 
   it('🔴 the tolerated 3d-models ladder is still THERE and still FLAGGED (allowlist is live)', () => {
