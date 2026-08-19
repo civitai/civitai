@@ -136,17 +136,19 @@
       # Service stack
       #
       # The SERVERS are docker-compose's job (docker-compose.base.yml), not
-      # nix's -- postgres x4, redis x2, minio, meilisearch, clickhouse, maildev.
-      # What the shell provides is the matching CLIENTS, because you talk to
-      # those containers by hand constantly:
+      # nix's -- four postgres, two redis, minio, meilisearch, clickhouse and
+      # maildev. What the shell provides is the matching CLIENTS, because you
+      # talk to those containers by hand constantly:
       #
-      #   psql              -> the `db` container (postgres 17) on :15432
+      #   psql              -> the `db` container on :15432
       #   redis-cli         -> the `redis` container on :6379
       #   clickhouse client -> the `clickhouse` container on :18123
       #
-      # postgresql_17 (not _16) because the primary `db` container is
-      # postgres:17 and a client older than its server is the one direction
-      # libpq does not promise to work.
+      # postgresql_17 rather than _16 because the postgres containers are NOT
+      # all one version: `prisma-pit` and `db` are postgres 17, while
+      # `notification-db` and `logical-db` are postgres 15. A newer client talks
+      # to an older server fine; the other direction is the one libpq does not
+      # promise, so the client tracks the NEWEST server, not the oldest.
       # =====================================================================
 
       serviceClients = [
