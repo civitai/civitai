@@ -1204,6 +1204,9 @@ enum ModelHashType {
   SHA256
   CRC32
   BLAKE3
+  // SHA256 truncated to 12 — the width A1111/Forge write for LoRAs, which no other stored
+  // hash matches. Same kind of derived truncation as AutoV2 (sha256[0:10]).
+  SHA256_12
 }
 
 model RecommendedResource {
