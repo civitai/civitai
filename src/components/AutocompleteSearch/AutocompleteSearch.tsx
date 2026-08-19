@@ -29,6 +29,7 @@ import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
+import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import {
   autocompleteAvailability,
   useAutocompleteAvailabilityStore,
@@ -156,7 +157,11 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''}`
       : null,
     isImages && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${currentUser?.username ? ` OR user.username = ${currentUser?.username}` : ''}`
+      ? `poi != true${
+          currentUser?.username
+            ? ` OR user.username = ${quoteMeiliValue(currentUser.username)}`
+            : ''
+        }`
       : null,
     supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
     isModels && !currentUser?.isModerator
@@ -761,7 +766,7 @@ function parseQuery(index: string, query: string) {
         const cleanedMatch = match?.groups?.value?.trim();
         const not = match?.groups?.not !== undefined;
         if (!cleanedMatch) continue;
-        filters.push(`${not ? 'NOT ' : ''}${attribute} = ${cleanedMatch}`);
+        filters.push(`${not ? 'NOT ' : ''}${attribute} = ${quoteMeiliValue(cleanedMatch)}`);
         searchPageQuery.push(
           `${filterAttributes.searchPageMap[attribute] ?? attribute}=${encodeURIComponent(
             cleanedMatch ?? ''

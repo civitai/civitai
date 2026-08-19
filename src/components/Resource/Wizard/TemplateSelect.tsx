@@ -2,6 +2,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { Checkbox, Stack, Text } from '@mantine/core';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
+import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import type { TemplateOmittableField } from '~/server/schema/model.schema';
 
 // "Settings only" is one preset over the omit list; a future granular picker can write
@@ -45,7 +46,7 @@ export function TemplateSelect({ username, onSelect }: Props) {
           );
           onSelect();
         }}
-        filters={`user.username='${username}'`}
+        filters={`user.username = ${quoteMeiliValue(username)}`}
         dropdownItemLimit={10}
         placeholder="Search your models..."
       />
