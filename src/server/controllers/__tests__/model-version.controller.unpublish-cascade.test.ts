@@ -119,6 +119,26 @@ describe('unpublishModelVersionHandler — last published version', () => {
     );
   });
 
+  // 🔴 On the preserve path the service writes back exactly what this controller hands it, so the
+  // hand-off is load-bearing for the whole guard: `meta: {}` here erases the moderator's reason,
+  // explanation, timestamp and actor while leaving the status at UnpublishedViolation — record
+  // gone, flag intact.
+  it('hands the model meta through intact', async () => {
+    const moderatorRecord = {
+      unpublishedReason: 'other',
+      customMessage: 'Reviewed by a human',
+      unpublishedAt: '2020-01-01T00:00:00.000Z',
+      unpublishedBy: 999,
+    };
+    mockGetModel.mockResolvedValue({ meta: { ...moderatorRecord }, nsfw: true });
+
+    await call();
+
+    expect(mockUnpublishModelById).toHaveBeenCalledWith(
+      expect.objectContaining({ meta: moderatorRecord })
+    );
+  });
+
   it('does not report a version take-down as a model unpublish', async () => {
     // The doubled-count shape: emitting the model event on the version path too would make every
     // single-version take-down arrive in analytics as a model unpublish.
@@ -196,7 +216,7 @@ describe('unpublishModelVersionHandler — last published version', () => {
     expect(mockUnpublishModelById).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a version-scoped confirm whose figure grew, without over-pricing it', async () => {
+  it('proceeds on a version-scoped confirm, pricing the version and not the model', async () => {
     // The version branch of the check was never exercised. Pricing it against the MODEL total would
     // refuse legitimate version-only unpublishes whenever the model owes more — the common case.
     mockResolveUnpublishScope.mockResolvedValue({ kind: 'version', modelId: MODEL_ID });

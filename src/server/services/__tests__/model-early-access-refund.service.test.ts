@@ -616,7 +616,13 @@ describe('unpublishModelById — early access refund gate', () => {
     setupRefundData({ accessRows: [] });
     setupUnpublishWrites();
 
-    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, reason: 'duplicate' });
+    // A reason means a moderator now — an owner supplying one is refused outright.
+    await unpublishModelById({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      isModerator: true,
+      reason: 'duplicate',
+    });
 
     expect(takeDownSql()).toContain(
       `SET "status" = ?::"ModelStatus", "meta" = COALESCE("meta", '{}'::jsonb) ||`
@@ -716,6 +722,62 @@ describe('unpublishModelById — early access refund gate', () => {
       );
     });
 
+    // The too-wide direction. A guard that also fired on a stale `meta.unpublishedReason` would
+    // escalate ordinary owner unpublishes to UnpublishedViolation for any model taken down once and
+    // republished since — and every assertion above would still pass.
+    it('does not escalate a published model carrying a stale reason in meta', async () => {
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('Published');
+
+      await unpublishModelById({
+        id: MODEL_ID,
+        userId: OWNER_ID,
+        meta: { unpublishedReason: 'duplicate', customMessage: 'from a previous take-down' },
+      });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('Unpublished');
+    });
+
+    it('preserves Deleted too, not UnpublishedViolation alone', async () => {
+      // Deleted is the other moderator-only status; clearing it clears the republish gate and
+      // publishModelById then nulls deletedAt, completing an owner-driven restore.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('Deleted');
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('Deleted');
+    });
+
+    it('takes the versions down without restamping their meta', async () => {
+      // The version rows are what unpublish.notifications.ts selects on, per version, with no
+      // status predicate. Merging unpublishedAt into them on a preserved take-down re-fires the
+      // notification with the owner named as the actor of a moderator's decision.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+      expect(takeDownParams()[0]).toBe('UnpublishedViolation');
+      expect(JSON.parse(takeDownParams()[1] as string)).toEqual({});
+    });
+
+    it('refuses a reason from someone who is not a moderator', async () => {
+      // Otherwise the guard's precondition — "an owner-initiated unpublish carries no reason" — is
+      // an assumption, and an owner can rewrite the moderator's verdict by supplying one.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+
+      await expect(
+        unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, reason: 'duplicate' })
+      ).rejects.toThrowError(/Only a moderator/);
+
+      expect(mockTx.model.update).not.toHaveBeenCalled();
+    });
+
     // A moderator acting deliberately still writes their own verdict over the old one.
     it('lets a moderator restate the violation with a new reason', async () => {
       setupRefundData({ accessRows: [] });
@@ -727,14 +789,20 @@ describe('unpublishModelById — early access refund gate', () => {
         userId: 999,
         isModerator: true,
         reason: 'duplicate',
+        customMessage: 'new note',
         meta: { unpublishedReason: 'other', customMessage: 'old' },
       });
 
       const data = mockTx.model.update.mock.calls[0][0].data;
       expect(data.status).toBe('UnpublishedViolation');
-      expect(data.meta).toEqual(
-        expect.objectContaining({ unpublishedReason: 'duplicate', unpublishedBy: 999 })
-      );
+      // All four, not two: a customMessage falling back to the stored one leaves a new verdict
+      // carrying the old explanation.
+      expect(data.meta).toEqual({
+        unpublishedReason: 'duplicate',
+        customMessage: 'new note',
+        unpublishedAt: expect.any(String),
+        unpublishedBy: 999,
+      });
     });
   });
 

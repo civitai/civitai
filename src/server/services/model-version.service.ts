@@ -1733,22 +1733,45 @@ export const unpublishModelVersionById = async ({
   const unpublishedAt = new Date().toISOString();
   const version = await dbWrite.$transaction(
     async (tx) => {
+      // 🔴 Same rule as unpublishModelById, and this is the SHORTER path to the same place: a
+      // moderator takes one version down, the owner calls unpublish on it with no reason, and
+      // without this it lands at plain Unpublished with the owner as the actor — which is all the
+      // status-keyed republish gate checks. One call, no setup.
+      //
+      // Preserves any moderator-only status, not UnpublishedViolation alone: Deleted is the other
+      // one, and clearing it lets an owner republish a soft-deleted version.
+      const existing = await tx.modelVersion.findUniqueOrThrow({
+        where: { id },
+        select: { status: true },
+      });
+      const preserveModStatus =
+        !reason && constants.modPublishOnlyStatuses.includes(existing.status);
+
       const updatedVersion = await tx.modelVersion.update({
         where: { id },
         data: {
-          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          status: reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished,
 
-          meta: {
-            ...meta,
-            ...(reason
-              ? {
-                  unpublishedReason: reason,
-                  customMessage,
-                }
-              : {}),
-            unpublishedAt,
-            unpublishedBy: user.id,
-          },
+          // Untouched on the preserve path: the moderator's explanation is what the take-down
+          // notification and the model-page banner render, and refreshing unpublishedAt re-fires
+          // that notification against the creator with the owner named as the actor.
+          meta: preserveModStatus
+            ? (meta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined
+            : {
+                ...meta,
+                ...(reason
+                  ? {
+                      unpublishedReason: reason,
+                      customMessage,
+                    }
+                  : {}),
+                unpublishedAt,
+                unpublishedBy: user.id,
+              },
         },
         select: { id: true, model: { select: { id: true, userId: true, nsfw: true } } },
       });
