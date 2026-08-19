@@ -269,9 +269,9 @@ function ImageContent({
 
   const handleDragStart = (event: React.DragEvent) => {
     if (pointerType.current !== 'mouse') return;
-    allowNativeDragStart(event);
     const media = event.target;
     if (!(media instanceof HTMLImageElement) && !(media instanceof HTMLVideoElement)) return;
+    allowNativeDragStart(event);
     setMediaDragData(event.dataTransfer, {
       url: media.currentSrc || media.src,
       mediaId: image.id,

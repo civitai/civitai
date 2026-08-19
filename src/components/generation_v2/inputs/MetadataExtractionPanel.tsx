@@ -68,9 +68,8 @@ function getDroppedImageUrl(event: React.DragEvent): string | undefined {
 
 /**
  * Try to extract a Civitai media database ID and type from the drop event's custom drag data.
- * EdgeImage/EdgeVideo
- * set 'application/x-civitai-media-id' and 'application/x-civitai-media-type'
- * when imageId is provided, allowing drop targets to fetch stored metadata server-side.
+ * EdgeImage/EdgeVideo set CIVITAI_MEDIA_ID_MIME and CIVITAI_MEDIA_TYPE_MIME when imageId is
+ * provided, allowing drop targets to fetch stored metadata server-side.
  */
 function getDroppedMediaInfo(
   event: React.DragEvent
