@@ -49,7 +49,7 @@ import { useHitsTransformed } from '~/components/Search/search.utils2';
 import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/search.types';
 import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
 import { isDefined, paired } from '~/utils/type-guards';
-import { ApplyCustomFilter, BrowsingLevelFilter } from '../Search/CustomSearchComponents';
+import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { QS } from '~/utils/qs';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
@@ -134,20 +134,6 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   };
   const currentUser = useCurrentUser();
 
-  const indexSupportsNsfwLevel = useMemo(
-    () =>
-      [
-        searchIndexMap.articles,
-        searchIndexMap.bounties,
-        searchIndexMap.models,
-        searchIndexMap.images,
-        searchIndexMap.collections,
-        searchIndexMap.tools,
-        searchIndexMap.comics,
-      ].some((i) => i === searchIndexMap[targetIndex]),
-    [targetIndex]
-  );
-
   const isModels = targetIndex === 'models';
   const isImages = targetIndex === 'images';
   const supportsPoi = ['models', 'images'].includes(targetIndex);
@@ -177,14 +163,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
-      {indexSupportsNsfwLevel ? (
-        <BrowsingLevelFilter
-          attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''}
-          filters={filters}
-        />
-      ) : filters.length > 0 ? (
-        <ApplyCustomFilter filters={filters} />
-      ) : null}
+      <BrowsingLevelFilter indexKey={targetIndex} filters={filters} />
       <AutocompleteSearchContent
         {...props}
         indexName={targetIndex}
