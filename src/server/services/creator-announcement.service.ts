@@ -58,9 +58,14 @@ export async function getCreatorAnnouncements({
   });
 }
 
-async function assertOwnedAnnouncement(id: number, userId: number) {
+/**
+ * `isModerator` widens this to any *authored* announcement — never to a platform row, which
+ * has its own moderator tooling. Matches what moderators can already do to the profile
+ * message this feature replaces: remove it in place, from wherever it is shown.
+ */
+async function assertOwnedAnnouncement(id: number, userId: number, isModerator = false) {
   const existing = await dbRead.announcement.findFirst({
-    where: { id, userId },
+    where: isModerator ? { id, userId: { not: null } } : { id, userId },
     select: { id: true, coverId: true, profileOnly: true },
   });
   if (!existing) throw throwAuthorizationError('Announcement not found');
@@ -132,8 +137,16 @@ export async function upsertCreatorAnnouncement({
     : dbWrite.announcement.create({ data: { ...data, userId }, select: creatorAnnouncementSelect });
 }
 
-export async function deleteCreatorAnnouncement({ id, userId }: { id: number; userId: number }) {
-  await assertOwnedAnnouncement(id, userId);
+export async function deleteCreatorAnnouncement({
+  id,
+  userId,
+  isModerator = false,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  await assertOwnedAnnouncement(id, userId, isModerator);
   return dbWrite.announcement.delete({ where: { id }, select: { id: true } });
 }
 

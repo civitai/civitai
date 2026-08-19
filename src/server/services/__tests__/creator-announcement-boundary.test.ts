@@ -166,3 +166,30 @@ describe('the allowance gates a notifying announcement and not a profile-only on
     expect(dbMock.dbWrite.announcement.create).toHaveBeenCalled();
   });
 });
+
+describe('a moderator may remove an authored announcement, never a platform one', () => {
+  it('widens the lookup to any authored row, and still excludes platform rows', async () => {
+    await deleteCreatorAnnouncement({ id: 7, userId: 999, isModerator: true });
+
+    const where = (
+      dbMock.dbRead.announcement.findFirst.mock.calls[0][0] as {
+        where: { id: number; userId: unknown };
+      }
+    ).where;
+
+    expect(where.id).toBe(7);
+    // Not the caller's id (they don't own it) but not unrestricted either: a platform
+    // row has userId null and must stay out of reach of this path.
+    expect(where.userId).toEqual({ not: null });
+    expect(dbMock.dbWrite.announcement.delete).toHaveBeenCalled();
+  });
+
+  it('still scopes a non-moderator delete to the caller', async () => {
+    await deleteCreatorAnnouncement({ id: 7, userId: 101 });
+
+    const where = (
+      dbMock.dbRead.announcement.findFirst.mock.calls[0][0] as { where: { userId: unknown } }
+    ).where;
+    expect(where.userId).toBe(101);
+  });
+});

@@ -65,7 +65,13 @@ export const announcementRouter = router({
     ),
   deleteCreatorAnnouncement: guardedProcedure
     .input(getByIdSchema)
-    .mutation(({ ctx, input }) => deleteCreatorAnnouncement({ id: input.id, userId: ctx.user.id })),
+    .mutation(({ ctx, input }) =>
+      deleteCreatorAnnouncement({
+        id: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   toggleAnnouncementMute: protectedProcedure
     .input(z.object({ creatorId: z.number(), muted: z.boolean() }))
     .mutation(({ ctx, input }) => toggleAnnouncementMute({ ...input, userId: ctx.user.id })),
