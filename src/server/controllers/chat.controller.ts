@@ -22,6 +22,7 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
+import { deriveMuteColumns } from '~/shared/utils/chat';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -397,9 +398,9 @@ export const modifyUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
-    const { chatMemberId, status, isPinned, ...rest } = input;
+    const { chatMemberId, status, isPinned, isMuted, notifyLevel, ...rest } = input;
 
-    const definedValues = { status, isPinned, ...rest };
+    const definedValues = { status, isPinned, isMuted, notifyLevel, ...rest };
     const definedValuesLength = Object.values(definedValues).filter(
       (val) => val !== undefined
     ).length;
@@ -474,18 +475,7 @@ export const modifyUserHandler = async ({
       // Accepting is what ends a request; leaving the mark set would strand the
       // conversation in Requests forever.
       filteredAt: status === ChatMemberStatus.Joined ? null : undefined,
-      // The two mute columns are written by different surfaces — the previous
-      // chat still writes `isMuted`, the new one writes `notifyLevel`, and both
-      // server readers moved to `notifyLevel`. Deriving each from the other is
-      // what stops a mute from silently doing nothing (or, worse, an unmute
-      // leaving the conversation permanently silent).
-      notifyLevel:
-        rest.isMuted === undefined
-          ? undefined
-          : rest.isMuted
-          ? ChatNotifyLevel.None
-          : ChatNotifyLevel.All,
-      isMuted: rest.notifyLevel === undefined ? undefined : rest.notifyLevel === 'None',
+      ...deriveMuteColumns({ isMuted, notifyLevel }),
     };
 
     const resp = await dbWrite.chatMember.update({

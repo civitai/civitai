@@ -278,12 +278,14 @@ function GlobalChatSettings({
                 value={option.value}
                 label={option.label}
                 description={option.description}
-                className="rounded p-2 hover:bg-gray-1 dark:hover:bg-dark-6"
+                className={clsx(classes.option, {
+                  [classes.selected]: option.value === settings.dmPolicy,
+                })}
               />
             ))}
           </Stack>
         </Radio.Group>
-        <Text size="xs" c="dimmed" mt="xs">
+        <Text component="div" className={classes.previewStrip}>
           {dmPolicyPreview[settings.dmPolicy ?? 'everyone']} Changing this does not move
           conversations you already have.
         </Text>
@@ -362,7 +364,7 @@ function ChatThemePicker({
           );
         })}
       </Group>
-      <Text size="xs" c="dimmed">
+      <Text component="div" className={classes.previewStrip}>
         Themes reskin <b>your</b> chat window only — the other side sees their own. Everything past
         Civitai comes with a membership, and reverts to Civitai if one lapses.
       </Text>

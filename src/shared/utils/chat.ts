@@ -1,5 +1,4 @@
-import type { ChatNotifyLevel } from '~/shared/utils/prisma/enums';
-import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
+import { ChatMemberStatus, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 
 export type ChatBucket = 'Inbox' | 'Requests' | 'Archived';
 
@@ -70,4 +69,31 @@ function mentionsUser(content: string, username: string): boolean {
     if (next === undefined || !/[a-z0-9_-]/.test(next)) return true;
     from = at + 1;
   }
+}
+
+/**
+ * What to write to the two mute columns for one membership change.
+ *
+ * They are written by different surfaces — the previous chat writes `isMuted`,
+ * the redesign writes `notifyLevel` — and every server reader is on
+ * `notifyLevel`, so each has to be derived from the other or a mute made on one
+ * surface does nothing on the rest.
+ *
+ * The column the caller actually named wins. Deriving unconditionally sends
+ * `undefined` for it, which Prisma reads as "leave alone", so the request
+ * updates the mirror and not the field it was about.
+ */
+export function deriveMuteColumns(input: { isMuted?: boolean; notifyLevel?: ChatNotifyLevel }): {
+  isMuted: boolean | undefined;
+  notifyLevel: ChatNotifyLevel | undefined;
+} {
+  const { isMuted, notifyLevel } = input;
+
+  return {
+    notifyLevel:
+      notifyLevel ??
+      (isMuted === undefined ? undefined : isMuted ? ChatNotifyLevel.None : ChatNotifyLevel.All),
+    isMuted:
+      isMuted ?? (notifyLevel === undefined ? undefined : notifyLevel === ChatNotifyLevel.None),
+  };
 }

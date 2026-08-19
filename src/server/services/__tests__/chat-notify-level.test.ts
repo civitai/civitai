@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { deriveMuteColumns } from '~/shared/utils/chat';
 import { ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import { shouldNotifyForMessage } from '~/shared/utils/chat';
 import { EMOJI_JUMBO_LIMIT, emojiOnlyCount, isJumboEmojiText } from '~/shared/constants/base-emoji';
@@ -85,5 +86,55 @@ describe('isJumboEmojiText', () => {
     expect(isJumboEmojiText('🎉 🎉')).toBe(true);
     expect(isJumboEmojiText('🎉'.repeat(EMOJI_JUMBO_LIMIT))).toBe(true);
     expect(isJumboEmojiText('🎉'.repeat(EMOJI_JUMBO_LIMIT + 1))).toBe(false);
+  });
+});
+
+/**
+ * Both mute columns have to move together, and the one the caller named has to
+ * be the one that moves.
+ *
+ * The regression this guards is silent in every way that matters: deriving both
+ * columns unconditionally sent `undefined` for whichever field the request
+ * actually carried, Prisma read that as "leave this column alone", the mutation
+ * returned 200, and the setting snapped back on the next render with no error
+ * anywhere. Asserting the mirror alone would not have caught it — the mirror
+ * was the half that kept working.
+ */
+describe('deriveMuteColumns', () => {
+  it('writes the level it was given, and mirrors it to isMuted', () => {
+    expect(deriveMuteColumns({ notifyLevel: ChatNotifyLevel.Mentions })).toEqual({
+      notifyLevel: ChatNotifyLevel.Mentions,
+      isMuted: false,
+    });
+    expect(deriveMuteColumns({ notifyLevel: ChatNotifyLevel.None })).toEqual({
+      notifyLevel: ChatNotifyLevel.None,
+      isMuted: true,
+    });
+  });
+
+  it('writes the mute it was given, and mirrors it to a level', () => {
+    // `false` has to survive the fallback: an unmute that resolves to undefined
+    // leaves the conversation silent forever.
+    expect(deriveMuteColumns({ isMuted: false })).toEqual({
+      isMuted: false,
+      notifyLevel: ChatNotifyLevel.All,
+    });
+    expect(deriveMuteColumns({ isMuted: true })).toEqual({
+      isMuted: true,
+      notifyLevel: ChatNotifyLevel.None,
+    });
+  });
+
+  it('touches neither column when the change is about something else', () => {
+    // Every other field of a membership update comes through here too; a status
+    // or pin change must not drag a mute along with it.
+    expect(deriveMuteColumns({})).toEqual({ isMuted: undefined, notifyLevel: undefined });
+  });
+
+  it('keeps an explicit pair intact rather than re-deriving either half', () => {
+    expect(deriveMuteColumns({ isMuted: true, notifyLevel: ChatNotifyLevel.Mentions })).toEqual({
+      isMuted: true,
+      notifyLevel: ChatNotifyLevel.Mentions,
+    });
   });
 });
