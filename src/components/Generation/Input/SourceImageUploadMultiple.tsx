@@ -9,6 +9,7 @@ import {
   Card,
   ActionIcon,
   Loader,
+  Tooltip,
 } from '@mantine/core';
 import type { Dispatch, DragEvent, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -29,11 +30,12 @@ import clsx from 'clsx';
 import { almostEqual, formatBytes } from '~/utils/number-helpers';
 import { Dropzone } from '@mantine/dropzone';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
-import { IconPalette, IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
+import { IconFileSearch, IconPalette, IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
+import { ImageMetadataModal, type ImageMetadataApply } from './ImageMetadataModal';
 import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawing.types';
 import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -41,7 +43,10 @@ import { isMobileDevice } from '~/hooks/useIsMobile';
 import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-metadata.store';
 import { recentSourceImagesStore, sourceImageKey } from '~/store/recent-source-images.store';
 import { isConsumerBlobUrl } from '~/shared/orchestrator/blob-url';
-import { extractSourceMetadataFromUrl } from '~/utils/metadata/extract-source-metadata';
+import {
+  extractSourceMetadata,
+  extractSourceMetadataFromUrl,
+} from '~/utils/metadata/extract-source-metadata';
 import { isDefined } from '~/utils/type-guards';
 
 type AspectRatio = `${number}:${number}`;
@@ -96,6 +101,10 @@ type SourceImageUploadProps = {
   onRemove?: (removedImage: SourceImageProps, index: number) => void;
   /** Whether the input is disabled */
   disabled?: boolean;
+  /** Show a per-image action that opens the extracted-metadata modal */
+  enableMetadataExtraction?: boolean;
+  /** How the form takes prompts pulled out of an image. Omit to make the modal read-only. */
+  metadataApply?: ImageMetadataApply;
 };
 
 type ImageComplete = {
@@ -148,11 +157,36 @@ type SourceImageUploadContext = {
   handleSlotUpload?: (entries: { slotIndex: number; src: File | string }[]) => Promise<void>;
   /** Remove image from a specific slot */
   removeSlotItem?: (slotIndex: number) => void;
+  enableMetadataExtraction?: boolean;
+  metadataApply?: ImageMetadataApply;
 };
 
 const [Provider, useContext] = createSafeContext<SourceImageUploadContext>(
   'missing SourceImageUploadContext'
 );
+
+/** Opens the extracted-metadata modal for one image. Rendered inside a `relative` preview card. */
+function MetadataAction({ url, apply }: { url: string; apply?: ImageMetadataApply }) {
+  return (
+    <Tooltip label="View image metadata" withinPortal>
+      <ActionIcon
+        variant="light"
+        color="dark"
+        size="sm"
+        className="absolute left-1 top-1 z-30"
+        onClick={() =>
+          dialogStore.trigger({
+            id: `image-metadata-modal-${url}`,
+            component: ImageMetadataModal,
+            props: { url, apply },
+          })
+        }
+      >
+        <IconFileSearch size={16} />
+      </ActionIcon>
+    </Tooltip>
+  );
+}
 
 const iconSize = 18;
 const maxSizeFormatted = formatBytes(maxOrchestratorImageFileSize);
@@ -173,6 +207,8 @@ export function SourceImageUploadMultiple({
   annotations,
   onRemove,
   disabled = false,
+  enableMetadataExtraction = false,
+  metadataApply,
 }: SourceImageUploadProps) {
   // Normalize: graph can pass null (e.g. txt2img persisted state) — treat as undefined
   const value = Array.isArray(rawValue) ? rawValue : undefined;
@@ -651,7 +687,7 @@ export function SourceImageUploadMultiple({
             const uploadResults = await Promise.all(
               toUpload.map(async ({ src, id, originalUrl }) => {
                 try {
-                  const response = await uploadOrchestratorImage(src, id);
+                  const response = await uploadOrchestratorImage(src, id, originalUrl);
                   if (response.url && response.available) {
                     return {
                       originalUrl,
@@ -996,6 +1032,9 @@ export function SourceImageUploadMultiple({
               height={firstImage.height}
             />
           )}
+          {enableMetadataExtraction && (
+            <MetadataAction url={firstImage.url} apply={metadataApply} />
+          )}
           <SourceImageUploadMultiple.CloseButton
             onClick={() => removeItem(0)}
             disabled={disabled}
@@ -1128,6 +1167,9 @@ export function SourceImageUploadMultiple({
                 height={imageAtSlot.height}
               />
             )}
+            {enableMetadataExtraction && (
+              <MetadataAction url={imageAtSlot.url} apply={metadataApply} />
+            )}
             <SourceImageUploadMultiple.CloseButton
               onClick={() => removeSlotItem(slotIndex)}
               disabled={isSlotDisabled}
@@ -1215,6 +1257,8 @@ export function SourceImageUploadMultiple({
         slots,
         handleSlotUpload,
         removeSlotItem,
+        enableMetadataExtraction,
+        metadataApply,
       }}
     >
       {isSlotsMode ? (
@@ -1543,6 +1587,8 @@ SourceImageUploadMultiple.Image = function ImagePreview({
     handleDrawingUpload,
     annotations,
     disabled,
+    enableMetadataExtraction,
+    metadataApply,
   } = useContext();
   const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
   const isMobile = isMobileDevice();
@@ -1640,6 +1686,9 @@ SourceImageUploadMultiple.Image = function ImagePreview({
                   height={previewItem.height}
                 />
               )}
+              {enableMetadataExtraction && (
+                <MetadataAction url={previewItem.url} apply={metadataApply} />
+              )}
               {enableDrawing &&
                 (isMobile ? (
                   // Mobile: Large prominent button bottom-left
@@ -1678,7 +1727,15 @@ SourceImageUploadMultiple.Image = function ImagePreview({
   );
 };
 
-export async function uploadOrchestratorImage(src: string | Blob | File, id: string) {
+export async function uploadOrchestratorImage(
+  src: string | Blob | File,
+  id: string,
+  /**
+   * Where to read generation metadata from, when that isn't `src` itself — the
+   * crop flow uploads a re-encoded Blob and only the pre-crop url still has EXIF.
+   */
+  metadataSource?: string | File
+) {
   const originalSize = await getImageDimensions(src);
 
   // If already an orchestrator URL, return it directly
@@ -1695,6 +1752,15 @@ export async function uploadOrchestratorImage(src: string | Blob | File, id: str
   try {
     setImageUploading(id, true);
 
+    // Read the source's generation metadata before the resize + JPEG re-encode
+    // below drops its EXIF — otherwise the uploaded URL has nothing left to read
+    // back and the image-metadata modal comes up empty for local files.
+    const metadataSrc =
+      metadataSource ?? (typeof src === 'string' || src instanceof File ? src : undefined);
+    const sourceMetadata = metadataSrc
+      ? extractSourceMetadata(metadataSrc).catch(() => undefined)
+      : undefined;
+
     // Resize and convert to JPEG blob
     const resized = await resizeImage(src, {
       maxHeight: maxUpscaleSize,
@@ -1710,6 +1776,14 @@ export async function uploadOrchestratorImage(src: string | Blob | File, id: str
     // Upload using presigned URL
     const blob = await uploadConsumerBlob(jpegBlob);
     setImageUploading(id, false);
+
+    const uploadedUrl = blob.url;
+    if (sourceMetadata && uploadedUrl) {
+      sourceMetadata.then((metadata) => {
+        if (metadata)
+          sourceMetadataStore.setMetadata(uploadedUrl, { ...metadata, exifExtracted: true });
+      });
+    }
 
     return { ...blob, ...resizedSize };
   } catch (e) {
