@@ -3,24 +3,13 @@ import { IconAlertTriangle, IconArrowRight, IconHistory } from '@tabler/icons-re
 import { ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
+import { HISTORY_FIELD_LABELS } from '~/components/CreatorShop/review-history';
 import type {
   CosmeticShopItemHistoryChange,
   CosmeticShopItemHistoryEntry,
 } from '~/server/schema/cosmetic-shop.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
-
-const fieldLabels: Record<string, string> = {
-  name: 'Name',
-  description: 'Description',
-  artwork: 'Artwork',
-  offsets: 'Fit offsets',
-  slug: 'Slug',
-  uses: 'Uses per purchase',
-  pricePerUse: 'Price per extra use',
-  price: 'Price',
-  quantity: 'Quantity',
-};
 
 const actionLabels: Record<string, string> = {
   approve: 'Approved & published',
@@ -41,7 +30,7 @@ const valueText = (value: CosmeticShopItemHistoryChange['from'], field: string) 
 };
 
 const changeText = (change: CosmeticShopItemHistoryChange) => {
-  const label = fieldLabels[change.field] ?? change.field;
+  const label = HISTORY_FIELD_LABELS[change.field] ?? change.field;
   if (change.field === 'artwork') return 'Artwork replaced';
   return `${label} ${valueText(change.from, change.field)} → ${valueText(change.to, change.field)}`;
 };
