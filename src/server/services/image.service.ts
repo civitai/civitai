@@ -3221,31 +3221,39 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   //
   // Read AFTER `await ownExcludedPromise` below, which is where both passes have
   // settled and which already precedes the `!data.length` guard.
+  // 🔴 DID THIS REQUEST ACTUALLY REACH BITDEX AT ALL? It can be ZERO, and the
+  // empty-result guard below cannot tell — an empty page and a page nobody asked
+  // for are the same `data.length === 0`.
+  //
+  // COUNTED FROM EVIDENCE THAT A CALL HAPPENED, NOT FROM LOOP ENTRY. An earlier
+  // revision incremented just before calling `getImagesFromBitdexPreFilter`,
+  // which was wrong in a way that looked right: that function has FIVE early
+  // `return null` paths that never reach `queryBitdex` — hidden-with-no-hidden-
+  // images, an unresolvable username, followed-with-zero-follows, and
+  // newCreators-with-none. A brand-new account opening the Following feed walks
+  // one of them, which is a great deal more likely than the `limit: 0` case that
+  // prompted the guard. Counting on entry re-created the same overcount one door
+  // down.
+  //
+  // The two observations that together mean "a call was made", and nothing else
+  // does: the client reported a FAILURE (it only does so from inside a call), or
+  // it handed back a NON-NULL result (it returns null on every failure, so
+  // non-null implies a completed call). Exactly one of the two fires per call, so
+  // this cannot double-count, and neither fires on an early return.
+  //
+  // Why it matters: recording a request that never contacted BitDex inflates the
+  // FALLBACK side of the exact ratio a roll-forward/rollback decision is read
+  // from, and contradicts this metric's own help string. (Reachability is
+  // measured; organic frequency is NOT.)
+  let bitdexCallsObserved = 0;
+
   let anyQueryFailed = false;
   const noteQueryFailure = () => {
     anyQueryFailed = true;
+    // A failure report is proof a call was made — it is emitted from inside the
+    // client, past every early return above it.
+    bitdexCallsObserved++;
   };
-
-  // 🔴 HOW MANY QUERIES THIS REQUEST ACTUALLY ISSUED, because it can be ZERO and
-  // the empty-result guard below cannot tell.
-  //
-  // `limit: 0` is externally reachable — the feed schema accepts it
-  // (`z.number().min(0)`) — and it collapses the pass loop's
-  // `accumulated.length < limit` condition on the FIRST evaluation, so the loop
-  // body never runs. With `skipOwnExcluded` also true (an anonymous caller),
-  // BitDex is never contacted at all, and yet `data` is empty, so the
-  // `!data.length` guard fires and would record a `fallback_empty` for a request
-  // that asked BitDex nothing.
-  //
-  // That is not a rounding error in the wrong direction: it inflates the
-  // FALLBACK side of the exact ratio a roll-forward/rollback decision is made
-  // on, and it would silently contradict this metric's own help string, which
-  // states the denominator as "requests that issued at least one query". A
-  // metric whose stated meaning and behaviour disagree is worse than no metric,
-  // so the behaviour is fixed here rather than the sentence being softened to
-  // match. (Reachability is measured; organic frequency is NOT — this is a
-  // correctness fix, not a claim about how often it happens.)
-  let queriesIssued = 0;
 
   const limit = input.limit ?? 100;
   // Opt-in to one's own not-yet-published content. Read once so the main
@@ -3352,7 +3360,6 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       true,
       noteQueryFailure
     );
-    queriesIssued++;
   }
 
   // Main loop: fetch pages, post-filter, accumulate until we have enough.
@@ -3373,10 +3380,14 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   const stats: PostFilterStats = { publicationHolds: 0, sortAtOnlyIds: new Set<number>() };
 
   while (pass < MAX_PASSES && accumulated.length < limit) {
-    queriesIssued++;
     const result = await (firstPage
       ? getImagesFromBitdexPreFilter(input, true, bitdexCursor, noteQueryFailure)
       : getImagesFromBitdexPreFilter(input, true, lastCursor, noteQueryFailure));
+    // Non-null ⇒ the client completed a call (it returns null on every failure,
+    // and the wrapper returns null without calling it at all on its early-return
+    // paths). A failed call is counted by `noteQueryFailure` instead, so exactly
+    // one of the two fires per call.
+    if (result) bitdexCallsObserved++;
     if (skipBudgetStartedAt === 0) skipBudgetStartedAt = Date.now();
     firstPage = false;
 
@@ -3453,6 +3464,10 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // Since the second pass is unscoped (for cacheability), we apply content-scoping
   // filters here to match the current view.
   const ownExcluded = await ownExcludedPromise;
+  // Same rule as the main pass. `ownExcludedPromise` is null when the pass was
+  // skipped entirely, and `await null` is null, so this counts only a pass that
+  // both ran and completed.
+  if (ownExcluded) bitdexCallsObserved++;
   if (ownExcluded?.documents?.length) {
     const mainIds = new Set(data.map((d) => d.id));
     let ownDocs = ownExcluded.documents
@@ -3599,11 +3614,11 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // knows what was in the index. Before this line the two were the same
     // observable, which is why a BitDex outage looked exactly like a quiet index.
     //
-    // Gated on `queriesIssued` for the reason given at its declaration: a
+    // Gated on `bitdexCallsObserved` for the reason given at its declaration: a
     // request that never contacted BitDex is neither of these things, and
     // recording it would make this counter's denominator disagree with its own
     // help string.
-    if (queriesIssued > 0)
+    if (bitdexCallsObserved > 0)
       recordBitdexPrimaryResult(anyQueryFailed ? 'fallback_error' : 'fallback_empty', serveMode);
 
     // ⚠️ A cursored request does not fall back cleanly — the Meili path parses

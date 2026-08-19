@@ -321,15 +321,24 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
   it('🔴 PRIMARY, signed-in, the OWN-CONTENT pass fails while the main pass is empty → fallback_error', async () => {
     getFliptVariantMock.mockResolvedValue('primary');
 
-    const calls: Array<{ ownExcluded: boolean; failed: boolean }> = [];
+    // Two INDEPENDENTLY-RECORDED ledgers: which passes ran, and which passes
+    // actually reported a failure. An earlier revision derived the second from
+    // the first (`failed: ownExcluded`), which made the "the main pass did not
+    // fail" assertion below restate its own fixture instead of observing
+    // anything. `reportedFailure` is now pushed from INSIDE the branch that
+    // invokes the callback, so it records what happened rather than what was
+    // intended.
+    const callsRun: Array<{ ownExcluded: boolean }> = [];
+    const reportedFailure: Array<{ ownExcluded: boolean }> = [];
     queryBitdexMock.mockImplementation(async (...args: unknown[]) => {
       const ownExcluded = isOwnExcludedQuery(args[1]);
       const onFailure = args.find((a) => typeof a === 'function') as
         | ((reason: string) => void)
         | undefined;
-      calls.push({ ownExcluded, failed: ownExcluded });
+      callsRun.push({ ownExcluded });
       if (ownExcluded) {
         // Only the own-content pass fails. The main pass below succeeds.
+        reportedFailure.push({ ownExcluded });
         onFailure?.('http_5xx');
         return null;
       }
@@ -344,9 +353,13 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
     // own-content one failed — assert the state was built before reading the
     // conclusion off it, or a silently-skipped second pass would make this case
     // pass for the same reason the anonymous ones do.
-    expect(calls.filter((c) => c.ownExcluded)).toHaveLength(1);
-    expect(calls.filter((c) => !c.ownExcluded).length).toBeGreaterThanOrEqual(1);
-    expect(calls.filter((c) => !c.ownExcluded).every((c) => !c.failed)).toBe(true);
+    expect(callsRun.filter((c) => c.ownExcluded)).toHaveLength(1);
+    expect(callsRun.filter((c) => !c.ownExcluded).length).toBeGreaterThanOrEqual(1);
+    // Exactly one failure was reported, and it came from the own-content pass —
+    // observed, not restated. If the main pass had also failed, `fallback_error`
+    // would be reachable without the own-content seam and the case would prove
+    // nothing.
+    expect(reportedFailure).toEqual([{ ownExcluded: true }]);
 
     expect(result.source).toBe('meili');
     expect(seriesThatMoved(before, after)).toEqual([key('fallback_error', 'primary')]);
@@ -371,6 +384,40 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
     // Positive control on the premise: this asserts the zero-query state was
     // actually built. Without it, "no series moved" would also be satisfied by a
     // counter that had simply stopped working.
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+    expect(result.source).toBe('meili');
+    expect(seriesThatMoved(before, after)).toEqual([]);
+  });
+
+  /**
+   * 🔴 THE SAME DEFECT ONE DOOR DOWN, AND THE LIKELIER ONE.
+   *
+   * `limit: 0` is not the only way to reach the empty-result guard without
+   * contacting BitDex. `getImagesFromBitdexPreFilter` has FIVE early
+   * `return null` paths that never reach the client at all —
+   * hidden-with-no-hidden-images, an unresolvable username,
+   * followed-with-zero-follows, newCreators-with-none. A guard that counted LOOP
+   * ENTRY rather than evidence of an actual call passed the `limit: 0` test and
+   * still over-counted every one of these.
+   *
+   * That matters more than the case that prompted the guard: a brand-new account
+   * opening the Following feed walks one of these doors, which is ordinary
+   * traffic, not an exotic input.
+   *
+   * `hidden` with an anonymous caller is the cleanest of them to drive — it
+   * returns at the first line of that block with no database round trip — and it
+   * exercises the same `return null` shape as the other four.
+   */
+  it('🔴 PRIMARY where the query builder returns early issues NO BitDex query, so nothing is recorded', async () => {
+    getFliptVariantMock.mockResolvedValue('primary');
+    const before = await readOutcomes();
+
+    // Anonymous + `hidden` → `if (!currentUserId) return null` before any client
+    // call. Anonymous also skips the own-content pass, so the request contacts
+    // BitDex exactly zero times.
+    const result = await getImagesFromSearch({ ...baseInput, hidden: true });
+
+    const after = await readOutcomes();
     expect(queryBitdexMock).not.toHaveBeenCalled();
     expect(result.source).toBe('meili');
     expect(seriesThatMoved(before, after)).toEqual([]);

@@ -143,6 +143,26 @@ describe('queryBitdex classifies every null it returns', () => {
     expect(moved).toEqual(['timeout']);
   });
 
+  /**
+   * 🔴 THE ONLY FIXTURE THAT SEPARATES `name`-DUCK-TYPING FROM `instanceof Error`.
+   *
+   * `DOMException` IS an `Error` subclass on this runtime, so both the
+   * DOMException case above and the plain-Error case pass under EITHER
+   * implementation — reverting to `err instanceof Error && err.name === …`
+   * survives both. A rejection that is not an Error at all but does carry
+   * `name: 'AbortError'` is what distinguishes them: duck-typing classifies it
+   * `timeout`, `instanceof` falls through to `network`.
+   *
+   * Without this case the duck-typing change is untested by construction — a
+   * change made for robustness that no test can tell was made.
+   */
+  it('a non-Error carrying name AbortError → timeout (this is what duck-typing buys)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue({ name: 'AbortError', message: 'aborted' }));
+    const { reasons, moved } = await observe();
+    expect(reasons).toEqual(['timeout']);
+    expect(moved).toEqual(['timeout']);
+  });
+
   it('a non-Error thrown value cannot crash the classifier', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(undefined));
     const { reasons, moved } = await observe();

@@ -44,6 +44,32 @@ async function seriesOf(name: string): Promise<Array<Record<string, string>>> {
   return values.map((v) => v.labels);
 }
 
+/**
+ * 🔴 SNAPSHOT EAGERLY. `Counter.get()` returns `Object.values(this.hashMap)` —
+ * the LIVE child objects — and `inc` mutates `hashMap[hash].value` IN PLACE. So a
+ * "before" handle that is only `.map()`ed AFTER the mutation reads post-increment
+ * state, and every value comparison built on it is vacuously equal.
+ *
+ * That is not hypothetical: the first version of the relabel case below did
+ * exactly that and the relabel mutant SURVIVED a fully green run — a test
+ * certifying a guarantee it structurally could not observe, which is worse than
+ * no test because it reads as coverage. The `Number(...)` copy here is the whole
+ * fix, and the sibling suite (`bitdex-feed-source.test.ts`) already snapshots
+ * this way.
+ */
+async function valuesByLabelKey(name: string): Promise<Record<string, number>> {
+  const metric = client.register.getSingleMetric(name) as unknown as Readable | undefined;
+  if (!metric) return {};
+  const { values } = await metric.get();
+  const snapshot: Record<string, number> = {};
+  for (const v of values) {
+    snapshot[`${v.labels.outcome ?? ''}|${v.labels.mode ?? ''}|${v.labels.reason ?? ''}`] = Number(
+      v.value
+    );
+  }
+  return snapshot;
+}
+
 const EXPECTED_RESULT_SERIES = BITDEX_SERVE_OUTCOMES.length * BITDEX_SERVE_MODES.length;
 
 describe('the record functions drop label values outside their union', () => {
@@ -53,11 +79,36 @@ describe('the record functions drop label values outside their union', () => {
     ensureRegisterBitdexFeedServeMetrics();
   });
 
-  it('POSITIVE CONTROL: a legal call DOES create/keep its series', async () => {
+  /**
+   * 🔴 A POSITIVE CONTROL THAT CANNOT FAIL IS NOT ONE. The first version of this
+   * asserted the `served|primary` SERIES EXISTS after a legal call — but
+   * `seedAllSeries` pre-creates all 8 at registration, so it was true before the
+   * call and stayed true with the `inc` deleted. Inert.
+   *
+   * Assert the VALUE MOVED instead. That is the property every "…is dropped"
+   * case below depends on: they all conclude from a value NOT moving, which
+   * means nothing until a value has been watched to move through this exact
+   * read path.
+   */
+  it('POSITIVE CONTROL: a legal call MOVES its series value by exactly 1', async () => {
+    const before = await valuesByLabelKey('bitdex_primary_result_total');
+
     recordBitdexPrimaryResult('served', 'primary');
-    const labels = await seriesOf('bitdex_primary_result_total');
-    expect(labels).toHaveLength(EXPECTED_RESULT_SERIES);
-    expect(labels.some((l) => l.outcome === 'served' && l.mode === 'primary')).toBe(true);
+
+    const after = await valuesByLabelKey('bitdex_primary_result_total');
+    expect(after['served|primary|'] - before['served|primary|']).toBe(1);
+    // And nothing else moved, so the read path resolves the right child.
+    const moved = Object.keys(after).filter((k) => after[k] !== before[k]);
+    expect(moved).toEqual(['served|primary|']);
+  });
+
+  it('POSITIVE CONTROL: a legal failure-reason call moves its series too', async () => {
+    const before = await valuesByLabelKey('bitdex_query_failures_total');
+
+    recordBitdexQueryFailure('http_4xx');
+
+    const after = await valuesByLabelKey('bitdex_query_failures_total');
+    expect(after['||http_4xx'] - before['||http_4xx']).toBe(1);
   });
 
   it('an unknown OUTCOME with a valid mode is dropped — no new series', async () => {
@@ -92,21 +143,36 @@ describe('the record functions drop label values outside their union', () => {
     expect(labels.some((l) => l.reason === 'http_418')).toBe(false);
   });
 
+  /**
+   * 🔴 THE CASE THE SERIES-COUNT CHECKS CANNOT MAKE. Relabelling a rejected value
+   * to a plausible default — `if (!isBitdexServeOutcome(outcome)) outcome =
+   * 'served'` — keeps the series count at exactly 8, so every `toHaveLength`
+   * assertion above passes. It shows up ONLY as a moved VALUE on an existing
+   * child, which is why this case reads values and why they must be snapshotted
+   * eagerly (see `valuesByLabelKey`).
+   */
   it('a dropped label value is NOT silently relabelled to a plausible default', async () => {
-    const before = await seriesOf('bitdex_primary_result_total');
-    const beforeCounts = await (
-      client.register.getSingleMetric('bitdex_primary_result_total') as unknown as Readable
-    ).get();
+    const before = await valuesByLabelKey('bitdex_primary_result_total');
 
     recordBitdexPrimaryResult('bogus' as BitdexServeOutcome, 'primary');
 
-    const afterCounts = await (
-      client.register.getSingleMetric('bitdex_primary_result_total') as unknown as Readable
-    ).get();
-    // Neither a new series NOR an increment on an existing one. Relabelling to
-    // e.g. `served` would keep the series count identical and only show up as a
-    // moved VALUE, so the count check alone would miss it.
-    expect(await seriesOf('bitdex_primary_result_total')).toHaveLength(before.length);
-    expect(afterCounts.values.map((v) => v.value)).toEqual(beforeCounts.values.map((v) => v.value));
+    const after = await valuesByLabelKey('bitdex_primary_result_total');
+    // No new series...
+    expect(Object.keys(after).sort()).toEqual(Object.keys(before).sort());
+    expect(Object.keys(after)).toHaveLength(EXPECTED_RESULT_SERIES);
+    // ...AND no existing series moved. A relabel to `served` would satisfy the
+    // first check and fail this one, which is the whole point of the case.
+    const moved = Object.keys(after).filter((k) => after[k] !== before[k]);
+    expect(moved).toEqual([]);
+  });
+
+  it('an unknown REASON is not relabelled either', async () => {
+    const before = await valuesByLabelKey('bitdex_query_failures_total');
+
+    recordBitdexQueryFailure('http_418' as (typeof BITDEX_QUERY_FAILURE_REASONS)[number]);
+
+    const after = await valuesByLabelKey('bitdex_query_failures_total');
+    expect(Object.keys(after)).toHaveLength(BITDEX_QUERY_FAILURE_REASONS.length);
+    expect(Object.keys(after).filter((k) => after[k] !== before[k])).toEqual([]);
   });
 });

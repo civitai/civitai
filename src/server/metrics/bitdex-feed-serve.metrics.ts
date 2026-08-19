@@ -43,11 +43,29 @@
 // failure, and counting it as one would make the served ratio sag whenever a
 // moderator opened a queue. The consequence to hold onto: `sum(…)` here is the
 // count of requests that ENGAGED the backend, not the count of feed requests.
-// Two other populations are outside it for the same reason: a request whose
-// `limit` collapses the fetch loop before it runs (externally reachable, and
-// explicitly guarded in `fetchBitdexPrimary`), and the hand-driven internal
-// comparison endpoint, which passes no callback so its calls reach
+//
+// The same exclusion covers every OTHER way a request can reach the empty-result
+// guard without contacting the backend — and there are more of them than the one
+// that prompted the guard. `fetchBitdexPrimary` gates on evidence that a call
+// actually happened (see `bitdexCallsObserved` there), so ALL of these are out:
+// a `limit` that collapses the fetch loop before its first iteration; and the
+// query builder's own early returns — hidden-with-no-hidden-images, an
+// unresolvable username, followed-with-zero-follows, newCreators-with-none. That
+// last one is a brand-new account opening the Following feed, i.e. ordinary
+// traffic, not an exotic input. The hand-driven internal comparison endpoint is
+// outside it too, by passing no callback: its calls reach
 // `bitdex_query_failures_total` but never this counter.
+//
+// ⚠️ SCOPE OF THAT GUARANTEE, stated precisely because it is an invariant now.
+// It covers `served`, `fallback_empty` and `fallback_error` — the three outcomes
+// emitted from inside `fetchBitdexPrimary`, where the evidence lives.
+// `fallback_exception` is emitted from the CALLER's catch arms and is
+// deliberately NOT gated: it means "the application threw on the BitDex path",
+// and whether a query had been issued first is irrelevant to that meaning — an
+// app-side throw before the first call is still an app-side throw worth paging
+// on, and suppressing it would blind the tripwire in the case where the code
+// broke earliest. So `fallback_exception` has a deliberately different
+// denominator from its three siblings. It reads a flat zero today.
 //
 // 🔴 THIS COUNTER ALONE CANNOT SEE EVERY DEGRADATION, AND AN ALERT BUILT ON IT
 // ALONE WILL BE GREEN THROUGH ONE OF THEM. A request whose own-content pass
