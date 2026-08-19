@@ -47,16 +47,6 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();
@@ -66,6 +56,7 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { getImagesFromSearchPreFilter, getImagesFromSearchPostFilter } from '../image.service';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const MODERATOR = 4321;
 
