@@ -90,7 +90,15 @@ BEGIN;
 -- Keep the TWO-argument form. The one-argument form is a different keyspace entirely, and
 -- article.service.ts already locks in it on bare article ids — a one-arg lock here would
 -- collide with whichever article shares this number.
+-- lock_timeout applies to advisory locks too, and the sibling migration sets it to 5s at
+-- SESSION scope — so run in the same psql session as documented, a second operator's lock
+-- would abort after 5s instead of waiting out a 25k-row insert, with the error the sibling's
+-- header tells them to read as "retry". SET LOCAL, so it reverts at COMMIT either way.
+SET LOCAL lock_timeout = 0;
 SELECT pg_advisory_xact_lock(1095630849::int, 0::int);
+-- Restored for the inserts themselves: each row takes FOR KEY SHARE on its "User" row, and
+-- those should abort rather than stall behind whatever holds a conflicting lock.
+SET LOCAL lock_timeout = '5s';
 
 INSERT INTO "Announcement" ("userId", "title", "content", "color", "domain", "startsAt", "profileOnly", "disabled", "metadata", "createdAt", "updatedAt")
 SELECT
