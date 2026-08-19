@@ -137,8 +137,8 @@ describe('buildAppsStoreFeedbackContext', () => {
      *
      * The set is `String.prototype.trim`'s own: WhiteSpace + LineTerminator, which includes
      * NBSP (U+00A0), BOM (U+FEFF), CR, VT/FF, LS/PS (U+2028/9) and ideographic space
-     * (U+3000). \u26A0\uFE0F Nothing here EXERCISES the store's matcher, so this table does not
-     * enforce that the two stay in step \u2014 if `AppListingsMarketplaceBody.tsx:331` stopped
+     * (U+3000). NOTE: nothing here EXERCISES the store's matcher, so this table does not
+     * enforce that the two stay in step — if `AppListingsMarketplaceBody.tsx:331` stopped
      * using `trim()`, no assertion in this file would go red. It pins our side only.
      */
     const TRIMMED_CHARS: [string, string][] = [
@@ -168,8 +168,8 @@ describe('buildAppsStoreFeedbackContext', () => {
     });
 
     /**
-     * \uD83D\uDD34 THE SAME BLIND SPOT, ONE POSITION OVER. The table above places each exotic
-     * character only in the PADDING, so the term's INTERIOR is ASCII in every fixture \u2014
+     * 🔴 THE SAME BLIND SPOT, ONE POSITION OVER. The table above places each exotic
+     * character only in the PADDING, so the term's INTERIOR is ASCII in every fixture —
      * and a fixture whose interior cannot contain the character cannot observe an
      * implementation that rewrites it there. Four mutants survived a fully green suite on
      * exactly that gap, including `replace(/\uFEFF/g, '')` (a global BOM strip, a very
@@ -179,9 +179,15 @@ describe('buildAppsStoreFeedbackContext', () => {
      * takes the first and explicitly declines the second, because the middle is what the
      * reporter actually typed. So every character the table trims at the ends must be
      * proven to SURVIVE in the interior.
+     *
+     * 🔴 The interior carries a SINGLE occurrence AND a DOUBLED one, because position and
+     * OCCURRENCE-COUNT are separate holes. With only a single occurrence the run-collapsing
+     * mutants survive — `replace(/\n{2,}/g, '\n')` and `replace(/\t{2,}/g, '\t')` both did
+     * — and collapsing blank lines is exactly the "tidy a pasted term" idiom someone
+     * reaches for. Same class as the padding-vs-interior hole above, one dimension over.
      */
     it.each(TRIMMED_CHARS)('keeps %s INSIDE the term, where it is not padding', (_label, ch) => {
-      const query = `up${ch}scale`;
+      const query = `up${ch}scale${ch}${ch}down`;
       const context = buildAppsStoreFeedbackContext({
         path: '/apps',
         filters: filters({ query }),
@@ -190,8 +196,24 @@ describe('buildAppsStoreFeedbackContext', () => {
     });
 
     /**
-     * \uD83D\uDD34 NO UNICODE NORMALISATION. `.normalize('NFKC')` is the plausible "tidy the term"
-     * addition and it is a storage-shape REWRITE, not a tidy: it maps fullwidth `\uFF22\uFF49\uFF54`
+     * CRLF specifically. The doubled-occurrence table above pairs each character with
+     * ITSELF, so it produces `\r\r` and `\n\n` but never the `\r\n` SEQUENCE — and
+     * `replace(/\r\n/g, '\n')`, line-ending normalisation and the most reached-for text
+     * tidy of all, survives on exactly that gap. A term pasted out of a Windows editor
+     * carries CRLF.
+     */
+    it('keeps a CRLF sequence inside the term', () => {
+      const query = 'up\r\nscale';
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+    });
+
+    /**
+     * 🔴 NO UNICODE NORMALISATION. `.normalize('NFKC')` is the plausible "tidy the term"
+     * addition and it is a storage-shape REWRITE, not a tidy: it maps fullwidth `Ｂｉｔ`
      * to `Bit`, folding characters the reporter deliberately typed. The module doc says
      * "normalise away only what can never be wanted back"; nothing tested that until now,
      * and both `NFKC` and `NFC` survived the suite.
@@ -207,14 +229,32 @@ describe('buildAppsStoreFeedbackContext', () => {
     });
 
     /**
-     * The fullwidth fixture above cannot see `.normalize('NFC')` \u2014 fullwidth characters
+     * The fullwidth fixture above cannot see `.normalize('NFC')` — fullwidth characters
      * are already NFC-stable, so that mutant survives it. NFC's real effect is COMPOSING a
      * decomposed sequence, so it takes a decomposed fixture to observe. This is the
      * common real input: text pasted from macOS is frequently NFD.
      */
     it('does not compose a decomposed term (NFC)', () => {
-      const query = 'cafe\u0301'; // "cafe" + COMBINING ACUTE \u2014 NFD, composes to "caf\u00E9"
+      const query = 'cafe\u0301'; // "cafe" + COMBINING ACUTE — NFD, composes to "café"
       expect(query.normalize('NFC')).not.toBe(query); // the fixture can see NFC at all
+      const context = buildAppsStoreFeedbackContext({
+        path: '/apps',
+        filters: filters({ query }),
+      });
+      expect(context?.filters?.query).toBe(query);
+    });
+
+    /**
+     * 🔴 AND THE DECOMPOSING DIRECTION. The two fixtures above pin only the COMPOSING
+     * normalisations: NFD is the identity on both of them (fullwidth has no canonical
+     * decomposition, and `cafe\u0301` is already decomposed), so `.normalize('NFD')`
+     * survived them both while the comment overhead claimed "NO UNICODE NORMALISATION".
+     * Decomposing is the same silent storage-shape rewrite as composing, and normalising
+     * to NFD is a real search-folding idiom. It takes a PRECOMPOSED fixture to see it.
+     */
+    it('does not decompose a precomposed term (NFD)', () => {
+      const query = 'caf\u00E9'; // precomposed U+00E9 — NFD would split it into e + U+0301
+      expect(query.normalize('NFD')).not.toBe(query); // the fixture can see NFD at all
       const context = buildAppsStoreFeedbackContext({
         path: '/apps',
         filters: filters({ query }),
