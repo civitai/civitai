@@ -45,6 +45,7 @@ let dismissedAlerts: string[] | undefined;
 let settingsResolved = true;
 let flags: Record<string, boolean> | null;
 let flagsReady: boolean;
+let currentUser: { id: number } | null;
 const dismissMutate = vi.fn();
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -62,8 +63,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     }),
     user: {
       getSettings: {
-        useQuery: () => ({
-          data: settingsResolved ? { dismissedAlerts } : undefined,
+        // `enabled` is honoured rather than ignored: the hook disables this
+        // query without a signed-in user, so a mock that always returns data
+        // would report `hasSettings: true` for a visitor production leaves at
+        // `false` — and the signed-out case below asserts against it.
+        useQuery: (_input?: unknown, opts?: { enabled?: boolean }) => ({
+          data: settingsResolved && (opts?.enabled ?? true) ? { dismissedAlerts } : undefined,
           isLoading: false,
         }),
       },
@@ -72,7 +77,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   },
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 91 }) }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => currentUser }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useOptionalFeatureFlags: () => flags,
@@ -122,6 +127,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   dismissedAlerts = [];
   settingsResolved = true;
+  currentUser = { id: 91 };
   flags = { ...FLAGS };
   flagsReady = true;
 });
@@ -172,6 +178,27 @@ describe('a targeted notice fails CLOSED while the answer is unknown', () => {
   test('not offered when there is no flag provider at all', () => {
     flags = null;
     expect(wouldRender(TARGETED_ON)).toBe(false);
+  });
+
+  test('a SIGNED-OUT visitor is in no audience, however ready the flags claim to be', () => {
+    // 🔴 `flagsReady` cannot close this one. It is
+    // `!session.data || isSuccess || isError`, so logged out it is `true` BY
+    // CONSTRUCTION — against the anonymous snapshot. A pure
+    // `isNoticeAudienceMatched` handed those two arguments cannot tell that
+    // apart from a resolved per-user answer, so the hook ANDs in `!!currentUser`
+    // and this pins it.
+    //
+    // Belt-and-braces rather than the only guard: `hasSettings` is already
+    // false signed out (the settings query is disabled without a user), which
+    // is why this changes nothing at any call site composing as documented.
+    currentUser = null;
+    flags = { imageCardInfoButton: true };
+    flagsReady = true;
+    expect(readHook(TARGETED_ON).isInAudience).toBe(false);
+    expect(wouldRender(TARGETED_ON)).toBe(false);
+    // The other gate that already covered this, asserted separately so the two
+    // claims do not collapse into one.
+    expect(readHook(TARGETED_ON).hasSettings).toBe(false);
   });
 });
 

@@ -21,11 +21,18 @@ export type UseFeatureNoticeResult = {
   /**
    * This user is in the notice's `audience`.
    *
-   * Always `true` for a notice that declares no audience, so an untargeted
-   * notice is unaffected by targeting existing. For a targeted one it is the
-   * per-user answer to the flag the notice names, and it fails closed while the
-   * flag overlay is unresolved — AND it into the render condition exactly like
-   * `hasSettings`.
+   * `true` for a notice that declares no audience whenever there is a signed-in
+   * user, so an untargeted notice is unaffected by targeting existing. For a
+   * targeted one it is the per-user answer to the flag the notice names, and it
+   * fails closed while that answer is unknown — AND it into the render condition
+   * exactly like `hasSettings`.
+   *
+   * 🔴 `false` for a SIGNED-OUT visitor, for every notice. There is no user to
+   * be in an audience, and `flagsReady` does NOT say otherwise — it is `true`
+   * for a logged-out visitor by construction (see `FeatureFlagsProvider`), so
+   * the flags on offer there are the anonymous snapshot. That costs nothing at
+   * any call site that composes as documented: `hasSettings` is already `false`
+   * signed out, because the settings query is disabled without a user.
    */
   isInAudience: boolean;
   /** Persist a dismissal, optimistically. */
@@ -79,10 +86,13 @@ export function useFeatureNotice(
   const currentUser = useCurrentUser();
   const queryEnabled = enabled && !!currentUser;
 
-  // 🔴 The per-user overlay, NOT a keyed flag evaluation. This is the only read
-  // that carries the caller's own session, and therefore the only one on which a
-  // segment-scoped flag can match at all — an evaluation with no context answers
-  // "not in the segment" for every user, uniformly and silently.
+  // 🔴 The provider's RESOLVED flags, NOT a keyed flag evaluation. What the
+  // provider hands out is `{ ...ssrFlags, ...toggleableOverlay }`, and BOTH
+  // halves are computed server-side from the caller's own session — which is
+  // what makes a segment-scoped flag able to match at all. A keyed evaluation
+  // with no context answers "not in the segment" for every user, uniformly and
+  // silently. Which half a given flag arrives on depends only on whether it is
+  // declared `toggleable`; see `NoticeAudience` in the registry.
   const featureFlags = useOptionalFeatureFlags();
   const flagsReady = useFeatureFlagsReady();
 
@@ -119,7 +129,13 @@ export function useFeatureNotice(
     isDismissed: isNoticeDismissed(settings?.dismissedAlerts, notice),
     hasSettings: !!settings,
     isLoading,
-    isInAudience: isNoticeAudienceMatched(notice, featureFlags, flagsReady),
+    // 🔴 `!!currentUser` is a gate `isNoticeAudienceMatched` cannot apply for
+    // itself: it is handed `flagsReady`, which is TRUE for a logged-out visitor
+    // (`!session.data` — see `FeatureFlagsProvider`), so from inside the pure
+    // function the anonymous snapshot is indistinguishable from a resolved
+    // per-user one. Answering "in the audience" for someone with no session is
+    // the one thing this must never do.
+    isInAudience: !!currentUser && isNoticeAudienceMatched(notice, featureFlags, flagsReady),
     // `dismiss` omits the flag and `restore` sends `false`, matching the wire
     // payloads these call sites have always sent.
     dismiss: () => mutation.mutate({ alertId: notice.id }),

@@ -47,10 +47,40 @@ import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
  *    early-adopter cohort is announceable") would conflate *who can see a
  *    feature* with *who should be told about it*, and leave no way to roll out
  *    quietly to that cohort — which is most of what a staged cohort is for.
- * 2. The value is read from the per-user flag overlay, which is computed from
- *    the caller's real session. That is the only path on which a
- *    segment-scoped flag can match; a keyed evaluation with no context
- *    silently answers "not in the segment" for everyone.
+ * 2. The value is read through `useOptionalFeatureFlags`, i.e. whatever
+ *    `FeatureFlagsProvider` resolved for THIS session. Never a keyed
+ *    evaluation, which has no context and so silently answers "not in the
+ *    segment" for everyone.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * 🔴 WHICH PATH A FLAG ARRIVES ON — read this before adding a second audience.
+ *
+ * `FeatureFlagsProvider` hands consumers `{ ...ssrFlags, ...toggleableOverlay }`.
+ * BOTH halves are computed server-side from the caller's real session, so a
+ * segment-scoped flag can match on either; which one carries a given flag is
+ * decided solely by whether its definition in `feature-flags.service.ts` sets
+ * `toggleable: true`:
+ *
+ * - NOT `toggleable` (the `flags` prop, seeded at SSR by `getFeatureFlagsAsync`
+ *   → `_app`). Resolved once per request against the user's identity, tier,
+ *   cohort, host and region, INCLUDING Flipt segment evaluation, and present
+ *   from the first client frame. `remixGallery` — the only flag any notice
+ *   names today — is this kind: `{ availability: ['mod'], fliptKey:
+ *   'remix-gallery' }`, no `toggleable`.
+ * - `toggleable: true` (the `userFlags` overlay, from `user.getFeatureFlags` /
+ *   `computeUserFeatureFlagsOverlay`). The user's own on/off CHOICE, layered
+ *   over the SSR flags. `computeUserFeatureFlagsOverlay` filters to toggleable
+ *   keys, so a non-toggleable flag never appears in it at all.
+ *
+ * The consequence worth knowing, because it is invisible from here: for a
+ * non-toggleable flag the `flagsReady` guard in `isNoticeAudienceMatched` can
+ * DEFER a render but cannot change its answer — the SSR flags already hold the
+ * per-user verdict and the overlay resolving does not revise it. So today, for
+ * the one notice that ships, that guard costs at most a frame and buys nothing.
+ * It becomes load-bearing the moment a notice names a `toggleable` flag, which
+ * is the case it was written for. It is deliberately not deleted for that
+ * reason — but do not read the shipped notice as evidence that it works.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export type NoticeAudience = {
   /**
@@ -148,15 +178,33 @@ export function isNoticeDismissed(
  * to someone who has it is a missed nudge, announcing one to someone who does
  * not have it is a broken promise.
  *
- * - `flagsReady` false → the per-user flag overlay has not resolved, so `flags`
- *   is still the anonymous server-rendered snapshot. Reading it would announce
- *   against defaults and then retract, which is the flash the notice machinery
- *   exists to avoid.
+ * - `flagsReady` false → the toggleable overlay query has not settled, so a
+ *   toggleable flag's value is still whatever the SSR snapshot defaulted it to.
+ *   Reading it would announce against defaults and then retract, which is the
+ *   flash the notice machinery exists to avoid.
  * - `flags` null → rendered outside the flag provider, so there is no answer at
  *   all. Treat that as "not in the audience" rather than as "no gate".
  *
- * @param flags      The resolved per-user overlay, or null outside a provider.
- * @param flagsReady Whether that overlay is the user's, not the anon snapshot.
+ * 🔴 `flagsReady` IS NOT A CLAIM THAT THE FLAGS ARE THIS USER'S. It is
+ * `!session.data || isSuccess || isError` (see `FeatureFlagsProvider`), and it
+ * is `true` in two states where the overlay is NOT the user's:
+ *
+ * - the `isError` arm — the overlay query FAILED (`retry: 0`), `userFeatures`
+ *   falls back to `{}`, and the merged flags are host-level SSR only;
+ * - logged out — no session, so `ready` is true against the anonymous snapshot.
+ *
+ * Both are harmless for a NON-toggleable flag, whose SSR value is already the
+ * per-user verdict. For a toggleable one they mean this function can be handed
+ * a default and told it is resolved, i.e. it FAILS OPEN in exactly the case the
+ * `flagsReady` argument exists to close. Anyone giving a notice a `toggleable`
+ * audience has to close that here — the anon half is already closed one level
+ * up, where `useFeatureNotice` ANDs in `!!currentUser`.
+ *
+ * @param flags      The provider's resolved flags (SSR flags + toggleable
+ *                   overlay), or null outside a provider.
+ * @param flagsReady Whether the toggleable overlay query has SETTLED — success,
+ *                   error, or no session at all. See the warning above: this is
+ *                   weaker than "the overlay is the user's".
  */
 export function isNoticeAudienceMatched(
   notice: FeatureNotice,
