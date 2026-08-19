@@ -2822,7 +2822,7 @@ export const unpublishModelById = async ({
           modelVersions: {
             updateMany: {
               where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-              data: { status: ModelStatus.Unpublished, meta: updatedMeta },
+              data: { status: ModelStatus.Unpublished },
             },
           },
         },
@@ -2830,6 +2830,24 @@ export const unpublishModelById = async ({
       });
 
       const versionIds = updatedModel.modelVersions.map((x) => x.id);
+
+      // 🔴 MERGE the unpublish keys into each version's own meta. Writing the model's meta object
+      // over the column — which is what `updateMany` above used to do — replaced every version's
+      // meta wholesale, and `hadEarlyAccessPurchase` went with it. That flag is the only pre-filter
+      // on the refund requirement and the guard on both delete paths, so wiping it turned an
+      // unpublish into a way to shed the refund obligation and then delete the version freely.
+      // updateMany cannot write a different value per row, hence raw SQL.
+      if (versionIds.length > 0) {
+        await tx.$executeRaw`
+          UPDATE "ModelVersion"
+          SET "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify({
+            ...(reason ? { unpublishedReason: reason, customMessage } : {}),
+            unpublishedAt,
+            unpublishedBy: userId,
+          })}::jsonb
+          WHERE id IN (${Prisma.join(versionIds)})
+        `;
+      }
       await tx.$executeRaw`
         UPDATE "Post"
         SET "metadata"    = "metadata" || jsonb_build_object(

@@ -122,6 +122,9 @@ function seedPurchase({
   dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
     { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
   ]);
+  // 🔴 Deliberately still seeded although the requirement no longer reads PaidAccess. It is what
+  // makes restoring the old gate-state filter reproduce cleanly as a mutation — remove this and the
+  // four gate-state tests below stop discriminating without going red.
   dbMock.dbWrite.paidAccess.findMany.mockResolvedValue(gates);
   dbMock.dbWrite.entityAccess.findMany.mockResolvedValue([
     {
@@ -408,7 +411,7 @@ describe('unpublishModelVersionById — refund gate', () => {
   //
   // Both assertions now carry weight: with the gate read gone, `entityAccess.findMany`'s `in` array
   // is the flagged-version set itself, so a scope mistake shows up there directly.
-  it('asks about this version alone, so a sibling can never enter the gate lookup', async () => {
+  it('asks about this version alone, so a sibling can never enter the refund set', async () => {
     seedPurchase();
 
     await expect(unpublishModelVersionById({ id: VERSION_ID, user: owner })).rejects.toThrowError(
