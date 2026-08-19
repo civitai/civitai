@@ -35,7 +35,6 @@
   const daysLeftThisMonth = $derived(
     remainingSaleDays(capTier, allSales, budgetMonthOf(now), overrides)
   );
-  const todayUtc = new Date().toISOString().slice(0, 10);
 
   // A custom enhance callback REPLACES the default, so applyAction has to run or a refused edit looks
   // exactly like a successful one.

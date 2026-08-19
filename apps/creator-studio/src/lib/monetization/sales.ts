@@ -125,8 +125,7 @@ export function resolveSaleEligibility({
       selectedCount === 1
         ? "This version is in early access, and a sale can't run on early access."
         : "Every selected version is in early access, and a sale can't run on early access.";
-  else if (leadDays > maxLead)
-    blockedReason = `A sale can start at most ${maxLead} days from now.`;
+  else if (leadDays > maxLead) blockedReason = `A sale can start at most ${maxLead} days from now.`;
   // Backdating is not a cosmetic problem: the budget buckets by START month, so a sale backdated into a
   // past month spends an untouched budget and runs concurrently with this month's.
   else if (startsAt < startOfDayUtc(now)) blockedReason = "A sale can't start in the past.";
@@ -331,7 +330,8 @@ export function resolveSaleUndercut(
   // overlapping, the deepest one differs between the two prices, so reusing the new price's winner
   // would quote a "currently" figure no buyer is paying.
   const current = bestSaleFor(storedPrice, sales, now) ?? sale;
-  const currentSalePrice = storedPrice > 0 ? storedPrice - saleDiscountFor(storedPrice, current) : 0;
+  const currentSalePrice =
+    storedPrice > 0 ? storedPrice - saleDiscountFor(storedPrice, current) : 0;
 
   return {
     live: isSaleActive(sale, now),

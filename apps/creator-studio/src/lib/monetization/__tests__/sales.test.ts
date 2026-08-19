@@ -379,13 +379,23 @@ describe('resolveSaleEligibility — bounds a forged or mistyped window', () => 
   it('🔴 blocks a Fixed discount when the price floor could not be resolved', () => {
     // undefined is "not known" — a failed preview. Treating it as "no floor" is how a discount nothing
     // evaluated reaches Apply.
-    const r = resolveSaleEligibility({ ...base, type: 'Fixed', amount: 400, minCoveredPrice: undefined });
+    const r = resolveSaleEligibility({
+      ...base,
+      type: 'Fixed',
+      amount: 400,
+      minCoveredPrice: undefined,
+    });
     expect(r.canSchedule).toBe(false);
     expect(r.blockedReason).toMatch(/Couldn't check the prices/);
   });
 
   it('allows a Fixed discount when nothing in the selection is priced (null, not undefined)', () => {
-    const r = resolveSaleEligibility({ ...base, type: 'Fixed', amount: 400, minCoveredPrice: null });
+    const r = resolveSaleEligibility({
+      ...base,
+      type: 'Fixed',
+      amount: 400,
+      minCoveredPrice: null,
+    });
     expect(r.canSchedule).toBe(true);
   });
 });
@@ -394,7 +404,12 @@ describe('resolveSaleEligibility — operator overrides from the KeyValue row', 
   const overrides = { saleDaysByTier: { bronze: 20 }, minCreatorScore: 50_000, maxLeadDays: 30 };
 
   it('spends the overridden allowance rather than the compiled one', () => {
-    const r = resolveSaleEligibility({ ...base, creatorScore: 60_000, daysUsedInMonth: 10, overrides });
+    const r = resolveSaleEligibility({
+      ...base,
+      creatorScore: 60_000,
+      daysUsedInMonth: 10,
+      overrides,
+    });
     expect(r.daysAllowed).toBe(20);
     expect(r.canSchedule).toBe(true);
   });
@@ -406,12 +421,21 @@ describe('resolveSaleEligibility — operator overrides from the KeyValue row', 
   });
 
   it('applies an overridden lead time', () => {
-    const r = resolveSaleEligibility({ ...base, creatorScore: 60_000, startsAt: days(25), overrides });
+    const r = resolveSaleEligibility({
+      ...base,
+      creatorScore: 60_000,
+      startsAt: days(25),
+      overrides,
+    });
     expect(r.canSchedule).toBe(true);
   });
 
   it('leaves every unmentioned limit at its default', () => {
-    const r = resolveSaleEligibility({ ...base, startsAt: days(20), overrides: { minCreatorScore: 1 } });
+    const r = resolveSaleEligibility({
+      ...base,
+      startsAt: days(20),
+      overrides: { minCreatorScore: 1 },
+    });
     expect(r.blockedReason).toMatch(/at most 14 days/);
   });
 });

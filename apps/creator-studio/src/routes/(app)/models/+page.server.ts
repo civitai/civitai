@@ -154,45 +154,39 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     cookies.set(PAGE_SIZE_COOKIE, String(perPage), { path: '/', maxAge: PAGE_SIZE_MAX_AGE });
   }
 
-  const [
-    result,
-    modelsScore,
-    permanentUsed,
-    earlyAccessUsed,
-    creatorScore,
-    salesEnabled,
-  ] = await Promise.all([
-    getCreatorModels({
-      userId: locals.user.id,
-      q,
-      fee: parsed.fee,
-      baseModel,
-      type,
-      status: parsed.status,
-      access,
-      usage: parsed.usage,
-      sort: parsed.sort,
-      page: parsed.page,
-      perPage,
-      // Selection is always available, so "select all matching filters" always needs the full id set.
-      withMatchingVersionIds: true,
-    }),
-    resolveModelsScore(
-      locals.user.id,
-      !!locals.user.isModerator,
-      cookies.get(TEST_MODELS_SCORE_COOKIE)
-    ),
-    countPermanentAccessVersions(locals.user.id),
-    countActiveEarlyAccessVersions(locals.user.id),
-    resolveCreatorScore(
-      locals.user.id,
-      !!locals.user.isModerator,
-      cookies.get(TEST_CREATOR_SCORE_COOKIE)
-    ),
-    // Per-user entityId so the feature can open to a few creators before everyone. `isEnabled` rather
-    // than `getBoolean`: only the former honours FLIPT_LOCAL_OVERRIDES, so this is togglable locally.
-    getFlipt().isEnabled('scheduled-model-sales', String(locals.user.id)),
-  ]);
+  const [result, modelsScore, permanentUsed, earlyAccessUsed, creatorScore, salesEnabled] =
+    await Promise.all([
+      getCreatorModels({
+        userId: locals.user.id,
+        q,
+        fee: parsed.fee,
+        baseModel,
+        type,
+        status: parsed.status,
+        access,
+        usage: parsed.usage,
+        sort: parsed.sort,
+        page: parsed.page,
+        perPage,
+        // Selection is always available, so "select all matching filters" always needs the full id set.
+        withMatchingVersionIds: true,
+      }),
+      resolveModelsScore(
+        locals.user.id,
+        !!locals.user.isModerator,
+        cookies.get(TEST_MODELS_SCORE_COOKIE)
+      ),
+      countPermanentAccessVersions(locals.user.id),
+      countActiveEarlyAccessVersions(locals.user.id),
+      resolveCreatorScore(
+        locals.user.id,
+        !!locals.user.isModerator,
+        cookies.get(TEST_CREATOR_SCORE_COOKIE)
+      ),
+      // Per-user entityId so the feature can open to a few creators before everyone. `isEnabled` rather
+      // than `getBoolean`: only the former honours FLIPT_LOCAL_OVERRIDES, so this is togglable locally.
+      getFlipt().isEnabled('scheduled-model-sales', String(locals.user.id)),
+    ]);
 
   // Sales are read ONLY when the feature is on. Migrations here are applied by hand, so on any
   // environment where the sale tables have not been created yet an unconditional read makes /models

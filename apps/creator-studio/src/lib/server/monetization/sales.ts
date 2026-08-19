@@ -83,18 +83,24 @@ export async function cheapestCoveredPrice(
 
 type CoveredPriceRow = { terms: unknown; baseModel: string | null };
 
-function coveredPriceRows(db: typeof dbRead | typeof dbWrite, userId: number, versionIds: number[]) {
-  return db
-    .selectFrom('PaidAccess as pa')
-    .innerJoin('ModelVersion as mv', 'mv.id', 'pa.entityId')
-    .innerJoin('Model as m', 'm.id', 'mv.modelId')
-    .select(['pa.terms', 'mv.baseModel'])
-    .where('pa.entityType', '=', 'ModelVersion')
-    .where('pa.entityId', 'in', versionIds)
-    // A sale can't cover early access, so an early-access price must not drag the floor down.
-    .where('pa.timeframeDays', 'is', null)
-    .where('m.userId', '=', userId)
-    .execute();
+function coveredPriceRows(
+  db: typeof dbRead | typeof dbWrite,
+  userId: number,
+  versionIds: number[]
+) {
+  return (
+    db
+      .selectFrom('PaidAccess as pa')
+      .innerJoin('ModelVersion as mv', 'mv.id', 'pa.entityId')
+      .innerJoin('Model as m', 'm.id', 'mv.modelId')
+      .select(['pa.terms', 'mv.baseModel'])
+      .where('pa.entityType', '=', 'ModelVersion')
+      .where('pa.entityId', 'in', versionIds)
+      // A sale can't cover early access, so an early-access price must not drag the floor down.
+      .where('pa.timeframeDays', 'is', null)
+      .where('m.userId', '=', userId)
+      .execute()
+  );
 }
 
 /** Lowest non-zero buyer-facing price across the rows. 0 means "not charged for", not "free". */

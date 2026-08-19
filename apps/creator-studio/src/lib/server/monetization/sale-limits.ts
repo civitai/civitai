@@ -17,8 +17,16 @@ const positiveInt = z.number().int().positive();
 
 const overridesSchema = z
   .object({
-    saleDaysByTier: z.record(z.string(), positiveInt).catch(undefined as never).optional(),
-    minCreatorScore: z.number().int().nonnegative().catch(undefined as never).optional(),
+    saleDaysByTier: z
+      .record(z.string(), positiveInt)
+      .catch(undefined as never)
+      .optional(),
+    minCreatorScore: z
+      .number()
+      .int()
+      .nonnegative()
+      .catch(undefined as never)
+      .optional(),
     maxLeadDays: positiveInt.catch(undefined as never).optional(),
   })
   .catch({});
