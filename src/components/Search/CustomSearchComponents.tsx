@@ -452,8 +452,11 @@ export const ApplyCustomFilter = ({
 
   const { refine } = useConfigure({ ...props, filters });
 
+  // `refine` REPLACES this widget's search parameters, so anything omitted here (hitsPerPage, …) is
+  // dropped from the request rather than left alone.
   useEffect(() => {
-    refine({ filters });
+    refine({ ...props, filters });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
 
   return null;
