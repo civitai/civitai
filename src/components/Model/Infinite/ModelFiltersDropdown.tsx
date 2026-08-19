@@ -104,6 +104,7 @@ export function DumbModelFiltersDropdown({
       status: undefined,
       checkpointType: undefined,
       earlyAccess: undefined,
+      paidAccess: undefined,
       supportsGeneration: false,
       hidden: undefined,
       fileFormats: undefined,
@@ -120,6 +121,7 @@ export function DumbModelFiltersDropdown({
         status: undefined,
         checkpointType: undefined,
         earlyAccess: undefined,
+        paidAccess: undefined,
         supportsGeneration: undefined,
         hidden: undefined,
         fileFormats: undefined,
@@ -155,6 +157,7 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.status?.length ?? 0) +
     (showCheckpointType && mergedFilters.checkpointType ? 1 : 0) +
     (!hideEarlyAccess && mergedFilters.earlyAccess ? 1 : 0) +
+    (!hideEarlyAccess && mergedFilters.paidAccess ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.isFeatured ? 1 : 0) +
@@ -250,6 +253,16 @@ export function DumbModelFiltersDropdown({
               onChange={(checked) => patchPending({ earlyAccess: checked })}
             >
               <span>Early Access</span>
+            </FilterChip>
+          )}
+          {/* Same gate as Early Access: the shop pins the access filter on, and
+              the two gate kinds are disjoint, so offering both there ANDs to nothing. */}
+          {!hideEarlyAccess && (
+            <FilterChip
+              checked={mergedFilters.paidAccess}
+              onChange={(checked) => patchPending({ paidAccess: checked })}
+            >
+              <span>Paid Access</span>
             </FilterChip>
           )}
           {flags.imageGeneration && (

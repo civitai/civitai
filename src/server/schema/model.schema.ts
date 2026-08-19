@@ -104,6 +104,7 @@ export const getAllModelsSchema = z.object({
   hidden: z.coerce.boolean().optional().default(false),
   needsReview: z.coerce.boolean().optional(),
   earlyAccess: z.coerce.boolean().optional(),
+  paidAccess: z.coerce.boolean().optional(),
   ids: commaDelimitedNumberArray().optional(),
   modelVersionIds: commaDelimitedNumberArray().optional(),
   supportsGeneration: z.coerce.boolean().optional(),

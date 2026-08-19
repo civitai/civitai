@@ -301,6 +301,20 @@ export async function getActiveEarlyAccessModelIds(): Promise<number[]> {
   return rows.map((r) => Number(r.modelId));
 }
 
+// Permanent gates only. `timeframeDays IS NULL` is the discriminator, not `endsAt`:
+// a timed gate carries a NULL `endsAt` until it is materialized at publish, so
+// keying off `endsAt` would sweep in pending early access.
+export async function getPermanentPaidAccessModelIds(): Promise<number[]> {
+  const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT mv."modelId"
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE pa."entityType" = 'ModelVersion' AND pa."timeframeDays" IS NULL
+      AND mv.status = 'Published'::"ModelStatus"
+  `;
+  return rows.map((r) => Number(r.modelId));
+}
+
 export const getModelsRaw = async ({
   input,
   include,
@@ -363,6 +377,7 @@ export const getModelsRaw = async ({
     allowCommercialUse,
     ids,
     earlyAccess,
+    paidAccess,
     supportsGeneration,
     fromPlatform,
     needsReview,
@@ -734,6 +749,16 @@ export const getModelsRaw = async ({
         JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
         WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
           AND pamv.status = 'Published'::"ModelStatus" AND pa."endsAt" > NOW()
+      )`
+    );
+  }
+  if (paidAccess) {
+    AND.push(
+      Prisma.sql`EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
+        WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
+          AND pamv.status = 'Published'::"ModelStatus" AND pa."timeframeDays" IS NULL
       )`
     );
   }
@@ -1191,6 +1216,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     ids,
     needsReview,
     earlyAccess,
+    paidAccess,
     supportsGeneration,
     followed,
     collectionId,
@@ -1280,6 +1306,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
   if (earlyAccess) {
     AND.push({ id: { in: await getActiveEarlyAccessModelIds() } });
+  }
+
+  if (paidAccess) {
+    AND.push({ id: { in: await getPermanentPaidAccessModelIds() } });
   }
 
   if (supportsGeneration) {

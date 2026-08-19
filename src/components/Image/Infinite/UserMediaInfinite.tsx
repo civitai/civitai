@@ -5,7 +5,6 @@ import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import type { ImageSections } from '~/components/Image/image.utils';
 import { useImageQueryParams } from '~/components/Image/image.utils';
@@ -135,7 +134,6 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                 />
               </Group>
             </Group>
-            <ImageCategories />
             {userLoading ? (
               <Center p="xl">
                 <Loader />
