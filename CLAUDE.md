@@ -372,7 +372,19 @@ declares `engines.node: ">=24.0.0 <25"`. On NixOS the flake owns both — it der
 its node major from `.nvmrc` instead of naming one, and `nix flake check` fails if
 they disagree.
 
-From nothing to a running app, one command:
+From nothing to a running app (the default path — no Nix):
+
+```bash
+nvm use                                        # .nvmrc -> 24.19.0
+corepack enable
+git submodule update --init event-engine-common
+cp .env-example .env.development
+docker compose -f docker-compose.base.yml up -d
+pnpm install && pnpm dev
+```
+
+**Optional, NixOS only** — the flake does the same in one command. Nothing requires
+it, and it is used by one maintainer; do not assume a contributor has it:
 
 ```bash
 nix run .#dev          # docker preflight, submodule, .env.development, compose up,
@@ -385,10 +397,10 @@ In an existing checkout that already works:
 1. Install dependencies: `pnpm install`
 2. Generate Prisma client: `pnpm run db:generate`
 3. Start the services if they are down: `make start`
-4. Start dev server: use the `/dev-server` skill — and start its daemon through
-   `nix run .#dev-server` so it lands on the flake's node. The daemon is spawned
-   with `process.execPath`, so whichever node first ran a CLI verb is the node it
-   keeps until it is shut down.
+4. Start dev server: use the `/dev-server` skill. The daemon is spawned with
+   `process.execPath`, so whichever node first ran a CLI verb is the node it keeps
+   until it is shut down — run it under the node from `.nvmrc`. (On NixOS,
+   `nix run .#dev-server` does that for you.)
 
 ### Git Worktrees
 

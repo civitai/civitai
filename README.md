@@ -69,7 +69,27 @@ for the database. By leveraging these tools, we've been able to create a scalabl
 
 ### Installation
 
-#### With Nix (recommended on NixOS, works on any Linux with flakes enabled)
+#### Standard setup
+
+```sh
+git clone https://github.com/civitai/civitai.git
+cd civitai
+nvm use                                              # reads .nvmrc -> 24.19.0
+corepack enable
+git submodule update --init event-engine-common
+cp .env-example .env.development
+docker compose -f docker-compose.base.yml up -d
+pnpm install
+pnpm dev
+```
+
+#### Optional: Nix flake
+
+> **Optional, and not the supported default.** The standard setup above is what the
+> project expects and what CI builds; nothing in the repo requires Nix, and you can
+> ignore this section entirely. It exists because NixOS cannot use Prisma's published
+> engines (there is no `linux-nixos` build), so a flake is the practical way to work on
+> this repo there. If you are not on NixOS and not already a flakes user, skip it.
 
 The flake owns the toolchain, so you do not install Node or pnpm yourself:
 
@@ -100,20 +120,6 @@ For an interactive shell with the same toolchain, use `nix develop`, or copy
 [`.envrc.example`](.envrc.example) to `.envrc` and run `direnv allow` to get it
 automatically on `cd`.
 
-#### Without Nix
-
-```sh
-git clone https://github.com/civitai/civitai.git
-cd civitai
-nvm use                                              # reads .nvmrc -> 24.19.0
-corepack enable
-git submodule update --init event-engine-common
-cp .env-example .env.development
-docker compose -f docker-compose.base.yml up -d
-pnpm install
-pnpm dev
-```
-
 #### With devcontainers
 
 > ⚠️ **Known out of step:** `.devcontainer/public/docker-compose.yml` pins
@@ -135,15 +141,15 @@ command. Otherwise, you will see performance issues.
 
 #### The signals and buzz services
 
-`docker-compose.base.yml` holds everything a contributor needs, and is what
-`nix run .#dev` starts. The extra services in `docker-compose.yml`
+`docker-compose.base.yml` holds everything a contributor needs (and is also what
+`nix run .#dev` starts). The extra services in `docker-compose.yml`
 (signals, buzz) come from private `ghcr.io` images, so they only work for
 internal members:
 
 - create a GitHub personal access token with `read:packages`
 - set it as `CR_PAT`
 - `echo $CR_PAT | docker login ghcr.io -u USERNAME --password-stdin`
-- then `nix run .#dev -- --full`, or `docker compose up -d`
+- then `docker compose up -d` (or, with the flake, `nix run .#dev -- --full`)
 
 ### After the first start
 

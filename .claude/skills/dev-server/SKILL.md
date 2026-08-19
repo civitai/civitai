@@ -44,7 +44,11 @@ on `node:24.19.0-alpine3.24`. It had been started from a shell outside the dev s
 had no `pnpm` at all — which silently disables the daemon's own auto-install path (it shells out to
 `pnpm install` / `pnpm run db:generate` when it sees the lockfile or the schema move).
 
-**Start it through the flake and this cannot happen:**
+**The fix, whatever your setup: start it from a shell whose `node --version` matches `.nvmrc` and which
+has `pnpm` on `PATH`.** `nvm use` at the repo root gives you both.
+
+**On NixOS (optional)** the flake wrapper does that for you — it pins node to the same version `.nvmrc`
+names, puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
 
 ```bash
 nix run .#dev-server -- status
@@ -52,12 +56,10 @@ nix run .#dev-server -- start
 nix run .#dev-server -- logs <session-id>
 ```
 
-That wrapper pins node to the flake's (the same one `.nvmrc` names), puts pnpm on `PATH`, and exports the
-Prisma engine paths NixOS needs. Every `node .claude/skills/dev-server/cli.mjs …` invocation elsewhere in
-this document takes the same subcommands — the wrapper only decides which node runs them.
+Every `node .claude/skills/dev-server/cli.mjs …` invocation elsewhere in this document takes the same
+subcommands — the wrapper only decides which node runs them, so nothing here depends on having Nix.
 
-If you are not using Nix, run the CLI from a shell where `node --version` matches `.nvmrc` and `pnpm` is on
-`PATH`. Either way, **check what you have got** before trusting a session:
+Either way, **check what you have got** before trusting a session:
 
 ```bash
 # the daemon's real interpreter, not the one you assume
