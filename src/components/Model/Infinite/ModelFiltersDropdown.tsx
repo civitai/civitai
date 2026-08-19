@@ -247,8 +247,9 @@ export function DumbModelFiltersDropdown({
         )}
 
         <Group gap={8} mb={4}>
-          {/* The shop pins the access filter on, and the two gate kinds are
-              disjoint, so neither toggle can do anything useful there. */}
+          {/* The shop pins Early Access on, so neither toggle can do anything
+              useful there. (Gate kinds are disjoint per VERSION, not per model —
+              a model with one permanent and one timed version matches both.) */}
           {!hideEarlyAccess && (
             <>
               <FilterChip
