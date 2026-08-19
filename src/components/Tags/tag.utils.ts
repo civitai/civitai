@@ -1,4 +1,4 @@
-import { TagTarget } from '~/shared/utils/prisma/enums';
+import type { TagTarget } from '~/shared/utils/prisma/enums';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { trpc } from '~/utils/trpc';
 import type { GetTagsForReviewInput } from '~/server/schema/tag.schema';
