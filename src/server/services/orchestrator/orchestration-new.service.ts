@@ -182,6 +182,14 @@ type StepInput = WorkflowStepTemplate & {
   resolvedSource?: { metadata: Record<string, unknown>; imageMetadata: string };
 };
 
+const DEFAULT_STEP_TIMEOUT_MINUTES = 20;
+const VIDEO_STEP_TIMEOUT_MINUTES = 40;
+const VIDEO_STEP_TYPES = new Set(['videoGen', 'videoInterpolation']);
+
+function buildStepTimeout(minutes: number) {
+  return new TimeSpan(0, minutes, 0).toString(['hours', 'minutes', 'seconds']);
+}
+
 /** Ecosystem workflows - GenerationGraphOutput where ecosystem is defined */
 type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }>;
 
@@ -1058,10 +1066,11 @@ export async function createWorkflowStepsFromGraph({
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
   };
 
-  // Calculate timeout: base 20 minutes + 1 minute per additional resource
-  const timeSpan = new TimeSpan(0, 20, 0);
-  timeSpan.addMinutes(Math.max(0, enrichedResources.length - 1));
-  const timeout = timeSpan.toString(['hours', 'minutes', 'seconds']);
+  // Calculate timeout: base (20 minutes, 40 for video steps) + 1 minute per
+  // additional resource
+  const extraResourceMinutes = Math.max(0, enrichedResources.length - 1);
+  const timeout = buildStepTimeout(DEFAULT_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
+  const videoTimeout = buildStepTimeout(VIDEO_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
 
   // Convert graph output to legacy {resources, params} format for storage.
   // This is the TEMPLATE snapshot — `params.prompt`/`negativePrompt` still
@@ -1187,7 +1196,9 @@ export async function createWorkflowStepsFromGraph({
         outputFormat: (step.input as { outputFormat?: string }).outputFormat ?? data.outputFormat,
       },
       priority: data.priority,
-      timeout,
+      // A handler-set timeout wins, so a slow ecosystem can ask for more than the
+      // per-step-type default.
+      timeout: step.timeout ?? (VIDEO_STEP_TYPES.has(step.$type) ? videoTimeout : timeout),
       metadata: isWhatIf
         ? undefined
         : ({
