@@ -3128,6 +3128,48 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // properly means changing what the query asks for, which is not this PR.
   if (input.isModerator && (input.scheduled || input.notPublished)) return null;
 
+  // Resolve `username` → `userId` BEFORE anything reads the creator scope.
+  //
+  // `skipOwnExcluded` below decides whether to issue the own-excluded second
+  // pass from `input.userId`. When the caller addresses a creator by handle
+  // instead of id, that field is empty here — the resolution used to happen
+  // later and locally, inside `getImagesFromBitdexPreFilter` — so the "viewing
+  // someone else's profile" arm of that guard tested `undefined`, never fired,
+  // and the caller's own private/blocked/nsfw0 content was merged into a feed
+  // it does not belong to (#3929). Every document involved belongs to the
+  // caller, so nothing of anyone else's is exposed; what breaks is feed
+  // integrity — the feed misrepresents what that creator posted.
+  //
+  // Precedence is spelled exactly as every other resolution site in this file
+  // spells it (`username && !userId`): an explicit `userId` wins and a
+  // disagreeing `username` is ignored. Spelling it differently here would make
+  // the two forms of the same request address different creators depending on
+  // which backend answered.
+  //
+  // The handle is passed to the lookup verbatim — no lowercasing, no trimming.
+  // Case semantics stay whatever the column's collation already decides, and
+  // the BitDex and Meili legs keep agreeing about which account a handle names.
+  //
+  // This costs no extra round trip. `getImagesFromBitdexPreFilter` guards its
+  // own resolution on `!userId`, so handing it the resolved input makes that a
+  // no-op — and it runs once PER PASS, so one lookup here replaces up to
+  // MAX_PASSES + MAX_EMPTIED_PAGES of them. Same client (`dbRead`) and same
+  // query as the one it replaces, so replica-lag behaviour is unchanged.
+  if (input.username && !input.userId) {
+    const targetUser = await dbRead.user.findUnique({
+      where: { username: input.username },
+      select: { id: true },
+    });
+    // A handle that resolves to nothing names no view, so there is nothing for
+    // a second pass to be scoped to. Returning null hands the request to the
+    // Meili leg, which raises NotFound — which is what a bad handle should do
+    // and, before this, did not: the main pass declined, but the own-excluded
+    // pass had already been issued, so `data` was non-empty and BitDex served
+    // the caller their own private images under a creator who does not exist.
+    if (!targetUser) return null;
+    input = { ...input, userId: targetUser.id };
+  }
+
   const limit = input.limit ?? 100;
   // Opt-in to one's own not-yet-published content. Read once so the main
   // post-filter and the own-excluded merge below cannot disagree about it.
@@ -3338,6 +3380,22 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
       .filter((d) => !mainIds.has(d.id));
 
     // Content-scope filtering — narrow unscoped results to the current view
+    //
+    // Creator scope first, because it is the one the rest of this list was
+    // missing. The second pass asks BitDex for `userId = currentUserId` and
+    // nothing else, so on a view pinned to a single creator these documents
+    // belong on the page only when that creator IS the caller. The
+    // `skipOwnExcluded` guard above already refuses to issue the pass
+    // otherwise — this makes the constraint hold where the documents are ADDED
+    // to the page rather than only where the decision to fetch them was made.
+    //
+    // That separation is exactly what #3929 broke: the decision was computed
+    // from a field that had not been resolved yet, and nothing downstream
+    // re-checked it. With the resolution above in place no live caller reaches
+    // this clause, so it is a structural guard rather than a second fix — but
+    // it is the guard that makes any future entry point arriving here with an
+    // unresolved creator fail closed instead of open.
+    if (input.userId) ownDocs = ownDocs.filter((d) => d.userId === input.userId);
     if (input.modelVersionId) {
       ownDocs = ownDocs.filter(
         (d) =>
