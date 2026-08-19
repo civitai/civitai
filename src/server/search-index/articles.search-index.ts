@@ -5,6 +5,7 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
+import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -53,17 +54,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
-  // `id` is required filterable for the keyset pagination scan in
-  // src/server/meilisearch/cleanup.ts. `id` is already declared in the
-  // updateSortableAttributes call above.
-  const filterableAttributes = ['id', 'tags.name', 'user.username', 'nsfwLevel'];
-
   if (
     // Meilisearch stores sorted.
-    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+    JSON.stringify(articlesFilterableAttributes.sort()) !==
+    JSON.stringify(settings.filterableAttributes)
   ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-      filterableAttributes
+      articlesFilterableAttributes
     );
 
     console.log(

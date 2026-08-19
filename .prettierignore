@@ -18,3 +18,11 @@ packages/civitai-db-schema/src/schema-drift/drift-baseline.json
 # reproduce, so with prettier owning the format a re-dump of this file was a 21,522-line diff
 # — while the gate's own STALE message instructs the operator to run exactly that command.
 packages/civitai-db-schema/src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json
+
+# Prisma generate owns the format of these. Prettier re-wraps the long
+# `export type X = (typeof X)[keyof typeof X];` lines it emits, which makes every
+# regeneration a ~700-line diff AND leaves `db:check-generated` permanently red —
+# it regenerates and diffs against the commit, so a formatted commit can never match.
+packages/civitai-db-schema/src/enums.ts
+packages/civitai-db-schema/src/models.ts
+packages/civitai-db-schema/src/kysely/

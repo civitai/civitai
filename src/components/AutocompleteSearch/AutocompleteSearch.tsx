@@ -29,6 +29,7 @@ import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
+import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import {
   autocompleteAvailability,
   useAutocompleteAvailabilityStore,
@@ -48,7 +49,7 @@ import { useHitsTransformed } from '~/components/Search/search.utils2';
 import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/search.types';
 import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
 import { isDefined, paired } from '~/utils/type-guards';
-import { ApplyCustomFilter, BrowsingLevelFilter } from '../Search/CustomSearchComponents';
+import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { QS } from '~/utils/qs';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
@@ -133,20 +134,6 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   };
   const currentUser = useCurrentUser();
 
-  const indexSupportsNsfwLevel = useMemo(
-    () =>
-      [
-        searchIndexMap.articles,
-        searchIndexMap.bounties,
-        searchIndexMap.models,
-        searchIndexMap.images,
-        searchIndexMap.collections,
-        searchIndexMap.tools,
-        searchIndexMap.comics,
-      ].some((i) => i === searchIndexMap[targetIndex]),
-    [targetIndex]
-  );
-
   const isModels = targetIndex === 'models';
   const isImages = targetIndex === 'images';
   const supportsPoi = ['models', 'images'].includes(targetIndex);
@@ -156,7 +143,11 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''}`
       : null,
     isImages && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${currentUser?.username ? ` OR user.username = ${currentUser?.username}` : ''}`
+      ? `poi != true${
+          currentUser?.username
+            ? ` OR user.username = ${quoteMeiliValue(currentUser.username)}`
+            : ''
+        }`
       : null,
     supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
     isModels && !currentUser?.isModerator
@@ -172,14 +163,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
-      {indexSupportsNsfwLevel ? (
-        <BrowsingLevelFilter
-          attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''}
-          filters={filters}
-        />
-      ) : filters.length > 0 ? (
-        <ApplyCustomFilter filters={filters} />
-      ) : null}
+      <BrowsingLevelFilter indexKey={targetIndex} filters={filters} />
       <AutocompleteSearchContent
         {...props}
         indexName={targetIndex}
@@ -761,7 +745,7 @@ function parseQuery(index: string, query: string) {
         const cleanedMatch = match?.groups?.value?.trim();
         const not = match?.groups?.not !== undefined;
         if (!cleanedMatch) continue;
-        filters.push(`${not ? 'NOT ' : ''}${attribute} = ${cleanedMatch}`);
+        filters.push(`${not ? 'NOT ' : ''}${attribute} = ${quoteMeiliValue(cleanedMatch)}`);
         searchPageQuery.push(
           `${filterAttributes.searchPageMap[attribute] ?? attribute}=${encodeURIComponent(
             cleanedMatch ?? ''

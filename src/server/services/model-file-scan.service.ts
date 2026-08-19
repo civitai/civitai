@@ -204,7 +204,9 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
   // Hash upsert (delete + createMany) — same pattern as legacy.
   if (outcome.hashes) {
-    const hashRows = (Object.entries(outcome.hashes) as Array<[ModelHashType, string]>)
+    const hashRows = (
+      Object.entries(normalizeScanHashes(outcome.hashes)) as Array<[ModelHashType, string]>
+    )
       .filter(([, hash]) => Boolean(hash))
       .map(([type, hash]) => ({ fileId, type, hash }));
 
@@ -419,6 +421,9 @@ type ModelScanStep =
   | ModelHashStep
   | ModelParseMetadataStep;
 
+const AUTOV3_LENGTH = 12;
+const SHA256_12_LENGTH = 12;
+
 const orchestratorHashFieldMap: Record<string, ModelHashType> = {
   sha256: ModelHashType.SHA256,
   autoV1: ModelHashType.AutoV1,
@@ -427,6 +432,42 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
   blake3: ModelHashType.BLAKE3,
   crc32: ModelHashType.CRC32,
 };
+/**
+ * Canonical stored form of the orchestrator's hash step output.
+ *
+ * Two adjustments, both idempotent so re-running over already-normalized values is a no-op:
+ *
+ *   AutoV3     arrives full-length (per @civitai/client: "SHA256 of the file with safetensors
+ *              header metadata stripped"). We store 12 chars, the width A1111 writes.
+ *   SHA256_12  is sent by nothing. It is sha256[0:12] — the width A1111/Forge write for LoRAs,
+ *              which no other stored hash matches, so resource detection fails without it.
+ *              See docs/image-resource-hash-matching.md.
+ *
+ * Every writer of ModelFileHash must run its hashes through this. There are two
+ * (applyScanOutcome and /api/mod/reprocess-scan); a third would need to call it too.
+ *
+ * This is the ONLY thing enforcing the AutoV3 width. A truncate_autov3_hash trigger used to do
+ * it in the database as well, and is dropped in migration 20260819010000 once this ships — so a
+ * writer that skips this helper stores a 64-char AutoV3 and silently breaks matching for the
+ * type carrying ~85-88% of LoRA references.
+ *
+ * AutoV1, AutoV2, BLAKE3, CRC32 and SHA256 pass through untouched — the orchestrator is the
+ * authority for those, and re-deriving them here would put two systems in charge of one value.
+ */
+export function normalizeScanHashes(
+  hashes: Partial<Record<ModelHashType, string>>
+): Partial<Record<ModelHashType, string>> {
+  const out: Partial<Record<ModelHashType, string>> = { ...hashes };
+
+  if (out.AutoV3) out.AutoV3 = out.AutoV3.slice(0, AUTOV3_LENGTH);
+
+  // The scan-request path writes an all-zero SHA256 as a "file unreachable" sentinel. Deriving
+  // from it would give every such file the same 12-char hash and make them match each other.
+  const sha256 = out.SHA256;
+  if (sha256 && !/^0+$/.test(sha256)) out.SHA256_12 = sha256.slice(0, SHA256_12_LENGTH);
+
+  return out;
+}
 
 // Orchestrator now reports scan outcomes via a `status` enum (and explicit
 // boolean flags) instead of POSIX exit codes. Map the known status strings,

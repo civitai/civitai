@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  applySavedRewardConfig,
   buildRewardsPayload,
   buildSetInput,
   initialDrafts,
@@ -59,6 +60,14 @@ const untouched = () => ({
   dailyBoost: row(),
   goodContent: row(),
   imagePostedToModel: row(),
+});
+
+// What an untouched form now writes: every reward records its switch, and only
+// its switch.
+const allOn = () => ({
+  dailyBoost: { enabled: true },
+  goodContent: { enabled: true },
+  imagePostedToModel: { enabled: true },
 });
 
 describe('initialDrafts', () => {
@@ -167,8 +176,8 @@ describe('buildRewardsPayload', () => {
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides, rows })).toEqual({
       dailyBoost: { enabled: false },
-      goodContent: { awardAmount: 1 },
-      imagePostedToModel: { awardAmount: 60 },
+      goodContent: { enabled: true, awardAmount: 1 },
+      imagePostedToModel: { enabled: true, awardAmount: 60 },
     });
   });
 
@@ -188,11 +197,17 @@ describe('buildRewardsPayload', () => {
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides, rows: untouched() })).toEqual({
       futureReward: { awardAmount: 5 },
+      ...allOn(),
     });
   });
 
-  it('writes nothing for a reward left at its defaults', () => {
-    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows: untouched() })).toEqual({});
+  // The amounts still follow the differs-from-the-default rule — nothing is
+  // written for an untouched award or cap — but `enabled` is recorded either way,
+  // because its default is ON and an absent entry cannot say a decision was made.
+  it('writes only the explicit on for a reward left at its defaults', () => {
+    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows: untouched() })).toEqual(
+      allOn()
+    );
   });
 
   it('removes an override when its input is cleared', () => {
@@ -200,14 +215,15 @@ describe('buildRewardsPayload', () => {
     const rows = { ...untouched(), goodContent: row({ awardAmount: '', cap: '50' }) };
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides, rows })).toEqual({
-      goodContent: { cap: 50 },
+      ...allOn(),
+      goodContent: { enabled: true, cap: 50 },
     });
   });
 
   it('never writes a cap the operator typed for a reward with multiple caps', () => {
     const rows = { ...untouched(), imagePostedToModel: row({ cap: '9999' }) };
 
-    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows })).toEqual({});
+    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows })).toEqual(allOn());
   });
 
   // No input is rendered for that reward, so an ordinary save about something
@@ -217,20 +233,34 @@ describe('buildRewardsPayload', () => {
     const overrides = { imagePostedToModel: { cap: 5000 } };
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides, rows: untouched() })).toEqual({
-      imagePostedToModel: { cap: 5000 },
+      ...allOn(),
+      imagePostedToModel: { enabled: true, cap: 5000 },
     });
   });
 
-  it('records only the off state, never an explicit on', () => {
+  // 🔴 The defect this replaced: only the `false` was ever written, so switching a
+  // reward ON deleted its override, and with nothing else differing from the
+  // compiled defaults the reward left the payload entirely. In production that
+  // emptied the row — two rewards turned on, `{"rewards":{}}` written — and the
+  // panel then had nothing to show for the save.
+  //
+  // `enabled: true` and an absent entry resolve identically at the grant path, so
+  // this changes what is RECORDED, not what pays. That is the point: the row is
+  // the only place a decision to enable can live.
+  it('records an explicit on for a reward switched back on', () => {
+    const overrides = { dailyBoost: { enabled: false } };
     const rows = { ...untouched(), dailyBoost: row({ enabled: true }) };
 
-    expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows })).toEqual({});
+    const payload = buildRewardsPayload({ rewards: REWARDS, overrides, rows });
+
+    expect(payload.dailyBoost).toEqual({ enabled: true });
   });
 
   it('coerces the inputs to numbers, since they are strings in the form', () => {
     const rows = { ...untouched(), goodContent: row({ awardAmount: '2', cap: '100' }) };
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows }).goodContent).toEqual({
+      enabled: true,
       awardAmount: 2,
       cap: 100,
     });
@@ -240,6 +270,7 @@ describe('buildRewardsPayload', () => {
     const rows = { ...untouched(), goodContent: row({ awardAmount: '0' }) };
 
     expect(buildRewardsPayload({ rewards: REWARDS, overrides: {}, rows }).goodContent).toEqual({
+      enabled: true,
       awardAmount: 0,
     });
   });
@@ -288,7 +319,8 @@ describe('buildSetInput', () => {
     const rows = { ...untouched(), goodContent: row({ awardAmount: '2' }) };
 
     expect(buildSetInput({ rewards: REWARDS, overrides: {}, rows, hash: 'h' }).rewards).toEqual({
-      goodContent: { awardAmount: 2 },
+      ...allOn(),
+      goodContent: { enabled: true, awardAmount: 2 },
     });
   });
 });
@@ -321,5 +353,37 @@ describe('the panel covers every override field', () => {
     expect([...PANEL_OVERRIDE_FIELDS].sort()).toEqual(
       Object.keys(rewardOverrideSchema.shape).sort()
     );
+  });
+});
+
+// The step the incident was about. Reverting this to a refetch typechecks, and
+// nothing else in the repo observes it: the panel has no test file, so the failure
+// mode is a moderator watching their own save do nothing.
+describe('applySavedRewardConfig', () => {
+  const panel = () => ({
+    setDrafts: vi.fn(),
+    setConflict: vi.fn(),
+    cache: { setData: vi.fn(), invalidate: vi.fn() },
+  });
+
+  it('seeds the cache from the response and never refetches', () => {
+    const saved = { stored: { value: { rewards: {} }, malformed: false, hash: 'h1' }, rewards: [] };
+    const p = panel();
+
+    applySavedRewardConfig(saved, p);
+
+    expect(p.cache.setData).toHaveBeenCalledWith(undefined, saved);
+    // The addressable half: a refetch here answers from a pod that never saw the
+    // write, which is the whole defect.
+    expect(p.cache.invalidate).not.toHaveBeenCalled();
+  });
+
+  it('clears the draft and the conflict, so the form stops reporting both', () => {
+    const p = panel();
+
+    applySavedRewardConfig({ stored: { value: {}, malformed: false, hash: '' }, rewards: [] }, p);
+
+    expect(p.setDrafts).toHaveBeenCalledWith(null);
+    expect(p.setConflict).toHaveBeenCalledWith(null);
   });
 });

@@ -1,5 +1,6 @@
 import {
   Center,
+  Chip,
   CloseButton,
   Group,
   Loader,
@@ -14,7 +15,9 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconListCheck, IconSearch, IconSettings, IconX } from '@tabler/icons-react';
 import React, { forwardRef, useMemo, useState } from 'react';
 import { dismissAnnouncements } from '~/components/Announcements/announcements.utils';
-import { AnnouncementsList } from '~/components/Announcements/AnnouncementsList';
+import type { AnnouncementSource } from '~/components/Announcements/AnnouncementsPanel';
+import { AnnouncementsPanel } from '~/components/Announcements/AnnouncementsPanel';
+import { useCreatorAnnouncementsFeature } from '~/components/Announcements/creator-announcements.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -38,6 +41,11 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
       key: 'notifications-hide-read',
       defaultValue: false,
     });
+    const [announcementSources, setAnnouncementSources] = useLocalStorage<AnnouncementSource[]>({
+      key: 'notifications-announcement-sources',
+      defaultValue: ['civitai', 'creators'],
+    });
+    const creatorAnnouncementsEnabled = useCreatorAnnouncementsFeature();
     const selectedCategory = Object.values(NotificationCategory).find(
       (category) => category === selectedTab
     );
@@ -110,23 +118,42 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
           <NotificationTabs
             onTabChange={(value) => setSelectedTab(value as NotificationCategory | null)}
           />
-          <TextInput
-            leftSection={<IconSearch size={16} />}
-            placeholder="Filter by message..."
-            value={searchText}
-            maxLength={150}
-            disabled={!notifications || notifications.length === 0}
-            onChange={(event) => setSearchText(event.currentTarget.value)}
-            rightSection={
-              <LegacyActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
-                <IconX size={16} />
-              </LegacyActionIcon>
-            }
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <TextInput
+              className="flex-1"
+              leftSection={<IconSearch size={16} />}
+              placeholder="Filter by message..."
+              value={searchText}
+              maxLength={150}
+              disabled={!notifications || notifications.length === 0}
+              onChange={(event) => setSearchText(event.currentTarget.value)}
+              rightSection={
+                <LegacyActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
+                  <IconX size={16} />
+                </LegacyActionIcon>
+              }
+            />
+            {creatorAnnouncementsEnabled && selectedTab === 'announcements' && (
+              <Chip.Group
+                multiple
+                value={announcementSources}
+                onChange={(value) => setAnnouncementSources(value as AnnouncementSource[])}
+              >
+                <Group gap={4} wrap="nowrap">
+                  <Chip value="civitai" radius="xl" size="sm">
+                    Civitai
+                  </Chip>
+                  <Chip value="creators" radius="xl" size="sm">
+                    Creators
+                  </Chip>
+                </Group>
+              </Chip.Group>
+            )}
+          </div>
         </div>
         <ScrollArea className="px-4 pb-4" scrollRestore={{ key: selectedTab ?? 'all' }}>
           {selectedTab === 'announcements' ? (
-            <AnnouncementsList />
+            <AnnouncementsPanel sources={announcementSources} />
           ) : (
             <>
               {loadingNotifications ? (

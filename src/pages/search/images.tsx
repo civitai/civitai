@@ -8,6 +8,7 @@ import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
+import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout } from '~/components/Search/SearchLayout';
 import { IconCloudOff } from '@tabler/icons-react';
@@ -60,7 +61,11 @@ function RenderFilters() {
 
   const filters = [
     browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${currentUser?.username ? ` OR user.username = ${currentUser.username}` : ''}`
+      ? `poi != true${
+          currentUser?.username
+            ? ` OR user.username = ${quoteMeiliValue(currentUser.username)}`
+            : ''
+        }`
       : null,
     browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
     // Filter out images from NSFW models with restricted base models
@@ -72,8 +77,9 @@ function RenderFilters() {
   return (
     <>
       <BrowsingLevelFilter
+        indexKey="images"
         filters={filters}
-        attributeName={!features.canViewNsfw ? 'combinedNsfwLevel' : 'nsfwLevel'}
+        attributeOverride={features.canViewNsfw ? undefined : 'combinedNsfwLevel'}
       />
       <SortBy
         title="Sort images by"

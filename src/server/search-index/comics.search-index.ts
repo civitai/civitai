@@ -3,6 +3,7 @@ import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
+import { comicsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { profileImageSelect } from '../selectors/image.selector';
@@ -12,7 +13,8 @@ const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = COMICS_SEARCH_INDEX;
 
 const searchableAttributes = ['name', 'description', 'user.username'];
-// `id` is in both lists for the keyset cleanup scan (src/server/meilisearch/cleanup.ts).
+// `id` is here and in the filterable list for the keyset cleanup scan
+// (src/server/meilisearch/cleanup.ts).
 const sortableAttributes = [
   'createdAt',
   'id',
@@ -20,7 +22,6 @@ const sortableAttributes = [
   'stats.chapterCount',
   'stats.followerCount',
 ];
-const filterableAttributes = ['id', 'user.username', 'genre', 'nsfwLevel'];
 const rankingRules = ['sort', 'words', 'typo', 'proximity', 'attribute', 'exactness'];
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -54,10 +55,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   if (
-    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+    JSON.stringify(comicsFilterableAttributes.sort()) !==
+    JSON.stringify(settings.filterableAttributes)
   ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-      filterableAttributes
+      comicsFilterableAttributes
     );
 
     console.log(

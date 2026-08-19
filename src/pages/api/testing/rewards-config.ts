@@ -14,22 +14,29 @@
  * — any override field that was refused for being out of bounds or the wrong
  * type.
  *
- * Read-only. It resolves through the same `resolveRewardConfig` the grant path
- * uses, including its cache, so a change written in the last minute may not
- * appear yet.
+ * Read-only. It applies the same resolution rules the grant path applies, but
+ * reads the row itself from the primary rather than through the grant path's
+ * per-pod memo: this is the endpoint an operator reaches for when the panel
+ * looks wrong, and a minute-old answer here is the same lie one layer down.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as rewardImports from '~/server/rewards';
-import { MAX_AWARD_AMOUNT, MAX_CAP, REWARD_CONFIG_KEY } from '~/server/rewards/reward-config';
+import { describeRewards } from '~/server/rewards/describe-rewards';
+import {
+  configFromStoredValue,
+  getStoredRewardConfig,
+  MAX_AWARD_AMOUNT,
+  MAX_CAP,
+  REWARD_CONFIG_KEY,
+} from '~/server/rewards/reward-config';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  const rewards = await Promise.all(Object.values(rewardImports).map((x) => x.describeConfig()));
+  const stored = await getStoredRewardConfig();
 
   return res.status(200).json({
     key: REWARD_CONFIG_KEY,
     bounds: { awardAmount: [0, MAX_AWARD_AMOUNT], cap: [0, MAX_CAP] },
-    rewards: rewards.sort((a, b) => a.type.localeCompare(b.type)),
+    rewards: await describeRewards(configFromStoredValue(stored.value)),
   });
 });

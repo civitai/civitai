@@ -1,4 +1,4 @@
-import { Loader, Popover, ScrollArea, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Loader, Popover, ScrollArea, Tabs, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { IconMoodSmile } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react';
@@ -10,7 +10,12 @@ import { StickerTopUp } from '~/components/Sticker/StickerTopUp';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { StickerSurface } from '~/shared/utils/sticker-token';
-import { STICKER_SURFACES, stickerBalanceLabel } from '~/shared/utils/sticker-token';
+import {
+  STICKER_SURFACES,
+  rankStickerMatch,
+  stickerBalanceLabel,
+} from '~/shared/utils/sticker-token';
+import { BASE_EMOJI } from '~/shared/constants/base-emoji';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -25,12 +30,15 @@ const keepComposerFocus = (e: ReactMouseEvent) => e.preventDefault();
 
 export function StickerPicker({
   onSelect,
+  onSelectEmoji,
   surface = 'comment',
   target,
   disabled,
   position = 'top-end',
 }: {
   onSelect: (sticker: ResolvedSticker) => void;
+  /** Supplying this adds the free base-emoji tab; surfaces without it stay sticker-only. */
+  onSelectEmoji?: (char: string) => void;
   /** Balances are only meaningful where placements are charged. */
   surface?: StickerSurface;
   target?: React.ReactNode;
@@ -40,6 +48,7 @@ export function StickerPicker({
   const features = useFeatureFlags();
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState('');
+  const [tab, setTab] = useState<'emoji' | 'sticker'>('emoji');
   // The sticker the author just tried to place with nothing left. Offering the
   // top-up here is the whole point — a link to the shop loses the composer.
   const [topUp, setTopUp] = useState<ResolvedSticker | null>(null);
@@ -60,12 +69,21 @@ export function StickerPicker({
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return sticker;
-    return sticker.filter((x) => x.slug.includes(needle) || x.name.toLowerCase().includes(needle));
+    return sticker.filter((x) => rankStickerMatch(needle, x.slug, x.name) !== null);
   }, [sticker, query]);
+
+  const withEmoji = !!onSelectEmoji;
+  const emoji = useMemo(() => {
+    const needle = query.trim().toLowerCase().replace(/^:|:$/g, '');
+    if (!needle) return BASE_EMOJI;
+    return BASE_EMOJI.filter((e) => rankStickerMatch(needle, e.slug, e.keywords) !== null);
+  }, [query]);
 
   // Gated at the single mount point every surface shares, so chat and the RTE
   // toolbar can't drift. Rendering is unaffected — that lives in <Sticker>.
-  if (!features.stickers) return null;
+  // Base emoji are free, so an emoji-capable surface stays available with
+  // stickers switched off.
+  if (!features.stickers && !withEmoji) return null;
 
   return (
     <Popover opened={opened} onChange={setOpened} position={position} withArrow shadow="md">
@@ -114,75 +132,115 @@ export function StickerPicker({
           <div className="flex w-64 flex-col gap-2">
             <TextInput
               size="xs"
-              placeholder="Search sticker"
+              placeholder={withEmoji ? 'Search' : 'Search sticker'}
               value={query}
               onChange={(e) => setQuery(e.currentTarget.value)}
             />
-            {isLoading ? (
-              <div className="flex justify-center py-4">
-                <Loader size="sm" />
-              </div>
-            ) : !sticker.length ? (
-              <Text size="xs" c="dimmed" ta="center" py="sm">
-                You don&apos;t own any stickers yet. Grab some in the shop.
-              </Text>
-            ) : !filtered.length ? (
-              <Text size="xs" c="dimmed" ta="center" py="sm">
-                No matches
-              </Text>
-            ) : (
-              <ScrollArea.Autosize mah={220} type="auto">
-                <div className="grid grid-cols-6 gap-1">
-                  {filtered.map((item) => {
-                    const remaining = balancesLoaded ? balances.get(item.id) ?? null : undefined;
-                    const exhausted = remaining === 0;
-                    const balanceLabel = stickerBalanceLabel(remaining);
-                    return (
+            {withEmoji && (
+              <Tabs value={tab} onChange={(v) => setTab(v === 'sticker' ? 'sticker' : 'emoji')}>
+                <Tabs.List grow>
+                  <Tabs.Tab value="emoji">Emoji</Tabs.Tab>
+                  {features.stickers && <Tabs.Tab value="sticker">Stickers</Tabs.Tab>}
+                </Tabs.List>
+              </Tabs>
+            )}
+            {withEmoji && tab === 'emoji' ? (
+              !emoji.length ? (
+                <Text size="xs" c="dimmed" ta="center" py="sm">
+                  No matches
+                </Text>
+              ) : (
+                <ScrollArea.Autosize mah={220} type="auto">
+                  <div className="grid grid-cols-7 gap-1">
+                    {emoji.map((item) => (
                       <UnstyledButton
-                        key={item.id}
-                        // Stickers are consumable in comments; showing the balance
-                        // here is what keeps "not enough uses" from arriving as a
-                        // failed submit.
-                        title={
-                          remaining === undefined
-                            ? `:${item.slug}:`
-                            : remaining === null
-                            ? `:${item.slug}: · unlimited`
-                            : exhausted
-                            ? `:${item.slug}: · out of uses — buy more`
-                            : `:${item.slug}: · ${remaining} left`
-                        }
-                        className={clsx(
-                          'relative flex items-center justify-center rounded p-1 hover:bg-gray-2 dark:hover:bg-dark-5',
-                          exhausted && 'opacity-40'
-                        )}
+                        key={item.slug}
+                        title={`:${item.slug}:`}
+                        aria-label={item.slug}
+                        className="flex items-center justify-center rounded p-1 text-xl leading-none hover:bg-gray-2 dark:hover:bg-dark-5"
                         onClick={() => {
-                          // Exhausted opens the top-up rather than doing nothing:
-                          // a dead button is where the author leaves.
-                          if (exhausted) {
-                            setTopUp(item);
-                            return;
-                          }
-                          onSelect(item);
+                          onSelectEmoji?.(item.char);
                           setOpened(false);
                           setQuery('');
                         }}
                       >
-                        <EdgeImage
-                          src={item.url}
-                          options={{ width: 64, anim: item.animated }}
-                          style={{ width: 28, height: 28, objectFit: 'contain' }}
-                        />
-                        {balanceLabel && (
-                          <span className="absolute bottom-0 right-0 rounded bg-dark-7/80 px-1 text-[10px] leading-tight text-white">
-                            {balanceLabel}
-                          </span>
-                        )}
+                        {item.char}
                       </UnstyledButton>
-                    );
-                  })}
-                </div>
-              </ScrollArea.Autosize>
+                    ))}
+                  </div>
+                </ScrollArea.Autosize>
+              )
+            ) : (
+              <>
+                {isLoading ? (
+                  <div className="flex justify-center py-4">
+                    <Loader size="sm" />
+                  </div>
+                ) : !sticker.length ? (
+                  <Text size="xs" c="dimmed" ta="center" py="sm">
+                    You don&apos;t own any stickers yet. Grab some in the shop.
+                  </Text>
+                ) : !filtered.length ? (
+                  <Text size="xs" c="dimmed" ta="center" py="sm">
+                    No matches
+                  </Text>
+                ) : (
+                  <ScrollArea.Autosize mah={220} type="auto">
+                    <div className="grid grid-cols-6 gap-1">
+                      {filtered.map((item) => {
+                        const remaining = balancesLoaded
+                          ? balances.get(item.id) ?? null
+                          : undefined;
+                        const exhausted = remaining === 0;
+                        const balanceLabel = stickerBalanceLabel(remaining);
+                        return (
+                          <UnstyledButton
+                            key={item.id}
+                            // Stickers are consumable in comments; showing the balance
+                            // here is what keeps "not enough uses" from arriving as a
+                            // failed submit.
+                            title={
+                              remaining === undefined
+                                ? `:${item.slug}:`
+                                : remaining === null
+                                ? `:${item.slug}: · unlimited`
+                                : exhausted
+                                ? `:${item.slug}: · out of uses — buy more`
+                                : `:${item.slug}: · ${remaining} left`
+                            }
+                            className={clsx(
+                              'relative flex items-center justify-center rounded p-1 hover:bg-gray-2 dark:hover:bg-dark-5',
+                              exhausted && 'opacity-40'
+                            )}
+                            onClick={() => {
+                              // Exhausted opens the top-up rather than doing nothing:
+                              // a dead button is where the author leaves.
+                              if (exhausted) {
+                                setTopUp(item);
+                                return;
+                              }
+                              onSelect(item);
+                              setOpened(false);
+                              setQuery('');
+                            }}
+                          >
+                            <EdgeImage
+                              src={item.url}
+                              options={{ width: 64, anim: item.animated }}
+                              style={{ width: 28, height: 28, objectFit: 'contain' }}
+                            />
+                            {balanceLabel && (
+                              <span className="absolute bottom-0 right-0 rounded bg-dark-7/80 px-1 text-[10px] leading-tight text-white">
+                                {balanceLabel}
+                              </span>
+                            )}
+                          </UnstyledButton>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea.Autosize>
+                )}
+              </>
             )}
           </div>
         )}

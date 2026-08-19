@@ -70,6 +70,7 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import { formatDate } from '~/utils/date-helpers';
 import detailClasses from '~/components/Model/ModelVersions/ModelVersionDetails.module.scss';
+import galleryClasses from '~/components/Apps/AppListingDetailBody.module.scss';
 import type {
   ListingDetail,
   ListingGalleryScreenshot,
@@ -408,8 +409,27 @@ function ScreenshotTile({
   );
 }
 
-/** Screenshot gallery — reuses AppDetailsModal's SimpleGrid pattern. Empty/broken
- *  URLs are skipped; the whole section is hidden when nothing remains. */
+/**
+ * Screenshot gallery — reuses AppDetailsModal's SimpleGrid pattern. Empty/broken
+ * URLs are skipped; the whole section is hidden when nothing remains.
+ *
+ * 🔴 THE GRID IS STILL TWO TRACKS; WHAT CHANGED IS WHAT AN UNPAIRED TILE DOES.
+ * A fixed `cols={{ base: 1, sm: 2 }}` gave a single-screenshot listing HALF the
+ * main column and dead space beside it, and did the same to the trailing tile of
+ * any odd count. `galleryClasses.gallery` adds one rule — a tile that is both the
+ * LAST child and at an ODD position spans `1 / -1` — so the gallery uses the width
+ * it actually has. See the stylesheet's header for why it is written as a
+ * structural CSS selector rather than a count-aware `cols` value: `ScreenshotTile`
+ * hides ITSELF on a load error, so the rendered tile count is discovered after
+ * render and any number computed from `shots.length` here would be wrong for
+ * exactly the listings with broken art.
+ *
+ * 🔴 Do not "simplify" this to `cols={shots.length === 1 ? 1 : 2}`. That reads as
+ * the same fix and is not: it fires on the ARRAY, so a 2-shot listing whose first
+ * image 404s still renders its surviving tile at half width, and it does nothing
+ * at all for the odd-trailing case. Measured, both cases, in
+ * `AppListingDetailBody.gallery.browser.test.tsx`.
+ */
 function ScreenshotGallery({
   screenshots,
   name,
@@ -422,7 +442,12 @@ function ScreenshotGallery({
   return (
     <Stack gap="xs">
       <Title order={4}>Screenshots</Title>
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+      <SimpleGrid
+        cols={{ base: 1, sm: 2 }}
+        spacing="md"
+        className={galleryClasses.gallery}
+        data-testid="apps-listing-screenshot-grid"
+      >
         {shots.map((shot, i) => (
           <ScreenshotTile key={`${shot.url}-${i}`} shot={shot} name={name} index={i} />
         ))}

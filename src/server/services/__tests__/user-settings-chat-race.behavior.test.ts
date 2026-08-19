@@ -264,4 +264,88 @@ describe('chat.setUserSettings — concurrent chat settings writes must not disc
 
     expect(settingsCacheBust).toHaveBeenCalledWith([USER_ID]);
   });
+
+  /**
+   * 🔴 THE `features.chat` REOPEN (#4119), WHICH ARRIVED WITH NO TEST OF ITS OWN.
+   *
+   * `chat-dm-policy.test.ts` covers the policy RESOLVER; nothing exercised the handler's
+   * second WRITE. That gap was found while resolving a merge conflict between #4119 and
+   * this change — both edited this handler — so the write was being reshaped with nothing
+   * watching it. These pin it.
+   *
+   * The reopen arrived as `setUserSetting({ features: { ...features, chat: true } })`,
+   * rebuilding the whole `features` object from the same 4h-TTL Redis snapshot this
+   * change exists to stop reading — the identical lost-update shape, one key over. The
+   * resolution routes it through the same atomic `mergeInto`. The interleaved case below
+   * is the one that distinguishes the two implementations — and it had to be interleaved:
+   * the non-interleaved version of it passed against BOTH, which is documented on the
+   * test itself because that is the trap, not a footnote.
+   */
+  describe('reopening features.chat when a DM policy is chosen', () => {
+    it('sets features.chat true when the policy is not `nobody` and chat was closed', async () => {
+      await seedUser(holder.db, USER_ID, { features: { chat: false } });
+
+      await setUserSettingsHandler({ input: { dmPolicy: 'everyone' }, ctx });
+
+      const settings = await readSettings(holder.db, USER_ID);
+      expect((settings.features as Record<string, unknown>).chat).toBe(true);
+      expect(chatOf(settings)).toEqual({ dmPolicy: 'everyone' });
+    });
+
+    /**
+     * 🔴 THE DISCRIMINATING CASE, AND IT HAS TO BE INTERLEAVED TO BE ONE.
+     *
+     * The obvious version — seed a sibling, call the handler, assert it survived — does
+     * NOT distinguish a merge from a whole-key replace. This suite's cache is a
+     * pass-through to Postgres, so the snapshot the handler reads always already contains
+     * the sibling, and `{ ...features, chat: true }` writes it straight back. Measured,
+     * not assumed: that fixture passed 11/11 against the replace implementation, i.e. the
+     * mutant SURVIVED. It was a fixture that could not observe the bug.
+     *
+     * The sibling has to appear AFTER the handler takes its snapshot. Then the replace
+     * writes a `features` rebuilt from a snapshot that predates it and the sibling is
+     * lost, while a merge over the stored column keeps it. That is the production shape —
+     * the snapshot there is up to 4h stale, so this understates the window.
+     */
+    it('keeps a features sibling written while the reopen is in flight', async () => {
+      await seedUser(holder.db, USER_ID, { features: { chat: false } });
+
+      const hold = holder.gate.hold(isSettingsWrite);
+      const inflight = setUserSettingsHandler({ input: { dmPolicy: 'following' }, ctx });
+      await reach(hold, inflight);
+
+      // A concurrent writer adds a features sub-key the in-flight snapshot never saw.
+      await holder.db.query(
+        `UPDATE "User" SET settings = jsonb_set(settings, '{features,someOtherFeature}', '"keep-me"') WHERE id = $1`,
+        [USER_ID]
+      );
+
+      hold.release();
+      await inflight;
+
+      expect((await readSettings(holder.db, USER_ID)).features).toEqual({
+        chat: true,
+        someOtherFeature: 'keep-me',
+      });
+    });
+
+    // CONTROL 1 — `nobody` must NOT reopen. Without this, an unconditional write passes
+    // both cases above while defeating the whole point of choosing `nobody`.
+    it('does NOT reopen chat when the chosen policy is `nobody`', async () => {
+      await seedUser(holder.db, USER_ID, { features: { chat: false } });
+
+      await setUserSettingsHandler({ input: { dmPolicy: 'nobody' }, ctx });
+
+      expect((await readSettings(holder.db, USER_ID)).features).toEqual({ chat: false });
+    });
+
+    // CONTROL 2 — an ordinary chat write must not touch `features` at all.
+    it('does not write features when the input carries no dmPolicy', async () => {
+      await seedUser(holder.db, USER_ID, { features: { chat: false } });
+
+      await setUserSettingsHandler({ input: { muteSounds: true }, ctx });
+
+      expect((await readSettings(holder.db, USER_ID)).features).toEqual({ chat: false });
+    });
+  });
 });

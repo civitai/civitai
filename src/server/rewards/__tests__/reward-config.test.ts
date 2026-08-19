@@ -3,21 +3,45 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { REWARD_CONFIG_CONFLICT } from '~/shared/constants/reward-config.constants';
 import {
+  configFromStoredValue,
   getStoredRewardConfig,
   invalidateRewardConfigCache,
   MAX_AWARD_AMOUNT,
   MAX_CAP,
+  resolveFromConfig,
   resolveRewardConfig,
   REWARD_CONFIG_KEY,
   rewardOverrideSchema,
   setRewardConfig,
+  storedViewOf,
 } from '~/server/rewards/reward-config';
+import { buildRewardsPayload } from '~/components/Rewards/reward-config-panel.utils';
 
 // The compiled definition's values. Every fallback below asserts against THIS
 // object rather than a repeated literal, so a fallback that lands on some other
 // plausible number (the placement bug that produced caps 100x too large) fails
 // here instead of passing on a coincidence.
 const DEFAULTS = { awardAmount: 10, cap: 30, capOverridable: true } as const;
+
+// 🔴 Models the jsonb round trip, which is where the hash bug lived. `KeyValue.value`
+// is jsonb: Postgres canonicalises key order (shortest key first, then bytewise) and
+// hands back a DIFFERENT insertion order than the one written, while
+// `rewardConfigHash` is `JSON.stringify` and is insertion-ordered. A fake that echoes
+// the object it was given makes the write and the read agree by construction — and a
+// test standing on that fake passes for code that hands the operator a hash for a row
+// that does not exist. Reversing the key order is enough: any reordering breaks a
+// stringify-based hash. Postgres's own rule is used rather than any reordering,
+// because it is IDEMPOTENT — reading a row twice must give the same order, and a fake
+// that merely flips the order gives back the original on the second pass.
+const asJsonb = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(asJsonb);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, entry]) => [key, asJsonb(entry)])
+  );
+};
 
 const findUnique = dbMock.dbRead.keyValue.findUnique;
 const findUniqueWrite = dbMock.dbWrite.keyValue.findUnique;
@@ -36,6 +60,10 @@ beforeEach(() => {
   invalidateRewardConfigCache();
   findUnique.mockResolvedValue(null);
   findUniqueWrite.mockResolvedValue(null);
+  dbMock.dbWrite.keyValue.upsert.mockImplementation(async ({ update }: any) => ({
+    key: REWARD_CONFIG_KEY,
+    value: asJsonb(update.value),
+  }));
 });
 
 afterEach(() => {
@@ -676,5 +704,130 @@ describe('getStoredRewardConfig', () => {
     await getStoredRewardConfig();
 
     expect(findUniqueWrite).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The panel builds the row and the grant path reads it, and nothing else sits
+// between them. Driving the REAL builder into the REAL writer and out through the
+// REAL resolver is the only place the two halves are checked against each other —
+// each half's own tests pass with the row shape they happen to agree on.
+describe('the round trip a moderator makes', () => {
+  const panelRow = {
+    type: 'testReward',
+    capOverridable: true,
+    defaults: { awardAmount: DEFAULTS.awardAmount, cap: DEFAULTS.cap },
+    effective: { enabled: false, awardAmount: DEFAULTS.awardAmount, cap: DEFAULTS.cap },
+  };
+
+  it('switches a stored-off reward on, and the row still names it', async () => {
+    storedConfig({ rewards: { testReward: { enabled: false } } });
+    expect((await resolve()).enabled).toBe(false);
+
+    const payload = buildRewardsPayload({
+      rewards: [panelRow],
+      overrides: { testReward: { enabled: false } },
+      rows: { testReward: { enabled: true, awardAmount: '', cap: '' } },
+    });
+
+    // 🔴 This assertion, not the one below it, is what catches the defect.
+    //
+    // An absent entry resolves to enabled exactly as `{enabled:true}` does, so a
+    // builder that DROPS the reward on the way in still ends this test with the
+    // reward paying. That is precisely why the production bug was invisible: the
+    // row emptied itself and everything kept working, with nothing left to show
+    // an operator that they had decided anything.
+    expect(payload.testReward).toEqual({ enabled: true });
+
+    const written = await setRewardConfig({ rewards: payload }, 1);
+    invalidateRewardConfigCache();
+    storedConfig(written);
+
+    expect(await resolve()).toMatchObject({
+      enabled: true,
+      awardAmount: DEFAULTS.awardAmount,
+      cap: DEFAULTS.cap,
+    });
+  });
+
+  it('turns it back off through the same path', async () => {
+    storedConfig({ rewards: { testReward: { enabled: true } } });
+
+    const payload = buildRewardsPayload({
+      rewards: [{ ...panelRow, effective: { ...panelRow.effective, enabled: true } }],
+      overrides: { testReward: { enabled: true } },
+      rows: { testReward: { enabled: false, awardAmount: '', cap: '' } },
+    });
+
+    const written = await setRewardConfig({ rewards: payload }, 1);
+    invalidateRewardConfigCache();
+    storedConfig(written);
+
+    expect((await resolve()).enabled).toBe(false);
+  });
+});
+
+// The panel sends the hash it was last given as `expectedHash`. A writer that
+// hands back the hash it LOADED describes a row that no longer exists, and the
+// caller's next save is refused as somebody else's edit — a conflict dialog on a
+// screen with one person in front of it.
+describe('the hash a save hands back', () => {
+  it('is accepted by the next save, while the pre-write hash is refused', async () => {
+    storedConfig({ rewards: {} });
+    const before = (await getStoredRewardConfig()).hash;
+
+    const written = await setRewardConfig({ rewards: { testReward: { enabled: false } } }, 1);
+    const after = storedViewOf(written).hash;
+    // The row that is now on disk, for both attempts below.
+    findUniqueWrite.mockResolvedValue({ value: written });
+
+    // The control: without it this passes for a writer that returns a hash the
+    // guard ignores entirely.
+    await expect(setRewardConfig({ rewards: {} }, 1, { expectedHash: before })).rejects.toThrow(
+      REWARD_CONFIG_CONFLICT.stale
+    );
+
+    await expect(
+      setRewardConfig({ rewards: { testReward: { enabled: true } } }, 1, { expectedHash: after })
+    ).resolves.toBeDefined();
+  });
+
+  // 🔴 The hash has to describe the row POSTGRES holds, not the object we sent it.
+  // `value` is jsonb and reorders keys; `rewardConfigHash` is `JSON.stringify` and
+  // does not. Hashing the in-memory object hands the panel a token for a row that
+  // never existed, and the moderator's NEXT save is refused as somebody else's edit
+  // — on a screen with one person in front of it, every time, forever.
+  it('describes the row as Postgres stored it, not the object it was sent', async () => {
+    storedConfig({ rewards: {} });
+    const row = { rewards: { testReward: { enabled: false, awardAmount: 4, cap: 8 } } };
+
+    const handedToTheClient = storedViewOf(await setRewardConfig(row, 1)).hash;
+
+    // What any later reader — including the guard itself — computes for that row.
+    findUniqueWrite.mockResolvedValue({ value: asJsonb(row) });
+    expect((await getStoredRewardConfig()).hash).toBe(handedToTheClient);
+  });
+});
+
+// The 60s per-pod memo is correct for the grant path — it runs on every reward
+// grant — and wrong for a moderator's screen, which is why the operator views
+// resolve a config they read themselves. Someone reading only the incident could
+// reasonably conclude "the cache was the bug" and delete it; the first assertion
+// here is what stops that.
+//
+// ⚠️ The second assertion is NOT the other half. It calls the resolver directly and
+// stays green for a router that goes back to the memo — what catches that is
+// `reward-config.router.test.ts`'s "resolves the rewards from the row it just read".
+// Kept only to show the two answers diverging at the same instant.
+describe('the grant path keeps its cache while the operator view reads through', () => {
+  it('serves the memoised answer to a grant while a fresh read already sees the change', async () => {
+    storedConfig({ rewards: { testReward: { enabled: false } } });
+    expect((await resolve()).enabled).toBe(false);
+
+    storedConfig({ rewards: { testReward: { enabled: true } } });
+
+    expect((await resolve()).enabled).toBe(false);
+
+    const fresh = configFromStoredValue((await getStoredRewardConfig()).value);
+    expect(resolveFromConfig(fresh, 'testReward', DEFAULTS).enabled).toBe(true);
   });
 });

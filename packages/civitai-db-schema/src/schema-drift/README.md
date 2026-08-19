@@ -180,25 +180,27 @@ pnpm --filter @civitai/db-schema drift \
 ```
 
 ```
-declared owning-side relations : 485
-checked against the database   : 445
-skipped (view / absent table)  : 40
-MISSING foreign key            : 37
+declared owning-side relations : 509
+checked against the database   : 448
+skipped (view / absent table)  : 61
+MISSING foreign key            : 40
 wrong referential action       : 0   <- see below
-MISSING column                 : 12
-nullability checked            : 2383
+MISSING column                 : 18
+nullability checked            : 2348
 nullability drift              : 13
 uniqueness declarations checked: 122
 missing unique index           : 1
 ```
 
-63 findings in total. The 13 nullability findings are `Purchase.userId`,
+72 findings in total. The 13 nullability findings are `Purchase.userId`,
 `ChallengeEvent.createdById`, nine `*Metric.updatedAt` columns, and
 `CosmeticShopItem.cosmeticId` / `UserCosmeticShopPurchases.cosmeticId`. Those last two are
 artefacts of the snapshot's age, not live drift: the packs migration made them nullable on
-2026-08-04 and the database has it. A recapture drops them. The 12 missing columns are
-`ModelFlag.sfwOnly`, `UserCosmeticShopPurchases.meta`, and ten
-`UserRank.thumbs{Up,Down}Count*Rank`. The single uniqueness finding is
+2026-08-04 and the database has it. A recapture drops them. The 18 missing columns are
+`ModelFlag.sfwOnly`, `UserCosmeticShopPurchases.meta`, `Challenge.judgingEngine`,
+`ChallengeJudge.judgingEngine`, `Collection.collaborationDisabledAt`,
+`CollectionItem.rejectionDetail`, three `Announcement.*`, three `Cosmetic.pHash*`,
+four `UserProfile.sfw*`, and two `app_block_publish_requests.source*`. The single uniqueness finding is
 `ImageResource(modelVersionId, name, imageId)`.
 
 **Nullability was 246 when this tool shipped.** #3592 then marked the seven `*Rank` families'

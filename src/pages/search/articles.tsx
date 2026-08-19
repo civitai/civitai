@@ -41,7 +41,7 @@ export default function ArticlesSearch() {
 const RenderFilters = () => {
   return (
     <>
-      <BrowsingLevelFilter attributeName="nsfwLevel" />
+      <BrowsingLevelFilter indexKey="articles" />
       <SortBy
         title="Sort articles by"
         items={[

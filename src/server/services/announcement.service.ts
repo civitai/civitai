@@ -142,8 +142,13 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
   const { limit = DEFAULT_PAGE_SIZE, page } = data ?? {};
   const { take, skip } = getPagination(limit, page);
 
+  // The moderator list is the sitewide tool; creator-authored rows are not its
+  // subject and would swamp it. Moderating those needs its own surface.
+  const where: Prisma.AnnouncementWhereInput = { userId: null };
+
   const [items, count] = await dbRead.$transaction([
     dbRead.announcement.findMany({
+      where,
       skip,
       take,
       select: {
@@ -162,7 +167,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
       },
       orderBy: { startsAt: { sort: 'desc', nulls: 'last' } },
     }),
-    dbRead.announcement.count(),
+    dbRead.announcement.count({ where }),
   ]);
 
   return getPagingData(
@@ -307,13 +312,21 @@ export const ANNOUNCEMENT_MEDIA_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
  * live within `lookaheadMs`, across all domains. Used by the media health check —
  * deliberately NOT domain-filtered, since a broken banner on a single-domain
  * announcement is just as broken.
+ *
+ * Site announcements only. A creator's cover is a `coverId` Image row, never a
+ * `metadata.image` key, so creator rows can never produce a finding — and there are ~25k
+ * of them once the profile-banner migration runs, against ~260 site rows. Without this the
+ * hourly check seq-scans and ships all of them to be discarded in JS.
  */
 export async function getMonitoredAnnouncementImageRefs(
   lookaheadMs: number = ANNOUNCEMENT_MEDIA_LOOKAHEAD_MS
 ) {
   const now = new Date();
   const announcements = await dbRead.announcement.findMany({
-    where: announcementWindowOverlapsWhere(now, new Date(now.getTime() + lookaheadMs)),
+    where: {
+      userId: null,
+      ...announcementWindowOverlapsWhere(now, new Date(now.getTime() + lookaheadMs)),
+    },
     select: { id: true, metadata: true },
   });
 
@@ -336,6 +349,9 @@ async function getAnnouncements(domain?: DomainColor) {
     where: {
       ...activeAnnouncementWhere(now),
       domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
+      // Platform announcements only. This cache is global per domain, so an
+      // authored row reaching it would show one creator's post to everyone.
+      userId: null,
     },
     select: {
       createdAt: true,

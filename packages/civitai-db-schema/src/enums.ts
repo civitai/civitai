@@ -306,6 +306,7 @@ export const ModelHashType = {
   SHA256: 'SHA256',
   CRC32: 'CRC32',
   BLAKE3: 'BLAKE3',
+  SHA256_12: 'SHA256_12',
 } as const;
 
 export type ModelHashType = (typeof ModelHashType)[keyof typeof ModelHashType];
@@ -535,6 +536,7 @@ export const CosmeticType = {
   ProfileDecoration: 'ProfileDecoration',
   ProfileBackground: 'ProfileBackground',
   Sticker: 'Sticker',
+  ChatTheme: 'ChatTheme',
 } as const;
 
 export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];
@@ -817,6 +819,14 @@ export const ChatMemberStatus = {
 } as const;
 
 export type ChatMemberStatus = (typeof ChatMemberStatus)[keyof typeof ChatMemberStatus];
+
+export const ChatNotifyLevel = {
+  All: 'All',
+  Mentions: 'Mentions',
+  None: 'None',
+} as const;
+
+export type ChatNotifyLevel = (typeof ChatNotifyLevel)[keyof typeof ChatNotifyLevel];
 
 export const ChatMessageType = {
   Markdown: 'Markdown',

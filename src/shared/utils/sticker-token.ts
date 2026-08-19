@@ -289,3 +289,39 @@ export const CREATOR_GRANT_USES_MULTIPLIER = 10;
  */
 export const stickerBalanceLabel = (remaining: number | null | undefined) =>
   remaining === undefined ? null : remaining === null ? '∞' : String(remaining);
+
+/**
+ * The `:partial` being typed at the caret, if there is one.
+ *
+ * A completed token is not a query: `:fire:` has its closing colon, and the
+ * slug pattern excludes `:`, so the match ends before it. The token also has to
+ * open at a word boundary, or every `http://` and `12:30` in a message would
+ * start suggesting.
+ */
+export function stickerQueryAtCaret(
+  text: string,
+  caret: number
+): { query: string; start: number } | null {
+  const before = text.slice(0, Math.max(0, caret));
+  const match = /(?:^|\s):([a-zA-Z0-9_]+)$/.exec(before);
+  if (!match) return null;
+
+  return { query: match[1].toLowerCase(), start: before.length - match[1].length - 1 };
+}
+
+/**
+ * Whether a sticker or emoji answers to what has been typed, and how well.
+ *
+ * Returns a rank rather than a boolean so a caller showing a short list can put
+ * the obvious answer first: typing `fi` should offer `fire` before `campfire`,
+ * and both before something that only matches on a keyword.
+ */
+export function rankStickerMatch(query: string, slug: string, extra?: string): number | null {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return 0;
+
+  if (slug.startsWith(needle)) return 0;
+  if (slug.includes(needle)) return 1;
+  if ((extra ?? '').toLowerCase().includes(needle)) return 2;
+  return null;
+}
