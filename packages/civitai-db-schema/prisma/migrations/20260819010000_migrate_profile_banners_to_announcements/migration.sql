@@ -1,10 +1,25 @@
 -- Profile banner messages become profile-only announcements (CU 868ktjte1).
 -- Applied by hand, like every migration here. Run AFTER 20260819000000_creator_announcements.
 --
--- Counts at the time of writing (prod), for the runbook's before/after check:
--- 26,403 rows inserted by the first statement (non-empty "message", live user; 27,776
--- non-empty overall, 1,373 of them on deleted users), and 5 by the second (28 rows hold a
--- non-NULL "sfwMessage", but 23 of those are empty strings and are not inserted).
+-- Counts (prod, 2026-08-19), for the runbook's before/after check:
+-- First statement inserts 25,655: 27,806 rows hold a non-empty "message", 1,379 of those
+-- sit on deleted users, leaving 26,427 live, and 772 of those contain HTML and are skipped.
+-- Second statement inserts 4: 29 rows hold a non-NULL "sfwMessage", 24 of those are empty
+-- strings or on a deleted user, and 1 of the remaining 5 contains HTML.
+--
+-- Banners containing HTML are SKIPPED, not stripped and not migrated as-is (Justin's call,
+-- 2026-08-19). An announcement renders through CustomMarkdown with allowedElements ['a']
+-- and no rehypeRaw, so markup that a profile banner renders today would land in the card as
+-- literal escaped text. Those creators keep their existing blue banner, which still works
+-- because this migration does not drop "UserProfile"."message".
+--
+-- The predicate deliberately over-matches: a false positive costs one creator an
+-- announcement they still have a banner for, a false negative ships a broken card. It reads
+-- an unterminated tag too (`<b `, `</p`), which is why it does not require a closing `>`.
+-- On prod it selects 772 of 26,427; a tighter form requiring the `>` selects 770.
+-- Do NOT reach for a backslash-b word boundary here. Postgres reads that escape as a backspace
+-- character, so the pattern silently matches nothing, which looks exactly like a clean result.
+-- Its word boundary is backslash-y; this pattern needs neither.
 --
 -- Nothing here notifies anyone: profileOnly rows are excluded from the feed and from the
 -- notification fan-out by construction, and no spend is recorded for them.
@@ -45,6 +60,7 @@ SELECT
 FROM "UserProfile" p
 JOIN "User" u ON u.id = p."userId"
 WHERE COALESCE(p.message, '') <> ''
+  AND p.message !~* '</?[a-z][a-z0-9]*(\s|/|>)'
   AND u."deletedAt" IS NULL;
 
 INSERT INTO "Announcement" ("userId", "title", "content", "color", "domain", "startsAt", "profileOnly", "disabled", "metadata", "createdAt", "updatedAt")
@@ -68,6 +84,7 @@ JOIN "User" u ON u.id = p."userId"
 -- bordered card where green shows nothing today.
 WHERE p."sfwMessage" IS NOT NULL
   AND p."sfwMessage" <> ''
+  AND p."sfwMessage" !~* '</?[a-z][a-z0-9]*(\s|/|>)'
   AND u."deletedAt" IS NULL;
 
 -- The columns are NOT dropped here. They stay until the carousel has been observed
@@ -76,7 +93,7 @@ WHERE p."sfwMessage" IS NOT NULL
 -- reversible by deleting the rows it inserted rather than by restoring text nobody has.
 --
 -- To reverse:
---   DELETE FROM "Announcement" WHERE "profileOnly" = true AND title = '' AND "createdAt" < '<the date this ran>';
+--   DELETE FROM "Announcement" WHERE "profileOnly" = true AND title = 'Creator Announcement' AND "createdAt" < '<the date this ran>';
 --
 -- Follow-up, once the carousel is confirmed live:
 --   ALTER TABLE "UserProfile"

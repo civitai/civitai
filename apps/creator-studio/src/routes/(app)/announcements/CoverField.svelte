@@ -2,6 +2,7 @@
   import { IconPhotoPlus } from '@tabler/icons-svelte';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
+  import { COVER_ASPECT_LABEL, coverAspectWarning } from '$lib/announcements';
   import { COVER_ACCEPT, COVER_MAX_BYTES, uploadCover, type CoverUpload } from './cover-upload';
 
   let {
@@ -13,6 +14,9 @@
   let dragging = $state(false);
   let uploading = $state(false);
   let error = $state<string | null>(null);
+
+  // A warning, not a rejection: a non-square cover still publishes, it just gets cropped.
+  let aspectWarning = $derived(coverAspectWarning(cover?.width, cover?.height));
 
   // The blob outlives the component otherwise; replacement is handled in take().
   $effect(() => () => {
@@ -80,6 +84,8 @@
     {/if}
   </div>
 
+  <span class="text-xs text-dark-2">{COVER_ASPECT_LABEL}</span>
+
   <input
     bind:this={input}
     id="announcement-cover"
@@ -93,5 +99,6 @@
   {#if uploading && (cover || existingUrl)}
     <span class="text-sm text-dark-2">Uploading…</span>
   {/if}
+  {#if aspectWarning}<p class="text-xs text-yellow-5">{aspectWarning}</p>{/if}
   {#if error}<p class="text-sm text-red-300">{error}</p>{/if}
 </div>
