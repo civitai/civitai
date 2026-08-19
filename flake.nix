@@ -100,11 +100,37 @@
         '';
       };
 
-      prismaEnv = {
+      # =====================================================================
+      # The environment the toolchain needs in order to behave
+      #
+      # ONE definition, consumed by BOTH the devShell and the `nix run` apps.
+      # Keeping it devShell-only is not a smaller version of this -- it is
+      # broken, and measurably so. `nix run .#dev` on a clean checkout got as far
+      # as `pnpm install`, whose postinstall runs `prisma generate`, which then
+      # tried to download an engine for platform `linux-nixos` and died on a 404.
+      # The same omission let pnpm re-exec itself as 10.28.1 inside an app whose
+      # PATH pointed at the flake's 10.34.5.
+      # =====================================================================
+
+      devEnv = {
+        # Prisma publishes no NixOS engine build, so point it at the patchelf'd
+        # ones above instead of letting it try to fetch a `linux-nixos` binary
+        # that has never existed.
         PRISMA_QUERY_ENGINE_LIBRARY = "${prisma-engines}/lib/libquery_engine.node";
         PRISMA_QUERY_ENGINE_BINARY = "${prisma-engines}/bin/query-engine";
         PRISMA_SCHEMA_ENGINE_BINARY = "${prisma-engines}/bin/schema-engine";
+
+        # pnpm 10 otherwise downloads and re-execs the exact version named in
+        # package.json's packageManager field, quietly replacing the pnpm this
+        # flake pinned. Measured: `pnpm --version` reports 10.28.1 without this
+        # and 10.34.5 with it, from the same binary on PATH.
+        npm_config_manage_package_manager_versions = "false";
       };
+
+      # The same attrset rendered as shell `export` lines, so an app and the
+      # shell cannot drift apart.
+      envPreamble = lib.concatStringsSep "\n"
+        (lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg v}") devEnv);
 
       # =====================================================================
       # Service stack
@@ -162,14 +188,18 @@
         # Docker is deliberately absent: the CLI has to match the daemon the
         # developer is already running, so it comes from the host PATH.
         runtimeInputs = [ nodejs pnpm pkgs.git pkgs.postgresql_17 pkgs.coreutils ];
-        text = builtins.readFile ./scripts/nix/dev-up.sh;
+        text = envPreamble + "\n" + builtins.readFile ./scripts/nix/dev-up.sh;
         meta.description = "Bootstrap and run the civitai local dev environment";
       };
 
       dev-server = pkgs.writeShellApplication {
         name = "dev-server";
         runtimeInputs = [ nodejs pnpm pkgs.git ];
-        text = ''
+        # The daemon runs `pnpm install` and `pnpm run db:generate` itself when
+        # it sees the lockfile or the schema move, so it needs the same env the
+        # shell has or those background installs hit the identical prisma 404.
+        text = envPreamble + ''
+
           # The dev-server daemon re-execs itself with process.execPath, so
           # whatever node launches the CLI is the node the daemon runs on
           # forever. Launching it through this wrapper is what pins it to the
@@ -277,13 +307,7 @@
         # `env` is baked into the cached shell profile, so direnv reloads pay
         # nothing for it. Keep anything expensive out of shellHook: nix-direnv
         # re-runs the hook on every reload even when the shell itself is cached.
-        env = prismaEnv // {
-          # pnpm 10 will otherwise download and exec the exact version named in
-          # package.json's packageManager field, quietly replacing the pnpm this
-          # flake just pinned. Turning it off is what makes the flake's pnpm the
-          # one that actually runs.
-          npm_config_manage_package_manager_versions = "false";
-        };
+        env = devEnv;
 
         shellHook = ''
           echo "civitai dev shell: node $(node --version), pnpm $(pnpm --version)"
