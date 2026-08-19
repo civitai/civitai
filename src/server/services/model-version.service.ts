@@ -124,6 +124,10 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import {
+  getModelVersionEarlyAccessRefundRequirement,
+  refundModelEarlyAccessPurchases,
+} from '~/server/services/model-early-access-refund.service';
 import type {
   ModelType,
   ModelVersionEngagementType,
@@ -1636,9 +1640,29 @@ export const unpublishModelVersionById = async ({
   id,
   reason,
   customMessage,
+  refundEarlyAccess,
   meta,
   user,
 }: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+  // Same obligation as unpublishing the whole model, scoped to this version: taking a version down
+  // revokes its buyers' access, so recent purchases have to be refunded first. Moderators bypass it
+  // exactly as they do in unpublishModelById.
+  if (!user.isModerator) {
+    const requirement = await getModelVersionEarlyAccessRefundRequirement({ id });
+    if (requirement.purchases.length > 0) {
+      if (!refundEarlyAccess) {
+        throw throwBadRequestError(
+          `Cannot unpublish a version with active early access purchases without refunding buyers. ${requirement.buyerCount} member(s) must be refunded a total of ${requirement.totalBuzz} Buzz.`
+        );
+      }
+      const { modelId } = await dbWrite.modelVersion.findUniqueOrThrow({
+        where: { id },
+        select: { modelId: true },
+      });
+      await refundModelEarlyAccessPurchases({ modelId, requirement, scope: 'version' });
+    }
+  }
+
   const unpublishedAt = new Date().toISOString();
   const version = await dbWrite.$transaction(
     async (tx) => {
