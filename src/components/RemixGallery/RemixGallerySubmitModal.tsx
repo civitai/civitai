@@ -17,7 +17,7 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
-import { ImageSort } from '~/server/common/enums';
+import { remixSubmitPickerFilters } from '~/components/RemixGallery/remix-gallery.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import {
@@ -73,18 +73,8 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
     { enabled: !!currentUser && selected != null }
   );
 
-  // `publishedOnly` because both feed paths otherwise carve out the caller's own
-  // unpublished posts, and a draft cannot be submitted — the mutation refuses it.
-  // Newest because someone submitting a remix has usually just made it; the
-  // default is most-reacted, which buries it.
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    {
-      userId: currentUser?.id,
-      period: 'AllTime',
-      limit: 50,
-      sort: ImageSort.Newest,
-      publishedOnly: true,
-    },
+    remixSubmitPickerFilters(currentUser?.id),
     { enabled: !!currentUser }
   );
 

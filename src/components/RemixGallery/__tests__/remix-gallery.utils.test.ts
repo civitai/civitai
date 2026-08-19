@@ -7,6 +7,7 @@ import {
   freeSubmissionOffer,
   galleryDialogImages,
   paidSubmissionOpen,
+  remixSubmitPickerFilters,
   submissionMethod,
   trimToWholeRows,
 } from '~/components/RemixGallery/remix-gallery.utils';
@@ -389,5 +390,26 @@ describe('galleryDialogImages', () => {
     expect(result).toHaveLength(100);
     expect(result[0].id).toBe(70);
     expect(result[result.length - 1].id).toBe(169);
+  });
+});
+
+describe('remixSubmitPickerFilters', () => {
+  // Both of these were reported from the picker: a moderator was offered their
+  // own drafts, which the submit mutation refuses, and the grid opened on a
+  // year-old image because the feed sorts by reactions unless told otherwise.
+  // Neither is visible in a rendered grid — a picker missing them looks like a
+  // picker.
+  it('asks for published images only', () => {
+    expect(remixSubmitPickerFilters(7).publishedOnly).toBe(true);
+  });
+
+  it('asks for the newest first, not the feed default', () => {
+    expect(remixSubmitPickerFilters(7).sort).toBe('Newest');
+  });
+
+  it('scopes the picker to the submitter', () => {
+    // The picker offers your own work to submit. Dropping this would offer
+    // everyone's, and every one of them would be refused.
+    expect(remixSubmitPickerFilters(7).userId).toBe(7);
   });
 });
