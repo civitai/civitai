@@ -5,6 +5,7 @@ import {
   capMediaType,
   effectiveLicensingFee,
   gatePrices,
+  bestSaleFor,
   discountedTerms,
   type ModelVersionSaleWindow,
   type SaleDiscountKind,
@@ -340,6 +341,12 @@ const hasChargeablePrice = (terms: PaidAccessTerms | undefined) => {
 
 export type ViewerMonetization = {
   paidAccess: PaidAccessRow | undefined;
+  /**
+   * The live sale behind `paidAccess.terms`, when one is discounting THIS viewer's price. Carries the
+   * pre-sale terms so a surface can show what the price was without recomputing the discount — and so
+   * nothing downstream has to know how a sale is resolved to be able to draw one.
+   */
+  sale: { listTerms: ModelVersionTerms; endsAt: Date } | null;
   /** What THIS viewer is quoted. The owner and moderators see the stored value, not the capped one. */
   licensingFee: number | null;
   /**
@@ -405,7 +412,12 @@ export async function getViewerMonetization({
           )
         : null;
     if (!cappableIds.has(v.id)) {
-      out[v.id] = { paidAccess: row, licensingFee: storedFee, effectiveLicensingFee: effectiveFee };
+      out[v.id] = {
+        paidAccess: row,
+        sale: null,
+        licensingFee: storedFee,
+        effectiveLicensingFee: effectiveFee,
+      };
       continue;
     }
     const tier = capTiers.get(ownerOf(v) as number) ?? null;
@@ -413,22 +425,30 @@ export async function getViewerMonetization({
     // cappedTerms no-ops for a timed window: its price isn't ceilinged, so what's stored is what buyers
     // pay. The licensing fee below is capped either way — charged per generation forever, not for the
     // length of a window.
+    // Sale AFTER cap, never before: the ceiling decides what the creator may charge and the discount comes
+    // off what this buyer would actually be billed. Discounting first lets the cap swallow the sale whole
+    // for a lapsed creator.
+    const listTerms = row
+      ? cappedTerms(row.terms as ModelVersionTerms, tier, {
+          permanent: isPermanentGate(row),
+          mediaType,
+        })
+      : undefined;
+    const saleTerms = listTerms ? discountedTerms(listTerms, row?.sales) : undefined;
+    const activeSale = row?.sales?.length
+      ? bestSaleFor(gatePrices(listTerms).download, row.sales)
+      : undefined;
     out[v.id] = {
-      paidAccess: row
-        ? {
-            ...row,
-            // Sale AFTER cap, never before: the ceiling decides what the creator may charge and the
-            // discount comes off what this buyer would actually be billed. Discounting first lets the
-            // cap swallow the sale whole for a lapsed creator.
-            terms: discountedTerms(
-              cappedTerms(row.terms as ModelVersionTerms, tier, {
-                permanent: isPermanentGate(row),
-                mediaType,
-              }),
-              row.sales
-            ),
-          }
-        : undefined,
+      paidAccess: row && saleTerms ? { ...row, terms: saleTerms } : undefined,
+      // Only report a sale that actually moved a price this viewer is quoted: a sale whose discount
+      // rounds to nothing must not draw a strikethrough over an unchanged number.
+      sale:
+        activeSale &&
+        listTerms &&
+        saleTerms &&
+        gatePrices(saleTerms).download < gatePrices(listTerms).download
+          ? { listTerms, endsAt: activeSale.endsAt }
+          : null,
       licensingFee:
         storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType, mediaType) : null,
       effectiveLicensingFee: effectiveFee,
@@ -497,13 +517,15 @@ export async function assertPaidAccessCaps({
  * whatever the owner stored.
  */
 export function toModelVersionPaidAccessDto(
-  row: PaidAccessRow | undefined
+  row: PaidAccessRow | undefined,
+  sale: ViewerMonetization['sale'] = null
 ): ModelVersionPaidAccessDto | null {
   if (!row) return null;
   return {
     endsAt: row.endsAt,
     timeframeDays: row.timeframeDays ?? null,
     terms: row.terms as ModelVersionTerms,
+    sale,
   };
 }
 

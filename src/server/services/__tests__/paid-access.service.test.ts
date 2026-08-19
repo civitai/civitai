@@ -415,6 +415,7 @@ describe('getViewerMonetization — an unset gate/fee is never invented', () => 
 
     expect(out[1]).toEqual({
       paidAccess: undefined,
+      sale: null,
       licensingFee: null,
       effectiveLicensingFee: null,
     });
@@ -597,5 +598,72 @@ describe('getViewerMonetization — a scheduled sale on top of the gate price', 
     const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
 
     expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+});
+
+describe('getViewerMonetization — what the UI is told about a sale', () => {
+  const OWNER = 7;
+  const FUTURE = new Date('2099-01-01T00:00:00.000Z');
+  const PAST = new Date('2020-01-01T00:00:00.000Z');
+
+  const sale = (over: Record<string, unknown> = {}) => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAtMs: PAST.getTime(),
+    endsAtMs: FUTURE.getTime(),
+    canceledAtMs: null,
+    ...over,
+  });
+
+  const row = (over: Record<string, unknown> = {}) => ({
+    entityId: 1,
+    ownerId: OWNER,
+    endsAtMs: FUTURE.getTime(),
+    timeframeDays: null,
+    terms: { download: { price: 1000 } },
+    sales: [],
+    ...over,
+  });
+
+  const drive = (gates: Record<string, unknown>, tier: string | null = 'gold') =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === 'test:cap-tier' ? { [OWNER]: { userId: OWNER, tier } } : gates
+    );
+
+  it('reports the pre-sale price and the end date, so the UI never recomputes the discount', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 800 } });
+    expect(out[1].sale?.listTerms).toEqual({ download: { price: 1000 } });
+    expect(out[1].sale?.endsAt).toEqual(FUTURE);
+  });
+
+  it('reports no sale to the owner, who is shown the stored price', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
+
+    expect(out[1].sale).toBeNull();
+  });
+
+  it('reports no sale when there is none', async () => {
+    drive({ 1: row() });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].sale).toBeNull();
+  });
+
+  it('reports no sale when the discount rounds away to nothing', async () => {
+    // 1% of 50 floors to 0. Drawing a strikethrough over an unchanged number would read as a broken page.
+    drive({ 1: row({ terms: { download: { price: 50 } }, sales: [sale({ discountAmount: 1 })] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 50 } });
+    expect(out[1].sale).toBeNull();
   });
 });

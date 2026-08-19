@@ -97,6 +97,7 @@ import {
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { getModelVersionActionLayout } from '~/components/Model/ModelVersions/model-version-layout';
 import ModelVersionDonationGoal from '~/components/Model/ModelVersions/ModelVersionDonationGoal';
+import { ModelVersionSaleBadge } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
@@ -286,6 +287,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const paidAccessEndsAt = version?.paidAccess?.endsAt;
   const isEarlyAccess = !!paidAccessEndsAt && paidAccessEndsAt > new Date();
   const paidAccessTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
+  // Only shown to someone who is actually quoted the sale price: the server reports no sale to an
+  // owner or moderator, who are shown the stored terms their editors write back.
+  const saleForViewer = !hasDownloadPermissions ? version?.paidAccess?.sale : null;
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
@@ -541,6 +545,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           </Group>
         </Group>
       </Card.Section>
+      {saleForViewer ? (
+        <Card.Section className="px-4 pt-2">
+          <ModelVersionSaleBadge sale={saleForViewer} />
+        </Card.Section>
+      ) : null}
       <Card.Section>
         <DownloadVariantDropdown
           files={filesVisible}

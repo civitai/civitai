@@ -379,6 +379,7 @@ export const getModelsRaw = async ({
     ids,
     earlyAccess,
     paidAccess,
+    onSale,
     supportsGeneration,
     fromPlatform,
     needsReview,
@@ -760,6 +761,26 @@ export const getModelsRaw = async ({
         JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
         WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
           AND pamv.status = 'Published'::"ModelStatus" AND pa."timeframeDays" IS NULL
+      )`
+    );
+  }
+  if (onSale) {
+    // A sale prices a PERMANENT gate only (timeframeDays IS NULL), matching the resolver — a version in a
+    // timed early-access window is never discounted, so listing it as on sale would be a lie the price
+    // page then contradicts. Ownership is re-checked here for the same reason the resolver does it: sales
+    // are authored in another application.
+    AND.push(
+      Prisma.sql`EXISTS (
+        SELECT 1 FROM "ModelVersionSaleItem" si
+        JOIN "ModelVersionSale" s ON s.id = si."saleId"
+        JOIN "ModelVersion" smv ON smv.id = si."modelVersionId"
+        JOIN "PaidAccess" spa ON spa."entityType" = 'ModelVersion' AND spa."entityId" = smv.id
+        WHERE smv."modelId" = m.id
+          AND smv.status = 'Published'::"ModelStatus"
+          AND spa."timeframeDays" IS NULL
+          AND s."userId" = m."userId"
+          AND s."startsAt" <= NOW() AND s."endsAt" > NOW()
+          AND (s."canceledAt" IS NULL OR s."canceledAt" > NOW())
       )`
     );
   }
