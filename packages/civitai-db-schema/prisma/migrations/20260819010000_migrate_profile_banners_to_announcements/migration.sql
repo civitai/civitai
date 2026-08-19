@@ -21,13 +21,15 @@
 -- green shows them nothing, so treating '' as absent would start publishing the
 -- mature-domain text on green.
 --
--- title is deliberately empty: a banner has no title, and inventing one would put words
--- in 26,403 creators' mouths. The carousel renders the title only when non-empty.
+-- A banner has no title of its own, so these carry a generic one: 'Creator Announcement'.
+-- Justin's call, 2026-08-19, after seeing a title-less card render. Stored rather than
+-- applied at render so the row is complete on its own and a moderator reading the table
+-- sees what a follower sees; a creator editing the announcement simply overwrites it.
 
 INSERT INTO "Announcement" ("userId", "title", "content", "color", "domain", "startsAt", "profileOnly", "disabled", "metadata", "createdAt", "updatedAt")
 SELECT
   p."userId",
-  '',
+  'Creator Announcement',
   p.message,
   'blue',
   CASE
@@ -48,7 +50,7 @@ WHERE COALESCE(p.message, '') <> ''
 INSERT INTO "Announcement" ("userId", "title", "content", "color", "domain", "startsAt", "profileOnly", "disabled", "metadata", "createdAt", "updatedAt")
 SELECT
   p."userId",
-  '',
+  'Creator Announcement',
   p."sfwMessage",
   'blue',
   ARRAY['green']::"DomainColor"[],
