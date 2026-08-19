@@ -521,7 +521,14 @@ export default function ModelDetailsV2({
   });
   const handleUnpublishModel = async () => {
     try {
-      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch({ id });
+      // staleTime 0: this is the number of buyers and the amount of Buzz the owner is consenting to
+      // move out of their account, so it is computed fresh. `fetch` serves a cached entry otherwise,
+      // and a purchase landing between two openings of this dialog would have them confirm one
+      // figure while the server acts on another.
+      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch(
+        { id },
+        { staleTime: 0 }
+      );
       const exemptNote =
         refund.exemptBuyerCount > 0
           ? ` ${refund.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access and are not refunded.`
