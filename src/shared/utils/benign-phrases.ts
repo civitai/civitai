@@ -68,6 +68,17 @@ const GAP_CONTENT = /[\p{L}\p{N}\p{Extended_Pictographic}]/u;
  * `if (!nsfw && !includesNsfw(...)) return false`, and every search caller passes no `nsfw`
  * argument), so swallowing the only nsfw signal in an input stops those sub-checks running.
  *
+ * Judged PER OCCURRENCE, chosen rather than defaulted into: refusing the whole text when any
+ * one occurrence is dirty would suppress whitelisting for the entire prompt, which is the false
+ * positive this exists to remove; stripping the whole text when any one occurrence is clean
+ * would license the swallow elsewhere in it. Per-occurrence is also the only rule that stays
+ * correct as the text grows, since nothing bounds how often an entry appears in user input.
+ *
+ * Consequence to know: a refused occurrence leaves the phrase in place, so the detector fires on
+ * THE WHITELISTED PHRASE ITSELF, and the flag names the moderator's own entry rather than what
+ * caused the refusal. Correct, but it reads as the whitelist being broken — which is why
+ * `/moderator/blocklists` says so in the phrase-list descriptions.
+ *
  * Refusing after the match rather than bounding the separator is deliberate: a bound made this
  * matcher disagree with `prepareWordRegex` and handed back the false positives on ordinary
  * punctuation (`emma,,,, stone`). This leaves the pattern identical and only declines an
