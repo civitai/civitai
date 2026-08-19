@@ -71,3 +71,20 @@ export function windowLabel(days: number): string {
   if (days === 30) return 'month';
   return `${days} days`;
 }
+
+// AnnouncementCard renders the cover in a fixed 10rem box with `object-cover`, so anything that
+// isn't square loses its edges rather than shrinking to fit.
+export const COVER_ASPECT_LABEL = 'Square (1:1) works best. Covers are cropped to a square.';
+
+// Wide enough to let a 1024x1010 export through; a real 16:9 or 3:4 upload is nowhere near it.
+export const COVER_ASPECT_TOLERANCE = 0.02;
+
+export function coverAspectWarning(
+  width: number | null | undefined,
+  height: number | null | undefined
+): string | null {
+  if (!width || !height) return null;
+  if (Math.abs(width - height) / Math.max(width, height) <= COVER_ASPECT_TOLERANCE) return null;
+  const trimmed = width > height ? 'sides' : 'top and bottom';
+  return `This image is ${width}×${height}. Covers are shown as a square, so the ${trimmed} will be cropped.`;
+}

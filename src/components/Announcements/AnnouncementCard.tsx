@@ -85,9 +85,15 @@ export function AnnouncementCard({
       {overlay}
 
       {cover && (
+        // Both halves of `size-40` are load-bearing. The height is what makes this square:
+        // it is a definite cross size, so the row's `items-stretch` no longer applies, and
+        // every child here is `absolute inset-0` and contributes no in-flow height, so
+        // dropping it collapses the cover to nothing rather than falling back to the image.
+        // Do not make the width responsive without pairing a height.
+        //
         // Hidden only when the card itself is under 20rem — this is a container query, so
         // it tracks the card's width, not the viewport's.
-        <div className="relative min-h-40 w-40 shrink-0 @max-xs:hidden">
+        <div className="relative size-40 shrink-0 @max-xs:hidden">
           {cover.kind === 'key' ? (
             <EdgeMedia
               src={cover.src}
