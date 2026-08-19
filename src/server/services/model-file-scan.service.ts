@@ -443,8 +443,21 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
  *              which no other stored hash matches, so resource detection fails without it.
  *              See docs/image-resource-hash-matching.md.
  *
- * Every writer of ModelFileHash must run its hashes through this. There are two
- * (applyScanOutcome and /api/mod/reprocess-scan); a third would need to call it too.
+ * Every writer of ModelFileHash that can carry a hash the orchestrator produced must run it
+ * through this. There are THREE writers, and the ledger test enumerates them from source —
+ * src/server/services/__tests__/model-file-hash-writers.test.ts fails when the set grows OR
+ * shrinks, so a new writer forces a decision here rather than inheriting one:
+ *
+ *   applyScanOutcome (this file)                     normalizes
+ *   /api/mod/reprocess-scan                          normalizes
+ *   createModelFileScanRequest's dev-only skip       EXEMPT — see below
+ *     (orchestrator/orchestrator.service.ts)
+ *
+ * The exemption is not "it's dev-only": it is that the sentinel that writer stores (SHA256 =
+ * 64 zeroes, "file unreachable") is a fixed point of this function, so calling it there would
+ * change nothing. That is a property of both modules at once, so it is pinned behaviourally in
+ * src/server/services/orchestrator/__tests__/createModelFileScanRequest.test.ts — change the
+ * sentinel, or drop the all-zero guard below, and that test goes red.
  *
  * This is the ONLY thing enforcing the AutoV3 width. A truncate_autov3_hash trigger used to do
  * it in the database as well, and is dropped in migration 20260819010000 once this ships — so a

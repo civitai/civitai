@@ -35,11 +35,16 @@ DROP INDEX CONCURRENTLY IF EXISTS "modelfilehash_hash";
 -- normalizeScanHashes() now does it in the scan webhook path instead, so the trigger is a
 -- no-op — the two produce identical values, which is why they could coexist across the deploy.
 --
--- Safe because every writer of ModelFileHash is accounted for:
---   applyScanOutcome            -> normalizeScanHashes
---   /api/mod/reprocess-scan     -> normalizeScanHashes
---   orchestrator.service.ts:657 -> writes the SHA256 sentinel only, never AutoV3
---   admin/temp/backfill-sha256-12 -> writes SHA256_12 only
+-- Safe because every writer of ModelFileHash is accounted for. Enumerated from source, and
+-- pinned by src/server/services/__tests__/model-file-hash-writers.test.ts, which fails when the
+-- set grows OR shrinks:
+--   applyScanOutcome                              -> normalizeScanHashes
+--   /api/mod/reprocess-scan                       -> normalizeScanHashes
+--   createModelFileScanRequest's dev-only skip    -> writes the all-zero SHA256 "file
+--     (orchestrator.service.ts)                      unreachable" sentinel only, never AutoV3
+--
+-- (An earlier draft of this comment also listed an `admin/temp/backfill-sha256-12` writer. No
+-- such endpoint exists in the repo — see the note in the 20260819000000 migration.)
 --
 -- A future writer that inserts AutoV3 without normalizing would store 64 chars and silently
 -- break matching for the type carrying ~85-88% of LoRA references. normalizeScanHashes() is the
