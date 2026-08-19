@@ -3,6 +3,8 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { buildSearchPageUrl, parseQuery } from '~/components/AutocompleteSearch/autocomplete-query';
 import { buildBrowsingLevelFilters, joinFilterClauses } from '~/components/Search/search-filters';
+import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
+import type { SearchIndexKey } from '~/components/Search/search.types';
 
 const attribute = 'nsfwLevel' as const;
 const pg = 1;
@@ -10,14 +12,14 @@ const pg = 1;
 // What `AutocompleteSearch` builds for a signed-out PG user with the poi/minor addons on.
 const baseFilters = ['poi != true', 'minor != true', 'availability != Private'];
 
-function autocompleteFilters(search: string) {
-  const { filters } = parseQuery('models', search);
+function autocompleteFilters(index: SearchIndexKey, search: string, base: string[] = []) {
+  const { filters } = parseQuery(index, search);
 
   return joinFilterClauses(
     buildBrowsingLevelFilters({
-      attribute,
+      attribute: BROWSING_LEVEL_ATTRIBUTE[index],
       browsingLevel: pg,
-      filters: [...baseFilters, filters],
+      filters: [...base, filters],
     })
   );
 }
@@ -48,7 +50,7 @@ describe('parseQuery', () => {
   });
 
   it('returns no filters for an index without token syntax', () => {
-    expect(parseQuery('images', '#anime')).toEqual({
+    expect(parseQuery('tools', '#anime')).toEqual({
       query: '#anime',
       filters: '',
       searchPageQuery: '',
@@ -58,27 +60,122 @@ describe('parseQuery', () => {
 
 describe('the filters the autocomplete sends to Meilisearch', () => {
   it('ANDs a #tag onto the browsing-level clause instead of replacing it', () => {
-    expect(autocompleteFilters('#anime')).toBe(
+    expect(autocompleteFilters('models', '#anime', baseFilters)).toBe(
       "(poi != true) AND (minor != true) AND (availability != Private) AND (tags.name = 'anime') AND (nsfwLevel=1)"
     );
   });
 
   it('ANDs an @user onto the browsing-level clause instead of replacing it', () => {
-    expect(autocompleteFilters('@civitai')).toBe(
+    expect(autocompleteFilters('models', '@civitai', baseFilters)).toBe(
       "(poi != true) AND (minor != true) AND (availability != Private) AND (user.username = 'civitai') AND (nsfwLevel=1)"
     );
   });
 
   it('keeps every clause a plain query has once a token is added', () => {
-    const plain = autocompleteFilters('anime');
-    const tagged = autocompleteFilters('#anime');
+    const plain = autocompleteFilters('models', 'anime', baseFilters);
+    const tagged = autocompleteFilters('models', '#anime', baseFilters);
 
     for (const clause of plain.split(' AND ')) expect(tagged).toContain(clause);
     expect(tagged).toContain(`(${attribute}=${pg})`);
   });
 
   it('emits the browsing-level clause last, so a token can never terminate the expression', () => {
-    expect(autocompleteFilters('#anime hash:abc123')).toMatch(/\(nsfwLevel=1\)$/);
+    expect(autocompleteFilters('models', '#anime hash:abc123', baseFilters)).toMatch(
+      /\(nsfwLevel=1\)$/
+    );
+  });
+});
+
+describe.each([
+  ['images', 'tagNames'],
+  ['articles', 'tags.name'],
+] as const)('the %s index', (index, tagAttribute) => {
+  it(`filters a #tag on ${tagAttribute}`, () => {
+    expect(parseQuery(index, '#anime')).toEqual({
+      query: ' ',
+      filters: `${tagAttribute} = 'anime'`,
+      searchPageQuery: 'tags=anime',
+    });
+  });
+
+  it('filters an @user on user.username', () => {
+    expect(parseQuery(index, '@civitai')).toEqual({
+      query: ' ',
+      filters: "user.username = 'civitai'",
+      searchPageQuery: 'users=civitai',
+    });
+  });
+
+  it('ANDs a #tag onto the browsing-level clause', () => {
+    expect(autocompleteFilters(index, '#anime')).toBe(
+      `(${tagAttribute} = 'anime') AND (nsfwLevel=1)`
+    );
+  });
+
+  it('ANDs an @user onto the browsing-level clause', () => {
+    expect(autocompleteFilters(index, '@civitai')).toBe(
+      "(user.username = 'civitai') AND (nsfwLevel=1)"
+    );
+  });
+
+  it('carries a #tag to the search page as a tags param', () => {
+    expect(buildSearchPageUrl(index, '#anime')).toBe(`/search/${index}?tags=anime`);
+  });
+
+  it('carries an @user to the search page as a users param', () => {
+    expect(buildSearchPageUrl(index, '@civitai')).toBe(`/search/${index}?users=civitai`);
+  });
+
+  it('leaves hash: alone, which only the models index can filter on', () => {
+    expect(parseQuery(index, 'hash:abc123')).toEqual({
+      query: 'hash:abc123',
+      filters: '',
+      searchPageQuery: '',
+    });
+  });
+});
+
+describe('the collections index', () => {
+  it('filters an @user on user.username', () => {
+    expect(parseQuery('collections', '@civitai')).toEqual({
+      query: ' ',
+      filters: "user.username = 'civitai'",
+      searchPageQuery: 'users=civitai',
+    });
+  });
+
+  it('ANDs an @user onto the browsing-level clause', () => {
+    expect(autocompleteFilters('collections', '@civitai')).toBe(
+      "(user.username = 'civitai') AND (nsfwLevel=1)"
+    );
+  });
+
+  it('carries an @user to the search page as a users param', () => {
+    expect(buildSearchPageUrl('collections', '@civitai')).toBe('/search/collections?users=civitai');
+  });
+
+  it('leaves a #tag in the query, having no tag attribute to filter on', () => {
+    expect(parseQuery('collections', '#anime')).toEqual({
+      query: '#anime',
+      filters: '',
+      searchPageQuery: '',
+    });
+  });
+});
+
+describe.each(['tools', 'users'] as const)('the %s index, which supports no tokens', (index) => {
+  it('leaves every token in the query and builds no filter', () => {
+    expect(parseQuery(index, '#anime @civitai')).toEqual({
+      query: '#anime @civitai',
+      filters: '',
+      searchPageQuery: '',
+    });
+  });
+
+  it('sends the whole input to the search page as a plain query', () => {
+    expect(buildSearchPageUrl(index, '#anime @civitai')).toBe(
+      `/search/${index}?query=%23anime%20%40civitai`
+    );
   });
 });
 

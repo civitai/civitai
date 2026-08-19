@@ -1,27 +1,66 @@
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
+import type { SearchIndexKey } from '~/components/Search/search.types';
 import { QS } from '~/utils/qs';
 import { getModelUrl } from '~/utils/string-helpers';
 
-const queryFilters: Record<
-  string,
-  { AIR?: RegExp; filters: Record<string, RegExp>; searchPageMap: Record<string, string> }
+const TAG_TOKEN = /(^|\s+)(?<not>!|-)?#(?<value>\w+)/g;
+const USER_TOKEN = /(^|\s+)(?<not>!|-)?@(?<value>\w+)/g;
+const HASH_TOKEN = /(^|\s+)(?<not>!|-)?hash:(?<value>[A-Za-z0-9_.-]+)/g;
+
+// Each key is an attribute its index declares filterable, and they diverge — images stores tags as
+// `tagNames`. One the index doesn't declare makes Meilisearch reject the search with a 400, which
+// the client swallows into an empty dropdown; search-index-contract.test.ts holds these against the
+// index definitions.
+export const queryFilters: Partial<
+  Record<
+    SearchIndexKey,
+    { AIR?: RegExp; filters: Record<string, RegExp>; searchPageMap: Record<string, string> }
+  >
 > = {
   models: {
     AIR: /^civitai:(?<modelId>\d+)@(?<modelVersionId>\d+)/g,
     filters: {
-      'tags.name': /(^|\s+)(?<not>!|-)?#(?<value>\w+)/g,
-      'user.username': /(^|\s+)(?<not>!|-)?@(?<value>\w+)/g,
-      'versions.hashes': /(^|\s+)(?<not>!|-)?hash:(?<value>[A-Za-z0-9_.-]+)/g,
+      'tags.name': TAG_TOKEN,
+      'user.username': USER_TOKEN,
+      'versions.hashes': HASH_TOKEN,
+    },
+    searchPageMap: {
+      'tags.name': 'tags',
+      'user.username': 'users',
+    },
+  },
+  images: {
+    filters: {
+      tagNames: TAG_TOKEN,
+      'user.username': USER_TOKEN,
+    },
+    searchPageMap: {
+      tagNames: 'tags',
+      'user.username': 'users',
+    },
+  },
+  articles: {
+    filters: {
+      'tags.name': TAG_TOKEN,
+      'user.username': USER_TOKEN,
+    },
+    searchPageMap: {
+      'tags.name': 'tags',
+      'user.username': 'users',
+    },
+  },
+  collections: {
+    filters: {
+      'user.username': USER_TOKEN,
     },
     searchPageMap: {
       'user.username': 'users',
-      'tags.name': 'tags',
     },
   },
 };
 
-export function checkAIR(index: string, query: string) {
-  const filterAttributes = queryFilters[index] ?? {};
+export function checkAIR(index: SearchIndexKey, query: string) {
+  const filterAttributes = queryFilters[index];
 
   if (!filterAttributes?.AIR) {
     return null;
@@ -44,7 +83,7 @@ export function checkAIR(index: string, query: string) {
   return null;
 }
 
-export function parseQuery(index: string, query: string) {
+export function parseQuery(index: SearchIndexKey, query: string) {
   const filterAttributes = queryFilters[index];
   const filters = [];
   const searchPageQuery = [];
@@ -71,7 +110,7 @@ export function parseQuery(index: string, query: string) {
   return { query, filters: filters.join(' AND '), searchPageQuery: searchPageQuery.join('&') };
 }
 
-export function buildSearchPageUrl(index: string, search: string) {
+export function buildSearchPageUrl(index: SearchIndexKey, search: string) {
   const { query, searchPageQuery } = parseQuery(index, search);
 
   const queryString = QS.stringify({
