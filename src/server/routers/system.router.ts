@@ -9,6 +9,7 @@ import {
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import { dbKV } from '~/server/db/db-helpers';
+import { getClientBenignLists } from '~/server/services/blocklist.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
@@ -35,6 +36,12 @@ export const systemRouter = router({
     .meta({ requiredScope: TokenScope.Full })
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(() => getCreationBlockedTags()),
+  // Moderator benign lists, shipped to the browser because the search gates run
+  // client-side against Meili and have no server hop to strip on.
+  getBenignPhrases: publicProcedure
+    .meta({ requiredScope: TokenScope.Full })
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(() => getClientBenignLists()),
   getDbKV: publicProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(z.object({ key: z.enum(PUBLIC_DB_KV_KEYS) }))

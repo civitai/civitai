@@ -9,6 +9,7 @@ import type {
 } from '~/server/schema/blocklist.schema';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { createLruCache } from '~/server/utils/lru-cache';
+import { buildBenignPhraseRegex } from '~/shared/utils/benign-phrases';
 
 export type BlocklistDTO = {
   id?: number;
@@ -121,21 +122,6 @@ export async function throwOnBlockedLinkDomain(value: string) {
 // #endregion
 
 // #region [benign phrases]
-const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-// Compile a moderator-managed phrase list into a single whole-word, case-insensitive
-// matcher. Whitespace in a phrase is loosened to `[^a-zA-Z0-9]+` (the same inter-word
-// separator audit.ts uses) so "teen titans" also matches "teen  titans" / "teen-titans"
-// / "teen.titans". Zero-width alnum boundaries (again matching audit.ts) instead of `\b`
-// so a phrase whose edge is punctuation still anchors. Returns null for an empty list so
-// callers can skip the replace.
-export function buildBenignPhraseRegex(phrases: string[]): RegExp | null {
-  const cleaned = phrases.map((p) => p.trim()).filter((p) => p.length > 0);
-  if (!cleaned.length) return null;
-  const alternation = cleaned.map((p) => escapeRegex(p).replace(/\s+/g, '[^a-zA-Z0-9]+')).join('|');
-  return new RegExp(`(?<![a-zA-Z0-9])(?:${alternation})(?![a-zA-Z0-9])`, 'gi');
-}
-
 // In-process TTL cache over the Redis-backed blocklist: the scan path strips benign
 // phrases on every image, so a short-lived local copy avoids a Redis round-trip per
 // scan. TTL (not cross-pod invalidation) is the freshness bound — a moderator edit
@@ -147,11 +133,27 @@ const benignPhraseRegexCache = createLruCache<BlocklistType, { pattern: RegExp |
   fetchFn: async (type) => ({ pattern: buildBenignPhraseRegex(await getBlocklistData(type)) }),
 });
 
+export { buildBenignPhraseRegex };
+
 export async function stripBenignPhrases(text = '', type: BlocklistType) {
   if (!text) return text;
   const { pattern } = await benignPhraseRegexCache.fetch(type);
   if (!pattern) return text;
   return text.replace(pattern, ' ');
+}
+/**
+ * The benign lists the BROWSER needs. The search gates (`AutocompleteSearch`,
+ * `SearchLayout`) run their POI / minor / profanity checks client-side against Meili
+ * directly, so there is no server hop to strip on — the lists have to be shipped down.
+ * Public and edge-cached; these are phrases moderators have declared SAFE, so the list
+ * says nothing about what we block.
+ */
+export async function getClientBenignLists() {
+  const [prompt, profanityWords] = await Promise.all([
+    getBlocklistData(BlocklistType.PromptBenignPhrase),
+    getBlocklistData(BlocklistType.ProfanityBenignWord),
+  ]);
+  return { prompt, profanityWords };
 }
 // #endregion
 

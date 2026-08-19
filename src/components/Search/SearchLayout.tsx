@@ -42,6 +42,7 @@ import type { UiState } from 'instantsearch.js';
 import { includesInappropriate } from '~/utils/metadata/audit';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
+import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import classes from './SearchLayout.module.scss';
 import clsx from 'clsx';
 
@@ -154,12 +155,15 @@ export function SearchLayout({
     setInstantSearchQuery(query);
   }, []);
 
+  const benignPhrases = useBenignPhrases();
+
   const isIllegalSearch = useMemo(() => {
     if (!searchQuery) return false;
 
-    const illegalSearch = includesInappropriate({ prompt: searchQuery });
+    // Detection reads the whitelisted copy; the query sent to Meili stays the raw text.
+    const illegalSearch = includesInappropriate({ prompt: benignPhrases.strip(searchQuery) });
     return illegalSearch === 'minor';
-  }, [searchQuery]);
+  }, [searchQuery, benignPhrases]);
 
   // Track illegal search separately to avoid side effects in useMemo
   useEffect(() => {

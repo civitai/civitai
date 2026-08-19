@@ -1,11 +1,22 @@
 import { useMemo } from 'react';
 import { createProfanityFilter, type ProfanityFilterOptions } from '~/libs/profanity-simple';
+import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 
 // Building the filter allocates the whole English dataset + matcher, so it's
 // shared across every consumer — but stays lazy so pages that never check
-// profanity don't pay for it.
-let sharedProfanityFilter: ReturnType<typeof createProfanityFilter> | undefined;
-const getProfanityFilter = () => (sharedProfanityFilter ??= createProfanityFilter());
+// profanity don't pay for it. Keyed by the moderator whitelist so an edit builds a
+// new filter instead of being served a stale one, while the common case (one list
+// for the whole session) still allocates once.
+const profanityFilters = new Map<string, ReturnType<typeof createProfanityFilter>>();
+const getProfanityFilter = (extraWhitelist: string[]) => {
+  const key = extraWhitelist.join(',');
+  let filter = profanityFilters.get(key);
+  if (!filter) {
+    filter = createProfanityFilter({ extraWhitelist });
+    profanityFilters.set(key, filter);
+  }
+  return filter;
+};
 
 export interface UseCheckProfanityOptions extends Partial<ProfanityFilterOptions> {
   /** Whether to enable profanity checking. When false, returns clean results */
@@ -53,7 +64,8 @@ export function useCheckProfanity(
 ): ProfanityAnalysis {
   const { enabled = true } = options;
 
-  const profanityFilter = useMemo(getProfanityFilter, []);
+  const { profanityWords } = useBenignPhrases();
+  const profanityFilter = useMemo(() => getProfanityFilter(profanityWords), [profanityWords]);
 
   // Analyze the text
   const analysis = useMemo((): ProfanityAnalysis => {

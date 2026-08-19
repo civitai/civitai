@@ -33,6 +33,11 @@ import { constants } from '~/server/common/constants';
 export interface ProfanityFilterOptions {
   /** How to replace profane words */
   replacementStyle: 'asterisk' | 'grawlix' | 'remove';
+  /**
+   * Moderator-managed benign words (BlocklistType.ProfanityBenignWord), merged with the
+   * static list. Same semantics: a full word that innocently CONTAINS a profanity token.
+   */
+  extraWhitelist: string[];
 }
 
 export interface ProfanityThresholdConfig {
@@ -112,8 +117,13 @@ export class SimpleProfanityFilter {
   constructor(options: Partial<ProfanityFilterOptions> = {}) {
     this.options = {
       replacementStyle: 'asterisk',
+      extraWhitelist: [],
       ...options,
     };
+
+    const whitelist = this.options.extraWhitelist.length
+      ? [...whitelistWords, ...this.options.extraWhitelist]
+      : whitelistWords;
 
     // Cache NSFW words once during construction
     this.nsfwWords = getCachedNsfwWords();
@@ -123,10 +133,10 @@ export class SimpleProfanityFilter {
     this.dataset.addAll(englishDataset);
 
     // Initialize whitelist mappings
-    this.whitelistMappings = createWhitelistMappings(this.nsfwWords.originalWords, whitelistWords);
+    this.whitelistMappings = createWhitelistMappings(this.nsfwWords.originalWords, whitelist);
 
     // Initialize whitelist Set for O(1) lookup during analysis
-    this.whitelistSet = new Set(whitelistWords.map((word) => word.toLowerCase()));
+    this.whitelistSet = new Set(whitelist.map((word) => word.toLowerCase()));
 
     this.initializeMatcher();
     this.initializeCensor();

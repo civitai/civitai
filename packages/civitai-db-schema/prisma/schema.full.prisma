@@ -7390,19 +7390,6 @@ enum UserRestrictionStatus {
 }
 
 // Moderator-curated allowlist for false-positive prompt triggers
-model PromptAllowlist {
-  id        Int      @id @default(autoincrement())
-  trigger   String
-  category  String
-  addedBy   Int
-  reason    String?
-  userRestrictionId Int?
-  createdAt DateTime @default(now())
-
-  @@unique([trigger, category])
-  @@index([category])
-}
-
 // Strike system — graduated user enforcement with points-based escalation
 enum StrikeReason {
   BlockedContent

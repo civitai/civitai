@@ -21,6 +21,8 @@ const blocklistDescriptions: Partial<Record<BlocklistType, string>> = {
     'Whole phrases in the positive prompt that innocently contain a minor/POI detection word (proper nouns, technical terms). Each phrase is blanked from the prompt before the scan audit runs, so it never false-flags an image for review. Enter the full phrase — e.g. "teen titans", "minor barrel distortion".',
   [BlocklistType.NegativeBenignPhrase]:
     'Same as Prompt Benign Phrase, but matched against the negative prompt — e.g. "mature content". Use for boilerplate negatives that trip the minor audit.',
+  [BlocklistType.ProfanityBenignWord]:
+    'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "analysis" contains "anal". The whole word is exempted from the profanity filter, which powers search. One word per entry, not a phrase. Added to the list already shipped with the site rather than replacing it.',
 };
 
 function BlocklistsPage() {

@@ -64,6 +64,7 @@ import { truncate } from 'lodash-es';
 import { usePathname } from 'next/navigation';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
+import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -257,11 +258,18 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   });
 
   // Check for illegal search first
+  const benignPhrases = useBenignPhrases();
+  // Detection reads the whitelisted copy; the query sent to Meili stays the raw text.
+  const auditedSearch = useMemo(
+    () => benignPhrases.strip(debouncedSearch),
+    [benignPhrases, debouncedSearch]
+  );
+
   const isIllegalSearch = useMemo(() => {
     if (!debouncedSearch) return false;
-    const illegalSearch = includesInappropriate({ prompt: debouncedSearch });
+    const illegalSearch = includesInappropriate({ prompt: auditedSearch });
     return illegalSearch === 'minor';
-  }, [debouncedSearch]);
+  }, [debouncedSearch, auditedSearch]);
 
   // Check profanity in search query (only if not illegal and domain is green)
   const profanityAnalysis = useCheckProfanity(debouncedSearch, {
@@ -272,10 +280,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const items = useMemo(() => {
     const isIllegalQuery = debouncedSearch
-      ? includesInappropriate({ prompt: debouncedSearch }) === 'minor'
+      ? includesInappropriate({ prompt: auditedSearch }) === 'minor'
       : false;
     const canPerformQuery = debouncedSearch
-      ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
+      ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(auditedSearch)
       : true;
     const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
 
@@ -609,8 +617,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
-                    Your search includes terms tied to real people. Content depicting real people
-                    is filtered from search results.
+                    Your search includes terms tied to real people. Content depicting real people is
+                    filtered from search results.
                   </Text>
                 </Stack>
               );
