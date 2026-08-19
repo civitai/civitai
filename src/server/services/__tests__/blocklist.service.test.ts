@@ -6,6 +6,7 @@ import { TRPCError } from '@trpc/server';
 // return a JSON blocklist is enough to drive throwOnBlockedLinkDomain end-to-end.
 import {
   buildBenignPhraseRegex,
+  getBlocklistDTO,
   stripBenignPhrases,
   throwOnBlockedLinkDomain,
 } from '../blocklist.service';
@@ -104,5 +105,64 @@ describe('stripBenignPhrases', () => {
 
   it('normalizes empty input to an empty string', async () => {
     expect(await stripBenignPhrases(undefined, BlocklistType.NegativeBenignPhrase)).toBe('');
+  });
+});
+
+describe('a type with more than one Blocklist row', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Force the DB read: a cache hit short-circuits before the rows are ever seen.
+    redisGet.mockResolvedValue(null);
+  });
+
+  // The fake HONOURS orderBy. With a fixed array the "lowest id wins" assertion passes
+  // whatever the query asks for, so the fake would be deciding the outcome instead of the
+  // code — and flipping the real orderBy to desc would stay green.
+  const rowsInDbOrder = [
+    { id: 8, type: BlocklistType.EmailDomain, data: ['c.example'] },
+    { id: 1, type: BlocklistType.EmailDomain, data: ['a.example', 'b.example'] },
+  ];
+  const respectOrderBy = (rows: typeof rowsInDbOrder) =>
+    dbMock.dbWrite.blocklist.findMany.mockImplementation(
+      async (args?: { orderBy?: { id?: 'asc' | 'desc' } }) => {
+        const direction = args?.orderBy?.id;
+        if (!direction) return [...rows];
+        return [...rows].sort((a, b) => (direction === 'desc' ? b.id - a.id : a.id - b.id));
+      }
+    );
+
+  const twoRows = () => respectOrderBy(rowsInDbOrder);
+
+  it('CONTROL: a single row is returned as-is', async () => {
+    respectOrderBy([{ id: 1, type: BlocklistType.EmailDomain, data: ['a.example'] }]);
+
+    const result = await getBlocklistDTO({ type: BlocklistType.EmailDomain });
+    expect(result.data).toEqual(['a.example']);
+  });
+
+  it('picks the lowest id deterministically rather than whichever row the DB returned first', async () => {
+    twoRows();
+
+    const result = await getBlocklistDTO({ type: BlocklistType.EmailDomain });
+    expect(result.id).toBe(1);
+    // NOT a union: merging silently would be a moderation bypass on the benign lists,
+    // where a wider list strips more rather than blocking more.
+    expect(result.data).toEqual(['a.example', 'b.example']);
+  });
+
+  it('asks the DB for an ordered read, so the pick cannot depend on physical row order', async () => {
+    twoRows();
+    await getBlocklistDTO({ type: BlocklistType.EmailDomain });
+
+    expect(dbMock.dbWrite.blocklist.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { id: 'asc' } })
+    );
+  });
+
+  it('returns an empty list when the type has no rows at all', async () => {
+    respectOrderBy([]);
+
+    const result = await getBlocklistDTO({ type: BlocklistType.EmailDomain });
+    expect(result.data).toEqual([]);
   });
 });

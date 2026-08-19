@@ -9,6 +9,7 @@ import type {
 } from '~/server/schema/blocklist.schema';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { createLruCache } from '~/server/utils/lru-cache';
+import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex } from '~/shared/utils/benign-phrases';
 
 export type BlocklistDTO = {
@@ -48,19 +49,57 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
         select: { id: true, type: true, data: true },
       });
   if (!result) throw new Error('failed to update blocklist');
-  await setCache({ type: result.type, data: result });
+  // Refresh from the deterministic read, not from `result`: caching the row just written
+  // is what let an edit to a duplicate row silently promote it to the live one.
+  await setCache({ type: result.type, data: await readBlocklistRow(result.type as BlocklistType) });
+}
+
+/**
+ * Nothing stops a type having more than one row, and `EmailDomain` has two in production
+ * — 8292 entries against 3, with the 3 present in neither the other row nor anything
+ * else. The old read took `findFirst` with no `orderBy`, so which set was live was up to
+ * Postgres; worse, `upsertBlocklist` wrote the row it had just touched into a cache key
+ * scoped to the TYPE, so the last row a moderator edited won for a month regardless. The
+ * loser's entries were simply not enforced, and the winner could change on an unrelated
+ * edit.
+ *
+ * This picks the lowest id, always, and reports the duplicate. It deliberately does NOT
+ * union the rows: for a deny-list a union blocks more, but for the benign lists a union
+ * strips more, which is a moderation bypass — one helper cannot silently pick a safe
+ * direction for both. Nor does it throw: this read gates account signup, so a duplicate
+ * row would become an outage. Deterministic-and-loud is the compromise until the rows are
+ * merged and a unique index on `type` makes it unrepresentable.
+ */
+async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
+  const rows = await dbWrite.blocklist.findMany({
+    where: { type },
+    select: { id: true, type: true, data: true },
+    orderBy: { id: 'asc' },
+  });
+
+  if (rows.length > 1) {
+    logToAxiom({
+      name: 'blocklist-duplicate-rows',
+      type: 'error',
+      message:
+        'More than one Blocklist row for a type; entries on the ignored rows are not enforced',
+      details: {
+        blocklistType: type,
+        usedId: rows[0].id,
+        ignoredIds: rows.slice(1).map((row) => row.id),
+        ignoredEntryCounts: rows.slice(1).map((row) => row.data.length),
+      },
+    }).catch(() => undefined);
+  }
+
+  return rows[0] ?? { type, data: [] };
 }
 
 export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
   const cached = await redis.get(getBlocklistKey(type));
   if (cached) return JSON.parse(cached) as BlocklistDTO;
 
-  const result = await dbWrite.blocklist
-    .findFirst({
-      where: { type },
-      select: { id: true, type: true, data: true },
-    })
-    .then((result): BlocklistDTO => (result ? result : { type, data: [] }));
+  const result = await readBlocklistRow(type);
 
   await setCache({ type: result.type, data: result });
   return result;
@@ -86,7 +125,10 @@ export async function removeBlocklistItems({ id, items }: RemoveBlocklistItemSch
     select: { id: true, type: true, data: true },
   });
 
-  await setCache({ type: updateResult.type, data: updateResult });
+  await setCache({
+    type: updateResult.type,
+    data: await readBlocklistRow(updateResult.type as BlocklistType),
+  });
 }
 
 // #region [blocked links]
