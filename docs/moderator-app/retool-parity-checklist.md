@@ -158,7 +158,7 @@ Open, with the evidence each audit produced:
       was *deliberately* unported because "the main app's equivalent also refreshes entity caches and
       search indexes"; `unassignCosmetic` does neither, so the stated reason was false and the comment
       is gone.
-- [x] **Every `retool/*` call attributes to the API key's owner** — **RESOLVED 2026-08-18** by session
+- [x] **Every `retool/*` call attributes to the API key's owner** — **RESOLVED 2026-08-19** by session
       forwarding instead of minted keys: the spoke relays the acting moderator's own cookie to
       `/api/mod/*`, so the audit row, the `privileged` check and the rate-limit bucket are all per
       moderator. The original plan was to **mint per-moderator keys** so actions are attributable, deferred as its own piece of work rather than
@@ -743,7 +743,7 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 
 ## 11. Operational
 
-- [ ] `FRESHDESK_API_KEY` — see the handover. (`CIVITAI_MOD_API_KEY` is retired, 2026-08-18.)
+- [ ] `FRESHDESK_API_KEY` — see the handover. (`CIVITAI_MOD_API_KEY` is retired, 2026-08-19.)
       **`RETOOL_DATABASE_URL` is superseded**: the cutover retires it in favour of
       `MODERATOR_DATABASE_URL`, which already points at the same database the xguard lab uses. Set that
       one in every deployed environment instead — see [`retool-db-cutover.md`](retool-db-cutover.md).
@@ -999,7 +999,7 @@ that reporter to that build.
       the navigation to go.) Verified: the arrow opens `civitai.red/images/<id>` in a new tab and does
       **not** toggle the selection.
 - [x] **Striking from this page fails with `Struck 0 of 1 owners: CIVITAI_MOD_API_KEY is not
-      configured.`** **RESOLVED 2026-08-18** — the key is gone; striking authenticates as the acting
+      configured.`** **RESOLVED 2026-08-19** — the key is gone; striking authenticates as the acting
       moderator. Note the failure this replaces it with: `strike/create` is rate-limited per moderator
       at 30/60s, so a bulk strike over more owners than that now reports the hub's own "retry in Ns".
 

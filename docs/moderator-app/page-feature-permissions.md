@@ -28,7 +28,7 @@ remove buzz should be a me only"*, while buzz movement and balance stay visible 
 ## Model
 
 Every capability is declared once in `CAPABILITIES` (`$lib/capabilities.ts`) and stored as an
-`AppPageAccess` row keyed `grant:<id>` — `grant:user.buzz.send`. (Renamed from `capability:` on 2026-08-18.)
+`AppPageAccess` row keyed `grant:<id>` — `grant:user.buzz.send`. (Renamed from `capability:` on 2026-08-19.)
 
 **The declarations are not server-only.** Components need the labels and the refusal wording too; while
 they lived under `$lib/server/` the client re-typed them and drifted — a Bulk Ban banner went on saying

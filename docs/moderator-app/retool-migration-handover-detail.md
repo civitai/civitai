@@ -10,7 +10,7 @@ Written 2026-08-07. Delete items as they are done.
 
 ## 1. Environment — `apps/moderator/.env`
 
-- [x] **`CIVITAI_MOD_API_KEY=`** — **no longer exists (2026-08-18). Do not set it.** The spoke calls
+- [x] **`CIVITAI_MOD_API_KEY=`** — **no longer exists (2026-08-19). Do not set it.** The spoke calls
       `/api/mod/*` and forwards the acting moderator's session cookie, so there is no shared key and
       no shared actor: the audit row names the moderator who clicked. The variable was removed from
       the code and from `.env.example`.

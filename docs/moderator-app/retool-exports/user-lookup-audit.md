@@ -117,7 +117,7 @@ Every cluster is ported. What remains is not a query:
 - **`GetSuccesfulPromptsUpdated`** — MongoDB. This app has no connection to it, and adding one for a
   single read is not worth the dependency.
 - **Bulk Image Manager** — ticket 1.3, absent from the section nav until it has a panel.
-- **No API key is needed** (updated 2026-08-18): the bulk comment and review actions call
+- **No API key is needed** (updated 2026-08-19): the bulk comment and review actions call
   `/api/mod/*` with the acting moderator's forwarded session cookie. `CIVITAI_MOD_API_KEY` is retired.
 
 The `ReToolActions` vs `ModActivity` question below was **not** treated as a blocker: this is a 1:1
