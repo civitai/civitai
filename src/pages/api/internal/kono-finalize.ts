@@ -1,6 +1,9 @@
 import * as z from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
-import { isImageInQueue, updatePendingImageRatings } from '~/server/services/games/new-order.service';
+import {
+  isImageInQueue,
+  updatePendingImageRatings,
+} from '~/server/services/games/new-order.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 

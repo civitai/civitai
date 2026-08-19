@@ -62,11 +62,13 @@ export async function apiCatalog(user: SessionUser, prefix?: string): Promise<Ca
       return {
         path: file.replace('/src/routes', '').replace('/+server.ts', ''),
         methods: [...methods],
-        doc: specced ? specToDoc(specced) : (mod._doc ?? null),
+        doc: specced ? specToDoc(specced) : mod._doc ?? null,
         auth: specced?.auth ?? null,
       };
     })
   );
 
-  return entries.filter((e) => visibleTo(user, e.auth)).sort((a, b) => a.path.localeCompare(b.path));
+  return entries
+    .filter((e) => visibleTo(user, e.auth))
+    .sort((a, b) => a.path.localeCompare(b.path));
 }

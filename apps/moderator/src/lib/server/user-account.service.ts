@@ -669,10 +669,7 @@ export type RetoolActivityRow = {
   action: string | null;
 };
 
-export async function getRetoolActivity(
-  userId: number,
-  limit = 25
-): Promise<RetoolActivityRow[]> {
+export async function getRetoolActivity(userId: number, limit = 25): Promise<RetoolActivityRow[]> {
   const rows = await getModeratorDb()
     .selectFrom('ReToolActions')
     .select(['id', 'Event as at', 'User as moderator', 'App as app', 'ActionType as action'])

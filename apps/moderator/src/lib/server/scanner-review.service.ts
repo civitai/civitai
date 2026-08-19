@@ -164,7 +164,11 @@ export async function listScans(
 
   if (rows.length === 0) return { rows: [], total };
 
-  const keys = rows.map((r) => ({ contentHash: r.contentHash, version: r.version, label: r.label }));
+  const keys = rows.map((r) => ({
+    contentHash: r.contentHash,
+    version: r.version,
+    label: r.label,
+  }));
   const verdicts = await dbRead
     .selectFrom('ScannerLabelReview')
     .select(['contentHash', 'version', 'label', 'reviewedBy', 'verdict'])
@@ -266,7 +270,6 @@ export async function getLabelReviewStats(input: {
   for (const s of stats) (activeLabels.has(s.label) ? active : retired).push(s);
   return { active, retired };
 }
-
 
 export async function focusedRun(input: {
   scanner: Scanner;

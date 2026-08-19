@@ -14,7 +14,10 @@ export type TimedMute = {
 };
 
 export type FreshdeskResult =
-  | { status: 'found'; contact: { id: number; name: string | null; email: string | null; url: string } }
+  | {
+      status: 'found';
+      contact: { id: number; name: string | null; email: string | null; url: string };
+    }
   | { status: 'none' }
   | { status: 'unavailable'; reason: string };
 

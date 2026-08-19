@@ -63,7 +63,9 @@ export async function getComicReviewQueue({
       'p.position',
       'p.chapterPosition',
       'p.projectId',
-      sql<string | null>`COALESCE(NULLIF(p.prompt, ''), NULLIF(p."enhancedPrompt", ''), NULLIF(i.meta->>'prompt', ''))`.as(
+      sql<
+        string | null
+      >`COALESCE(NULLIF(p.prompt, ''), NULLIF(p."enhancedPrompt", ''), NULLIF(i.meta->>'prompt', ''))`.as(
         'prompt'
       ),
       sql<boolean>`(p.metadata->>'sourceImageUrl') IS NOT NULL`.as('uploaded'),

@@ -72,8 +72,10 @@ describe('agents cannot write XGuard ground truth', () => {
     // so adding a second method to an existing route file was the way to publish an unauthenticated
     // endpoint while this suite stayed green.
     const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
-    const routes = [...filesUnder(path.join(API_ROUTES, 'xguard')), ...filesUnder(path.join(API_ROUTES, 'mod'))]
-      .filter((f) => path.basename(f) === '+server.ts');
+    const routes = [
+      ...filesUnder(path.join(API_ROUTES, 'xguard')),
+      ...filesUnder(path.join(API_ROUTES, 'mod')),
+    ].filter((f) => path.basename(f) === '+server.ts');
     expect(routes.length, 'no token-callable routes found — the paths moved').toBeGreaterThan(0);
 
     const bare = [];

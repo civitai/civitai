@@ -16,8 +16,8 @@ export const GET = defineWebhookEndpoint({
   input: z.object({
     label: z.string().trim().min(1).optional().describe('Restrict the list to one label.'),
     // Clamped rather than rejected, so a caller looping with a too-large page size still makes progress.
-    limit: z
-      .coerce.number()
+    limit: z.coerce
+      .number()
       .int()
       .default(25)
       .transform((n) => Math.min(100, Math.max(1, n)))
@@ -123,6 +123,9 @@ export const POST = defineWebhookEndpoint({
       error(400, (err as Error).message);
     }
 
-    return json({ runId, label, status: 'running', poll: `/api/xguard/runs/${runId}` }, { status: 202 });
+    return json(
+      { runId, label, status: 'running', poll: `/api/xguard/runs/${runId}` },
+      { status: 202 }
+    );
   },
 });

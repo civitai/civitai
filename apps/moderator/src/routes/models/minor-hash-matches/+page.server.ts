@@ -40,8 +40,8 @@ export const load: PageServerLoad = async ({ url }) => {
     tab === 'auto'
       ? await getAutoFlaggedMinorModels({ limit, offset })
       : tab === 'appeals'
-        ? await getMinorFlagAppealsForReview({ limit, offset })
-        : await getMinorHashMatchesForReview({ limit, offset });
+      ? await getMinorFlagAppealsForReview({ limit, offset })
+      : await getMinorHashMatchesForReview({ limit, offset });
 
   return { tab, limit, page, offset, tabs: TABS, ...queue, wide: true };
 };
@@ -54,7 +54,10 @@ const modelIdFrom = async (event: RequestEvent) => {
 
 /** Every action reports the failure rather than swallowing it: these are minor-safety verdicts, and a
  *  refused write that renders as success is the worst outcome available here. */
-const run = async (event: RequestEvent, action: (modelId: number) => Promise<{ ok: boolean; error?: string }>) => {
+const run = async (
+  event: RequestEvent,
+  action: (modelId: number) => Promise<{ ok: boolean; error?: string }>
+) => {
   const modelId = await modelIdFrom(event);
   if (!modelId) return fail(400, { error: 'Missing model id.' });
 

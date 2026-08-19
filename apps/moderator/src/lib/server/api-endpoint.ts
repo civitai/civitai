@@ -118,7 +118,8 @@ export function defineEndpoint<S extends z.ZodType, E extends RequestEvent>(
   return build(def, { kind: 'session', page: def.page }, (event) => {
     // A token is refused rather than ignored: it would otherwise reach here with no user and 401 as
     // "not signed in", which reads like the caller forgot a cookie rather than used the wrong scheme.
-    if (event.locals.tokenClient) error(401, 'This endpoint is for signed-in moderators, not services.');
+    if (event.locals.tokenClient)
+      error(401, 'This endpoint is for signed-in moderators, not services.');
     if (!event.locals.user) error(401, 'Not signed in.');
     requireAccess(event.locals.user, def.page);
   });
@@ -145,7 +146,7 @@ export function specToDoc(spec: EndpointSpec): EndpointDoc {
       description:
         p.default !== undefined
           ? `${p.description ?? ''} Defaults to ${JSON.stringify(p.default)}.`.trim()
-          : (p.description ?? ''),
+          : p.description ?? '',
     })),
     returns: spec.returns,
     notes: spec.notes,

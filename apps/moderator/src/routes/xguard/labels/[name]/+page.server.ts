@@ -49,11 +49,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
       .selectFrom('human_judgement')
       .select(({ fn }) => [
         fn.count<string>('sample_id').distinct().as('confirmed'),
-        fn
-          .count<string>('sample_id')
-          .distinct()
-          .filterWhere('verdict', '=', true)
-          .as('positives'),
+        fn.count<string>('sample_id').distinct().filterWhere('verdict', '=', true).as('positives'),
       ])
       .where('label', '=', params.name)
       .where('excluded_reason', 'is', null)
@@ -111,7 +107,8 @@ export const actions: Actions = {
     if (!Number.isFinite(version)) return fail(400, { message: 'Pick a version to evaluate' });
 
     const connectionString = env.MODERATOR_DATABASE_URL;
-    if (!connectionString) return fail(500, { message: 'MODERATOR_DATABASE_URL is not configured' });
+    if (!connectionString)
+      return fail(500, { message: 'MODERATOR_DATABASE_URL is not configured' });
 
     try {
       const summary = await runEvaluation({

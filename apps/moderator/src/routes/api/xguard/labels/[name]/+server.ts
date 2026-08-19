@@ -43,7 +43,11 @@ export const GET = defineWebhookEndpoint({
         .selectFrom('human_judgement')
         .select(({ fn }) => [
           fn.count<string>('sample_id').distinct().as('confirmed'),
-          fn.count<string>('sample_id').distinct().filterWhere('verdict', '=', true).as('positives'),
+          fn
+            .count<string>('sample_id')
+            .distinct()
+            .filterWhere('verdict', '=', true)
+            .as('positives'),
         ])
         .where('label', '=', name)
         .where('excluded_reason', 'is', null)

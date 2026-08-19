@@ -54,7 +54,8 @@ FALSE for:
   },
 
   SexualNudity: {
-    description: 'The prompt requests nudity or exposed genitals, without necessarily requesting an act.',
+    description:
+      'The prompt requests nudity or exposed genitals, without necessarily requesting an act.',
     rubric: `TRUE when the prompt requests a subject who is nude, partially nude, or has genitals, breasts or buttocks exposed.
 
 Counts:

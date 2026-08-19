@@ -6,7 +6,10 @@ export type HighlightSource = HighlightCategory | 'model';
 export type HighlightSegment = { text: string; source: HighlightSource | null };
 
 // Per-source style as data (hex, not classes) so any renderer applies it inline.
-export const HIGHLIGHT_STYLES: Record<HighlightSource, { bg: string; weight: number; title: string }> = {
+export const HIGHLIGHT_STYLES: Record<
+  HighlightSource,
+  { bg: string; weight: number; title: string }
+> = {
   trigger: { bg: '#fca5a5', weight: 600, title: 'Policy: trigger' },
   soft: { bg: '#fde68a', weight: 500, title: 'Policy: soft' },
   carveOut: { bg: '#bbf7d0', weight: 500, title: 'Policy: carve-out' },

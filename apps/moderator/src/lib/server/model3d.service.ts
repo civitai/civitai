@@ -36,7 +36,11 @@ export async function unpublishModel3d({
     .executeTakeFirst();
   if (!existing || existing.deletedAt) return;
 
-  await dbWrite.updateTable('Model3D').set({ status: 'Unpublished' }).where('id', '=', id).execute();
+  await dbWrite
+    .updateTable('Model3D')
+    .set({ status: 'Unpublished' })
+    .where('id', '=', id)
+    .execute();
 
   await recordModActivity({ userId, entityType: 'model3d', entityId: id, activity: 'unpublish' });
 

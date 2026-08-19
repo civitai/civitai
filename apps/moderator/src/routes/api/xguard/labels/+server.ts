@@ -11,7 +11,6 @@ export const GET = defineWebhookEndpoint({
     'A label with zero confirmed positives cannot have its recall measured — evaluations there report n/a, not 0.',
   ],
   handler: async () => {
-
     const [labels, rated, confirmed, versions] = await Promise.all([
       getLabDb()
         .selectFrom('label_def')
@@ -29,7 +28,11 @@ export const GET = defineWebhookEndpoint({
         .select(({ fn }) => [
           'label',
           fn.count<string>('sample_id').distinct().as('confirmed'),
-          fn.count<string>('sample_id').distinct().filterWhere('verdict', '=', true).as('positives'),
+          fn
+            .count<string>('sample_id')
+            .distinct()
+            .filterWhere('verdict', '=', true)
+            .as('positives'),
         ])
         .where('excluded_reason', 'is', null)
         .groupBy('label')

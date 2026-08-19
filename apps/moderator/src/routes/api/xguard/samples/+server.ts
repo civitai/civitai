@@ -22,7 +22,9 @@ export const GET = defineWebhookEndpoint({
       .trim()
       .min(1)
       .optional()
-      .describe("Which label's rating and review state to report. Required by the two filters below."),
+      .describe(
+        "Which label's rating and review state to report. Required by the two filters below."
+      ),
     reviewed: z
       .enum(['yes', 'no'])
       .optional()
@@ -125,7 +127,12 @@ export const POST = defineWebhookEndpoint({
   summary: 'Pull a fresh stratified batch of prompts from live traffic.',
   input: z.object({
     batch: z.string().trim().min(1).max(120).describe('Name for this sampling batch.'),
-    label: z.string().trim().min(1).optional().describe('Stratify against this label’s live scores.'),
+    label: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe('Stratify against this label’s live scores.'),
     size: bounded(500, 1, 5000).describe('Prompts to pull, 1-5000.'),
     bands: bounded(5, 1, 20).describe('Score bands to stratify across, 1-20.'),
     days: bounded(7, 1, 365).describe('How far back to sample, 1-365 days.'),

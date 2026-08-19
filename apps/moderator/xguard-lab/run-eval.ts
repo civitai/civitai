@@ -46,7 +46,9 @@ const summary = await runEvaluation({
 const pct = (n: number | null) => (n === null ? 'n/a' : n.toFixed(3));
 console.log(`
 run ${summary.runId}  ${summary.label} @ ${summary.policyLabel}  threshold ${summary.threshold}
-  TP ${summary.tp}   FP ${summary.fp}   TN ${summary.tn}   FN ${summary.fn}${summary.errors ? `   errors ${summary.errors}` : ''}
+  TP ${summary.tp}   FP ${summary.fp}   TN ${summary.tn}   FN ${summary.fn}${
+  summary.errors ? `   errors ${summary.errors}` : ''
+}
   precision ${pct(summary.precision)}   recall ${pct(summary.recall)}   f1 ${pct(summary.f1)}
 `);
 

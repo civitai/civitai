@@ -59,7 +59,9 @@ try {
       [def.label, version, def.policy, def.threshold, def.action ?? 'Scan', set.note ?? set.name]
     );
 
-    console.log(`${def.label}  ->  v${version}  (threshold ${def.threshold}, ${def.action ?? 'Scan'})`);
+    console.log(
+      `${def.label}  ->  v${version}  (threshold ${def.threshold}, ${def.action ?? 'Scan'})`
+    );
   }
 } finally {
   await client.end();

@@ -13,7 +13,16 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   const version = url.searchParams.get('version')?.trim() || undefined;
 
   const { rows } = await listScans(
-    { scanner, view, label, version, nearMissGap: 0.05, limit: EXPORT_LIMIT, offset: 0, latestVersionOnly: true },
+    {
+      scanner,
+      view,
+      label,
+      version,
+      nearMissGap: 0.05,
+      limit: EXPORT_LIMIT,
+      offset: 0,
+      latestVersionOnly: true,
+    },
     locals.user.id
   );
 
@@ -26,10 +35,27 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
 };
 
 const HEADERS = [
-  'contentHash', 'version', 'label', 'scanner', 'entityType', 'labelValue', 'modelVersion',
-  'score', 'threshold', 'triggered', 'occurrences', 'firstSeenAt', 'lastSeenAt', 'durationMs',
-  'workflowIds', 'entityIds', 'matchedText', 'matchedPositivePrompt', 'matchedNegativePrompt',
-  'myVerdict', 'anyVerdict',
+  'contentHash',
+  'version',
+  'label',
+  'scanner',
+  'entityType',
+  'labelValue',
+  'modelVersion',
+  'score',
+  'threshold',
+  'triggered',
+  'occurrences',
+  'firstSeenAt',
+  'lastSeenAt',
+  'durationMs',
+  'workflowIds',
+  'entityIds',
+  'matchedText',
+  'matchedPositivePrompt',
+  'matchedNegativePrompt',
+  'myVerdict',
+  'anyVerdict',
 ] as const;
 
 function toCsv(rows: QueueRow[]): string {
@@ -37,11 +63,27 @@ function toCsv(rows: QueueRow[]): string {
   const lines = [HEADERS.join(',')];
   for (const r of rows) {
     const cells: (string | number | null)[] = [
-      r.contentHash, r.version, r.label, r.scanner, r.entityType, r.labelValue, r.modelVersion,
-      r.score, r.threshold, r.triggered, r.occurrences, r.firstSeenAt, r.lastSeenAt, r.durationMs,
-      r.workflowIds.join('|'), r.entityIds.join('|'), r.matchedText.join('|'),
-      r.matchedPositivePrompt.join('|'), r.matchedNegativePrompt.join('|'),
-      r.myVerdict ?? '', r.anyVerdict ?? '',
+      r.contentHash,
+      r.version,
+      r.label,
+      r.scanner,
+      r.entityType,
+      r.labelValue,
+      r.modelVersion,
+      r.score,
+      r.threshold,
+      r.triggered,
+      r.occurrences,
+      r.firstSeenAt,
+      r.lastSeenAt,
+      r.durationMs,
+      r.workflowIds.join('|'),
+      r.entityIds.join('|'),
+      r.matchedText.join('|'),
+      r.matchedPositivePrompt.join('|'),
+      r.matchedNegativePrompt.join('|'),
+      r.myVerdict ?? '',
+      r.anyVerdict ?? '',
     ];
     lines.push(cells.map(csvCell).join(','));
   }

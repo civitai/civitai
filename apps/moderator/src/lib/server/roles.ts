@@ -2,7 +2,8 @@ import { listAppRoles } from '@civitai/db-queries/page-access';
 import { APP, SUPER_ROLE, isStorableRole, type Role } from './access';
 import { dbRead } from './db';
 
-export const NO_ROLE_CATALOGUE = 'Could not read the role list from the auth hub. Try again shortly.';
+export const NO_ROLE_CATALOGUE =
+  'Could not read the role list from the auth hub. Try again shortly.';
 
 // Column order for `/admin`, and nothing else. The matrix is read left to right as ascending trust, and a
 // column's position is the only thing telling one unlabelled checkbox from the next — ordering by id put

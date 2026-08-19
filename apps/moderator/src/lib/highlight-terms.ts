@@ -83,7 +83,8 @@ export function findTermSpans(text: string, terms: LabelTerm[]): TermSpan[] {
     while ((m = re.exec(text)) !== null) {
       const start = m.index;
       const end = start + m[0].length;
-      if (!taken.some((s) => start < s.end && end > s.start)) taken.push({ start, end, kind, label });
+      if (!taken.some((s) => start < s.end && end > s.start))
+        taken.push({ start, end, kind, label });
       if (m[0].length === 0) re.lastIndex++;
     }
   }

@@ -1,10 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { canAccess } from '$lib/server/access';
-import {
-  getAutoFlaggedMinorDetail,
-  getMinorHashMatchDetail,
-} from '$lib/server/minor-hash.service';
+import { getAutoFlaggedMinorDetail, getMinorHashMatchDetail } from '$lib/server/minor-hash.service';
 import { MINOR_HASH_PATH } from '../../../models/minor-hash-matches/tabs';
 
 // Per-row on expand, not joined into the list: covers, uploader counts and flag provenance are
@@ -20,6 +17,7 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   // The Pending tab already knows which seed matched, so it passes it and skips re-deriving. The
   // other two tabs have no pointer to the seed and must resolve it from the hash.
   const minorModelId = Number(url.searchParams.get('minorModelId')) || null;
-  if (minorModelId) return json({ match: null, detail: await getMinorHashMatchDetail({ modelId, minorModelId }) });
+  if (minorModelId)
+    return json({ match: null, detail: await getMinorHashMatchDetail({ modelId, minorModelId }) });
   return json(await getAutoFlaggedMinorDetail({ modelId }));
 };

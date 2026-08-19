@@ -10,7 +10,6 @@ export const GET = defineWebhookEndpoint({
     'A batch with samples but no ratings is the normal starting state: sample, then rate, then review.',
   ],
   handler: async () => {
-
     const [batches, coverage] = await Promise.all([
       getLabDb()
         .selectFrom('sample')

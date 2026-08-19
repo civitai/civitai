@@ -28,7 +28,12 @@ export const POST = defineWebhookEndpoint({
     batch: z.string().trim().min(1).max(120).describe('Sampling batch to rate.'),
     label: z.enum(LABEL_NAMES).describe('Which label to rate for.'),
     limit: bounded(DEFAULT_LIMIT, MAX_LIMIT).describe(`Samples this call, 1-${MAX_LIMIT}.`),
-    model: z.string().trim().min(1).optional().describe('OpenRouter model. Defaults to the tuned rater.'),
+    model: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe('OpenRouter model. Defaults to the tuned rater.'),
     concurrency: bounded(6, 12).describe('Parallel rater calls, 1-12.'),
   }),
   returns:

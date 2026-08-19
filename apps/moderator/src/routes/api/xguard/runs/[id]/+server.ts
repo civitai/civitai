@@ -28,8 +28,8 @@ export const GET = defineWebhookEndpoint({
       .describe('Which rows to return. "wrong" is FP + FN — the ones worth reading.'),
     // Clamped rather than rejected, so a caller looping with a too-large page size still makes progress;
     // junk (`limit=all`) is still an error, which a broken caller loop should be.
-    limit: z
-      .coerce.number()
+    limit: z.coerce
+      .number()
       .int()
       .default(100)
       .transform((n) => Math.min(1000, Math.max(1, n)))

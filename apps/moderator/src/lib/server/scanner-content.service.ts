@@ -7,7 +7,6 @@ import type { ScanContent } from '$lib/scanner-audit';
 
 export type { ScanContent };
 
-
 export type ScanContentItem = {
   contentHash: string;
   workflowId: string;
@@ -50,7 +49,12 @@ async function resolveScanContent(
         unavailableReason: 'snapshot-parse-failed',
       };
     }
-    return { contentHash: item.contentHash, scanner: snap.scanner, ...parsed.data, unavailable: false };
+    return {
+      contentHash: item.contentHash,
+      scanner: snap.scanner,
+      ...parsed.data,
+      unavailable: false,
+    };
   }
 
   if (item.scanner === 'image_ingestion') {

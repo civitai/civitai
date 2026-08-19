@@ -126,7 +126,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
   // Every label's terms: a run list can span labels, and a prompt is worth highlighting for
   // vocabulary the label under test does not own.
-  const terms = await getLabDb().selectFrom('label_term').select(['label', 'term', 'kind']).execute();
+  const terms = await getLabDb()
+    .selectFrom('label_term')
+    .select(['label', 'term', 'kind'])
+    .execute();
 
   return {
     label,
