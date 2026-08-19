@@ -8,6 +8,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CreatorAnnouncementsCarousel } from '~/components/Announcements/CreatorAnnouncementsCarousel';
 import { useQueryCreatorAnnouncements } from '~/components/Announcements/creator-announcements.utils';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
+import { shouldShowProfileMessage } from '~/components/Profile/profile.utils';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
@@ -94,8 +95,13 @@ export function ProfileHeader({ username }: { username: string }) {
   };
 
   const renderMessage = () => {
-    // Superseded, not replaced: `message` stays live until the migration retires it.
-    if (!profile.message || user.muted || announcements.length > 0) {
+    if (
+      !shouldShowProfileMessage({
+        message: profile.message,
+        userMuted: user.muted,
+        announcementCount: announcements.length,
+      })
+    ) {
       return;
     }
 
