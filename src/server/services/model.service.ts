@@ -2814,52 +2814,52 @@ export const unpublishModelById = async ({
         unpublishedAt,
         unpublishedBy: userId,
       };
-      // The ids actually transitioning, captured BEFORE the update while the statuses still say so.
-      // `updatedModel.modelVersions` is every version of the model — drafts, training rows, versions
-      // taken down months ago — and stamping the unpublish keys onto those sends the creator a
-      // "version unpublished" notification for each one: unpublish.notifications.ts selects on the
-      // meta alone, with no status predicate, keyed per modelVersionId.
-      const transitioningVersions = await tx.modelVersion.findMany({
-        where: { modelId: id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-        select: { id: true },
-      });
-      const transitioningVersionIds = transitioningVersions.map((x) => x.id);
-
       const updatedModel = await tx.model.update({
         where: { id },
         data: {
           status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
           meta: updatedMeta,
-          modelVersions: {
-            updateMany: {
-              where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-              data: { status: ModelStatus.Unpublished },
-            },
-          },
         },
         select: { userId: true, modelVersions: { select: { id: true } } },
       });
 
       const versionIds = updatedModel.modelVersions.map((x) => x.id);
 
-      // 🔴 MERGE the unpublish keys into each version's own meta. Writing the model's meta object
-      // over the column — which is what `updateMany` above used to do — replaced every version's
-      // meta wholesale, and `hadEarlyAccessPurchase` went with it. That flag is the only pre-filter
-      // on the refund requirement and the guard on both delete paths, so wiping it turned an
-      // unpublish into a way to shed the refund obligation and then delete the version freely.
-      // updateMany cannot write a different value per row, hence raw SQL. Scoped to the versions
-      // this call is actually taking down, not to every version on the model.
-      if (transitioningVersionIds.length > 0) {
-        await tx.$executeRaw`
-          UPDATE "ModelVersion"
-          SET "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify({
-            ...(reason ? { unpublishedReason: reason, customMessage } : {}),
-            unpublishedAt,
-            unpublishedBy: userId,
-          })}::jsonb
-          WHERE id IN (${Prisma.join(transitioningVersionIds)})
-        `;
-      }
+      // One statement for the version take-down, and it has to stay one.
+      //
+      // 🔴 MERGE the keys into each version's own meta rather than writing an object over the
+      // column. Overwriting replaced every version's meta wholesale and `hadEarlyAccessPurchase`
+      // went with it — that flag is the only pre-filter on the refund requirement and the guard on
+      // both delete paths, so losing it turns an unpublish into a way to shed the refund obligation
+      // and then delete the version past every guard. `updateMany` cannot write a different value
+      // per row, hence raw SQL.
+      //
+      // 🔴 And the keys must land on exactly the versions this call takes down. They are what
+      // unpublish.notifications.ts selects on — meta alone, no status predicate, keyed per version —
+      // so stamping a draft tells the creator a version they never published was unpublished.
+      // Status and meta move together under one snapshot, which makes "stamped iff transitioned"
+      // structural rather than two predicates someone has to keep in step.
+      const transitioned = await tx.$queryRaw<{ id: number }[]>`
+        UPDATE "ModelVersion"
+        SET "status" = ${
+          reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished
+        }::"ModelStatus",
+            "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify({
+              ...(reason ? { unpublishedReason: reason, customMessage } : {}),
+              unpublishedAt,
+              unpublishedBy: userId,
+            })}::jsonb
+        WHERE "modelId" = ${id}
+          AND "status" IN (${ModelStatus.Published}::"ModelStatus", ${
+        ModelStatus.Scheduled
+      }::"ModelStatus")
+        RETURNING id
+      `;
+      const transitionedVersionIds = transitioned.map((x) => x.id);
+
+      // Deliberately the WIDE id list, unlike the statement above: a post attached to a version that
+      // was already down can still be published, and `publishedAt IS NOT NULL` is what scopes this —
+      // not the id set. Narrowing it to the transitioned versions would leave those posts public.
       await tx.$executeRaw`
         UPDATE "Post"
         SET "metadata"    = "metadata" || jsonb_build_object(
