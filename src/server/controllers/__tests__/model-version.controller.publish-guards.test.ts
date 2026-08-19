@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Publishing a version is allowed only when both the version and its parent model are in a state an
@@ -31,7 +32,10 @@ vi.mock('~/server/services/model.service', () => ({
 vi.mock('~/server/services/training.service', () => ({}));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
 
-import { publishModelVersionHandler } from '~/server/controllers/model-version.controller';
+import {
+  publishModelVersionHandler,
+  publishPrivateModelVersionHandler,
+} from '~/server/controllers/model-version.controller';
 
 const VERSION_ID = 100;
 const OWNER_ID = 7;
@@ -91,5 +95,66 @@ describe('publishModelVersionHandler — publishable state', () => {
     await call('UnpublishedViolation', 'UnpublishedViolation', true);
 
     expect(mockPublishModelVersionById).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('publishPrivateModelVersionHandler — the same publishable state', () => {
+  const callPrivate = (versionStatus: string, modelStatus: string, isModerator = false) => {
+    mockGetVersionById.mockResolvedValue({
+      id: VERSION_ID,
+      status: versionStatus,
+      uploadType: 'Trained',
+      model: {
+        id: 42,
+        publishedAt: new Date(),
+        availability: 'Private',
+        userId: OWNER_ID,
+        status: modelStatus,
+      },
+      files: [{ id: 1, metadata: {} }],
+      posts: [{ id: 5 }],
+    });
+
+    return publishPrivateModelVersionHandler({
+      input: { id: VERSION_ID },
+      ctx: { user: { id: OWNER_ID, isModerator } },
+    } as never);
+  };
+
+  it.each(['UnpublishedViolation', 'Deleted'])(
+    'refuses an owner when the VERSION is at %s',
+    async (status) => {
+      await expect(callPrivate(status, 'Published')).rejects.toThrowError(/not authorized/);
+      expect(dbMock.dbWrite.modelFile.findMany).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['UnpublishedViolation', 'Deleted'])(
+    'refuses an owner when the parent MODEL is at %s',
+    async (status) => {
+      await expect(callPrivate('Unpublished', status)).rejects.toThrowError(/not authorized/);
+      expect(dbMock.dbWrite.modelFile.findMany).not.toHaveBeenCalled();
+    }
+  );
+
+  // Negative control. This handler does a great deal after the guard, so rather than mocking all of
+  // it, the assertion is that the call gets PAST the guard — it reads the version's files, and
+  // whatever it fails on afterwards is not an authorization refusal.
+  it('lets an ordinary publish through the guard', async () => {
+    dbMock.dbWrite.modelFile.findMany.mockResolvedValue([]);
+
+    await expect(callPrivate('Unpublished', 'Published')).rejects.not.toThrowError(
+      /not authorized/
+    );
+    expect(dbMock.dbWrite.modelFile.findMany).toHaveBeenCalled();
+  });
+
+  it('lets a moderator past it', async () => {
+    dbMock.dbWrite.modelFile.findMany.mockResolvedValue([]);
+
+    await expect(
+      callPrivate('UnpublishedViolation', 'UnpublishedViolation', true)
+    ).rejects.not.toThrowError(/not authorized/);
+    expect(dbMock.dbWrite.modelFile.findMany).toHaveBeenCalled();
   });
 });
