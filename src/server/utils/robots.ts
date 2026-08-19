@@ -32,22 +32,38 @@ export const disallowPaths = [
 /**
  * Further disallows for the `*` group. These exist to protect crawl budget
  * rather than to hide content, which is why they carry their own comments in
- * the emitted file.
+ * the emitted file. This is the single source for those lines — the `*` group
+ * is emitted FROM it, so adding an entry here reaches both groups.
  */
-export const crawlBudgetDisallowPaths = [
-  '/login',
-  '/*?adid=',
-  '/*&adid=',
-  '/*?query=',
-  '/*&query=',
+export const crawlBudgetDisallow: { comment: string[]; paths: string[] }[] = [
+  {
+    comment: ['# Login pages — high alternate-canonical volume from /login?returnUrl=... variants'],
+    paths: ['/login'],
+  },
+  {
+    comment: [
+      '# Ad/affiliate tracking parameters — canonical handles correctness, but each',
+      '# variant wastes crawl budget',
+    ],
+    paths: ['/*?adid=', '/*&adid='],
+  },
+  {
+    comment: ['# Site-search query URLs — thin/duplicate content, low SEO value'],
+    paths: ['/*?query=', '/*&query='],
+  },
 ];
+
+export const crawlBudgetDisallowPaths = crawlBudgetDisallow.flatMap((g) => g.paths);
 
 /**
  * Disallowed for `meta-externalagent` only, on top of everything the `*` group
- * disallows. The review routes are server-rendered per request and the
- * canonical model page already carries the same content.
+ * disallows. These review pages are server-rendered per request.
+ *
+ * Scope note: this covers the paginated review LISTING pages. Individual review
+ * permalinks (`/reviews/[reviewId]`) are deliberately left crawlable — they are
+ * the canonical URL for a single review, and cheap by comparison.
  */
-export const metaExternalAgentDisallowPaths = ['/models/*/reviews'];
+export const metaExternalAgentDisallowPaths = ['/models/*/reviews', '/3d-models/*/reviews'];
 
 /**
  * Every disallow that applies to the `*` group, in emitted order.
@@ -63,31 +79,22 @@ export function buildRobotsTxt(baseUrl: string): string {
   for (const path of disallowPaths) lines.push(`Disallow: ${path}`);
   lines.push('');
 
-  lines.push('# Login pages — high alternate-canonical volume from /login?returnUrl=... variants');
-  lines.push('Disallow: /login');
-  lines.push('');
+  // Emitted from `crawlBudgetDisallow` so this block and the meta group below
+  // cannot drift apart.
+  for (const group of crawlBudgetDisallow) {
+    lines.push(...group.comment);
+    for (const path of group.paths) lines.push(`Disallow: ${path}`);
+    lines.push('');
+  }
 
-  lines.push(
-    '# Ad/affiliate tracking parameters — canonical handles correctness, but each',
-    '# variant wastes crawl budget'
-  );
-  lines.push('Disallow: /*?adid=');
-  lines.push('Disallow: /*&adid=');
-  lines.push('');
-
-  lines.push('# Site-search query URLs — thin/duplicate content, low SEO value');
-  lines.push('Disallow: /*?query=');
-  lines.push('Disallow: /*&query=');
-  lines.push('');
-
-  // Meta's declared AI/content crawler. It is a large and growing share of the
-  // requests to the server-rendered review routes, which are expensive to
-  // render; the canonical model page carries the same content and stays fully
-  // crawlable.
+  // Meta's declared AI/content crawler, which documents itself as honouring
+  // robots.txt. These review listing pages are server-rendered per request.
   //
-  // 🔴 robots.txt group semantics: a crawler obeys ONLY its most specific
-  // matching group and ignores `User-agent: *` entirely. This block therefore
-  // repeats every `*` disallow on purpose. Removing that repetition would leave
+  // 🔴 robots.txt group semantics (RFC 9309 §2.2.1): a crawler that matches a
+  // named group obeys ONLY that group — "If no matching group exists, crawlers
+  // MUST obey the group with a user-agent line with the `*` value, if present",
+  // i.e. a named group suppresses `*` entirely. This block therefore repeats
+  // every `*` disallow on purpose. Removing that repetition would leave
   // meta-externalagent LESS restricted than it is today, not more —
   // `robots.test.ts` asserts the superset property so the mistake cannot ship.
   lines.push('# meta-externalagent');
@@ -126,7 +133,10 @@ export function parseRobotsGroups(txt: string): Record<string, string[]> {
       groups[current] ??= [];
       continue;
     }
-    const dis = /^Disallow:\s*(.+)$/i.exec(line);
+    // `(.*)` not `(.+)`: per RFC 9309 an EMPTY `Disallow:` is meaningful — it
+    // means "allow everything". `(.+)` would silently skip a group neutered
+    // that way, so the parser would not see the very mistake it exists to catch.
+    const dis = /^Disallow:\s*(.*)$/i.exec(line);
     if (dis && current) groups[current].push(dis[1].trim());
   }
   return groups;
