@@ -120,7 +120,7 @@
   </div>
   {#if !model.tracking}
     <div class="flex h-40 items-center justify-center text-center text-sm text-dark-3">
-      View tracking hasn't started collecting for 3D models yet.
+      View tracking wasn't collecting for 3D models yet in this period.
     </div>
   {:else if model.lifetime === 0}
     <div class="flex h-40 items-center justify-center text-center text-sm text-dark-3">

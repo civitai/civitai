@@ -211,6 +211,30 @@ pnpm run db:check-generated  # Fail if the committed generated client is stale
 
 **`schema.full.prisma` is the only schema you edit.** `packages/civitai-db-schema/prisma/schema.full.prisma` is the single tracked schema. `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums to produce `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`. Both `schema.prisma` files — that one **and** the leftover `prisma/schema.prisma` at the repo root — are gitignored build artifacts; editing either is silently overwritten on the next generate. `pnpm run db:check-generated` regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
 
+#### Adding an enum value: DEPLOY FIRST, then migrate, then write
+
+`ALTER TYPE ... ADD VALUE` is harmless on its own. **Writing rows that use the new label is not.**
+Prisma deserializes enum columns strictly, so a row carrying a label the running client doesn't
+know throws on **read** — not on the write that created it. Every page selecting that column 500s,
+and for a Prisma-mapped view the blast radius is every consumer of the view.
+
+Normally this is invisible because the code that writes a new value ships in the same deploy that
+teaches the client about it. A **backfill breaks that coupling**: it writes rows the moment you run
+it, regardless of what is deployed.
+
+So treat an additive enum as expand/contract:
+
+1. **Deploy** the regenerated client (knows the value, writes none) — every reader can now decode it
+2. Apply `ALTER TYPE ... ADD VALUE` — value exists, still unused
+3. Backfill / enable the writes — first rows appear, safely
+
+Applying the migration before the deploy is only safe while **nothing writes the value**. If a
+backfill runs in that window, pods on the previous build break on read until the deploy lands.
+
+(Bit us 2026-08-19 adding `ModelHashType.SHA256_12`: the migration and a 1.5M-row backfill both ran
+ahead of the deploy, and every model detail page reading the `ModelHash` view — which has no type
+filter, so it surfaces every hash type to every reader — started 500ing.)
+
 **CRITICAL: We do NOT use `prisma migrate deploy`. Migrations are applied manually.**
 - Migration files in `packages/civitai-db-schema/prisma/migrations/` exist for review/history but are never auto-run. That is the only directory Prisma reads — the `prisma/migrations/` path at the repo root predates the monorepo, no longer exists, and CI blocks re-creating it.
 - Each environment's DB is updated by a human running the SQL directly (psql, retool, etc.)

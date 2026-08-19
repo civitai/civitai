@@ -55,11 +55,6 @@ export function ModerationNav() {
           hidden: !features.creatorShop,
         },
         { label: 'Grant Cosmetics', href: '/moderator/cosmetics/grant' },
-        // {
-        //   label: 'Paddle Adjustments',
-        //   href: '/moderator/paddle/adjustments',
-        //   hidden: !features.paddleAdjustments,
-        // },
         {
           label: 'Announcements',
           href: '/moderator/announcements',

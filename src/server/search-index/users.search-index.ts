@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { usersFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { updateDocs } from '~/server/meilisearch/client';
 
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -57,14 +58,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  const filterableAttributes = ['id', 'username'];
-
   if (
     // Meilisearch stores sorted.
-    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+    JSON.stringify(usersFilterableAttributes.sort()) !==
+    JSON.stringify(settings.filterableAttributes)
   ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-      filterableAttributes
+      usersFilterableAttributes
     );
 
     console.log(

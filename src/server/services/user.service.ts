@@ -2672,19 +2672,6 @@ export async function updateContentSettings({
   });
 }
 
-export const getUserByPaddleCustomerId = async ({
-  paddleCustomerId,
-}: {
-  paddleCustomerId: string;
-}) => {
-  const user = await dbRead.user.findFirst({
-    where: { paddleCustomerId },
-    select: { id: true, username: true },
-  });
-
-  return user;
-};
-
 // #region [user settings]
 // User-level content preference columns that we cache alongside the settings
 // JSON so the client can patch them in one place (see getUserContentSettings).

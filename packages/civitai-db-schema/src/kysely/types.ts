@@ -89,6 +89,7 @@ import type {
   EntityCollaboratorStatus,
   ClubAdminPermission,
   ChatMemberStatus,
+  ChatNotifyLevel,
   ChatMessageType,
   PurchasableRewardUsage,
   EntityType,
@@ -1636,6 +1637,10 @@ export type ChatMember = {
   leftAt: Timestamp | null;
   kickedAt: Timestamp | null;
   unkickedAt: Timestamp | null;
+  filteredAt: Timestamp | null;
+  notifyLevel: Generated<ChatNotifyLevel>;
+  pinnedAt: Timestamp | null;
+  clearedAt: Timestamp | null;
 };
 export type ChatMessage = {
   id: Generated<number>;
@@ -1646,6 +1651,7 @@ export type ChatMessage = {
   contentType: Generated<ChatMessageType>;
   referenceMessageId: number | null;
   editedAt: Timestamp | null;
+  deletedAt: Timestamp | null;
 };
 export type ChatReport = {
   chatId: number;
@@ -4061,51 +4067,6 @@ export type UserPurchasedRewards = {
 };
 export type UserRank = {
   userId: number;
-  downloadCountDayRank: Generated<number | null>;
-  downloadCountWeekRank: Generated<number | null>;
-  downloadCountMonthRank: Generated<number | null>;
-  downloadCountYearRank: Generated<number | null>;
-  downloadCountAllTimeRank: Generated<number | null>;
-  ratingCountDayRank: Generated<number | null>;
-  ratingCountWeekRank: Generated<number | null>;
-  ratingCountMonthRank: Generated<number | null>;
-  ratingCountYearRank: Generated<number | null>;
-  ratingCountAllTimeRank: Generated<number | null>;
-  followerCountDayRank: Generated<number | null>;
-  followerCountWeekRank: Generated<number | null>;
-  followerCountMonthRank: Generated<number | null>;
-  followerCountYearRank: Generated<number | null>;
-  followerCountAllTimeRank: Generated<number | null>;
-  ratingDayRank: Generated<number | null>;
-  ratingWeekRank: Generated<number | null>;
-  ratingMonthRank: Generated<number | null>;
-  ratingYearRank: Generated<number | null>;
-  ratingAllTimeRank: Generated<number | null>;
-  favoriteCountDayRank: Generated<number | null>;
-  favoriteCountWeekRank: Generated<number | null>;
-  favoriteCountMonthRank: Generated<number | null>;
-  favoriteCountYearRank: Generated<number | null>;
-  favoriteCountAllTimeRank: Generated<number | null>;
-  answerCountDayRank: Generated<number | null>;
-  answerCountWeekRank: Generated<number | null>;
-  answerCountMonthRank: Generated<number | null>;
-  answerCountYearRank: Generated<number | null>;
-  answerCountAllTimeRank: Generated<number | null>;
-  answerAcceptCountDayRank: Generated<number | null>;
-  answerAcceptCountWeekRank: Generated<number | null>;
-  answerAcceptCountMonthRank: Generated<number | null>;
-  answerAcceptCountYearRank: Generated<number | null>;
-  answerAcceptCountAllTimeRank: Generated<number | null>;
-  thumbsUpCountDayRank: Generated<number | null>;
-  thumbsUpCountWeekRank: Generated<number | null>;
-  thumbsUpCountMonthRank: Generated<number | null>;
-  thumbsUpCountYearRank: Generated<number | null>;
-  thumbsUpCountAllTimeRank: Generated<number | null>;
-  thumbsDownCountDayRank: Generated<number | null>;
-  thumbsDownCountWeekRank: Generated<number | null>;
-  thumbsDownCountMonthRank: Generated<number | null>;
-  thumbsDownCountYearRank: Generated<number | null>;
-  thumbsDownCountAllTimeRank: Generated<number | null>;
   leaderboardRank: number | null;
   leaderboardId: string | null;
   leaderboardTitle: string | null;
