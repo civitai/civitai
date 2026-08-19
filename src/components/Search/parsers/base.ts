@@ -45,9 +45,10 @@ export const searchParamsSchema = z.object({
   page: z.coerce.number().optional(),
 });
 
-// Coerced, not `z.string()`: QS.parse runs with parseNumbers/parseBooleans, so `?tags=2026`
-// arrives as a number and `?tags=true` as a boolean.
-const coercedString = z.coerce.string();
+// QS.parse runs with parseNumbers/parseBooleans, so `?tags=2026` arrives as a number and
+// `?tags=true` as a boolean. Narrower than `z.coerce.string()`, which would also accept the `null`
+// a bare `?tags` produces and turn it into the string "null" — a filter that matches nothing.
+const coercedString = z.union([z.string(), z.number(), z.boolean()]).transform(String);
 
 export const stringArrayParamSchema = z
   .union([z.array(coercedString), coercedString])
