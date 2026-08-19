@@ -56,6 +56,8 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
+import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
+import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -232,6 +234,8 @@ function CreatorShopReviewPage() {
   // A pack is authored by whoever listed it; a cosmetic by whoever made it.
   const submitter = selected?.cosmetic?.creator ?? selected?.addedBy ?? null;
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
+  // The verdict the item stopped carrying the moment the creator edited it.
+  const priorReview = priorReviewFromHistory(selectedMeta.history);
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
   const isAnimated = !!(selected?.cosmetic?.data as { animated?: boolean } | null)?.animated;
@@ -509,6 +513,11 @@ function CreatorShopReviewPage() {
               <Stack gap={0}>
                 {items.map((item) => {
                   const active = item.id === selectedId;
+                  // Triage is oldest-first regardless of what already happened
+                  // to an item, so the queue has to say which ones are re-reviews.
+                  const itemPrior = priorReviewFromHistory(
+                    ((item.meta ?? {}) as CosmeticShopItemMeta).history
+                  );
                   return (
                     <UnstyledButton
                       key={item.id}
@@ -543,6 +552,16 @@ function CreatorShopReviewPage() {
                             · {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
                           </Text>
                         </Stack>
+                        {itemPrior && item.status === CosmeticShopItemStatus.PendingReview && (
+                          <Badge
+                            size="sm"
+                            variant="light"
+                            radius="sm"
+                            color={itemPrior.artworkSwaps ? 'orange' : 'yellow'}
+                          >
+                            {itemPrior.artworkSwaps ? 'New artwork' : 'Re-review'}
+                          </Badge>
+                        )}
                         {statusFilter === 'all' && (
                           <Badge
                             size="sm"
@@ -611,6 +630,8 @@ function CreatorShopReviewPage() {
                     </Text>
                   </Group>
                 </Stack>
+
+                {!!priorReview && <PriorReviewCard prior={priorReview} />}
 
                 <Group align="flex-start" gap="xl" wrap="nowrap" className="max-md:flex-wrap">
                   {/* Preview */}
@@ -961,7 +982,9 @@ function CreatorShopReviewPage() {
                   </Stack>
                 </Group>
 
-                {/* Actions — archived items are view-only (reviewItem rejects them). */}
+                {/* Actions — archived items are view-only (reviewItem refuses
+                    them). A rejected item keeps its buttons: this panel is the
+                    only way back from a rejection, and it is moderator-only. */}
                 {selected.status === CosmeticShopItemStatus.Archived ? (
                   <Group pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>
                     <Text size="sm" c="dimmed">
@@ -970,84 +993,91 @@ function CreatorShopReviewPage() {
                     </Text>
                   </Group>
                 ) : (
-                  <Group
-                    justify="space-between"
-                    wrap="nowrap"
-                    pt="md"
-                    gap="md"
-                    style={{ borderTop: CREATOR_SHOP_BORDER }}
-                    className="max-md:flex-wrap"
-                  >
-                    <TextInput
-                      placeholder="Add a note (required for everything except approval)"
-                      value={reason}
-                      onChange={(e) => setReason(e.currentTarget.value)}
-                      maxLength={1000}
-                      style={{ flex: 1 }}
-                      className="max-md:w-full"
-                    />
-                    <Group gap="sm" wrap="nowrap">
-                      {selected.status === CosmeticShopItemStatus.Published ? (
-                        // Already-live items: review verdicts make no sense —
-                        // the mod either pulls it back into the queue or removes it.
-                        <>
-                          <Button
-                            color="orange"
-                            variant="light"
-                            leftSection={<IconArrowBackUp size={16} />}
-                            loading={reviewItem.isPending}
-                            onClick={() => submitReview('revert')}
-                          >
-                            Revert to pending
-                          </Button>
-                          <Button
-                            color="red"
-                            variant="light"
-                            leftSection={<IconBan size={16} />}
-                            loading={takedownItem.isPending}
-                            onClick={confirmTakedown}
-                          >
-                            Take down
-                          </Button>
-                          <Button
-                            color="red"
-                            leftSection={<IconTrash size={16} />}
-                            loading={deleteItem.isPending}
-                            onClick={confirmDelete}
-                          >
-                            Delete
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button
-                            variant="default"
-                            loading={reviewItem.isPending}
-                            onClick={() => submitReview('request-changes')}
-                          >
-                            Request changes
-                          </Button>
-                          <Button
-                            color="red"
-                            variant="light"
-                            leftSection={<IconX size={16} />}
-                            loading={reviewItem.isPending}
-                            onClick={() => submitReview('reject')}
-                          >
-                            Reject
-                          </Button>
-                          <Button
-                            color="green"
-                            leftSection={<IconCheck size={16} />}
-                            loading={reviewItem.isPending}
-                            onClick={handleApprove}
-                          >
-                            Approve &amp; Publish
-                          </Button>
-                        </>
-                      )}
+                  <Stack gap={8} pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>
+                    {selected.status === CosmeticShopItemStatus.Rejected && (
+                      <Text size="sm" c="dimmed">
+                        Rejected — the creator can no longer edit, relist or restore this. Bringing
+                        it back is a moderator action: request changes to hand it to them, or
+                        approve to publish it as it stands.
+                      </Text>
+                    )}
+                    <Group
+                      justify="space-between"
+                      wrap="nowrap"
+                      gap="md"
+                      className="max-md:flex-wrap"
+                    >
+                      <TextInput
+                        placeholder="Add a note (required for everything except approval)"
+                        value={reason}
+                        onChange={(e) => setReason(e.currentTarget.value)}
+                        maxLength={1000}
+                        style={{ flex: 1 }}
+                        className="max-md:w-full"
+                      />
+                      <Group gap="sm" wrap="nowrap">
+                        {selected.status === CosmeticShopItemStatus.Published ? (
+                          // Already-live items: review verdicts make no sense —
+                          // the mod either pulls it back into the queue or removes it.
+                          <>
+                            <Button
+                              color="orange"
+                              variant="light"
+                              leftSection={<IconArrowBackUp size={16} />}
+                              loading={reviewItem.isPending}
+                              onClick={() => submitReview('revert')}
+                            >
+                              Revert to pending
+                            </Button>
+                            <Button
+                              color="red"
+                              variant="light"
+                              leftSection={<IconBan size={16} />}
+                              loading={takedownItem.isPending}
+                              onClick={confirmTakedown}
+                            >
+                              Take down
+                            </Button>
+                            <Button
+                              color="red"
+                              leftSection={<IconTrash size={16} />}
+                              loading={deleteItem.isPending}
+                              onClick={confirmDelete}
+                            >
+                              Delete
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button
+                              variant="default"
+                              loading={reviewItem.isPending}
+                              onClick={() => submitReview('request-changes')}
+                            >
+                              Request changes
+                            </Button>
+                            <Button
+                              color="red"
+                              variant="light"
+                              leftSection={<IconX size={16} />}
+                              loading={reviewItem.isPending}
+                              onClick={() => submitReview('reject')}
+                            >
+                              Reject
+                            </Button>
+                            <Button
+                              color="green"
+                              leftSection={<IconCheck size={16} />}
+                              loading={reviewItem.isPending}
+                              onClick={handleApprove}
+                            >
+                              Approve &amp; Publish
+                            </Button>
+                          </>
+                        )}
+                      </Group>
                     </Group>
-                  </Group>
+                  </Stack>
                 )}
               </Stack>
             ) : (

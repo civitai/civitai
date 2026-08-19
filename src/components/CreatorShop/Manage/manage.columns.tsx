@@ -24,6 +24,7 @@ import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { ItemResellersPopover } from '~/components/CreatorShop/Manage/ItemResellersPopover';
 import { statusMeta } from '~/components/CreatorShop/Manage/manage.constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { wasLastReviewARejection } from '~/server/services/creator-shop.data';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -105,6 +106,11 @@ function ItemActionsMenu({
 }) {
   const currentUser = useCurrentUser();
   const isArchived = item.status === CosmeticShopItemStatus.Archived;
+  // Archiving overwrites the status, so an item archived back when that was
+  // allowed still has to read as rejected — restoring one is refused server-side.
+  const isRejected =
+    item.status === CosmeticShopItemStatus.Rejected ||
+    (isArchived && wasLastReviewARejection(((item.meta ?? {}) as CosmeticShopItemMeta).history));
 
   const confirmDelete = () =>
     openConfirmModal({
@@ -163,7 +169,12 @@ function ItemActionsMenu({
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        {isArchived ? (
+        {isRejected ? (
+          // Editing, listing and archiving a rejected item are all refused
+          // server-side — archiving because restoring afterwards used to put it
+          // back in the queue with the verdict cleared.
+          <Menu.Label>Rejected — this item is final and can&apos;t be changed.</Menu.Label>
+        ) : isArchived ? (
           <Menu.Item
             leftSection={<IconArchiveOff size={16} />}
             disabled={unarchiveItem.isPending}
@@ -180,8 +191,6 @@ function ItemActionsMenu({
           <>
             <Menu.Item
               leftSection={<IconEdit size={16} />}
-              // Rejected is terminal — nothing more can be changed.
-              disabled={item.status === CosmeticShopItemStatus.Rejected}
               onClick={() =>
                 dialogStore.trigger({
                   // A pack has no cosmetic to edit — its contents and price live
