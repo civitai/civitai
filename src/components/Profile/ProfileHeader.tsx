@@ -5,6 +5,8 @@ import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { CreatorAnnouncementsCarousel } from '~/components/Announcements/CreatorAnnouncementsCarousel';
+import { useQueryCreatorAnnouncements } from '~/components/Announcements/creator-announcements.utils';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -24,6 +26,7 @@ export function ProfileHeader({ username }: { username: string }) {
     username,
   });
   const isMobile = useContainerSmallerThan('sm');
+  const { announcements } = useQueryCreatorAnnouncements(user?.id);
 
   const cover = user?.profile?.coverImage;
   const images = useMemo(
@@ -91,7 +94,8 @@ export function ProfileHeader({ username }: { username: string }) {
   };
 
   const renderMessage = () => {
-    if (!profile.message || user.muted) {
+    // Superseded, not replaced: `message` stays live until the migration retires it.
+    if (!profile.message || user.muted || announcements.length > 0) {
       return;
     }
 
@@ -125,6 +129,7 @@ export function ProfileHeader({ username }: { username: string }) {
   if (isMobile) {
     return (
       <div className="flex flex-col gap-3">
+        {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} />}
         {renderMessage()}
         <div className="flex flex-col">
           {renderCoverImage()}
@@ -143,6 +148,7 @@ export function ProfileHeader({ username }: { username: string }) {
   return (
     <Stack>
       {renderCoverImage()}
+      {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} />}
       {renderMessage()}
     </Stack>
   );

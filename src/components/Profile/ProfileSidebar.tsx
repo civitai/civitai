@@ -32,6 +32,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { AnnouncementMuteToggle } from '~/components/Announcements/AnnouncementMuteToggle';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -215,13 +216,16 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     </Button>
   );
   const followUserBtn = !isCurrentUser && (
-    <FollowUserButton
-      userId={user.id}
-      leftSection={isMobile ? undefined : <IconRss size={16} />}
-      size={sizeOpts.button}
-      style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
-      variant={isMobile ? 'filled' : undefined}
-    />
+    <Group gap={4} wrap="nowrap" className="flex-1">
+      <FollowUserButton
+        userId={user.id}
+        leftSection={isMobile ? undefined : <IconRss size={16} />}
+        size={sizeOpts.button}
+        style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5, flex: 1 }}
+        variant={isMobile ? 'filled' : undefined}
+      />
+      <AnnouncementMuteToggle creatorId={user.id} />
+    </Group>
   );
 
   const TipBuzzBtn = ({ label }: { label?: string }) => (
