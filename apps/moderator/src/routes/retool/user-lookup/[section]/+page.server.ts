@@ -4,6 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { canAccess, requiresGrant } from '$lib/server/access';
 import { denied } from '$lib/permissions';
 import { parseForm, userIdSchema } from '$lib/server/query';
+import { banFieldsSchema, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
   addUserNote,
@@ -11,7 +12,6 @@ import {
   updateUserNote,
 } from '$lib/server/moderation-memory.service';
 import {
-  BAN_REASON_CODES,
   addSocial,
   addTimedMute,
   BUZZ_TRANSACTION_TYPE_KEYS,
@@ -625,19 +625,12 @@ export const actions: Actions = {
     // else with a 500 before the ban happens, so an unchecked value here is a ban that silently does not
     // occur.
     const input = parseForm(
-      userIdSchema.extend({
-        ban: z.enum(['true', 'false']),
-        reasonCode: z
-          .enum(BAN_REASON_CODES)
-          .optional()
-          .or(z.literal('').transform(() => undefined)),
-        detailsInternal: z.string().trim().max(2000).optional(),
-        detailsExternal: z.string().trim().max(2000).optional(),
-        removeMedia: z.string().optional(),
-      }),
+      banFieldsSchema.extend({ ...userIdSchema.shape, ban: z.enum(['true', 'false']) }),
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
+    const unexplained = input.ban === 'true' ? rejectUnexplainedOther(input) : null;
+    if (unexplained) return accountFail(unexplained);
 
     const result = await setBanned({
       userId: input.userId,
@@ -645,7 +638,8 @@ export const actions: Actions = {
       reasonCode: input.reasonCode,
       detailsInternal: input.detailsInternal || undefined,
       detailsExternal: input.detailsExternal || undefined,
-      removeMedia: input.removeMedia === 'on',
+      removeMedia: input.removeMedia,
+      removeModels: input.ban === 'true' ? input.removeModels : undefined,
       moderatorId: locals.user.id,
     });
     if (!result.ok) return accountFail(result.error);

@@ -3,7 +3,13 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, requiresGrant } from '$lib/server/access';
 import { denied } from '$lib/permissions';
-import { parseForm, parseIdList, parseIdListStrict, parseQuery } from '$lib/server/query';
+import {
+  parseForm,
+  parseIdList,
+  parseIdListStrict,
+  parseQuery,
+  checkboxField,
+} from '$lib/server/query';
 import { BAN_REASON_CODES, setBanned } from '$lib/server/user-actions.service';
 import { addUserNote } from '$lib/server/moderation-memory.service';
 import {
@@ -125,7 +131,7 @@ export const actions: Actions = {
         reasonCode: z.enum(BAN_REASON_CODES),
         detailsInternal: z.string().trim().max(500).optional(),
         note: z.string().trim().max(1000).optional(),
-        removeMedia: z.coerce.boolean().catch(false),
+        removeMedia: checkboxField,
       }),
       await request.formData()
     );

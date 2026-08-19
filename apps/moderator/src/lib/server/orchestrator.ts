@@ -18,3 +18,43 @@ export function getOrchestratorClient(): OrchestratorClient {
   }
   return client;
 }
+
+/**
+ * Release (or refuse) an ambient "gate" job — the orchestrator's own hold on a paused workflow.
+ *
+ * Here rather than in the caller because the base URL and the credentials are this module's job: a
+ * second reader of `ORCHESTRATOR_ACCESS_TOKEN` is how the app ended up with two different answers about
+ * which env var counts (see `xguard-api.ts`, which also falls back to `ORCHESTRATOR_TOKEN`).
+ *
+ * WHICH job is the gate is the caller's knowledge, not ours.
+ */
+export async function releaseAmbientJob(
+  gateId: string,
+  approved: boolean
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const endpoint = env.ORCHESTRATOR_ENDPOINT;
+  const token = env.ORCHESTRATOR_ACCESS_TOKEN;
+  if (!endpoint || !token) return { ok: false, error: 'Orchestrator is not configured.' };
+
+  const base = endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint;
+  try {
+    const res = await fetch(`${base}/v1/manager/ambientjobs/${gateId}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ approved }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok)
+      return {
+        ok: false,
+        error:
+          res.status === 429
+            ? 'The orchestrator is rate-limiting; try again shortly.'
+            : `The orchestrator refused the gate update (${res.status}).`,
+      };
+    return { ok: true };
+  } catch (e) {
+    console.error('[orchestrator] gate update failed', e);
+    return { ok: false, error: 'Could not reach the orchestrator.' };
+  }
+}

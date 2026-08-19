@@ -31,6 +31,18 @@ export const parseIdListStrict = (value: string, max: number): number[] | string
     : ids;
 };
 
+/**
+ * A checkbox as browsers actually submit one: absent when unchecked, and its VALUE is not a boolean.
+ *
+ * 🔴 Never use `z.coerce.boolean()` here. It maps "off", "false" and "0" to `true`, so the day a
+ * checkbox is swapped for a hidden input carrying an explicit value — the shape used elsewhere in this
+ * app — every ban silently purges the account's media. This accepts both shapes.
+ */
+export const checkboxField = z
+  .string()
+  .optional()
+  .transform((v) => v === 'on' || v === 'true' || v === '1');
+
 /** zod over FormData, with the first message rather than the full issue tree. The form-side twin of
  *  `parseQuery`. */
 export function parseForm<T extends z.ZodType>(schema: T, form: FormData): z.infer<T> | string {

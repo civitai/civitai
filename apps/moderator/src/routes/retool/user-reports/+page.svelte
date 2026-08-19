@@ -1,13 +1,11 @@
 <script lang="ts">
   import type { ActionData, PageData } from './$types';
-  import { writeEnhancer } from '$lib/form-action';
+  import { FormState } from '$lib/form-state.svelte';
   import QueuePanel from './QueuePanel.svelte';
   import SuspectPanel from './SuspectPanel.svelte';
   import HistoryPanel from './HistoryPanel.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
-
-  let submitting = $state(false);
   // Which report row is in flight, so one claim does not disable all fifty rows.
   let pendingId = $state<number | null>(null);
 
@@ -16,18 +14,15 @@
 
   // Actioning a report or striking an account changes what the queue shows, and the queue comes from
   // `load` — so unlike the client-fetched panels elsewhere, this one does want the reload.
-  const onSubmit = writeEnhancer({
+  // `onSubmit` reads the posted row, so the wrapper that existed only to peek at `formData` before
+  // delegating is gone. `onSettled` clears the marker on refusal as well as success — it marks which
+  // row is in flight, and a refused row that stays marked reads as still working.
+  const onSubmit = new FormState({
     reload: true,
-    busy: (value) => {
-      submitting = value;
-      if (!value) pendingId = null;
-    },
+    onSuccess: null,
+    onSubmit: ({ formData }) => (pendingId = Number(formData.get('id')) || null),
+    onSettled: () => (pendingId = null),
   });
-
-  const onReportSubmit: typeof onSubmit = (input) => {
-    pendingId = Number(input.formData.get('id')) || null;
-    return onSubmit(input);
-  };
 </script>
 
 <header class="page-header">
@@ -59,7 +54,7 @@
       suspectId={data.suspectId}
       canAct={data.canAct}
       error={scoped('report')}
-      onSubmit={onReportSubmit}
+      onSubmit={onSubmit.enhance}
       {pendingId}
       queueFilters={data.queueFilters}
     />

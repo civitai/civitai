@@ -59,3 +59,8 @@ export const userLookupUrl = (idOrUsername: number | string, section?: string) =
   const q = `?q=${encodeURIComponent(String(idOrUsername))}`;
   return section ? `/retool/user-lookup/${section}${q}` : `/retool/user-lookup${q}`;
 };
+
+/** A model page pinned to one version. Built inline at four sites before this; the version is the whole
+ *  point on the moderation pages, and dropping it lands the reviewer on whichever version is current. */
+export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: number) =>
+  `${civitaiUrl}/models/${modelId}?modelVersionId=${versionId}`;

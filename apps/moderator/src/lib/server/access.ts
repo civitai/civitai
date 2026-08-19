@@ -126,6 +126,9 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/prohibited-prompts', label: 'Prohibited Prompts' },
       { path: '/audit/prompt-tester', label: 'Prompt Tester' },
       { path: '/audit/scanner-audit', label: 'Scanner Audit' },
+      { path: '/audit/generator-restrictions', label: 'Generator Restrictions' },
+      { path: '/audit/training-models', label: 'Training Models' },
+      { path: '/audit/training-data', label: 'Training Data Review' },
     ],
   },
   {

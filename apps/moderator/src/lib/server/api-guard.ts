@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { requireAccess } from './access';
+import { canAccess } from './access';
 
 // `/api/*` is exempt from the global route gate in hooks.server.ts, so every endpoint carries its own
 // check. Sharing it keeps the page path in one place: it is spelled as a literal, and `/retool/*` is a
@@ -14,11 +14,15 @@ const MAX_INT = 2_147_483_647;
 export function requireIdParam(
   locals: App.Locals,
   raw: string | undefined,
-  pagePath: string,
+  /** One page, or several — an endpoint serving two pages that are granted separately must accept
+   *  either, and gating on one silently refuses the other's holders. */
+  pagePath: string | string[],
   name: string
 ): number {
   if (!locals.user) error(403, 'Not signed in.');
-  requireAccess(locals.user, pagePath);
+  const paths = Array.isArray(pagePath) ? pagePath : [pagePath];
+  if (!paths.some((path) => canAccess(locals.user!, path)))
+    error(403, 'You do not have access to this page.');
 
   const id = Number(raw);
   if (!Number.isInteger(id) || id <= 0 || id > MAX_INT) error(400, `Bad ${name}.`);

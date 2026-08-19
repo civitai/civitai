@@ -17,7 +17,7 @@
 // 🔴 STORED VALUE. Every grant row is keyed `grant:<id>`, so this prefix and each `id` below are column
 // names, not labels: changing one orphans its rows silently — the grant is not revoked, it is simply
 // no longer found, which reads as a permission that stopped working for nobody's reason. Renamed from
-// `capability:` on 2026-08-18 with the existing rows repointed by hand.
+// `capability:` on 2026-08-19 with the existing rows repointed by hand.
 // Route paths always start with `/`, so this cannot collide with one.
 const PERMISSION_PREFIX = 'grant:';
 
@@ -33,6 +33,10 @@ export const PERMISSIONS = [
   { id: 'user.moderator.toggle', label: 'Activate or deactivate moderator' },
   { id: 'user.cosmetics.grant', label: 'Grant cosmetics' },
   { id: 'bulk-ban.execute', label: 'Run a mass ban' },
+  // Reaching a review queue is an investigation right; banning the account it belongs to is not. Held
+  // apart so a role can be given the Audit queues without the account-ending half of them.
+  { id: 'audit.ban.execute', label: 'Ban an account from an audit queue' },
+  { id: 'csam.report.file', label: 'File a CSAM report' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

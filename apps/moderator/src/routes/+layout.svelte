@@ -1,5 +1,6 @@
 <script lang="ts">
   import '../global.css';
+  import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import { page, navigating } from '$app/state';
   import { buildWordmarkSvg } from '@civitai/brand';
   import {
@@ -250,6 +251,10 @@
     </div>
   </SidebarInset>
 </SidebarProvider>
+
+<!-- Success confirmations: a write that changes nothing on screen (a publish toggle, a saved banner)
+     otherwise gives the operator no signal that it landed. -->
+<Toaster position="bottom-right" />
 
 <style>
   .nav-progress-bar {

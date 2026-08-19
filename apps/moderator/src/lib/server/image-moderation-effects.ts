@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { civitaiAppUrl } from './civitai-url';
 import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
@@ -416,7 +417,7 @@ export async function emailAppealResolution(input: {
   imageIds: number[];
 }): Promise<void> {
   if (!input.imageIds.length) return;
-  const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
+  const base = civitaiAppUrl();
   try {
     await appealResolutionEmail.send({
       to: input.to,

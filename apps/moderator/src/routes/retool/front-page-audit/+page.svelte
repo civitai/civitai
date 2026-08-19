@@ -10,7 +10,7 @@
   import { cn } from '@civitai/ui/utils.js';
   import { TAG_CATEGORIES } from './moderation-tags';
   import type { ActionData, PageData } from './$types';
-  import { writeEnhancer } from '$lib/form-action';
+  import { FormState } from '$lib/form-state.svelte';
   import { dateTime, num } from '$lib/format';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { MEDIA_LABELS, ORDER_LABELS, SWEEP_LEVELS, SWEEP_MEDIA, SWEEP_ORDERS } from './sweep';
@@ -39,7 +39,7 @@
   // refetching 200 rows.
   const newRating = new SvelteMap<number, number>();
 
-  const onSubmit = writeEnhancer({ reload: false });
+  const onSubmit = new FormState({ onSuccess: null, reload: false });
 
   const apply = () =>
     goto(`?level=${level}&order=${order}&media=${media}&hours=${hours}`, { keepFocus: true });
@@ -190,7 +190,7 @@
             <span>{tag.name}</span>
             {#if data.canAct}
               {#each [['up', '↑'], ['down', '↓']] as [direction, glyph] (direction)}
-                <form method="POST" action="?/voteTag" use:enhance={onSubmit} class="inline">
+                <form method="POST" action="?/voteTag" use:enhance={onSubmit.enhance} class="inline">
                   <input type="hidden" name="imageId" value={img.id} />
                   <input type="hidden" name="tagId" value={tag.id} />
                   <input type="hidden" name="direction" value={direction} />
@@ -221,7 +221,7 @@
               <span class="w-16 shrink-0 text-dark-3">{category.label}</span>
               {#each category.tags as tag (tag.id)}
                 {@const present = img.moderatedTags.some((t) => t.id === tag.id)}
-                <form method="POST" action="?/voteTag" use:enhance={onSubmit} class="inline">
+                <form method="POST" action="?/voteTag" use:enhance={onSubmit.enhance} class="inline">
                   <input type="hidden" name="imageId" value={img.id} />
                   <input type="hidden" name="tagId" value={tag.id} />
                   <input type="hidden" name="direction" value={present ? 'down' : 'up'} />
@@ -266,7 +266,7 @@
       <RatingBar
         imageId={img.id}
         current={rating}
-        {onSubmit}
+        onSubmit={onSubmit.enhance}
         onRated={(level, ok) => {
           // Reverted on failure: an optimistic dim that never clears makes the moderator's own record
           // of "what I have handled" wrong, and the skipped card is the one that failed.

@@ -21,7 +21,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { sidebarCounts } from '$lib/sidebar-counts.svelte';
   import { URGENT_REPORT_COUNT, queueSeverityClass } from '$lib/queue-thresholds';
-  import { writeEnhancer } from '$lib/form-action';
+  import { FormState } from '$lib/form-state.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -131,7 +131,7 @@
 
   // Refetches the board rather than invalidating: the swept count lives behind /api/moderation-board,
   // which `load` does not touch.
-  const onSweep = writeEnhancer({ onSuccess: () => (boardVersion += 1) });
+  const onSweep = new FormState({ onSuccess: () => (boardVersion += 1) });
 
   const ago = (iso: string) => {
     const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -478,7 +478,7 @@
                 {s.since ? format(s.count) : 'never swept'}
               </span>
             </div>
-            <form method="POST" action="?/sweep" use:enhance={onSweep} class="mt-1">
+            <form method="POST" action="?/sweep" use:enhance={onSweep.enhance} class="mt-1">
               <input type="hidden" name="task" value={s.task} />
               <Button type="submit" variant="outline" size="sm">Mark swept</Button>
             </form>

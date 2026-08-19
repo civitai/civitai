@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { civitaiAppUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
@@ -34,7 +35,7 @@ async function callMainApp(
   const token = env.WEBHOOK_TOKEN;
   if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
 
-  const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
+  const base = civitaiAppUrl();
   const query = new URLSearchParams({ ...params, token });
   try {
     const res = await fetch(`${base}${path}?${query}`, {
@@ -74,7 +75,7 @@ async function postJson(opts: {
   auth: 'webhook' | 'session';
   timeoutMs: number;
 }): Promise<JsonResult> {
-  const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
+  const base = civitaiAppUrl();
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   let url = `${base}${opts.path}`;
 
@@ -129,6 +130,7 @@ async function postJson(opts: {
 export type ModEndpoint =
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
+  | 'csam/training-data-report'
   | 'image/tag-vote'
   | 'minor-flag/confirm'
   | 'minor-flag/dismiss'
@@ -139,6 +141,7 @@ export type ModEndpoint =
   | 'review/delete'
   | 'review/set-exclude'
   | 'strike/create'
+  | 'training-data/resolve'
   | 'user/toggle-moderator'
   | 'user/update-identity';
 
@@ -414,6 +417,31 @@ export { BAN_REASONS as BAN_REASON_CODES, type BanReasonCode } from '$lib/enforc
 // Re-reading `bannedAt` and refusing when it already matches the request turns the toggle back into an
 // explicit operation: a stale page that thinks the user is unbanned cannot silently unban them. The
 // 200-before-work behaviour cannot be fixed from here, so callers must re-read rather than trust it.
+/**
+ * What a ban would take down, shown before it is confirmed. Predicates copied from HEAD's
+ * `getBanContentPreview`: images not already `Blocked`, and models that are live to someone
+ * (`Published`/`Scheduled`) — a count of everything they ever uploaded would overstate the blast radius.
+ */
+export async function getBanContentPreview(
+  userId: number
+): Promise<{ imageCount: number; modelCount: number }> {
+  const [images, models] = await Promise.all([
+    dbRead
+      .selectFrom('Image')
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .where('userId', '=', userId)
+      .where('ingestion', '!=', 'Blocked')
+      .executeTakeFirst(),
+    dbRead
+      .selectFrom('Model')
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .where('userId', '=', userId)
+      .where('status', 'in', ['Published', 'Scheduled'])
+      .executeTakeFirst(),
+  ]);
+  return { imageCount: Number(images?.count ?? 0), modelCount: Number(models?.count ?? 0) };
+}
+
 export async function setBanned(input: {
   userId: number;
   ban: boolean;
@@ -424,6 +452,9 @@ export async function setBanned(input: {
   /** The endpoint blocks media only for `SexualMinor` unless this is set — a Nudify or Harassment ban
    *  otherwise leaves every image up and needs a second, separate purge. */
   removeMedia?: boolean;
+  /** Unpublishes their models. The endpoint DEFAULTS THIS ON when the param is absent, so a caller that
+   *  never sends it cannot offer the operator a choice. Send it explicitly either way. */
+  removeModels?: boolean;
   moderatorId: number;
 }): Promise<ActionResult> {
   const current = await dbWrite
@@ -442,6 +473,8 @@ export async function setBanned(input: {
   if (input.ban && input.detailsInternal) params.detailsInternal = input.detailsInternal;
   if (input.ban && input.detailsExternal) params.detailsExternal = input.detailsExternal;
   if (input.ban && input.removeMedia) params.removeMedia = 'true';
+  if (input.ban && input.removeModels !== undefined)
+    params.removeModels = String(input.removeModels);
 
   const result = await callMainApp('/api/mod/ban-user', params, 'Ban endpoint');
   if (!result.ok) return result;

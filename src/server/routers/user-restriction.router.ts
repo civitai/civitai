@@ -6,15 +6,11 @@ import {
   addToAllowlistSchema,
   backfillRestrictionTriggersSchema,
   debugAuditPromptSchema,
-  getGenerationRestrictionsSchema,
-  resolveRestrictionSchema,
-  saveSuspiciousMatchSchema,
   submitRestrictionContextSchema,
 } from '~/server/schema/user-restriction.schema';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import { debugAuditPrompt, type DebugAuditMatch } from '~/utils/metadata/audit';
 import { bustPromptAllowlistCache } from '~/server/services/orchestrator/promptAuditing';
-import { resolveUserRestriction } from '~/server/services/user-restriction-resolve.service';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -43,53 +39,6 @@ export const userRestrictionRouter = router({
   //   return restriction;
   // }),
   // --- Moderator endpoints ---
-
-  /** Paginated list of generation restrictions for moderator review. */
-  getAll: moderatorProcedure.input(getGenerationRestrictionsSchema).query(async ({ input }) => {
-    const { limit, page, status, username, userId } = input;
-    const offset = (page - 1) * limit;
-
-    const where: NonNullable<Parameters<typeof dbRead.userRestriction.findMany>[0]>['where'] = {
-      type: 'generation',
-      ...(status && { status }),
-      ...(userId && { userId }),
-      user: {
-        deletedAt: null,
-        ...(username && { username: { contains: username, mode: 'insensitive' as const } }),
-      },
-    };
-
-    const [items, totalCount] = await Promise.all([
-      dbRead.userRestriction.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: offset,
-        take: limit,
-        select: {
-          id: true,
-          userId: true,
-          status: true,
-          triggers: true,
-          createdAt: true,
-          resolvedAt: true,
-          resolvedBy: true,
-          resolvedMessage: true,
-          userMessage: true,
-          userMessageAt: true,
-          user: { select: { id: true, username: true, image: true } },
-        },
-      }),
-      dbRead.userRestriction.count({ where }),
-    ]);
-
-    return { items, totalCount };
-  }),
-
-  /** Moderator resolves a restriction — uphold or overturn. */
-  resolve: moderatorProcedure.input(resolveRestrictionSchema).mutation(async ({ ctx, input }) => {
-    await resolveUserRestriction({ ...input, moderatorId: ctx.user.id });
-    return { success: true };
-  }),
 
   /** Moderator adds a trigger to the prompt allowlist (marks as benign). */
   addToAllowlist: moderatorProcedure
@@ -130,30 +79,6 @@ export const userRestrictionRouter = router({
     const { prompt, negativePrompt } = input;
     return debugAuditPrompt(prompt, negativePrompt);
   }),
-
-  /** Save suspicious audit matches to Redis for later review. */
-  saveSuspiciousMatches: moderatorProcedure
-    .input(saveSuspiciousMatchSchema)
-    .mutation(async ({ ctx, input }) => {
-      const { matches } = input;
-      const moderatorId = ctx.user.id;
-
-      // Add each match to a Redis list with timestamp and moderator info
-      const entries = matches.map((match) => ({
-        ...match,
-        flaggedBy: moderatorId,
-        flaggedAt: new Date().toISOString(),
-      }));
-
-      for (const entry of entries) {
-        await sysRedis.lPush(REDIS_SYS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, JSON.stringify(entry));
-      }
-
-      // Keep only the last 1000 entries
-      await sysRedis.lTrim(REDIS_SYS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, 0, 999);
-
-      return { success: true, savedCount: entries.length };
-    }),
 
   /** Get suspicious audit matches from Redis. */
   getSuspiciousMatches: moderatorProcedure.query(async () => {

@@ -8,8 +8,8 @@ import type { SubmitFunction } from '@sveltejs/kit';
  * tick left standing over a refusal makes the moderator's own record wrong, and the item they then skip
  * is the one that failed. It was hand-rolled on seven queues in three different shapes before this.
  *
- * Separate from `writeEnhancer` rather than an option on it: that one's `reset: true` clears the form,
- * and its `busy` disables a panel — both wrong for a grid where fifty cards each own a button.
+ * Separate from `FormState` rather than an option on it: that one resets the form on success and holds
+ * a single `submitting` flag — both wrong for a grid where fifty cards each own a button.
  */
 export function optimisticEnhancer(
   mark: (input: Parameters<SubmitFunction>[0]) => () => void,
@@ -25,48 +25,6 @@ export function optimisticEnhancer(
       await update({
         invalidateAll: result.type === 'success' ? opts.reload ?? false : false,
       });
-    };
-  };
-}
-
-// One enhance callback for every write on this page. Five panels previously shared a page-level
-// callback that called `applyAction` alone, which does NOT reset the form and does NOT track a busy
-// state — so after a successful send the textarea still held its text and the button was still live,
-// and pressing it again sent a second notification.
-//
-// `update({ reset: true, invalidateAll: false })` applies the result AND clears the form. The
-// `invalidateAll: false` is load-bearing: the default reruns `load`, which rebuilds the derived
-// `account` promise and re-runs the 744M-row reaction scan on every write, including ones that change
-// nothing it displays.
-export function writeEnhancer(opts: {
-  /** Runs only on success — bump the refresh counter, close the form, clear local state. */
-  onSuccess?: () => void;
-  busy?: (value: boolean) => void;
-  /** Set ONLY when the page's own `load` data changes — a report queue, an identity row. Panels fed
-   *  by `/api/*` must leave this off, or every write re-runs the whole page load behind them. */
-  reload?: boolean;
-  /**
-   * The submitting panel's own error slot: the message on a refusal, `null` on success.
-   *
-   * This is what lets a page hold many forms without a discriminator. SvelteKit's `form` prop is
-   * PAGE-level, so every panel sees every other panel's failure and each had to filter by a `scope`
-   * the server stamped — miss the scope and the refusal renders in three panels, or in none.
-   */
-  onResult?: (error: string | null) => void;
-}): SubmitFunction {
-  return () => {
-    opts.busy?.(true);
-    return async ({ result, update }) => {
-      // Reset on success ONLY. Clearing the fields after a refusal throws away what the operator
-      // typed, on the one path where they need it back to fix and resubmit.
-      await update({ reset: result.type === 'success', invalidateAll: opts.reload ?? false });
-      opts.onResult?.(
-        result.type === 'failure'
-          ? (result.data?.error as string | undefined) ?? 'Something went wrong.'
-          : null
-      );
-      if (result.type === 'success') opts.onSuccess?.();
-      opts.busy?.(false);
     };
   };
 }

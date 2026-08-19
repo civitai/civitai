@@ -1184,6 +1184,9 @@ importers:
       '@tabler/icons-svelte':
         specifier: ^3.28.1
         version: 3.44.0(svelte@5.56.3(@typescript-eslint/types@8.60.1))
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
       kysely:
         specifier: ^0.28.7
         version: 0.28.17

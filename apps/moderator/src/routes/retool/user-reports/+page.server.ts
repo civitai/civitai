@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
-import { parseForm, parseIdList, parseQuery, userIdSchema } from '$lib/server/query';
+import { parseForm, parseIdList, parseQuery, userIdSchema, checkboxField } from '$lib/server/query';
 import {
   issueStrike,
   removeImages,
@@ -271,12 +271,7 @@ export const actions: Actions = {
         // Retool's TosReasons carried a flag alongside the message; setting it is part of the same
         // gesture, so a POI removal does not need a second pass to mark the images.
         alsoFlag: z.enum(['poi', 'minor', 'tag']).optional(),
-        // Retool's strikeCheckbox. `z.coerce.boolean()` would read the string "false" as true, and a
-        // checkbox is absent-or-its-value, so match the value it posts.
-        strikeOwners: z
-          .literal('1')
-          .optional()
-          .transform((v) => v === '1'),
+        strikeOwners: checkboxField,
       }),
       await request.formData()
     );

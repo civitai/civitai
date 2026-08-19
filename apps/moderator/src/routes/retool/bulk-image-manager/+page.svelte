@@ -12,7 +12,7 @@
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import type { ActionData, PageData } from './$types';
-  import { writeEnhancer } from '$lib/form-action';
+  import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
@@ -115,8 +115,7 @@
     });
   });
 
-  let submitting = $state(false);
-  const onSubmit = writeEnhancer({
+  const onSubmit = new FormState({
     reload: true,
     // The account-wide form is torn down here too: a success does not change the URL, so the effect
     // above never fires and it would otherwise stay open and armed under its own success banner.
@@ -125,7 +124,6 @@
       nuking = false;
       nukeConfirm = '';
     },
-    busy: (value) => (submitting = value),
   });
 
   // `limit` is carried through a new search rather than reset: a moderator who raised it did so because
@@ -295,8 +293,8 @@
     <ImageActionBar
       {selected}
       selectable={filteredItems.map((i) => i.id)}
-      {onSubmit}
-      {submitting}
+      onSubmit={onSubmit.enhance}
+      submitting={onSubmit.submitting}
       ownerCount={selectedOwnerCount}
       blockedIds={blockedIds}
     />
@@ -319,7 +317,7 @@
           Remove all images…
         </Button>
       {:else}
-        <form method="POST" action="?/removeAllForUser" use:enhance={onSubmit} class="grid gap-2">
+        <form method="POST" action="?/removeAllForUser" use:enhance={onSubmit.enhance} class="grid gap-2">
           <input type="hidden" name="userId" value={data.subjectUserId} />
           <Input name="reason" placeholder="Reason (recorded with the removal)" class="max-w-lg" />
           <Input
@@ -333,9 +331,9 @@
               type="submit"
               size="sm"
               variant="destructive"
-              disabled={submitting || nukeConfirm.trim() === ''}
+              disabled={onSubmit.submitting || nukeConfirm.trim() === ''}
             >
-              {submitting ? 'Removing…' : 'Remove every image'}
+              {onSubmit.submitting ? 'Removing…' : 'Remove every image'}
             </Button>
             <Button type="button" size="sm" variant="outline" onclick={() => (nuking = false)}>
               Cancel

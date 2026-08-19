@@ -194,12 +194,21 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `model.schema.ts` (`getAllModelsSchema`, `declineReviewSchema`)
   - Infra: **Postgres + Meilisearch (index updates) + Redis (caching middleware)**
 
-- [ ] **`/moderator/training-models`** — `src/pages/moderator/training-models.tsx` — flag: `trainingModelsModeration`
-  - Procedures: `moderator.models.queryTraining`, `training.getAnnouncement` (queries); `model.toggleCannotPublish`, `training.setAnnouncement` (mutations)
-  - Services: `model.service.ts` → `getTrainingModelsForModerators`, `toggleCannotPublish`; Redis KV get/set for `training-announcement`
-  - Schemas: `model.schema.ts` (`getTrainingModerationFeedSchema`), `base.schema.ts` (`getByIdSchema`), training-announcement zod object
-  - Infra: **Postgres + Meilisearch + Redis (dbKV)**
-  - Notes: also downloads training data via `/api/download/training-data/{versionId}` (separate API, not tRPC)
+- [x] **`/moderator/training-models`** — **Migrated** to the spoke at **`/audit/training-models`**.
+  - Spoke: `training-moderation.service.ts` (`getTrainingModelsFeed`, `toggleCannotPublish`,
+    `getTrainingAnnouncement`/`setTrainingAnnouncement`) — all Kysely; the announcement is the same
+    `KeyValue` row `training.getAnnouncement` still reads, and `cannotPublish` is a jsonb `||` merge on
+    `Model.meta` plus the Meilisearch enqueue. Ban reuses `setBanned`.
+  - Training-data zip: the spoke's `/api/training-data/[versionId]` PROXIES the main app's
+    `/api/download/models/{id}?type=Training%20Data` with the moderator's own cookie, and JSZip unpacks it
+    client-side. Deliberately not a presign — resolving `ModelFile.url` goes through the storage resolver
+    with a delivery-worker fallback, which the spoke would have to re-derive.
+  - Filters: username is an EXACT match (as in the main app), plus workflow id, created-date range and
+    publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
+  - **Main-app trim:** deleted the page + its SCSS; removed `moderator.models.queryTraining`,
+    `model.toggleCannotPublish`, `training.setAnnouncement` and their services/schemas
+    (`getTrainingModelsForModerators`, `toggleCannotPublish`, `getTrainingModerationFeedSchema`).
+    **Kept** `training.getAnnouncement` — the training form renders it.
 
 ## 4. Generation & training
 
@@ -211,21 +220,74 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Services: `generation/generation.service.ts` (`getGateRules`, `setGateRules`)
   - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
   - Infra: **Redis (sysRedis `SYSTEM.FEATURES`) + Flipt** (`GENERATION_TESTING`)
-- [ ] **`/moderator/generation-restrictions`** — `generation-restrictions.tsx` — flag: none (nav-gated on `csamReports`)
-  - Procedures: `userRestriction.getAll` (query); `userRestriction.resolve`, `userRestriction.saveSuspiciousMatches` (mutations) — **logic inline in router**
-  - Services: extract inline logic; `user.service.ts` (`updateUserById`), `orchestrator/promptAuditing.ts` (`resetProhibitedRequestCount`, `bustPromptAllowlistCache`), `notification.service.ts` (`createNotification`), `auth/session-invalidation.ts` (`refreshSession`)
-  - Schemas: `user-restriction.schema.ts` (`getGenerationRestrictionsSchema`, `resolveRestrictionSchema`, `saveSuspiciousMatchSchema`)
-  - Infra: **Postgres + Redis (sysRedis) + Axiom + email + notifications + session mgmt**
-- [ ] **`/moderator/review/training-data`** (index) — `review/training-data/index.tsx` — flag: `reviewTrainingData`
-  - Procedures: `moderator.modelVersions.query` (infinite, `trainingStatus: 'Paused'`); `modelVersion.recheckTrainingStatus` (mutation)
-  - Services: `model-version.service.ts` (`queryModelVersions`, `getVersionById`, `getWorkflowIdFromModelVersion`); `orchestrator/workflows.ts` (`getWorkflow`)
-  - Schemas: `model-version.schema.ts` (`queryModelVersionsSchema`), `base.schema.ts` (`getByIdSchema`)
-  - Infra: **Postgres + Orchestrator** (needs `ORCHESTRATOR_ACCESS_TOKEN`)
-- [ ] **`/moderator/review/training-data/[versionId]`** — `review/training-data/[versionId].tsx` — flag: `reviewTrainingData`
-  - Procedures: `modelVersion.getTrainingDetails` (query); `moderator.trainingData.approve`, `moderator.trainingData.deny` (mutations)
-  - Services: `model-version.service.ts` (`getVersionById`); `training.controller.ts` (`getJobIdFromVersion`, `moderateTrainingData`); `orchestrator/workflows.ts` (`getWorkflow`)
-  - Schemas: `base.schema.ts` (`getByIdSchema`)
-  - Infra: **Postgres + Orchestrator (workflow `gateInstructions` mutation) + Axiom + S3** (training-data zip via `/api/download/training-data/{versionId}`)
+- [x] **`/moderator/generation-restrictions`** — **Migrated** to the spoke at
+  **`/audit/generator-restrictions`** (label "Generator Restrictions").
+  - Spoke: `user-restriction.service.ts` reads the queue with Kysely and writes suspicious matches to the
+    SAME `system:suspicious-audit-matches` list (shared Redis, 1000-entry trim) that
+    `userRestriction.getSuspiciousMatches` still serves `/moderator/suspicious-audit-matches` from.
+  - Rulings go through the EXISTING `resolveRestriction` (`/api/mod/restriction/resolve`) — main owns the
+    mute clear, the subscription, the notification and the session refresh in one write. Ban reuses
+    `setBanned` and then upholds, as the main app did.
+  - Trigger prompts are highlighted by `@civitai/mod-utils/prompt-audit` server-side rather than by
+    re-running each row's stored `matchedRegex` in the browser; the recorded match and regex still render
+    beside the prompt.
+  - **Not ported:** the "View Generations" drawer — it is built on
+    `orchestrator.queryUserGeneratedImages` + `WorkflowData`, a port of its own. The user link goes to
+    User Lookup instead.
+  - **Main-app trim:** deleted the page; removed `userRestriction.getAll`, `.resolve` and
+    `.saveSuspiciousMatches` with their schemas, and `UserGenerationsDrawer`. **Kept**
+    `getSuspiciousMatches`/`clearSuspiciousMatches` (suspicious-audit-matches page) and
+    `resolveUserRestriction` (the mod endpoint).
+- [x] **`/moderator/review/training-data`** (index + `[versionId]`) — **Migrated** to the spoke at
+  **`/audit/training-data`** and **`/audit/training-data/[versionId]`**.
+  - Spoke: `training-moderation.service.ts` (`getPausedTrainingVersions`, `getTrainingVersionDetail`,
+    `moderateTrainingData`). The detail read goes through the WRITE connection — `ModelFile.metadata` is
+    TOASTed jsonb the logical subscriber drops on UPDATE, so on the replica `trainingResults` is empty.
+  - Approve/deny releases the orchestrator's ambient gate job (the SECOND job of the first step) and then
+    POSTs the `resource-training-v2` webhook, because the orchestrator does not reliably fire it —
+    without that an approved run stays Paused in our database.
+  - **CSAM report ported**, but through a NEW main-app endpoint `/api/mod/csam/training-data-report`
+    (`fileCsamReport`, split out of `createCsamReportHandler`): filing it also denies the run and
+    soft-deletes the account, one transaction the spoke would have to re-derive.
+  - **Not ported:** the index page's "Recheck Training Status" button — in the main app its click handler
+    only invalidated the query and never called `modelVersion.recheckTrainingStatus`, so porting it would
+    have ported a dead control. That procedure is untouched and still serves model owners.
+  - **Main-app trim:** deleted both pages; removed `moderator.modelVersions.query`,
+    `moderator.trainingData.approve`/`.deny`, `modelVersion.getTrainingDetails` and their handlers/
+    schemas (`queryModelVersions`, `queryModelVersionsSchema`,
+    `queryModelVersionsForModeratorHandler`, `getModelVersionForTrainingReviewHandler`,
+    `handleApproveTrainingData`). **Kept** `handleDenyTrainingData` — the CSAM path calls it.
+#### Audit-section follow-ups (from the five-agent review, 2026-08-18)
+
+Deliberately deferred; none blocks the three pages above.
+
+- **Two new permissions need granting on `/admin`:** `audit.ban.execute` and `csam.report.file`. Until
+  someone ticks them, only `moderator:admin` can ban from an audit queue or file a CSAM report — the
+  pages themselves are separately unreachable until their `NAVIGATION` paths are granted.
+- **Prompt text renders verbatim.** An earlier revision ran it through `getPromptHighlightSegments` for
+  category colouring, which normalises — decoding HTML entities and stripping combining marks — and so
+  folded away the evasion being reviewed. Reverted: the trigger card now renders the stored string
+  unchanged and highlights the recorded `matchedWord` by literal search (`HighlightedText.svelte`). The
+  stored `matchedRegex` is still never executed; it is attacker-influenced text.
+- **"Allowed to publish" widened.** The main app's Prisma `not: { path, equals: true }` compiled to SQL
+  that excluded rows whose `meta` (or whose `cannotPublish` key) was null; the spoke's
+  `IS DISTINCT FROM 'true'` includes them. The spoke's reading is almost certainly the intended one,
+  but the two apps disagree while both exist.
+- **Checkbox parsing is settled.** `checkboxField` in `$lib/server/query.ts` is the one parser, used by
+  all three ban actions. `z.coerce.boolean()` is banned for checkboxes — it maps `"off"`/`"false"`/`"0"`
+  to `true`, which on a ban means purging media the operator explicitly unticked.
+- **`BanConfirmForm` now serves all three ban sites**, including `user-lookup`'s. Unban and purge kept
+  their own blocks there — they have no fields and a different confirmation shape, and folding them in
+  would mean a `mode` prop switching off two-thirds of the body.
+- **Shared shapes extracted:** `TrainingAssetViewer` (fetch + progress + abort + revoke, used by both
+  training pages), `Pager` (offset) and `CursorPager` (keyset, one visual language),
+  `HighlightedText`, and a single `ActionResult`. `TrainingDataSheet` moved page-local.
+- **Both feature flags are retired.** `trainingModelsModeration` and `reviewTrainingData` had no reader
+  left but a nav `hidden:` clause pointing at a redirect; removed from `feature-flags.service.ts` and
+  from `ModerationNav`. Access is the spoke's role grants.
+- **`handleDenyTrainingData` survives on one non-obvious caller** — the CSAM path in
+  `csam.controller.ts`, no tRPC route. Do not sweep it as dead.
+
 - [x] **`/moderator/prompt-audit-test`** — `prompt-audit-test.tsx` — **Migrated** to the spoke at
   **`/audit/prohibited-prompts`** (under the Audit nav group), **without** the "flag as suspicious" feature.
   The spoke reads ClickHouse directly (`prohibited-prompts.service.ts` → today's `prohibitedRequests` + per-user

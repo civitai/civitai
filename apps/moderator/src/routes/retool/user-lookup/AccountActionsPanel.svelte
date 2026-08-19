@@ -1,18 +1,15 @@
 <script lang="ts">
+  import BanConfirmForm from '$lib/components/BanConfirmForm.svelte';
   import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
-  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { LayoutData } from './$types';
   import { LINK_CLASS } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import { fetchSupport } from './user-support';
   import { REWARDS_ELIGIBILITY } from './enforcement-options';
-  import { BAN_REASONS } from '$lib/enforcement';
   import { FormState } from '$lib/form-state.svelte';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
@@ -29,7 +26,6 @@
   let version = $state(0);
   let confirming = $state<'ban' | 'unban' | 'purge' | null>(null);
   let purgeConfirm = $state('');
-  let reasonCode = $state('');
 
   // One flag for the whole panel: these actions all act on the same account, and none of them is safe to
   // interleave with another.
@@ -48,7 +44,6 @@
     reload: true,
     onSuccess: () => {
       confirming = null;
-      reasonCode = '';
       purgeConfirm = '';
       version += 1;
     },
@@ -221,57 +216,35 @@
           </div>
         </div>
       </form>
-    {:else if confirming}
+    {:else if confirming === 'ban'}
+      <div class="mt-4">
+        <!-- Shared with the Audit ban forms: the paragraph describing what a ban does to a user's
+             images is a policy statement, and three copies of it would next change in one or two. -->
+        <BanConfirmForm
+          userId={identity.id}
+          username={identity.username}
+          action="?/setBanned"
+          enhancer={form.enhance}
+          busy={form.submitting}
+          onCancel={() => (confirming = null)}
+        >
+          {#snippet hidden()}
+            <input type="hidden" name="userId" value={identity.id} />
+            <input type="hidden" name="ban" value="true" />
+          {/snippet}
+        </BanConfirmForm>
+      </div>
+    {:else if confirming === 'unban'}
       <form method="POST" action="?/setBanned" use:enhance={form.enhance} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
-        <input type="hidden" name="ban" value={confirming === 'ban' ? 'true' : 'false'} />
-        <div
-          class="rounded-md border p-3 {confirming === 'ban'
-            ? 'border-red-500/40 bg-red-500/10'
-            : 'border-dark-4 bg-dark-7'}"
-        >
+        <input type="hidden" name="ban" value="false" />
+        <div class="rounded-md border border-dark-4 bg-dark-7 p-3">
           <p class="mb-2 text-sm text-white">
-            {#if confirming === 'ban'}
-              Ban <strong>{identity.username ?? identity.id}</strong>? Unpublishes their models and
-              notifies them. Images stay up unless the reason is Sexual Minor, or you tick below.
-            {:else}
-              Unban <strong>{identity.username ?? identity.id}</strong>?
-            {/if}
+            Unban <strong>{identity.username ?? identity.id}</strong>?
           </p>
-          {#if confirming === 'ban'}
-            <Select.Root type="single" name="reasonCode" bind:value={reasonCode}>
-              <Select.Trigger class="mb-2 w-full">
-                {reasonCode || 'Reason code (optional)'}
-              </Select.Trigger>
-              <Select.Content>
-                {#each BAN_REASONS as reason (reason)}
-                  <Select.Item value={reason}>{reason}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-            <Textarea name="detailsInternal" rows={2} placeholder="Internal notes (optional)" />
-            <!-- Stored on the ban and read back by the appeal flow. Not emailed to the user. -->
-            <Textarea
-              name="detailsExternal"
-              rows={2}
-              placeholder="Rationale for the appeal record (optional)"
-              class="mt-2"
-            />
-            <div class="mt-2 flex items-center gap-2">
-              <Checkbox id="ban-remove-media" name="removeMedia" />
-              <Label for="ban-remove-media" class="font-normal text-dark-0">
-                Also remove their images
-              </Label>
-            </div>
-          {/if}
           <div class="mt-2 flex gap-2">
-            <Button
-              type="submit"
-              size="sm"
-              disabled={form.submitting}
-              variant={confirming === 'ban' ? 'destructive' : 'default'}
-            >
-              {form.submitting ? 'Working…' : `Confirm ${confirming}`}
+            <Button type="submit" size="sm" disabled={form.submitting}>
+              {form.submitting ? 'Working…' : 'Confirm unban'}
             </Button>
             <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
               Cancel

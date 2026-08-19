@@ -43,3 +43,15 @@ export type Jsonified<T> = {
     ? Jsonified<T[K]>
     : T[K];
 };
+
+/** Scales through the units, unlike a fixed MB divisor — a 3 GB training set read "3072.0 MB". */
+export const bytes = (kb: number): string => {
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = kb;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+};

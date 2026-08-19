@@ -11,7 +11,7 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { ActionData, PageData } from './$types';
-  import { writeEnhancer } from '$lib/form-action';
+  import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import { BAN_REASONS } from '$lib/enforcement';
@@ -48,12 +48,7 @@
   let reasonCode = $state('');
   let removeMedia = $state(false);
   let confirming = $state(false);
-  let submitting = $state(false);
-  const onSubmit = writeEnhancer({
-    reload: true,
-    onSuccess: () => (confirming = false),
-    busy: (v) => (submitting = v),
-  });
+  const onSubmit = new FormState({ reload: true, onSuccess: () => (confirming = false) });
 
   const load = () =>
     goto(
@@ -292,7 +287,7 @@
            decided on is a separate gesture from banning it — and it covers the already-banned rows
            the ban loop skips. Every matched candidate, not just the bannable ones. -->
       {#if data.candidates.length}
-        <form method="POST" action="?/addNotes" use:enhance={onSubmit} class="mt-4">
+        <form method="POST" action="?/addNotes" use:enhance={onSubmit.enhance} class="mt-4">
           <input type="hidden" name="userIds" value={noteTargets.map((c) => c.id).join(',')} />
           <div class="flex gap-2">
             <Input
@@ -301,7 +296,7 @@
               class="min-w-48 flex-1"
               required
             />
-            <Button type="submit" variant="outline" disabled={submitting || noteTargets.length === 0}>
+            <Button type="submit" variant="outline" disabled={onSubmit.submitting || noteTargets.length === 0}>
               Add notes
             </Button>
           </div>
@@ -318,7 +313,7 @@
             Ban {num(bannable.length)} accounts
           </Button>
         {:else}
-          <form method="POST" action="?/banAll" use:enhance={onSubmit} class="mt-4">
+          <form method="POST" action="?/banAll" use:enhance={onSubmit.enhance} class="mt-4">
             <input type="hidden" name="userIds" value={bannableIds} />
             <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
               <p class="mb-2 text-sm text-white">
@@ -353,9 +348,9 @@
                   type="submit"
                   variant="destructive"
                   size="sm"
-                  disabled={submitting || !reasonCode}
+                  disabled={onSubmit.submitting || !reasonCode}
                 >
-                  {submitting ? 'Banning…' : `Ban ${num(bannable.length)}`}
+                  {onSubmit.submitting ? 'Banning…' : `Ban ${num(bannable.length)}`}
                 </Button>
                 <Button type="button" size="sm" variant="outline" onclick={() => (confirming = false)}>
                   Cancel

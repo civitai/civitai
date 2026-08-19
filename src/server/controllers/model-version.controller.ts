@@ -19,7 +19,6 @@ import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { getOwnerDonationGoals } from '~/server/services/donation-goal.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
@@ -29,7 +28,6 @@ import type {
   ModelVersionsGeneratedImagesOnTimeframeSchema,
   ModelVersionUpsertInput,
   PublishVersionInput,
-  QueryModelVersionSchema,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
@@ -51,7 +49,6 @@ import {
   modelVersionDonationGoal,
   modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
-  queryModelVersions,
   toggleNotifyModelVersion,
   unpublishModelVersionById,
   updateModelVersionById,
@@ -1001,74 +998,6 @@ export const modelVersionDonationGoalHandler = async ({
   }
 };
 
-export async function queryModelVersionsForModeratorHandler({
-  input,
-  ctx,
-}: {
-  input: QueryModelVersionSchema;
-  ctx: Context;
-}) {
-  const { nextCursor, items } = await queryModelVersions({
-    user: ctx.user,
-    query: input,
-    select: {
-      id: true,
-      name: true,
-      meta: true,
-      trainingStatus: true,
-      createdAt: true,
-      model: {
-        select: {
-          id: true,
-          name: true,
-          userId: true,
-        },
-      },
-      files: {
-        select: { metadata: true },
-        where: { type: 'Training Data' },
-        take: 1,
-      },
-    },
-  });
-
-  const workflowIds: string[] = [];
-  const mappedItems = items.map(({ files, meta, ...version }) => {
-    const trainingFile = pickBestTrainingFile(files);
-    const trainingResults = (trainingFile?.metadata as FileMetadata)
-      ?.trainingResults as TrainingResultsV2;
-
-    if (trainingResults?.workflowId) workflowIds.push(trainingResults.workflowId);
-
-    return {
-      ...version,
-      meta: meta as ModelVersionMeta | null,
-      workflowId: trainingResults?.workflowId,
-    };
-  });
-
-  /*
-    querying the workflows here may seem pointless, but querying the workflow can cause the orchestrator to take action on a workflow with failed/expired jobs.
-
-    Perhaps we need to move this to a method that can be called from the client to refresh the list as needed
-  */
-  const workflows = await Promise.all(
-    workflowIds.map((workflowId) =>
-      getWorkflow({ token: env.ORCHESTRATOR_ACCESS_TOKEN, path: { workflowId } }).catch(() => null)
-    )
-  );
-
-  return {
-    nextCursor,
-    items: mappedItems
-      .map((item) => ({
-        ...item,
-        workflow: workflows.find((x) => x && x.id === item.workflowId),
-      }))
-      .filter((x) => x.workflow),
-  };
-}
-
 export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
   const version = await getVersionById({
     ...input,
@@ -1076,39 +1005,6 @@ export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInp
   });
   if (!version) throw throwNotFoundError();
   return version.model.user;
-}
-
-export async function getModelVersionForTrainingReviewHandler({ input }: { input: GetByIdInput }) {
-  const version = await getVersionById({
-    ...input,
-    select: {
-      model: { select: { id: true, user: { select: userWithCosmeticsSelect } } },
-      files: {
-        select: { id: true, metadata: true },
-        where: { type: 'Training Data' },
-      },
-    },
-  });
-  if (!version) throw throwNotFoundError();
-
-  const trainingFile = pickBestTrainingFile(version.files);
-  // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
-  const fresh = trainingFile
-    ? await dbWrite.modelFile.findUnique({
-        where: { id: trainingFile.id },
-        select: { metadata: true },
-      })
-    : null;
-  const metadata = (fresh?.metadata ?? trainingFile?.metadata) as FileMetadata | undefined;
-  const trainingResults = (metadata?.trainingResults ?? {}) as TrainingResultsV2;
-
-  return {
-    modelId: version.model.id,
-    user: version.model.user,
-    workflowId: trainingResults?.workflowId,
-    jobId: trainingResults?.jobId as string | null,
-    trainingResults,
-  };
 }
 
 export async function recheckModelVersionTrainingStatusHandler({

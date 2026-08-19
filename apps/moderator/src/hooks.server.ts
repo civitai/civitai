@@ -1,5 +1,5 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
+import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
 import { loadPageAccessGrants } from '$lib/server/page-access';
@@ -8,7 +8,7 @@ import { logAxiomError } from '$lib/server/axiom';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
-const NON_MODERATOR_REDIRECT = env.CIVITAI_APP_URL || 'https://civitai.com';
+const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 
 // AUTH ADAPTER — read the Cookie header → ask the shared spoke guard → act. The guard's decision logic is
 // framework-agnostic (@civitai/auth `createSpokeGuard`); only this hook is SvelteKit-specific. Runs on the

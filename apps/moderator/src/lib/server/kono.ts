@@ -1,7 +1,8 @@
 import { env } from '$env/dynamic/private';
+import { civitaiAppUrl } from './civitai-url';
 
 export async function syncKonoFinalize(imageId: number, nsfwLevel: number): Promise<void> {
-  const base = env.CIVITAI_APP_URL || 'https://civitai.com';
+  const base = civitaiAppUrl();
   const token = env.WEBHOOK_TOKEN;
   if (!token) {
     console.warn('[kono] WEBHOOK_TOKEN not set — skipping KoNO finalize', { imageId });

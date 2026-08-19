@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { civitaiAppUrl } from './civitai-url';
 
 // HARD RULE: a spoke→main callback is allowed ONLY where main owns a fan-out the spoke cannot
 // reproduce without becoming a second source of truth. Port everything else as a direct Kysely
@@ -19,7 +20,7 @@ export async function syncSearchIndex(entity: {
   entityId: number;
   action?: 'update' | 'delete';
 }): Promise<void> {
-  const base = env.CIVITAI_APP_URL || 'https://civitai.com';
+  const base = civitaiAppUrl();
   const token = env.WEBHOOK_TOKEN;
   if (!token) {
     console.warn('[search-index] WEBHOOK_TOKEN not set — skipping Meilisearch sync', entity);

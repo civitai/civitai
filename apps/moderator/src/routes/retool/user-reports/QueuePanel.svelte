@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Pager from '$lib/components/Pager.svelte';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -217,16 +218,6 @@
       {/each}
     </ul>
 
-    {#if lastPage > 1}
-      <div class="mt-3 flex items-center gap-3 text-sm">
-        {#if page > 1}
-          <a href={pageHref(page - 1)} class={LINK_CLASS}>Previous</a>
-        {/if}
-        <span class="text-xs text-dark-2">Page {page} of {num(lastPage)}</span>
-        {#if page < lastPage}
-          <a href={pageHref(page + 1)} class={LINK_CLASS}>Next</a>
-        {/if}
-      </div>
-    {/if}
+    <Pager {page} pageCount={lastPage} href={pageHref} />
   {/if}
 </section>

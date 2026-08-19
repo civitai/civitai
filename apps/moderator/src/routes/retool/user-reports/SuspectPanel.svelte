@@ -14,7 +14,7 @@
   import { reportReasonLabel, reportStatusVariant } from '$lib/reports';
   import SuspectFilterBar from './SuspectFilterBar.svelte';
   import type { PageData } from './$types';
-  import { writeEnhancer } from '$lib/form-action';
+  import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
 
@@ -57,7 +57,6 @@
   let striking = $state(false);
   let strikeReason = $state('');
   let notifying = $state(false);
-  let submitting = $state(false);
 
   const selected = new SvelteSet<string | number>();
   const blockedIds = $derived(
@@ -68,14 +67,13 @@
 
   // This panel owns its writes so a success can tear down what it armed. Inferring that from the
   // action's return shape left a strike form open with a live submit after the strike had landed.
-  const onSubmit = writeEnhancer({
+  const onSubmit = new FormState({
     reload: true,
     onSuccess: () => {
       striking = false;
       notifying = false;
       selected.clear();
     },
-    busy: (value) => (submitting = value),
   });
 
   // A new batch — a page of the grid, a filter change — must not carry the previous selection: those
@@ -119,7 +117,7 @@
   </div>
 
   {#if striking}
-    <form method="POST" action="?/strike" use:enhance={onSubmit} class="mb-3">
+    <form method="POST" action="?/strike" use:enhance={onSubmit.enhance} class="mb-3">
       <input type="hidden" name="userId" value={suspectId} />
       {#if strikeError}
         <div
@@ -131,8 +129,8 @@
       {/if}
       <CannedReasonPicker reasons={STRIKE_REASONS} idPrefix="strike" bind:value={strikeReason} />
       <div class="mt-2 flex gap-2">
-        <Button type="submit" size="sm" variant="destructive" disabled={submitting}>
-          {submitting ? 'Working…' : 'Issue strike'}
+        <Button type="submit" size="sm" variant="destructive" disabled={onSubmit.submitting}>
+          {onSubmit.submitting ? 'Working…' : 'Issue strike'}
         </Button>
         <Button type="button" size="sm" variant="outline" onclick={() => (striking = false)}>
           Cancel
@@ -142,7 +140,7 @@
   {/if}
 
   {#if notifying}
-    <form method="POST" action="?/notify" use:enhance={onSubmit} class="mb-3">
+    <form method="POST" action="?/notify" use:enhance={onSubmit.enhance} class="mb-3">
       <input type="hidden" name="userId" value={suspectId} />
       {#if notifyError}
         <div
@@ -154,7 +152,7 @@
       {/if}
       <Textarea name="message" rows={2} placeholder="What should this user be told?" required />
       <div class="mt-2 flex gap-2">
-        <Button type="submit" size="sm" disabled={submitting}>Send</Button>
+        <Button type="submit" size="sm" disabled={onSubmit.submitting}>Send</Button>
         <Button type="button" size="sm" variant="outline" onclick={() => (notifying = false)}>
           Cancel
         </Button>
@@ -293,8 +291,8 @@
   <ImageActionBar
     {selected}
     selectable={suspect.items.map((i) => i.id)}
-    {onSubmit}
-    {submitting}
+    onSubmit={onSubmit.enhance}
+    submitting={onSubmit.submitting}
     notify={false}
     blockedIds={blockedIds}
   />

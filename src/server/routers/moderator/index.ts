@@ -1,22 +1,12 @@
 import * as z from 'zod';
-import { queryModelVersionsForModeratorHandler } from '~/server/controllers/model-version.controller';
 import { getModelsPagedSimpleHandler } from '~/server/controllers/model.controller';
-import {
-  handleApproveTrainingData,
-  handleDenyTrainingData,
-} from '~/server/controllers/training.controller';
 import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
 import {
   modCashAdjustmentSchema,
   updateCashWithdrawalSchema,
 } from '~/server/schema/creator-program.schema';
 import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
-import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
-import {
-  getAllModelsSchema,
-  getTrainingModerationFeedSchema,
-  transferModelOwnershipSchema,
-} from '~/server/schema/model.schema';
+import { getAllModelsSchema, transferModelOwnershipSchema } from '~/server/schema/model.schema';
 import {
   getAutoFlaggedMinorDetailSchema,
   getAutoFlaggedMinorModelsSchema,
@@ -37,7 +27,6 @@ import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-f
 import {
   getModelModerationDetail,
   getModelModRules,
-  getTrainingModelsForModerators,
   transferModelOwnership,
 } from '~/server/services/model.service';
 import {
@@ -51,11 +40,7 @@ import {
   resolveMinorFlagAppeal,
   revertMinorHashAutoFlag,
 } from '~/server/services/minor-hash.service';
-import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
-
-const trainingModerationProcedure = protectedProcedure.use(
-  isFlagProtected('trainingModelsModeration')
-);
+import { moderatorProcedure, router, isFlagProtected } from '~/server/trpc';
 
 const cashManagementProcedure = moderatorProcedure.use(isFlagProtected('cashManagement'));
 
@@ -68,9 +53,6 @@ export const modRouter = router({
     resolveFlagged: moderatorProcedure
       .input(getByIdsSchema)
       .mutation(({ input, ctx }) => resolveFlaggedModel({ ...input, userId: ctx.user.id })),
-    queryTraining: trainingModerationProcedure
-      .input(getTrainingModerationFeedSchema)
-      .query(({ input }) => getTrainingModelsForModerators(input)),
     transferOwnership: moderatorProcedure
       .input(transferModelOwnershipSchema)
       .mutation(({ input, ctx }) => transferModelOwnership({ ...input, modUserId: ctx.user.id })),
@@ -113,15 +95,6 @@ export const modRouter = router({
     resolveMinorFlagAppeal: moderatorProcedure
       .input(resolveMinorFlagAppealSchema)
       .mutation(({ input, ctx }) => resolveMinorFlagAppeal({ ...input, userId: ctx.user.id })),
-  }),
-  modelVersions: router({
-    query: moderatorProcedure
-      .input(queryModelVersionsSchema)
-      .query(queryModelVersionsForModeratorHandler),
-  }),
-  trainingData: router({
-    approve: moderatorProcedure.input(getByIdSchema).mutation(handleApproveTrainingData),
-    deny: moderatorProcedure.input(getByIdSchema).mutation(handleDenyTrainingData),
   }),
   cash: router({
     getCashForUser: cashManagementProcedure

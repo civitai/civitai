@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { HIGHLIGHT_MARK } from '$lib/prompt-highlight';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import type {
     PromptHighlightCategory,
@@ -7,15 +8,6 @@
   } from '@civitai/mod-utils/prompt-audit';
 
   let { result, label = 'prompt' }: { result: PromptHighlightResult; label?: string } = $props();
-
-  const MARK: Record<PromptHighlightCategory, string> = {
-    minor: 'bg-violet-500/25 text-violet-200',
-    age: 'bg-amber-500/25 text-amber-100',
-    young: 'bg-sky-500/25 text-sky-200',
-    poi: 'bg-teal-500/25 text-teal-100',
-    blocked: 'bg-rose-600/30 text-rose-100',
-    nsfw: 'bg-orange-500/25 text-orange-100',
-  };
 
   // Context chars kept around each highlight in the compact card excerpt.
   const CTX = 36;
@@ -49,7 +41,7 @@
 {#snippet segs(segments: PromptSegment[])}
   {#each segments as seg, i (i)}
     {#if seg.category}
-      <mark class="rounded-sm px-0.5 {MARK[seg.category]}">{seg.text}</mark>
+      <mark class="rounded-sm px-0.5 {HIGHLIGHT_MARK[seg.category]}">{seg.text}</mark>
     {:else}{seg.text}{/if}
   {/each}
 {/snippet}

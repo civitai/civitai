@@ -4,7 +4,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import type { ActionData, PageData } from './$types';
-  import { writeEnhancer } from '$lib/form-action';
+  import { FormState } from '$lib/form-state.svelte';
   import { dateTime, num } from '$lib/format';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -15,12 +15,7 @@
     ['poi', 'POI review'],
     ['reported', 'Reported images'],
   ] as const;
-
-  let submitting = $state(false);
-  const onSubmit = writeEnhancer({
-    reload: true,
-    busy: (value) => (submitting = value),
-  });
+  const onSubmit = new FormState({ onSuccess: null, reload: true });
 </script>
 
 <header class="page-header">
@@ -66,9 +61,9 @@
     </p>
     <div class="flex flex-wrap gap-2">
       {#each HELP_TYPE_LABELS as [type, label] (type)}
-        <form method="POST" action="?/file" use:enhance={onSubmit}>
+        <form method="POST" action="?/file" use:enhance={onSubmit.enhance}>
           <input type="hidden" name="type" value={type} />
-          <Button type="submit" variant="outline" size="sm" disabled={submitting}>{label}</Button>
+          <Button type="submit" variant="outline" size="sm" disabled={onSubmit.submitting}>{label}</Button>
         </form>
       {/each}
     </div>
@@ -139,10 +134,10 @@
                   Act on these {data.images.length} in Bulk Image Manager
                 </Button>
               {/if}
-              <form method="POST" action="?/resolve" use:enhance={onSubmit}>
+              <form method="POST" action="?/resolve" use:enhance={onSubmit.enhance}>
                 <input type="hidden" name="requestId" value={selected.id} />
-                <Button type="submit" size="sm" disabled={submitting}>
-                  {submitting ? 'Marking…' : 'Mark handled'}
+                <Button type="submit" size="sm" disabled={onSubmit.submitting}>
+                  {onSubmit.submitting ? 'Marking…' : 'Mark handled'}
                 </Button>
               </form>
             </div>
