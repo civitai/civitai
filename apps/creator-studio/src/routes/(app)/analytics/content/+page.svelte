@@ -221,7 +221,7 @@
     {#if is3d}
       Your 3D models
       <span class="text-xs text-dark-3">
-        {trackingLive ? `· by views ${periodLabel}` : '· view tracking not collecting yet'}
+        {trackingLive ? `· by views ${periodLabel}` : '· view tracking wasn’t collecting yet then'}
       </span>
     {:else if isComics}
       Your comics by {sort === 'views' ? 'views' : 'chapter reads'}
@@ -268,7 +268,7 @@
                 <IconEye size={13} />
                 {num(m.views)} views {periodLabel}
               {:else}
-                <span class="text-dark-2">View tracking starts soon</span>
+                <span class="text-dark-2">Not tracked yet {periodLabel}</span>
               {/if}
             </p>
             {#if !m.published}

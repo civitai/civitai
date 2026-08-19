@@ -137,7 +137,7 @@
   </div>
   {#if !comic.tracking}
     <div class="flex h-40 items-center justify-center text-center text-sm text-dark-3">
-      View tracking hasn't started collecting for comics yet.
+      View tracking wasn't collecting for comics yet in this period.
     </div>
   {:else if comic.lifetime === 0 && comic.readTotal === 0}
     <div class="flex h-40 items-center justify-center text-center text-sm text-dark-3">

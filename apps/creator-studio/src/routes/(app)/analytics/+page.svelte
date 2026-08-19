@@ -46,10 +46,7 @@
     series: TimePoint[],
     label: string,
     colorIndex: number,
-    prevSeries: TimePoint[] = [],
-    // Last day this particular series has data for. Defaults to `through` (the last elapsed day); a series fed
-    // by a nightly rollup passes `viewsThrough` instead, because its own last day is one earlier.
-    until: string = data.through
+    prevSeries: TimePoint[] = []
   ) {
     // Comparison-month overlay: a muted dashed line, each day lined up under the current day it compares against
     // by ordinal offset (delta), so an arbitrary earlier month reads like-for-like.
@@ -60,9 +57,9 @@
       datasets: [
         {
           label,
-          // The series is gap-filled to the end of the month; stop the line where its data ends so a partial
-          // current month doesn't read as a drop to zero for days that have no answer yet.
-          data: series.map((p) => (p.date <= until ? p.value : null)),
+          // The series is gap-filled to the end of the month; stop the line at today so a partial current month
+          // doesn't read as a drop to zero for days that haven't happened.
+          data: series.map((p) => (p.date <= data.through ? p.value : null)),
           borderColor: chartColor(colorIndex),
           backgroundColor: chartColor(colorIndex),
           tension: 0.3,
@@ -257,8 +254,7 @@
             data.analytics.imageViews,
             'Image views',
             5,
-            data.analyticsPrev?.imageViews,
-            data.viewsThrough
+            data.analyticsPrev?.imageViews
           )}
           options={commonOptions}
           plugins={[crosshair]}

@@ -120,7 +120,7 @@ async function fetchComicViewDetail(
           }' AND entityId IN (${chapterIds.join(',')}) AND ${inRange} GROUP BY id`
         )
       : Promise.resolve([]),
-    viewTrackingLive(VIEW_ENTITY.comicProject, from, to),
+    viewTrackingLive(VIEW_ENTITY.comicProject, to),
   ]);
 
   const readsById = new Map(perChapter.map((r) => [Number(r.id), Number(r.reads)]));
@@ -185,7 +185,7 @@ async function fetchModel3dViewDetail(
       totalSql(VIEW_ENTITY.model3d, id, compareFrom, compareTo)
     ),
     ch.$query<{ value: number | string }>(totalSql(VIEW_ENTITY.model3d, id)),
-    viewTrackingLive(VIEW_ENTITY.model3d, from, to),
+    viewTrackingLive(VIEW_ENTITY.model3d, to),
   ]);
 
   const series = points(viewRows);

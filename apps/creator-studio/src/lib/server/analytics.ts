@@ -4,7 +4,7 @@ import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
-import { viewTrackingSql } from '$lib/analytics/view-tracking';
+import { viewTrackingSql, ownerViewsDailySql } from '$lib/server/analytics-sql';
 import { VIEW_ENTITY, IMPRESSION_ENTITY } from '$lib/server/view-entities';
 import type { ViewEntity, ImpressionEntity } from '$lib/server/view-entities';
 
@@ -328,18 +328,6 @@ function seriesSql(
 // new entity type in the `type` enum has to be added to both or it counts as a delete here.
 const reactionCreateTypes = `('Image_Create', 'Comment_Create', 'CommentV2_Create', 'Review_Create', 'Question_Create', 'Answer_Create', 'BountyEntry_Create', 'Article_Create')`;
 const netReactions = `sum(if(type IN ${reactionCreateTypes}, 1, -1))`;
-
-// Image views come from `image_views_daily_by_owner`, a nightly owner-keyed rollup of `daily_views`, because
-// the same answer off `daily_views` needs `entityId IN (this creator's images)` — a creator's ids are scattered
-// across the whole id space, so the primary key prunes almost nothing and a 400-image creator reads 131M rows.
-// Against the rollup it is an `ownerId` prefix seek: 3 marks.
-//
-// Two consequences of the rollup being a nightly seal, both visible to the reader: today is absent until the
-// 02:00 refresh, and views on images with no `images_created` row are dropped by its join (~0.4% in 2026,
-// higher the further back you go).
-function ownerViewsDailySql(uid: number, from: string, to: string): string {
-  return `SELECT createdDate AS date, sum(views) AS value FROM image_views_daily_by_owner WHERE ownerId = ${uid} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
-}
 
 // Articles deliberately do NOT get the owner-rollup treatment images needed. There are ~32k articles on the
 // platform against 130M images, and the heaviest creator has 438 — so the creator's own ids fit in a literal
@@ -788,21 +776,17 @@ async function fetchImageViewDetail(
   };
 }
 
-// Answers "not collecting yet" as distinct from "you have none", for the range the surrounding numbers cover.
-// The query — and why it must carry the range — is in `$lib/analytics/view-tracking`.
+// Answers "was tracking collecting by the end of this period" as distinct from "you have none" — see
+// `$lib/server/analytics-sql`.
 //
-// 🔴 Deliberately NOT cached, and the reason is the asymmetry. For any given range this answer starts false
-// and flips true once, forever. Caching it means caching a `false` — and a cached `false` outlives the event
-// it is wrong about, so the surface keeps saying "not collecting yet" for the whole TTL after data lands.
-// That is exactly what happened with a 1h TTL: impressions were live and attributed, and the tile stayed
-// hidden. A stale `true` would be harmless; a stale `false` hides a working feature and looks identical to
-// the real pre-launch state.
-export async function viewTrackingLive(
-  entityType: string,
-  from: string,
-  to: string
-): Promise<boolean> {
-  const rows = await getClickhouse().$query<{ one: number }>(viewTrackingSql(entityType, from, to));
+// 🔴 This function is uncached, but the answer is NOT: every caller returns it inside the object its
+// `createCache` wrapper stores, so a `false` survives that cache's TTL (~20 min for a month). That is
+// tolerable only because the answer is monotone — it flips false→true once per period and never back — so
+// the stale window is bounded and self-correcting. Anything that makes it non-monotone reintroduces a
+// surface that says "not collecting yet" over live data for a full TTL, which is how a working feature
+// stayed hidden once already.
+export async function viewTrackingLive(entityType: string, to: string): Promise<boolean> {
+  const rows = await getClickhouse().$query<{ one: number }>(viewTrackingSql(entityType, to));
   return rows.length > 0;
 }
 
@@ -827,7 +811,7 @@ async function fetchModel3ds(userId: number, from: string, to: string): Promise<
     ])
     .execute();
 
-  const tracking = await viewTrackingLive(VIEW_ENTITY.model3d, from, to);
+  const tracking = await viewTrackingLive(VIEW_ENTITY.model3d, to);
   if (!rows.length) return { models: [], tracking };
 
   const viewRows = await getClickhouse().$query<{ id: number | string; views: number | string }>(
@@ -907,7 +891,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     ORDER BY count(DISTINCT r."userId") DESC, p.id DESC
   `.execute(dbRead);
 
-  const tracking = await viewTrackingLive(VIEW_ENTITY.comicProject, from, to);
+  const tracking = await viewTrackingLive(VIEW_ENTITY.comicProject, to);
   const projectIds = result.rows.map((r) => Number(r.projectId));
   if (!projectIds.length) return { comics: [], tracking };
 
