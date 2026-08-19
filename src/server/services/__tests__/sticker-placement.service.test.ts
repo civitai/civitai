@@ -5,7 +5,10 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
-import { STICKER_REMOVAL_LOCK_HOURS } from '~/shared/utils/sticker-placement';
+import {
+  STICKER_PLACEMENT_QUEUE_LIMIT,
+  STICKER_REMOVAL_LOCK_HOURS,
+} from '~/shared/utils/sticker-placement';
 import type { CreateStickerPlacement } from '~/server/services/sticker-placement.service';
 
 /**
@@ -143,6 +146,7 @@ const {
   getPlacementSettlementStates,
   getStickerPlacementDetail,
   getPendingStickerPlacements,
+  getMyStickerPlacements,
 } = await import('~/server/services/sticker-placement.service');
 
 const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: ASKED, price: PRICE, cap: CAP };
@@ -1676,5 +1680,139 @@ describe('the payload handed to the free claim', () => {
     });
 
     expect(claimData()).not.toHaveProperty('comment');
+  });
+});
+
+/**
+ * The placer's own list. Its risks are not the owner queue's: the host image
+ * belongs to someone else, so the visibility rules that let a stranger see it
+ * are the only thing between this payload and an image its owner unpublished.
+ */
+describe('getMyStickerPlacements', () => {
+  const LEVELS = { domainLevels: allBrowsingLevelsFlag, viewerLevels: allBrowsingLevelsFlag };
+  const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
+
+  const sentRow = (id: number, data: unknown = good, status = 'pending') => ({
+    id,
+    targetId: IMAGE,
+    ownerId: OWNER,
+    status,
+    amount: PRICE,
+    data,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    expiresAt: null,
+    owner: { id: OWNER, username: 'someone', image: null },
+  });
+
+  const hostImage = (nsfwLevel = NsfwLevel.PG) => ({
+    id: IMAGE,
+    url: 'asset',
+    name: 'a name',
+    width: 1,
+    height: 1,
+    type: 'image',
+    metadata: null,
+    nsfwLevel,
+  });
+
+  it('reads only the placer own placements, and only live ones', async () => {
+    placementFindMany.mockResolvedValue([]);
+
+    await getMyStickerPlacements({ placerId: PLACER, ...LEVELS });
+
+    const { where, take } = placementFindMany.mock.calls.at(-1)?.[0] as {
+      where: Record<string, unknown>;
+      take: number;
+    };
+    // `placerId` is the scope: without it this returns other people's spending,
+    // and the amount on every row is real Buzz.
+    expect(where).toEqual({
+      surface: 'sticker',
+      placerId: PLACER,
+      status: { in: ['pending', 'approved'] },
+    });
+    expect(take).toBe(STICKER_PLACEMENT_QUEUE_LIMIT);
+  });
+
+  /**
+   * The host is another creator's image. Paying to sit on it does not entitle
+   * the placer to keep seeing it after they unpublished it, took it down, or it
+   * was flagged — so the read carries the public rules rather than an id list.
+   */
+  it('fetches the host image under the public visibility rules', async () => {
+    placementFindMany.mockResolvedValue([sentRow(1)]);
+    imageFindMany.mockResolvedValue([hostImage()]);
+
+    await getMyStickerPlacements({ placerId: PLACER, ...LEVELS });
+
+    const { where } = imageFindMany.mock.calls.at(-1)?.[0] as { where: Record<string, unknown> };
+    expect(where).toEqual({
+      id: { in: [IMAGE] },
+      post: { publishedAt: { not: null } },
+      ingestion: 'Scanned',
+      tosViolation: false,
+      minor: false,
+      poi: false,
+    });
+  });
+
+  it('keeps the row when the host image fails those rules', async () => {
+    placementFindMany.mockResolvedValue([sentRow(1)]);
+    // What the filtered read returns for an unpublished or removed host.
+    imageFindMany.mockResolvedValue([]);
+
+    const rows = await getMyStickerPlacements({ placerId: PLACER, ...LEVELS });
+
+    // The placement still exists and its Buzz is still in escrow, so the placer
+    // has to be able to see that it is there.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].image).toBeNull();
+  });
+
+  it('sends the host asset when it is inside the ceiling', async () => {
+    // The positive control: without it every withholding assertion below passes
+    // against a list that shows nothing at all.
+    placementFindMany.mockResolvedValue([sentRow(1)]);
+    imageFindMany.mockResolvedValue([hostImage(NsfwLevel.PG)]);
+
+    const rows = await getMyStickerPlacements({
+      placerId: PLACER,
+      domainLevels: sfwBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+
+    expect(rows[0].image).toMatchObject({ viewable: true, url: 'asset' });
+  });
+
+  it('withholds a host asset the domain may not serve', async () => {
+    placementFindMany.mockResolvedValue([sentRow(1)]);
+    imageFindMany.mockResolvedValue([hostImage(NsfwLevel.X)]);
+
+    const rows = await getMyStickerPlacements({
+      placerId: PLACER,
+      domainLevels: sfwBrowsingLevelsFlag,
+      viewerLevels: allBrowsingLevelsFlag,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].image).toEqual({ viewable: false, id: IMAGE, nsfwLevel: NsfwLevel.X });
+    // The fields, not just the flag: a branch that sets `viewable: false` and
+    // spreads the row anyway passes a flag check while shipping the bytes.
+    for (const field of ['url', 'name', 'metadata', 'width', 'height', 'type'])
+      expect(rows[0].image, `${field} reached a domain that may not serve it`).not.toHaveProperty(
+        field
+      );
+  });
+
+  it('drops a row whose payload cannot be read, and keeps the rest', async () => {
+    placementFindMany.mockResolvedValue([sentRow(1, { nonsense: true }), sentRow(2)]);
+    imageFindMany.mockResolvedValue([hostImage()]);
+
+    const rows = await getMyStickerPlacements({ placerId: PLACER, ...LEVELS });
+
+    // Parsed, not passed through: the page reads `data.cosmeticId` to draw the
+    // sticker, so a row that reached it unparsed would render nothing.
+    expect(rows.map((row) => row.id)).toEqual([2]);
+    expect(rows[0].data).toMatchObject({ cosmeticId: COSMETIC });
   });
 });
