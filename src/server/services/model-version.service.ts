@@ -81,6 +81,7 @@ import {
   assertPaidAccessInput,
   getCachedCapTier,
   getPaidAccess,
+  getFreshSalesForVersion,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
@@ -88,6 +89,8 @@ import {
   type ModelVersionTerms,
   capMediaType,
   effectivePaidAccessPrice,
+  bestSaleFor,
+  saleDiscountFor,
   isPermanentGate,
   acceptsBlueBuzz,
   generationPrice,
@@ -2230,10 +2233,19 @@ export const earlyAccessPurchase = async ({
   const permanent = isPermanentGate(paidAccess);
   // Skipped for a timed gate: there's nothing to clamp against, so no reason to pay for the lookup.
   const ownerTier = permanent ? await getCachedCapTier(modelVersion.model.userId) : null;
-  const amount = effectivePaidAccessPrice(storedPrice, ownerTier, {
+  const cappedAmount = effectivePaidAccessPrice(storedPrice, ownerTier, {
     permanent,
     mediaType: capMediaType(modelVersion.baseModel),
   });
+  // Sales are read from the PRIMARY, not the cached gate: a cancelled sale must stop discounting the moment
+  // the creator ends it, and the cache is an hour behind with a fire-and-forget bust. Applied after the cap
+  // for the same reason getViewerMonetization does — the two must agree or buyers are billed a price they
+  // were never shown. The floor at 1 is a backstop, not the rule: Creator Studio refuses a sale that would
+  // take any covered version to zero, because a free purchase writes no ledger row and the 30-day refund
+  // path reads amounts back from the ledger. This keeps the money path safe if that refusal is ever missed.
+  const sales = await getFreshSalesForVersion(modelVersionId);
+  const sale = bestSaleFor(cappedAmount, sales);
+  const amount = sale ? Math.max(1, cappedAmount - saleDiscountFor(cappedAmount, sale)) : cappedAmount;
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {

@@ -519,3 +519,83 @@ describe('assertPaidAccessCaps — the price ceiling is permanent-only', () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe('getViewerMonetization — a scheduled sale on top of the gate price', () => {
+  const OWNER = 7;
+  const FUTURE = new Date('2099-01-01T00:00:00.000Z');
+  const PAST = new Date('2020-01-01T00:00:00.000Z');
+
+  const sale = (over: Record<string, unknown> = {}) => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAtMs: PAST.getTime(),
+    endsAtMs: FUTURE.getTime(),
+    canceledAtMs: null,
+    ...over,
+  });
+
+  const row = (over: Record<string, unknown> = {}) => ({
+    entityId: 1,
+    ownerId: OWNER,
+    endsAtMs: FUTURE.getTime(),
+    timeframeDays: null,
+    terms: { download: { price: 1000 } },
+    sales: [],
+    ...over,
+  });
+
+  const drive = (
+    gates: Record<string, unknown>,
+    tiers: Record<number, string | null> = { [OWNER]: 'gold' }
+  ) =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === 'test:cap-tier'
+        ? Object.fromEntries(
+            Object.entries(tiers).map(([id, tier]) => [id, { userId: Number(id), tier }])
+          )
+        : gates
+    );
+
+  it('discounts the price a buyer is shown', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 800 } });
+  });
+
+  it('takes the sale off the CAPPED price, not the stored one', async () => {
+    // Lapsed owner: 5000 stored is billed at the free cap of 500, so 20% off must be 400. Discounting
+    // the stored price first would give 4000, which the cap flattens back to 500 and the sale vanishes.
+    drive({ 1: row({ terms: { download: { price: 5000 } }, sales: [sale()] }) }, { [OWNER]: null });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 400 } });
+  });
+
+  it('ignores a sale that has been cancelled, even while its window is still open', async () => {
+    drive({ 1: row({ sales: [sale({ canceledAtMs: PAST.getTime() })] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+
+  it('ignores a sale whose window has not opened yet', async () => {
+    drive({ 1: row({ sales: [sale({ startsAtMs: FUTURE.getTime() })] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+
+  it('leaves the OWNER the undiscounted stored price, as with the cap', async () => {
+    drive({ 1: row({ sales: [sale()] }) });
+
+    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
+
+    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 1000 } });
+  });
+});

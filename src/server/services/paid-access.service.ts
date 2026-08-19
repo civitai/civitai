@@ -5,6 +5,9 @@ import {
   capMediaType,
   effectiveLicensingFee,
   gatePrices,
+  discountedTerms,
+  type ModelVersionSaleWindow,
+  type SaleDiscountKind,
   isPaidAccessActive,
   isPermanentGate,
   maxPaidAccessPrice,
@@ -58,13 +61,84 @@ export function assertPaidAccessInput(input: ModelVersionPaidAccessInputSchema |
 // Cache the ROW, not the verdict: endsAt is materialized, so active-ness is derived live and the
 // cache never goes stale on time passing — only on config change / removal (see bustPaidAccessCache).
 
+type CachedSale = {
+  id: number;
+  discountType: SaleDiscountKind;
+  discountAmount: number;
+  startsAtMs: number;
+  endsAtMs: number;
+  canceledAtMs: number | null;
+};
+
 type PaidAccessCacheRow = {
   entityId: number;
   ownerId: number;
   endsAtMs: number | null; // epoch ms (safe to serialize); null = permanent
   timeframeDays: number | null;
   terms: PaidAccessTerms;
+  // Sale WINDOWS, never a discounted price: the row is cached for an hour and a sale turns on and off at a
+  // wall-clock moment, so what's cached has to be the fact that doesn't change while the cache is warm.
+  sales: CachedSale[];
 };
+
+/**
+ * Sales covering a set of versions: live now OR still to come. Upcoming ones are included deliberately —
+ * the row is cached for an hour, so a sale that starts inside that hour has to already be in the cached
+ * value or it would not apply until the entry expired. Cancelled and finished sales are dropped; they can
+ * never become active again.
+ *
+ * Only ModelVersion carries sales; a ComicChapter gate has no discount concept.
+ */
+async function getSalesFor(
+  db: typeof dbRead | typeof dbWrite,
+  entityType: PaidAccessEntityType,
+  entityIds: number[]
+): Promise<Map<number, CachedSale[]>> {
+  const out = new Map<number, CachedSale[]>();
+  if (entityType !== 'ModelVersion' || !entityIds.length) return out;
+  const now = new Date();
+  const items = await db.modelVersionSaleItem.findMany({
+    where: {
+      modelVersionId: { in: entityIds },
+      sale: { endsAt: { gt: now }, OR: [{ canceledAt: null }, { canceledAt: { gt: now } }] },
+    },
+    select: {
+      modelVersionId: true,
+      sale: {
+        select: {
+          id: true,
+          discountType: true,
+          discountAmount: true,
+          startsAt: true,
+          endsAt: true,
+          canceledAt: true,
+        },
+      },
+    },
+  });
+  for (const item of items) {
+    const list = out.get(item.modelVersionId) ?? [];
+    list.push({
+      id: item.sale.id,
+      discountType: item.sale.discountType as SaleDiscountKind,
+      discountAmount: item.sale.discountAmount,
+      startsAtMs: item.sale.startsAt.getTime(),
+      endsAtMs: item.sale.endsAt.getTime(),
+      canceledAtMs: item.sale.canceledAt ? item.sale.canceledAt.getTime() : null,
+    });
+    out.set(item.modelVersionId, list);
+  }
+  return out;
+}
+
+const hydrateSale = (s: CachedSale): ModelVersionSaleWindow => ({
+  id: s.id,
+  discountType: s.discountType,
+  discountAmount: s.discountAmount,
+  startsAt: new Date(s.startsAtMs),
+  endsAt: new Date(s.endsAtMs),
+  canceledAt: s.canceledAtMs != null ? new Date(s.canceledAtMs) : null,
+});
 
 function createPaidAccessCache(entityType: PaidAccessEntityType) {
   return createCachedObject<PaidAccessCacheRow>({
@@ -83,6 +157,7 @@ function createPaidAccessCache(entityType: PaidAccessEntityType) {
         where: { entityType, entityId: { in: entityIds } },
         select: { entityId: true, ownerId: true, endsAt: true, timeframeDays: true, terms: true },
       });
+      const salesByVersion = await getSalesFor(db, entityType, entityIds);
       return rows.reduce((acc, r) => {
         acc[r.entityId.toString()] = {
           entityId: r.entityId,
@@ -90,6 +165,7 @@ function createPaidAccessCache(entityType: PaidAccessEntityType) {
           endsAtMs: r.endsAt ? r.endsAt.getTime() : null,
           timeframeDays: r.timeframeDays,
           terms: (r.terms ?? {}) as PaidAccessTerms,
+          sales: salesByVersion.get(r.entityId) ?? [],
         };
         return acc;
       }, {} as Record<string, PaidAccessCacheRow>);
@@ -105,6 +181,18 @@ const paidAccessCaches: Partial<
 > = {};
 function paidAccessCache(entityType: PaidAccessEntityType) {
   return (paidAccessCaches[entityType] ??= createPaidAccessCache(entityType));
+}
+
+/**
+ * Sales for ONE version, read from the PRIMARY. The charge path must never price from the cached window:
+ * entries live an hour with SWR off and Creator Studio's cache bust is fire-and-forget, so a cancelled sale
+ * could otherwise keep discounting real purchases long after the creator ended it.
+ */
+export async function getFreshSalesForVersion(
+  modelVersionId: number
+): Promise<ModelVersionSaleWindow[]> {
+  const byVersion = await getSalesFor(dbWrite, 'ModelVersion', [modelVersionId]);
+  return (byVersion.get(modelVersionId) ?? []).map(hydrateSale);
 }
 
 /** Decorate a bounded set of entity ids with their PaidAccess row (absent = free). */
@@ -124,6 +212,7 @@ export async function getPaidAccess(
       endsAt: c.endsAtMs != null ? new Date(c.endsAtMs) : null,
       timeframeDays: c.timeframeDays,
       terms: c.terms,
+      sales: (c.sales ?? []).map(hydrateSale),
     };
   }
   return out;
@@ -293,10 +382,16 @@ export async function getViewerMonetization({
       paidAccess: row
         ? {
             ...row,
-            terms: cappedTerms(row.terms as ModelVersionTerms, tier, {
-              permanent: isPermanentGate(row),
-              mediaType,
-            }),
+            // Sale AFTER cap, never before: the ceiling decides what the creator may charge and the
+            // discount comes off what this buyer would actually be billed. Discounting first lets the
+            // cap swallow the sale whole for a lapsed creator.
+            terms: discountedTerms(
+              cappedTerms(row.terms as ModelVersionTerms, tier, {
+                permanent: isPermanentGate(row),
+                mediaType,
+              }),
+              row.sales
+            ),
           }
         : undefined,
       licensingFee:

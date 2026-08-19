@@ -16,12 +16,14 @@ const { mockDbWrite } = vi.hoisted(() => ({
 const {
   mockCreateMultiAccountBuzzTransaction,
   mockGetPaidAccess,
+  mockGetFreshSalesForVersion,
   mockGetOwnerDonationGoals,
   mockHasEntityAccess,
   mockCheckDonationGoalComplete,
 } = vi.hoisted(() => ({
   mockCreateMultiAccountBuzzTransaction: vi.fn(),
   mockGetPaidAccess: vi.fn(),
+  mockGetFreshSalesForVersion: vi.fn(),
   mockGetOwnerDonationGoals: vi.fn(),
   mockHasEntityAccess: vi.fn(),
   mockCheckDonationGoalComplete: vi.fn(),
@@ -56,6 +58,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   materializePaidAccessEndsAt: vi.fn(),
   writePaidAccessForModelVersion: vi.fn(),
   getPaidAccess: mockGetPaidAccess,
+  getFreshSalesForVersion: mockGetFreshSalesForVersion,
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
@@ -127,6 +130,7 @@ const seed = ({
     transactionCount: 1,
     transactionIds: [],
   });
+  mockGetFreshSalesForVersion.mockResolvedValue([]);
 };
 
 beforeEach(() => {
@@ -206,5 +210,60 @@ describe('earlyAccessPurchase — Blue Buzz', () => {
     });
 
     expect(mockDbWrite.donation.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('earlyAccessPurchase — a scheduled sale is priced from the PRIMARY, not the cached gate', () => {
+  const liveSale = {
+    id: 1,
+    discountType: 'Percent' as const,
+    discountAmount: 20,
+    startsAt: new Date(Date.now() - 86_400_000),
+    endsAt: new Date(Date.now() + 86_400_000),
+    canceledAt: null,
+  };
+
+  const charged = () => mockCreateMultiAccountBuzzTransaction.mock.calls[0][0].amount;
+
+  it('charges the discounted price when a sale is live', async () => {
+    seed();
+    mockGetFreshSalesForVersion.mockResolvedValue([liveSale]);
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType: 'yellow',
+    });
+
+    expect(charged()).toBe(400);
+  });
+
+  it('charges full price the moment a sale is cancelled, even though the cached gate still carries it', async () => {
+    // The gate row is cached for an hour and Creator Studio's bust is fire-and-forget, so the cached copy
+    // can still describe a sale the creator has already ended. The charge reads the primary instead —
+    // this test fails if the purchase path is ever repointed at the cached window.
+    seed();
+    mockGetPaidAccess.mockResolvedValue({
+      [VERSION_ID]: {
+        entityType: 'ModelVersion',
+        entityId: VERSION_ID,
+        ownerId: OWNER,
+        endsAt: new Date(Date.now() + 86_400_000),
+        timeframeDays: 3,
+        terms: { download: { price: 500 } },
+        sales: [liveSale],
+      },
+    });
+    mockGetFreshSalesForVersion.mockResolvedValue([]);
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType: 'yellow',
+    });
+
+    expect(charged()).toBe(500);
   });
 });

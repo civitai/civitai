@@ -144,6 +144,8 @@ export type PaidAccessRow = {
   /** Timed-window length in days; null = permanent. Materialized into endsAt at publish. */
   timeframeDays?: number | null;
   terms: PaidAccessTerms;
+  /** Scheduled sales covering this entity — windows only, never a resolved price. See discountedTerms. */
+  sales?: ModelVersionSaleWindow[];
 };
 
 /**
