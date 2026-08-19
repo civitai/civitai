@@ -1,5 +1,25 @@
 -- Profile banner messages become profile-only announcements (CU 868ktjte1).
--- Applied by hand, like every migration here. Run AFTER 20260819000000_creator_announcements.
+-- Applied by hand, like every migration here. Run AFTER 20260819000000_creator_announcements,
+-- with ON_ERROR_STOP, as that file's header instructs:
+--   psql -v ON_ERROR_STOP=1 -f migration.sql
+--
+-- Both statements are idempotent, matching the sibling migration, whose header promises the
+-- operator that re-running the pair always resumes. That promise has to hold here or it is a
+-- trap: these are two separate statements in a file that opens no transaction, so statement 1
+-- landing and statement 2 not is a reachable state, and an unguarded re-run would insert
+-- 25,655 duplicates and show every affected creator the same card twice.
+--
+-- Each statement is gated on its own marker in metadata rather than on the rows it would
+-- write. An INSERT is atomic, so the marker's presence means that statement completed; and a
+-- marker no creator can author is the only discriminator that survives creators authoring
+-- their own profileOnly announcements between the two runs. Matching row-for-row on content
+-- instead is both slower (a correlated scan per profile, which times out on prod-sized data)
+-- and wrong once someone edits a migrated announcement.
+--
+-- The marker is a metadata key the app's zod schema does not declare, so it is stripped the
+-- first time a creator edits the announcement. That is fine for the re-run gate, which only
+-- has to hold during the run, but it does mean the reverse below misses rows a creator has
+-- already edited.
 --
 -- Counts (prod, 2026-08-19), for the runbook's before/after check:
 -- First statement inserts 25,655: 27,806 rows hold a non-empty "message", 1,379 of those
@@ -19,7 +39,10 @@
 -- On prod it selects 772 of 26,427; a tighter form requiring the `>` selects 770.
 -- Do NOT reach for a backslash-b word boundary here. Postgres reads that escape as a backspace
 -- character, so the pattern silently matches nothing, which looks exactly like a clean result.
--- Its word boundary is backslash-y; this pattern needs neither.
+-- Its word boundary is backslash-y; this pattern needs neither. Do check that the session has
+-- standard_conforming_strings on, which is the default: with it off the backslash-s in the
+-- pattern degrades to a literal s, and the predicate quietly stops matching `<b class=...`
+-- while still matching `<div>`.
 --
 -- Nothing here notifies anyone: profileOnly rows are excluded from the feed and from the
 -- notification fan-out by construction, and no spend is recorded for them.
@@ -54,14 +77,17 @@ SELECT
   p."messageAddedAt",
   true,
   false,
-  '{"dismissible": true}'::jsonb,
+  '{"dismissible": true, "migrated": "message"}'::jsonb,
   COALESCE(p."messageAddedAt", now()),
   now()
 FROM "UserProfile" p
 JOIN "User" u ON u.id = p."userId"
 WHERE COALESCE(p.message, '') <> ''
   AND p.message !~* '</?[a-z][a-z0-9]*(\s|/|>)'
-  AND u."deletedAt" IS NULL;
+  AND u."deletedAt" IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM "Announcement" a WHERE a.metadata->>'migrated' = 'message'
+  );
 
 INSERT INTO "Announcement" ("userId", "title", "content", "color", "domain", "startsAt", "profileOnly", "disabled", "metadata", "createdAt", "updatedAt")
 SELECT
@@ -73,7 +99,7 @@ SELECT
   p."sfwMessageAddedAt",
   true,
   false,
-  '{"dismissible": true}'::jsonb,
+  '{"dismissible": true, "migrated": "sfwMessage"}'::jsonb,
   COALESCE(p."sfwMessageAddedAt", now()),
   now()
 FROM "UserProfile" p
@@ -85,7 +111,10 @@ JOIN "User" u ON u.id = p."userId"
 WHERE p."sfwMessage" IS NOT NULL
   AND p."sfwMessage" <> ''
   AND p."sfwMessage" !~* '</?[a-z][a-z0-9]*(\s|/|>)'
-  AND u."deletedAt" IS NULL;
+  AND u."deletedAt" IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM "Announcement" a WHERE a.metadata->>'migrated' = 'sfwMessage'
+  );
 
 -- The columns are NOT dropped here. They stay until the carousel has been observed
 -- working in production: ProfileHeader suppresses the banner once a creator has a live
@@ -93,7 +122,10 @@ WHERE p."sfwMessage" IS NOT NULL
 -- reversible by deleting the rows it inserted rather than by restoring text nobody has.
 --
 -- To reverse:
---   DELETE FROM "Announcement" WHERE "profileOnly" = true AND title = 'Creator Announcement' AND "createdAt" < '<the date this ran>';
+--   DELETE FROM "Announcement" WHERE metadata->>'migrated' IN ('message', 'sfwMessage');
+-- The marker is what makes this exact. A timestamp window is not: 8 of the inserted rows have
+-- a NULL "messageAddedAt" and so take createdAt = now(), which a bare date (midnight) sorts
+-- before, leaving those creators an orphaned card the reverse reported as removed.
 --
 -- Follow-up, once the carousel is confirmed live:
 --   ALTER TABLE "UserProfile"
