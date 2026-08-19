@@ -312,6 +312,52 @@ describe('unpublishModelVersionById — a version already taken down by a modera
     expect(mockTx.modelVersion.update.mock.calls[0][0].data.meta).toEqual(moderatorRecord);
   });
 
+  // 🔴 The `!reason` conjunct. Without it a moderator restating a verdict on an
+  // already-UnpublishedViolation version — or taking a Deleted one down with a fresh reason — has
+  // their new verdict silently discarded: old status kept, meta untouched, no error.
+  it('lets a moderator restate the verdict on a version already taken down', async () => {
+    seedStatus('UnpublishedViolation');
+
+    await unpublishModelVersionById({
+      id: VERSION_ID,
+      user: moderator,
+      reason: 'duplicate',
+      customMessage: 'new note',
+      meta: { unpublishedReason: 'other', customMessage: 'old' },
+    });
+
+    const data = mockTx.modelVersion.update.mock.calls[0][0].data;
+    expect(data.status).toBe('UnpublishedViolation');
+    expect(data.meta).toEqual({
+      unpublishedReason: 'duplicate',
+      customMessage: 'new note',
+      unpublishedAt: expect.any(String),
+      unpublishedBy: moderator.id,
+    });
+  });
+
+  it('refuses a reason from someone who is not a moderator', async () => {
+    // Otherwise the preserve guard's precondition holds on the model half and is merely assumed
+    // here — and this is the half whose meta the per-version notification selects on.
+    seedStatus('UnpublishedViolation');
+
+    await expect(
+      unpublishModelVersionById({ id: VERSION_ID, user: owner, reason: 'duplicate' })
+    ).rejects.toThrowError(/Only a moderator/);
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('writes no meta at all when the caller passed none', async () => {
+    // Pins the `?? undefined` on the preserve path: `?? {}` would write an empty object over the
+    // moderator's record rather than leaving the column alone.
+    seedStatus('UnpublishedViolation');
+
+    await unpublishModelVersionById({ id: VERSION_ID, user: owner });
+
+    expect(mockTx.modelVersion.update.mock.calls[0][0].data.meta).toBeUndefined();
+  });
+
   // Negative control: preserving unconditionally would leave every ordinary version unpublish
   // unrecorded, and each assertion above would still pass.
   it('still stamps an ordinary unpublish of a published version', async () => {

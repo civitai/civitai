@@ -120,6 +120,7 @@ import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   sleep,
+  throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
@@ -1715,6 +1716,13 @@ export const unpublishModelVersionById = async ({
   // revokes its buyers' access, so recent purchases have to be refunded first. Moderators bypass it
   // exactly as they do in unpublishModelById.
   if (!user.isModerator) {
+    // Same rule as unpublishModelById: only a moderator gives a reason. Without it the preserve
+    // guard below has a precondition rather than an assumption on one half and not the other — an
+    // owner supplying a reason takes the non-preserve branch, overwrites a moderator's verdict and
+    // attribution on the version they took down, and re-fires the per-version notification.
+    if (reason || customMessage)
+      throw throwAuthorizationError('Only a moderator can give a reason for unpublishing.');
+
     const requirement = await getModelVersionEarlyAccessRefundRequirement({ id });
     if (requirement.purchases.length > 0) {
       if (!refundEarlyAccess) {

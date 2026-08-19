@@ -775,6 +775,12 @@ describe('unpublishModelById — early access refund gate', () => {
         unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, reason: 'duplicate' })
       ).rejects.toThrowError(/Only a moderator/);
 
+      // customMessage alone is refused too — it is the conjunct a later simplification deletes for
+      // free, and it is the field that carries the explanation for reason 'other'.
+      await expect(
+        unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, customMessage: 'mine now' })
+      ).rejects.toThrowError(/Only a moderator/);
+
       expect(mockTx.model.update).not.toHaveBeenCalled();
     });
 
