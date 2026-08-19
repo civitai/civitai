@@ -7,6 +7,7 @@ import {
   middleware,
 } from '~/server/trpc';
 import {
+  domainColorEnum,
   getAnnouncementsPagedSchema,
   getCreatorAnnouncementsSchema,
   getCurrentAnnouncementsSchema,
@@ -23,6 +24,9 @@ import {
 import {
   deleteCreatorAnnouncement,
   getCreatorAnnouncements,
+  getFollowedAnnouncements,
+  getMutedAnnouncementCreators,
+  isAnnouncementCreatorMuted,
   toggleAnnouncementMute,
   upsertCreatorAnnouncement,
 } from '~/server/services/creator-announcement.service';
@@ -58,6 +62,25 @@ export const announcementRouter = router({
   getCreatorAnnouncements: publicProcedure
     .input(getCreatorAnnouncementsSchema)
     .query(({ input }) => getCreatorAnnouncements(input)),
+  getFollowedAnnouncements: protectedProcedure
+    .input(
+      z
+        .object({
+          limit: z.number().min(1).max(50).default(20),
+          cursor: z.number().optional(),
+          // Stamped by applyRequestDomainColor from the request host, never by the client.
+          domain: domainColorEnum.optional(),
+        })
+        .default({ limit: 20 })
+    )
+    .use(applyRequestDomainColor)
+    .query(({ ctx, input }) => getFollowedAnnouncements({ ...input, userId: ctx.user.id })),
+  getMutedCreators: protectedProcedure.query(({ ctx }) => getMutedAnnouncementCreators(ctx.user.id)),
+  isCreatorMuted: protectedProcedure
+    .input(z.object({ creatorId: z.number() }))
+    .query(({ ctx, input }) =>
+      isAnnouncementCreatorMuted({ userId: ctx.user.id, creatorId: input.creatorId })
+    ),
   upsertCreatorAnnouncement: guardedProcedure
     .input(upsertCreatorAnnouncementSchema)
     .mutation(({ ctx, input }) =>
