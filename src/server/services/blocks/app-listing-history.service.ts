@@ -322,11 +322,24 @@ export const ORPHANED_SUBMISSIONS_LIMIT = 25;
 /**
  * How many rows the DB read scans before the ownership de-dup narrows them.
  *
- * 🔴 STRICTLY GREATER THAN THE DISPLAY CAP, and the inequality is the point: the de-dup
- * runs in application code after the query and only removes rows, so scanning exactly
- * `ORPHANED_SUBMISSIONS_LIMIT` would silently return a short page whenever any of them
- * were de-duped. Bounded rather than unbounded because this is still a per-user read on an
- * indexed pair.
+ * 🔴 STRICTLY GREATER THAN THE DISPLAY CAP, because the de-dup runs in application code
+ * AFTER the query and only removes rows — scanning exactly `ORPHANED_SUBMISSIONS_LIMIT`
+ * returns a short page whenever any of them de-dup away.
+ *
+ * 🔴 THIS MAKES UNDER-RETURN 4× HARDER; IT DOES NOT CLOSE IT, and the earlier wording here
+ * implied otherwise. A short page is still produced when ≥76 of the newest 100 null-FK
+ * rows de-dup as owned AND non-owned rows exist past position 100 — reachable for a
+ * developer with roughly 8 apps × 10 pre-approval rejections each. With no pagination and
+ * no "showing 25 of N" affordance, that short page still reads as the whole truth. Closing
+ * it properly means paginating or counting, which is out of scope here and recorded in the
+ * follow-up issue.
+ *
+ * 🔴 AND RAISING IT IS CHEAPER THAN "an indexed pair" SUGGESTED. Neither
+ * `app_block_publish_requests_my_submissions_idx` (`submittedByUserId, status`) nor
+ * `…_app_history_idx` (`appBlockId, submittedAt DESC`) can serve
+ * `ORDER BY submitted_at DESC` under `submitted_by_user_id = $1 AND app_block_id IS NULL`,
+ * so Postgres top-N sorts the matching rows either way and 25 → 100 costs essentially
+ * nothing. That makes the widening safer than the original note implied, not riskier.
  */
 export const ORPHAN_SCAN_LIMIT = ORPHANED_SUBMISSIONS_LIMIT * 4;
 

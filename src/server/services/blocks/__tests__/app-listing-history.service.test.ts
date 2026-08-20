@@ -681,11 +681,20 @@ describe('🔴 the orphan read scans wider than it displays', () => {
   });
 
   /**
-   * 🔴 THE BEHAVIOURAL HALF. With the display cap of de-duped rows in front of the real
-   * ones, a `take: ORPHANED_SUBMISSIONS_LIMIT` implementation returns ZERO orphans while
-   * several exist — a confident empty result on the only surface that has them.
+   * 🔴 WHAT THIS ACTUALLY PINS: the ORDER of the two steps — de-dup FIRST, display cap
+   * SECOND. With a cap's worth of owned rows in front, applying the cap before the filter
+   * yields the 25 owned rows and then removes all of them; applying it after yields the
+   * three real ones.
+   *
+   * 🔴 IT DOES **NOT** KILL THE `take` MUTANT, and the earlier comment here claimed it did.
+   * `mockImplementation` ignores `take` entirely, so under a
+   * `take: ORPHANED_SUBMISSIONS_LIMIT` mutant the mock still hands back all 28 rows and
+   * this case passes unchanged. `take` is covered only by the argument assertion above
+   * (`call.take === ORPHAN_SCAN_LIMIT`), which is self-referential: both sides move
+   * together if the constant changes. A fixture-level guard on `take` would need a fake
+   * that honours it, which is recorded in the follow-up issue rather than bolted on here.
    */
-  it('🔴 still returns a FULL page when the de-dup removes the newest rows', async () => {
+  it('🔴 applies the display cap AFTER the de-dup, not before', async () => {
     const owned = Array.from({ length: ORPHANED_SUBMISSIONS_LIMIT }, (_, i) => ({
       id: `pubreq_owned_${i}`,
       slug: `owned-${i}`,

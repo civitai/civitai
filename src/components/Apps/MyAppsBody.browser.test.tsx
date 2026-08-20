@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   historyCalls: [] as Array<{ input: { appListingId: string }; enabled: boolean }>,
   orphans: [] as unknown[],
   orphansError: null as string | null,
+  orphansLoading: false,
   appBlocksFlag: true,
 }));
 
@@ -69,7 +70,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       listMyOrphanedSubmissions: {
         useQuery: () => ({
           data: mocks.orphans,
-          isLoading: false,
+          isLoading: mocks.orphansLoading,
           error: mocks.orphansError ? { message: mocks.orphansError } : null,
         }),
       },
@@ -143,6 +144,7 @@ beforeEach(() => {
   mocks.historyCalls = [];
   mocks.orphans = [];
   mocks.orphansError = null;
+  mocks.orphansLoading = false;
   mocks.appBlocksFlag = true;
 });
 
@@ -1132,5 +1134,91 @@ describe('MyAppsBody (container) — the orphan query’s error reaches the view
     await expect
       .element(page.getByTestId('apps-mine-orphaned-error'))
       .toHaveTextContent(/orphan read refused/i);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 🔴 The guards themselves must not become silent-zero paths
+ * ------------------------------------------------------------------ */
+
+describe('🔴 a pending or failed orphan read is never dressed up as "none"', () => {
+  const anOrphan: OrphanedSubmissionRow = {
+    id: 'pubreq_f2',
+    slug: 'in-flight',
+    version: '0.3.0',
+    status: 'withdrawn',
+    submittedAt: '2026-07-09T00:00:00Z',
+    reviewedAt: null,
+    rejectionReason: null,
+    approvalNotes: null,
+    canWithdraw: false,
+  };
+
+  /**
+   * 🔴 F1 — BOTH READS FAILED, ZERO ORPHAN ROWS. The early return keyed on orphan DATA
+   * length alone, so this shape rendered only the `listMine` alert and the orphan failure
+   * reported nothing, permanently. Zero rows is not the same fact as "the read succeeded
+   * and found none" — the silent-zero lesson applied to the guard that was written for it.
+   */
+  test('🔴 both reads failing reports BOTH failures, not just listMine', async () => {
+    renderWithProviders(
+      <MyAppsBodyView rows={[]} errorMessage="listMine blew up" orphanedError="orphans blew up" />
+    );
+    await expect.element(page.getByTestId('apps-mine-error')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-error'))
+      .toHaveTextContent(/orphans blew up/i);
+  });
+
+  /**
+   * 🔴 F2 — `rowsQuery` RESOLVED EMPTY WHILE THE ORPHAN READ IS STILL STREAMING. The two
+   * procedures batch into one request under `httpBatchStreamLink` but stream back
+   * independently, so this interleaving is ordinary rather than exotic. Without the
+   * loading term the page asserts "you don't own any apps yet" over a pending read.
+   */
+  test('🔴 an in-flight orphan read never renders the "no apps yet" empty state', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[]} orphanedLoading />);
+    await expect.element(page.getByTestId('apps-mine-list')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-empty').elements()).toHaveLength(0);
+  });
+
+  test('…and once it resolves genuinely empty, the empty state DOES appear (control arm)', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[]} orphanedLoading={false} />);
+    await expect.element(page.getByTestId('apps-mine-empty')).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 THE `isLoading && orphanedSubmissions.length === 0` GUARD'S OWN CASE. Reverting it
+   * to a plain `isLoading` survived the previous battery — it was uncovered. Its real
+   * effect is not about errors at all: once orphans resolve while rows are still loading,
+   * falling through renders the group instead of a spinner over data that already arrived.
+   */
+  test('🔴 resolved orphans render while rows are STILL loading, rather than a bare spinner', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[]} isLoading orphanedSubmissions={[anOrphan]} />);
+    await expect.element(page.getByTestId('apps-mine-orphaned-row-pubreq_f2')).toBeInTheDocument();
+  });
+
+  test('with nothing resolved yet, the loader is still what renders', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[]} isLoading />);
+    // No list, no empty state — the page is honestly still working.
+    expect(page.getByTestId('apps-mine-list').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-mine-empty').elements()).toHaveLength(0);
+  });
+});
+
+describe('MyAppsBody (container) — the orphan query’s LOADING state reaches the view', () => {
+  test('🔴 an in-flight orphan read suppresses the empty state end-to-end', async () => {
+    mocks.rows = [];
+    mocks.orphansLoading = true;
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-list')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-empty').elements()).toHaveLength(0);
+  });
+
+  test('…and a resolved-empty one does not (control arm)', async () => {
+    mocks.rows = [];
+    mocks.orphansLoading = false;
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-empty')).toBeInTheDocument();
   });
 });

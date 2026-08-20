@@ -578,6 +578,8 @@ export type MyAppsBodyViewProps = {
   orphanedSubmissions?: OrphanedSubmissionRow[];
   /** Message from a FAILED orphan read. Never conflate with an empty one. */
   orphanedError?: string | null;
+  /** Is the orphan read still in flight? An empty result mid-stream is not an empty set. */
+  orphanedLoading?: boolean;
   onWithdrawOrphan?: (row: OrphanedSubmissionRow) => void;
 };
 
@@ -596,6 +598,7 @@ export function MyAppsBodyView({
   withdrawEnabled = true,
   orphanedSubmissions = [],
   orphanedError = null,
+  orphanedLoading = false,
   onWithdrawOrphan,
 }: MyAppsBodyViewProps) {
   const [inactiveOpen, setInactiveOpen] = useState(false);
@@ -642,9 +645,15 @@ export function MyAppsBodyView({
    * submission is reachable from — an invisible population arriving by a different route,
    * i.e. the same failure mode as the defect this page exists to fix. The alert now
    * renders BESIDE whatever else resolved.
+   *
+   * 🔴 AND THE GUARD KEYS ON THE ORPHAN READ'S *ERROR* AS WELL AS ITS DATA. Keying on
+   * `orphanedSubmissions.length` alone reopened the same hole one door along: with BOTH
+   * reads failed and zero orphan rows, the early return fired and the orphan failure
+   * reported nothing, permanently. Zero rows is not the same fact as "the read succeeded
+   * and found none" — that is the whole silent-zero lesson, applied to the guard itself.
    */
   const rowsFailed = !!errorMessage;
-  if (rowsFailed && orphanedSubmissions.length === 0) {
+  if (rowsFailed && orphanedSubmissions.length === 0 && !orphanedError) {
     return (
       <Alert
         color="red"
@@ -656,6 +665,14 @@ export function MyAppsBodyView({
       </Alert>
     );
   }
+  /**
+   * 🔴 WHAT THIS GUARD ACTUALLY DOES, stated because its first comment described only the
+   * error case while its real effect is here: once the ORPHAN read resolves while `rows`
+   * are still loading, the loader stops rendering and the rows area would be empty with no
+   * loading affordance. Falling through is correct — the orphan group is real content and
+   * showing it beats a spinner over data that already arrived — but the page must then not
+   * claim the account is empty, which is what `orphanedLoading` below is for.
+   */
   if (isLoading && orphanedSubmissions.length === 0) {
     return (
       <Center py="xl">
@@ -670,8 +687,20 @@ export function MyAppsBodyView({
    * the one group that finally makes their rejected first version visible — the original
    * defect, reappearing one layer up. The alert renders INSIDE the stack, beside them.
    */
+  /**
+   * 🔴 `orphanedLoading` IS PART OF THIS PREDICATE, and it is reachable rather than
+   * defensive. The two procedures batch into ONE request under `httpBatchStreamLink` but
+   * stream back INDEPENDENTLY, so `rowsQuery` resolving empty while the orphan read is
+   * still in flight is an ordinary interleaving — and without this term the page renders
+   * "You don't own or collaborate on any apps yet" over a pending read. Streaming makes
+   * that MORE reachable, not less.
+   */
   const hasNothingAtAll =
-    rows.length === 0 && orphanedSubmissions.length === 0 && !rowsFailed && !orphanedError;
+    rows.length === 0 &&
+    orphanedSubmissions.length === 0 &&
+    !rowsFailed &&
+    !orphanedError &&
+    !orphanedLoading;
 
   return (
     <Stack gap="lg" data-testid="apps-mine-list">
@@ -990,6 +1019,7 @@ export function MyAppsBody() {
       withdrawEnabled={!!features?.appBlocks}
       orphanedSubmissions={(orphansQuery.data ?? []) as OrphanedSubmissionRow[]}
       orphanedError={orphansQuery.error?.message ?? null}
+      orphanedLoading={orphansQuery.isLoading}
       onWithdrawOrphan={onWithdrawOrphan}
     />
   );
