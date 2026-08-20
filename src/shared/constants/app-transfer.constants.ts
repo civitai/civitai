@@ -42,9 +42,8 @@
  *      `connectClientId`, stranding the `connectRequestedScopes` /
  *      `connectScopeJustifications` a moderator approved — and on an OAuth-connected
  *      listing with no `externalUrl` it leaves an approved listing whose primary CTA has
- *      no `href`,
- *      i.e. exactly the state `assertOffsiteListingActionable` exists to refuse at
- *      go-live. The "remedy" would walk the owner into a shape the go-live gate rejects.
+ *      no `href`, i.e. exactly the state `assertOffsiteListingActionable` exists to refuse
+ *      at go-live. The "remedy" would walk the owner into a shape the go-live gate rejects.
  *   3. IT IS NOT RELIABLY AVAILABLE TO WHOEVER READS THE STRING.
  *      `loadConnectClientForListing` BYPASSES its owner check for a moderator, so a
  *      mod may link a client the listing owner does not own, while `oauthClient.delete`
