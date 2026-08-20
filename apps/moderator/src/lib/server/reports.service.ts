@@ -281,14 +281,26 @@ export async function setReportStatus({
   return { ok: true as const, changed: !!updated };
 }
 
+/**
+ * Reports whether the row was there, rather than throwing. Zero rows here means the report was
+ * deleted while the moderator was typing — a race, not an error on their part — and the caller has
+ * to be able to tell the difference, because the right answer is to take the row off their screen
+ * rather than to leave them staring at notes that were silently dropped.
+ */
 export async function updateReportNotes({
   id,
   internalNotes,
 }: {
   id: number;
   internalNotes: string | null;
-}) {
-  await dbWrite.updateTable('Report').set({ internalNotes }).where('id', '=', id).execute();
+}): Promise<{ ok: true } | { ok: false; gone: true }> {
+  const result = await dbWrite
+    .updateTable('Report')
+    .set({ internalNotes })
+    .where('id', '=', id)
+    .executeTakeFirst();
+
+  return result.numUpdatedRows > 0n ? { ok: true } : { ok: false, gone: true };
 }
 
 export type MostReportedRow = {

@@ -1,3 +1,4 @@
+import promClient from 'prom-client';
 import { vi } from 'vitest';
 import { getTestRsaKeyPair } from './rsa-test-key';
 import { dbMock } from './mocks/db.mock';
@@ -191,6 +192,18 @@ vi.mock('~/server/prom/client', () => ({
   vaultItemFailedCounter: promMetricStub(),
   rewardGivenCounter: promMetricStub(),
   rewardFailedCounter: promMetricStub(),
+  // Also re-exported rather than declared here, and NOT a metric — it is the real cross-graph
+  // Registry that `src/pages/api/metrics.ts` scrapes and now also registers its own failure counter
+  // on, at MODULE scope. Omitting it means any suite that merely IMPORTS that page throws
+  // `No "instrumentationRegistry" export is defined on the "~/server/prom/client" mock` during
+  // module evaluation — which is not a failure of the thing under test, and is invisible until some
+  // unrelated suite happens to import the page (two seed suites did, and went red in CI while every
+  // metrics-specific suite stayed green, because those mock the module themselves).
+  //
+  // A REAL throwaway Registry rather than a stub: consumers call `.metrics()`, `.getSingleMetric()`
+  // and register into it, and a stub that answered those with vi.fn() would let a suite assert
+  // against a registry that never held anything.
+  instrumentationRegistry: new promClient.Registry(),
   // Re-exported from '@civitai/telemetry/client' rather than declared in
   // prom/client, so this module-replacing mock drops it. `base.reward` and
   // `image.service` both call `.inc()` on it WITHOUT the `?.inc?.()` guard their

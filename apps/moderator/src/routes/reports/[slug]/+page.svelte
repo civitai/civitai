@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { goto } from '$app/navigation';
+  import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { IconExternalLink } from '@tabler/icons-svelte';
   import {
@@ -28,6 +28,7 @@
     SheetHeader,
     SheetTitle,
   } from '@civitai/ui/components/ui/sheet/index.js';
+  import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { MultiCombobox } from '@civitai/ui/components/ui/multi-combobox/index.js';
@@ -41,9 +42,28 @@
     reportedPlacementId,
     reportDetail,
   } from '$lib/reports';
+  import type { ActionResult } from '@sveltejs/kit';
+  import { FormState } from '$lib/form-state.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  /**
+   * A `gone` refusal means the report was deleted underneath the moderator, so the queue reloads and
+   * the row leaves — which closes the sheet through `selected`, taking the panel's own error with it.
+   * A toast is the only surface that outlives that, and without one the row simply vanishes.
+   * Every other refusal leaves the sheet open to fix and retry, which is `FormState`'s default.
+   */
+  const reloadIfGone = (result: ActionResult) => {
+    if (result.type !== 'failure' || !result.data?.gone) return;
+    toast.error(String(result.data.error ?? 'That report no longer exists.'));
+    invalidateAll();
+  };
+
+  const statusForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
+  const notesForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
+  const placementForm = new FormState({ onSuccess: null, reload: true });
+  const sweepForm = new FormState({ onSuccess: null, reload: true });
 
   let selectedId = $state<number | null>(null);
   // Armed per placement id, so closing the sheet and opening another report cannot leave a live
@@ -97,6 +117,10 @@
 
   function openDetails(id: number) {
     selectedId = id;
+    // A refusal belongs to the report it was raised on; opening another must not inherit it.
+    statusForm.error = null;
+    notesForm.error = null;
+    placementForm.error = null;
   }
 </script>
 
@@ -108,20 +132,22 @@
 <!-- Retool's `ActionAllPostReports`. Only meaningful here: the query keys on every image in the post
      already being blocked, which is a post-shaped question. -->
 {#if data.type === 'post'}
-  <form method="POST" action="?/actionResolvedPosts" use:enhance class="mb-4">
+  <form method="POST" action="?/actionResolvedPosts" use:enhance={sweepForm.enhance} class="mb-4">
     <Button type="submit" variant="outline" size="sm">Action reports already resolved by content</Button>
     <span class="ml-2 text-xs text-muted-foreground">
       Pending reports whose post is entirely blocked already.
     </span>
   </form>
   <!-- A bulk action that reports nothing is indistinguishable from one that did nothing. -->
-  {#if form && 'message' in form && form.message}
-    <p class="mb-4 text-sm text-amber-300" role="status">{form.message}</p>
-  {:else if form && 'actioned' in form && form.actioned != null}
+  {#if form && 'actioned' in form && form.actioned != null}
     <p class="mb-4 text-sm text-green-300" role="status">
       Actioned {form.actioned} of {form.found}{form.skipped ? `, ${form.skipped} already handled` : ''}{form.more ? ' — more remain, run it again.' : ''}
     </p>
   {/if}
+{/if}
+
+{#if sweepForm.error}
+  <p class="mb-4 text-sm text-red-300" role="alert">{sweepForm.error}</p>
 {/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
@@ -314,9 +340,11 @@
               sticker off the image for everyone.
             </p>
             {#if confirmingPlacement === placementId}
-              <form method="POST" action="?/removePlacement" use:enhance class="flex flex-wrap gap-2">
+              <form method="POST" action="?/removePlacement" use:enhance={placementForm.enhance} class="flex flex-wrap gap-2">
                 <input type="hidden" name="placementId" value={placementId} />
-                <Button type="submit" size="sm" variant="destructive">Yes, remove it</Button>
+                <Button type="submit" size="sm" variant="destructive" disabled={placementForm.submitting}>
+                  Yes, remove it
+                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -326,7 +354,11 @@
                   Cancel
                 </Button>
               </form>
-            {:else}
+            {/if}
+            {#if placementForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{placementForm.error}</p>
+            {/if}
+            {#if confirmingPlacement !== placementId}
               <Button size="sm" variant="destructive" onclick={() => (confirmingPlacement = placementId)}>
                 Remove placement
               </Button>
@@ -334,7 +366,7 @@
           </div>
         {/if}
 
-        <form method="POST" action="?/setStatus" use:enhance class="flex flex-col gap-2">
+        <form method="POST" action="?/setStatus" use:enhance={statusForm.enhance} class="flex flex-col gap-2">
           <input type="hidden" name="id" value={selected.id} />
           <span class="text-sm font-medium">Status</span>
           <div class="flex flex-wrap gap-2">
@@ -351,17 +383,33 @@
               </Button>
             {/each}
           </div>
+          {#if statusForm.error}
+            <p class="text-sm text-red-300" role="alert">{statusForm.error}</p>
+          {/if}
         </form>
 
-        <form method="POST" action="?/saveNotes" use:enhance class="flex flex-col gap-2">
+        <form method="POST" action="?/saveNotes" use:enhance={notesForm.enhance} class="flex flex-col gap-2">
           <input type="hidden" name="id" value={selected.id} />
           <span class="text-sm font-medium">Internal notes</span>
           <Textarea name="internalNotes" rows={3} value={selected.internalNotes ?? ''} />
-          <Button type="submit" size="sm" class="self-end">Save notes</Button>
+          <Button type="submit" size="sm" class="self-end" disabled={notesForm.submitting}>
+            Save notes
+          </Button>
+          {#if notesForm.error}
+            <p class="text-sm text-red-300" role="alert">{notesForm.error}</p>
+          {/if}
         </form>
       </div>
     {:else}
-      <div class="p-6 text-sm text-muted-foreground">Report updated.</div>
+      <!-- Reached while the sheet plays its exit animation with `selected` already null, which happens
+           two ways: an action emptied the row (bits-ui does not fire `onOpenChange` for a
+           parent-driven close, so `selectedId` still holds it) or the moderator clicked the X (which
+           does, so it is null). Only the first is an update, and only a `success` outcome is one at
+           all — `gone` means the report was deleted and the edit dropped. Both conditions, or this
+           says "Report updated." at someone who read a report and closed it. -->
+      {#if selectedId !== null && form && 'success' in form && form.success}
+        <div class="p-6 text-sm text-muted-foreground">Report updated.</div>
+      {/if}
     {/if}
   </SheetContent>
 </Sheet>

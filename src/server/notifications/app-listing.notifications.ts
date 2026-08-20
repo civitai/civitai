@@ -31,8 +31,16 @@ export type AppListingModerationNotificationDetails = {
   listingId?: string | null;
 };
 
-/** All four owner notifications point the owner at their submissions/history view. */
-const OWNER_SUBMISSIONS_URL = '/apps/mine';
+/**
+ * Every owner-facing app-listing notification points the owner at their submissions/history view.
+ *
+ * Exported because `new-app-listing-comment` (in `comment.notifications.ts`) is the fifth such
+ * notification and must land on the same page for the same reason: `/apps/mine` gates on
+ * `appBlocksAuthor`, the developer cohort a listing owner is in by construction, whereas the
+ * public detail page gates on `hasAppsStoreAccess` and 404s for owners outside it. One constant,
+ * so a route rename moves all five.
+ */
+export const OWNER_SUBMISSIONS_URL = '/apps/mine';
 
 function appLabel(details: AppListingModerationNotificationDetails): string {
   return details.name ? `"${details.name}"` : 'Your app';

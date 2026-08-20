@@ -168,6 +168,20 @@ const flipt = createFliptClient({
   },
 });
 
+// 🔴 THE ENTITY-ID TRAP. All four evaluators below take `(flag, entityId?,
+// context?)`, and the two arguments are NOT interchangeable. A Flipt segment
+// constraint reads one of two inputs depending on its TYPE:
+// `ENTITY_ID_COMPARISON_TYPE` matches the `entityId` argument, while
+// `STRING_COMPARISON_TYPE` matches a named property of the `context`. Of the 15
+// segments in flipt-state today, 12 are the latter — including every identity,
+// tier and cohort segment we have (`moderators`, `testers`, `early-adopters`,
+// `members`, `app-dev-testers`, `CreatorProgram`, …).
+//
+// So `isFlipt(FLAG, String(user.id))` cannot match any of those, for anybody.
+// It returns the flag's base `enabled` value instead, which is indistinguishable
+// from an honest "this user is not in the segment" — no error, no log line. Pass
+// `buildFliptContext(user)`, or at minimum the properties you actually know.
+// Enforced by `src/server/flipt/__tests__/flipt-eval-context.test.ts`.
 export const isFlipt = flipt.isEnabled;
 export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;

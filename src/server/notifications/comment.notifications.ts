@@ -5,6 +5,7 @@ import {
   createNotificationProcessor,
   notBlockedBetween,
 } from '~/server/notifications/base.notifications';
+import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 import { QS } from '~/utils/qs';
 
 /**
@@ -37,6 +38,31 @@ export const appListingSlugJoin = (expr: string) =>
  * `ON DELETE SET NULL`, so a resolvable `appListingId` always has a slug).
  */
 export const appListingSlugResolved = (expr: string) => `(${expr} IS NULL OR al.slug IS NOT NULL)`;
+
+/**
+ * The canonical owner of an app listing, in SQL — the raw-SQL mirror of
+ * `resolveCanonicalListingOwner` in `~/server/services/blocks/app-access.service`.
+ *
+ * 🔴 OWNERSHIP IS NOT ONE COLUMN. It depends on the listing's KIND:
+ *   - `onsite`  → the owner is `OauthClient.userId`, reached as `AppBlock.app.userId`.
+ *                 `app_listings.user_id` is a DENORMALIZED COPY there and can go stale —
+ *                 `acceptTransfer` calls it "the denormalized follow-up, where a 0-count is a
+ *                 legitimate desync". It stays the FALLBACK, because a listing whose block
+ *                 carries a dangling `app_id` still needs an owner.
+ *   - anything else (incl. `offsite`) → the column IS the owner, unconditionally. An unknown
+ *                 kind falls through to the column deliberately, matching the service's
+ *                 fail-closed behaviour.
+ *
+ * Reading the column alone is latent-wrong rather than wrong today (measured: 0 of 21 onsite
+ * listings diverge), but 17 of 21 onsite listings are the shape that could — and a divergence
+ * would send the listing name, slug and a commenter's username to the PREVIOUS owner while the
+ * real one silently got nothing. That is a disclosure, not just a miss, so it is resolved here
+ * rather than commented around.
+ *
+ * Requires `al`, plus `LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"` and
+ * `LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"` to be in scope.
+ */
+export const APP_LISTING_OWNER_SQL = `CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END`;
 
 /**
  * Human-readable noun for a thread type in notification copy.
@@ -709,6 +735,107 @@ export const commentNotifications = createNotificationProcessor({
       FROM new_post_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-post-comment');
+    `,
+  },
+  'new-app-listing-comment': {
+    displayName: 'New comments on your app listings',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your app listing: "${details.listingName}"`,
+      // 🔴 THE OWNER'S SUBMISSIONS VIEW, **NOT** the public listing detail page — and this is a
+      // deliberate reversal of the issue's suggestion, for a measured reason.
+      //
+      // `/apps/store-preview/<slug>` gates on `hasAppsStoreAccess`, which rolls out to
+      // `moderators` OR `app-dev-testers` only. Measured against prod: of the 4 current listing
+      // owners, one is in NEITHER cohort — so a deep link 404s for the very person being
+      // notified. #4160's three types escaped this because their recipient had already commented
+      // in the thread and had therefore already proven they could open the page; this is the
+      // first app-listing notification pushed to an owner UNCONDITIONALLY, so it cannot borrow
+      // that assumption.
+      //
+      // `/apps/mine` gates on `isAppDeveloper` = `isModerator || opts.appBlocksAuthor`
+      // (`app-blocks-access.ts:52`). 🔴 That is a FLIPT COHORT FLAG, not a structural property of
+      // owning a listing: an owner outside the cohort gets `notFound` here too. This is therefore
+      // the BETTER destination, not a guaranteed one — it is where all four existing owner-facing
+      // app-listing notifications already point, so this type is not inventing a reachability
+      // assumption of its own, and the cohort it needs is the developer one rather than the
+      // narrower store-access one. Shared constant rather than a second literal, so a route
+      // rename moves all five.
+      url: OWNER_SUBMISSIONS_URL,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_app_listing_comment AS (
+        SELECT DISTINCT
+          ${APP_LISTING_OWNER_SQL} "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'commentId', c.id,
+            'appListingSlug', al.slug,
+            'listingName', al.name,
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        -- TOP-LEVEL comments only. A reply's own thread is keyed by its parent COMMENT and carries
+        -- no "appListingId", so it never matches — replies stay with new-comment-reply /
+        -- new-thread-response.
+        --
+        -- 🔴 THIS PREDICATE IS BEHAVIOURALLY REDUNDANT, AND THAT IS DELIBERATE. The
+        -- app_listings join below is an INNER join on al."serial_id" = t."appListingId", and NULL
+        -- never equals anything, so a NULL "appListingId" is already excluded by the join itself:
+        -- removing this line produces BYTE-IDENTICAL result rows — executed against a real
+        -- Postgres 16 fixture by the #4184 audit, not reasoned about here.
+        --
+        -- So a mutant that deletes it SURVIVES because it is UNREACHABLE — no input can make the
+        -- guard change the answer — NOT because a test forgot to assert it. The distinction has
+        -- opposite remedies: an unasserted mutant wants a new assertion, an unreachable one wants
+        -- nothing (adding a test for it would be vacuous by construction). Kept as
+        -- defence-in-depth so the intent survives a future refactor that makes the join LEFT or
+        -- reorders it — at which point the redundancy ends and this becomes load-bearing.
+        JOIN "Thread" t ON t.id = c."threadId" AND t."appListingId" IS NOT NULL
+        JOIN "app_listings" al ON al."serial_id" = t."appListingId"
+        -- Ownership chain for the onsite kind — see APP_LISTING_OWNER_SQL. LEFT, because an
+        -- offsite listing has no block and an onsite one may carry a dangling app_id; both must
+        -- still fall back to the column rather than drop the row.
+        LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"
+        LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"
+        WHERE ${APP_LISTING_OWNER_SQL} > 0
+          -- Only APPROVED listings. The destination reads through
+          -- \`appListings.getAppDetail\`, which is approved-only, so a comment on a draft /
+          -- rejected / moderator-removed listing would notify its owner toward a NotFound.
+          -- Measured on prod: only 14 of 28 listings are approved. Mirrors the sibling raw-SQL
+          -- consumer (appListing.metrics.sql.ts).
+          AND al."status" = 'approved'
+          -- Never a shadow revision. \`beginListingRevision\` clones an approved parent as a
+          -- hidden draft; the clone freezes \`user_id\` at clone time and no ownership write
+          -- revisits it, so a shadow can name a STALE owner. Not reachable today (shadows are
+          -- draft, so the status filter already excludes them) — belt and braces, and it
+          -- matches every Prisma-side ownership read.
+          AND al."revision_of_id" IS NULL
+          AND c."createdAt" > '${lastSent}'
+          -- Two floors, for the reason new-post-comment carries them: this type has no cursor row
+          -- until its first successful run, so it inherits the job's GLOBAL last-run — new Date(0)
+          -- on a fresh DB, and stale by the outage duration after any send-notifications outage.
+          AND c."createdAt" > '2026-08-19'
+          -- The rolling window is the one that never goes stale: it bounds any first batch to
+          -- ~7 days however far the cursor drifted.
+          AND c."createdAt" > NOW() - INTERVAL '7 days'
+          -- A commenter never notifies themselves for their own listing.
+          AND c."userId" != ${APP_LISTING_OWNER_SQL}
+          -- Argument ORDER is load-bearing: (recipient, actor). Swapped, the owner's Hide stops
+          -- suppressing and the commenter's starts — a silent inversion of who gets muted.
+          AND ${notBlockedBetween(APP_LISTING_OWNER_SQL, 'c."userId"')}
+      )
+      SELECT
+        concat('new-comment-app-listing:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId"    "userId",
+        'new-app-listing-comment' "type",
+        details
+      FROM new_app_listing_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-app-listing-comment');
     `,
   },
   'new-article-comment': {

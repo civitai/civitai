@@ -106,6 +106,11 @@ export const getAutoLabelWorkflowSchema = z.object({
   workflowId: z.string().min(1),
 });
 
+export type GetTrainingEpochArchiveInput = z.infer<typeof getTrainingEpochArchiveSchema>;
+export const getTrainingEpochArchiveSchema = z.object({
+  modelVersionId: z.number().positive(),
+});
+
 export const trainingServiceStatusSchema = z.object({
   available: z.boolean().default(true),
   message: z.string().nullish(),
