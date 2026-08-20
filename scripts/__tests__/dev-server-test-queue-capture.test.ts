@@ -1,6 +1,6 @@
 import type * as ChildProcess from 'child_process';
 import { EventEmitter } from 'events';
-import { closeSync, existsSync, openSync, rmSync, writeFileSync, writeSync } from 'fs';
+import { closeSync, existsSync, openSync, readdirSync, rmSync, writeFileSync, writeSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -357,6 +357,7 @@ describe('the queue hands its child the capture file, not a pipe', () => {
         onLog: (_level: string, message: string) => messages.push(message),
         onExit: () => {},
       });
+      const stdio = (spawnMock.mock.calls[0][2] as { stdio: number[] }).stdio;
 
       handle.dispose();
       const before = messages.length;
@@ -370,6 +371,92 @@ describe('the queue hands its child the capture file, not a pipe', () => {
       // how the first version of this test passed against a surviving interval.
       writeFileSync(foreign, 'FOREIGN-SECRET\n'.repeat(500));
       foreignFds.push(openSync(foreign, 'r'), openSync(foreign, 'r'));
+
+      // The self-check. This case only has teeth if the reclamation actually happened — if it
+      // ever stops, `readSync` gets EBADF, `drain()` breaks silently, and the test goes on
+      // passing while protecting nothing.
+      expect(foreignFds).toContain(stdio[1]);
+
+      vi.advanceTimersByTime(1000);
+
+      expect(messages.slice(before)).toEqual([]);
+      expect(messages.some((m) => m.includes('FOREIGN-SECRET'))).toBe(false);
+    } finally {
+      for (const fd of foreignFds) closeSync(fd);
+      rmSync(foreign, { force: true });
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * A log consumer that throws must not cost the descriptors and the file.
+   *
+   * Draining calls back into `onLog`. With the close outside a `finally`, a throwing consumer
+   * left BOTH descriptors open and the capture file on disk — measured — per run, in a daemon
+   * that runs for days. The slot-freeing guard upstream then swallows it, so it would be silent
+   * as well as leaky.
+   */
+  it('releases the descriptors and the file even when the log consumer throws', () => {
+    const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
+    spawnMock.mockReturnValue(child);
+
+    let seen = 0;
+    const handle = defaultStartRun({
+      worktree: repoRoot,
+      args: [],
+      onLog: (_level: string, message: string) => {
+        // The queue's own preamble line arrives first; blow up on captured output.
+        if (message.startsWith('boom')) {
+          seen += 1;
+          throw new Error('log consumer blew up');
+        }
+      },
+      onExit: () => {},
+    });
+    const stdio = (spawnMock.mock.calls[0][2] as { stdio: number[] }).stdio;
+    const capturePath = readdirSync(tmpdir())
+      .filter((f) => f.startsWith('civitai-test-run-'))
+      .map((f) => resolve(tmpdir(), f));
+    writeSync(stdio[1], 'boom one\nboom two\n');
+
+    expect(() => handle.dispose()).toThrow(/log consumer blew up/);
+
+    expect(seen).toBeGreaterThan(0);
+    // Released despite the throw: the descriptor is closed and the file is gone.
+    expect(() => writeSync(stdio[1], 'x')).toThrow();
+    for (const p of capturePath) expect(existsSync(p)).toBe(false);
+  });
+
+  /**
+   * The same hazard on the path every healthy run takes.
+   *
+   * `finish()` and `dispose()` have the identical clearInterval -> drain -> close shape, and the
+   * previous round pinned only `dispose()` — the RARER of the two. `finish()` runs on every
+   * normal child exit, so a stray interval there is the common case, not the edge case.
+   */
+  it('stops the tail on a normal exit too, not just on dispose', () => {
+    vi.useFakeTimers();
+    const foreign = resolve(tmpdir(), `civitai-fd-probe-${process.pid}-${Date.now()}-exit.log`);
+    const foreignFds: number[] = [];
+    try {
+      const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
+      spawnMock.mockReturnValue(child);
+
+      const messages: string[] = [];
+      defaultStartRun({
+        worktree: repoRoot,
+        args: [],
+        onLog: (_level: string, message: string) => messages.push(message),
+        onExit: () => {},
+      });
+      const stdio = (spawnMock.mock.calls[0][2] as { stdio: number[] }).stdio;
+
+      child.emit('exit', 0);
+      const before = messages.length;
+
+      writeFileSync(foreign, 'FOREIGN-SECRET\n'.repeat(500));
+      foreignFds.push(openSync(foreign, 'r'), openSync(foreign, 'r'));
+      expect(foreignFds).toContain(stdio[1]);
 
       vi.advanceTimersByTime(1000);
 

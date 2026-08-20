@@ -219,8 +219,14 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
     // Ordering is the point. Every remaining line is read BEFORE the run is reported terminal,
     // so a waiter that wakes on the terminal status cannot observe a log that is still filling.
     // The old pipe path could call onExit with lines still in flight.
-    capture.drain(true);
-    capture.close();
+    //
+    // `finally`, because draining calls back into `onLog`: a consumer that throws would otherwise
+    // leave both descriptors open and the capture file on disk, per run, in a long-lived daemon.
+    try {
+      capture.drain(true);
+    } finally {
+      capture.close();
+    }
     onExit(code, error);
   };
 
@@ -243,8 +249,13 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
     if (finished) return;
     finished = true;
     clearInterval(tail);
-    capture.drain(true);
-    capture.close();
+    // See finish(): the close is in `finally` so a throwing log consumer cannot leak the
+    // descriptors and the file.
+    try {
+      capture.drain(true);
+    } finally {
+      capture.close();
+    }
   };
 
   emitter.pid = child.pid;
@@ -414,8 +425,10 @@ export class TestQueue {
         // Releasing the slot matters more than releasing the file descriptors.
         try {
           run.handle?.dispose?.();
-        } catch {
-          /* the slot must be freed regardless */
+        } catch (err) {
+          // The slot is freed regardless — but silently swallowing this would hide a clipped log
+          // behind `logsDropped: 0`, which is exactly what the truncation marker exists to stop.
+          this.addLog(run, 'error', `capture release failed: ${err?.message ?? String(err)}`);
         }
         run.handle = null;
         this.release(id);
@@ -472,8 +485,8 @@ export class TestQueue {
       // leaving every remaining run unkilled and the caller's `process.exit(0)` unreached.
       try {
         run.handle?.dispose?.();
-      } catch {
-        /* the slot must be freed regardless */
+      } catch (err) {
+        this.addLog(run, 'error', `capture release failed: ${err?.message ?? String(err)}`);
       }
       run.handle = null;
       this.release(id);
