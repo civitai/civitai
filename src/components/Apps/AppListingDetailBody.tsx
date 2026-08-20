@@ -15,6 +15,7 @@ import {
   Stack,
   Text,
   Title,
+  UnstyledButton,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
@@ -30,7 +31,7 @@ import {
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   appInitial,
@@ -47,6 +48,12 @@ import {
 } from '~/components/Apps/appListingDetailView';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
+import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
+import {
+  NO_BROKEN_SCREENSHOTS,
+  withBrokenIndex,
+  type BrokenScreenshotIndexes,
+} from '~/components/Apps/appListingScreenshotNav';
 import { RelatedListings } from '~/components/Apps/RelatedListings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
@@ -375,43 +382,95 @@ function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
 }
 
 /**
- * One screenshot tile — hides itself on load error (a dangling Image ref) rather
- * than rendering a broken `<img>`. Plain `<img>` (mirrors AppDetailsModal / the
- * live detail): the URL is a CDN edge URL, not a configured Next/Image domain.
+ * One screenshot tile — a BUTTON that opens the full-size viewer, and the reporter
+ * of a dangling Image ref. Plain `<img>` (mirrors AppDetailsModal / the live
+ * detail): the URL is a CDN edge URL, not a configured Next/Image domain.
+ *
+ * 🔴 THE `broken` STATE MOVED UP TO THE GALLERY, DELIBERATELY. It used to be this
+ * component's own `useState`, and hiding itself was all it ever did with it — which
+ * was enough while nothing else needed to know. It is not enough now: the viewer
+ * navigates over the same list, so a shot the GRID has already given up on must be
+ * one the VIEWER skips too, and one component's private state cannot say that. The
+ * rendered result is unchanged — the tile still disappears on a load error — but the
+ * decision is made once, by the owner of the list, instead of twice.
+ *
+ * 🔴 IT IS A REAL `<button>` (`UnstyledButton`), NOT an `<img onClick>`. The tile has
+ * to be tab-reachable and Enter/Space-activatable, and the accessible name has to
+ * come from somewhere: it is COMPUTED FROM THE CONTENT (the image `alt` plus the
+ * caption text) rather than pinned with an `aria-label`, so the name always contains
+ * the caption the viewer can see — a bare `aria-label="View screenshot"` would strip
+ * it and break WCAG 2.5.3 label-in-name. The button sits INSIDE the `Card` rather
+ * than replacing it so the grid's children stay one element per tile, which is what
+ * the gallery's fill rule (`:last-child:nth-child(odd)`) matches on.
  */
 function ScreenshotTile({
   shot,
   name,
   index,
+  onOpen,
+  onBroken,
 }: {
   shot: ListingGalleryScreenshot;
   name: string;
+  /** Index into the gallery's URL-filtered list — the viewer's index space. */
   index: number;
+  onOpen: () => void;
+  onBroken: () => void;
 }) {
-  const [broken, setBroken] = useState(false);
-  if (broken) return null;
   return (
     <Card withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={shot.url}
-        alt={shot.caption ? shot.caption : `${name} screenshot ${index + 1}`}
-        loading="lazy"
-        onError={() => setBroken(true)}
-        style={{ width: '100%', height: 'auto', display: 'block' }}
-      />
-      {shot.caption && (
-        <Text size="xs" c="dimmed" p="xs" lineClamp={2}>
-          {shot.caption}
-        </Text>
-      )}
+      <UnstyledButton
+        onClick={onOpen}
+        data-testid="apps-listing-screenshot-tile"
+        // The index this tile represents, as a DOM fact. A test that clicks "the
+        // third tile" and asserts the viewer opened on shot 3 is otherwise asserting
+        // against its own fixture order rather than against the wiring.
+        data-screenshot-index={index}
+        // Paired with a ring, never a bare `outline: none` — keyboard focus has to
+        // stay visible on a tile whose whole job is to be activated by keyboard.
+        className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-5"
+        style={{ display: 'block', width: '100%', textAlign: 'left' }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={shot.url}
+          alt={shot.caption ? shot.caption : `${name} screenshot ${index + 1}`}
+          loading="lazy"
+          onError={onBroken}
+          style={{ width: '100%', height: 'auto', display: 'block' }}
+        />
+        {shot.caption && (
+          <Text size="xs" c="dimmed" p="xs" lineClamp={2}>
+            {shot.caption}
+          </Text>
+        )}
+      </UnstyledButton>
     </Card>
   );
 }
 
 /**
  * Screenshot gallery — reuses AppDetailsModal's SimpleGrid pattern. Empty/broken
- * URLs are skipped; the whole section is hidden when nothing remains.
+ * URLs are skipped; the whole section is hidden when nothing remains. Each tile
+ * opens the full-size `AppListingScreenshotViewer` (prev/next, arrow keys, Esc,
+ * caption, `3 / 7` indicator).
+ *
+ * 🔴 THIS COMPONENT OWNS THE INDEX SPACE THAT BOTH SURFACES READ, and that is the
+ * whole reason the viewer is mounted HERE rather than fired at the app-wide
+ * `dialogStore`. `shots` (the URL-filtered list) and `broken` (the indices whose
+ * image 404'd) are single copies shared by the grid and the viewer, so the tile at
+ * `shots` index *i* opens the viewer at *i* with nothing in between to be off by
+ * one about. A viewer holding its own snapshot of either would diverge silently —
+ * see the rejected-alternatives ledger in `AppListingScreenshotViewer`'s header,
+ * and the seam gate in `__tests__/appListingScreenshotViewerWiring.test.ts`.
+ *
+ * 🔴 THE VIEWER IS **NOT** OMITTED IN `preview`, deliberately, and that is a
+ * decision against the grain of the posture ledger on this file's props. The
+ * ledger's rule is "omit every LIVE / interactive / AGGREGATE surface"; a lightbox
+ * is none of those — it queries nothing, writes nothing and acts on nothing. A
+ * moderator reviewing a shadow listing's MEDIA is precisely the reader who most
+ * needs to see a screenshot at full size, so keeping it serves the posture rather
+ * than bending it. The gallery itself was already on the KEPT side of that ledger.
  *
  * 🔴 THE GRID IS STILL TWO TRACKS; WHAT CHANGED IS WHAT AN UNPAIRED TILE DOES.
  * A fixed `cols={{ base: 1, sm: 2 }}` gave a single-screenshot listing HALF the
@@ -438,7 +497,31 @@ function ScreenshotGallery({
   name: string;
 }) {
   const shots = screenshots.filter((s) => !!s.url);
+
+  // 🔴 THE ONE INDEX SPACE, AND THE ONE PLACE THAT KNOWS WHICH SHOTS ARE REAL.
+  // Both pieces of state are indices into `shots` — the URL-filtered list above —
+  // never into the raw `screenshots` prop, and the tile at `shots` index *i* opens
+  // the viewer at *i* with no mapping in between. That is the whole defence against
+  // the off-by-one this feature invites: there is no second numbering to disagree
+  // with the first. `broken` lives here rather than in the tile because the viewer
+  // has to skip the same shots the grid has dropped (see `ScreenshotTile`).
+  const [broken, setBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const markBroken = useCallback(
+    (index: number) => setBroken((prev) => withBrokenIndex(prev, index)),
+    []
+  );
+
   if (shots.length === 0) return null;
+
+  // Rendered from the SAME array the viewer reads, minus what has failed to load, so
+  // a tile's `index` prop is its viewer index even after earlier tiles have dropped
+  // out. Mapping over the filtered-but-not-renumbered pairs is what keeps that true:
+  // renumbering here would silently shift every `alt` and every open target.
+  const visible = shots
+    .map((shot, index) => ({ shot, index }))
+    .filter(({ index }) => !broken.has(index));
+
   return (
     <Stack gap="xs">
       <Title order={4}>Screenshots</Title>
@@ -448,10 +531,26 @@ function ScreenshotGallery({
         className={galleryClasses.gallery}
         data-testid="apps-listing-screenshot-grid"
       >
-        {shots.map((shot, i) => (
-          <ScreenshotTile key={`${shot.url}-${i}`} shot={shot} name={name} index={i} />
+        {visible.map(({ shot, index }) => (
+          <ScreenshotTile
+            key={`${shot.url}-${index}`}
+            shot={shot}
+            name={name}
+            index={index}
+            onOpen={() => setOpenIndex(index)}
+            onBroken={() => markBroken(index)}
+          />
         ))}
       </SimpleGrid>
+      <AppListingScreenshotViewer
+        shots={shots}
+        name={name}
+        broken={broken}
+        index={openIndex}
+        onIndexChange={setOpenIndex}
+        onBroken={markBroken}
+        onClose={() => setOpenIndex(null)}
+      />
     </Stack>
   );
 }
