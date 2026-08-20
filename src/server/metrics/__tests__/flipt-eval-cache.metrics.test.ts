@@ -24,18 +24,57 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptCacheStats: () => stats,
 }));
 
-/** Read one `{cache}` series' current value from the default registry. */
+/**
+ * Read one `{cache}` series' current value from the default registry.
+ *
+ * 🔴 Returns NaN — never 0 — when the metric or the label is missing. A `?? 0`
+ * here makes every assertion whose expected value is 0 pass whether or not the
+ * series exists, and one of the fixtures below legitimately expects 0. That is
+ * the absent-vs-zero ambiguity this whole metric exists to remove, so it must not
+ * be reintroduced in the test that guards it. (Caught by mutation: gating the
+ * `variant` inc on a non-zero value SURVIVED against a `?? 0` reader.)
+ */
 async function read(metricName: string, cache: string): Promise<number> {
   const metric = client.register.getSingleMetric(metricName) as
     | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
     | undefined;
   if (!metric) return Number.NaN;
   const { values } = await metric.get();
-  return values.find((v) => v.labels.cache === cache)?.value ?? 0;
+  const found = values.find((v) => v.labels.cache === cache);
+  return found ? found.value : Number.NaN;
 }
 
 beforeEach(() => {
   client.register.resetMetrics();
+});
+
+/**
+ * 🔴 THE SEAM, and it is the one this file previously left open. Importing
+ * `../flipt-eval-cache.metrics` directly proves the module registers — it CANNOT
+ * prove anything reaches it in production. These counters have no emitter on the
+ * request path; the only way they exist on a pod is the module-scope side-effect
+ * import in `src/pages/api/metrics.ts`. Deleting that line left the whole
+ * `src/server/metrics/` suite green (131/131), i.e. registered-but-unreached —
+ * this repo's documented #1 metric-death mode, and exactly what the sibling seam
+ * tests for substitutions and bitdex-feed-serve exist to catch.
+ *
+ * So this asserts against the module that SERVES the scrape, not the one that
+ * declares the metric. Behavioural on purpose: parsing `metrics.ts` for the
+ * import string would be a spelled guard, satisfiable by a comment.
+ */
+describe('flipt eval-cache metrics — the /api/metrics seam', () => {
+  it('is registered by loading the module that serves the scrape', async () => {
+    await import('~/pages/api/metrics');
+    for (const name of [
+      'civitai_app_flipt_eval_cache_hits_total',
+      'civitai_app_flipt_eval_cache_misses_total',
+      'civitai_app_flipt_eval_cache_expired_misses_total',
+      'civitai_app_flipt_eval_cache_rotations_total',
+      'civitai_app_flipt_eval_cache_entries',
+    ]) {
+      expect(client.register.getSingleMetric(name), name).toBeDefined();
+    }
+  });
 });
 
 describe('flipt eval-cache metrics', () => {

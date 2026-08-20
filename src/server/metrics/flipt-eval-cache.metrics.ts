@@ -40,10 +40,14 @@ import { getFliptCacheStats } from '~/server/flipt/client';
 
 const CACHE_LABEL = 'cache' as const;
 
-function counter(name: string, help: string, pick: (s: ReturnType<typeof getFliptCacheStats>) => {
-  boolean: number;
-  variant: number;
-}) {
+function counter(
+  name: string,
+  help: string,
+  pick: (s: ReturnType<typeof getFliptCacheStats>) => {
+    boolean: number;
+    variant: number;
+  }
+) {
   const existing = client.register.getSingleMetric(name);
   if (existing) return existing as client.Counter<string>;
   return new client.Counter({
@@ -97,7 +101,8 @@ export const fliptEvalCacheSize = (() => {
   if (existing) return existing as client.Gauge<string>;
   return new client.Gauge({
     name,
-    help: 'Live Flipt eval-cache entries across both generations, by cache kind. ' +
+    help:
+      'Live Flipt eval-cache entries across both generations, by cache kind. ' +
       'Instantaneous. Compare against the entry ceiling to see how close to ' +
       'rotation the cache is running.',
     labelNames: [CACHE_LABEL],
