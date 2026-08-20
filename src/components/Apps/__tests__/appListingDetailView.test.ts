@@ -545,6 +545,41 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
   });
 
   /**
+   * 🔴 THE `kind === 'offsite'` CONJUNCT IS A RUNTIME GUARD, NOT TYPE NOISE —
+   * and this fixture exists because the ordinary on-site case CANNOT SEE IT.
+   *
+   * Measured: deleting that conjunct leaves the whole suite GREEN. The on-site
+   * case above still returns `false`, but for the WRONG reason — an on-site
+   * `kindData` has no `externalUrl` at all, so the third conjunct carries the
+   * verdict and the deleted one is never the deciding term. The mutant RAN; the
+   * assertion just could not observe it. (Reachable-but-unasserted and
+   * never-executed are different findings; this was the former.)
+   *
+   * The shape that discriminates is a CAST producer handing over an object with
+   * BOTH `kind: 'onsite'` and an `externalUrl` — impossible per the DTO union,
+   * routine at runtime. `appListingDetailRows` already carries a 🔴 note about
+   * exactly this: the moderator combined-review surface builds
+   * `ListingDetail`-shaped objects through a cast, and a required field being
+   * absent there once blanked the whole review modal. An on-site listing must
+   * never claim it "runs entirely off-platform" no matter what a producer
+   * attaches to it.
+   */
+  it('🔴 an ON-SITE kindData carrying an externalUrl (cast producer) → still NOT shown', () => {
+    const cast = {
+      kind: 'onsite',
+      appBlockId: 'blk-1',
+      hasPage: true,
+      liveUrl: 'https://blk-1.civit.ai',
+      externalUrl: 'https://smuggled.example/app',
+      connectClientId: null,
+    } as unknown as ListingDetail['kindData'];
+    // POSITIVE CONTROL: the same object with `kind: 'offsite'` IS shown, so the
+    // `false` below is about the kind term and not about an inert function.
+    expect(shouldShowOffsiteDisclosure({ ...cast, kind: 'offsite' })).toBe(true);
+    expect(shouldShowOffsiteDisclosure(cast)).toBe(false);
+  });
+
+  /**
    * The RENDERER must not re-implement the predicate. A structural check on the
    * source, because the JSX itself is invisible to this project — the same
    * technique the iframe gate below uses, with its positive control.
