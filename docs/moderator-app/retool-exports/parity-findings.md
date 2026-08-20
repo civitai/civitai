@@ -16,6 +16,24 @@ Status: **[x] fixed · [ ] open**. Nothing here is verified in a browser.
 and `b3456102bb` without being ticked, so this file read as 19 open findings when 16 were done. If you
 are about to act on an unticked box, check the code first; that is how this file misleads.
 
+## Front Page Audit: port state (canonical)
+
+**This block is the single source of truth for which Front Page Audit writes exist.** It is stated here
+and *linked* from everywhere else — `MIGRATIONS.md`'s table row and its §B verification list, and the
+08-19 feedback round. It used to be restated in each of them, and it went out of step with reality twice
+on 2026-08-20 alone: both times a write was built and two of the four copies still called it unported.
+If you change what is ported, change this block; do not re-describe it elsewhere.
+
+| Retool write | State |
+| --- | --- |
+| `FrontPageTimers` (shared resume point) | **Built** 2026-08-20 — read by `getSweepCheckpoint`, advanced by "Mark swept up to here". Unverified in a browser. |
+| `research_ratings` (`InsertRatingGame`) | **Built** 2026-08-20 — Retool's upsert verbatim; unfreezes Queue Stats' "Research ratings" board. Unverified in a browser. |
+| `RatingChanges` (`LogNsfwLevel` + `LogNsfwLevel2`) | **Not ported — and no longer blocked.** Confirmed against the moderator database 2026-08-20: the table exists with `id` (serial), `imageId`, `createdAt` (`timestamptz`, default `now()`), `updatedBy` (text), `rating` (int), `originalRating` (int NOT NULL). That matches Retool's changesets, so both writes can be built. Two distinct writes, not one duplicated: `LogNsfwLevel` INSERTs on a rating (`rating` = level set, `originalRating` = level swept); `LogNsfwLevel2` UPDATE-or-INSERTs by `imageId` on a tag vote, additions only. |
+
+Consequence still open: `recordModActivity` stores no before/after, so "who changed this image from X
+to XXX" is answerable for the Retool era and not for ours.
+
+
 ## Bulk Image Manager — fixed in 948bd9d110
 
 - [x] `UserQuery5000` (`WHERE nsfwLevel = 32`, the already-removed view) absorbed into a row about
@@ -260,3 +278,319 @@ paddleCustomerId account` (`textInput14` "Enter User Id" → `button95` "Remove 
 3. **Columns selected but never rendered** is the single most repeated defect — prompts, flags,
    `blockedFor`, notification bodies, report details. Fetching costs a query; dropping it costs a
    moderator deciding blind.
+
+---
+
+# Second fidelity pass (2026-08-20)
+
+`retool-fidelity-review` re-run on the six apps with no agent-run on record: **User Lookup v2, Chat
+Audit, Image Lookup, Article Lookup, User Reports, Front Page Audit**. The first pass above was largely
+hand-run and predates the agent.
+
+Every claim below was checked against the code before being recorded; several of the agents' findings are
+**not** here because they did not survive that check. Nothing here is verified in a browser.
+
+## Fixed in this pass
+
+- [x] **Image Lookup — a pasted CDN URL could never match a full-URL row.** `where('url', '=', uuid ?? value)`:
+      a full URL contains a UUID, so `uuid` was always truthy and the raw string was never tried — the
+      exact case the adjacent comment said the fallback existed for. Such rows are ~0.003% of `Image`
+      (2 of 57,852 sampled), and they reported "no image matches", which on that page reads as *deleted*.
+      Now tries both spellings.
+- [x] **Image Lookup — the POI/minor write was gated on the page's own path**, which `hooks.server.ts`
+      has already checked, so it was no gate at all. Bulk Image Manager and User Reports gate the identical
+      `setImageFlag` call on `/users`. An Image Lookup grant alone conferred a write the other two
+      withhold. Now `/users`.
+- [x] **User Reports — "Nothing recorded against this account" was false for the whole Retool era.**
+      The page called `getModActivity` alone; `ModActivity` keys on content and did not exist for those
+      years. `getRetoolActivity` was already built and `/api/user-mod-activity` already returns the pair —
+      this page called one of the two, on the screen where the strike is issued. Both now render, kept
+      visually apart (the Retool rows carry a display name, not a moderator id).
+- [x] **User Reports — "Reports received … Never reported before this one"** was `UserReport` rows only:
+      reports against the *account row*, not against content the account owns. "Reports received" is the
+      established name of the 11-way content union (`getReportsReceived`), so the label asserted the
+      stronger claim. Relabelled "Account reports", and the empty state now says content reports are not
+      counted here.
+- [x] **Chat Audit — the "Newest" feed lost its content search** (Retool's `textInput2`). The panel's
+      stated job is watching spam as it happens, bodies are collapsed by default, and there was no filter,
+      so there was no way to find the spam string. `ListFilterBar` added, matching the sibling panel.
+      Filtering reveals no text: a match still needs "Show message text".
+- [x] **Article Lookup — `Article.cover` dropped, so legacy-cover articles showed "Cover image —".**
+      Two cover columns exist; the port selected only `coverId`. 7 of 26,505 articles carry only the old
+      one, and for those the page denied the existence of the image its headline badge derives from. Two
+      other services in this repo already treat `cover` as a live fallback.
+- [x] **Article Lookup — `moderatorNsfwLevelBasis` dropped** (set on 360 articles). It is what says whether
+      an override may be auto-cleared. Now shown, but only under an active override.
+
+## Chat reports — resolved, with a third answer
+
+- [x] **User Lookup — chat reports were scoped to `Chat.ownerId`, whoever *created* the conversation.**
+      First read of this said the data could not settle it and it needed a decision. That was too
+      pessimistic: `Report.userId` names the reporter, and excluding them is what makes the question
+      answerable. The rule now lives in `chatReportSubject` (`report-entities.ts`) and both the count
+      tile and the rows list use it — **the reported party is the chat member who is not a reporter, in
+      a two-party chat; group chats match nobody.**
+
+      Why the two obvious answers are both wrong, and why this one is not:
+
+      | Reading | Result on production |
+      | --- | --- |
+      | `Chat.ownerId` (what shipped) | Wrong for **118** reports where the owner is the reporter — the complainant was credited and the account complained about showed zero. Also counted `Automated` reports, which the rows list filters out. |
+      | Any message author (Retool `query152`) | Always includes the reporter, so every harassment report also marks the **victim** as having reported content. |
+      | Non-reporter participant, two-party only | **2,219 of 2,241** human-filed reports (99.0%) resolve to exactly one account — verified one accused per report, no double counting. The 17 group-chat reports are deliberately unattributed. |
+
+      The scale of the old bug is larger than the mis-attribution alone: **11,056 accounts were
+      over-counted** (worst by 269), because the tile counted the 59,555 `Automated` reports (96% of all
+      chat reports, filed by user `-1`) that the rows list never showed — the exact count/rows
+      disagreement that function's comment says it exists to prevent. **93 accounts were under-counted.**
+
+      All figures measured against production 2026-08-20 and recorded in the function's docstring.
+
+## Open — real gaps, not yet built
+
+> Ticked 2026-08-20: 11 of these 13 were closed the same day and one did not survive verification —
+> see "Open gaps closed" below for each. The finding text is kept as the record of what was wrong.
+> Only `RatingChanges` remains open.
+
+- [x] **Front Page Audit — the Split control on Queue Stats writes a resume point nothing reads.**
+      `queue-stats` inserts fork rows into `FrontPageTimers`/`_catchup` and tells the moderator a fork
+      happened; `/retool/front-page-audit` reads neither table (its window is a fixed `hours` dropdown).
+      The two pages state contradictory things about the same mechanism.
+- [x] **Front Page Audit — `LogTimestamp`'s column list is NOT missing from the export.** The recorded
+      reason for leaving three writes unported ("GUI-mode writes whose column lists the export does not
+      carry") does not survive reading `raw/front-page-audit.json`, which has all three changesets
+      verbatim. `numberOfImages` is also absent from the typed model in `moderator-db-types.ts`.
+- [x] **Front Page Audit — `InsertRatingGame` unported, and Queue Stats renders the frozen result.**
+      "Research ratings — All time" sits directly beside "Ratings set", which is `ModActivity`-backed and
+      still counts. One list grows, the other cannot, with nothing on screen saying why.
+- [ ] **Front Page Audit — `RatingChanges` is two writes, not one.** `LogNsfwLevel` (on rating: records
+      the set level *and* the swept level) and `LogNsfwLevel2` (on tag vote: additions only, level from
+      the tag). The audit called them duplicates of each other. `recordModActivity` stores no
+      before/after, so "who changed this image from X to XXX" is answerable for the Retool era and not ours.
+- [x] **Front Page Audit — the sweep's coordination mechanic is absent**: no shared checkpoint, no "who
+      swept this last". Two moderators sweeping the same rating work the same rows. The page discloses
+      this; the Split control above now contradicts the disclosure.
+- [x] **User Lookup — `ActionReport` absent, with no navigation path either.** Report rows render
+      read-only with no link out, and `/reports/[slug]` filters by *reporter*, not by reported account,
+      and has no report-id anchor. The recorded mitigation ("act on it in /reports") overstates what is
+      reachable.
+- [x] **User Lookup — timed mutes lost arbitrary durations and scheduled start.** Retool had `muteStart`
+      and `muteEnd` datetime widgets *plus* presets; the build has the six presets only, and always starts
+      now. The server accepts up to 8760 hours, so the UI is the constraint. Three hours, two weeks, or a
+      mute beginning when an event does are all unexpressible.
+- [x] **User Lookup — `UserSubscriptionStatusAnnual` absent.** `Price.interval` is never selected, so a
+      moderator handling a refund cannot tell an annual plan from a monthly one — the fact that decides
+      the amount.
+- [x] ~~**User Lookup — notification depth fixed at 25.**~~ **FALSE** — see "Did not survive
+      verification" below; the 25/50/100/200 picker exists and `?limit=` is honoured to 200.
+      record left. `ownerId` differs from the current `Image.userId` after a transfer.
+- [x] **Image Lookup — `Image.meta` survives only as `prompt`/`negativePrompt`.** Retool showed the whole
+      cell, so seed, sampler, model hash and `civitaiResources` were readable. `scanJobs` already gets a
+      raw `<details>` on the same panel; `meta` could take the same treatment.
+- [x] **Image Lookup — the vote-ring panel narrowed two Retool tables into one signal** and prints
+      "nothing suggesting a ring" over a set filtered by `Image_Create`, an internal-CIDR exclusion and a
+      `createdAt` bound. One-account-many-IPs and the full IP ranking are both gone, and the internal-range
+      exclusion appears in no divergence list.
+- [x] **User Reports — mod notifications have no click-through.** `sendModNotification` takes a `url`,
+      documented as what `system-announcement` renders as the click-through; **no call site anywhere passes
+      it** — not User Reports, not User Lookup, not Bulk Image Manager. Retool sent `/safety`.
+
+## Process findings
+
+- [ ] **Chat Audit and Image Lookup have no `-audit.md` classification file.** They are the only ported
+      apps without one. Nothing records what was deliberately dropped, which is why most of their findings
+      are widget-level rather than SQL-level.
+- **Audit rows corrected in this pass**, recorded so they are not re-trusted: Image Lookup's tracker entry
+  claimed "read-only" (it writes POI/minor); Chat Audit's claimed `TopChats` was not ported (it is, as are
+  `TopChats24` and `TopChatters24`); User Lookup's audit lists `ToggleMod`, the strike cluster and most of
+  "cluster A" as blocked or missing when all are built, files `query152` and `alternateAccount` as plumbing
+  when both are real queries, and classifies `AvailableCosmeticList` twice contradictorily; User Reports'
+  audit maps `UserQuery`/`UserQuery5000` to `resolveUserId` when both are the image grid, and files
+  `TOSImages` as `port` when the export annotates it `//doesnt run anywhere, just a test`; Front Page
+  Audit's audit calls `LogNsfwLevel`/`LogNsfwLevel2` duplicates and counts `ByReactions` in two buckets.
+  Article Lookup's and User Reports' audits both still ask for a re-extract that already happened.
+
+---
+
+# Open gaps closed (2026-08-20, same day)
+
+Working through the "Open — real gaps" list above. Each was re-verified against the code before being
+acted on; two did not survive that check and are corrected rather than fixed.
+
+## Did not survive verification
+
+- **"Notification depth is fixed at 25" — FALSE.** `NotificationsPanel.svelte` has a Retool-equivalent
+  "Number of Notifs" picker (25/50/100/200) and `/api/user-notifications/[userId]` honours `?limit=` up
+  to 200. The claim came from reading the service's default parameter (`limit = 25`) as a hardcode. The
+  "show me the last 200" case it said was impossible is directly supported.
+- **"Timed mutes lost arbitrary durations" — half true.** Presets-only was a deliberate, commented
+  choice ("a free-text hours box invites 240 where someone meant 24"), not an oversight. The *gap* was
+  real, so it is fixed below — but as a date picker, which was Retool's `muteEnd` and does not
+  reintroduce the hazard the presets exist to avoid. **Scheduled START (`muteStart`) is still not
+  ported**, and should not be until something expires mutes: nothing does, so a mute that begins later
+  would be bookkeeping that never fires. Same cron as the expiry gap.
+
+## Fixed
+
+- [x] **Mod notifications had no click-through.** `sendModNotification` took an optional `url` that
+      **no call site anywhere passed**, so every moderator-authored notification shipped as dead text.
+      Now defaults to `/safety` — Retool's own destination, and what the footer, image detail and
+      training upload all link to — with an explicit override still available.
+- [x] **`UserSubscriptionStatusAnnual`.** `Price` is now joined into the one subscription query, so
+      `interval` (plus `unitAmount`/`currency`) reaches the panel. Annual vs monthly is what decides a
+      refund amount, and Retool kept a whole second query for it.
+- [x] **Timed mutes: arbitrary end.** An "Until…" option beside the six presets, taking a datetime.
+      The action accepts `hours` OR `until`, and refuses a time already past — `datetime-local` carries
+      no timezone, and a mute that lifts the instant it is applied reads as a silent failure.
+- [x] **Image Lookup: the lifecycle log dropped four columns Retool showed.** `ownerId` (owner at the
+      time — differs from the current `Image.userId` after a transfer), `nsfw` at the event, `resources`
+      and the request provenance (`ip`, `userAgent`, `via`) are all selected and rendered. Verified
+      against `system.columns` rather than inferred: every one exists on `default.images`.
+- [x] **Image Lookup: the lifecycle log's time bound is removed.** It was applied on the reasoning that
+      it "costs nothing", but it could not gain anything either (8.2M rows, ~400ms unbounded) and could
+      only lose rows — and the truncation banner fires on the LIMIT, not the bound, so an exclusion
+      would have been silent. On the deleted path the oldest event is the original `DeleteTOS`.
+- [x] **Image Lookup: `Image.meta` beyond the two prompts.** The rest of the cell — seed, sampler, model
+      hash, `civitaiResources` — now renders in a `<details>`, the same treatment `scanJobs` already got.
+      Retool showed the whole cell.
+- [x] **Image Lookup: the vote-ring panel's negative claim.** "Nothing suggesting a ring" was asserted
+      over a set narrowed three ways the reader could not see. It now says what it counted, and that one
+      account reacting from many addresses is not a shape it looks for.
+- [x] **User Lookup: `ActionReport` had no navigation path.** `getReports` takes a `reportId`, and
+      `/reports/[slug]?report=<id>` opens that one report with its filters forced to `all` — a report
+      linked from elsewhere is usually already handled, and the default Pending+Processing view would
+      have rendered an empty list, which reads as "that report does not exist". Every report row on
+      User Lookup now links to where it can be actioned.
+- [x] **Front Page Audit: `InsertRatingGame`.** Every rating set on the sweep writes `research_ratings`
+      again, using Retool's upsert verbatim including the conflict target (`research_ratings_pkey` is
+      `(userId, imageId)`, confirmed against production). Best-effort: the research dataset must not be
+      able to fail the moderation action it describes. This unfreezes Queue Stats' "Research ratings"
+      board, which sat beside a `ModActivity`-backed board that never stopped counting.
+- [x] **Front Page Audit: the shared resume point.** `FrontPageTimers` is now read as the sweep's start
+      and advanced by a "Mark swept up to here" button — Retool's green Log. The checkpoint sets
+      `lastCheckedAt` to the `createdAt` of the last row swept, never `now()`: the sweep is oldest-first,
+      so anything posted while the moderator worked has not been looked at. Disabled on the reactions
+      ordering, as Retool disabled it, because that view ranks by popularity and its last row is not a
+      position in a queue. An explicit `?hours=` still overrides, for looking outside the checkpoint.
+
+      This also settles the contradiction: Queue Stats' Split control has been forking
+      `FrontPageTimers`/`_catchup` all along and telling the moderator so, while the sweep read neither
+      and the page said the resume point "is not ported yet". Both are now true statements.
+
+## Still open
+
+- [ ] **`RatingChanges` (`LogNsfwLevel` + `LogNsfwLevel2`) — unblocked, not built.** The credential
+      blocker is gone: the table's columns were confirmed 2026-08-20 and match the export's changesets
+      (see the canonical block above). This is now ordinary porting work. Until it lands,
+      `recordModActivity` stores no before/after, so "who changed this image from X to XXX" stays
+      answerable for the Retool era and not for ours.
+- [ ] **`numberOfImages` on `FrontPageTimers`.** **Confirmed to exist** (integer) 2026-08-20, so
+      `markSweepChecked` can write it and `moderator-db-types.ts` should carry it. Not blocked.
+- [ ] **Scheduled mute start.** See the note at the top; blocked on the same missing cron as expiry.
+
+## Review pass on the fixes (2026-08-20)
+
+Four agents over the diff — correctness, Svelte idiom, abstraction, comments. Everything below was
+verified against the code or production before acting.
+
+🔴 **The chat-report predicate shipped wrong and is now fixed.** `chatReportSubject` required the
+subject to be a non-reporting member of a two-party chat but **never required the reporter to be a
+member at all**. `Automated` reports are filed by user `-1`, who is in no chat, so both parties passed
+every clause — and those are 96% of the table. Measured: **121,148 attributions across 20,452 accounts**
+instead of 2,226 across 1,186. Every account that had merely *received* an auto-flagged DM read as
+having reported content — the exact harm the predicate was written to avoid, at fifty times the scale of
+the bug it replaced. The docstring asserted the opposite ("they match nobody here") and that assertion
+was never tested. One extra `EXISTS` fixes it; the clause is now marked as load-bearing so it is not
+dropped as redundant.
+
+Also fixed from the same pass:
+
+- **Mark-swept could advance the SHARED point from a private window**, discarding everything between —
+  a moderator on a 24h window whose shared point was five days back would silently drop four days.
+  The action now requires the sweep to have started from the checkpoint and refuses a backwards move.
+- **The video sweep (20 rows) shared the image sweep's checkpoint (200 rows)**, so marking it skipped
+  every image in the same span. Checkpoint is now scoped to the newest-first *image* sweep only.
+- **The checkpoint banner rendered over the reactions ordering**, which ignores the window entirely.
+- **`Sweep` always wrote `hours` into the URL**, so the first press permanently abandoned the shared
+  resume point — the feature was reachable only on a bare landing.
+- **The banner rendered the Split control's `splitQueue` sentinel as a moderator's username.**
+- **`?report=` echoed the default filter chips** over a list that ran unfiltered, so an Actioned or
+  Automated report appeared under chips claiming Pending+Processing.
+- **`datetime-local` mute end resolved in the server's timezone**, not the moderator's — 23:00 local
+  became 23:00 UTC. The client now submits the resolved instant.
+- **Chat Audit's "Newest" filter looked like the site-wide search** but filters the loaded 100; the
+  label and empty state now say so and link to the real search.
+- `ShowMoreButton`'s `capped` was inverted under an active filter; the Moderation-activity heading
+  counted one of the two lists it rendered; the lifecycle metadata line rendered as an empty row when
+  every field was absent.
+
+Four comments were **false** and are corrected: the "not yet ported" note above the code that ports it,
+the `ownerColumn: null` doc (no longer "the one type"), an "11-way union" that is now 14, and a claim
+that every `sendModNotification` call site omitted `url` when User Lookup passes it.
+
+### Known and not fixed
+
+- **`getRetoolActivity` matches a bare number in free text** (`"ActionType" ~ '\y<id>\y'`), so an
+  imageId or a Buzz amount can match an unrelated account. Pre-existing, but this pass put it under a
+  heading on the strike screen and folded it into the count. Needs a look at real `ReToolActions`
+  phrasings — no `RETOOL_DATABASE_URL` in this checkout.
+- **The lifecycle log's `ip`/`userAgent` are the ACTOR's**, and on `Delete`/`DeleteTOS`/`Restore` rows
+  that is a moderator. They render unlabelled beside the owner link; a ban-evasion hunt could
+  misattribute a colleague's address. Label or suppress on those types.
+- **`nsfw` on lifecycle events is the deprecated `None/Soft/Mature/X/Blocked` vocabulary**, and its `X`
+  is not today's X. Rendered raw, so a 2024 event reads as a current rating.
+- **`chatReportSubject` counts `ChatMember` rows of every status**, including `Left`/`Kicked`. Exactly
+  one human-filed report is lost to this today; a future "leave conversation" flow would make it worse.
+- **`front-page-audit/+page.svelte` is ~340 lines** and holds three panels. Split as siblings.
+- **`user-reports.service.ts` builds the same report query four times**, and `ReportQueryOptions.reasons`
+  is honoured by only one of the three exported readers while being documented for all.
+- **`UserReportRow.entityType` carries a display LABEL, not the enum**, so `entityUrl` already produces
+  dead links for ResourceReview / ComicProject / Model3D on User Lookup while working on `/reports`.
+  Carry `type: ReportEntity` and `reportActionPath`'s reverse map disappears with it.
+- **`FrontPageTimers` is read and written by two services** with private understandings of the row
+  semantics. One `front-page-timers.ts` owning both, plus the sentinel, is the fix.
+
+### Review follow-ups closed
+
+- [x] **Dead links on User Lookup's report rows.** `UserReportRow.entityType` carried a display *label*,
+      and both `entityUrl` and `reportActionPath` reverse-mapped it — but 'Review' / 'Comic' / '3D Model'
+      do not lowercase to `resourceReview` / `comicProject` / `model3d`, so those three types rendered as
+      grey text here while linking fine on `/reports`. The row now carries `type: ReportEntity` beside the
+      label, and `reportActionPath`'s reverse map is gone rather than being a third map of one fact.
+- [x] **Four copies of the report query in one file**, which had already drifted: `reasons` was
+      documented for all three readers and honoured by one. One `reportBase` builder now owns the joins
+      and both filters.
+- [x] **`FrontPageTimers` owned by two services** → `front-page-timers.ts` owns the tables, the
+      `splitQueue` sentinel and both resume points. Queue Stats re-exports the split API for its callers.
+      The unused `stream: 'catchup'` parameter is dropped rather than left as a half-built path.
+- [x] **`front-page-audit/+page.svelte` was 340 lines / three panels** → 216, with `SweepFilterBar` and
+      `SweepCheckpointBar` as siblings. The window picker now hides while the shared point is in force,
+      instead of displaying a window that is not running.
+- [x] **Lifecycle-log labelling**: `ip` reads "from <ip>" and is documented as the ACTOR's (a moderator
+      on Delete/Restore rows), and `nsfw` reads "legacy rating" — its vocabulary is the deprecated
+      `None/Soft/Mature/X/Blocked`, whose `X` is not today's X.
+
+⚠️ **Do not narrow `chatReportSubject` to `ChatMember.status = 'Joined'`.** It looks like a tightening
+and drops the result from 2,226 to 751: the recipient of an unsolicited DM is usually `Invited`,
+`Ignored` or `Left`, which is exactly the harassment case the predicate exists to find. Recorded in the
+docstring.
+
+### `getRetoolActivity` matched image counts, not just user ids — fixed 2026-08-20
+
+`ReToolActions.ActionType` is free text and **56% of its 132,041 rows carry more than one number**
+(`ToS 5 images from <id>`, `Strike 2 on user <id>`, `Banned 47 accounts`, `ToS N images from modelId
+<id>`). The predicate was a bare word-boundary match on the id, so every image count and strike number
+was attributed to whichever account shared that value:
+
+| Probe user id | Rows matched (bare `\y<id>\y`) | Rows matched (subject-anchored) |
+| --- | --- | --- |
+| 1 | 22,130 | 0 |
+| 2 | 7,289 | 0 |
+| 5 | 2,331 — 2,204 of them `ToS 5 images…` | 0 |
+| 100 | 438 | 0 |
+| real 6–7 digit subject ids | 7 / 5 / 6 | 7 / 5 / 6 — identical |
+
+**101 accounts have an id under 100**, and this session had just put the result on the User Reports
+strike screen and folded it into the "Moderation activity" count. The id must now follow a subject label
+(`from `, `User `, `UserID `, `on user `, `for user `, `to (`). `from ` requires digits immediately
+after, which is what excludes `from modelId <id>` — a model, not the account.

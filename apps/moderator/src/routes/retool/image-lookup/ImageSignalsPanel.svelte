@@ -55,8 +55,15 @@
               {num(reactions.totalReactions)} reactions from {num(reactions.distinctIps)} addresses.
             </p>
             {#if reactions.clusters.length === 0}
+              <!-- An affirmative negative has to say what it looked at. This set is narrowed three ways
+                   the reader cannot see — reactions given (not withdrawn), external addresses only, and
+                   from the image's creation onward — so "nothing suggesting a ring" alone overstates it. -->
               <p class="text-sm text-dark-2">
-                No address carries more than one account — nothing suggesting a ring.
+                No address carries more than one account.
+                <span class="text-xs">
+                  Counts reactions given from external addresses since the image was posted; an account
+                  reacting from many addresses is not a shape this looks for.
+                </span>
               </p>
             {:else}
               <ul class="space-y-2 text-sm">
@@ -119,6 +126,35 @@
                   {/if}
                   {#if e.tags}
                     <span class="w-full wrap-break-word text-xs text-dark-2">tags: {e.tags}</span>
+                  {/if}
+                  {#if e.resources}
+                    <span class="w-full wrap-break-word text-xs text-dark-2">
+                      resources: {e.resources}
+                    </span>
+                  {/if}
+                  {#if e.nsfw || (e.ownerId && e.ownerId !== e.userId) || e.via || e.ip}
+                    <span class="w-full text-xs text-dark-2">
+                      <!-- The deprecated four-value vocabulary (None/Soft/Mature/X/Blocked), NOT the
+                           browsing-level bitmask the rest of this app speaks — and its `X` is not
+                           today's X. Labelled so a 2024 event is not read as a current rating. -->
+                      {#if e.nsfw}legacy rating {e.nsfw}{/if}
+                      <!-- Owner at the time, shown only when it is not the actor: after a transfer the
+                           current Image.userId is a different account from the one that held it here. -->
+                      {#if e.ownerId && e.ownerId !== e.userId}
+                        owned by
+                        <a href={userLookupUrl(e.ownerId)} class={LINK_CLASS}>#{e.ownerId}</a>
+                      {/if}
+                      {#if e.via && e.via !== 'web'}via {e.via}{/if}
+                      <!-- The ACTOR's address, not the uploader's — on a Delete/Restore row that is a
+                           moderator. Unlabelled beside the owner link, a ban-evasion hunt reads it as
+                           the account's own. -->
+                      {#if e.ip}from {e.ip}{/if}
+                    </span>
+                  {/if}
+                  {#if e.userAgent}
+                    <span class="w-full truncate text-xs text-dark-2" title={e.userAgent}>
+                      {e.userAgent}
+                    </span>
                   {/if}
                 </li>
               {/each}

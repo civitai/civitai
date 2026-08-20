@@ -92,6 +92,11 @@ export type GetReportsParams = {
    *  a `<=` on a date would drop everything reported after midnight on it. */
   from?: Date;
   to?: Date;
+  /** One report, by id. What makes a report REACHABLE from a page that only lists it: User Lookup shows
+   *  a user's reports read-only, and without this the only route to the action was to open the entity's
+   *  queue and page through it by eye. Applied on top of the other filters, not instead of them — the
+   *  page widens them itself when the id would otherwise fall outside the default view. */
+  reportId?: number;
 };
 
 export async function getReports({
@@ -103,6 +108,7 @@ export async function getReports({
   reportedBy,
   from,
   to,
+  reportId,
 }: GetReportsParams): Promise<{
   items: ModeratorReportRow[];
   totalItems: number;
@@ -133,6 +139,7 @@ export async function getReports({
   if (reportedBy) base = base.where('User.username', 'ilike', `${reportedBy}%`);
   if (from) base = base.where('Report.createdAt', '>=', from);
   if (to) base = base.where('Report.createdAt', '<', to);
+  if (reportId) base = base.where('Report.id', '=', reportId);
 
   const totalItems = Number(
     (await base.select((eb) => eb.fn.countAll<number>().as('count')).executeTakeFirst())?.count ?? 0

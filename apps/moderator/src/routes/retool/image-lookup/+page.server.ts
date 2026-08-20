@@ -38,7 +38,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       postId,
       deletedImageId: null,
       notFound: false,
-      canAct: canAccess(locals.user, '/retool/image-lookup'),
+      canAct: canAccess(locals.user, '/users'),
     };
   }
 
@@ -81,16 +81,20 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     postId: null,
     deletedImageId,
     notFound: !result && !deletedImageId,
-    canAct: canAccess(locals.user, '/retool/image-lookup'),
+    canAct: canAccess(locals.user, '/users'),
   };
 };
 
 export const actions: Actions = {
   // Retool's Toggle Minor / Toggle Poi. Same endpoint Bulk Image Manager uses, so the flag write has
   // one implementation and one audit trail; Retool could only ever turn them ON.
+  //
+  // Gated on `/users` to match Bulk Image Manager and User Reports, which make the same call: reaching a
+  // lookup page is an investigation permission, setting a flag is not. Gated on this page's own path it
+  // was no gate at all — `hooks.server.ts` has already checked that — so an Image Lookup grant alone
+  // conferred a write the other two pages withhold.
   setFlag: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/retool/image-lookup'))
-      return fail(400, { error: 'Not permitted.' });
+    if (!canAccess(locals.user, '/users')) return fail(400, { error: 'Not permitted.' });
     const input = parseForm(
       z.object({
         imageId: z.coerce.number().int().positive(),

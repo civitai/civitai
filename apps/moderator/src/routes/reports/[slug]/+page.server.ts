@@ -21,9 +21,14 @@ export const load: PageServerLoad = async ({ params, url }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');
 
+  // `?report=<id>` opens ONE report, from a page that could only list it. Its filters are forced to
+  // `all`: a report linked to from elsewhere is usually already handled, and landing on an empty list
+  // because the default view is Pending+Processing reads as "that report does not exist".
+  const reportId = Number(url.searchParams.get('report')) || undefined;
+
   // Canonicalize a bare landing so the active default filters are explicit (and shareable) in the URL.
   // Only absent params get defaults — a present-but-empty `?status=` is a deliberate clear, left alone.
-  if (!url.searchParams.has('status')) {
+  if (!reportId && !url.searchParams.has('status')) {
     const canonical = new URL(url);
     DEFAULT_REPORT_STATUSES.forEach((s) => canonical.searchParams.append('status', s));
     redirect(307, canonical.pathname + canonical.search);
@@ -44,9 +49,10 @@ export const load: PageServerLoad = async ({ params, url }) => {
     type,
     page,
     // An empty selection is every one, said explicitly rather than implied by omission.
-    statuses: statuses.length ? statuses : 'all',
-    reasons: reasons.length ? reasons : 'all',
+    statuses: reportId ? 'all' : statuses.length ? statuses : 'all',
+    reasons: reportId ? 'all' : reasons.length ? reasons : 'all',
     reportedBy: reportedBy || undefined,
+    reportId,
   });
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
@@ -54,9 +60,12 @@ export const load: PageServerLoad = async ({ params, url }) => {
   // while it is hiding it — once reasons are chosen explicitly, the choice is the whole story.
   return {
     type,
-    statuses,
+    // A `?report=` view ran with no status/reason filter, so echoing the defaults would put chips
+    // saying "Pending + Processing" above an Actioned row and a note about hiding Automated above an
+    // Automated one — the operator reads that as the filters being broken.
+    statuses: reportId ? [] : statuses,
     reasons: urlReasons,
-    hidingAutomated: !url.searchParams.has('reason'),
+    hidingAutomated: !reportId && !url.searchParams.has('reason'),
     reportedBy,
     ...data,
   };

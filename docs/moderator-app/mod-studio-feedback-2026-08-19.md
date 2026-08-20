@@ -176,8 +176,9 @@ round still reads as the record of what was reported that day.
       candidate explanation for a strike that writes and does not appear.
 - [ ] **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** *(08-17)* — add
       them to the schema, or accept the raw `sql` read.
-- [ ] **`FrontPageTimers` / `RatingChanges`** *(08-17)* — the two schemas Front Page Audit needs before it
-      can resume or log. The sweep works without them; the shared resume point and the audit trail do not.
+- [ ] **`RatingChanges`** *(08-17, narrowed 08-20)* — the rating audit trail, the one Front Page Audit
+      write still unported; `FrontPageTimers` is done. Current state, and the only place it is recorded:
+      [Front Page Audit: port state](retool-exports/parity-findings.md#front-page-audit-port-state-canonical).
 - [ ] **How queue sweeps get tracked** *(08-17)* — a new table, or an extension of `ModActivity`. Blocks
       the remaining queue requests.
 

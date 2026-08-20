@@ -39,6 +39,15 @@
   ]);
 
   const scanJobs = $derived(image.scanJobs ? JSON.stringify(image.scanJobs, null, 2) : null);
+
+  // Everything in `meta` beyond the two prompts — seed, sampler, model hash, civitaiResources. Same
+  // raw-dump treatment as scanJobs: guessing which keys matter is what left it invisible.
+  const metaRest = $derived.by(() => {
+    const meta = image.meta as Record<string, unknown> | null;
+    if (!meta) return null;
+    const { prompt: _p, negativePrompt: _n, ...rest } = meta;
+    return Object.keys(rest).length ? JSON.stringify(rest, null, 2) : null;
+  });
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -161,6 +170,13 @@
     </div>
   {:else if image.hideMeta}
     <p class="mt-4 text-sm text-dark-2">The uploader hid this image's metadata.</p>
+  {/if}
+
+  {#if metaRest}
+    <details class="mt-4 text-sm">
+      <summary class="text-dark-2">Generation metadata</summary>
+      <pre class="mt-2 overflow-x-auto rounded-md bg-dark-7 p-3 text-xs text-dark-1">{metaRest}</pre>
+    </details>
   {/if}
 
   {#if scanJobs}

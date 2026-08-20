@@ -112,6 +112,9 @@ export const reportEntityForSlug = (slug: string): ReportEntity | undefined =>
 
 export const reportPath = (entity: ReportEntity) => `/reports/${reportEntitySlugs[entity]}`;
 
+export const reportActionPath = (entity: ReportEntity, reportId: number) =>
+  `${reportPath(entity)}?report=${reportId}`;
+
 export const reportCountKey = (entity: ReportEntity) => `report:${entity}`;
 
 /** `Report.details` is jsonb. Retool's CASE picked `violation` over `reason` and showed `comment`

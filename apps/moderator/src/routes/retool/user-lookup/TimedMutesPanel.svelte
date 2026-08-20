@@ -22,6 +22,13 @@
 
   let version = $state(0);
   let muteHours = $state(24);
+  // A DATE rather than a free-text hours box, for the same reason as the presets below: a date shows
+  // you what you picked, where `240` does not announce itself as ten days.
+  let customUntil = $state('');
+  const useCustom = $derived(muteHours === 0);
+  const customUntilIso = $derived(
+    customUntil ? (Number.isNaN(Date.parse(customUntil)) ? '' : new Date(customUntil).toISOString()) : ''
+  );
 
   const support = $derived(browser ? fetchSupport(identity.id, version) : null);
 
@@ -29,6 +36,9 @@
     reload: true,
     onSuccess: () => {
       version += 1;
+      // `update({reset:true})` clears the DOM field but fires no input event, so `bind:value` would
+      // keep the submitted timestamp while the control renders empty.
+      customUntil = '';
     },
   });
 </script>
@@ -55,7 +65,7 @@
         <label class="text-xs text-dark-2">
           Duration
           <!-- Retool's presetMutes. A free-text hours box invites 240 where someone meant 24. -->
-          <div class="mt-1 flex gap-1">
+          <div class="mt-1 flex flex-wrap gap-1">
             {#each MUTE_PRESETS as [value, label] (value)}
               <Button
                 type="button"
@@ -66,8 +76,30 @@
                 {label}
               </Button>
             {/each}
+            <Button
+              type="button"
+              size="xs"
+              variant={useCustom ? 'default' : 'outline'}
+              onclick={() => (muteHours = 0)}
+            >
+              Until…
+            </Button>
           </div>
-          <input type="hidden" name="hours" value={muteHours} />
+          {#if useCustom}
+            <Input
+              type="datetime-local"
+              aria-label="Mute until"
+              bind:value={customUntil}
+              class="mt-1"
+              required
+            />
+            <!-- `datetime-local` submits no offset, and `new Date(...)` on a bare date-time resolves in
+                 the SERVER's zone (UTC in the containers) — so the moderator's 23:00 became 23:00 UTC.
+                 Submitting the resolved instant instead keeps the clock time they picked. -->
+            <input type="hidden" name="until" value={customUntilIso} />
+          {:else}
+            <input type="hidden" name="hours" value={muteHours} />
+          {/if}
         </label>
         <label class="flex-1 text-xs text-dark-2">
           Reason

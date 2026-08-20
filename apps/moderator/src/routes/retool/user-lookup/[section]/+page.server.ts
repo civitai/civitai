@@ -650,16 +650,25 @@ export const actions: Actions = {
     const author = locals.user.username;
     if (!author) return accountFail('Your account has no username.');
 
+    // Either a preset duration or an explicit end (Retool's `muteEnd`); the panel submits one or the
+    // other. `until` arrives as an ISO instant, not the raw `datetime-local` value — see the panel.
     const input = parseForm(
       userIdSchema.extend({
-        hours: z.coerce.number().positive().max(8760),
+        hours: z.coerce.number().positive().max(8760).optional(),
+        until: z.coerce.date().optional(),
         reason: z.string().trim().min(1).max(500),
       }),
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
 
-    const until = new Date(Date.now() + input.hours * 3_600_000);
+    const until =
+      input.until ?? (input.hours ? new Date(Date.now() + input.hours * 3_600_000) : null);
+    if (!until) return accountFail('Pick a duration or an end date.');
+    // A past end time would lift the mute the instant it is applied and read as a silent failure.
+    if (until.getTime() <= Date.now()) return accountFail('That end time has already passed.');
+    if (until.getTime() > Date.now() + 8760 * 3_600_000)
+      return accountFail('A timed mute cannot run more than a year.');
     const result = await addTimedMute({
       userId: input.userId,
       until,

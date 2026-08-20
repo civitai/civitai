@@ -32,6 +32,7 @@
     imageResult,
     legacyStrikeCount,
     modActivity,
+    retoolActivity,
     reportsOnUser,
   }: {
     suspectId: number;
@@ -47,6 +48,7 @@
     imageResult: string | null;
     legacyStrikeCount: number;
     modActivity: NonNullable<PageData['modActivity']>;
+    retoolActivity: NonNullable<PageData['retoolActivity']>;
     reportsOnUser: NonNullable<PageData['reportsOnUser']>;
   } = $props();
 
@@ -197,10 +199,12 @@
   <div class="mb-4 grid gap-4 sm:grid-cols-2">
     <div>
       <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
-        Moderation activity ({modActivity.length})
+        Moderation activity ({modActivity.length + retoolActivity.length})
       </h3>
-      {#if modActivity.length === 0}
+      {#if modActivity.length === 0 && retoolActivity.length === 0}
         <p class="text-sm text-dark-2">Nothing recorded against this account.</p>
+      {:else if modActivity.length === 0}
+        <p class="mb-1 text-sm text-dark-2">Nothing since the Retool migration.</p>
       {:else}
         <ul class="space-y-1 text-sm">
           {#each modActivity.slice(0, 8) as a (a.id)}
@@ -215,14 +219,35 @@
           {/each}
         </ul>
       {/if}
+
+      <!-- Kept apart rather than merged: the Retool rows carry a display name, not a moderator id, and
+           no entity link, so interleaving them would imply a continuity the data does not have. -->
+      {#if retoolActivity.length}
+        <ul class="mt-1 space-y-1 text-sm">
+          {#each retoolActivity.slice(0, 8) as a (`retool-${a.id}`)}
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <span class="text-dark-0">{a.action ?? 'action'}</span>
+              <span class="text-xs text-dark-2">
+                Retool{#if a.app} · {a.app}{/if}{#if a.moderator} · {a.moderator}{/if}
+                · {dateTime(a.at)}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
 
     <div>
+      <!-- Reports against the ACCOUNT row, not against content they own. "Reports received" is
+           `getReportsReceived`'s name for the content union, and reusing it here would say an account
+           with dozens of open image reports has never been reported. -->
       <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
-        Reports received ({reportsOnUser.length}, human-filed)
+        Account reports ({reportsOnUser.length}, human-filed)
       </h3>
       {#if reportsOnUser.length === 0}
-        <p class="text-sm text-dark-2">Never reported before this one.</p>
+        <p class="text-sm text-dark-2">
+          No prior report against the account itself. Reports on their content are not counted here.
+        </p>
       {:else}
         <ul class="space-y-1 text-sm">
           {#each reportsOnUser.slice(0, 8) as r (r.id)}
