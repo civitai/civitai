@@ -32,7 +32,7 @@ export type AppListingModerationNotificationDetails = {
 };
 
 /** All four owner notifications point the owner at their submissions/history view. */
-const OWNER_SUBMISSIONS_URL = '/apps/my-submissions';
+const OWNER_SUBMISSIONS_URL = '/apps/mine';
 
 function appLabel(details: AppListingModerationNotificationDetails): string {
   return details.name ? `"${details.name}"` : 'Your app';

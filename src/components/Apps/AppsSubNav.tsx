@@ -4,7 +4,6 @@ import {
   IconBuildingStore,
   IconCurrencyDollar,
   IconGavel,
-  IconListDetails,
   IconMail,
   IconPlugConnected,
   IconSquarePlus,
@@ -27,7 +26,10 @@ import { hasAppsStoreAccess, isAppDeveloper } from '~/shared/utils/app-blocks-ac
 export type AppsNavSummary = {
   /** ≥1 install/subscription → show "Installed". */
   hasInstalls: boolean;
-  /** ≥1 publish request → show "My submissions". */
+  /**
+   * ≥1 publish request. Used to drive its own "My submissions" tab; that page merged into
+   * `/apps/mine`, so this now widens "My apps" — see the 🔴 note on that entry.
+   */
   hasSubmissions: boolean;
   /** ≥1 owned app in the `approved` state → show "Revenue". */
   hasApprovedApps: boolean;
@@ -153,23 +155,31 @@ const SUB_NAV_LINKS: SubNavLink[] = [
    * comment. That is a recorded decision about an OWNERSHIP affordance, not an oversight,
    * and it is left exactly as main has it.)
    */
+  /**
+   * 🔴 `hasSubmissions` IS PART OF THIS PREDICATE BECAUSE THIS TAB ABSORBED "My
+   * submissions". That tab was `visible: (s) => s.hasSubmissions` and pointed at
+   * `/apps/my-submissions`, which now 301s here. Dropping it while leaving this entry on
+   * `hasEditableApps` alone would remove the only nav route for anyone whose submission
+   * history outlives their editable set — a submitter whose every listing was deleted, for
+   * instance. The union is what makes the merge lossless in the nav as well as the page.
+   *
+   * `c.isAuthor` is kept (and is NEW relative to the old submissions tab) for the reason
+   * #3899 gave: `/apps/mine` `getServerSideProps`-gates on `features.appBlocksAuthor` +
+   * `isAppDeveloper` and otherwise 404s, while the summary driving it is gated on the
+   * marketplace `appBlocks` flag — so a store-visible non-author could otherwise click
+   * straight into a 404.
+   */
   {
     href: '/apps/mine',
     label: 'My apps',
     icon: IconApps,
-    visible: (s, c) => c.isAuthor && s.hasEditableApps,
+    visible: (s, c) => c.isAuthor && (s.hasEditableApps || s.hasSubmissions),
   },
   {
     href: '/apps/invites',
     label: 'Invites',
     icon: IconMail,
     visible: (s, c) => c.isAuthor && s.hasPendingInvites,
-  },
-  {
-    href: '/apps/my-submissions',
-    label: 'My submissions',
-    icon: IconListDetails,
-    visible: (s) => s.hasSubmissions,
   },
   {
     href: '/apps/revenue',

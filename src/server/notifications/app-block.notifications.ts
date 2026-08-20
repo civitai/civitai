@@ -36,7 +36,7 @@ export type AppBlockModerationNotificationDetails = {
 };
 
 /** Both submitter notifications point the developer at their submissions view. */
-const SUBMITTER_SUBMISSIONS_URL = '/apps/my-submissions';
+const SUBMITTER_SUBMISSIONS_URL = '/apps/mine';
 
 /** `Your app block "Name"` when a name is present, else a terse `Your app block`. */
 function blockLabel(details: AppBlockModerationNotificationDetails): string {
