@@ -110,11 +110,10 @@ export function ModelVersionSaleBanner({
   if (!sale) return null;
 
   const listPrice = sale.listTerms.download?.price;
-  const buyerPrice = sale.buyerTerms.download?.price;
   const endsAt = new Date(sale.endsAt);
-  // Owner and moderator are both quoted the STORED price everywhere else on the page, so instead of a
-  // strikethrough over a number that is not moving, they are told what a BUYER pays. Without that, the
-  // banner announces a discount whose actual price appears nowhere — which is how Justin read it.
+  // The page now shows the sale price to everyone, owner included, so the strikethrough beside it would
+  // repeat what this line already says. An owner instead gets the number that vanished from the page:
+  // their own list price, which is what the sale is discounting FROM.
   const quotedStoredPrice = isOwner || isModerator;
 
   return (
@@ -128,14 +127,8 @@ export function ModelVersionSaleBanner({
               <SaleDiscountLabel sale={sale} size="sm" />
             </Text>
             <Text size="xs" c="dimmed">
-              {quotedStoredPrice && buyerPrice != null && listPrice != null && (
-                <>
-                  Buyers pay{' '}
-                  <Text span fw={600} c="green.7">
-                    {buyerPrice.toLocaleString()}
-                  </Text>{' '}
-                  instead of {listPrice.toLocaleString()} Buzz ·{' '}
-                </>
+              {quotedStoredPrice && listPrice != null && (
+                <>Your list price is {listPrice.toLocaleString()} Buzz · </>
               )}
               Ends {formatDate(endsAt, 'MMM D, YYYY h:mm A')}
               {isOwner && (
