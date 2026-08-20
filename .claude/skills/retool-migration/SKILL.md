@@ -8,6 +8,12 @@ description: Port a Retool app's functionality into a page in apps/moderator. Us
 Ports what a Retool app **does** into `apps/moderator`. Retool's layout, styling and component
 tree are **not** ported — the JSON is a spec for behaviour, not a design.
 
+Sibling skill: [`moderator-page-migration`](../moderator-page-migration/SKILL.md), for the *other* inbound
+path — pages coming from the main Next.js app's `src/pages/moderator/**`. Same app, same conventions, same
+reviews; different source, and a cutover step this path does not have (deleting the legacy page and
+trimming what it orphans). If the thing you are porting is a `/moderator/*` page rather than a Retool
+export, use that one.
+
 ## Setup (once per checkout)
 
 ```bash
@@ -39,9 +45,12 @@ off. Moderator-database slices *can* be ticked once they work: the app reads and
 
 ## The moderator database (`retool_db` in the exports)
 
-User notes, strikes, timed mutes and image help requests live in a database of their own, never in
-Civitai's. **The app reads and writes it through `getModeratorDb()`** — port these queries like any
-other; there is no need to wait for a data migration.
+User notes and image help requests live in a database of their own, never in Civitai's. (Legacy
+`UserStrikes` and `TimedMutes` are there too but are **not** the live implementations — strikes go
+through `strike/create` and timed mutes are `User.muteExpiresAt`. `TimedMutes` is not even typed.)
+
+**The app reads and writes this database through `getModeratorDb()`** — port these queries like any other;
+there is no need to wait for a data migration.
 
 ```ts
 import { getModeratorDb } from '$lib/server/moderator-db';
@@ -416,7 +425,10 @@ team.
 - **`{{ }}` can contain arbitrary JS** (`select1.data.find(i => i.id === select1.value)`), not
   just field references. Read them as data-flow hints, not as expressions to translate literally.
 - **Retool queries often hit the read replica.** Keep it that way — use `dbRead` for
-  investigation screens so they never load the primary.
+  investigation screens so they never load the primary. One narrow exception exists and needs a
+  written reason: a refetch of a row the same request just caused to be written, where replica lag
+  past the round trip reproduces the bug the read is fixing (`getLiveStrikes({ readYourWrite })`).
+  Reaching for `dbWrite` because a read "feels stale" is not that case.
 - **Some queries are already ported.** Check `NAVIGATION` and `docs/moderator-app/` before
   building; images, articles, blocklists, audit and cosmetics have moved already.
 - Query IDs in the export (`GetHelpers`, `GetImageData`) are the names moderators use verbally.

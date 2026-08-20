@@ -22,6 +22,13 @@
 
   let version = $state(0);
   let muteHours = $state(24);
+  // A DATE rather than a free-text hours box, for the same reason as the presets below: a date shows
+  // you what you picked, where `240` does not announce itself as ten days.
+  let customUntil = $state('');
+  const useCustom = $derived(muteHours === 0);
+  const customUntilIso = $derived(
+    customUntil ? (Number.isNaN(Date.parse(customUntil)) ? '' : new Date(customUntil).toISOString()) : ''
+  );
 
   const support = $derived(browser ? fetchSupport(identity.id, version) : null);
 
@@ -29,6 +36,9 @@
     reload: true,
     onSuccess: () => {
       version += 1;
+      // `update({reset:true})` clears the DOM field but fires no input event, so `bind:value` would
+      // keep the submitted timestamp while the control renders empty.
+      customUntil = '';
     },
   });
 </script>
@@ -55,7 +65,7 @@
         <label class="text-xs text-dark-2">
           Duration
           <!-- Retool's presetMutes. A free-text hours box invites 240 where someone meant 24. -->
-          <div class="mt-1 flex gap-1">
+          <div class="mt-1 flex flex-wrap gap-1">
             {#each MUTE_PRESETS as [value, label] (value)}
               <Button
                 type="button"
@@ -66,8 +76,30 @@
                 {label}
               </Button>
             {/each}
+            <Button
+              type="button"
+              size="xs"
+              variant={useCustom ? 'default' : 'outline'}
+              onclick={() => (muteHours = 0)}
+            >
+              Until…
+            </Button>
           </div>
-          <input type="hidden" name="hours" value={muteHours} />
+          {#if useCustom}
+            <Input
+              type="datetime-local"
+              aria-label="Mute until"
+              bind:value={customUntil}
+              class="mt-1"
+              required
+            />
+            <!-- `datetime-local` submits no offset, and `new Date(...)` on a bare date-time resolves in
+                 the SERVER's zone (UTC in the containers) — so the moderator's 23:00 became 23:00 UTC.
+                 Submitting the resolved instant instead keeps the clock time they picked. -->
+            <input type="hidden" name="until" value={customUntilIso} />
+          {:else}
+            <input type="hidden" name="hours" value={muteHours} />
+          {/if}
         </label>
         <label class="flex-1 text-xs text-dark-2">
           Reason
@@ -83,38 +115,40 @@
   {:then result}
     {#if result}
       <div class="mt-5">
-        <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
-          History ({result.timedMutes.length})
-        </h4>
-        {#if result.timedMutes.length === 0}
-          <p class="text-sm text-dark-2">This account has never been given a timed mute.</p>
+        <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Current</h4>
+        {#if !result.timedMute}
+          <p class="text-sm text-dark-2">
+            No timed mute in force. A permanent mute, if any, is on the Admin panel.
+          </p>
         {:else}
-          <ul class="space-y-1.5 text-sm">
-            {#each result.timedMutes as m (m.id)}
-              <li class="flex flex-wrap items-baseline gap-x-2">
-                {#if m.active}
-                  <Badge variant="destructive">active</Badge>
-                {:else}
-                  <Badge variant="secondary">ended</Badge>
-                {/if}
-                <span class="text-dark-0">until {dateTime(m.muteEnd)}</span>
-                <span class="text-xs text-dark-2">{m.createdBy ?? 'unknown'}</span>
-                {#if m.muteReason}
-                  <span class="text-xs text-dark-2">— {m.muteReason}</span>
-                {/if}
-                {#if m.active && canAct}
-                  <form method="POST" action="?/revokeTimedMute" use:enhance={form.enhance}>
-                    <input type="hidden" name="id" value={m.id} />
-                    <input type="hidden" name="userId" value={identity.id} />
-                    <button type="submit" disabled={form.submitting} class="text-xs {LINK_CLASS}">
-                      revoke
-                    </button>
-                  </form>
-                {/if}
-              </li>
-            {/each}
-          </ul>
+          {@const m = result.timedMute}
+          <div class="flex flex-wrap items-baseline gap-x-2 text-sm">
+            <Badge variant="destructive">active</Badge>
+            <span class="text-dark-0">until {dateTime(m.muteExpiresAt)}</span>
+            <!-- A strike-set mute carries no moderator and no reason. Saying so beats an unexplained
+                 blank on the screen a ban is decided on. -->
+            {#if m.source === 'strikes'}
+              <span class="text-xs text-dark-2">set by strike escalation</span>
+            {:else}
+              {#if m.mutedAt}<span class="text-xs text-dark-2">set {dateTime(m.mutedAt)}</span>{/if}
+              {#if m.mutedBy}
+                <a href="?q={m.mutedBy}" class="text-xs {LINK_CLASS}">by #{m.mutedBy}</a>
+              {/if}
+              {#if m.reason}<span class="w-full text-xs text-dark-2">— {m.reason}</span>{/if}
+            {/if}
+            {#if canAct}
+              <form method="POST" action="?/revokeTimedMute" use:enhance={form.enhance}>
+                <input type="hidden" name="userId" value={identity.id} />
+                <button type="submit" disabled={form.submitting} class="text-xs {LINK_CLASS}">
+                  revoke
+                </button>
+              </form>
+            {/if}
+          </div>
         {/if}
+        <!-- Past mutes are not listed here: they live in ModActivity beside every other action taken on
+             the account, which is where a moderator reads history. The old list came from a side table
+             that only ever held mutes set through this one panel. -->
       </div>
     {/if}
   {:catch}

@@ -21,23 +21,22 @@ detail before doing anything destructive.
 
 | # | Do | Why it blocks |
 | --- | --- | --- |
-| ~~1~~ | ~~Set **`CIVITAI_MOD_API_KEY`**~~ **RESOLVED 2026-08-19 — do NOT provision this.** The spoke no longer holds a moderator key: every main-app call now goes to `/api/mod/*` and relays the acting moderator's own session cookie. The variable is gone from the code and from `.env.example`. |
+| ~~1~~ | ~~Set **`CIVITAI_MOD_API_KEY`**~~ **RESOLVED 2026-08-19 — do NOT provision this.** The spoke no longer holds a moderator key: every main-app call now goes to `/api/mod/*` and relays the acting moderator's own session cookie. The variable is gone from the code and from `.env.example`. | — |
 | 2 | Set **`RETOOL_DATABASE_URL`** in every deployed env | Otherwise notes/strikes/mutes read the wrong database → [detail](retool-migration-handover-detail.md#1-environment--appsmoderatorenv) |
 | 3 | Rename **`FRESHDESK_TOKEN` → `FRESHDESK_API_KEY`** | Support panel has shown "no contact found" for *every* user → [detail](retool-migration-handover-detail.md#1-environment--appsmoderatorenv) |
 | 4 | Apply **3 SQL migrations** by hand (each `CREATE INDEX CONCURRENTLY`, so outside a transaction) | Page-access table + mod-activity history + a report index → [detail](retool-migration-handover-detail.md#2-database-migrations--none-are-auto-applied) |
 | 5 | **Grant 5 new pages on `/admin`** — `article-lookup`, `user-reports`, `bulk-image-manager`, `front-page-audit`, `image-help` | A new page is reachable only by `moderator:admin` until granted. Grant Bulk Image Manager **narrowly**. Front Page Audit's rating buttons are gated on its own grant, so a moderator without it sees the sweep read-only → [detail](retool-migration-handover-detail.md#2b-grant-the-new-pages-on-admin) |
-
-| 5b | **Repoint the main app's moderator lookup buttons** off Retool, in `civitai`'s env: `NEXT_PUBLIC_POST_LOOKUP_URL` → `<mod app>/retool/bulk-image-manager?source=post&q=`, `NEXT_PUBLIC_MODEL_LOOKUP_URL` → `?source=model&q=`, `NEXT_PUBLIC_USER_LOOKUP_URL` → `<mod app>/retool/user-lookup?q=`, `NEXT_PUBLIC_CHAT_LOOKUP_URL` → `<mod app>/retool/chat-audit`. Each control appends a bare id to the value. | All four still point at Retool app URLs and die with it. Post and model both target Retool's **Bulk Image Manager** (`urlparams.postId` / `modelId`), not separate apps — there is nothing left to port for them. |
+| ~~5b~~ | ~~**Repoint the main app's moderator lookup buttons** off Retool~~ **RESOLVED 2026-08-20 — no env work.** There are no per-target lookup variables any more. One `NEXT_PUBLIC_MODERATOR_APP_URL` (with a default) plus path helpers in `src/shared/constants/moderator-app.ts`. User → `/retool/user-lookup?q=`, post → `/retool/bulk-image-manager?source=post&q=` (note `source`+`q`, not Retool's `postId`). Model was waived; chat had no reader left and its variable is deleted. | Per-target detail: [`mod-studio-feedback-2026-08-19.md`](mod-studio-feedback-2026-08-19.md). |
 
 ## Decisions only a dev can make
 
 | # | Decide | Detail |
 | --- | --- | --- |
 | ~~6~~ | ~~**Where the 2 Retool Workflows live.**~~ **RESOLVED 2026-08-11** — not ported. Both are inert alerting wrappers (no crontab, `isEnabled: false`, orphaned Discord block); the underlying jobs are already ours. The alert they provided was genuinely missing and is reimplemented as `src/server/jobs/challenge-health-check.ts`. | [decision](retool-workflows-decision.md) |
-| 7 | **Two schemas Front Page Audit needs** to resume and log (`FrontPageTimers`, `RatingChanges`) — `research_ratings` is closed, the main app deliberately dropped it. The sweep works without them; what is missing is the shared resume point and the audit trail. | [detail](retool-migration-handover-detail.md#2d-two-schemas-front-page-audit-needs-before-it-can-resume-or-log) |
+| 7 | **`RatingChanges`** — the one Front Page Audit write still unported (the rating audit trail). `FrontPageTimers` was built 2026-08-20, so the shared resume point works; the table's columns are confirmed and this is ordinary porting work, not a decision. | Canonical state: [Front Page Audit port state](retool-exports/parity-findings.md) |
 | 8 | **`aiNsfwLevel` and `aiModel` exist in production but not in `schema.full.prisma`.** The scan webhook writes them; the moderator app reads `aiNsfwLevel` through raw `sql` because it cannot be typed. Add to the schema, or accept the raw read. | [detail](retool-migration-handover-detail.md#4-known-open-decided-or-deferred) |
 | 9 | **`ReToolActions` vs `ModActivity`** — two mod-action logs, nothing reconciles them. **Recommendation made 2026-08-11**: migrate as a read-only archive, do NOT merge into `ModActivity` — the user id is embedded in free text and matched with `LIKE`, so any merge would invent `entityType`/`entityId` and attribution that then reads as real. Still needs a human's yes. | [decision](retool-db-cutover.md) |
-| 10 | **Two strike systems** — this app writes Retool's `UserStrikes`, not the main app's newer `Strike`. | [detail](retool-migration-handover-detail.md#4-known-open-decided-or-deferred) |
+| ~~10~~ | ~~**Two strike systems** — this app writes Retool's `UserStrikes`.~~ **RESOLVED 2026-08-20.** `issueStrike` writes the main app's `Strike` through `retool/strike → create`, so escalation, points, expiry, the typed notification and the void path all come with it. Legacy `UserStrikes` rows are still read alongside so history is not lost. | [detail](retool-migration-handover-detail.md#4-known-open-decided-or-deferred) |
 
 ## Before Retool access is lost
 
@@ -72,11 +71,6 @@ green form is not evidence. Verify against the real target, not the page.
 
 ## Known gaps in what was ported
 
-**[`parity-findings.md`](retool-exports/parity-findings.md)** is the live list: 35 findings from
-comparing each export's SQL against what was built, with fixed/open status. The open ones a moderator
-would notice first:
-
-- User Lookup's "reports they filed" drops the commonest kind while its own tile counts them
-- Report entity coverage is 6 of Retool's 11 types, so some reported accounts read as clean
-- `UserRestriction` is read nowhere, so a system auto-mute looks like an unexplained manual one
-- Report `details` — the reporter's own words — is fetched and dropped on **every** page in the app
+**[`parity-findings.md`](retool-exports/parity-findings.md)** is the live list — every finding from
+comparing each export's SQL against what was built, with fixed/open status, and it moves faster than
+this file. Read it there; nothing is restated here.

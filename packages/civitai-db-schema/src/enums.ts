@@ -683,7 +683,8 @@ export const CollectionItemRejectionReason = {
   Automated: 'Automated',
 } as const;
 
-export type CollectionItemRejectionReason = (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
+export type CollectionItemRejectionReason =
+  (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
 
 export const CollectionContributorPermission = {
   VIEW: 'VIEW',

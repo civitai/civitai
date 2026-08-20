@@ -27,7 +27,7 @@ import {
 } from '$lib/server/moderation-memory.service';
 import { getSuspectImages } from '$lib/server/report-triage.service';
 import { getLiveStrikes } from '$lib/server/user-lookup.service';
-import { getModActivity } from '$lib/server/user-account.service';
+import { getModActivity, getRetoolActivity } from '$lib/server/user-account.service';
 import { getReportsOnUser } from '$lib/server/user-reports.service';
 import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
 import { ingestionErrorLevelSet } from '@civitai/shared';
@@ -115,45 +115,58 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // Reaching the queue is an investigation permission; acting on a report or an account is not.
   const canAct = canAccess(locals.user, '/users');
 
-  const [reports, history, suspect, strikes, legacyStrikes, notes, modActivity, reportsOnUser] =
-    await Promise.all([
-      // The SAME query `/reports/user` runs. A parallel one diverged from the sidebar's counts on which
-      // reasons it excluded, so the badge and this heading disagreed about one queue.
-      getReports({
-        type: ReportEntity.User,
-        page,
-        limit: PER_PAGE,
-        // An empty selection is every status, said explicitly rather than implied by omission.
-        statuses: queueStatuses.length ? queueStatuses : 'all',
-        reasons: DEFAULT_REPORT_REASONS,
-        reportedBy: reportedBy || undefined,
-        from: reportedFrom ?? undefined,
-        to: reportedTo ?? undefined,
-      }),
-      getReportHistory(ReportEntity.User),
-      user ? getSuspectImages(user, filters, { cursor }) : null,
-      // The MAIN APP's strikes, not the moderator database's Retool-era table — that one is written by
-      // nothing, so this panel read 0 on an account carrying ten live strikes, which is the worst
-      // possible number to be wrong about on the screen where the next one is issued.
-      user ? getLiveStrikes(user) : null,
-      user ? getUserStrikes(user) : null,
-      // Retool put the suspect's notes on this page. "Shipped in User Lookup" is true of the dataset and
-      // false of this screen: deciding on a strike without the prior note is the thing notes exist to stop.
-      user ? getUserNotes(user, locals.user.username ?? null) : null,
-      // Retool's top-left was three tabs — ModActivity / Reports / UserReport History — and the whole
-      // point of this screen is not leaving it. Strikes and notes were already here; these two are what
-      // "has anyone dealt with this account before" actually reads.
-      user ? getModActivity(user, 20) : null,
-      // Every status, not the open ones: the queue row above is the open report. What is missing here is
-      // whether this account has been reported and RULED ON before.
-      //
-      // Human-filed only, matching the queue's own definition. `Automated` is 99.9% of this table — one
-      // dev account carries 556 of them — so an unfiltered list of 20 is 20 Clavata rows and answers
-      // nothing about whether a person has complained about this account before.
-      user
-        ? getReportsOnUser(user, { limit: 20, statuses: [], reasons: DEFAULT_REPORT_REASONS })
-        : null,
-    ]);
+  const [
+    reports,
+    history,
+    suspect,
+    strikes,
+    legacyStrikes,
+    notes,
+    modActivity,
+    retoolActivity,
+    reportsOnUser,
+  ] = await Promise.all([
+    // The SAME query `/reports/user` runs. A parallel one diverged from the sidebar's counts on which
+    // reasons it excluded, so the badge and this heading disagreed about one queue.
+    getReports({
+      type: ReportEntity.User,
+      page,
+      limit: PER_PAGE,
+      // An empty selection is every status, said explicitly rather than implied by omission.
+      statuses: queueStatuses.length ? queueStatuses : 'all',
+      reasons: DEFAULT_REPORT_REASONS,
+      reportedBy: reportedBy || undefined,
+      from: reportedFrom ?? undefined,
+      to: reportedTo ?? undefined,
+    }),
+    getReportHistory(ReportEntity.User),
+    user ? getSuspectImages(user, filters, { cursor }) : null,
+    // The MAIN APP's strikes, not the moderator database's Retool-era table — that one is written by
+    // nothing, so this panel read 0 on an account carrying ten live strikes, which is the worst
+    // possible number to be wrong about on the screen where the next one is issued.
+    user ? getLiveStrikes(user) : null,
+    user ? getUserStrikes(user) : null,
+    // Retool put the suspect's notes on this page. "Shipped in User Lookup" is true of the dataset and
+    // false of this screen: deciding on a strike without the prior note is the thing notes exist to stop.
+    user ? getUserNotes(user, locals.user.username ?? null) : null,
+    // Retool's top-left was three tabs — ModActivity / Reports / UserReport History — and the whole
+    // point of this screen is not leaving it. Strikes and notes were already here; these two are what
+    // "has anyone dealt with this account before" actually reads.
+    user ? getModActivity(user, 20) : null,
+    // The Retool-era half of the same question. `ModActivity` keys on content and did not exist for
+    // the Retool years, so on its own it prints "nothing recorded" for an account carrying a decade of
+    // enforcement — on the one screen where that answer decides whether to strike.
+    user ? getRetoolActivity(user, 20) : null,
+    // Every status, not the open ones: the queue row above is the open report. What is missing here is
+    // whether this account has been reported and RULED ON before.
+    //
+    // Human-filed only, matching the queue's own definition. `Automated` is 99.9% of this table — one
+    // dev account carries 556 of them — so an unfiltered list of 20 is 20 Clavata rows and answers
+    // nothing about whether a person has complained about this account before.
+    user
+      ? getReportsOnUser(user, { limit: 20, statuses: [], reasons: DEFAULT_REPORT_REASONS })
+      : null,
+  ]);
 
   // The report row carries the suspect's id but not their state; hydrate through the shared helper
   // rather than joining User again — four hand-rolled copies of that join had already drifted.
@@ -193,6 +206,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     legacyStrikeCount: legacyStrikes?.length ?? 0,
     notes,
     modActivity,
+    retoolActivity,
     reportsOnUser,
     canAct,
     // The queue and the selected suspect sit side by side, which needs the full content width.

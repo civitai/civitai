@@ -2,15 +2,15 @@
 // rather than imported from `$lib/server/*` because it crosses a JSON boundary — `Date` arrives as
 // `string` — and importing a server module into a component invites it into the client bundle.
 
+/** The account's current timed mute. One or none — it is `User.muteExpiresAt`, a single column, not a
+ *  list of rows that could disagree with the account. */
 export type TimedMute = {
-  id: number;
-  muteStart: string | null;
-  muteEnd: string | null;
-  createdBy: string | null;
-  muteReason: string | null;
-  /** Derived server-side from both the revocation flag and `muteEnd` — Retool and this app disagree
-   *  about which one means "active", so the panel must not re-derive it. */
-  active: boolean;
+  muteExpiresAt: string;
+  /** `strikes` carries no reason or moderator — the escalation engine set it, not a person. */
+  source: 'moderator' | 'strikes';
+  mutedAt: string | null;
+  reason: string | null;
+  mutedBy: number | null;
 };
 
 export type FreshdeskResult =
@@ -21,7 +21,7 @@ export type FreshdeskResult =
   | { status: 'none' }
   | { status: 'unavailable'; reason: string };
 
-export type Support = { timedMutes: TimedMute[]; freshdesk: FreshdeskResult };
+export type Support = { timedMute: TimedMute | null; freshdesk: FreshdeskResult };
 
 export async function fetchSupport(userId: number, version: number): Promise<Support> {
   const r = await fetch(`/api/user-support/${userId}?v=${version}`);

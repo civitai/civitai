@@ -111,13 +111,15 @@ Open, with the evidence each audit produced:
       `User.muteExpiresAt` — the only column `processTimedUnmutes` selects on — so a 24-hour mute was
       permanent while the panel rendered it as expiring.
       The blocker was that `muteExpiresAt !== null` carried **two** meanings: "has an expiry" and "came
-      from strikes". `meta.manualMute` now separates them: `evaluateStrikeEscalation`'s de-escalation
-      branch skips a manual mute, so decaying strike points no longer lift a mute a moderator set to run
-      for another two days, while `processTimedUnmutes` still lifts it on time and clears the flag.
+      from strikes". **Superseded 2026-08-20:** the separator is `mutedAt`, not the `meta.manualMute`
+      flag this entry originally described — that flag was written by two apps and read by none, while
+      `mutedAt` already meant "a moderator decided this" for `confirm-mutes`, `entity-moderation` and
+      `prepare-leaderboard`. `evaluateStrikeEscalation` now skips **and does not shorten** a mute
+      carrying it, and both strike unmute paths clear it so it cannot go stale.
       `retool/user → mute` takes an optional `expiresAt` (omitted = today's indefinite mute).
-      Verified end to end on 1290051: a 24h mute wrote `muteExpiresAt` exactly 24.0h out with
-      `manualMute: true`; revoke cleared mute, expiry and flag. 55 strike-service tests pass, both apps
-      typecheck.
+      Verified end to end on 1290051: a 24h mute wrote `muteExpiresAt` exactly 24.0h out; revoke
+      cleared mute and expiry. (The `manualMute: true` this originally recorded no longer exists — see
+      above.) 58 strike-service tests pass, both apps typecheck.
 - [x] **Strikes write a second, disconnected ledger** (2026-08-12 — decision: the main app owns strikes,
       Retool only ever gave mods manual give/revoke on top of it). `addUserStrike` inserted into the
       moderator database's legacy `UserStrikes`, which gets none of what a strike does. Issuing now calls
@@ -413,10 +415,11 @@ browser as user 1290051, not by reading the code.
       measure.** Nothing computes this signal today, and Retool's own definition is not in the export, so
       building one would be inventing a moderation heuristic rather than porting it. Needs a rule from
       the mod team (rate? duplicate text? ratio to other activity?) before it means anything.
-- [ ] **Timed mutes: Mute Start / Notify User** — **parked 2026-08-12**: `TimedMutes` is **0 rows in
-      both databases**, so the feature was most likely never used. The underlying expiry bug is fixed
-      regardless (see the 🔴 item above) — this is only about the two extra controls, which are not worth
-      building onto a table nobody writes until someone confirms the feature is wanted.
+- [ ] **Timed mutes: Mute Start / Notify User** — **still parked, new reasoning 2026-08-20.** The
+      `TimedMutes` table is gone; a timed mute is `User.muteExpiresAt`, and expiry works
+      (`processTimedUnmutesJob`, hourly). Mute *start* needs a `muteStartsAt` column plus a second job —
+      a schema change, not a control. Notify User is a wiring job now that `issueStrike`/`notify` exist.
+      Neither is worth doing until someone confirms the feature is wanted.
 - [x] **Banned for CSAM** (2026-08-11). The ban badge now carries its reason code, and a separate
       **CSAM ban** chip appears for the `SexualMinor*` codes — a Nudify ban and a SexualMinor ban are
       not the same next conversation, and the reason was a section away under Admin. Verified against
@@ -1089,7 +1092,8 @@ that reporter to that build.
       panel selected and dropped.
       Verified end to end on 1290051: applying a 24h mute renders it active with the reason and the
       moderator, Admin shows the cross-link, revoke flips it to ended, and the `User` row comes back to
-      `muted=false, muteExpiresAt=null, manualMute=false`.
+      `muted=false, muteExpiresAt=null` (and `mutedAt=null` since 2026-08-20; the `manualMute=false`
+      originally recorded here no longer exists).
       **This unblocks §12i** — a gate on the `admin` slug now actually gates that surface.
 - [x] **Notes and strikes belong on Basic User Information** (2026-08-13 — `ModerationMemoryPanel`
       renders there too; the Notes & Strikes section stays, since it is also where the write forms live).

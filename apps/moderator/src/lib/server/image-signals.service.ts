@@ -6,13 +6,10 @@ import { INTERNAL_IP_RANGE } from './clickhouse-filters';
 // Everything behind `/api/image-signals` — the ClickHouse half of Image Lookup. One file per endpoint,
 // same rule as the User Lookup services.
 //
-// BOTH tables sort by TIME first (`reactions`: time, reaction, entityId, userId — `images`: time,
-// imageId, userId), and `reactions` is 825M rows. Filtering on the image id alone scans the table: 2.0s
-// measured, and 5.3s on a colder id.
-//
-// The fix is that a reaction cannot predate the image it is on. Passing the image's own `createdAt` as a
-// lower bound puts the query back on the sort key — 2.0s to 203ms on the same id. Callers must pass it;
-// there is no sensible default, and omitting it silently reintroduces the full scan.
+// `reactions` is 825M rows and sorts by TIME first (time, reaction, entityId, userId), so filtering on
+// the image id alone scans the table: 2.0s measured, 5.3s on a colder id. A reaction cannot predate the
+// image it is on, so the image's own `createdAt` as a lower bound puts the query back on the sort key —
+// 2.0s to 203ms. (`default.images` is deliberately UNBOUNDED; see `getImageEvents`.)
 //
 // The ClickHouse helper interpolates values with NO escaping, so only numbers we control and a bound
 // matched against CH_DATETIME are ever put into a query.
@@ -39,35 +36,48 @@ export type ImageEvent = {
   tosReason: string | null;
   violationType: string | null;
   violationDetails: string;
+  /** Owner AT THE TIME of the event, which a transfer makes different from the current one. */
+  ownerId: number;
+  nsfw: string | null;
+  /** Model ids on a Resources event, as ClickHouse renders the array. */
+  resources: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  via: string | null;
   /** The tag set as of that moment — on a Tags event this is what the scanner changed. */
   tags: string | null;
 };
 
 // `default.images` is the image's lifecycle log — Create / Delete / DeleteTOS / Tags / Resources /
 // Restore / Play — and it is the only place the TOS reason and violation type for a removal are kept.
-// 8.2M rows, so the time bound matters less here, but it costs nothing to apply the same one.
-// `createdAt` is null for an image that no longer exists in Postgres — a TOS deletion removes the row but
-// leaves this log, which is exactly when a moderator most needs it. Unbounded is affordable here (8.2M
-// rows, ~400ms); it would not be on `reactions`, which is why that one has no such fallback.
+//
+// NOT time-bounded, unlike the reactions scan below: the bound can only LOSE rows (anything logged
+// before the Postgres `createdAt`), the truncation banner fires on the LIMIT so nothing on screen would
+// say so, and unbounded is 8.2M rows / ~400ms. On the deleted path the oldest event is the original
+// DeleteTOS, which is what the moderator came for.
 export async function getImageEvents(
   imageId: number,
-  createdAt: string | null,
   limit = 50
 ): Promise<{ rows: ImageEvent[]; truncated: boolean }> {
-  const bound = bounded(createdAt, 'time');
   const rows = await getClickhouse().$query<{
     type: string;
     time: string;
     userId: string;
+    ownerId: string;
+    nsfw: string | null;
     tosReason: string | null;
     violationType: string | null;
     violationDetails: string;
     tags: string | null;
+    resources: string | null;
+    ip: string | null;
+    userAgent: string | null;
+    via: string | null;
   }>(`
-    SELECT type, time, userId, tosReason, violationType, violationDetails, toString(tags) AS tags
+    SELECT type, time, userId, ownerId, nsfw, tosReason, violationType, violationDetails,
+           toString(tags) AS tags, toString(resources) AS resources, ip, userAgent, via
     FROM default.images
     WHERE imageId = ${imageId}
-      ${bound}
     ORDER BY time DESC
     LIMIT ${limit + 1}
   `);
@@ -82,10 +92,16 @@ export async function getImageEvents(
     type: r.type,
     time: clickhouseDate(r.time),
     userId: Number(r.userId),
+    ownerId: Number(r.ownerId),
+    nsfw: r.nsfw || null,
     tosReason: r.tosReason,
     violationType: r.violationType,
     violationDetails: r.violationDetails,
     tags: r.tags || null,
+    resources: r.resources && r.resources !== '[]' ? r.resources : null,
+    ip: r.ip || null,
+    userAgent: r.userAgent || null,
+    via: r.via || null,
   }));
 
   return { rows: page, truncated };

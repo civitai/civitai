@@ -38,6 +38,9 @@ export type ImageDetail = {
   hash: string | null;
   pHash: string | null;
   scanJobs: unknown;
+  /** The whole cell. `prompt`/`negativePrompt` are lifted out above; the rest is seed, sampler, model
+   *  hash and civitaiResources, which Retool's SELECT * put on screen. */
+  meta: unknown;
   prompt: string | null;
   negativePrompt: string | null;
 };
@@ -150,12 +153,14 @@ export async function resolveImageId(term: string): Promise<number | null> {
   }
 
   // Retool matched `url` against the raw term, so any stored value resolved. Older rows hold full
-  // CDN URLs rather than a bare UUID; without the fallback those report "no image matches", which
-  // reads as deleted rather than as an unrecognised format.
+  // CDN URLs rather than a bare UUID, so both spellings have to be tried: matching only the extracted
+  // UUID misses them, and those report "no image matches", which reads as deleted rather than as an
+  // unrecognised format.
+  const candidates = uuid && uuid !== value ? [uuid, value] : [uuid ?? value];
   const row = await dbRead
     .selectFrom('Image')
     .select('id')
-    .where('url', '=', uuid ?? value)
+    .where('url', 'in', candidates)
     .executeTakeFirst();
   return row?.id ?? null;
 }
@@ -276,6 +281,9 @@ async function getImage(imageId: number): Promise<ImageDetail | null> {
       // `meta` holds the generation prompt, which is the evidence behind a minor/poi call.
       sql<string | null>`i."meta" ->> 'prompt'`.as('prompt'),
       sql<string | null>`i."meta" ->> 'negativePrompt'`.as('negativePrompt'),
+      // The rest of the cell — seed, sampler, model hash, civitaiResources. Retool showed the whole
+      // `meta` column, and two extracted strings is not the same answer to "what made this image".
+      'i.meta',
     ])
     .where('i.id', '=', imageId)
     .executeTakeFirst();

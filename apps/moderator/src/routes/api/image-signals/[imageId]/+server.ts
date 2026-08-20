@@ -26,7 +26,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   // no lower bound, and an unbounded scan of the 825M-row reactions table is not worth it for an image
   // that no longer exists.
   const [events, reactions] = await Promise.all([
-    getImageEvents(imageId, image?.createdAt ?? null),
+    getImageEvents(imageId),
     image ? getReactionSignals(imageId, image.createdAt) : null,
   ]);
 

@@ -1,11 +1,7 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { enhance } from '$app/forms';
-  import { goto } from '$app/navigation';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import { cn } from '@civitai/ui/utils.js';
   import { TAG_CATEGORIES } from './moderation-tags';
@@ -13,23 +9,12 @@
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime, num } from '$lib/format';
   import { getBrowsingLevelLabel } from '@civitai/shared';
-  import { MEDIA_LABELS, ORDER_LABELS, SWEEP_LEVELS, SWEEP_MEDIA, SWEEP_ORDERS } from './sweep';
+  import { SWEEP_LEVELS } from './sweep';
   import RatingBar from './RatingBar.svelte';
+  import SweepFilterBar from './SweepFilterBar.svelte';
+  import SweepCheckpointBar from './SweepCheckpointBar.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
-
-  // Local mirrors so changing a picker doesn't navigate twice. The effect re-syncs on back/forward,
-  // where the component is not remounted.
-  let level = $state(untrack(() => String(data.nsfwLevel)));
-  let order = $state(untrack(() => data.order));
-  let media = $state(untrack(() => data.media));
-  let hours = $state(untrack(() => String(data.hours)));
-  $effect(() => {
-    level = String(data.nsfwLevel);
-    order = data.order;
-    media = data.media;
-    hours = String(data.hours);
-  });
 
   // Rated images stay on screen (removing them would renumber the grid mid-sweep) but dim, so the
   // moderator can see what they have handled in this pass. A SvelteSet so the grid re-renders on
@@ -40,17 +25,11 @@
   const newRating = new SvelteMap<number, number>();
 
   const onSubmit = new FormState({ onSuccess: null, reload: false });
-
-  const apply = () =>
-    goto(`?level=${level}&order=${order}&media=${media}&hours=${hours}`, { keepFocus: true });
-
-  const labelFor = (value: number) =>
-    SWEEP_LEVELS.find((l) => l.value === value)?.label ?? String(value);
-
-  // Pickers show the PENDING selection; the heading shows what is actually loaded. Labelling the
-  // controls from `data` made a chosen value read as unchanged until Sweep was pressed.
-  const pendingLevelLabel = $derived(labelFor(Number(level)));
-  const loadedLevelLabel = $derived(labelFor(data.nsfwLevel));
+  // The heading names what is actually LOADED; the pickers, which show a pending selection, live in
+  // SweepFilterBar.
+  const loadedLevelLabel = $derived(
+    SWEEP_LEVELS.find((l) => l.value === data.nsfwLevel)?.label ?? String(data.nsfwLevel)
+  );
 </script>
 
 <header class="page-header">
@@ -61,59 +40,7 @@
   </p>
 </header>
 
-<section class="mb-4 flex flex-wrap items-end gap-2 rounded-xl border border-dark-4 bg-dark-6 p-5">
-  <label class="flex flex-col gap-1 text-xs text-dark-2">
-    Rating
-    <Select.Root type="single" bind:value={level}>
-      <Select.Trigger class="w-32">{pendingLevelLabel}</Select.Trigger>
-      <Select.Content>
-        {#each SWEEP_LEVELS as l (l.value)}
-          <Select.Item value={String(l.value)}>{l.label}</Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
-  </label>
-
-  <label class="flex flex-col gap-1 text-xs text-dark-2">
-    Order
-    <Select.Root type="single" bind:value={order}>
-      <Select.Trigger class="w-56">{ORDER_LABELS[order]}</Select.Trigger>
-      <Select.Content>
-        {#each SWEEP_ORDERS as o (o)}
-          <Select.Item value={o}>{ORDER_LABELS[o]}</Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
-  </label>
-
-  <label class="flex flex-col gap-1 text-xs text-dark-2">
-    Media
-    <Select.Root type="single" bind:value={media}>
-      <Select.Trigger class="w-32">{MEDIA_LABELS[media]}</Select.Trigger>
-      <Select.Content>
-        {#each SWEEP_MEDIA as m (m)}
-          <Select.Item value={m}>{MEDIA_LABELS[m]}</Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
-  </label>
-
-  {#if order === 'newest'}
-    <label class="flex flex-col gap-1 text-xs text-dark-2">
-      Window (hours)
-      <Select.Root type="single" bind:value={hours}>
-        <Select.Trigger class="w-28">{hours}h</Select.Trigger>
-        <Select.Content>
-          {#each [6, 12, 24, 48, 72, 168, 720] as h (h)}
-            <Select.Item value={String(h)}>{h}h</Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
-    </label>
-  {/if}
-
-  <Button onclick={apply}>Sweep</Button>
-</section>
+<SweepFilterBar {data} />
 
 {#if form?.error}
   <div
@@ -138,10 +65,11 @@
       <span class="text-amber-300"> Capped at {data.limit}; narrow the window.</span>
     {/if}
   </p>
-  <p class="mt-2 text-xs text-dark-2">
-    The shared resume point (Retool's <code>FrontPageTimers</code>) is not ported yet, so this window is
-    yours alone — two moderators sweeping the same rating will overlap. Share the URL to split a sweep.
-  </p>
+  <!-- Only the newest-first image sweep shares a resume point; the reactions view ignores the window
+       entirely and the video sweep is a different, much smaller population. -->
+  {#if data.order === 'newest' && data.media === 'image'}
+    <SweepCheckpointBar {data} />
+  {/if}
 </section>
 
 <ImageQueueGrid

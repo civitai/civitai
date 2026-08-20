@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
-import { dbRead } from './db';
-import { OWNED_REPORT_ENTITIES } from './report-entities';
+import { dbRead, dbWrite } from './db';
+import { OWNED_REPORT_ENTITIES, chatReportSubject } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { getModeratorContact, type ModeratorContact } from './user-signals.service';
 
@@ -10,7 +10,8 @@ import { getModeratorContact, type ModeratorContact } from './user-signals.servi
 //
 // Ported from Retool (UserIDByUsername / UserIDByEmail / UserContent /
 // AllCountsUnion / UserStats). Investigation only — every read goes to the replica so looking a user up
-// never touches the primary.
+// never touches the primary. The single exception is `getLiveStrikes({ readYourWrite })`, which is a
+// refetch of a row the caller just caused to be written; see it for why.
 
 export type UserIdentity = {
   id: number;
@@ -206,9 +207,19 @@ export type LiveStrike = {
  * The strike ROWS, where `getActiveStrikes` answers the header chip's "how much rope is left". Voided
  * and expired ones are included: a moderator deciding on the next action needs the account's history,
  * and a strike that has already lapsed is the thing that says this has happened before.
+ *
+ * ⚠️ `limit` truncates silently, and `SuspectPanel` already renders a count from `.length` — at 50
+ * rows that count would read as the cap.
+ *
+ * `readYourWrite` reads the PRIMARY. The strike itself is written there by the main app, and this is
+ * refetched milliseconds after that call returns, so on the replica any lag past the round trip
+ * reproduces the exact bug this serves — "the strike was issued and is not in the list".
  */
-export async function getLiveStrikes(userId: number, limit = 50): Promise<LiveStrike[]> {
-  return dbRead
+export async function getLiveStrikes(
+  userId: number,
+  { limit = 50, readYourWrite = false }: { limit?: number; readYourWrite?: boolean } = {}
+): Promise<LiveStrike[]> {
+  return (readYourWrite ? dbWrite : dbRead)
     .selectFrom('UserStrike')
     .select([
       'id',
@@ -660,13 +671,15 @@ export async function getReportedContent(userId: number): Promise<ReportedConten
       return { label, count: Number(r?.count ?? 0) };
     })
   ).then(async (counts) => {
-    // Chat is owned by `ownerId`, so it cannot go through the loop — but leaving it out here while the
-    // rows below list it is exactly the count/rows disagreement the shared list exists to prevent.
+    // Chat has no owner column that means "who was reported", so it cannot go through the loop — but
+    // leaving it out here while the rows below list it is exactly the count/rows disagreement the
+    // shared list exists to prevent. `chatReportSubject` is the one definition of the rule.
     const chat = await dbRead
       .selectFrom('Chat')
       .innerJoin('ChatReport', 'ChatReport.chatId', 'Chat.id')
+      .innerJoin('Report as r', 'r.id', 'ChatReport.reportId')
       .select((eb) => eb.fn.count<string>('Chat.id').distinct().as('count'))
-      .where('Chat.ownerId', '=', userId)
+      .where(chatReportSubject('Chat.id', 'r', userId))
       .executeTakeFirst();
     return [...counts, { label: 'Chat', count: Number(chat?.count ?? 0) }];
   });
@@ -681,6 +694,11 @@ export type UserSubscription = {
   cancelAtPeriodEnd: boolean | null;
   canceledAt: Date | null;
   currentPeriodEnd: Date | null;
+  /** `month` / `year`. Retool kept a whole second query for this: it is what says whether a refund is
+   *  a month or a year of value. */
+  interval: string | null;
+  unitAmount: number | null;
+  currency: string | null;
 };
 
 // CustomerSubscription is unique on (userId, buzzType) — multiple rows per user are by design, and
@@ -698,11 +716,17 @@ export async function getSubscription(userId: number): Promise<UserSubscription 
     'cs.cancelAtPeriodEnd',
     'cs.canceledAt',
     'cs.currentPeriodEnd',
+    // Retool's UserSubscriptionStatusAnnual was a second query for exactly this column. Annual vs
+    // monthly is what decides the amount on a refund or a chargeback, so it rides the one query.
+    'pr.interval',
+    'pr.unitAmount',
+    'pr.currency',
   ] as const;
 
   const paid = await dbRead
     .selectFrom('CustomerSubscription as cs')
     .leftJoin('Product as p', 'p.id', 'cs.productId')
+    .leftJoin('Price as pr', 'pr.id', 'cs.priceId')
     .select(select)
     .where('cs.userId', '=', userId)
     .where('cs.buzzType', '=', PAID_BUZZ_TYPE)
@@ -713,6 +737,7 @@ export async function getSubscription(userId: number): Promise<UserSubscription 
   const other = await dbRead
     .selectFrom('CustomerSubscription as cs')
     .leftJoin('Product as p', 'p.id', 'cs.productId')
+    .leftJoin('Price as pr', 'pr.id', 'cs.priceId')
     .select(select)
     .where('cs.userId', '=', userId)
     .orderBy('cs.currentPeriodEnd', 'desc')

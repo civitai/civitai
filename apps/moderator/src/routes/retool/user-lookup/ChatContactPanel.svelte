@@ -1,8 +1,14 @@
 <script lang="ts">
   import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { chatAuditChatUrl, chatAuditUserUrl } from '$lib/entity-url';
   import type { ModeratorContact } from '$lib/server/user-signals.service';
 
-  let { modContact }: { modContact: ModeratorContact } = $props();
+  let {
+    modContact,
+    username,
+  }: { modContact: ModeratorContact; username: string | null } = $props();
+
+  const postedInHref = $derived(username ? chatAuditUserUrl(username) : null);
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -12,10 +18,19 @@
     prior-context warning, not a chat browser.
   </p>
 
+  {#if postedInHref}
+    <p class="mb-3 text-sm">
+      <!-- "posted in", not "is in" — see `chatAuditUserUrl`. -->
+      <a href={postedInHref} class={LINK_CLASS}>Every chat this account has posted in →</a>
+    </p>
+  {/if}
+
   {#if modContact.chats === null}
     <p class="text-sm text-red-300">Could not check moderator contact — treat as unknown, not none.</p>
   {:else if modContact.chats === 0}
-    <p class="text-sm text-dark-2">No moderator contact on record.</p>
+    <p class="text-sm text-dark-2">
+      No moderator has posted in a chat with this account. That is not the same as having no chats.
+    </p>
   {:else}
     <div class="rounded-md border border-blue-500/30 bg-blue-500/10 p-2 text-sm text-blue-200">
       This account has spoken with a moderator in {num(modContact.chats)}
@@ -27,7 +42,7 @@
     <ul class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm">
       {#each modContact.chatIds as id (id)}
         <li>
-          <a href="/retool/chat-audit/chats?chat={id}" class={LINK_CLASS}>chat {id}</a>
+          <a href={chatAuditChatUrl(id)} class={LINK_CLASS}>chat {id}</a>
         </li>
       {/each}
       {#if modContact.chats > modContact.chatIds.length}

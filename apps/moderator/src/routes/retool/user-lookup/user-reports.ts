@@ -1,10 +1,15 @@
 // The `/api/user-reports` payload. Crosses a JSON boundary, so `Date` arrives as `string`.
 
+import type { ReportEntity } from '$lib/reports';
+
 export type ReportRow = {
   id: number;
   createdAt: string;
   reason: string;
   status: string;
+  /** The enum — what resolves a URL or a route. `entityType` beside it is a display label and does
+   *  not lowercase to this, which is how it produced dead links when used as a key. */
+  type: ReportEntity;
   entityType: string;
   entityId: number | null;
   reporterId: number | null;

@@ -25,11 +25,18 @@ const searchIndexes = {
   user: usersSearchIndex,
 } as const;
 
-const schema = z.object({
-  entityType: z.string(),
-  entityId: z.coerce.number().int().positive(),
-  action: z.enum(['update', 'delete']).optional(),
-});
+const schema = z
+  .object({
+    entityType: z.string(),
+    entityId: z.coerce.number().int().positive().optional(),
+    // Capped because the whole body is held in memory and a runaway caller should fail loudly rather
+    // than enqueue a million ids. Well above any real moderation batch.
+    entityIds: z.array(z.coerce.number().int().positive()).min(1).max(1000).optional(),
+    action: z.enum(['update', 'delete']).optional(),
+  })
+  .refine((v) => v.entityId != null || v.entityIds?.length, {
+    message: 'Provide entityId or entityIds',
+  });
 
 // Internal callback so spoke apps (e.g. apps/moderator) that mutate Postgres directly can trigger a
 // Meilisearch re-index without owning the search-index client. Token-guarded via WEBHOOK_TOKEN, which is
@@ -42,7 +49,7 @@ export default WebhookEndpoint(async (req, res) => {
   if (!result.success)
     return res.status(400).json({ error: 'Invalid input', details: result.error.issues });
 
-  const { entityType, entityId, action } = result.data;
+  const { entityType, entityId, entityIds, action } = result.data;
   const index = searchIndexes[entityType as keyof typeof searchIndexes];
   if (!index)
     return res.status(400).json({
@@ -54,12 +61,14 @@ export default WebhookEndpoint(async (req, res) => {
   const queueAction =
     action === 'delete' ? SearchIndexUpdateQueueAction.Delete : SearchIndexUpdateQueueAction.Update;
 
-  await index.queueUpdate([{ id: entityId, action: queueAction }]);
+  const ids = [...new Set(entityIds ?? [entityId as number])];
+  const updates = ids.map((id) => ({ id, action: queueAction }));
+
+  await index.queueUpdate(updates);
 
   // Images live in two indexes (main + metrics) — keep both in sync, matching the main app's
   // queueImageSearchIndexUpdate.
-  if (entityType === 'image')
-    await imagesMetricsSearchIndex.queueUpdate([{ id: entityId, action: queueAction }]);
+  if (entityType === 'image') await imagesMetricsSearchIndex.queueUpdate(updates);
 
-  return res.status(200).json({ ok: true, entityType, entityId });
+  return res.status(200).json({ ok: true, entityType, count: ids.length });
 });

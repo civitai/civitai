@@ -27,6 +27,16 @@
     ['Body length', `${num(article.contentLength)} chars`],
   ]);
 
+  // `coverId` superseded the legacy `cover` URL string. Reading only the id renders an article that has
+  // just the old column as having no cover — beside a badge the cover is what produced.
+  const coverLabel = $derived(
+    article.coverId !== null
+      ? `#${article.coverId}`
+      : article.cover
+        ? 'legacy cover (no image record)'
+        : '—'
+  );
+
   // `nsfwLevel` is what the site actually applies; the override sits above the content-derived level.
   const levels = $derived<[string, string][]>([
     ['Effective', getBrowsingLevelLabel(article.nsfwLevel)],
@@ -35,8 +45,20 @@
       'Moderator override',
       article.moderatorNsfwLevel === null ? '—' : getBrowsingLevelLabel(article.moderatorNsfwLevel),
     ],
+    // Only meaningful under an override, and it is the number that says whether the gate may clear it:
+    // basis below the override means the content was always lower, so it is not auto-clearable.
+    ...(article.moderatorNsfwLevel === null
+      ? []
+      : ([
+          [
+            'Override basis',
+            article.moderatorNsfwLevelBasis === null
+              ? 'not recorded (predates the column)'
+              : getBrowsingLevelLabel(article.moderatorNsfwLevelBasis),
+          ],
+        ] satisfies [string, string][])),
     // The cover is usually WHY the effective level is what it is, so it belongs beside the three.
-    ['Cover image', article.coverId === null ? '—' : `#${article.coverId}`],
+    ['Cover image', coverLabel],
   ]);
 
   // Typed non-null by Prisma's generated Kysely types, but the column is nullable in the database.

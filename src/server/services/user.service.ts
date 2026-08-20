@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -459,14 +460,16 @@ export async function clearUserProfileFields({
  * Mod-driven: explicit mute/unmute (vs. legacy toggle).
  */
 /**
- * `muteExpiresAt` carries two meanings that used to be the same one: "this mute has an expiry" and
- * "this mute came from strikes". A moderator setting a timed mute needs the first without the second —
- * otherwise `evaluateStrikeEscalation` clears their mute early the moment strike points decay, because
- * its de-escalation branch treats any non-null `muteExpiresAt` as strike-owned.
+ * A moderator's mute, timed or not.
  *
- * So a moderator-set expiry also stamps `meta.manualMute`, which that branch refuses to touch.
- * `processTimedUnmutes` still lifts it on time — that is the point of a timed mute — and clears the
- * flag with it.
+ * `mutedAt` is what marks it as a person's decision: every automatic path (strike escalation, prompt
+ * auditing, scam auto-mute) leaves it null, and `evaluateStrikeEscalation` will neither lift nor shorten
+ * a mute that has it. `processTimedUnmutes` still lifts an expiry on time — that is the point of a timed
+ * mute — and clears `mutedAt` with it.
+ *
+ * This used to need a `meta.manualMute` flag. It did not: `mutedAt` already carried exactly this
+ * meaning for `confirm-mutes`, `entity-moderation` and `prepare-leaderboard`, and the flag was written
+ * by two apps and read by none.
  */
 export async function setUserMuted({
   userId,
@@ -478,26 +481,27 @@ export async function setUserMuted({
   expiresAt?: Date | null;
 }) {
   const date = new Date();
-  const existing = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });
-  const currentMeta = (existing?.meta ?? {}) as UserMeta & { manualMute?: boolean };
-  // Only a muted-with-expiry is manual-and-timed. An indefinite mute has no expiry to protect, and an
-  // unmute ends the whole question, so both clear the flag.
-  const manualMute = muted && !!expiresAt;
+
+  // The unmute half clears the provenance too; the mute half only sets an expiry when the caller asked
+  // for one, so an ordinary mute keeps today's indefinite behaviour.
+  let data: Prisma.UserUpdateInput;
+  if (muted) {
+    data = {
+      muted: true,
+      mutedAt: date,
+      ...(expiresAt !== undefined ? { muteExpiresAt: expiresAt } : {}),
+    };
+  } else {
+    const existing = await dbRead.user.findUnique({
+      where: { id: userId },
+      select: { meta: true },
+    });
+    data = clearedMuteFields(existing?.meta as UserMeta | null);
+  }
 
   const user = await updateUserById({
     id: userId,
-    data: {
-      muted,
-      mutedAt: muted ? date : null,
-      // Unmuting always clears the expiry; muting only sets one when the caller asked for it, so an
-      // ordinary mute keeps today's indefinite behaviour.
-      ...(muted
-        ? expiresAt !== undefined
-          ? { muteExpiresAt: expiresAt }
-          : {}
-        : { muteExpiresAt: null }),
-      meta: { ...currentMeta, manualMute },
-    },
+    data,
     updateSource: muted ? 'retool:mute' : 'retool:unmute',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
