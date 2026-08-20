@@ -5,7 +5,7 @@ import { page, userEvent } from 'vitest/browser';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type * as MantineHooks from '@mantine/hooks';
 import type { MyAppRow } from '~/components/Apps/myAppsView';
-import type { MyAppHistoryEntry } from './MyAppsBody';
+import type { MyAppHistoryEntry, OrphanedSubmissionRow } from './MyAppsBody';
 import type * as TrpcModule from '~/utils/trpc';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
 
@@ -35,6 +35,14 @@ const mocks = vi.hoisted(() => ({
   rows: [] as unknown[],
   /** Every `listingHistory.useQuery(input, opts)` call, in order. */
   historyCalls: [] as Array<{ input: { appListingId: string }; enabled: boolean }>,
+  orphans: [] as unknown[],
+  appBlocksFlag: true,
+}));
+
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  // The container reads `appBlocks` for the WRITE gate only — the page itself is
+  // `appBlocksAuthor`-gated. See the note at its use site.
+  useFeatureFlags: () => ({ appBlocks: mocks.appBlocksFlag, appBlocksAuthor: true }),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -44,6 +52,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       appListings: {
         listingHistory: { invalidate: vi.fn() },
         listMine: { invalidate: vi.fn() },
+        listMyOrphanedSubmissions: { invalidate: vi.fn() },
       },
     }),
     appListings: {
@@ -55,6 +64,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           mocks.historyCalls.push({ input, enabled: opts.enabled });
           return { data: [], isLoading: false, error: null };
         },
+      },
+      listMyOrphanedSubmissions: {
+        useQuery: () => ({ data: mocks.orphans, isLoading: false, error: null }),
       },
       withdrawExternalRequest: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
     },
@@ -113,6 +125,9 @@ function entry(over: Partial<MyAppHistoryEntry> & { id: string }): MyAppHistoryE
     approvalNotes: null,
     changelog: null,
     deployState: null,
+    // Default to the SUBMITTER's view so the fixture is not silently unwithdrawable; the
+    // cases that care about the collaborator/flag branches set it explicitly.
+    canWithdraw: over.status === 'pending',
     ...over,
   };
 }
@@ -121,6 +136,8 @@ beforeEach(() => {
   mocks.compact = false;
   mocks.rows = [];
   mocks.historyCalls = [];
+  mocks.orphans = [];
+  mocks.appBlocksFlag = true;
 });
 
 /* ------------------------------------------------------------------ *
@@ -624,8 +641,8 @@ describe('nested history', () => {
 
   test('Withdraw is offered only on a PENDING entry', async () => {
     const withdrawn: MyAppHistoryEntry[] = [
-      entry({ id: 'pend_1', status: 'pending' }),
-      entry({ id: 'appr_1', status: 'approved' }),
+      entry({ id: 'pend_1', status: 'pending', canWithdraw: true }),
+      entry({ id: 'appr_1', status: 'approved', canWithdraw: false }),
     ];
     const seen: string[] = [];
     renderWithProviders(
@@ -717,5 +734,312 @@ describe('MyAppsBody (container) — history is fetched on EXPAND, not up front'
     renderWithProviders(<MyAppsBody />);
     await expect.element(page.getByTestId('apps-mine-row-apl_from_listmine')).toBeInTheDocument();
     expect(page.getByTestId('apps-mine-empty').elements()).toHaveLength(0);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Withdraw is only offered to someone who can actually use it
+ * ------------------------------------------------------------------ */
+
+describe('🔴 Withdraw is not offered to people the server will refuse', () => {
+  /**
+   * Both withdraw procs are SUBMITTER-scoped (`withdrawExternalRequest` and
+   * `withdrawRequest` each throw NOT_OWNED unless `submittedByUserId === userId`). An
+   * accepted collaborator, a transfer recipient and a moderator-claimed owner — the three
+   * populations this page exists to serve — would otherwise get a button that only ever
+   * red-toasts. The server sends its own verdict as `canWithdraw`.
+   */
+  test('a PENDING entry the viewer did not submit shows NO button', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_seat', role: 'editor' })]}
+        expandedId="apl_seat"
+        history={[entry({ id: 'req_theirs', status: 'pending', canWithdraw: false })]}
+        onWithdraw={() => undefined}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-mine-history-entry-req_theirs'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-history-withdraw-req_theirs').elements()).toHaveLength(0);
+  });
+
+  test('the same entry DOES show it for the submitter', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_own' })]}
+        expandedId="apl_own"
+        history={[entry({ id: 'req_mine', status: 'pending', canWithdraw: true })]}
+        onWithdraw={() => undefined}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-mine-history-withdraw-req_mine'))
+      .toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 THE FLAG MISMATCH. `blocks.withdrawPublishRequest` carries `enforceAppBlocksFlag`;
+   * this page and both of its reads gate on `appBlocksAuthor` only. With the author flag
+   * on and the store flag off the page renders, history loads, and the VERSION half of the
+   * button 403s — while the off-site half (`withdrawExternalRequest`, no flag) is fine.
+   */
+  test('🔴 with the store flag off, the VERSION withdraw is hidden and the LISTING one is not', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_flag' })]}
+        expandedId="apl_flag"
+        withdrawEnabled={false}
+        history={[
+          entry({ id: 'ver_1', source: 'version', status: 'pending', canWithdraw: true }),
+          entry({
+            id: 'lst_1',
+            source: 'listing',
+            status: 'pending',
+            version: null,
+            canWithdraw: true,
+          }),
+        ]}
+        onWithdraw={() => undefined}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-history-entry-ver_1')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-history-withdraw-ver_1').elements()).toHaveLength(0);
+    // The off-site sibling proc has no such gate, so its control stays.
+    await expect.element(page.getByTestId('apps-mine-history-withdraw-lst_1')).toBeInTheDocument();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The completeness advisory
+ * ------------------------------------------------------------------ */
+
+describe('🔴 the listing-completeness advisory has a home', () => {
+  /**
+   * It rendered on the two `/apps/my-submissions` tables, which lost their importer when
+   * that page merged here. Without it an author stops being told the listing is
+   * incomplete — and `listingCoverUrl`'s "no screenshot fallback, the author must see the
+   * gap" rationale cites this warning by name, so removing it would falsify that comment.
+   */
+  test('a row with problems renders the indicator', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({
+            appListingId: 'apl_incomplete',
+            status: 'draft',
+            problems: [
+              // Real codes from `ListingProblemCode` — a made-up one typechecks red, which
+              // is the point of pinning the union rather than a loose string.
+              { code: 'missing-cover', label: 'Missing cover image', severity: 'blocking' },
+              { code: 'empty-tagline', label: 'Missing tagline', severity: 'advisory' },
+            ],
+          }),
+        ]}
+      />
+    );
+    const holder = page.getByTestId('apps-mine-problems-apl_incomplete');
+    await expect.element(holder).toBeInTheDocument();
+    // The indicator itself, not just the slot — it returns null on an empty list.
+    expect(
+      holder.element().querySelector('[data-testid="apps-submission-problems"]')
+    ).not.toBeNull();
+  });
+
+  test('a complete row renders no warning at all', async () => {
+    renderWithProviders(
+      <MyAppsBodyView rows={[row({ appListingId: 'apl_complete', problems: [] })]} />
+    );
+    const holder = page.getByTestId('apps-mine-problems-apl_complete');
+    await expect.element(holder).toBeInTheDocument();
+    expect(holder.element().querySelector('[data-testid="apps-submission-problems"]')).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Submissions whose listing was deleted
+ * ------------------------------------------------------------------ */
+
+describe('🔴 submissions without a listing', () => {
+  const orphan = (
+    over: Partial<OrphanedSubmissionRow> & { id: string }
+  ): OrphanedSubmissionRow => ({
+    slug: `slug-${over.id}`,
+    version: '0.1.0',
+    status: 'rejected',
+    submittedAt: '2026-07-07T00:00:00Z',
+    reviewedAt: '2026-07-08T00:00:00Z',
+    rejectionReason: null,
+    approvalNotes: null,
+    canWithdraw: false,
+    ...over,
+  });
+
+  /**
+   * 🔴 THE POPULATION THAT HAD NO SURFACE. A first version that is rejected or withdrawn
+   * has its pre-approval draft listing DELETED to release the slug, so there is no app row
+   * to nest it under. Measured on production 2026-08-20: 3 of 3 rejected and 27 of 33
+   * withdrawn on-site requests are in that state — and the "your app was rejected"
+   * notification now points at this page.
+   */
+  test('a rejected submission with no listing renders WITH its reviewer reason', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_other' })]}
+        orphanedSubmissions={[
+          orphan({
+            id: 'pubreq_rej',
+            slug: 'gone-app',
+            rejectionReason: 'manifest requests a scope it never uses',
+          }),
+        ]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-orphaned')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-row-pubreq_rej'))
+      .toHaveTextContent('gone-app');
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-status-pubreq_rej'))
+      .toHaveTextContent(/rejected/i);
+    // The reason is the whole point — it is the only thing that tells the dev what to fix.
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-notes-pubreq_rej'))
+      .toHaveTextContent(/scope it never uses/i);
+  });
+
+  test('the group is NOT hidden behind the Inactive collapse', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_live' })]}
+        orphanedSubmissions={[orphan({ id: 'pubreq_x' })]}
+      />
+    );
+    // Visible with no interaction at all: no toggle was clicked.
+    await expect.element(page.getByTestId('apps-mine-orphaned-row-pubreq_x')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mine-orphaned-count')).toHaveTextContent('1');
+  });
+
+  test('a PENDING orphan offers Withdraw; a rejected one does not', async () => {
+    const seen: string[] = [];
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[]}
+        orphanedSubmissions={[
+          orphan({ id: 'pubreq_pend', status: 'pending', canWithdraw: true }),
+          orphan({ id: 'pubreq_rej2', status: 'rejected', canWithdraw: false }),
+        ]}
+        onWithdrawOrphan={(r) => seen.push(r.id)}
+      />
+    );
+    const btn = page.getByTestId('apps-mine-orphaned-withdraw-pubreq_pend');
+    await expect.element(btn).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-orphaned-withdraw-pubreq_rej2').elements()).toHaveLength(0);
+    await userEvent.click(btn.element());
+    expect(seen).toEqual(['pubreq_pend']);
+  });
+
+  test('an orphan withdraw is hidden when the store flag is off (same proc, same gate)', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[]}
+        withdrawEnabled={false}
+        orphanedSubmissions={[orphan({ id: 'pubreq_f', status: 'pending', canWithdraw: true })]}
+        onWithdrawOrphan={() => undefined}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-orphaned-row-pubreq_f')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-orphaned-withdraw-pubreq_f').elements()).toHaveLength(0);
+  });
+
+  test('no group at all when there is nothing orphaned', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[row({ appListingId: 'apl_only' })]} />);
+    await expect.element(page.getByTestId('apps-mine-row-apl_only')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-orphaned').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 THE EMPTY STATE MUST NOT SWALLOW THEM. An account whose only records are orphans
+   * has zero listings, so the "you don't own any apps yet" alert would otherwise be the
+   * whole page — which is exactly the "my rejection is nowhere" defect in a new place.
+   */
+  test('an account with ONLY orphans still sees them, not the empty state', async () => {
+    renderWithProviders(
+      <MyAppsBodyView rows={[]} orphanedSubmissions={[orphan({ id: 'pubreq_lonely' })]} />
+    );
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-row-pubreq_lonely'))
+      .toBeInTheDocument();
+  });
+});
+
+describe('MyAppsBody (container) — the orphan read and the write flag', () => {
+  test('renders orphaned submissions from their own query', async () => {
+    mocks.rows = [row({ appListingId: 'apl_c1' })];
+    mocks.orphans = [
+      {
+        id: 'pubreq_c',
+        slug: 'container-gone',
+        version: '0.1.0',
+        status: 'rejected',
+        submittedAt: '2026-07-07T00:00:00Z',
+        reviewedAt: null,
+        rejectionReason: 'nope',
+        approvalNotes: null,
+        canWithdraw: false,
+      },
+    ];
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-orphaned-row-pubreq_c')).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 The container is where the flag mismatch is actually decided. With `appBlocks` off
+   * the page still renders (it gates on `appBlocksAuthor`) but the version-withdraw
+   * mutation would 403, so the control must not be offered.
+   */
+  test('🔴 with appBlocks OFF the orphan Withdraw is not rendered', async () => {
+    mocks.appBlocksFlag = false;
+    mocks.rows = [];
+    mocks.orphans = [
+      {
+        id: 'pubreq_flag',
+        slug: 'flagged',
+        version: '0.1.0',
+        status: 'pending',
+        submittedAt: '2026-07-07T00:00:00Z',
+        reviewedAt: null,
+        rejectionReason: null,
+        approvalNotes: null,
+        canWithdraw: true,
+      },
+    ];
+    renderWithProviders(<MyAppsBody />);
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-row-pubreq_flag'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-orphaned-withdraw-pubreq_flag').elements()).toHaveLength(0);
+  });
+
+  test('…and IS rendered with the flag on (the control arm)', async () => {
+    mocks.appBlocksFlag = true;
+    mocks.rows = [];
+    mocks.orphans = [
+      {
+        id: 'pubreq_flag2',
+        slug: 'flagged2',
+        version: '0.1.0',
+        status: 'pending',
+        submittedAt: '2026-07-07T00:00:00Z',
+        reviewedAt: null,
+        rejectionReason: null,
+        approvalNotes: null,
+        canWithdraw: true,
+      },
+    ];
+    renderWithProviders(<MyAppsBody />);
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-withdraw-pubreq_flag2'))
+      .toBeInTheDocument();
   });
 });

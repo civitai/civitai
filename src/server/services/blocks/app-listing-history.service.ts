@@ -1,7 +1,10 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
-import { resolveListingAccess } from '~/server/services/blocks/app-access.service';
+import {
+  canonicalOwnerWhereBranches,
+  resolveListingAccess,
+} from '~/server/services/blocks/app-access.service';
 
 /**
  * ONE APP'S SUBMISSION HISTORY — the per-row, fetched-on-expand read behind the merged
@@ -61,10 +64,89 @@ export type ListingHistoryEntry = {
   /** `building | deploying | live | failed`, on `version` entries only. */
   deployState: string | null;
   deployUpdatedAt: Date | null;
+  /**
+   * May THIS caller withdraw this request?
+   *
+   * 🔴 A SERVER-COMPUTED VERDICT, not a raw `submittedByUserId` for the client to compare.
+   * Both withdraw procs are SUBMITTER-scoped — `withdrawExternalRequest` and
+   * `withdrawRequest` each throw NOT_OWNED unless `submittedByUserId === userId` — so an
+   * accepted collaborator, a transfer recipient and a moderator-claimed owner (precisely
+   * the three populations this page exists to serve) would otherwise be offered a button
+   * that can only ever red-toast.
+   *
+   * Carrying the verdict rather than the id keeps the rule in ONE place, on the side that
+   * owns it, and avoids handing a seat-holder another user's id for no consumer — the same
+   * discipline `MyAppListing` applies to `connectClientId`. `false` here is not an
+   * authorization boundary: the procs are still the gate and are unchanged.
+   */
+  canWithdraw: boolean;
 };
 
 /** Hard cap. An app with more history than this is pathological, not paginated. */
 export const LISTING_HISTORY_LIMIT = 50;
+
+/**
+ * The `where` that finds an on-site listing's CODE requests — or `null` when there is no
+ * code stream to look for at all.
+ *
+ * 🔴 `app_block_publish_requests.app_block_id` IS NULL UNTIL APPROVE. `submitApp` writes
+ * `appBlockId: existingApp?.id ?? null` (`publish-request.service.ts`), and the FK is
+ * backfilled only in the approve path. Keying this query on `appBlockId` ALONE therefore
+ * made an entire population invisible — measured on production 2026-08-20:
+ * **3 of 3 `rejected`** and **27 of 33 `withdrawn`** block requests carry a NULL FK. A
+ * developer who clicked "your app was rejected" (a notification this PR repoints at
+ * `/apps/mine`) landed on a page that knew nothing about it, and a pending first version
+ * rendered "No submissions yet for this app." with no status and no Withdraw.
+ *
+ * 🔴 THE FALLBACK IS `slug`, AND IT MUST BE OWNER-SCOPED. `slug` is the identity that
+ * carries a first request across its whole lifecycle (it is NOT NULL on the request and
+ * `app_listings_slug_key` is unconditionally UNIQUE), so it is the only join left when the
+ * FK is null. But a slug is RELEASED when a first version is rejected or withdrawn — the
+ * draft listing is deleted — so the same slug can later belong to a DIFFERENT user. An
+ * unscoped slug match would hand that new owner the previous applicant's rejection reason.
+ * Scoping to the listing's CANONICAL OWNER (never to the viewer) closes that without
+ * re-introducing the submitter-scoping bug: an accepted collaborator still sees the
+ * owner's history, because the scope names the owner and not the caller.
+ *
+ * 🔴 GATED ON `kind === 'onsite'`. An OFF-SITE listing also has a null `appBlockId`, and
+ * before this fix that was the very thing keeping it out of the block table. The kind
+ * check is now what does that job — dropping it would run a slug query against the code
+ * stream for every external app.
+ */
+export function blockRequestWhereForListing(access: {
+  kind: string;
+  appBlockId: string | null;
+  slug?: string | null;
+  ownerUserId: number | null;
+}): Record<string, unknown> | null {
+  if (access.kind !== 'onsite') return null;
+  const branches: Record<string, unknown>[] = [];
+  if (access.appBlockId) branches.push({ appBlockId: access.appBlockId });
+  // The null-FK branch. Both clauses are load-bearing: `slug` finds the row, the owner
+  // scope is what stops a recycled slug leaking a stranger's review.
+  if (access.slug && typeof access.ownerUserId === 'number') {
+    branches.push({ slug: access.slug, submittedByUserId: access.ownerUserId });
+  }
+  if (branches.length === 0) return null;
+  return branches.length === 1 ? branches[0] : { OR: branches };
+}
+
+/**
+ * Mirror of what the two withdraw procs will actually decide.
+ *
+ * 🔴 IT RESTATES THE PROC'S REFUSAL, it does not replace it. `withdrawRequest`
+ * (`publish-request.service.ts`) and `withdrawExternalRequest`
+ * (`offsite-listing.service.ts`) both refuse NOT_OWNED unless the caller IS the submitter,
+ * and both refuse a non-`pending` request. Rendering a control the server will refuse is
+ * how the three populations this page serves each got a button that only red-toasts.
+ */
+export function canWithdrawRequest(
+  status: string,
+  submittedByUserId: number | null | undefined,
+  viewerUserId: number
+): boolean {
+  return status === 'pending' && submittedByUserId === viewerUserId;
+}
 
 /**
  * Every publish event for ONE listing the caller may act on, newest first.
@@ -94,7 +176,7 @@ export async function listListingHistory(opts: {
   }
   // `resolveListingAccess` walks a shadow id to its parent, so this is always the PARENT.
   const listingId = access.seatListingId;
-  const appBlockId = access.appBlockId;
+  const blockWhere = blockRequestWhereForListing(access);
 
   const [listingRequests, blockRequests] = await Promise.all([
     dbRead.appListingPublishRequest.findMany({
@@ -107,19 +189,16 @@ export async function listListingHistory(opts: {
         id: true,
         status: true,
         submittedAt: true,
+        submittedByUserId: true,
         reviewedAt: true,
         rejectionReason: true,
         approvalNotes: true,
         changelog: true,
       },
     }),
-    // 🔴 CONDITIONAL, and the condition is the block — not the kind. An off-site listing
-    // has no `appBlockId`, so there is no code stream to read; issuing the query with a
-    // `null` id would match every request whose block FK is still unset (a pending FIRST
-    // version, for ANY app) and hand this caller other people's submissions.
-    appBlockId
+    blockWhere
       ? dbRead.appBlockPublishRequest.findMany({
-          where: { appBlockId },
+          where: blockWhere,
           orderBy: { submittedAt: 'desc' },
           take: limit,
           select: {
@@ -127,6 +206,7 @@ export async function listListingHistory(opts: {
             version: true,
             status: true,
             submittedAt: true,
+            submittedByUserId: true,
             reviewedAt: true,
             rejectionReason: true,
             approvalNotes: true,
@@ -143,6 +223,7 @@ export async function listListingHistory(opts: {
         id: string;
         status: string;
         submittedAt: Date;
+        submittedByUserId: number;
         reviewedAt: Date | null;
         rejectionReason: string | null;
         approvalNotes: string | null;
@@ -159,6 +240,7 @@ export async function listListingHistory(opts: {
         changelog: r.changelog,
         deployState: null,
         deployUpdatedAt: null,
+        canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
       })
     ),
     ...blockRequests.map(
@@ -167,6 +249,7 @@ export async function listListingHistory(opts: {
         version: string;
         status: string;
         submittedAt: Date;
+        submittedByUserId: number;
         reviewedAt: Date | null;
         rejectionReason: string | null;
         approvalNotes: string | null;
@@ -184,6 +267,7 @@ export async function listListingHistory(opts: {
         changelog: null,
         deployState: r.deployState,
         deployUpdatedAt: r.deployUpdatedAt,
+        canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
       })
     ),
   ];
@@ -195,4 +279,121 @@ export async function listListingHistory(opts: {
     return diff !== 0 ? diff : a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
   });
   return entries.slice(0, limit);
+}
+
+/**
+ * One submission whose LISTING NO LONGER EXISTS — rendered on `/apps/mine` as its own
+ * submission-keyed group.
+ */
+export type OrphanedSubmission = {
+  id: string;
+  slug: string;
+  version: string;
+  status: string;
+  submittedAt: Date;
+  reviewedAt: Date | null;
+  rejectionReason: string | null;
+  approvalNotes: string | null;
+  canWithdraw: boolean;
+};
+
+/** Bound on the orphan group. It is a tail, not a browsable archive. */
+export const ORPHANED_SUBMISSIONS_LIMIT = 25;
+
+/**
+ * The caller's own first-version submissions that no APP-KEYED row can ever show them.
+ *
+ * 🔴 WHY A SECOND, SUBMITTER-SCOPED READ EXISTS AT ALL, in a PR whose whole point is that
+ * submitter-scoping is the bug. Because for THIS population there is no app to key on. A
+ * first version that is rejected or withdrawn has its pre-approval DRAFT listing DELETED —
+ * `deleteOnsiteDraftListingForSlug` runs in both `rejectRequest` and `withdrawRequest` — so
+ * the row `/apps/mine` would hang the history off is gone, while the request itself
+ * survives with its `slug`, `status`, `rejection_reason` and `submitted_by_user_id` intact.
+ * Measured on production 2026-08-20: **3 of 3 rejected** and **27 of 33 withdrawn** block
+ * requests are in exactly this state. Submitter-scoping is not a policy choice here; it is
+ * the only identity left on the record.
+ *
+ * 🔴 THE DELETION IS DELIBERATELY LEFT ALONE. `app_listings_slug_key` is an UNCONDITIONAL
+ * UNIQUE index, so deleting the draft is the cleanest slug release available; a partial
+ * unique index cannot back a Prisma `findUnique({ where: { slug } })`, which would mean
+ * auditing every slug lookup in the repo and risking a discarded listing shadowing a live
+ * one. Nothing is lost by the deletion — the record survives, it just had no reader. This
+ * function is the reader. **No schema change, no migration.**
+ *
+ * 🔴 A REQUEST IS EXCLUDED WHEN ITS SLUG RESOLVES TO A LISTING THE CALLER OWNS, because
+ * then the app-keyed table already shows it (via the null-FK slug branch in
+ * {@link blockRequestWhereForListing}) and listing it twice would read as two submissions.
+ * The exclusion is OWNERSHIP-scoped rather than mere existence: after a rejection the slug
+ * can be taken by SOMEONE ELSE, and that stranger's listing must not swallow this user's
+ * own record. Ownership is resolved with {@link canonicalOwnerWhereBranches} — the same
+ * decomposition `resolveAccessibleListingIds` uses — so this cannot disagree with the set
+ * the table renders. A seat-holder never reaches these rows: the read is submitter-scoped,
+ * and whoever submitted a first version was its owner at the time.
+ */
+export async function listMyOrphanedSubmissions(opts: {
+  userId: number;
+  limit?: number;
+}): Promise<OrphanedSubmission[]> {
+  const limit = Math.min(
+    Math.max(opts.limit ?? ORPHANED_SUBMISSIONS_LIMIT, 1),
+    ORPHANED_SUBMISSIONS_LIMIT
+  );
+  const rows = await dbRead.appBlockPublishRequest.findMany({
+    // 🔴 `appBlockId: null` IS THE WHOLE POPULATION FILTER. A request that ever reached
+    // approve carries its FK, so it is reachable from its app and is not an orphan. This
+    // is the same NULL that made the population invisible in the first place — here it is
+    // the thing being selected FOR rather than silently excluded.
+    where: { submittedByUserId: opts.userId, appBlockId: null },
+    orderBy: { submittedAt: 'desc' },
+    take: limit,
+    select: {
+      id: true,
+      slug: true,
+      version: true,
+      status: true,
+      submittedAt: true,
+      reviewedAt: true,
+      rejectionReason: true,
+      approvalNotes: true,
+    },
+  });
+  if (rows.length === 0) return [];
+
+  const slugs = [...new Set(rows.map((r: { slug: string }) => r.slug))];
+  const ownedWithSlug = await dbRead.appListing.findMany({
+    where: {
+      slug: { in: slugs },
+      revisionOfId: null,
+      OR: canonicalOwnerWhereBranches(opts.userId),
+    },
+    select: { slug: true },
+  });
+  const ownedSlugs = new Set(ownedWithSlug.map((l: { slug: string }) => l.slug));
+
+  return rows
+    .filter((r: { slug: string }) => !ownedSlugs.has(r.slug))
+    .map(
+      (r: {
+        id: string;
+        slug: string;
+        version: string;
+        status: string;
+        submittedAt: Date;
+        reviewedAt: Date | null;
+        rejectionReason: string | null;
+        approvalNotes: string | null;
+      }) => ({
+        id: r.id,
+        slug: r.slug,
+        version: r.version,
+        status: r.status,
+        submittedAt: r.submittedAt,
+        reviewedAt: r.reviewedAt,
+        rejectionReason: r.rejectionReason,
+        approvalNotes: r.approvalNotes,
+        // Always the submitter here, by construction — but routed through the SAME helper
+        // the app-keyed entries use, so the pending-only half of the rule has one home.
+        canWithdraw: canWithdrawRequest(r.status, opts.userId, opts.userId),
+      })
+    );
 }

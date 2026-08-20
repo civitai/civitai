@@ -42,9 +42,13 @@ const mockDb = dbMock.dbRead;
 const mockWriteDb = dbMock.dbWrite;
 void mockWriteDb;
 
-const { listListingHistory, LISTING_HISTORY_LIMIT } = await import(
-  '~/server/services/blocks/app-listing-history.service'
-);
+const {
+  listListingHistory,
+  listMyOrphanedSubmissions,
+  blockRequestWhereForListing,
+  canWithdrawRequest,
+  LISTING_HISTORY_LIMIT,
+} = await import('~/server/services/blocks/app-listing-history.service');
 
 const OWNER = 41;
 const SEAT = 52;
@@ -55,6 +59,7 @@ function onsiteListing(over: Record<string, unknown> = {}) {
   return {
     id: 'apl_main',
     userId: OWNER,
+    slug: 'main-app',
     kind: 'onsite',
     appBlockId: 'ab_main',
     revisionOfId: null,
@@ -69,6 +74,7 @@ function offsiteListing(over: Record<string, unknown> = {}) {
   return {
     id: 'apl_ext',
     userId: OWNER,
+    slug: 'ext-app',
     kind: 'offsite',
     appBlockId: null,
     revisionOfId: null,
@@ -80,6 +86,7 @@ function offsiteListing(over: Record<string, unknown> = {}) {
 
 const listingReq = (over: Record<string, unknown> & { id: string }) => ({
   status: 'approved',
+  submittedByUserId: OWNER,
   submittedAt: new Date('2026-05-01T00:00:00Z'),
   reviewedAt: null,
   rejectionReason: null,
@@ -91,6 +98,7 @@ const listingReq = (over: Record<string, unknown> & { id: string }) => ({
 const blockReq = (over: Record<string, unknown> & { id: string }) => ({
   version: '1.0.0',
   status: 'approved',
+  submittedByUserId: OWNER,
   submittedAt: new Date('2026-05-01T00:00:00Z'),
   reviewedAt: null,
   rejectionReason: null,
@@ -186,15 +194,24 @@ describe('🔴 the block query is CONDITIONAL on the block, not on the kind', ()
     expect(mockDb.appBlockPublishRequest.findMany).not.toHaveBeenCalled();
   });
 
-  it('the block query is scoped to THIS app’s block id', async () => {
+  it('the block query names THIS app’s block id, alongside the null-FK slug branch', async () => {
     mockDb.appListing.findUnique.mockImplementation(async () =>
-      onsiteListing({ appBlockId: 'ab_specific', appBlock: { app: { userId: OWNER } } })
+      onsiteListing({
+        appBlockId: 'ab_specific',
+        slug: 'specific-app',
+        appBlock: { app: { userId: OWNER } },
+      })
     );
     await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
     const call = mockDb.appBlockPublishRequest.findMany.mock.calls[0][0] as {
-      where: { appBlockId: string };
+      where: { OR: Array<Record<string, unknown>> };
     };
-    expect(call.where.appBlockId).toBe('ab_specific');
+    // Both branches, and nothing else: the FK finds every approved-era request, the
+    // owner-scoped slug finds the pre-approval ones whose FK is still NULL.
+    expect(call.where.OR).toEqual([
+      { appBlockId: 'ab_specific' },
+      { slug: 'specific-app', submittedByUserId: OWNER },
+    ]);
   });
 });
 
@@ -238,20 +255,30 @@ describe('🔴 shadow revisions are folded in', () => {
 });
 
 describe('🔴 authorization is ownership∪seat, NEVER submittedByUserId', () => {
-  it('neither query is scoped by submitter — that is the whole point of the merge', async () => {
+  /**
+   * 🔴 THE DISTINCTION THAT MATTERS IS *WHOSE* ID APPEARS, not whether the column does.
+   * The null-FK slug branch legitimately carries `submittedByUserId` — scoped to the
+   * listing's OWNER, so a recycled slug cannot leak a stranger's review. Scoping to the
+   * VIEWER is the bug: that is what empties the history for a collaborator, a transfer
+   * recipient and a moderator-claimed owner. This asserts against a SEAT-HOLDER, where the
+   * two ids differ, so a mutant that swapped owner for viewer dies here.
+   */
+  it('the queries name the OWNER, never the viewer', async () => {
     mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
-    await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    mockDb.appCollaborator.findFirst.mockImplementation(async () => ({ userId: SEAT }));
+    await listListingHistory({ appListingId: 'apl_main', userId: SEAT });
     const listingWhere = JSON.stringify(
       (mockDb.appListingPublishRequest.findMany.mock.calls[0][0] as { where: unknown }).where
     );
     const blockWhere = JSON.stringify(
       (mockDb.appBlockPublishRequest.findMany.mock.calls[0][0] as { where: unknown }).where
     );
-    // A submitter filter here would empty the history for a collaborator, for a transfer
-    // recipient and for a moderator-claimed owner — the three populations `/apps/mine`
-    // exists to serve.
+    // The LISTING stream keys on the listing id alone — no submitter column at all.
     expect(listingWhere).not.toContain('submittedByUserId');
-    expect(blockWhere).not.toContain('submittedByUserId');
+    // The BLOCK stream's slug branch names the OWNER…
+    expect(blockWhere).toContain(`"submittedByUserId":${OWNER}`);
+    // …and never the caller, who here is a seat-holder who submitted nothing.
+    expect(blockWhere).not.toContain(`"submittedByUserId":${SEAT}`);
   });
 
   it('an ACCEPTED collaborator — who submitted nothing — gets the full history', async () => {
@@ -304,5 +331,251 @@ describe('bounds', () => {
     await listListingHistory({ appListingId: 'apl_ext', userId: OWNER, limit: 9999 });
     const call = mockDb.appListingPublishRequest.findMany.mock.calls[0][0] as { take: number };
     expect(call.take).toBe(LISTING_HISTORY_LIMIT);
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * 🔴 THE NULL-FK POPULATION — `app_block_id` is NULL until approve
+ * ------------------------------------------------------------------------ */
+
+describe('🔴 blockRequestWhereForListing — the null-FK branch', () => {
+  const ONSITE = { kind: 'onsite', slug: 'my-app', ownerUserId: OWNER };
+
+  it('keys on the block id once the app is approved', () => {
+    expect(blockRequestWhereForListing({ ...ONSITE, appBlockId: 'ab_9' })).toEqual({
+      OR: [{ appBlockId: 'ab_9' }, { slug: 'my-app', submittedByUserId: OWNER }],
+    });
+  });
+
+  /**
+   * 🔴 THE WHOLE DEFECT, as one assertion. `submitApp` writes `appBlockId: null` and only
+   * the approve path backfills it, so a first version has no FK — and the previous
+   * implementation skipped the block query entirely on a null id. Measured on production
+   * 2026-08-20: 3 of 3 rejected and 27 of 33 withdrawn rows are in this state.
+   */
+  it('falls back to the OWNER-SCOPED slug when the FK is still null', () => {
+    expect(blockRequestWhereForListing({ ...ONSITE, appBlockId: null })).toEqual({
+      slug: 'my-app',
+      submittedByUserId: OWNER,
+    });
+  });
+
+  /**
+   * 🔴 THE OWNER SCOPE IS NOT DECORATION. A rejected/withdrawn first version DELETES its
+   * draft listing to release the slug, so the same slug can later belong to someone else.
+   * An unscoped slug match would hand that new owner the previous applicant's rejection
+   * reason — which is why the branch carries BOTH clauses.
+   */
+  it('never emits a bare slug match', () => {
+    const where = blockRequestWhereForListing({ ...ONSITE, appBlockId: null }) as Record<
+      string,
+      unknown
+    >;
+    expect(where).toHaveProperty('submittedByUserId', OWNER);
+    expect(JSON.stringify(where)).not.toBe(JSON.stringify({ slug: 'my-app' }));
+  });
+
+  it('yields NOTHING when the owner is unknown — no unscoped fallback', () => {
+    expect(
+      blockRequestWhereForListing({ ...ONSITE, appBlockId: null, ownerUserId: null })
+    ).toBeNull();
+  });
+
+  /**
+   * 🔴 THE KIND GATE now does the job the null-FK check used to do by accident. An
+   * OFF-SITE listing also has `appBlockId: null`; without this it would run a slug query
+   * against the CODE stream for every external app.
+   */
+  it('an OFF-SITE listing never reaches the block table, FK or no FK', () => {
+    expect(
+      blockRequestWhereForListing({
+        kind: 'offsite',
+        appBlockId: null,
+        slug: 's',
+        ownerUserId: OWNER,
+      })
+    ).toBeNull();
+    expect(
+      blockRequestWhereForListing({
+        kind: 'offsite',
+        appBlockId: 'ab_x',
+        slug: 's',
+        ownerUserId: OWNER,
+      })
+    ).toBeNull();
+  });
+});
+
+describe('🔴 a PENDING first version (listing exists as a draft, FK still null)', () => {
+  function pendingV1Listing() {
+    // The draft `AppListing` submit mints: real row, real slug, NO backing block yet.
+    return onsiteListing({
+      id: 'apl_draft',
+      slug: 'pending-app',
+      appBlockId: null,
+      appBlock: null,
+      userId: OWNER,
+    });
+  }
+
+  it('returns the request instead of "No submissions yet for this app"', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => pendingV1Listing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({
+        id: 'pubreq_v1_pending',
+        version: '0.1.0',
+        status: 'pending',
+        submittedByUserId: OWNER,
+        submittedAt: new Date('2026-08-18T00:00:00Z'),
+      }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_draft', userId: OWNER });
+    expect(out.map((e) => e.id)).toEqual(['pubreq_v1_pending']);
+    expect(out[0]).toMatchObject({ source: 'version', status: 'pending', version: '0.1.0' });
+  });
+
+  it('🔴 offers Withdraw to the submitter — the control that was missing entirely', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => pendingV1Listing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({ id: 'pubreq_w', status: 'pending', submittedByUserId: OWNER }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_draft', userId: OWNER });
+    expect(out[0].canWithdraw).toBe(true);
+  });
+
+  it('the query it issues is the owner-scoped slug, not a null appBlockId', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => pendingV1Listing());
+    await listListingHistory({ appListingId: 'apl_draft', userId: OWNER });
+    const call = mockDb.appBlockPublishRequest.findMany.mock.calls[0][0] as { where: unknown };
+    expect(call.where).toEqual({ slug: 'pending-app', submittedByUserId: OWNER });
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * 🔴 canWithdraw — the control is only offered to someone who can use it
+ * ------------------------------------------------------------------------ */
+
+describe('🔴 canWithdraw mirrors the procs’ own submitter scope', () => {
+  it('true only for a PENDING request submitted by the viewer', () => {
+    expect(canWithdrawRequest('pending', SEAT, SEAT)).toBe(true);
+  });
+
+  it('false for an accepted COLLABORATOR — the proc would throw NOT_OWNED', () => {
+    expect(canWithdrawRequest('pending', OWNER, SEAT)).toBe(false);
+  });
+
+  it('false once the request is no longer pending', () => {
+    expect(canWithdrawRequest('approved', SEAT, SEAT)).toBe(false);
+    expect(canWithdrawRequest('rejected', SEAT, SEAT)).toBe(false);
+    expect(canWithdrawRequest('withdrawn', SEAT, SEAT)).toBe(false);
+  });
+
+  it('false when the submitter is unknown', () => {
+    expect(canWithdrawRequest('pending', null, SEAT)).toBe(false);
+  });
+
+  it('a seat-holder reading an owner’s pending request is not offered Withdraw', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appCollaborator.findFirst.mockImplementation(async () => ({ userId: SEAT }));
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({ id: 'pubreq_owner', status: 'pending', submittedByUserId: OWNER }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: SEAT });
+    expect(out[0].canWithdraw).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * 🔴 The orphan population — the listing was DELETED
+ * ------------------------------------------------------------------------ */
+
+describe('🔴 listMyOrphanedSubmissions — rejected/withdrawn v1 whose listing is gone', () => {
+  const orphanRow = (over: Record<string, unknown> & { id: string; slug: string }) => ({
+    version: '0.1.0',
+    status: 'rejected',
+    submittedAt: new Date('2026-07-07T00:00:00Z'),
+    reviewedAt: new Date('2026-07-08T00:00:00Z'),
+    rejectionReason: 'manifest requests a scope it never uses',
+    approvalNotes: null,
+    ...over,
+  });
+
+  it('surfaces a rejected first version WITH its reviewer reason', async () => {
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      orphanRow({ id: 'pubreq_rej', slug: 'gone-app' }),
+    ]);
+    mockDb.appListing.findMany.mockImplementation(async () => []);
+    const out = await listMyOrphanedSubmissions({ userId: OWNER });
+    expect(out.map((r) => r.id)).toEqual(['pubreq_rej']);
+    expect(out[0]).toMatchObject({
+      slug: 'gone-app',
+      status: 'rejected',
+      rejectionReason: 'manifest requests a scope it never uses',
+      canWithdraw: false,
+    });
+  });
+
+  it('scopes the read to NULL-FK requests submitted by the caller', async () => {
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => []);
+    await listMyOrphanedSubmissions({ userId: OWNER });
+    const call = mockDb.appBlockPublishRequest.findMany.mock.calls[0][0] as {
+      where: Record<string, unknown>;
+    };
+    // 🔴 `appBlockId: null` IS the population. A request that reached approve carries its
+    // FK and is reachable from its app, so it is not an orphan.
+    expect(call.where).toEqual({ submittedByUserId: OWNER, appBlockId: null });
+  });
+
+  /**
+   * 🔴 THE DE-DUPLICATION RULE, and it is OWNERSHIP-scoped rather than existence-scoped. A
+   * pending v1 still has its draft listing, so the app-keyed table already shows it via
+   * the slug branch — listing it here too would read as two submissions.
+   */
+  it('drops a request whose slug still resolves to a listing the caller OWNS', async () => {
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      orphanRow({ id: 'pubreq_live', slug: 'still-mine', status: 'pending' }),
+      orphanRow({ id: 'pubreq_dead', slug: 'long-gone' }),
+    ]);
+    mockDb.appListing.findMany.mockImplementation(async () => [{ slug: 'still-mine' }]);
+    const out = await listMyOrphanedSubmissions({ userId: OWNER });
+    expect(out.map((r) => r.id)).toEqual(['pubreq_dead']);
+  });
+
+  /**
+   * 🔴 THE MIRROR CASE, and it is why the exclusion is not a bare existence check. After a
+   * rejection the slug is released and someone ELSE can take it. That stranger's listing
+   * must not swallow this user's own record — the exclusion query is owner-scoped, so a
+   * listing they do not own simply does not come back from it.
+   */
+  it('KEEPS a request whose slug was later taken by someone else', async () => {
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      orphanRow({ id: 'pubreq_mine', slug: 'recycled' }),
+    ]);
+    // The owner-scoped lookup returns nothing: the live `recycled` listing is not theirs.
+    mockDb.appListing.findMany.mockImplementation(async () => []);
+    const out = await listMyOrphanedSubmissions({ userId: OWNER });
+    expect(out.map((r) => r.id)).toEqual(['pubreq_mine']);
+    const call = mockDb.appListing.findMany.mock.calls[0][0] as {
+      where: { slug: { in: string[] }; revisionOfId: null; OR: unknown[] };
+    };
+    expect(call.where.slug.in).toEqual(['recycled']);
+    // Ownership, not existence — the branches come from `canonicalOwnerWhereBranches`.
+    expect(Array.isArray(call.where.OR)).toBe(true);
+    expect(call.where.OR.length).toBeGreaterThan(0);
+  });
+
+  it('a PENDING orphan (its draft create failed) still offers Withdraw', async () => {
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      orphanRow({ id: 'pubreq_p', slug: 'no-draft', status: 'pending', rejectionReason: null }),
+    ]);
+    mockDb.appListing.findMany.mockImplementation(async () => []);
+    const out = await listMyOrphanedSubmissions({ userId: OWNER });
+    expect(out[0].canWithdraw).toBe(true);
+  });
+
+  it('skips the second query entirely when there is nothing to check', async () => {
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => []);
+    expect(await listMyOrphanedSubmissions({ userId: OWNER })).toEqual([]);
+    expect(mockDb.appListing.findMany).not.toHaveBeenCalled();
   });
 });

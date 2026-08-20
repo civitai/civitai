@@ -24,6 +24,7 @@ import {
 import Link from 'next/link';
 import { useCallback, useMemo, useState } from 'react';
 
+import { ListingProblemsIndicator } from '~/components/Apps/ListingProblemsIndicator';
 import type { MyAppRow } from '~/components/Apps/myAppsView';
 import {
   historyStatusColor,
@@ -35,6 +36,7 @@ import {
   partitionMyAppRows,
   sortByRecentlyUpdated,
 } from '~/components/Apps/myAppsView';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAuthorableListingStatus } from '~/shared/constants/app-capabilities.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -71,6 +73,26 @@ export type MyAppHistoryEntry = {
   approvalNotes: string | null;
   changelog: string | null;
   deployState: string | null;
+  /**
+   * The SERVER's verdict on whether this caller may withdraw this request. Both withdraw
+   * procs are submitter-scoped, so a collaborator / transfer recipient / mod-claimed owner
+   * offered the button gets a guaranteed red toast. Optional on the type only so a fixture
+   * need not spell it; treated as `false` when absent, which is the safe direction.
+   */
+  canWithdraw?: boolean;
+};
+
+/** One row of `appListings.listMyOrphanedSubmissions` — a submission with no listing. */
+export type OrphanedSubmissionRow = {
+  id: string;
+  slug: string;
+  version: string;
+  status: string;
+  submittedAt: string | Date;
+  reviewedAt: string | Date | null;
+  rejectionReason: string | null;
+  approvalNotes: string | null;
+  canWithdraw?: boolean;
 };
 
 /** Fixed media boxes. Both dimensions are attributes on the `img`, so the row reserves its
@@ -213,6 +235,17 @@ function StatusBadges({ row }: { row: MyAppRow }) {
       >
         {row.status}
       </Badge>
+      {/*
+        🔴 THE COMPLETENESS ADVISORY'S ONLY REMAINING HOME. It hung off the two
+        `/apps/my-submissions` tables, which lost their importer when that page merged
+        here — so without this the author stops being told that the icon, cover,
+        screenshots, description, tagline or category are missing. It is also what makes
+        `listingCoverUrl`'s "no screenshot fallback, the author must see the gap"
+        rationale true rather than merely asserted: that comment cites this warning.
+      */}
+      <span data-testid={`apps-mine-problems-${row.appListingId}`}>
+        <ListingProblemsIndicator problems={row.problems ?? []} />
+      </span>
     </Group>
   );
 }
@@ -264,6 +297,7 @@ function HistoryPanel({
   errorMessage,
   onWithdraw,
   withdrawing,
+  withdrawEnabled,
 }: {
   row: MyAppRow;
   expanded: boolean;
@@ -272,6 +306,7 @@ function HistoryPanel({
   errorMessage: string | null;
   onWithdraw?: (entry: MyAppHistoryEntry) => void;
   withdrawing: boolean;
+  withdrawEnabled: boolean;
 }) {
   return (
     <div id={historyPanelId(row.appListingId)} data-testid={historyPanelId(row.appListingId)}>
@@ -332,7 +367,14 @@ function HistoryPanel({
                   {e.approvalNotes}
                 </Text>
               ) : null}
-              {e.status === 'pending' && onWithdraw ? (
+              {/*
+                🔴 THREE CONDITIONS, and each one removes a button that could only fail.
+                `canWithdraw` is the server restating its own submitter-scoped refusal;
+                `withdrawEnabled` covers the FLAG mismatch (the version-withdraw mutation
+                carries `enforceAppBlocksFlag` while this page and its reads gate on
+                `appBlocksAuthor` only, so with the store flag off that half 403s).
+              */}
+              {e.canWithdraw && onWithdraw && (e.source === 'listing' || withdrawEnabled) ? (
                 <Button
                   size="compact-xs"
                   variant="subtle"
@@ -362,6 +404,7 @@ type RowRenderProps = {
   historyError: string | null;
   onWithdraw?: (entry: MyAppHistoryEntry) => void;
   withdrawing: boolean;
+  withdrawEnabled: boolean;
 };
 
 function rowTestId(group: 'active' | 'inactive', appListingId: string): string {
@@ -412,6 +455,7 @@ function AppTableRow(props: RowRenderProps) {
             errorMessage={props.historyError}
             onWithdraw={props.onWithdraw}
             withdrawing={props.withdrawing}
+            withdrawEnabled={props.withdrawEnabled}
           />
         </Table.Td>
       </Table.Tr>
@@ -458,6 +502,7 @@ function AppCardRow(props: RowRenderProps) {
           errorMessage={props.historyError}
           onWithdraw={props.onWithdraw}
           withdrawing={props.withdrawing}
+          withdrawEnabled={props.withdrawEnabled}
         />
       </Stack>
     </Paper>
@@ -522,6 +567,16 @@ export type MyAppsBodyViewProps = {
   historyError?: string | null;
   onWithdraw?: (entry: MyAppHistoryEntry) => void;
   withdrawing?: boolean;
+  /**
+   * Is the VERSION-withdraw mutation reachable for this viewer? Defaults to `true`; the
+   * container passes `features.appBlocks`, because `blocks.withdrawPublishRequest` carries
+   * `enforceAppBlocksFlag` while this page does not. Listing-source entries are unaffected
+   * — `appListings.withdrawExternalRequest` has no such gate.
+   */
+  withdrawEnabled?: boolean;
+  /** Submissions whose listing was deleted — see `listMyOrphanedSubmissions`. */
+  orphanedSubmissions?: OrphanedSubmissionRow[];
+  onWithdrawOrphan?: (row: OrphanedSubmissionRow) => void;
 };
 
 export function MyAppsBodyView({
@@ -536,6 +591,9 @@ export function MyAppsBodyView({
   historyError = null,
   onWithdraw,
   withdrawing = false,
+  withdrawEnabled = true,
+  orphanedSubmissions = [],
+  onWithdrawOrphan,
 }: MyAppsBodyViewProps) {
   const [inactiveOpen, setInactiveOpen] = useState(false);
   const [inactivePage, setInactivePage] = useState(1);
@@ -560,9 +618,19 @@ export function MyAppsBodyView({
         historyError: expanded ? historyError : null,
         onWithdraw,
         withdrawing,
+        withdrawEnabled,
       };
     },
-    [expandedId, history, historyLoading, historyError, onToggleExpand, onWithdraw, withdrawing]
+    [
+      expandedId,
+      history,
+      historyLoading,
+      historyError,
+      onToggleExpand,
+      onWithdraw,
+      withdrawing,
+      withdrawEnabled,
+    ]
   );
 
   if (errorMessage) {
@@ -584,22 +652,28 @@ export function MyAppsBodyView({
       </Center>
     );
   }
-  if (rows.length === 0) {
-    return (
-      <Alert
-        color="gray"
-        variant="light"
-        icon={<IconApps size={16} />}
-        data-testid="apps-mine-empty"
-      >
-        You don’t own or collaborate on any apps yet.
-      </Alert>
-    );
-  }
+  /**
+   * 🔴 THE EMPTY STATE IS NOT AN EARLY RETURN, and that distinction is a defect this
+   * suite caught. An account whose ONLY records are orphaned submissions has zero
+   * listings, so returning here would render "you don't own any apps yet" over the top of
+   * the one group that finally makes their rejected first version visible — the original
+   * defect, reappearing one layer up. The alert renders INSIDE the stack, beside them.
+   */
+  const hasNothingAtAll = rows.length === 0 && orphanedSubmissions.length === 0;
 
   return (
     <Stack gap="lg" data-testid="apps-mine-list">
-      {active.length === 0 ? (
+      {hasNothingAtAll && (
+        <Alert
+          color="gray"
+          variant="light"
+          icon={<IconApps size={16} />}
+          data-testid="apps-mine-empty"
+        >
+          You don’t own or collaborate on any apps yet.
+        </Alert>
+      )}
+      {rows.length === 0 ? null : active.length === 0 ? (
         <Alert color="gray" variant="light" data-testid="apps-mine-active-empty">
           Every app you can access is inactive. Open “Inactive” below to see them.
         </Alert>
@@ -660,6 +734,111 @@ export function MyAppsBodyView({
           </Collapse>
         </Stack>
       )}
+
+      {orphanedSubmissions.length > 0 && (
+        <OrphanedSubmissionsSection
+          rows={orphanedSubmissions}
+          onWithdraw={onWithdrawOrphan}
+          withdrawing={withdrawing}
+          withdrawEnabled={withdrawEnabled}
+        />
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * Submissions whose LISTING NO LONGER EXISTS — the population no app-keyed row can show.
+ *
+ * 🔴 SUBMISSION-KEYED, NOT APP-KEYED, and that is forced rather than chosen. A first
+ * version that is rejected or withdrawn has its pre-approval draft listing DELETED to
+ * release the slug, so there is no app to nest this under. Measured on production
+ * 2026-08-20: **3 of 3 rejected** and **27 of 33 withdrawn** on-site requests are in that
+ * state — i.e. 100% of rejections were unreachable from anywhere in the product, including
+ * from the "your app was rejected" notification that now points at this page.
+ *
+ * 🔴 ALWAYS VISIBLE, deliberately NOT behind the Inactive collapse. These rows are the
+ * ones a developer arrives looking for, and the group is small and bounded; collapsing the
+ * only surface that shows a rejection reason would re-create the defect in a nicer shape.
+ */
+function OrphanedSubmissionsSection({
+  rows,
+  onWithdraw,
+  withdrawing,
+  withdrawEnabled,
+}: {
+  rows: OrphanedSubmissionRow[];
+  onWithdraw?: (row: OrphanedSubmissionRow) => void;
+  withdrawing: boolean;
+  withdrawEnabled: boolean;
+}) {
+  return (
+    <Stack gap="xs" data-testid="apps-mine-orphaned">
+      <Group gap={6}>
+        <Text fw={600} size="sm">
+          Submissions without a listing
+        </Text>
+        <Badge variant="light" color="gray" data-testid="apps-mine-orphaned-count">
+          {rows.length}
+        </Badge>
+      </Group>
+      <Text size="xs" c="dimmed">
+        These apps never got a store listing — a first version that was rejected or withdrawn
+        releases its slug, so there is no app page to show them on.
+      </Text>
+      <Stack gap="xs">
+        {rows.map((r) => (
+          <Paper
+            key={r.id}
+            withBorder
+            p="sm"
+            radius="md"
+            data-testid={`apps-mine-orphaned-row-${r.id}`}
+          >
+            <Group justify="space-between" wrap="wrap" gap="xs">
+              <Stack gap={2}>
+                <Text fw={600}>{r.slug}</Text>
+                <Text size="xs" c="dimmed">
+                  v{r.version} · submitted {formatWhen(r.submittedAt)}
+                </Text>
+              </Stack>
+              <Group gap="xs">
+                <Badge
+                  variant="outline"
+                  color={historyStatusColor(r.status)}
+                  data-testid={`apps-mine-orphaned-status-${r.id}`}
+                >
+                  {r.status}
+                </Badge>
+                {r.canWithdraw && onWithdraw && withdrawEnabled ? (
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    color="gray"
+                    disabled={withdrawing}
+                    onClick={() => onWithdraw(r)}
+                    data-testid={`apps-mine-orphaned-withdraw-${r.id}`}
+                  >
+                    Withdraw
+                  </Button>
+                ) : null}
+              </Group>
+            </Group>
+            {/* 🔴 THE REVIEWER'S REASON IS THE POINT OF THIS GROUP. It is the only thing
+                on the whole record that tells the developer what to change, and it was
+                unreachable before this section existed. */}
+            {r.rejectionReason ? (
+              <Text size="xs" c="red" mt={6} data-testid={`apps-mine-orphaned-notes-${r.id}`}>
+                {r.rejectionReason}
+              </Text>
+            ) : r.approvalNotes ? (
+              <Text size="xs" c="dimmed" mt={6} data-testid={`apps-mine-orphaned-notes-${r.id}`}>
+                {r.approvalNotes}
+              </Text>
+            ) : null}
+          </Paper>
+        ))}
+      </Stack>
     </Stack>
   );
 }
@@ -671,6 +850,22 @@ export function MyAppsBody() {
   // has measured, so the `=== true` keeps the first paint on the table rather than
   // flashing the card layout on desktop.
   const isCompact = useMediaQuery('(max-width: 48em)') === true;
+  /**
+   * 🔴 READ FOR THE *WRITE*, NOT FOR THE PAGE. The page and both of its reads gate on
+   * `appBlocksAuthor` ONLY — deliberately, because `appBlocks` is store VISIBILITY and an
+   * author must be able to see their own apps when the store narrows. But
+   * `blocks.withdrawPublishRequest` carries `.use(enforceAppBlocksFlag)`, so with
+   * `appBlocksAuthor` on and `appBlocks` off the page renders, history loads, and the
+   * version-Withdraw 403s. Its off-site sibling `appListings.withdrawExternalRequest` has
+   * no such gate, so the two halves of one button disagree.
+   *
+   * 🔴 THE UI IS GATED RATHER THAN THE MUTATION LOOSENED. Removing `enforceAppBlocksFlag`
+   * from a mutation is an authorization change and is not mine to make in passing; hiding
+   * a control the server would refuse is strictly an improvement over the page this
+   * replaced, where the whole submissions read was `appBlocks`-gated and the button did
+   * not exist at all in this cohort. Recorded in the PR body as the open question.
+   */
+  const features = useFeatureFlags();
 
   const rowsQuery = trpc.appListings.listMine.useQuery(undefined, { retry: false });
 
@@ -684,10 +879,20 @@ export function MyAppsBody() {
     { enabled: !!expandedId, retry: false }
   );
 
+  /**
+   * Submissions whose listing was deleted. One flat, bounded read alongside the rows —
+   * NOT lazy, because unlike history there is no row to expand: this group IS the only
+   * surface these records have.
+   */
+  const orphansQuery = trpc.appListings.listMyOrphanedSubmissions.useQuery(undefined, {
+    retry: false,
+  });
+
   const utils = trpc.useUtils();
   const refetchHistory = useCallback(() => {
     void utils.appListings.listingHistory.invalidate();
     void utils.appListings.listMine.invalidate();
+    void utils.appListings.listMyOrphanedSubmissions.invalidate();
   }, [utils]);
 
   const onWithdrawError = useCallback((message: string) => {
@@ -723,6 +928,14 @@ export function MyAppsBody() {
     [withdrawVersion, withdrawListing]
   );
 
+  // An orphan is by construction a BLOCK publish request, so it only ever has one proc.
+  const onWithdrawOrphan = useCallback(
+    (rowToWithdraw: OrphanedSubmissionRow) => {
+      withdrawVersion.mutate({ publishRequestId: rowToWithdraw.id });
+    },
+    [withdrawVersion]
+  );
+
   return (
     <MyAppsBodyView
       rows={(rowsQuery.data ?? []) as MyAppRow[]}
@@ -736,6 +949,9 @@ export function MyAppsBody() {
       historyError={historyQuery.error?.message ?? null}
       onWithdraw={onWithdraw}
       withdrawing={withdrawVersion.isPending || withdrawListing.isPending}
+      withdrawEnabled={!!features?.appBlocks}
+      orphanedSubmissions={(orphansQuery.data ?? []) as OrphanedSubmissionRow[]}
+      onWithdrawOrphan={onWithdrawOrphan}
     />
   );
 }

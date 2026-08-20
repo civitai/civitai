@@ -368,9 +368,20 @@ describe('getAppListingAuthoringContext', () => {
     };
   }
 
+  /**
+   * 🔴 THE FAKE DISCRIMINATES THE TWO `findUnique` READS BY `select.connectClientId`, NOT
+   * by `select.slug`. It used to key on `slug`, which worked only because
+   * `resolveListingAccess` happened not to ask for that column — an INCIDENTAL property,
+   * not a contract. The moment that resolver legitimately needed the slug (to find a
+   * publish request whose `app_block_id` is still NULL), the access read started matching
+   * the AUTHORING branch and came back without `userId`/`kind`, so every case here failed
+   * with FORBIDDEN and read like an authorization regression. `connectClientId` is asked
+   * for by the authoring read ALONE and is documented as deliberately absent from the
+   * other, which makes it a discriminator with a reason rather than a coincidence.
+   */
   it('the OWNER gets role owner + the kind-derived capabilities', async () => {
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture()
     );
@@ -384,7 +395,7 @@ describe('getAppListingAuthoringContext', () => {
 
   it('an ACCEPTED seat gets role editor', async () => {
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture()
     );
@@ -395,7 +406,7 @@ describe('getAppListingAuthoringContext', () => {
 
   it('🔴 a stranger is REFUSED (FORBIDDEN), not handed a role-less row', async () => {
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture()
     );
@@ -407,7 +418,7 @@ describe('getAppListingAuthoringContext', () => {
 
   it('a PENDING invitee is a stranger here — an unaccepted invite confers nothing', async () => {
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_1', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture()
     );
@@ -431,7 +442,7 @@ describe('getAppListingAuthoringContext', () => {
   describe('the listing STATUS gate', () => {
     function withStatus(status: string) {
       mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-        (a[0] as { select?: { slug?: boolean } }).select?.slug
+        (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
           ? { id: 'apl_1', slug: 'my-app', name: 'My App', status }
           : listingFixture()
       );
@@ -482,7 +493,7 @@ describe('getAppListingAuthoringContext', () => {
     // shadow would make an in-flight revision look off-site and silently strip the
     // block-only tabs from the editor.
     mockDb.appListing.findUnique.mockImplementation(async (...a: unknown[]) =>
-      (a[0] as { select?: { slug?: boolean } }).select?.slug
+      (a[0] as { select?: { connectClientId?: boolean } }).select?.connectClientId
         ? { id: 'apl_parent', slug: 'my-app', name: 'My App', status: 'approved' }
         : listingFixture({
             id: 'apl_shadow',

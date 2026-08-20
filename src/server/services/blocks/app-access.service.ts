@@ -2,6 +2,8 @@ import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import type { ListingProblem } from '~/server/services/blocks/listing-problems';
+import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import type {
   AppRole,
   ListingCapability,
@@ -135,6 +137,17 @@ export type ListingAccess = {
    * seat is ever read or written under.
    */
   seatListingId: string;
+  /**
+   * The SEAT (parent) listing's slug.
+   *
+   * 🔴 CARRIED BECAUSE IT IS THE ONLY JOIN LEFT WHEN A BLOCK FK IS NULL.
+   * `app_block_publish_requests.app_block_id` is NULL until approve, so an app's first
+   * pending/rejected/withdrawn version cannot be found by block id at all — `slug` is what
+   * carries identity across that lifecycle. Taken from the PARENT for the same reason
+   * `kind` and `appBlockId` are: a shadow revision has a synthetic `rev-<ulid>` slug.
+   * Read by {@link blockRequestWhereForListing}.
+   */
+  slug: string;
   /**
    * 🔴 THE CANONICAL OWNER, resolved KIND-AWARE — **not** `AppListing.userId`.
    *
@@ -450,6 +463,7 @@ export async function resolveListingAccess(
     select: {
       id: true,
       userId: true,
+      slug: true,
       kind: true,
       appBlockId: true,
       revisionOfId: true,
@@ -460,6 +474,9 @@ export async function resolveListingAccess(
       revisionOf: {
         select: {
           id: true,
+          // The PUBLIC slug. A shadow's own slug is the synthetic `rev-<ulid>`, which
+          // matches no publish request, so the parent's is the one that can join.
+          slug: true,
           // 🔴 THE PARENT'S OWNER COLUMN, and it is NOT redundant with the shadow's own.
           // The shadow froze a copy of it at clone time; for an OFF-SITE listing that
           // column IS the owner, so reading the frozen one keeps naming whoever owned the
@@ -509,6 +526,9 @@ export async function resolveListingAccess(
     ownerUserId,
     kind,
     appBlockId,
+    // 🔴 THE PARENT'S slug, on the same `?? listing.slug` fallback as `kind`/`appBlockId`
+    // above — a shadow carries the synthetic `rev-<ulid>`, which joins to nothing.
+    slug: ((listing.revisionOfId ? parent?.slug : listing.slug) ?? listing.slug) as string,
   };
   if (typeof userId !== 'number') return { ...base, role: null };
   if (ownerUserId === userId) return { ...base, role: 'owner' };
@@ -817,6 +837,20 @@ export type MyAppListing = {
    * `take: limit` deterministic) is untouched.
    */
   updatedAt: Date;
+  /**
+   * The listing-completeness ADVISORY — missing icon / cover / screenshots / description
+   * / tagline / category, from {@link computeListingProblems}.
+   *
+   * 🔴 CARRIED BECAUSE `/apps/mine` IS NOW ITS ONLY POSSIBLE HOME. The advisory rendered
+   * on the two `/apps/my-submissions` tables; that page merged into this one, so without
+   * this field the warning has no surface at all and an author simply stops being told
+   * their listing is incomplete. It is also what makes {@link listingCoverUrl}'s "no
+   * screenshot fallback, the author must see the gap" argument true rather than merely
+   * asserted — that rationale cites this warning by name.
+   *
+   * Empty array = nothing to flag. Never `undefined`.
+   */
+  problems: ListingProblem[];
 };
 
 /**
@@ -846,7 +880,7 @@ export type MyAppListing = {
  */
 export type AppListingAuthoringContext = Omit<
   MyAppListing,
-  'iconUrl' | 'coverUrl' | 'updatedAt'
+  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems'
 > & {
   /**
    * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
@@ -879,6 +913,19 @@ async function hydrateMyAppListings(
     // query. `app_listings.icon_id`/`cover_id` are integer FKs to `Image`, so the URL is
     // one join away; doing it here keeps this read at ONE hydrate query, which
     // `app-access.accessible-listings.test.ts` pins by call count.
+    //
+    // 🔴 `iconId`/`coverId`/`description`/`tagline`/`category` + the FILTERED screenshot
+    // COUNT are the exact inputs of {@link computeListingProblems} — the listing-
+    // completeness advisory. They are selected HERE rather than fetched by a second
+    // surface because `/apps/mine` is now the ONLY place that advisory can render: it used
+    // to hang off the two `/apps/my-submissions` tables, and those lost their importer
+    // when that page merged into this one. Deriving "the cover is missing" from
+    // `coverUrl == null` would cover one of six problems and silently drop the other five.
+    //
+    // The screenshot count is `_count` with the SAME `imageId: { not: null }` filter the
+    // authoritative asset gate uses (`buildAssetStatus`) — a screenshot whose Image was
+    // deleted has nothing to display, so counting it would make `no-screenshots` a
+    // false negative.
     select: {
       id: true,
       slug: true,
@@ -889,6 +936,12 @@ async function hydrateMyAppListings(
       updatedAt: true,
       icon: { select: { url: true } },
       cover: { select: { url: true } },
+      iconId: true,
+      coverId: true,
+      description: true,
+      tagline: true,
+      category: true,
+      _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
     },
     orderBy: { serialId: 'desc' },
     take: limit,
@@ -905,6 +958,12 @@ async function hydrateMyAppListings(
       updatedAt?: Date | null;
       icon?: { url: string | null } | null;
       cover?: { url: string | null } | null;
+      iconId?: number | null;
+      coverId?: number | null;
+      description?: string | null;
+      tagline?: string | null;
+      category?: string | null;
+      _count?: { screenshots: number } | null;
     }) => {
       const kind = r.kind as ListingKind;
       return {
@@ -918,12 +977,25 @@ async function hydrateMyAppListings(
         capabilities: capabilitiesForKind(kind),
         iconUrl: listingIconUrl(r.icon),
         // 🔴 `null`, NOT a screenshot — see {@link listingCoverUrl}. The author must be
-        // able to see that their own cover is missing.
+        // able to see that their own cover is missing. That is only true as long as the
+        // advisory below actually renders somewhere; `problems` is what makes it true.
         coverUrl: listingCoverUrl(r.cover, null),
         // A narrow test fake that ignores `select` yields `undefined` here; the epoch
         // keeps the row sortable rather than producing an `Invalid Date` that poisons
         // every comparison it takes part in.
         updatedAt: r.updatedAt ?? new Date(0),
+        // 🔴 NO `assetScans` PASSED, so no scan-state problems are computed here. That
+        // input needs each asset's `ingestion` state, which is a per-listing fan-out this
+        // LIST read deliberately does not do — the same reasoning as the omitted
+        // `connectClientId`. The scan problems remain on the single-listing surfaces.
+        problems: computeListingProblems({
+          iconId: r.iconId ?? null,
+          coverId: r.coverId ?? null,
+          screenshotCount: r._count?.screenshots ?? 0,
+          description: r.description ?? null,
+          tagline: r.tagline ?? null,
+          category: r.category ?? null,
+        }).problems,
       };
     }
   );

@@ -1,6 +1,7 @@
 import type { EditorTab } from '~/components/Apps/appListingEditorTabs';
 import { editorTabsFor, listingEditHref } from '~/components/Apps/appListingEditorTabs';
 import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
+import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import type {
   AppRole,
   ListingCapability,
@@ -67,6 +68,15 @@ export type MyAppRow = {
   iconUrl: string | null;
   coverUrl: string | null;
   updatedAt: string | Date;
+  /**
+   * The listing-completeness advisory (missing icon / cover / screenshots / description /
+   * tagline / category), computed server-side by `computeListingProblems`.
+   *
+   * 🔴 THIS TABLE IS THE ADVISORY'S ONLY HOME NOW. It rendered on the two
+   * `/apps/my-submissions` tables, which lost their importer when that page merged here.
+   * Optional on the type so a fixture need not spell it, never optional in the payload.
+   */
+  problems?: ListingProblem[];
 };
 
 /**
