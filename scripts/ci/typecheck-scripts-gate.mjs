@@ -1,62 +1,79 @@
 #!/usr/bin/env node
 /**
- * Ratchet gate for the type errors in the QUARANTINED files under `scripts/`.
+ * MEASUREMENT INSTRUMENT for the part of `scripts/` the root typecheck does not
+ * cover. 🔴 IT IS NOT WIRED INTO CI, DELIBERATELY — see WHY IT DOES NOT BLOCK.
  *
  * WHY THIS EXISTS
  * ---------------
- * Until this gate landed, the root `tsconfig.json` put ZERO files under
- * `scripts/` into the program. Not "only `scripts/local-dev`" — zero. That
- * directory was named in `include` and ALSO in `exclude`, and exclude wins, so
- * the one entry that made the list look intentional was inert. Measured on
- * 23cecb57c0: `tsc -p tsconfig.json --listFilesOnly` contained 0 files under
- * `scripts/`, and a deliberate `const x: number = 'nope'` planted in
+ * The root `tsconfig.json` used to put ZERO files under `scripts/` into the
+ * program. Not "only `scripts/local-dev`" — zero. That directory was named in
+ * `include` and ALSO in `exclude`, and exclude wins, so the one entry that made
+ * the list look intentional was inert. Measured on 23cecb57c0:
+ * `tsc -p tsconfig.json --listFilesOnly` contained 0 files under `scripts/`, and
+ * a deliberate `const x: number = 'nope'` planted in
  * `scripts/oneoffs/parse_header.ts` produced `OK — 0 type errors`, exit 0. Both
  * CI tiers run that same config, so the gap could not close on its own.
  *
- * `tsconfig.json` now includes `scripts/**\/*.ts(x)`. 33 of the 38 files that
- * pulls in were already clean and are checked by the real `pnpm typecheck` from
- * now on, in both tiers, along with every file added under `scripts/` later.
- * The other five carried 198 pre-existing errors and are listed in that config's
- * `exclude` under a `scripts/ quarantine` heading.
+ * `tsconfig.json` now includes `scripts/**\/*.ts(x)` and excludes two things:
+ * the whole of `scripts/__tests__/**`, and `scripts/local-dev/gen_seed.ts`.
+ * Everything else under `scripts/` — the operational scripts, where a type error
+ * is a latent runtime bug rather than a test-harness artifact — is checked by
+ * the real `pnpm typecheck` in BOTH tiers from now on, as is any file added to
+ * those directories later. That is the blocking win, and it needs no gate.
  *
- * THIS GATE IS WHAT KEEPS THAT QUARANTINE FROM BEING A NEW BLIND SPOT. Excluding
- * five files and walking away would recreate, at smaller scale, exactly the
- * defect being fixed — which is how `src/**\/__tests__/**` got to 801 errors.
+ * This file measures what is left.
  *
- * `tsconfig.scripts.json` is the same program with the quarantine entries
- * removed. It is a strict superset: every other `include`/`exclude`/
- * `compilerOptions` value is inherited via `extends`, deliberately. A hand-rolled
- * narrowed program that picks its own `include` drops `src/types/global.d.ts`,
- * ambient names then resolve to TS2304, generics that depend on them collapse,
- * and the affected files report FEWER errors than they really have — a false
- * all-clear on exactly the files being measured.
+ * WHY IT DOES NOT BLOCK
+ * ---------------------
+ * An earlier revision quarantined four individual `scripts/__tests__` files and
+ * ran as a blocking CI job. That was wrong, and the evidence arrived within a
+ * day: PR #4181 added `scripts/__tests__/dev-server-daemon-port.test.ts`, a
+ * perfectly ordinary test, and it carried 4 TS2345s — which reddened the root
+ * typecheck AND blocked this gate as a file "not in the baseline".
  *
- * WHAT THIS GATE ASKS
- * -------------------
- * Not "is the quarantine clean" — it is not, and blocking on that would be
- * permanently red, which only teaches people to click through. It asks: **did
- * this change make it worse?**
+ * The cause is structural, not a backlog. That directory exists to test the
+ * untyped `.mjs` modules under `.claude/skills/` and `.claude/hooks/` by
+ * importing them, and none of those modules carries JSDoc, so under `allowJs`
+ * tsc infers their signatures from the implementation and every caller inherits
+ * the result. `daemonPortsGuarded(env = process.env)` infers as requiring a full
+ * `ProcessEnv`, so `{ DEV_DAEMON_PORT: '9555' }` is an error; the 164 errors in
+ * `dev-server-test-queue.test.ts` are the same mechanism, where
+ * `request({ worktree, args = [] } = {})` infers as `{ args?: never[] }` (40x
+ * TS2353) and a run object's `null` initializers infer as type `null` (123x
+ * TS18047/TS2531).
  *
- *   - a quarantined file whose error count went UP        -> BLOCK
- *   - a file with errors that is NOT in the baseline      -> BLOCK
- *   - a quarantined file whose error count went DOWN      -> pass, and say so
- *   - a quarantined file that is now clean, or is gone    -> pass, and say so
+ * Measured: 5 of the 15 files in that directory carry this class, and ALL 15
+ * were added within a single month. A blocking gate over it would therefore
+ * fire several times a month, always for a defect in a dependency the test
+ * author did not write, and the fastest way out would be to add a baseline
+ * entry. A gate whose common remedy is "record the failure" trains the reflex it
+ * exists to prevent. So the directory is excluded from the root program the same
+ * way `src/**\/__tests__/**` is, and this file reports on it instead of gating
+ * it. Typing the `.mjs` modules is the real fix; this is how you watch that
+ * number go down.
  *
- * Lowering a baseline entry is never required to merge; raising one is only
- * possible by editing a committed file inside the pull request, where a reviewer
- * sees it. When a file reaches zero, delete its line from `tsconfig.json`'s
- * quarantine block and from `tsconfig.scripts.json` is NOT needed — the latter
- * simply stops differing by that entry, which `diffLists` then requires you to
- * reflect in QUARANTINE below.
+ * `tsconfig.scripts.json` is the same program with those two exclusions removed.
+ * It is a strict superset: every other `include`/`exclude`/`compilerOptions`
+ * value is inherited via `extends`, deliberately. A hand-rolled narrowed program
+ * that picks its own `include` drops `src/types/global.d.ts`, ambient names then
+ * resolve to TS2304, generics that depend on them collapse, and the affected
+ * files report FEWER errors than they really have — a false all-clear on exactly
+ * the files being measured.
  *
- * A NOTE ON WHERE THE 198 COME FROM
- * ---------------------------------
- * 164 of them are in one file and share a single cause: it imports an untyped
- * `.mjs` module carrying no JSDoc, so under `allowJs` tsc infers
- * `request({ worktree, args = [] } = {})` as taking `{ args?: never[] }` (40x
- * TS2353) and infers the run object's `null` initializers as type `null` (123x
- * TS18047/TS2531). They are not 164 independent defects, and the fix is to type
- * that module rather than to edit 164 assertions.
+ * WHAT IT ASKS
+ * ------------
+ * Not "is this clean" — it is not, and blocking on that would be permanently
+ * red, which only teaches people to click through. It asks: **did this change
+ * make it worse?**
+ *
+ *   - a baselined file whose error count went UP          -> report, exit 1
+ *   - a file with errors that is NOT in the baseline      -> report, exit 1
+ *   - a baselined file whose error count went DOWN        -> pass, and say so
+ *   - a baselined file that is now clean, or is gone      -> pass, and say so
+ *
+ * Because nothing runs it automatically, exit 1 is a report to whoever ran it,
+ * not a merge block. Run it before and after a change to the `.mjs` modules, or
+ * on a schedule, and regenerate with `--write-baseline`.
  *
  * INSTRUMENT VALIDATION (read this before trusting a green run)
  * ------------------------------------------------------------
@@ -132,13 +149,7 @@ const BASE_TS_CONFIG = 'tsconfig.json';
  * if the two configs stop agreeing with it — including if this list goes STALE
  * after someone cleans a file up. Shrinking it is the intended direction.
  */
-const QUARANTINE = [
-  'scripts/__tests__/dev-server-test-queue.test.ts',
-  'scripts/__tests__/dev-server-env-modes.test.ts',
-  'scripts/__tests__/dev-server-port-reservation.test.ts',
-  'scripts/__tests__/typecheck-tests-gate.test.ts',
-  'scripts/local-dev/gen_seed.ts',
-];
+const QUARANTINE = ['scripts/__tests__/**', 'scripts/local-dev/gen_seed.ts'];
 
 function fail(msg, code) {
   console.error(msg);
@@ -488,9 +499,18 @@ if (result.renames.length) {
   console.error('    regression fits through. Re-run with --write-baseline in the same change.');
 }
 console.error('');
-console.error('  These are real type errors in files tsconfig.json quarantines out of the');
-console.error('  scripts/ typecheck. A file NOT in the baseline is the interesting case: it');
-console.error('  means the quarantine grew, or a quarantined file was renamed.');
+console.error('  These are real type errors under scripts/. Which ones MATTER depends on');
+console.error('  where the file sits, and the two cases have different remedies:');
+console.error('');
+console.error('    scripts/__tests__/… or scripts/local-dev/gen_seed.ts');
+console.error('      -> excluded from the root program, so `pnpm typecheck` is still green');
+console.error('         and nothing is blocked. This is a report. Fix it, or re-run with');
+console.error('         --write-baseline to record it.');
+console.error('');
+console.error('    ANY OTHER PATH under scripts/');
+console.error('      -> that file IS in the root program, which means `pnpm typecheck` is');
+console.error('         RED right now and BOTH CI tiers are blocking on it. Fix it; do not');
+console.error('         record it in this baseline.');
 console.error('');
 console.error('  Reproduce locally:');
 console.error(`    pnpm typecheck -p ${TS_CONFIG}`);

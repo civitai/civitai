@@ -12,12 +12,15 @@ import {
   isScriptFileLine,
   relativizeToRepo,
   scriptFileFloor,
+  stripJsonComments,
 } from '../ci/typecheck-scripts-compare.mjs';
 
 /**
- * `scripts/ci/typecheck-scripts-gate.mjs` ratchets the type errors in the five
- * files `tsconfig.json` quarantines out of the `scripts/` typecheck. Its entire
- * value rests on one property: it must be UNABLE to report a confident zero.
+ * `scripts/ci/typecheck-scripts-gate.mjs` measures the type errors in the part of
+ * `scripts/` the root program excludes — `scripts/__tests__/**` and
+ * `scripts/local-dev/gen_seed.ts`. It is not wired into CI (see its header for
+ * why), so its exit code is a report rather than a merge block. Its entire value
+ * rests on one property: it must be UNABLE to report a confident zero.
  *
  * Two tiers here, deliberately:
  *
@@ -47,13 +50,10 @@ const plain = (file: string, code = 2322) =>
 
 // The quarantine the gate pins. Mirrored here so a drift between the gate's list
 // and the fixtures shows up as a failing test rather than as a silent no-op.
-const QUARANTINE = [
-  'scripts/__tests__/dev-server-test-queue.test.ts',
-  'scripts/__tests__/dev-server-env-modes.test.ts',
-  'scripts/__tests__/dev-server-port-reservation.test.ts',
-  'scripts/__tests__/typecheck-tests-gate.test.ts',
-  'scripts/local-dev/gen_seed.ts',
-];
+// What `tsconfig.json` excludes and `tsconfig.scripts.json` re-includes. Mirrored
+// here so a drift between the gate's list and these fixtures fails a test rather
+// than silently becoming a no-op.
+const QUARANTINE = ['scripts/__tests__/**', 'scripts/local-dev/gen_seed.ts'];
 const BASE_EXCLUDE = ['node_modules', 'src/**/__tests__/**', 'packages/civitai-ui'];
 
 let dir: string;
@@ -530,18 +530,58 @@ describe('the committed baseline', () => {
     for (const file of Object.keys(b.files)) expect(isGatedScriptFile(file)).toBe(true);
   });
 
-  it('covers exactly the files tsconfig.json quarantines — no more, no less', () => {
-    // A baseline entry for a file that is NOT quarantined would be unreachable
-    // (the root typecheck blocks on it first); a quarantined file with NO entry
-    // means the quarantine grew without the ratchet noticing.
+  it('records ONLY files the root program excludes — never one `pnpm typecheck` can see', () => {
+    // 🔴 The invariant that keeps this baseline from becoming a place to hide a
+    // real failure. Every entry must be a path `tsconfig.json` excludes. An entry
+    // for a root-COVERED file would mean somebody recorded an error that the root
+    // typecheck is red on — i.e. used this file to make a blocking failure look
+    // handled. That is the one way this instrument could do harm, so it is pinned
+    // structurally rather than trusted to review.
+    //
+    // The exclusion set is read from `tsconfig.json` rather than restated, so
+    // narrowing the exclusions automatically tightens this test.
     const root = path.resolve(__dirname, '../..');
-    const raw = readFileSync(path.join(root, 'tsconfig.json'), 'utf8');
-    const quarantined = [...raw.matchAll(/"(scripts\/[^"]+\.tsx?)"/g)]
-      .map((m) => m[1]!)
-      .filter((f) => !f.includes('*'));
+    const excludes: string[] = JSON.parse(
+      stripJsonComments(readFileSync(path.join(root, 'tsconfig.json'), 'utf8'))
+    ).exclude;
+    const scriptExcludes = excludes.filter((e) => e.startsWith('scripts/'));
+
+    // Positive control on the parse itself: a zero here would make the loop below
+    // vacuous, and a vacuous loop passes.
+    expect(scriptExcludes.length).toBeGreaterThan(0);
+
+    const covers = (file: string) =>
+      scriptExcludes.some((pattern) =>
+        pattern.endsWith('/**') ? file.startsWith(pattern.slice(0, -2)) : file === pattern
+      );
+
     const b = JSON.parse(
       readFileSync(path.resolve(__dirname, '../ci/typecheck-scripts-baseline.json'), 'utf8')
     );
-    expect(new Set(Object.keys(b.files))).toEqual(new Set(quarantined));
+    const entries = Object.keys(b.files);
+    expect(entries.length).toBeGreaterThan(0);
+    for (const file of entries) {
+      expect(
+        covers(file),
+        `${file} is in the baseline but is NOT excluded by tsconfig.json, so the root ` +
+          `typecheck can see it. Fix the file; do not record it here.`
+      ).toBe(true);
+    }
+  });
+
+  it('the covers() predicate can actually reject — negative control', () => {
+    // Without this, the loop above would pass just as happily against a predicate
+    // that returns true for everything.
+    const scriptExcludes = ['scripts/__tests__/**', 'scripts/local-dev/gen_seed.ts'];
+    const covers = (file: string) =>
+      scriptExcludes.some((pattern) =>
+        pattern.endsWith('/**') ? file.startsWith(pattern.slice(0, -2)) : file === pattern
+      );
+    expect(covers('scripts/__tests__/anything.test.ts')).toBe(true);
+    expect(covers('scripts/local-dev/gen_seed.ts')).toBe(true);
+    // Root-covered paths — a baseline entry for any of these must fail the test above.
+    expect(covers('scripts/oneoffs/parse_header.ts')).toBe(false);
+    expect(covers('scripts/local-dev/utils.ts')).toBe(false);
+    expect(covers('scripts/seed-comics.ts')).toBe(false);
   });
 });

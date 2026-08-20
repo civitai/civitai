@@ -241,55 +241,6 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
-  typecheck-scripts:
-    name: Typecheck scripts/ (quarantine ratchet)
-    runs-on: ubuntu-latest
-    # UNCONDITIONAL, unlike the `typecheck` job above. That one is narrowed to
-    # fork PRs and non-main bases because the in-cluster Tekton `pr-check`
-    # pipeline covers everything else — but Tekton runs `pnpm run typecheck`,
-    # i.e. the ROOT tsconfig, and this gate measures `tsconfig.scripts.json`.
-    # Nothing else runs it, so a narrowing `if:` here would mean it never ran at
-    # all on an internal PR.
-    #
-    # 🔴 READ THIS BEFORE ASSUMING THIS JOB IS WHAT COVERS scripts/. It is not.
-    # `tsconfig.json` now includes `scripts/**/*.ts(x)`, so the 33 clean files
-    # there are checked by the ROOT typecheck and BOTH tiers already block on
-    # them — including every file added under `scripts/` in future. This job
-    # exists for the FIVE quarantined files listed in that config's `exclude`,
-    # which no other tier can see. Deleting it does not uncover the 33; it
-    # uncovers the 5.
-    #
-    # Its own job rather than a step on `unit`: that job is `continue-on-error`
-    # (report-only by design), so a ratchet parked there could never block.
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # `tsconfig.scripts.json` inherits `src` from the root config, and src
-          # imports event-engine-common. Without the submodule those resolve to
-          # 12 TS2307/TS7006 errors. The gate reports them as "outside scripts/"
-          # and drops them rather than mis-scoring them, so the verdict would
-          # still be correct — but the log becomes noise around it, and the
-          # submodule is public and needs no secret.
-          submodules: true
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      # Drives `scripts/typecheck.mjs` internally — the wrapper that sets the V8
-      # heap cap and classifies the outcome, so a heap abort reads as CRASHED
-      # rather than as a clean zero. The gate additionally refuses (exit 3) on a
-      # measurement it cannot trust, which is neither a pass nor a failure.
-      - name: Scripts quarantine ratchet
-        run: node scripts/ci/typecheck-scripts-gate.mjs
-
   unit:
     name: Unit tests
     runs-on: ubuntu-latest

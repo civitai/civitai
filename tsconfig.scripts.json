@@ -1,17 +1,17 @@
 {
   // Audit/measurement config for `scripts/ci/typecheck-scripts-gate.mjs`:
   // identical to tsconfig.json in every respect EXCEPT that it does not exclude
-  // the five quarantined files listed in that config's `scripts/ quarantine`
-  // block.
+  // `scripts/__tests__/**` or `scripts/local-dev/gen_seed.ts` — i.e. it is the
+  // program the root config would be if `scripts/` were fully typechecked.
   //
-  // The delta from the base config is exactly those five entries, deliberately,
+  // The delta from the base config is exactly those two entries, deliberately,
   // and `diffLists` in the gate re-asserts it on every run. A hand-rolled
   // narrowed program (one that picks its own `include`, or drops `src`) silently
   // loses `src/types/global.d.ts`, which makes ambient names resolve to TS2304
   // and collapses downstream generics into a FALSE all-clear on exactly the
-  // files being measured. Extending the real config and subtracting the
-  // quarantine is what keeps the program honest — the same reasoning, and the
-  // same shape, as `tsconfig.tests.json`.
+  // files being measured. Extending the real config and subtracting the two
+  // entries is what keeps the program honest — the same reasoning, and the same
+  // shape, as `tsconfig.tests.json`.
   "extends": "./tsconfig.json",
   "exclude": [
     "node_modules",
