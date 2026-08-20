@@ -21,11 +21,10 @@ import { PlacementFreeBadge } from '~/components/Placement/PlacementFreeBadge';
 import { PlacementFreeFilter } from '~/components/Placement/PlacementFreeFilter';
 import { visibleQueueRows } from '~/components/Placement/free-filter';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Meta } from '~/components/Meta/Meta';
 import { SubmissionPair } from '~/components/RemixGallery/SubmissionPair';
+import { useWithheldHref } from '~/components/Placement/useWithheldHref';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
@@ -152,16 +151,6 @@ export default function RemixSubmissions() {
       </Container>
     </>
   );
-}
-
-/**
- * Where to send someone whose domain will not serve an image. The queue keeps
- * the row so the escrow can still be answered; this is the only route left to
- * the picture itself, since the withheld tile has no pixels to reveal.
- */
-function useWithheldHref() {
-  const domains = useServerDomains();
-  return (image: { id: number }) => syncAccount(`//${domains.red}/images/${image.id}`);
 }
 
 type ReceivedRow = RouterOutput['placement']['getPendingRemixGallerySubmissions']['items'][number];

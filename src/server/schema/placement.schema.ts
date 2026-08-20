@@ -306,3 +306,8 @@ export const getPendingStickerPlacementsSchema = z.object({
   cursor: placementQueueCursorSchema,
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });
+
+/** Same marking rule as the owner queue: the placer's own band, not a filter. */
+export const getMyStickerPlacementsSchema = z.object({
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
