@@ -161,6 +161,24 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
     'feed-image-existence has no segment rollouts; hot feed path',
   'server/services/image.service.ts:5814':
     'feed-image-existence has no segment rollouts; hot feed path',
+  // flags `model-text-moderation-xguard` / `-apply`: both enabled=true, 0 rules,
+  // 0 rollouts (checked against flipt-state and against the evaluation API on
+  // 2026-08-20, which returned DEFAULT_EVALUATION_REASON for both).
+  //
+  // These two are entity-keyed ON PURPOSE, and a context could not help them. The
+  // entityId is a MODEL id, not a user id — every STRING_COMPARISON segment we have
+  // describes a person (moderators, testers, members, tiers, cohorts), and none of
+  // them can say anything about a model. The intended rollout here is a `threshold`
+  // rollout, which buckets on the entityId itself, so the entityId is the whole
+  // point rather than a missing context. The adapter also runs from a webhook with
+  // no session at all, so there is no SessionUser to build a truthful context from.
+  //
+  // The caveat above still applies with force: if either flag ever gains a SEGMENT
+  // rollout it will silently match nothing here. A percentage rollout is fine.
+  'server/services/model-moderation.adapter.ts:123':
+    'model-text-moderation-xguard has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
+  'server/services/model-moderation.adapter.ts:228':
+    'model-text-moderation-xguard-apply has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
 };
 
 describe('flipt evaluation context — source gate', () => {

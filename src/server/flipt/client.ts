@@ -76,6 +76,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
   // rollback stays usable after the switch is thrown.
   MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
+  // Gates SUBMISSION of model name+description to XGuard from upsertModel. Keyed on
+  // modelId so a percentage rollout picks a deterministic, sticky subset of content.
+  // DEFAULT-OFF — isFlipt returns false for an unknown flag or an unreachable Flipt.
+  MODEL_TEXT_MODERATION_XGUARD = 'model-text-moderation-xguard',
+  // Gates APPLYING the verdict (the `nsfw` write). Separate from the submit flag so the
+  // scan can run in shadow — verdicts recorded to EntityModeration and the audit log while
+  // the profanity filter stays solely in charge of the column. For a path that
+  // auto-restricts other people's models, not flagging is the safe failure.
+  MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
   // Arms the reaction reconciliation audit's repair path to WRITE compensating
   // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
   // or an unreachable Flipt, and for a path that mutates production metrics that
