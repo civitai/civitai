@@ -420,13 +420,13 @@ jobs:
       # part and this job has already paid for it. The tradeoff is that a type
       # error renders under this job's name — hence the job rename above.
       #
-      # Deliberately ONE step driving a script, not six `pnpm --filter` steps.
-      # Six steps abort at the first red app, so a shared type change that breaks
-      # four of them reports one; and `pnpm --filter <name>` EXITS 0 WHEN THE
-      # NAME MATCHES NOTHING (measured, pnpm 10.28.1 — it prints "No projects
-      # matched the filters" and succeeds), so six hardcoded package names are
-      # six chances for a rename to turn this gate into a green no-op. The script
-      # derives the app set from disk, proves each filter selected a real
-      # package, and collects every failure. See its header.
+      # Deliberately ONE step driving a script, not one `pnpm --filter` step per
+      # app. Per-app steps abort at the first red app, so a shared type change
+      # that breaks several of them reports one; and `pnpm --filter <name>` EXITS
+      # 0 WHEN THE NAME MATCHES NOTHING (measured, pnpm 10.28.1 — it prints "No
+      # projects matched the filters" and succeeds), so a hardcoded list of
+      # package names is one chance per app for a rename to turn this gate into a
+      # green no-op. The script derives the app set from disk, proves each filter
+      # selected a real package, and collects every failure. See its header.
       - name: Typecheck apps
         run: node scripts/ci/typecheck-apps.mjs
