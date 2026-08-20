@@ -1068,7 +1068,11 @@ describe('AppListingDetailBody', () => {
     expect(container.textContent).not.toContain('Connecting this app will be available soon');
   });
 
-  test('the connect branch keeps its own glyph', async () => {
+  // 🔴 #4208 — was "the connect branch keeps its own glyph", asserting a disabled
+  // "Connect" button with a `plug-connected` glyph. That CTA had no flow behind
+  // it and is deleted; an OAuth listing with no destination now takes the SAME
+  // informational arm as a grandfathered one. NEW-BEHAVIOUR GUARD.
+  test('🔴 an OAuth listing with NO destination renders Unavailable, not a Connect CTA', async () => {
     const { container } = await renderScoped(
       <AppListingDetailBody
         detail={base({
@@ -1081,7 +1085,14 @@ describe('AppListingDetailBody', () => {
         })}
       />
     );
-    expect(await waitForCtaGlyph(container as HTMLElement, 'Connect')).toBe('plug-connected');
+    // Positive assertion first — this also settles the render before the
+    // point-in-time absence reads below.
+    expect(await waitForCtaGlyph(container as HTMLElement, 'Unavailable')).toBe('info-circle');
+    expect(container.textContent).toContain('This app has no valid external link.');
+    // 🔴 Plain string absence, NOT `expect.element(...).not.toBeInTheDocument()`,
+    // which is inert in this repo (#4197) and passes for any string.
+    expect(container.textContent).not.toContain('Connecting this app will be available soon');
+    expect(container.querySelector('button[disabled]')).toBeNull();
   });
 
   test('the info (model-slot) branch keeps its own glyph', async () => {

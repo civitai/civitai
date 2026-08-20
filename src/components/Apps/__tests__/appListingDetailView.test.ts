@@ -16,8 +16,12 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  * the browser component suites are not run by CI at all, so this is where the
  * correctness coverage belongs even though nothing here BLOCKS a merge).
  * Pin the kind × hasPage × destination primary-action matrix incl.
- * the appBlocksPages gate, https guard, connect stub, and slug encoding, so a
- * regression in the detail action routing FAILS here.
+ * the appBlocksPages gate, https guard, and slug encoding, so a regression in
+ * the detail action routing FAILS here.
+ *
+ * 🔴 There is no "connect stub" arm any more — #4208 deleted that CTA. What is
+ * pinned instead is its ABSENCE, and the fact that the OAuth capability no
+ * longer changes the action at all.
  */
 
 function onsiteDetail(
@@ -78,7 +82,9 @@ function offsiteDetail(
 
 describe('getDetailPrimaryAction — on-site', () => {
   it('hasPage + canOpenPage → Open → /apps/run/<slug>', () => {
-    expect(getDetailPrimaryAction(onsiteDetail({ hasPage: true, slug: 'gen' }), { canOpenPage: true })).toEqual({
+    expect(
+      getDetailPrimaryAction(onsiteDetail({ hasPage: true, slug: 'gen' }), { canOpenPage: true })
+    ).toEqual({
       label: 'Open',
       mode: 'open',
       href: '/apps/run/gen',
@@ -278,7 +284,8 @@ describe('getDetailPrimaryAction — on-site', () => {
   });
   it('encodes an odd slug on the Open run link', () => {
     expect(
-      getDetailPrimaryAction(onsiteDetail({ hasPage: true, slug: 'a b/c' }), { canOpenPage: true }).href
+      getDetailPrimaryAction(onsiteDetail({ hasPage: true, slug: 'a b/c' }), { canOpenPage: true })
+        .href
     ).toBe('/apps/run/a%20b%2Fc');
   });
 });
@@ -372,24 +379,28 @@ describe('getDetailPrimaryAction — off-site', () => {
   });
 
   /**
-   * 🔴 SURFACED, NOT DECIDED — the one place off-site listings still diverge.
+   * 🔴 #4208 — THE DEAD "Connect" CTA IS GONE, AND MUST NOT COME BACK.
    *
-   * With no usable destination there is nothing to navigate to, and the two
-   * fallbacks say different things: an app with no OAuth client is simply
-   * "Unavailable", while an OAuth-connected one keeps the "Connect" stub for a
-   * route that does not exist yet. That is a CAPABILITY difference (does this
-   * app connect to your Civitai account?), not a kind difference, and the
-   * predicate is now read straight off `connectClientId` — byte-identical to
-   * what the deleted sub-kind computed from the same field.
+   * With no usable destination there is nothing to navigate to. This used to
+   * fork on the OAuth capability: no client → "Unavailable", a client → a
+   * disabled "Connect" button reading "Connecting this app will be available
+   * soon." Nothing was behind it, so it cost a click and returned nowhere.
    *
-   * Whether the stub should survive at all is a product question this change
-   * does not answer; it is pinned here so a future answer has to be deliberate.
+   * Measured against production before removal: ZERO listings sat in the state
+   * (all five off-site rows, every status, carry an https destination), so no
+   * live listing changed. The state remains REACHABLE —
+   * `submitExternalListingSchema` (`src/server/schema/blocks/offsite-listing.schema.ts`)
+   * requires `connectClientId` but leaves `externalUrl` optional — which is why
+   * the fallthrough still has to be honest rather than absent.
+   *
+   * 🔴 NEW-BEHAVIOUR GUARD, not regression coverage: it pins an outcome this
+   * commit introduces. Its value is forward-looking — reintroducing the fork
+   * fails here.
    */
-  it('🔴 OAuth-connected with NO usable destination → the stub still fails safe', () => {
-    // The stub must stay REACHABLE and must stay hrefless. Enumerated over every
-    // way a destination can be absent, with the client_id present in each.
-    // (`undefined` is deliberately absent: the DTO types `externalUrl` as
-    // `string | null`, and the fixture's destructuring default would silently
+  it('🔴 OAuth-connected with NO usable destination → Unavailable (no Connect stub)', () => {
+    // Enumerated over every way a destination can be absent, client_id present
+    // in each. (`undefined` is deliberately absent: the DTO types `externalUrl`
+    // as `string | null`, and the fixture's destructuring default would silently
     // rewrite it to `null` anyway — a row whose label lied about its input.)
     for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
       const key = `externalUrl=${String(externalUrl)}`;
@@ -397,51 +408,93 @@ describe('getDetailPrimaryAction — off-site', () => {
         offsiteDetail({ connectClientId: 'client-123', externalUrl }),
         { canOpenPage: true }
       );
-      expect(action.mode, key).toBe('connect');
-      expect(action.label, key).toBe('Connect');
-      expect(action.href, key).toBeUndefined();
-      expect(action.external, key).toBe(false);
-      expect(action.note, key).toBeTruthy();
-    }
-  });
-
-  it('🔴 GRANDFATHERED with NO usable destination → Unavailable, NOT the Connect stub', () => {
-    // The negative arm of the case above, over the same four absence shapes.
-    // Without it the capability test could be inverted (or deleted, defaulting
-    // everything to the stub) and the suite would stay green.
-    for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
-      const key = `externalUrl=${String(externalUrl)}`;
-      const action = getDetailPrimaryAction(offsiteDetail({ connectClientId: null, externalUrl }), {
-        canOpenPage: true,
-      });
       expect(action.mode, key).toBe('info');
       expect(action.label, key).toBe('Unavailable');
-      expect(action.note, key).toBe('This app has no valid external link.');
       expect(action.href, key).toBeUndefined();
+      expect(action.external, key).toBe(false);
+      // 🔴 Pin the WHOLE note, not "is truthy" — the defect was a specific
+      // sentence promising a flow, and a truthiness check is satisfied by it.
+      expect(action.note, key).toBe('This app has no valid external link.');
+      expect(action.label, key).not.toBe('Connect');
     }
   });
 
   /**
-   * An empty-string client id is FALSY, which is what the deleted
-   * `resolveOffsiteSubKind` tested — so it took the no-client arm.
-   * `app-listing.service.detailKindData`'s `|| null` guarantees this never
-   * reaches the wire by THAT path, but `app-listing-actionable.service` calls
-   * this view-model directly with a listing row, so pin the truthiness here
-   * rather than relying on a caller. (`MySubmissionsList` also calls it
-   * directly, but hardcodes `kind: 'onsite'` and never reaches this branch —
-   * it is NOT an off-site caller; an earlier version of this note implied it
-   * was.) The mod-review preview builder reaches it too, via
-   * `buildListingDetailPreview` → `AppListingDetailBody`, and it uses
-   * `?? null` — see `shouldShowOffsiteDisclosure`'s docstring.
+   * 🔴 THE CAPABILITY NO LONGER CHANGES THE ACTION — assert the EQUALITY, not
+   * two separate constants.
+   *
+   * The grandfathered (no-OAuth) arm was already "Unavailable" before #4208, so
+   * asserting it alone is unchanged behaviour and could not detect the fork
+   * being restored. What is new is that the two arms are now IDENTICAL, so that
+   * is what this pins: same object, both capability states, every absence shape.
+   * A restored `connectClientId` branch makes these differ and fails here.
    */
-  it('an empty-string connectClientId takes the no-client arm (truthiness, not nullish)', () => {
-    const action = getDetailPrimaryAction(
+  it('🔴 with no destination, the action is IDENTICAL with and without OAuth', () => {
+    let compared = 0;
+    for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
+      const key = `externalUrl=${String(externalUrl)}`;
+      const withOauth = getDetailPrimaryAction(
+        offsiteDetail({ connectClientId: 'client-123', externalUrl }),
+        { canOpenPage: true }
+      );
+      const grandfathered = getDetailPrimaryAction(
+        offsiteDetail({ connectClientId: null, externalUrl }),
+        { canOpenPage: true }
+      );
+      expect(withOauth, key).toEqual(grandfathered);
+      // Anti-vacuity: both being some empty/undefined value would also compare
+      // equal. Pin the shared value too.
+      expect(grandfathered.label, key).toBe('Unavailable');
+      compared++;
+    }
+    expect(compared).toBe(4);
+  });
+
+  /**
+   * 🔴 INVARIANT GUARD, NOT A CAPABILITY TEST — and its title used to claim
+   * otherwise, which is why it is relabelled rather than left alone.
+   *
+   * Before #4208 this pinned TRUTHINESS: an empty-string client id is falsy,
+   * which is what the deleted `resolveOffsiteSubKind` tested, so it took the
+   * "no client" arm instead of the Connect stub. **That arm no longer exists.**
+   * `getDetailPrimaryAction` does not read `connectClientId` at all now, so
+   * `''`, `'client-123'` and `null` are indistinguishable here BY CONSTRUCTION
+   * and this fixture exercises the no-destination path and nothing else. Left
+   * as-is it would have read as capability coverage while being unable to fail
+   * for any capability reason.
+   *
+   * Kept and widened to assert what is actually true now: the action does not
+   * vary with the capability, empty string included.
+   *
+   * The truthiness contract still matters and still has a real test — it moved
+   * to `shouldShowOffsiteDisclosure`, which does still read the field. The
+   * callers that reach this view-model directly with a raw row
+   * (`app-listing-actionable.service`; and the mod-review preview builder via
+   * `buildListingDetailPreview` → `AppListingDetailBody`, which uses `?? null`)
+   * are documented in that predicate's docstring. (`MySubmissionsList` also
+   * calls it directly but hardcodes `kind: 'onsite'` and never reaches this
+   * branch — it is NOT an off-site caller.)
+   */
+  it('🔴 the action ignores connectClientId entirely, empty string included', () => {
+    const baseline = getDetailPrimaryAction(
       offsiteDetail({ connectClientId: '', externalUrl: null }),
-      {
-        canOpenPage: true,
-      }
+      { canOpenPage: true }
     );
-    expect(action.label).toBe('Unavailable');
+    expect(baseline.label).toBe('Unavailable');
+
+    // The invariant, stated as one: every capability shape yields the SAME
+    // action. Anti-vacuity — the loop must actually compare all three.
+    let compared = 0;
+    for (const connectClientId of [null, '', 'client-123']) {
+      expect(
+        getDetailPrimaryAction(offsiteDetail({ connectClientId, externalUrl: null }), {
+          canOpenPage: true,
+        }),
+        `client=${String(connectClientId)}`
+      ).toEqual(baseline);
+      compared++;
+    }
+    expect(compared).toBe(3);
   });
 
   it('🔴 no off-site listing with an https target is ever left un-navigable', () => {
@@ -472,6 +525,87 @@ describe('getDetailPrimaryAction — off-site', () => {
     // matrix also crossed a sub-kind that no longer exists; the DROP is the
     // point — the removed dimension was never independent of `connectClientId`.)
     expect(navigable).toBe(2);
+  });
+});
+
+/**
+ * 🔴 #4208 SOURCE-LEVEL GATE — the dead Connect affordance must not return to the
+ * renderer.
+ *
+ * The type guard (`DetailActionMode` has no `'connect'`) already makes the
+ * VIEW-MODEL unable to emit it. This closes the other half: a hand-rolled button
+ * in the JSX, which no type would catch, and which the browser suite — run only
+ * by the PR preview pipeline, report-only and not a required check — would not
+ * block either. Same technique and same positive-control discipline as the
+ * disclosure gate below.
+ *
+ * 🔴 NEW-BEHAVIOUR GUARD, not regression coverage.
+ */
+describe('🔴 the removed Connect CTA cannot silently return', () => {
+  const body = fs.readFileSync(path.resolve(__dirname, '../AppListingDetailBody.tsx'), 'utf8');
+
+  /**
+   * 🔴 ASSERT THE STATE, NOT THE WORDING.
+   *
+   * An earlier version of this gate checked three strings. Two of them —
+   * `action.mode === 'connect'` and `glyphFor('connect')` — were VACUOUS BY
+   * CONSTRUCTION: with `'connect'` removed from `DetailActionMode`, writing
+   * either is a `TS2367`/`TS2345`, so no compiling tree can contain them and
+   * neither assertion could ever fire. The third was a SPELLED guard, walkable
+   * by rewording the sentence.
+   *
+   * Measured: a stub restored under a DIFFERENT mode with REWORDED copy —
+   *
+   *   if (action.mode === 'info' && detail.kindData.kind === 'offsite' &&
+   *       detail.kindData.connectClientId) { …disabled "Connect" button… }
+   *
+   * — typechecked with 0 errors and SURVIVED the whole blocking suite.
+   *
+   * So gate the STATE the mutant cannot avoid needing: the CTA renderer routes
+   * on the view-model's `action` ONLY. It must not read listing kind data at
+   * all, because re-deriving the OAuth capability there is exactly how the dead
+   * button comes back — under any mode name, behind any wording.
+   */
+  it('🔴 the CTA renderer never re-derives the capability (state, not wording)', () => {
+    const start = body.indexOf('function PrimaryAction(');
+    expect(start, 'PrimaryAction not found — did the component get renamed?').toBeGreaterThan(-1);
+    const end = body.indexOf('\n}\n', start);
+    expect(end, 'PrimaryAction end not found').toBeGreaterThan(start);
+    const cta = body.slice(start, end);
+
+    // POSITIVE CONTROLS — prove we sliced the real function BODY, not an empty
+    // string or just its signature. Without these the absences below would pass
+    // against a mis-slice, which is the failure mode of every region gate.
+    expect(cta).toMatch(/getDetailPrimaryAction\(detail/);
+    expect(cta).toMatch(/action\.mode === 'visit'/);
+    expect(cta.length).toBeGreaterThan(500);
+
+    // 🔴 THE GATE. The CTA branches on `action` and nothing else.
+    expect(cta, 'the CTA must not read the OAuth capability').not.toMatch(/connectClientId/);
+    expect(cta, 'the CTA must not branch on listing kind data').not.toMatch(/kindData/);
+  });
+
+  it('the renderer no longer carries the stub copy', () => {
+    // POSITIVE CONTROL first: prove the read returned this component's source,
+    // so the absence below is about the file and not about an empty string.
+    expect(body).toMatch(/shouldShowOffsiteDisclosure\(detail\.kindData\)/);
+
+    // The exact promise the CTA made. Kept as a cheap catch for a VERBATIM
+    // restore — but it is a spelled guard, so the state gate above is the one
+    // doing the real work.
+    expect(body).not.toMatch(/Connecting this app will be available soon/);
+  });
+
+  it('the view-model no longer emits the mode or its copy', () => {
+    const view = fs.readFileSync(path.resolve(__dirname, '../appListingDetailView.ts'), 'utf8');
+    // POSITIVE CONTROL: the read really returned the view-model.
+    expect(view).toMatch(/export function getDetailPrimaryAction/);
+
+    // 🔴 Match a `mode:` ASSIGNMENT, not the bare word — the docstrings discuss
+    // the removal at length and name `'connect'` repeatedly, so a bare-word
+    // check would fail on the prose explaining why the code is gone.
+    expect(view).not.toMatch(/mode:\s*['"]connect['"]/);
+    expect(view).not.toMatch(/Connecting this app will be available soon/);
   });
 });
 
@@ -538,8 +672,15 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
   });
 
   it('an empty-string connectClientId does NOT suppress it (truthiness, not nullish)', () => {
-    // Matches the projection's `|| null` and `getDetailPrimaryAction`'s test, so
-    // all three read the capability the same way.
+    // Matches `app-listing.service`'s `|| null` projection — so BOTH remaining
+    // readers agree that an empty string is not a connected OAuth app.
+    //
+    // 🔴 This used to say "and `getDetailPrimaryAction`'s test, so all three read
+    // the capability the same way". #4208 deleted that reader: the primary action
+    // no longer branches on `connectClientId` at all, so this predicate is the
+    // only place in this module that does. Count the readers, don't restate the
+    // number — the sibling branch that adds `shouldShowConnectCapability` takes
+    // it back up.
     expect(
       shouldShowOffsiteDisclosure({
         kind: 'offsite',
@@ -594,10 +735,7 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
     // directory `vitest` was invoked from, so a cwd-relative read passes in CI
     // (where it is the repo root) and ENOENTs locally — a test whose verdict is
     // about the caller's shell. Same idiom as the iframe gate below.
-    const body = fs.readFileSync(
-      path.resolve(__dirname, '../AppListingDetailBody.tsx'),
-      'utf8'
-    );
+    const body = fs.readFileSync(path.resolve(__dirname, '../AppListingDetailBody.tsx'), 'utf8');
     // POSITIVE CONTROL first: the read really returned this component's source.
     expect(body).toMatch(/This app runs entirely off-platform/);
     expect(body).toMatch(/shouldShowOffsiteDisclosure\(detail\.kindData\)/);
@@ -794,7 +932,9 @@ describe('owner Edit deep-link + gating (on the detail view-model)', () => {
     ).toBe('/apps/blk-7/edit');
   });
   it('on-site with no appBlockId → null (no editable target → hide)', () => {
-    expect(getOwnerEditHref(onsiteDetail({ hasPage: false, appBlockId: null }).kindData, 'l1')).toBeNull();
+    expect(
+      getOwnerEditHref(onsiteDetail({ hasPage: false, appBlockId: null }).kindData, 'l1')
+    ).toBeNull();
   });
   it('off-site detail kindData → the submit editor keyed on the listing id', () => {
     expect(getOwnerEditHref(offsiteDetail({ externalUrl: 'https://x' }).kindData, 'l2')).toBe(

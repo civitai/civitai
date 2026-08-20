@@ -683,30 +683,12 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
     );
   }
 
-  if (action.mode === 'connect') {
-    // Honest stub for a connect listing with NO destination at all: inert button
-    // + a note, so the affordance is never a dead 404 link.
-    //
-    // 🔴 This is NOT the ordinary connect case any more. A connect listing that
-    // carries an https `externalUrl` — which is every one in production — takes
-    // the `visit` branch above and renders a real `Visit ↗`. The mode used to be
-    // returned unconditionally for the sub-kind, which made this inert button
-    // the ONLY thing a viewer ever saw for an app with a linked OAuth client.
-    // See `getDetailPrimaryAction`.
-    const GlyphIcon = glyphFor('connect');
-    return (
-      <Stack gap={4}>
-        <Button variant="default" leftSection={<GlyphIcon size={16} />} disabled fullWidth>
-          {action.label}
-        </Button>
-        {action.note && (
-          <Text size="xs" c="dimmed">
-            {action.note}
-          </Text>
-        )}
-      </Stack>
-    );
-  }
+  // 🔴 THERE IS NO `connect` BRANCH — #4208 removed the disabled "Connect" button
+  // and its note promising the flow was coming soon. It promised an
+  // action with no flow behind it; an off-site listing with no usable destination
+  // now falls through to the informational arm below and reads "Unavailable".
+  // `DetailActionMode` no longer has the member, so re-adding a branch here does
+  // not type-check. Do not widen the type to make one fit.
 
   // Informational (`info`) — a note plus, if the action ever carries one, an
   // internal "learn more" link. `getDetailPrimaryAction` produces NO href for

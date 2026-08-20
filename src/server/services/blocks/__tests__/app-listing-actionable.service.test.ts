@@ -53,7 +53,9 @@ describe('checkOffsiteListingActionable — the verdict', () => {
 
   for (const { name, url } of NO_DESTINATION) {
     it(`BLOCKS an OAuth-connected off-site listing whose externalUrl is ${name}`, () => {
-      // client_id present → the no-destination fallback takes the Connect-stub arm.
+      // client_id present → the no-destination fallback. Since #4208 that is the
+      // same informational arm a grandfathered listing takes; either way it
+      // yields no href, which is the only thing this gate reads.
       const result = checkOffsiteListingActionable(
         offsite({ externalUrl: url, connectClientId: 'client-123' })
       );
@@ -198,12 +200,18 @@ describe('assertOffsiteListingActionable — fails CLOSED with mod-actionable co
     // Names the listing…
     expect(trpc.message).toContain('demo-app');
     // …quotes what the moderator would have seen on the button…
-    expect(trpc.message).toContain('Connecting this app will be available soon.');
+    //
+    // 🔴 #4208: this used to quote the dead Connect stub's copy. That CTA is
+    // deleted, so an OAuth listing with no destination now renders the SAME
+    // informational affordance as any other — the gate still fails closed, and
+    // the message now quotes the honest sentence instead of the promise.
+    expect(trpc.message).toContain('This app has no valid external link.');
+    expect(trpc.message).not.toContain('Connecting this app will be available soon.');
     // …and states the remedy.
     expect(trpc.message).toContain('https external URL');
   });
 
-  it('quotes the OTHER non-actionable shape too (no valid link), not just the connect stub', () => {
+  it('quotes the same copy for the OTHER non-actionable shape (non-https link)', () => {
     let message = '';
     try {
       assertOffsiteListingActionable(offsite({ externalUrl: 'http://insecure.app' }));
