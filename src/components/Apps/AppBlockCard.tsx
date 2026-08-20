@@ -157,7 +157,7 @@ export function AppBlockCard({
   // the card renders an "Open ↗" link to the off-site URL (new tab) and HIDES
   // the Install button + (already-card-hidden) scopes, since an external app has
   // no install / scopes / token. The off-site nature is flagged with a small
-  // "Off-site" badge. Everything else (View details) is unchanged.
+  // "Standalone" badge. Everything else (View details) is unchanged.
   const isExternal = Boolean(block.externalUrl);
   // Show Install ONLY for an app that installs into a model/in-context slot.
   // A page app (target slot `app.page`) is STATELESS — installModel `'none'` in
@@ -224,7 +224,7 @@ export function AppBlockCard({
                 size="sm"
                 leftSection={<IconExternalLink size={12} />}
               >
-                Off-site
+                Standalone
               </Badge>
             )}
             {/* Mod-assigned marketplace category (+ its icon). NULL until a mod

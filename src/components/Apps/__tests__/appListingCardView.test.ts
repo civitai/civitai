@@ -79,26 +79,28 @@ describe('getListingBadge', () => {
   /**
    * 🔴 NEW BEHAVIOUR (not regression coverage): off-site used to badge as
    * "Connect app" when a client was linked and "Off-site" when not. There is one
-   * badge now. This pins the collapsed pair — the "Connect app" case above is
-   * what a revert would put back, and it is what this assertion refuses.
+   * badge now, and PR #4187 renamed its word to "Standalone". This pins the
+   * collapsed pair — the "Connect app" case above is what a revert would put
+   * back, and it is what this assertion refuses.
    */
-  it('🔴 off-site → "Off-site", with or without a usable destination', () => {
+  it('🔴 off-site → "Standalone", with or without a usable destination', () => {
     for (const externalUrl of [null, 'https://x.com', 'http://insecure.example']) {
       expect(getListingBadge(offsiteCard(externalUrl)), String(externalUrl)).toEqual({
-        label: 'Off-site',
+        label: 'Standalone',
         kind: 'offsite',
       });
     }
   });
   /**
    * The word is load-bearing: it must be the SAME word the store's kind filter
-   * puts on the whole category (`KindFilterButtons`' "Off-site"). Under the fork
+   * puts on the whole category (`KindFilterButtons`' "Standalone"). Under the fork
    * the parent label was true of only one child while the submit flow minted
    * nothing but the other one. Pinned as a literal so a reword has to be
-   * deliberate — PR #4187 renames it, and this is the assertion it must update.
+   * deliberate — PR #4187 renamed it Off-site → Standalone, and this assertion
+   * moved with it.
    */
   it('🔴 the off-site badge label is exactly the store kind-filter word', () => {
-    expect(getListingBadge(offsiteCard('https://x.com')).label).toBe('Off-site');
+    expect(getListingBadge(offsiteCard('https://x.com')).label).toBe('Standalone');
   });
 });
 

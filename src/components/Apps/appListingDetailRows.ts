@@ -62,7 +62,7 @@ export type ListingDetailRow = {
  * filter uses.
  */
 function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
-  return detail.kindData.kind === 'onsite' ? 'On-site app' : 'Off-site';
+  return detail.kindData.kind === 'onsite' ? 'On-site app' : 'Standalone';
 }
 
 /**

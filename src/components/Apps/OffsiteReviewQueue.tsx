@@ -196,7 +196,7 @@ export function OffsiteReviewQueue() {
         labelPosition="left"
       />
       <Text size="xs" c="dimmed">
-        Off-site apps — a lighter, content-only review (no code / bundle). Approving requires an
+        Standalone apps — a lighter, content-only review (no code / bundle). Approving requires an
         asset-complete draft (icon + cover + ≥1 screenshot).
       </Text>
 
@@ -1253,7 +1253,7 @@ export function OffsiteReportsQueue() {
           <Group gap={6}>
             <IconFlag size={14} />
             <Text size="sm" fw={600}>
-              Off-site listing reports
+              Standalone listing reports
             </Text>
             <Badge size="sm" variant="light" color={items.length > 0 ? 'red' : 'gray'}>
               {items.length}
@@ -1264,8 +1264,8 @@ export function OffsiteReportsQueue() {
       />
       <Group justify="space-between">
         <Text size="xs" c="dimmed">
-          User reports of approved off-site apps. Verify ownership out-of-band, then delist / relist
-          / purge and resolve or dismiss the report.
+          User reports of approved standalone apps. Verify ownership out-of-band, then delist /
+          relist / purge and resolve or dismiss the report.
         </Text>
         <SegmentedControl
           size="xs"

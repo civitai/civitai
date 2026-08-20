@@ -243,7 +243,7 @@ describe('AppListingsMarketplaceBody', () => {
   test('clicking a kind toggle WRITES kind to the URL (shallow, no scroll)', async () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Off-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
 
     expect(router.replace).toHaveBeenCalled();
     const [url, , options] = vi.mocked(router.replace).mock.calls.at(-1)!;

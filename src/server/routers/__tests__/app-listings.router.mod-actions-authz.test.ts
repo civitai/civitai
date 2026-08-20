@@ -228,7 +228,7 @@ describe('mod actions — error mapping via mapOffsiteError', () => {
   });
 
   it('a typed NOT_FOUND maps to NOT_FOUND', async () => {
-    mockRelist.mockRejectedValueOnce(offsiteModErr('NOT_FOUND', 'Off-site listing not found.'));
+    mockRelist.mockRejectedValueOnce(offsiteModErr('NOT_FOUND', 'Standalone listing not found.'));
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
     await expect(caller.relistListing({ appListingId: 'apl_x', reason: REASON })).rejects.toMatchObject({
       code: 'NOT_FOUND',
