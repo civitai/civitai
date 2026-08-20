@@ -444,14 +444,20 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
  *              See docs/image-resource-hash-matching.md.
  *
  * Every writer of ModelFileHash that can carry a hash the orchestrator produced must run it
- * through this. There are THREE writers, and the ledger test enumerates them from source —
+ * through this. There are FOUR writers, and the ledger test enumerates them from source —
  * src/server/services/__tests__/model-file-hash-writers.test.ts fails when the set grows OR
  * shrinks, so a new writer forces a decision here rather than inheriting one:
  *
  *   applyScanOutcome (this file)                     normalizes
  *   /api/mod/reprocess-scan                          normalizes
+ *   /api/admin/temp/backfill-sha256-12               normalizes
  *   createModelFileScanRequest's dev-only skip       EXEMPT — see below
  *     (orchestrator/orchestrator.service.ts)
+ *
+ * The backfill writer derives SHA256_12 for files scanned before this helper shipped. It reads
+ * the stored SHA256 row and calls this function rather than truncating inline, so the all-zero
+ * sentinel guard below applies there too — which is the whole reason it is not a one-line SQL
+ * UPDATE.
  *
  * The exemption is not "it's dev-only": it is that the sentinel that writer stores (SHA256 =
  * 64 zeroes, "file unreachable") is a fixed point of this function, so calling it there would

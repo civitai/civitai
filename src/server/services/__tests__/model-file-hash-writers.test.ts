@@ -130,6 +130,12 @@ const WRITER_LEDGER = [
     why: 'replays rawScanResult, where AutoV3 is still full-length and SHA256_12 is absent',
   },
   {
+    file: 'src/pages/api/admin/temp/backfill-sha256-12.ts',
+    writes: ['modelFileHash.createMany'],
+    normalizes: true,
+    why: 'one-time backfill of SHA256_12 for files scanned before normalizeScanHashes() shipped; derives from the stored SHA256 row through the helper, so it inherits the all-zero sentinel guard instead of re-implementing the truncation',
+  },
+  {
     file: 'src/server/services/orchestrator/orchestrator.service.ts',
     writes: ['modelFileHash.upsert'],
     normalizes: false,

@@ -16,12 +16,15 @@ ALTER TYPE "ModelHashType" ADD VALUE IF NOT EXISTS 'SHA256_12';
 -- Backfill is NOT run here. ADD VALUE cannot be referenced in the same transaction that adds
 -- it, and this is ~1.5M rows.
 --
--- 🔴 THE BACKFILL IS NOT IMPLEMENTED. This comment (and docs/image-resource-hash-matching.md)
--- used to describe a `GET /api/admin/temp/backfill-sha256-12` endpoint. That file has never
--- existed on any branch — `git log --diff-filter=A -- src/pages/api/admin/temp/backfill-sha256-12.ts`
--- returns nothing. Anyone following the old instruction gets a 404, not a backfill.
+-- The backfill is `GET /api/admin/temp/backfill-sha256-12` — token-gated, dry-run by default,
+-- batched, resumable via `start=<lastCursor>`, idempotent via ON CONFLICT ("fileId", type) DO
+-- NOTHING. It derives from the stored SHA256 row THROUGH normalizeScanHashes() rather than
+-- truncating inline, so it inherits the all-zero "file unreachable" sentinel guard; deriving from
+-- that sentinel would give every unreachable file the same 12-char hash. See
+-- docs/image-resource-hash-matching.md for the parameters and the resume loop.
 --
--- Consequence, and it is not a broken state: files scanned AFTER the release that ships
--- normalizeScanHashes() get their SHA256_12 row from the scan path. Files scanned BEFORE it keep
--- failing 12-char LoRA detection exactly as they do today, indefinitely, until someone either
--- writes the backfill or replays them through /api/mod/reprocess-scan.
+-- 🔴 Production was already backfilled OUT-OF-BAND on 2026-08-19/20, before that endpoint existed.
+-- Measured on the nvme0 replica 2026-08-20: 1,489,372 SHA256_12 rows against 1,489,384 SHA256
+-- rows, all 12 chars, none disagreeing with left(sha256,12), every one created between 22:15Z and
+-- 02:29Z. The anti-join leaves 15 files short. Re-run that anti-join (in the doc) before planning
+-- a run — do not assume a corpus-wide job is still outstanding.

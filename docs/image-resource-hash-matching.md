@@ -20,13 +20,13 @@ four-stage pipeline.
 **Stage 1 — collect candidates** (lines 12–86). Five `UNION ALL` branches pull `(name, hash)` pairs
 out of `Image.meta`, because different tools write metadata differently:
 
-| Branch | Source | Shape |
-|---|---|---|
-| 1 | `meta.resources[]` | array with name / hash / weight |
-| 2 | `meta.hashes{}` | object — **the Forge / A1111 path, and the subject of this document** |
-| 3 | `meta."Model hash"` | single checkpoint string |
-| 4 | `meta.civitaiResources[]` | carries `modelVersionId` **directly — no hash** |
-| 5 | `Post.modelVersionId` | inherited, `detected: false` |
+| Branch | Source                    | Shape                                                                 |
+| ------ | ------------------------- | --------------------------------------------------------------------- |
+| 1      | `meta.resources[]`        | array with name / hash / weight                                       |
+| 2      | `meta.hashes{}`           | object — **the Forge / A1111 path, and the subject of this document** |
+| 3      | `meta."Model hash"`       | single checkpoint string                                              |
+| 4      | `meta.civitaiResources[]` | carries `modelVersionId` **directly — no hash**                       |
+| 5      | `Post.modelVersionId`     | inherited, `detected: false`                                          |
 
 Branch 4 is why on-site generations always work: we wrote that metadata ourselves and put the
 version id in it, so no matching is required.
@@ -56,7 +56,7 @@ once. A tool writes 10 characters and hits `AutoV2`; 12 characters and hits `Aut
 That is genuinely useful, and it is also the defect: **the system matches _values_, not
 _algorithms_.** It behaves as a lookup table of every hash string we have ever stored, and detection
 succeeds if and only if the generating tool wrote a string we hold verbatim. Exact equality cannot
-see that one string is a *prefix* of another.
+see that one string is a _prefix_ of another.
 
 ---
 
@@ -85,14 +85,14 @@ hash: hash?.replace('0x', '').slice(0, 12),   // correct as written — leave it
 ```
 
 SwarmUI's `sui_models[].hash` is a **tensorhash**, not a file SHA256 — per its own spec, linked at
-`swarmui.metadata.ts:21`: *"a hash of the data of the model processing only its tensor sections and
-not its header (ie to allow metadata to change without affecting the hash)"*. That is the same
+`swarmui.metadata.ts:21`: _"a hash of the data of the model processing only its tensor sections and
+not its header (ie to allow metadata to change without affecting the hash)"_. That is the same
 quantity as `AutoV3`, which we store truncated to 12. (Prod did that in a `truncate_autov3_hash()`
 trigger, `SUBSTRING(NEW.hash FROM 1 FOR 12)`; `normalizeScanHashes()` took it over in application
 code and migration `20260819010000` drops the trigger.)
 
 So `.slice(0, 12)` lands **exactly on `AutoV3`** — the one 12-character value that does match.
-Truncating to 10 would produce a 10-character *tensor*-hash prefix, and `AutoV2` is a *file*-hash
+Truncating to 10 would produce a 10-character _tensor_-hash prefix, and `AutoV2` is a _file_-hash
 prefix, so it would match nothing.
 
 This also explains the AutoV3 collision behaviour noted under Collision analysis: 1,505 AutoV3 values
@@ -175,7 +175,7 @@ v1.10.1 (stock A1111)       n=2409   exact=2341   sha12=5
 ```
 
 Stock A1111 is clean; Forge and Forge Neo carry essentially all of it. **It is not purely per-build,
-though**: 1,332 images in that single day contain *both* an exact-matching and a `sha12` LoRA hash,
+though**: 1,332 images in that single day contain _both_ an exact-matching and a `sha12` LoRA hash,
 so the same build emits both forms depending on the file. Treat "which build" as an open question,
 not a settled one.
 
@@ -183,11 +183,11 @@ not a settled one.
 
 Two independent samples over different windows:
 
-| Outcome | Sample A (1 day, n=800) | Sample B (1 day, n=2887) |
-|---|---|---|
-| Matches `AutoV3` — works today | 680 (85%) | 2549 (88.3%) |
-| Recoverable via `left(,10)` + SHA256 confirm | 57 (7.1%) | 168 (5.8%) |
-| Matches neither — genuinely local / unpublished | 63 (7.9%) | 170 (5.9%) |
+| Outcome                                         | Sample A (1 day, n=800) | Sample B (1 day, n=2887) |
+| ----------------------------------------------- | ----------------------- | ------------------------ |
+| Matches `AutoV3` — works today                  | 680 (85%)               | 2549 (88.3%)             |
+| Recoverable via `left(,10)` + SHA256 confirm    | 57 (7.1%)               | 168 (5.8%)               |
+| Matches neither — genuinely local / unpublished | 63 (7.9%)               | 170 (5.9%)               |
 
 So the fix recovers roughly **6–7% of all LoRA references, and about half of currently-failing
 ones**. In sample B, **all 168** prefix hits also passed the 12-character SHA256 confirmation —
@@ -204,11 +204,11 @@ rather than assumed.
 ≈ n²/2N = **0.92**. Observed: **1**. The estimate is accurate, so it projects:
 
 | Distinct files | Expected 10-char collisions | Expected 12-char collisions |
-|---|---|---|
-| 1.43M (today) | 0.9 (1 observed) | 0.004 (0 observed) |
-| 3M | 4 | 0.02 |
-| 10M | 46 | 0.18 |
-| 20M | 182 | 0.71 |
+| -------------- | --------------------------- | --------------------------- |
+| 1.43M (today)  | 0.9 (1 observed)            | 0.004 (0 observed)          |
+| 3M             | 4                           | 0.02                        |
+| 10M            | 46                          | 0.18                        |
+| 20M            | 182                         | 0.71                        |
 
 Collisions grow quadratically, so 10-character matching degrades faster than the catalog grows.
 
@@ -216,10 +216,10 @@ Collisions grow quadratically, so 10-character matching degrades faster than the
 `row_number` dedup already resolves those, and only **1** is a true prefix collision.
 
 **`AutoV3` is different, and worse than a naive reading suggests.** 44,321 `AutoV3` values map to
-more than one file, and **1,505 of those map to byte-*different* files** — roughly 400,000× what
+more than one file, and **1,505 of those map to byte-_different_ files** — roughly 400,000× what
 48-bit birthday collisions would predict. That is not probabilistic: `AutoV3` is a tensor-only hash
 that is deliberately blind to header/metadata differences, so two files with identical tensors and
-different metadata share one. This argues *for* the SHA256-confirm path below, which has 0
+different metadata share one. This argues _for_ the SHA256-confirm path below, which has 0
 collisions against `AutoV3`'s 1,505.
 
 This 10-character exposure is **pre-existing, not introduced by this work**: `AutoV2` is already the
@@ -241,14 +241,14 @@ This is not a special case bolted onto the resolver — it is the same mechanism
 (`SHA256[0:10]`) and `AutoV3` (tensor hash at 12) already use. The schema is a table of truncations
 mirroring what generation tools emit; this fills the one entry that was missing.
 
-| Change | Where |
-|---|---|
-| `SHA256_12` enum value | `schema.full.prisma`, migration `20260819000000_model_file_hash_sha256_12` |
-| Derive it | `normalizeScanHashes()` in `src/server/services/model-file-scan.service.ts`. Produces every truncated form (AutoV3, SHA256_12) in one place, in application code. Both hash-writing paths call it — `applyScanOutcome` and `/api/mod/reprocess-scan`, which needs it independently because it replays `rawScanResult` where AutoV3 is still full-length. |
-| Guard it | `src/server/services/__tests__/model-file-hash-writers.test.ts` — a ledger of every `ModelFileHash` writer, enumerated from source, failing when the set grows or shrinks; plus behavioural cases in `reprocess-scan-hash-derivation.test.ts` and `model-file-hash-writer-exemption.test.ts` |
-| Backfill existing files | 🔴 **not implemented** — see below |
-| Detection SQL | **unchanged** |
-| Public API | **unchanged** — the new type is returned alongside the others, exactly as `AutoV2` (also a `SHA256` truncation) already is |
+| Change                  | Where                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SHA256_12` enum value  | `schema.full.prisma`, migration `20260819000000_model_file_hash_sha256_12`                                                                                                                                                                                                                                                                               |
+| Derive it               | `normalizeScanHashes()` in `src/server/services/model-file-scan.service.ts`. Produces every truncated form (AutoV3, SHA256_12) in one place, in application code. Both hash-writing paths call it — `applyScanOutcome` and `/api/mod/reprocess-scan`, which needs it independently because it replays `rawScanResult` where AutoV3 is still full-length. |
+| Guard it                | `src/server/services/__tests__/model-file-hash-writers.test.ts` — a ledger of every `ModelFileHash` writer, enumerated from source, failing when the set grows or shrinks; plus behavioural cases in `reprocess-scan-hash-derivation.test.ts` and `model-file-hash-writer-exemption.test.ts`                                                             |
+| Backfill existing files | `GET /api/admin/temp/backfill-sha256-12` — see below                                                                                                                                                                                                                                                                                                     |
+| Detection SQL           | **unchanged**                                                                                                                                                                                                                                                                                                                                            |
+| Public API              | **unchanged** — the new type is returned alongside the others, exactly as `AutoV2` (also a `SHA256` truncation) already is                                                                                                                                                                                                                               |
 
 ### Why not a prefix match in SQL
 
@@ -262,22 +262,51 @@ uploader is warned about. Adding rows introduces no new code path, so none of th
 Storage is net negative anyway: +400 MB of rows against −577 MB from dropping `modelfilehash_hash`,
 an index on `lower(hash)` over a `citext` column with **849 lifetime scans**.
 
-### Backfill — 🔴 NOT IMPLEMENTED
+### Backfill
 
-This section previously documented a `GET /api/admin/temp/backfill-sha256-12` endpoint, and the
-`20260819000000` migration told the operator to run it. **That file has never existed on any
-branch** (`git log --diff-filter=A -- src/pages/api/admin/temp/backfill-sha256-12.ts` returns
-nothing), so following either instruction gets a 404.
+`GET /api/admin/temp/backfill-sha256-12`, guarded by `WEBHOOK_TOKEN` like every other endpoint in
+that directory. (Two earlier revisions of this section were wrong in opposite directions: the first
+documented the endpoint before it existed, the second recorded that it never had. It exists now.)
 
-The design it described is still the right one — derive entirely from stored `SHA256` rows, no file
-access, no orchestrator, no re-scan; batch internally, log a resumable cursor, idempotent via
-`ON CONFLICT ("fileId", type) DO NOTHING` — it just has not been written.
+It derives entirely from stored `SHA256` rows — no file access, no orchestrator, no re-scan. Each
+hash goes through `normalizeScanHashes()` rather than being truncated inline, so the backfill
+inherits the scan path's rules and **cannot drift from them**. That is load-bearing, not stylistic:
+the helper suppresses derivation from the all-zero "file unreachable" sentinel, and an inline
+`slice(0, 12)` would give every unreachable file the same 12-char hash and make them all match each
+other. It is the fourth entry in the writer ledger
+(`src/server/services/__tests__/model-file-hash-writers.test.ts`).
 
-Until it is, the split is: files scanned **after** the release that ships `normalizeScanHashes()`
-get their `SHA256_12` row from the scan path; files scanned **before** it keep failing 12-char LoRA
-detection exactly as they do today, indefinitely. That is not a half-broken state, but it is also
-not self-healing — the existing corpus needs either this backfill or a replay through
-`/api/mod/reprocess-scan`.
+Idempotent via `createMany({ skipDuplicates: true })` → `ON CONFLICT ("fileId", type) DO NOTHING`
+against `ModelFileHash_pkey`, the table's only unique constraint. Re-running a completed range
+writes nothing and costs only the read.
+
+| Param        | Default         | Meaning                                             |
+| ------------ | --------------- | --------------------------------------------------- |
+| `dryRun`     | `true`          | Count what a live run would insert, without writing |
+| `batchSize`  | 1000 (max 5000) | `SHA256` rows per page                              |
+| `maxBatches` | 100 (max 10000) | Hard cap on batches per invocation                  |
+| `start`      | 0               | Minimum `fileId` — the resume point                 |
+| `end`        | —               | Maximum `fileId`                                    |
+
+A full pass is ~1.49M `SHA256` rows, so at the defaults **one call does not finish the corpus**: it
+stops at 100 batches (~100k files) and returns `complete: false` with `lastCursor`. Resume with
+`start=<lastCursor>` until `complete: true`. Start with the default `dryRun=true` — its `candidates`
+is the real write volume, computed against existing siblings rather than assumed from the row count.
+
+🔴 **Production was already backfilled out-of-band on 2026-08-19/20**, before this endpoint existed.
+Measured on the nvme0 replica 2026-08-20: 1,489,384 `SHA256` rows against 1,489,372 `SHA256_12`
+rows, all 12 chars, **zero** disagreeing with `left(sha256, 12)`, and every one of them created
+between `22:15Z` and `02:29Z` — i.e. by a manual pass, not by the scan path. The anti-join finds
+**15** `SHA256` rows still lacking a sibling. So the corpus-wide run this endpoint was designed for
+is already done; what remains is a near-free idempotent sweep. Treat the "~1.5M rows failing
+indefinitely" framing above as historical — re-run the anti-join before planning any run:
+
+```sql
+SELECT count(*) FROM "ModelFileHash" s
+WHERE s.type = 'SHA256' AND s.hash !~ '^0+$'
+  AND NOT EXISTS (SELECT 1 FROM "ModelFileHash" t
+                  WHERE t."fileId" = s."fileId" AND t.type = 'SHA256_12');
+```
 
 ### One accepted behaviour change
 
@@ -306,7 +335,7 @@ loss. The case for the confirm step rests on the **10M-file projection (46 colli
 present-day benefit, and it should be argued on those terms.
 
 **Store `SHA256[0:12]` as its own hash type row.** Because the Stage 2 join has no type filter, this
-would work with *zero* SQL change — the most elegant option on paper. Rejected on size:
+would work with _zero_ SQL change — the most elegant option on paper. Rejected on size:
 `ModelFileHash` is **8,751,379 rows / 2,305 MB** (744 MB heap + 1,561 MB indexes), and this adds one
 row per `SHA256` row — **+1,486,996 rows, +17%, roughly 400 MB** — to store a prefix of a column
 that already exists on a sibling row of the same table, plus a backfill over 1.5M files and a
@@ -331,7 +360,7 @@ There is therefore no separate write path. `createImageResources()`
 (`src/server/services/image.service.ts:8671`) is the live writer, and it consumes
 `get_image_resources()` output — so fixing that one function fixes both directions.
 
-🔴 **Latent hazard worth fixing separately:** `pnpm db:program` applies *every* `.sql` in the
+🔴 **Latent hazard worth fixing separately:** `pnpm db:program` applies _every_ `.sql` in the
 programmability directory, so the next run **re-creates the dropped function**. It would be inert
 (no callers), but it is a deliberately-removed object silently reappearing, pointed at the wrong
 table. The file should be deleted rather than left to be resurrected.
@@ -381,7 +410,7 @@ still cap the warning at one for any image with two genuinely-unmatchable resour
 `ORDER BY`, and `createImageResources` applies `uniqBy(modelversionid)`, which keeps whichever row
 came first. Normally `row_number_version` guarantees one row per version — but the final
 `OR iri.hash IS NULL` lets branch-4 (`civitaiResources`) rows bypass that filter, so an image
-carrying *both* `civitaiResources` and `hashes` can emit two rows for one version. Measured on two
+carrying _both_ `civitaiResources` and `hashes` can emit two rows for one version. Measured on two
 ComfyUI images in the corpus (140015836, 140015048): version 3181498 appears twice, once as
 `('kreamania_variant6', hash 6a847a168a)` and once as `('checkpoint', hash NULL)`.
 
@@ -467,15 +496,15 @@ It needs its own fixtures. The `local/hashfix` harness exercises the SQL only.
 The images below are real uploads whose embedded metadata exercises each case. Fetch them from the
 CDN at `original=true` (a transformed variant drops the metadata) to rebuild a fixture set.
 
-| Image id | Case | Expected after a fix |
-|---|---|---|
-| 139444993 | `SHA256[0:12]`, `neo-2.28` | `ffdb3743c1c8` resolves to version 3214341 |
-| 138775138 | 3 LoRAs, 1 matching | `7e5a17e35800` keeps resolving to 365933; other two resolve; **two** unmatched reported, not one |
-| 139934636 | local-only LoRA | still resolves to **nothing** — matching it means the comparison is too loose |
-| 135566724, 119372854 | `0x` prefix | unchanged until the algorithm is identified |
-| 139830592 | `neo-2.28`, matches today | unchanged — the A/B partner for 139444993 |
-| 140087915 | 5 LoRAs, mixed outcomes | multi-resource regression case |
-| 140039335 | mojibake in a LoRA name | unrelated UTF-8 decoding case, noted in passing |
+| Image id             | Case                       | Expected after a fix                                                                             |
+| -------------------- | -------------------------- | ------------------------------------------------------------------------------------------------ |
+| 139444993            | `SHA256[0:12]`, `neo-2.28` | `ffdb3743c1c8` resolves to version 3214341                                                       |
+| 138775138            | 3 LoRAs, 1 matching        | `7e5a17e35800` keeps resolving to 365933; other two resolve; **two** unmatched reported, not one |
+| 139934636            | local-only LoRA            | still resolves to **nothing** — matching it means the comparison is too loose                    |
+| 135566724, 119372854 | `0x` prefix                | unchanged until the algorithm is identified                                                      |
+| 139830592            | `neo-2.28`, matches today  | unchanged — the A/B partner for 139444993                                                        |
+| 140087915            | 5 LoRAs, mixed outcomes    | multi-resource regression case                                                                   |
+| 140039335            | mojibake in a LoRA name    | unrelated UTF-8 decoding case, noted in passing                                                  |
 
 A fix is correct when the majority path (85–88% of references, matching `AutoV3` today) is provably
 unchanged. That negative control matters as much as the positive ones: the failure mode of a
