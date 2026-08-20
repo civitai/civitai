@@ -546,6 +546,13 @@ export type AppOwnershipTransfer = {
   created_at: Generated<Timestamp>;
   responded_at: Timestamp | null;
 };
+export type AppPageAccess = {
+  app: string;
+  path: string;
+  roles: string[];
+  updatedById: number | null;
+  updatedAt: Generated<Timestamp>;
+};
 export type AppReviewAgentReport = {
   id: string;
   publish_request_id: string;
@@ -4252,6 +4259,7 @@ export type DB = {
   app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
+  AppPageAccess: AppPageAccess;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
   ArticleMetric: ArticleMetric;

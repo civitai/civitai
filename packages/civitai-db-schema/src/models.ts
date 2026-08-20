@@ -60,7 +60,7 @@ export type LicensingFeeSettlementCurrency = "Buzz" | "Cash";
 
 export type ModelVersionEngagementType = "Notify";
 
-export type ModelHashType = "AutoV1" | "AutoV2" | "AutoV3" | "SHA256" | "CRC32" | "BLAKE3";
+export type ModelHashType = "AutoV1" | "AutoV2" | "AutoV3" | "SHA256" | "CRC32" | "BLAKE3" | "SHA256_12";
 
 export type ScanResultCode = "Pending" | "Success" | "Danger" | "Error";
 
@@ -5296,6 +5296,14 @@ export interface Outbox {
   createdAt: Date | null;
   details: JsonValue | null;
   attempts: number | null;
+}
+
+export interface AppPageAccess {
+  app: string;
+  path: string;
+  roles: string[];
+  updatedById: number | null;
+  updatedAt: Date;
 }
 
 export interface PlacementSpace {

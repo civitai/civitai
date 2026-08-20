@@ -211,6 +211,30 @@ pnpm run db:check-generated  # Fail if the committed generated client is stale
 
 **`schema.full.prisma` is the only schema you edit.** `packages/civitai-db-schema/prisma/schema.full.prisma` is the single tracked schema. `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums to produce `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`. Both `schema.prisma` files — that one **and** the leftover `prisma/schema.prisma` at the repo root — are gitignored build artifacts; editing either is silently overwritten on the next generate. `pnpm run db:check-generated` regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
 
+#### Adding an enum value: DEPLOY FIRST, then migrate, then write
+
+`ALTER TYPE ... ADD VALUE` is harmless on its own. **Writing rows that use the new label is not.**
+Prisma deserializes enum columns strictly, so a row carrying a label the running client doesn't
+know throws on **read** — not on the write that created it. Every page selecting that column 500s,
+and for a Prisma-mapped view the blast radius is every consumer of the view.
+
+Normally this is invisible because the code that writes a new value ships in the same deploy that
+teaches the client about it. A **backfill breaks that coupling**: it writes rows the moment you run
+it, regardless of what is deployed.
+
+So treat an additive enum as expand/contract:
+
+1. **Deploy** the regenerated client (knows the value, writes none) — every reader can now decode it
+2. Apply `ALTER TYPE ... ADD VALUE` — value exists, still unused
+3. Backfill / enable the writes — first rows appear, safely
+
+Applying the migration before the deploy is only safe while **nothing writes the value**. If a
+backfill runs in that window, pods on the previous build break on read until the deploy lands.
+
+(Bit us 2026-08-19 adding `ModelHashType.SHA256_12`: the migration and a 1.5M-row backfill both ran
+ahead of the deploy, and every model detail page reading the `ModelHash` view — which has no type
+filter, so it surfaces every hash type to every reader — started 500ing.)
+
 **CRITICAL: We do NOT use `prisma migrate deploy`. Migrations are applied manually.**
 - Migration files in `packages/civitai-db-schema/prisma/migrations/` exist for review/history but are never auto-run. That is the only directory Prisma reads — the `prisma/migrations/` path at the repo root predates the monorepo, no longer exists, and CI blocks re-creating it.
 - Each environment's DB is updated by a human running the SQL directly (psql, retool, etc.)
@@ -365,9 +389,42 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 - Search service endpoints
 
 ### Local Development
+
+**Toolchain: node `24.19.0` and pnpm 10.x.** `.nvmrc` is the authority (CI reads it
+via `node-version-file:`, and the Dockerfile base image tracks it); `package.json`
+declares `engines.node: ">=24.0.0 <25"`. On NixOS the flake owns both — it derives
+its node major from `.nvmrc` instead of naming one, and `nix flake check` fails if
+they disagree.
+
+From nothing to a running app (the default path — no Nix):
+
+```bash
+nvm use                                        # .nvmrc -> 24.19.0
+corepack enable
+git submodule update --init event-engine-common
+cp .env-example .env.development
+docker compose -f docker-compose.base.yml up -d
+pnpm install && pnpm dev
+```
+
+**Optional, NixOS only** — the flake does the same in one command. Nothing requires
+it, and it is used by one maintainer; do not assume a contributor has it:
+
+```bash
+nix run .#dev          # docker preflight, submodule, .env.development, compose up,
+                       # wait for postgres, pnpm install, next dev on :3000
+nix run .#dev -- --no-start   # bootstrap only
+nix run .#doctor              # are the flake's pins still in step with the repo?
+```
+
+In an existing checkout that already works:
 1. Install dependencies: `pnpm install`
 2. Generate Prisma client: `pnpm run db:generate`
-3. Start dev server: Use `/dev-server` skill
+3. Start the services if they are down: `make start`
+4. Start dev server: use the `/dev-server` skill. The daemon is spawned with
+   `process.execPath`, so whichever node first ran a CLI verb is the node it keeps
+   until it is shut down — run it under the node from `.nvmrc`. (On NixOS,
+   `nix run .#dev-server` does that for you.)
 
 ### Git Worktrees
 
@@ -420,10 +477,14 @@ that file collected a nonzero count** — it was 308 tests on one base. If it re
 about your change, whatever the summary says.
 
 **A fresh worktree also has no `.envrc`.** It's gitignored, so it never comes with the checkout, and you silently
-get system Node instead of the flake's pinned version. Measured: system Node **26.5.0** against the flake's
-**22.22.2** produced 7 spurious `window.localStorage is undefined` failures under happy-dom plus 8 Prisma
-`linux-nixos` engine errors — every one a false red that got attributed to the code under test. Create a minimal
-`.envrc` containing `use flake` and `direnv allow` it. **Then confirm your cwd is actually the worktree**: one run
+get system Node instead of the flake's pinned version. Measured (when the flake still shipped node 22): system
+Node **26.5.0** against the flake's **22.22.2** produced 7 spurious `window.localStorage is undefined` failures
+under happy-dom plus 8 Prisma `linux-nixos` engine errors — every one a false red that got attributed to the code
+under test. The flake now ships **24.19.0**, matching `.nvmrc`, so the version gap is smaller — but the *Prisma*
+half is unchanged and does not care about the gap: without the flake's env there are no `PRISMA_*_ENGINE_*` paths
+at all, and prisma goes looking for a `linux-nixos` engine that has never been published.
+`cp .envrc.example <worktree>/.envrc && direnv allow`, or run commands through `nix develop`.
+**Then confirm your cwd is actually the worktree**: one run
 whose cwd was set to a different repo lost two suites to collection failures and **77 tests silently never ran**
 (10849 → 10772) while the output otherwise looked entirely normal.
 

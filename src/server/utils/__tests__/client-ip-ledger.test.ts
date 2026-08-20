@@ -45,7 +45,7 @@ import path from 'path';
  * on the analytics wire),
  * `src/server/services/__tests__/image-search.client-ip.test.ts` (the address in
  * the search-actor hash),
- * `src/__tests__/pages/api/mod/retool/comment.client-ip.test.ts`
+ * `src/__tests__/pages/api/mod/comment/remove-as-tos.client-ip.test.ts`
  * (the address in the moderation audit trail),
  * `src/__tests__/pages/api/auth/callback.client-ip.test.ts` (the address the
  * spoke forwards), and the four suites beside
@@ -195,6 +195,13 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
   'server/services/image-search.service.ts': {
     symbol: 'resolveClientIpOrNull',
     why: 'Anonymous search-actor hashing. Must agree with the ctx.ip-fed sibling call sites.',
+  },
+  'server/controllers/image.controller.ts': {
+    symbol: 'resolveClientIpOrNull',
+    why:
+      'Forwards the acting moderator’s address to the moderator spoke, which records it on the '  +
+      'image-moderation audit row. Attribution, not enforcement — and the field is optional, so the '  +
+      'falsy sentinel is preserved.',
   },
   'pages/api/mod/comment/remove-as-tos.ts': {
     symbol: 'resolveClientIpOrNull',

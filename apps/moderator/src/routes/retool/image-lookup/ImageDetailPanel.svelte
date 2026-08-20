@@ -1,0 +1,172 @@
+<script lang="ts">
+  import { imageFlagValue } from '$lib/image-flags';
+  import { enhance } from '$app/forms';
+  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
+  import { entityUrl, userLookupUrl } from '$lib/entity-url';
+  import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import type { PageData } from './$types';
+
+  type Image = NonNullable<PageData['result']>['image'];
+
+  let {
+    image,
+    civitaiUrl,
+    canAct = false,
+  }: { image: Image; civitaiUrl: string; canAct?: boolean } = $props();
+
+  let flagging = $state(false);
+
+  const imageUrl = $derived(entityUrl(civitaiUrl, 'image', image.id));
+
+  const fields = $derived<[string, string][]>([
+    ['Uploaded', dateTime(image.createdAt)],
+    // The last write of any kind. On a row whose moderation history is otherwise a separate panel, an
+    // `Updated` far from `Uploaded` is the tell that something touched it.
+    ['Updated', dateTime(image.updatedAt)],
+    ['Scanned', dateTime(image.scannedAt)],
+    ['Type', image.type],
+    ['Dimensions', image.width && image.height ? `${num(image.width)}×${num(image.height)}` : '—'],
+    ['NSFW level', `${image.nsfwLevel}${image.nsfwLevelLocked ? ' (locked)' : ''}`],
+    ['Ingestion', image.ingestion],
+    // Retool's Image Data table was a `SELECT *`; these are the columns a moderator actually reaches
+    // for — the hashes for duplicate hunting, the scan jobs for why ingestion landed where it did.
+    ['Hash', image.hash ?? '—'],
+    ['pHash', image.pHash ?? '—'],
+    ['Meta hidden by uploader', image.hideMeta ? 'yes' : 'no'],
+  ]);
+
+  const scanJobs = $derived(image.scanJobs ? JSON.stringify(image.scanJobs, null, 2) : null);
+</script>
+
+<section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+    <h2 class="text-lg font-semibold text-white">
+      {#if imageUrl}
+        <a href={imageUrl} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+          Image #{image.id}
+        </a>
+      {:else}
+        Image #{image.id}
+      {/if}
+    </h2>
+    <ImageFlagBadges
+      tosViolation={image.tosViolation}
+      blockedFor={image.blockedFor}
+      needsReview={image.needsReview}
+      minor={image.minor}
+      acceptableMinor={image.acceptableMinor}
+      poi={image.poi}
+    />
+  </div>
+
+  {#if canAct}
+    <!-- Retool had Toggle Minor / Toggle Poi here, ON only. Both directions, because a flag set in
+         error is otherwise uncorrectable from the screen that shows it. -->
+    <form
+      method="POST"
+      action="?/setFlag"
+      use:enhance={() => {
+        flagging = true;
+        return async ({ update }) => {
+          await update({ reset: true });
+          flagging = false;
+        };
+      }}
+      class="mt-3 flex flex-wrap gap-2"
+    >
+      <input type="hidden" name="imageId" value={image.id} />
+      <Button
+        type="submit"
+        name="flagValue"
+        value={imageFlagValue('minor', !image.minor)}
+        size="sm"
+        variant="outline"
+        disabled={flagging}
+      >
+        {image.minor ? 'Clear minor' : 'Set minor'}
+      </Button>
+      <Button
+        type="submit"
+        name="flagValue"
+        value={imageFlagValue('poi', !image.poi)}
+        size="sm"
+        variant="outline"
+        disabled={flagging}
+      >
+        {image.poi ? 'Clear POI' : 'Set POI'}
+      </Button>
+    </form>
+  {/if}
+
+  <div class="mt-2 flex flex-wrap items-baseline gap-x-3 text-sm">
+    <!-- The uploader's name IS the lookup link, rather than a link to their public profile beside a
+         separate "look up uploader". Two links to one account is a choice a moderator has to make on
+         every image, and the profile is the answer to almost none of the questions this page is open
+         for — User Lookup carries a link to it for the times it is. -->
+    <span class="text-dark-2">by</span>
+    <a href={userLookupUrl(image.userId)} class={LINK_CLASS}>
+      {image.username ?? `#${image.userId}`}
+    </a>
+    {#if image.userBannedAt}
+      <Badge variant="destructive">uploader banned</Badge>
+    {/if}
+    <!-- Also into the app: the post's other images are the usual reason an image lookup is not the end
+         of the investigation, and the panel it lands on carries its own way out to the site. -->
+    {#if image.postId}
+      <a href="?post={image.postId}" class={LINK_CLASS}>post {image.postId}</a>
+    {/if}
+  </div>
+
+  <div class="mt-4 flex flex-col gap-4 sm:flex-row">
+    <!-- An image lookup that does not show the image makes the moderator open a second tab to answer
+         "what am I even looking at". `url` is the Cloudflare key, which is exactly EdgeMedia's `src`. -->
+    <EdgeMedia
+      src={image.url}
+      name={image.name}
+      type={image.type}
+      width={450}
+      alt="Image {image.id}"
+      class="max-h-64 w-auto shrink-0 rounded-lg border border-dark-4"
+    />
+
+    <dl class="grid flex-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+      {#each fields as [label, value] (label)}
+        <div>
+          <dt class="text-xs tracking-wide text-dark-2 uppercase">{label}</dt>
+          <dd class="text-dark-0">{value}</dd>
+        </div>
+      {/each}
+    </dl>
+  </div>
+
+  {#if image.prompt || image.negativePrompt}
+    <!-- The prompt is the evidence behind a minor/poi call, and it lived in `meta`, which the port was
+         not selecting at all. -->
+    <div class="mt-4 flex flex-col gap-2 text-sm">
+      {#if image.prompt}
+        <div>
+          <div class="text-xs tracking-wide text-dark-2 uppercase">Prompt</div>
+          <p class="wrap-break-word text-dark-0">{image.prompt}</p>
+        </div>
+      {/if}
+      {#if image.negativePrompt}
+        <div>
+          <div class="text-xs tracking-wide text-dark-2 uppercase">Negative prompt</div>
+          <p class="wrap-break-word text-dark-2">{image.negativePrompt}</p>
+        </div>
+      {/if}
+    </div>
+  {:else if image.hideMeta}
+    <p class="mt-4 text-sm text-dark-2">The uploader hid this image's metadata.</p>
+  {/if}
+
+  {#if scanJobs}
+    <details class="mt-4 text-sm">
+      <summary class="text-dark-2">Scan jobs</summary>
+      <pre class="mt-2 overflow-x-auto rounded-md bg-dark-7 p-3 text-xs text-dark-1">{scanJobs}</pre>
+    </details>
+  {/if}
+</section>

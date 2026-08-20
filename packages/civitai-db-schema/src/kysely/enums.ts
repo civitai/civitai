@@ -253,6 +253,7 @@ export const ModelHashType = {
   SHA256: 'SHA256',
   CRC32: 'CRC32',
   BLAKE3: 'BLAKE3',
+  SHA256_12: 'SHA256_12',
 } as const;
 export type ModelHashType = (typeof ModelHashType)[keyof typeof ModelHashType];
 export const ScanResultCode = {

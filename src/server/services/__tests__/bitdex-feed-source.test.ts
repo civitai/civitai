@@ -494,3 +494,65 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
     });
   });
 });
+
+/**
+ * The publication rule on the BitDex leg, asserted at the DISPATCHER.
+ *
+ * 🔴 These belong here rather than beside the Meili filter-string tests, and the
+ * reason is the bug that produced them. `publishedOnly` was added to both Meili
+ * filter builders and tested there by a `describe.each` over a hand-authored
+ * list of two — and a hand-authored list cannot report a member it does not
+ * have. The BitDex leg was the member it did not have, so the picker that
+ * started all this still served a moderator their own drafts while the tests
+ * stayed green.
+ *
+ * `getImagesFromSearch` is the one place that enumerates the backends, so a test
+ * parameterised over the FLAG (a closed set the dispatcher already switches on)
+ * fails when a fourth leg arrives, where a test parameterised over a list of
+ * functions cannot.
+ *
+ * The subject has to change with it: BitDex applies this rule as a post-filter
+ * over fetched documents and emits no filter clause at all, so a filter-string
+ * assertion is structurally incapable of seeing it. These assert on the rows
+ * that came back, which every backend has to produce.
+ */
+describe('publishedOnly is honoured on every backend, not only the ones with a filter string', () => {
+  const unpublishedOwnDoc = { ...bitdexDoc, id: 909, userId: CURRENT_USER_ID, publishedAt: null };
+
+  const moderatorPickerInput = {
+    ...baseInput,
+    currentUserId: CURRENT_USER_ID,
+    userId: CURRENT_USER_ID,
+    isModerator: true,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getFliptVariantMock.mockResolvedValue('primary');
+    // The own-content pass is the door the drafts came in by; the main pass is
+    // already published-only for everyone and is not what this is about.
+    queryBitdexMock.mockImplementation((_index: unknown, filters: unknown) =>
+      Promise.resolve(
+        isOwnExcludedQuery(filters)
+          ? { documents: [unpublishedOwnDoc], cursor: undefined }
+          : { documents: [], cursor: undefined }
+      )
+    );
+  });
+
+  it('does not hand a publishedOnly caller their own unpublished row', async () => {
+    const result = await getImagesFromSearch({ ...moderatorPickerInput, publishedOnly: true });
+
+    expect(result.data.map((row: { id: number }) => row.id)).not.toContain(unpublishedOwnDoc.id);
+  });
+
+  it('still merges a moderator own unpublished row when they did not ask for published only', async () => {
+    // The control, and it is load-bearing twice over: without it the assertion
+    // above passes against a build where the own-content pass returns nothing at
+    // all, and it pins the deliberate moderator carve-out that the fix narrows
+    // rather than removes.
+    const result = await getImagesFromSearch(moderatorPickerInput);
+
+    expect(result.data.map((row: { id: number }) => row.id)).toContain(unpublishedOwnDoc.id);
+  });
+});

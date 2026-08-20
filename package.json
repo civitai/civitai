@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.25",
+  "version": "5.1.27",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -128,6 +128,7 @@
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
+    "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
     "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",

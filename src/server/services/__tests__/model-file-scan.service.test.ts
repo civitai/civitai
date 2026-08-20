@@ -127,6 +127,24 @@ import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import { addLinkedComponent } from '~/server/services/model-version.service';
 import { constants } from '~/server/common/constants';
 
+// Every hash writer runs through normalizeScanHashes, which DERIVES rows (SHA256_12 from SHA256,
+// a truncated AutoV3) on top of what the orchestrator sent. So these assertions name the exact
+// set of type=hash pairs written: a new derivation shows up as an unexpected member rather than
+// as arithmetic that needs re-doing, and a wrong derivation shows up as a wrong value.
+const hashRowsWritten = (callIndex = 0) => {
+  const { data } = mockDbWrite.modelFileHash.createMany.mock.calls[callIndex][0] as {
+    data: { fileId: number; type: ModelHashType; hash: string }[];
+  };
+  return data.map(({ fileId, type, hash }) => `${fileId}:${type}=${hash}`).sort();
+};
+
+const expectHashRows = (expected: string[], callIndex = 0) =>
+  expect(hashRowsWritten(callIndex)).toEqual([...expected].sort());
+
+// Long enough that a slice is observable — 'sha' would make SHA256_12 identical to SHA256.
+const SHA256_FIXTURE = 'a'.repeat(60) + 'beef';
+const AUTOV3_FIXTURE = 'c'.repeat(60) + 'dead';
+
 describe('model-file-scan.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -345,7 +363,7 @@ describe('model-file-scan.service', () => {
       await applyScanOutcome({
         fileId: 1,
         hashes: {
-          [ModelHashType.SHA256]: 'sha-1',
+          [ModelHashType.SHA256]: SHA256_FIXTURE,
           [ModelHashType.AutoV2]: 'auto-1',
         },
       });
@@ -354,12 +372,11 @@ describe('model-file-scan.service', () => {
       expect(mockDbWrite.modelFileHash.deleteMany).toHaveBeenCalledWith({
         where: { fileId: 1 },
       });
-      expect(mockDbWrite.modelFileHash.createMany).toHaveBeenCalledWith({
-        data: expect.arrayContaining([
-          { fileId: 1, type: ModelHashType.SHA256, hash: 'sha-1' },
-          { fileId: 1, type: ModelHashType.AutoV2, hash: 'auto-1' },
-        ]),
-      });
+      expectHashRows([
+        `1:${ModelHashType.SHA256}=${SHA256_FIXTURE}`,
+        `1:${ModelHashType.SHA256_12}=${SHA256_FIXTURE.slice(0, 12)}`,
+        `1:${ModelHashType.AutoV2}=auto-1`,
+      ]);
     });
 
     it('skips the hash transaction when all hash values are empty/falsy', async () => {
@@ -702,10 +719,10 @@ describe('model-file-scan.service', () => {
             {
               $type: 'modelHash',
               output: {
-                sha256: 'sha',
+                sha256: SHA256_FIXTURE,
                 autoV1: 'av1',
                 autoV2: 'av2',
-                autoV3: 'av3',
+                autoV3: AUTOV3_FIXTURE,
                 blake3: 'b3',
                 crc32: 'crc',
               },
@@ -718,16 +735,15 @@ describe('model-file-scan.service', () => {
         makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
       );
 
-      expect(mockDbWrite.modelFileHash.createMany).toHaveBeenCalledWith({
-        data: expect.arrayContaining([
-          { fileId: 1, type: ModelHashType.SHA256, hash: 'sha' },
-          { fileId: 1, type: ModelHashType.AutoV1, hash: 'av1' },
-          { fileId: 1, type: ModelHashType.AutoV2, hash: 'av2' },
-          { fileId: 1, type: ModelHashType.AutoV3, hash: 'av3' },
-          { fileId: 1, type: ModelHashType.BLAKE3, hash: 'b3' },
-          { fileId: 1, type: ModelHashType.CRC32, hash: 'crc' },
-        ]),
-      });
+      expectHashRows([
+        `1:${ModelHashType.SHA256}=${SHA256_FIXTURE}`,
+        `1:${ModelHashType.SHA256_12}=${SHA256_FIXTURE.slice(0, 12)}`,
+        `1:${ModelHashType.AutoV1}=av1`,
+        `1:${ModelHashType.AutoV2}=av2`,
+        `1:${ModelHashType.AutoV3}=${AUTOV3_FIXTURE.slice(0, 12)}`,
+        `1:${ModelHashType.BLAKE3}=b3`,
+        `1:${ModelHashType.CRC32}=crc`,
+      ]);
     });
 
     it('skips hash entries with null/empty values', async () => {
@@ -737,7 +753,7 @@ describe('model-file-scan.service', () => {
           steps: [
             {
               $type: 'modelHash',
-              output: { sha256: 'sha', autoV1: null, autoV2: '', autoV3: undefined },
+              output: { sha256: SHA256_FIXTURE, autoV1: null, autoV2: '', autoV3: undefined },
             },
           ],
         },
@@ -747,8 +763,27 @@ describe('model-file-scan.service', () => {
         makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
       );
 
-      const createManyCall = mockDbWrite.modelFileHash.createMany.mock.calls[0][0];
-      expect(createManyCall.data).toEqual([{ fileId: 1, type: ModelHashType.SHA256, hash: 'sha' }]);
+      expectHashRows([
+        `1:${ModelHashType.SHA256}=${SHA256_FIXTURE}`,
+        `1:${ModelHashType.SHA256_12}=${SHA256_FIXTURE.slice(0, 12)}`,
+      ]);
+    });
+
+    // The scan-request path writes an all-zero SHA256 as a "file unreachable" sentinel; deriving
+    // from it would give every unreachable file the same 12-char hash, matching them to each other.
+    it('does not derive SHA256_12 from the all-zero sha256 sentinel', async () => {
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [{ $type: 'modelHash', output: { sha256: '0'.repeat(64) } }],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+      );
+
+      expectHashRows([`1:${ModelHashType.SHA256}=${'0'.repeat(64)}`]);
     });
 
     it('maps clamScan status "clean" to virusScan.Success even when exitCode is null', async () => {

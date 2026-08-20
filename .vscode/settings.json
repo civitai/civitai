@@ -157,6 +157,20 @@
     "**/.next/**": true,
     "**/dist/**": true,
     "**/.git/objects/**": true,
-    "**/.git/subtree-cache/**": true
+    "**/.git/subtree-cache/**": true,
+    "**/.svelte-kit/**": true,
+    "**/apps/*/build/**": true,
+    "**/.turbo/**": true,
+    "**/.vite/**": true,
+    "**/playwright-report/**": true,
+    "**/test-results/**": true
+  },
+  "search.exclude": {
+    "**/.svelte-kit": true,
+    "**/apps/*/build": true,
+    "**/.turbo": true
+  },
+  "files.exclude": {
+    "**/.svelte-kit": true
   }
 }
