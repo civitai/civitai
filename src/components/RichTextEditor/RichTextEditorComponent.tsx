@@ -37,6 +37,7 @@ import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { InsertMarkdownControl } from '~/components/RichTextEditor/InsertMarkdownControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -144,6 +145,7 @@ export function RichTextEditor({
   const addPolls = includeControls.includes('polls');
   const addTimestamp = includeControls.includes('timestamp');
   const addStickers = includeControls.includes('sticker');
+  const addMarkdown = includeControls.includes('markdown');
 
   // Autocomplete and the input rule are insertion paths just like the picker, so
   // they answer to the same flag. StickerPicker gates itself at its own mount
@@ -447,6 +449,11 @@ export function RichTextEditor({
                 <InsertStickerControl />
               </RTE.ControlsGroup>
             )}
+            {addMarkdown && (
+              <RTE.ControlsGroup>
+                <InsertMarkdownControl />
+              </RTE.ControlsGroup>
+            )}
           </RTE.Toolbar>
         )}
 
@@ -489,7 +496,7 @@ export type EditorCommandsRef = {
   focus: () => void;
 };
 
-type ControlType =
+export type ControlType =
   | 'heading'
   | 'formatting'
   | 'list'
@@ -500,7 +507,8 @@ type ControlType =
   | 'polls'
   | 'colors'
   | 'timestamp'
-  | 'sticker';
+  | 'sticker'
+  | 'markdown';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
