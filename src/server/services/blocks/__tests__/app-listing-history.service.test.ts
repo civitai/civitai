@@ -48,6 +48,8 @@ const {
   blockRequestWhereForListing,
   canWithdrawRequest,
   LISTING_HISTORY_LIMIT,
+  ORPHANED_SUBMISSIONS_LIMIT,
+  ORPHAN_SCAN_LIMIT,
 } = await import('~/server/services/blocks/app-listing-history.service');
 
 const OWNER = 41;
@@ -181,7 +183,7 @@ describe('🔴 the two streams are UNIONED, not deduplicated', () => {
   });
 });
 
-describe('🔴 the block query is CONDITIONAL on the block, not on the kind', () => {
+describe('🔴 the block query is conditional on the KIND, and then on the block', () => {
   it('an off-site listing never queries the block table at all', async () => {
     mockDb.appListing.findUnique.mockImplementation(async () => offsiteListing());
     mockDb.appListingPublishRequest.findMany.mockImplementation(async () => [
@@ -577,5 +579,154 @@ describe('🔴 listMyOrphanedSubmissions — rejected/withdrawn v1 whose listing
     mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => []);
     expect(await listMyOrphanedSubmissions({ userId: OWNER })).toEqual([]);
     expect(mockDb.appListing.findMany).not.toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * 🔴 canWithdraw on BOTH streams — the two mappers are separate code
+ * ------------------------------------------------------------------------ */
+
+/**
+ * 🔴 SYMMETRY IS AN ASSUMPTION, NOT A FACT. `listListingHistory` maps the two streams in
+ * two separate `.map()` calls, so the `canWithdraw` wiring exists TWICE and can be wrong in
+ * one of them alone. An independently-built mutation sweep proved exactly that: rebinding
+ * the LISTING-stream call to `canWithdrawRequest(r.status, opts.userId, opts.userId)` —
+ * i.e. "every viewer is the submitter" — SURVIVED a fully green run, while the identical
+ * mutation on the BLOCK stream was killed. The block half had a test; the off-site half did
+ * not. These cases pin each stream on its own so neither can be covered by the other.
+ */
+describe('🔴 canWithdraw is wired on the LISTING (off-site) stream too', () => {
+  /** An off-site listing owned by OWNER, seated by SEAT — so the two ids differ. */
+  function seatedOffsite() {
+    mockDb.appListing.findUnique.mockImplementation(async () => offsiteListing());
+    mockDb.appCollaborator.findFirst.mockImplementation(async () => ({ userId: SEAT }));
+  }
+
+  it('🔴 a seat-holder is NOT offered Withdraw on an OFF-SITE pending request', async () => {
+    seatedOffsite();
+    mockDb.appListingPublishRequest.findMany.mockImplementation(async () => [
+      listingReq({ id: 'alpr_pending', status: 'pending', submittedByUserId: OWNER }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_ext', userId: SEAT });
+    expect(out.map((e) => e.id)).toEqual(['alpr_pending']);
+    // The proc would throw NOT_OWNED: `withdrawExternalRequest` is submitter-scoped.
+    expect(out[0].canWithdraw).toBe(false);
+  });
+
+  it('…and the SUBMITTER is, on the same stream (the control arm)', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => offsiteListing());
+    mockDb.appListingPublishRequest.findMany.mockImplementation(async () => [
+      listingReq({ id: 'alpr_mine', status: 'pending', submittedByUserId: OWNER }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_ext', userId: OWNER });
+    expect(out[0].canWithdraw).toBe(true);
+  });
+
+  it('an APPROVED off-site request is never withdrawable, even for its submitter', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => offsiteListing());
+    mockDb.appListingPublishRequest.findMany.mockImplementation(async () => [
+      listingReq({ id: 'alpr_done', status: 'approved', submittedByUserId: OWNER }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_ext', userId: OWNER });
+    expect(out[0].canWithdraw).toBe(false);
+  });
+
+  /**
+   * 🔴 THE TWO STREAMS ARE ASSERTED IN ONE PAYLOAD, so a mutant that fixes one mapper and
+   * breaks the other cannot pass by averaging. The listing request is the SEAT-HOLDER's own
+   * (withdrawable) and the block request is the OWNER's (not), so the two answers differ
+   * and neither can be produced by a constant.
+   */
+  it('🔴 the two streams answer INDEPENDENTLY within one response', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appCollaborator.findFirst.mockImplementation(async () => ({ userId: SEAT }));
+    mockDb.appListingPublishRequest.findMany.mockImplementation(async () => [
+      listingReq({
+        id: 'alpr_seat',
+        status: 'pending',
+        submittedByUserId: SEAT,
+        submittedAt: new Date('2026-06-06T00:00:00Z'),
+      }),
+    ]);
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({
+        id: 'pubreq_owner',
+        status: 'pending',
+        submittedByUserId: OWNER,
+        submittedAt: new Date('2026-06-05T00:00:00Z'),
+      }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: SEAT });
+    const byId = Object.fromEntries(out.map((e) => [e.id, e.canWithdraw]));
+    expect(byId).toEqual({ alpr_seat: true, pubreq_owner: false });
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * 🔴 The orphan scan must be wider than the display cap
+ * ------------------------------------------------------------------------ */
+
+describe('🔴 the orphan read scans wider than it displays', () => {
+  it('the scan limit is strictly greater than the display cap', () => {
+    // The de-dup runs after the query and only removes rows, so scanning exactly the cap
+    // would return a short page whenever any row was de-duped.
+    expect(ORPHAN_SCAN_LIMIT).toBeGreaterThan(ORPHANED_SUBMISSIONS_LIMIT);
+  });
+
+  it('the DB read takes the SCAN limit, not the display cap', async () => {
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => []);
+    await listMyOrphanedSubmissions({ userId: OWNER });
+    const call = mockDb.appBlockPublishRequest.findMany.mock.calls[0][0] as { take: number };
+    expect(call.take).toBe(ORPHAN_SCAN_LIMIT);
+  });
+
+  /**
+   * 🔴 THE BEHAVIOURAL HALF. With the display cap of de-duped rows in front of the real
+   * ones, a `take: ORPHANED_SUBMISSIONS_LIMIT` implementation returns ZERO orphans while
+   * several exist — a confident empty result on the only surface that has them.
+   */
+  it('🔴 still returns a FULL page when the de-dup removes the newest rows', async () => {
+    const owned = Array.from({ length: ORPHANED_SUBMISSIONS_LIMIT }, (_, i) => ({
+      id: `pubreq_owned_${i}`,
+      slug: `owned-${i}`,
+      version: '0.1.0',
+      status: 'pending',
+      submittedAt: new Date(2026, 5, 28, 0, ORPHANED_SUBMISSIONS_LIMIT - i),
+      reviewedAt: null,
+      rejectionReason: null,
+      approvalNotes: null,
+    }));
+    const real = Array.from({ length: 3 }, (_, i) => ({
+      id: `pubreq_real_${i}`,
+      slug: `real-${i}`,
+      version: '0.2.0',
+      status: 'rejected',
+      submittedAt: new Date(2026, 5, 1, 0, i),
+      reviewedAt: null,
+      rejectionReason: 'no',
+      approvalNotes: null,
+    }));
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [...owned, ...real]);
+    mockDb.appListing.findMany.mockImplementation(async () => owned.map((r) => ({ slug: r.slug })));
+    const out = await listMyOrphanedSubmissions({ userId: OWNER });
+    expect(out.map((r) => r.id)).toEqual(['pubreq_real_0', 'pubreq_real_1', 'pubreq_real_2']);
+  });
+
+  it('the display cap still bounds the result', async () => {
+    const many = Array.from({ length: ORPHAN_SCAN_LIMIT }, (_, i) => ({
+      id: `pubreq_${String(i).padStart(3, '0')}`,
+      slug: `slug-${i}`,
+      version: '0.1.0',
+      status: 'withdrawn',
+      submittedAt: new Date(2026, 0, 1, 0, i),
+      reviewedAt: null,
+      rejectionReason: null,
+      approvalNotes: null,
+    }));
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => many);
+    mockDb.appListing.findMany.mockImplementation(async () => []);
+    expect(await listMyOrphanedSubmissions({ userId: OWNER })).toHaveLength(
+      ORPHANED_SUBMISSIONS_LIMIT
+    );
   });
 });

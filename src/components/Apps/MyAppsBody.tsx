@@ -576,6 +576,8 @@ export type MyAppsBodyViewProps = {
   withdrawEnabled?: boolean;
   /** Submissions whose listing was deleted — see `listMyOrphanedSubmissions`. */
   orphanedSubmissions?: OrphanedSubmissionRow[];
+  /** Message from a FAILED orphan read. Never conflate with an empty one. */
+  orphanedError?: string | null;
   onWithdrawOrphan?: (row: OrphanedSubmissionRow) => void;
 };
 
@@ -593,6 +595,7 @@ export function MyAppsBodyView({
   withdrawing = false,
   withdrawEnabled = true,
   orphanedSubmissions = [],
+  orphanedError = null,
   onWithdrawOrphan,
 }: MyAppsBodyViewProps) {
   const [inactiveOpen, setInactiveOpen] = useState(false);
@@ -633,7 +636,15 @@ export function MyAppsBodyView({
     ]
   );
 
-  if (errorMessage) {
+  /**
+   * 🔴 A FAILED `listMine` MUST NOT SWALLOW THE ORPHAN GROUP. This used to `return` the
+   * alert, which meant one failing read blanked the ONE surface a rejected first
+   * submission is reachable from — an invisible population arriving by a different route,
+   * i.e. the same failure mode as the defect this page exists to fix. The alert now
+   * renders BESIDE whatever else resolved.
+   */
+  const rowsFailed = !!errorMessage;
+  if (rowsFailed && orphanedSubmissions.length === 0) {
     return (
       <Alert
         color="red"
@@ -645,7 +656,7 @@ export function MyAppsBodyView({
       </Alert>
     );
   }
-  if (isLoading) {
+  if (isLoading && orphanedSubmissions.length === 0) {
     return (
       <Center py="xl">
         <Loader />
@@ -659,10 +670,37 @@ export function MyAppsBodyView({
    * the one group that finally makes their rejected first version visible — the original
    * defect, reappearing one layer up. The alert renders INSIDE the stack, beside them.
    */
-  const hasNothingAtAll = rows.length === 0 && orphanedSubmissions.length === 0;
+  const hasNothingAtAll =
+    rows.length === 0 && orphanedSubmissions.length === 0 && !rowsFailed && !orphanedError;
 
   return (
     <Stack gap="lg" data-testid="apps-mine-list">
+      {rowsFailed && (
+        <Alert
+          color="red"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          data-testid="apps-mine-error"
+        >
+          {errorMessage}
+        </Alert>
+      )}
+      {/*
+        🔴 A FAILING ORPHAN READ MUST SAY SO. `orphansQuery.error` was read NOWHERE, so a
+        failure rendered nothing and reported nothing — indistinguishable from "you have no
+        rejected submissions", which is the exact lie this group was added to stop telling.
+        A reassuring empty result is not evidence of an empty set.
+      */}
+      {orphanedError && (
+        <Alert
+          color="red"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          data-testid="apps-mine-orphaned-error"
+        >
+          {orphanedError}
+        </Alert>
+      )}
       {hasNothingAtAll && (
         <Alert
           color="gray"
@@ -951,6 +989,7 @@ export function MyAppsBody() {
       withdrawing={withdrawVersion.isPending || withdrawListing.isPending}
       withdrawEnabled={!!features?.appBlocks}
       orphanedSubmissions={(orphansQuery.data ?? []) as OrphanedSubmissionRow[]}
+      orphanedError={orphansQuery.error?.message ?? null}
       onWithdrawOrphan={onWithdrawOrphan}
     />
   );

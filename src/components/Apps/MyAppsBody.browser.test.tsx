@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   /** Every `listingHistory.useQuery(input, opts)` call, in order. */
   historyCalls: [] as Array<{ input: { appListingId: string }; enabled: boolean }>,
   orphans: [] as unknown[],
+  orphansError: null as string | null,
   appBlocksFlag: true,
 }));
 
@@ -66,7 +67,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         },
       },
       listMyOrphanedSubmissions: {
-        useQuery: () => ({ data: mocks.orphans, isLoading: false, error: null }),
+        useQuery: () => ({
+          data: mocks.orphans,
+          isLoading: false,
+          error: mocks.orphansError ? { message: mocks.orphansError } : null,
+        }),
       },
       withdrawExternalRequest: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
     },
@@ -137,6 +142,7 @@ beforeEach(() => {
   mocks.rows = [];
   mocks.historyCalls = [];
   mocks.orphans = [];
+  mocks.orphansError = null;
   mocks.appBlocksFlag = true;
 });
 
@@ -1041,5 +1047,90 @@ describe('MyAppsBody (container) — the orphan read and the write flag', () => 
     await expect
       .element(page.getByTestId('apps-mine-orphaned-withdraw-pubreq_flag2'))
       .toBeInTheDocument();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 🔴 A failed read must SAY so — never render as an empty set
+ * ------------------------------------------------------------------ */
+
+describe('🔴 neither read can fail silently on the surface this population has', () => {
+  const anOrphan: OrphanedSubmissionRow = {
+    id: 'pubreq_survivor',
+    slug: 'survivor',
+    version: '0.1.0',
+    status: 'rejected',
+    submittedAt: '2026-07-07T00:00:00Z',
+    reviewedAt: null,
+    rejectionReason: 'needs a smaller bundle',
+    approvalNotes: null,
+    canWithdraw: false,
+  };
+
+  /**
+   * 🔴 A `listMine` FAILURE USED TO RETURN EARLY, blanking the orphan group with it. That
+   * group is by construction the ONLY place a rejected first submission is reachable, so
+   * swallowing it is the original §1 defect arriving by a different route — an invisible
+   * population, this time caused by an unrelated query.
+   */
+  test('🔴 a failed listMine still renders the orphan group, alongside its error', async () => {
+    renderWithProviders(
+      <MyAppsBodyView rows={[]} errorMessage="listMine blew up" orphanedSubmissions={[anOrphan]} />
+    );
+    await expect.element(page.getByTestId('apps-mine-error')).toBeInTheDocument();
+    // …and the group survives it.
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-row-pubreq_survivor'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-notes-pubreq_survivor'))
+      .toHaveTextContent(/smaller bundle/i);
+  });
+
+  test('a failed listMine with nothing else still shows the error alone', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[]} errorMessage="listMine blew up" />);
+    await expect.element(page.getByTestId('apps-mine-error')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-orphaned').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 `orphansQuery.error` WAS READ NOWHERE. A failing read rendered nothing and reported
+   * nothing, which is indistinguishable from "you have no rejected submissions" — the
+   * exact lie this group exists to stop telling. A reassuring zero is not evidence.
+   */
+  test('🔴 a failed orphan read reports itself instead of rendering as "none"', async () => {
+    renderWithProviders(
+      <MyAppsBodyView rows={[row({ appListingId: 'apl_live' })]} orphanedError="orphans blew up" />
+    );
+    await expect.element(page.getByTestId('apps-mine-orphaned-error')).toBeInTheDocument();
+    // The rows that DID resolve are still shown — one failure does not blank the page.
+    await expect.element(page.getByTestId('apps-mine-row-apl_live')).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 AND IT MUST NOT BE DRESSED UP AS AN EMPTY ACCOUNT. "You don't own any apps yet" over
+   * the top of a broken read is a confident, wrong answer.
+   */
+  test('🔴 a broken orphan read never renders the "no apps yet" empty state', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[]} orphanedError="orphans blew up" />);
+    await expect.element(page.getByTestId('apps-mine-orphaned-error')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-empty').elements()).toHaveLength(0);
+  });
+
+  test('a genuinely empty account still says so (the control arm)', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[]} />);
+    await expect.element(page.getByTestId('apps-mine-empty')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-orphaned-error').elements()).toHaveLength(0);
+  });
+});
+
+describe('MyAppsBody (container) — the orphan query’s error reaches the view', () => {
+  test('🔴 a failing listMyOrphanedSubmissions surfaces its message', async () => {
+    mocks.rows = [row({ appListingId: 'apl_c9' })];
+    mocks.orphansError = 'orphan read refused';
+    renderWithProviders(<MyAppsBody />);
+    await expect
+      .element(page.getByTestId('apps-mine-orphaned-error'))
+      .toHaveTextContent(/orphan read refused/i);
   });
 });

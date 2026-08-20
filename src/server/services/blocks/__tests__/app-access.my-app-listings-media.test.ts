@@ -46,6 +46,12 @@ const SEAT_HOLDER = 22;
 
 type Stored = {
   id: string;
+  iconId: number | null;
+  coverId: number | null;
+  description: string | null;
+  tagline: string | null;
+  category: string | null;
+  _count: { screenshots: number };
   slug: string;
   name: string;
   status: string;
@@ -70,6 +76,17 @@ function stored(over: Partial<Stored> & { id: string }): Stored {
     updatedAt: new Date('2026-01-01T00:00:00Z'),
     icon: null,
     cover: null,
+    // 🔴 PAIRWISE-DISTINCT SIBLING VALUES, deliberately. `iconId` and `coverId` are two
+    // ints feeding two adjacent arguments of `computeListingProblems`; if they shared a
+    // value (or were both null by default) an OPERAND SWAP — passing `r.iconId` where
+    // `coverId` belongs — would produce identical output and survive a green suite. 7 and
+    // 9 are distinct from each other and from the screenshot count.
+    iconId: 7,
+    coverId: 9,
+    description: `Description of ${over.id}`,
+    tagline: `Tagline of ${over.id}`,
+    category: 'utility',
+    _count: { screenshots: 3 },
     blockOwnerUserId: null,
     columnUserId: OWNER,
     ...over,
@@ -290,5 +307,154 @@ describe('🔴 listMyAppListings — the ownership∪seat set is UNCHANGED by th
       findManyFake([stored({ id: 'apl_other', columnUserId: OWNER })])
     );
     expect(await listMyAppListings({ userId: 999 })).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * 🔴 THE `problems` SEAM
+ * ------------------------------------------------------------------------ */
+
+/**
+ * 🔴 THIS BLOCK EXISTS BECAUSE BOTH SIDES WERE ALREADY GREEN IN ISOLATION.
+ * `computeListingProblems` is well covered as a pure function, and the CLIENT test hands
+ * `problems` in by hand — so nothing exercised the JOIN between them. An independently
+ * built mutation sweep found three survivors right here: `problems` forced to `[]` (which
+ * is the missing-advisory defect restored, silently), `coverId` fed from `r.iconId`, and
+ * the screenshot-count default flipped `0 → 99`. Every one passed a fully green suite.
+ *
+ * The fixtures below carry pairwise-distinct sibling values so an operand swap changes the
+ * ANSWER and not merely the arguments.
+ */
+describe('🔴 listMyAppListings — the completeness advisory is wired to the row', () => {
+  it('a fully complete listing reports NO problems', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_ok', columnUserId: OWNER })])
+    );
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows[0].problems).toEqual([]);
+  });
+
+  /**
+   * 🔴 KILLS "`problems` is always `[]`". A constant-empty implementation passes the
+   * complete-listing case above by construction, so THIS is the assertion that can see it.
+   */
+  it('🔴 a listing missing its ICON reports missing-icon', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_noicon', columnUserId: OWNER, iconId: null })])
+    );
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows[0].problems.map((p) => p.code)).toEqual(['missing-icon']);
+  });
+
+  /**
+   * 🔴 KILLS THE OPERAND SWAP. With `iconId: 7` present and `coverId: null`, the correct
+   * wiring reports `missing-cover`; an implementation that passes `r.iconId` into the
+   * `coverId` slot sees 7 there and reports nothing. The two fixture values are distinct
+   * precisely so this discriminates.
+   */
+  it('🔴 a listing missing its COVER reports missing-cover, not missing-icon', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_nocover', columnUserId: OWNER, coverId: null })])
+    );
+    const rows = await listMyAppListings({ userId: OWNER });
+    const codes = rows[0].problems.map((p) => p.code);
+    expect(codes).toEqual(['missing-cover']);
+    expect(codes).not.toContain('missing-icon');
+  });
+
+  /** The mirror direction, so neither argument can be sourced from the other. */
+  it('🔴 icon and cover are reported INDEPENDENTLY when both are absent', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_bare', columnUserId: OWNER, iconId: null, coverId: null })])
+    );
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows[0].problems.map((p) => p.code).sort()).toEqual(['missing-cover', 'missing-icon']);
+  });
+
+  /**
+   * 🔴 KILLS THE SCREENSHOT-COUNT DEFAULT MUTANT (`0 → 99`). A non-zero default would make
+   * `no-screenshots` unreachable, so the ONLY way to see it is a fixture that really has
+   * zero and an assertion that demands the problem.
+   */
+  it('🔴 a listing with zero screenshots reports no-screenshots', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_noshots', columnUserId: OWNER, _count: { screenshots: 0 } })])
+    );
+    expect((await listMyAppListings({ userId: OWNER }))[0].problems.map((p) => p.code)).toEqual([
+      'no-screenshots',
+    ]);
+  });
+
+  /**
+   * 🔴 THE `?? 0` DEFAULT'S OWN CASE, and it exists because the obvious test could not see
+   * it. An independently-built sweep mutated that default `0 → 99` and it SURVIVED a fully
+   * green suite — including the zero-screenshot case above. The reason is `??`, not a
+   * missing assertion: `0 ?? 99` is `0`, so with `_count` PRESENT the default is
+   * unreachable by construction. It fires only when the relation is absent from the row,
+   * which is what this case builds.
+   *
+   * 🔴 AND THE DIRECTION IS THE POINT. Absent must mean ZERO — report the problem — never
+   * a number that suppresses it. A default that hides `no-screenshots` turns an incomplete
+   * listing into a clean one silently, which is the same failure as dropping the advisory
+   * altogether.
+   */
+  it('🔴 a row whose _count relation is ABSENT still reports no-screenshots', async () => {
+    const row = stored({ id: 'apl_nocount', columnUserId: OWNER });
+    // Drop the relation the way a narrow projection would, rather than setting it to 0 —
+    // that is the only shape in which the default is reached at all.
+    delete (row as unknown as Record<string, unknown>)._count;
+    mockDb.appListing.findMany.mockImplementation(findManyFake([row]));
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows[0].problems.map((p) => p.code)).toEqual(['no-screenshots']);
+  });
+
+  it('the three TEXT fields are each reported on their own', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([
+        stored({ id: 'apl_notext', columnUserId: OWNER, description: null }),
+        stored({ id: 'apl_notag', columnUserId: OWNER, tagline: null }),
+        stored({ id: 'apl_nocat', columnUserId: OWNER, category: null }),
+      ])
+    );
+    const byId = Object.fromEntries(
+      (await listMyAppListings({ userId: OWNER })).map((r) => [
+        r.appListingId,
+        r.problems.map((p) => p.code),
+      ])
+    );
+    expect(byId.apl_notext).toEqual(['empty-description']);
+    expect(byId.apl_notag).toEqual(['empty-tagline']);
+    expect(byId.apl_nocat).toEqual(['empty-category']);
+  });
+
+  it('the select really asks for every input the advisory needs', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_sel', columnUserId: OWNER })])
+    );
+    await listMyAppListings({ userId: OWNER });
+    const select = (
+      mockDb.appListing.findMany.mock.calls.at(-1)?.[0] as { select: Record<string, unknown> }
+    ).select;
+    for (const key of ['iconId', 'coverId', 'description', 'tagline', 'category', '_count']) {
+      expect(select, `select is missing ${key}`).toHaveProperty(key);
+    }
+  });
+
+  /**
+   * 🔴 THE SCREENSHOT COUNT MUST BE THE FILTERED ONE. A screenshot whose `Image` was
+   * deleted has nothing to display, so counting it makes `no-screenshots` a false
+   * negative — the same filter the authoritative asset gate uses.
+   */
+  it('the screenshot count is filtered on a live Image', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_f', columnUserId: OWNER })])
+    );
+    await listMyAppListings({ userId: OWNER });
+    const select = (
+      mockDb.appListing.findMany.mock.calls.at(-1)?.[0] as {
+        select: { _count: { select: { screenshots: { where: unknown } } } };
+      }
+    ).select;
+    expect(select._count.select.screenshots.where).toEqual({ imageId: { not: null } });
   });
 });

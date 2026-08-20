@@ -108,10 +108,22 @@ export const LISTING_HISTORY_LIMIT = 50;
  * re-introducing the submitter-scoping bug: an accepted collaborator still sees the
  * owner's history, because the scope names the owner and not the caller.
  *
- * 🔴 GATED ON `kind === 'onsite'`. An OFF-SITE listing also has a null `appBlockId`, and
- * before this fix that was the very thing keeping it out of the block table. The kind
- * check is now what does that job — dropping it would run a slug query against the code
- * stream for every external app.
+ * 🔴 GATED ON `kind === 'onsite'`, AND THAT IS A DELIBERATE BEHAVIOUR CHANGE, not a no-op.
+ * For an ORDINARY off-site listing the null `appBlockId` was already keeping it out of the
+ * block table, so the gate is redundant there. It is NOT redundant for the shape
+ * `mapAppBlockToListing` can mint — `kind: 'offsite'` WITH a non-null `appBlockId`, which
+ * `resolveListingAccess` explicitly supports and `app-access.kind-aware-owner.test.ts`
+ * pins (issue #3844). On that shape the previous `appBlockId ? … : null` DID run the block
+ * query; this gate now refuses it.
+ *
+ * That is a tightening in the right direction, and it is worth stating rather than letting
+ * it look incidental: an off-site listing's backing block is a legacy artefact, not the app
+ * the store presents, so surfacing its code stream would show an author a version history
+ * for something they do not publish — and `capabilitiesForKind('offsite').submitVersion` is
+ * `false` for exactly that reason. The read now agrees with the capability table.
+ *
+ * Dropping the gate also re-opens the slug query against the code stream for every external
+ * app, which is the louder half of what it prevents.
  */
 export function blockRequestWhereForListing(access: {
   kind: string;
@@ -124,6 +136,13 @@ export function blockRequestWhereForListing(access: {
   if (access.appBlockId) branches.push({ appBlockId: access.appBlockId });
   // The null-FK branch. Both clauses are load-bearing: `slug` finds the row, the owner
   // scope is what stops a recycled slug leaking a stranger's review.
+  //
+  // 🔴 STATED NARROWLY, because the scope names the CURRENT owner. On a listing acquired
+  // by TRANSFER or by a moderator CLAIM, pre-approval requests submitted by the PREVIOUS
+  // holder still do not surface — their `submitted_by_user_id` is someone else's. That is
+  // not a regression (they were unreachable before this too) and it is the conservative
+  // direction, but this branch does NOT restore first-version history for those two
+  // populations; it restores it for an owner who submitted it themselves.
   if (access.slug && typeof access.ownerUserId === 'number') {
     branches.push({ slug: access.slug, submittedByUserId: access.ownerUserId });
   }
@@ -297,8 +316,19 @@ export type OrphanedSubmission = {
   canWithdraw: boolean;
 };
 
-/** Bound on the orphan group. It is a tail, not a browsable archive. */
+/** Display bound on the orphan group. It is a tail, not a browsable archive. */
 export const ORPHANED_SUBMISSIONS_LIMIT = 25;
+
+/**
+ * How many rows the DB read scans before the ownership de-dup narrows them.
+ *
+ * 🔴 STRICTLY GREATER THAN THE DISPLAY CAP, and the inequality is the point: the de-dup
+ * runs in application code after the query and only removes rows, so scanning exactly
+ * `ORPHANED_SUBMISSIONS_LIMIT` would silently return a short page whenever any of them
+ * were de-duped. Bounded rather than unbounded because this is still a per-user read on an
+ * indexed pair.
+ */
+export const ORPHAN_SCAN_LIMIT = ORPHANED_SUBMISSIONS_LIMIT * 4;
 
 /**
  * The caller's own first-version submissions that no APP-KEYED row can ever show them.
@@ -332,12 +362,7 @@ export const ORPHANED_SUBMISSIONS_LIMIT = 25;
  */
 export async function listMyOrphanedSubmissions(opts: {
   userId: number;
-  limit?: number;
 }): Promise<OrphanedSubmission[]> {
-  const limit = Math.min(
-    Math.max(opts.limit ?? ORPHANED_SUBMISSIONS_LIMIT, 1),
-    ORPHANED_SUBMISSIONS_LIMIT
-  );
   const rows = await dbRead.appBlockPublishRequest.findMany({
     // 🔴 `appBlockId: null` IS THE WHOLE POPULATION FILTER. A request that ever reached
     // approve carries its FK, so it is reachable from its app and is not an orphan. This
@@ -345,7 +370,11 @@ export async function listMyOrphanedSubmissions(opts: {
     // the thing being selected FOR rather than silently excluded.
     where: { submittedByUserId: opts.userId, appBlockId: null },
     orderBy: { submittedAt: 'desc' },
-    take: limit,
+    // 🔴 SCAN WIDER THAN THE DISPLAY CAP, because the ownership de-dup below runs AFTER
+    // this query and can only REMOVE rows. Taking the cap here would return fewer than the
+    // cap while more orphans existed — an under-full page that reads as the whole truth,
+    // on the one surface this population has.
+    take: ORPHAN_SCAN_LIMIT,
     select: {
       id: true,
       slug: true,
@@ -370,30 +399,34 @@ export async function listMyOrphanedSubmissions(opts: {
   });
   const ownedSlugs = new Set(ownedWithSlug.map((l: { slug: string }) => l.slug));
 
-  return rows
-    .filter((r: { slug: string }) => !ownedSlugs.has(r.slug))
-    .map(
-      (r: {
-        id: string;
-        slug: string;
-        version: string;
-        status: string;
-        submittedAt: Date;
-        reviewedAt: Date | null;
-        rejectionReason: string | null;
-        approvalNotes: string | null;
-      }) => ({
-        id: r.id,
-        slug: r.slug,
-        version: r.version,
-        status: r.status,
-        submittedAt: r.submittedAt,
-        reviewedAt: r.reviewedAt,
-        rejectionReason: r.rejectionReason,
-        approvalNotes: r.approvalNotes,
-        // Always the submitter here, by construction — but routed through the SAME helper
-        // the app-keyed entries use, so the pending-only half of the rule has one home.
-        canWithdraw: canWithdrawRequest(r.status, opts.userId, opts.userId),
-      })
-    );
+  return (
+    rows
+      .filter((r: { slug: string }) => !ownedSlugs.has(r.slug))
+      // The display cap is applied HERE, after the de-dup — see {@link ORPHAN_SCAN_LIMIT}.
+      .slice(0, ORPHANED_SUBMISSIONS_LIMIT)
+      .map(
+        (r: {
+          id: string;
+          slug: string;
+          version: string;
+          status: string;
+          submittedAt: Date;
+          reviewedAt: Date | null;
+          rejectionReason: string | null;
+          approvalNotes: string | null;
+        }) => ({
+          id: r.id,
+          slug: r.slug,
+          version: r.version,
+          status: r.status,
+          submittedAt: r.submittedAt,
+          reviewedAt: r.reviewedAt,
+          rejectionReason: r.rejectionReason,
+          approvalNotes: r.approvalNotes,
+          // Always the submitter here, by construction — but routed through the SAME helper
+          // the app-keyed entries use, so the pending-only half of the rule has one home.
+          canWithdraw: canWithdrawRequest(r.status, opts.userId, opts.userId),
+        })
+      )
+  );
 }
