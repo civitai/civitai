@@ -50,12 +50,13 @@ const v2Results = {
 
 describe('buildEpochArchiveEntries', () => {
   it('includes every epoch model AND every sample, models first, ascending by epoch', () => {
-    const { entries, omittedCount } = buildEpochArchiveEntries({
+    const { entries, unresolvedCount, cappedCount } = buildEpochArchiveEntries({
       trainingResults: v2Results,
       modelName: 'My Cool Model!',
     });
 
-    expect(omittedCount).toBe(0);
+    expect(unresolvedCount).toBe(0);
+    expect(cappedCount).toBe(0);
     expect(entries).toEqual([
       { blobId: 'MODEL1.safetensors', fileName: 'My_Cool_Model__epoch_1.safetensors' },
       { blobId: 'MODEL2.safetensors', fileName: 'My_Cool_Model__epoch_2.safetensors' },
@@ -91,8 +92,8 @@ describe('buildEpochArchiveEntries', () => {
     ]);
   });
 
-  it('counts URLs that are not orchestrator blobs as omitted rather than dropping them silently', () => {
-    const { entries, omittedCount } = buildEpochArchiveEntries({
+  it('counts URLs that are not orchestrator blobs as unresolved rather than dropping them silently', () => {
+    const { entries, unresolvedCount, cappedCount } = buildEpochArchiveEntries({
       trainingResults: {
         ...v2Results,
         epochs: [
@@ -108,11 +109,12 @@ describe('buildEpochArchiveEntries', () => {
     });
 
     expect(entries).toEqual([{ blobId: 'OK.jpeg', fileName: 'legacy_epoch_1_sample_1.jpeg' }]);
-    expect(omittedCount).toBe(2);
+    expect(unresolvedCount).toBe(2);
+    expect(cappedCount).toBe(0);
   });
 
   it('keeps the model files and reports the overflow when a run exceeds the entry cap', () => {
-    const { entries, omittedCount } = buildEpochArchiveEntries({
+    const { entries, unresolvedCount, cappedCount } = buildEpochArchiveEntries({
       trainingResults: v2Results,
       modelName: 'capped',
       maxEntries: 3,
@@ -123,7 +125,8 @@ describe('buildEpochArchiveEntries', () => {
       'MODEL2.safetensors',
       'E1S1.jpeg',
     ]);
-    expect(omittedCount).toBe(2);
+    expect(cappedCount).toBe(2);
+    expect(unresolvedCount).toBe(0);
   });
 });
 
@@ -158,7 +161,8 @@ describe('getTrainingEpochArchive', () => {
     });
     expect(createBlobArchive.mock.calls[0][0].entries).toHaveLength(5);
     expect(result.url).toContain('/archive/token');
-    expect(result.omittedCount).toBe(0);
+    expect(result.unresolvedCount).toBe(0);
+    expect(result.cappedCount).toBe(0);
   });
 
   it('refuses a user who does not own the model', async () => {

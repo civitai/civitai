@@ -39,8 +39,10 @@ function extensionOf(blobId: string) {
 
 export type TrainingEpochArchiveEntries = {
   entries: BlobArchiveEntry[];
-  /** Blobs we could not include — either not orchestrator blobs, or over the entry cap. */
-  omittedCount: number;
+  /** Files whose URL is not an orchestrator blob, so there is nothing left to fetch. */
+  unresolvedCount: number;
+  /** Files that still exist but did not fit under the archive's entry cap. */
+  cappedCount: number;
 };
 
 /**
@@ -81,23 +83,24 @@ export function buildEpochArchiveEntries({
 
   const entries: BlobArchiveEntry[] = [];
   const seen = new Set<string>();
-  let omittedCount = 0;
+  let unresolvedCount = 0;
+  let cappedCount = 0;
 
   for (const candidate of candidates) {
     const blobId = candidate.url ? getConsumerBlobId(candidate.url) : undefined;
     if (!blobId || seen.has(blobId)) {
-      if (!blobId) omittedCount++;
+      if (!blobId) unresolvedCount++;
       continue;
     }
     if (entries.length >= maxEntries) {
-      omittedCount++;
+      cappedCount++;
       continue;
     }
     seen.add(blobId);
     entries.push({ blobId, fileName: candidate.fileName(blobId) });
   }
 
-  return { entries, omittedCount };
+  return { entries, unresolvedCount, cappedCount };
 }
 
 /**
@@ -131,7 +134,10 @@ export async function getTrainingEpochArchive({
   if (!trainingResults?.epochs?.length) throw throwNotFoundError('No training epochs found');
 
   const modelName = modelVersion.model.name;
-  const { entries, omittedCount } = buildEpochArchiveEntries({ trainingResults, modelName });
+  const { entries, unresolvedCount, cappedCount } = buildEpochArchiveEntries({
+    trainingResults,
+    modelName,
+  });
   if (!entries.length) throw throwNotFoundError('No downloadable training files found');
 
   const archive = await createBlobArchive({
@@ -143,6 +149,7 @@ export async function getTrainingEpochArchive({
     url: archive.url,
     entryCount: archive.entryCount,
     expiresAt: archive.expiresAt,
-    omittedCount,
+    unresolvedCount,
+    cappedCount,
   };
 }

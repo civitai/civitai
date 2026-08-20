@@ -467,13 +467,22 @@ export default function TrainingSelectFile({
   // The orchestrator bundles every blob the run produced (epoch models + sample media)
   // into one zip and hands back a short-lived signed URL, so nothing streams through us.
   const archiveMutation = trpc.training.getEpochArchive.useMutation({
-    onSuccess: ({ url, omittedCount }) => {
-      if (omittedCount > 0) {
+    onSuccess: ({ url, unresolvedCount, cappedCount }) => {
+      const reasons: string[] = [];
+      if (unresolvedCount > 0)
+        reasons.push(
+          `${unresolvedCount} file${unresolvedCount > 1 ? 's are' : ' is'} no longer available.`
+        );
+      if (cappedCount > 0)
+        reasons.push(
+          `${cappedCount} file${
+            cappedCount > 1 ? 's were' : ' was'
+          } left out because the archive hit its file limit.`
+        );
+      if (reasons.length > 0) {
         showWarningNotification({
           title: 'Some files could not be included',
-          message: `${omittedCount} file${
-            omittedCount > 1 ? 's are' : ' is'
-          } no longer available and was left out of the archive.`,
+          message: reasons.join(' '),
           autoClose: false,
         });
       }
