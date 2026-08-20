@@ -25,6 +25,7 @@ import type {
 import {
   PLACEMENT_SURFACES,
   declineFeeAmount,
+  isPlacementSurface,
   placementOutcomeFromStatus,
   placementTransactionId,
   splitPlacementPayment,
@@ -185,7 +186,7 @@ const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
 
 /** Where the unfunded-settlement gauge stops counting. See the gauge's own note. */
 const UNFUNDED_GAUGE_CEILING = 1_000;
-const PAYOUT_KINDS = [
+export const PAYOUT_KINDS = [
   'toOwner',
   'toSeller',
   'toPlatform',
@@ -216,6 +217,9 @@ const LEDGER_TEXT: Record<PlacementSurface, Record<PlacementTransactionKind, str
     // them apart — so naming one of them here would be wrong on the other three.
     principalToPlacer: 'Refund: your sticker placement',
     feeToPlacer: 'Refund: sticker placement fee',
+    // Neither of these two reaches Buzz — the platform legs keep the money in
+    // escrow and record a receipt instead — so this text is what a row WOULD say
+    // if that ever changes, and nothing renders it today.
     toPlatform: 'Platform share of a sticker placement',
     forfeit: 'Forfeited sticker placement',
   },
@@ -242,10 +246,9 @@ const placementLedgerEntry = (
   kind: PlacementTransactionKind,
   target: { surface: string; targetType: string | null; targetId: number | null }
 ) => ({
-  // A surface missing from the table cannot reach here — PLACEMENT_SURFACES
-  // denies one everywhere — but this is a money path, and a dull row beats a
-  // TypeError that strands the leg.
-  description: LEDGER_TEXT[target.surface as PlacementSurface]?.[kind] ?? 'Placement',
+  // Guarded rather than cast: `surface` is a TEXT column, and this is a money
+  // path where a dull row beats a TypeError that strands the leg.
+  description: isPlacementSurface(target.surface) ? LEDGER_TEXT[target.surface][kind] : 'Placement',
   details:
     target.targetType === 'image' && target.targetId
       ? { entityType: 'Image', entityId: target.targetId }

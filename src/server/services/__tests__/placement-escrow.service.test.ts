@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PLACEMENT_HOLD_KINDS } from '~/shared/utils/placement';
 // Mocked below; imported for the assertion that a swallowed reward failure is
 // still reported.
 import { logToAxiom } from '~/server/logging/client';
@@ -111,8 +112,21 @@ Object.assign(dbWriteMock, {
   $queryRaw: queryRaw,
   ...{
     placement: {
+      // Projects `select` rather than handing back the whole row. A double that
+      // ignores it answers with columns the query never asked for, so narrowing
+      // a select in the code under test changes nothing here and the revert is
+      // invisible.
       findUnique: vi.fn(
-        async ({ where }: { where: { id: number } }) => db.placements.get(where.id) ?? null
+        async ({ where, select }: { where: { id: number }; select?: Record<string, boolean> }) => {
+          const row = db.placements.get(where.id);
+          if (!row) return null;
+          if (!select) return row;
+          return Object.fromEntries(
+            Object.keys(select)
+              .filter((column) => select[column])
+              .map((column) => [column, row[column]])
+          );
+        }
       ),
       findMany: vi.fn(async ({ take }: { take?: number }) =>
         [...db.placements.values()]
@@ -281,6 +295,7 @@ const storedShares = (shares: { seller: number; platform: number }) =>
   (configState.shares = shares);
 
 const {
+  PAYOUT_KINDS,
   holdPlacementEscrow,
   settlePlacement,
   expirePlacements,
@@ -2108,14 +2123,17 @@ describe('what a placement says in the Buzz ledger', () => {
       amount: 1000,
     });
 
-  const descriptionsWritten = () =>
+  // Not `String(...)`: coercing turns a missing description into the literal
+  // 'undefined', which carries no leg name and no digit and so satisfies every
+  // assertion below.
+  const descriptionsWritten = (): unknown[] =>
     [
       ...createMultiAccountBuzzTransaction.mock.calls,
       ...createBuzzTransaction.mock.calls,
       ...refundMultiAccountTransaction.mock.calls,
-    ].map((call) => String(call[0].description));
+    ].map((call) => call[0].description);
 
-  it('names the two holds in words the placer can read', async () => {
+  it('names the two holds in words the placer can read, and links both to the image', async () => {
     givenPlacement();
     await hold();
 
@@ -2123,6 +2141,12 @@ describe('what a placement says in the Buzz ledger', () => {
       'Sticker placement fee, held while the creator decides',
       'Sticker placement, held while the creator decides',
     ]);
+    // Asserted positively on the hold legs, not only negatively in the
+    // non-image case below: these are the rows whose link depends on the
+    // widened `select`, and the fake honours `select`, so dropping a column
+    // from it lands here.
+    for (const call of createMultiAccountBuzzTransaction.mock.calls)
+      expect(call[0].details).toEqual({ entityType: 'Image', entityId: 99 });
   });
 
   it('tells the owner what landed on their image, and links the row to it', async () => {
@@ -2193,37 +2217,64 @@ describe('what a placement says in the Buzz ledger', () => {
       expect(call[0].details).toBeUndefined();
   });
 
-  it.each([
-    ['approve', OWNER],
-    ['decline', OWNER],
-    ['expire', undefined],
-  ] as const)('leaks no leg name or placement id through a %s', async (action, actorId) => {
-    givenPlacement();
+  // Each case pins the exact number of rows its action writes. `toBeGreaterThan`
+  // was satisfied by the two holds alone — before the settle ran — so a settle
+  // that paid nothing swept two known-clean strings and passed.
+  const settlements = [
+    {
+      name: 'an approval',
+      arrange: () => givenPlacement(),
+      // Two holds and toOwner. toPlatform keeps the money in escrow and writes
+      // no Buzz row.
+      writes: 3,
+      settle: () => settlePlacement({ placementId: 1, action: 'approve' as const, actorId: OWNER }),
+    },
+    {
+      // The only path that reaches toSeller, and therefore the only one that
+      // sweeps its copy.
+      name: 'an approval paying a seller',
+      arrange: () => {
+        givenPlacement({ sellerId: SELLER });
+        storedShares({ seller: 0.2, platform: 0.1 });
+      },
+      writes: 4,
+      settle: () => settlePlacement({ placementId: 1, action: 'approve' as const, actorId: OWNER }),
+    },
+    {
+      name: 'a decline',
+      arrange: () => givenPlacement(),
+      // Two holds, the owner's fee, and the placer's principal refund.
+      writes: 4,
+      settle: () => settlePlacement({ placementId: 1, action: 'decline' as const, actorId: OWNER }),
+    },
+    {
+      name: 'an expiry',
+      arrange: () => givenPlacement(),
+      // Two holds and both refunds.
+      writes: 4,
+      settle: () => settlePlacement({ placementId: 1, action: 'expire' as const }),
+    },
+  ];
+
+  it.each(settlements)('leaks no leg name or placement id through $name', async (settlement) => {
+    settlement.arrange();
     await hold();
 
-    await settlePlacement({ placementId: 1, action, actorId });
+    await settlement.settle();
 
     const written = descriptionsWritten();
-    // Not a vacuous sweep: the settle paths above write these, and an empty list
-    // would pass every assertion below.
-    expect(written.length).toBeGreaterThan(1);
+    expect(written).toHaveLength(settlement.writes);
 
     for (const description of written) {
-      for (const kind of [
-        'holdFee',
-        'holdPrincipal',
-        'toOwner',
-        'toSeller',
-        'toPlatform',
-        'feeToOwner',
-        'principalToPlacer',
-        'feeToPlacer',
-        'forfeit',
-      ])
+      expect(description).toBeTypeOf('string');
+
+      // The lists the code pays from, so a leg added later is swept without
+      // anyone remembering to add it here.
+      for (const kind of [...PLACEMENT_HOLD_KINDS, ...PAYOUT_KINDS])
         expect(description).not.toContain(kind);
 
       expect(description).not.toMatch(/placement \d/i);
-      expect(description.length).toBeLessThanOrEqual(100);
+      expect(String(description).length).toBeLessThanOrEqual(100);
     }
   });
 });
