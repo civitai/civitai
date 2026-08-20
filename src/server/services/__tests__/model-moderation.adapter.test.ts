@@ -730,9 +730,9 @@ describe('resolveBackfillCursor', () => {
 
   // A window that matched nothing still made progress; stalling here would loop forever.
   it('advances past a window that matched nothing', () => {
-    expect(
-      resolveBackfillCursor({ windowEnd: 50_000, maxId: 2_862_887, truncated: false })
-    ).toBe(50_000);
+    expect(resolveBackfillCursor({ windowEnd: 50_000, maxId: 2_862_887, truncated: false })).toBe(
+      50_000
+    );
   });
 
   it('terminates once the window reaches past the last id', () => {
@@ -756,9 +756,9 @@ describe('resolveBackfillCursor', () => {
   // Truncated with no candidate is contradictory, but the guard has to hold rather than
   // return undefined and stall the sweep on a NaN cursor.
   it('falls back to the window end when truncated with no candidate id', () => {
-    expect(
-      resolveBackfillCursor({ windowEnd: 50_000, maxId: 2_862_887, truncated: true })
-    ).toBe(50_000);
+    expect(resolveBackfillCursor({ windowEnd: 50_000, maxId: 2_862_887, truncated: true })).toBe(
+      50_000
+    );
   });
 });
 

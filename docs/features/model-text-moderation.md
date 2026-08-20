@@ -1,6 +1,6 @@
 # Model Text Moderation
 
-**Status**: Shipping dark — feature flags not yet created
+**Status**: Shipping dark — flags exist, ramp not started
 **Tracking**: CU 868ktb1wb
 **Last Updated**: 2026-08-20
 
@@ -20,7 +20,7 @@ describes adult content is marked NSFW automatically, and that decision is recor
 moderators can review it.
 
 Text moderation **raises a flag; it does not rate the model.** A model's rating comes from its
-images. A text scan can only assert that the model's *stated purpose* is adult — which is
+images. A text scan can only assert that the model's _stated purpose_ is adult — which is
 exactly what the NSFW flag already means. It is not a substitute for image-derived levels.
 
 ---
@@ -63,8 +63,8 @@ deliberately ignored: it folds them in. The rating outcome is derived only from 
 2. The NSFW property is **locked**, so an ordinary edit cannot clear it.
 3. The model's **browsing level is recomputed**, which is what moves it behind the viewer's
    content settings.
-4. The matched terms, the labels that triggered, and the scan time are **recorded on the model**
-   for moderator review.
+4. The labels that triggered, **how confidently** each one scored against its own threshold, and
+   the scan time are **recorded on the model** for moderator review.
 
 Nothing else happens. Text moderation never removes, unpublishes, blocks or reports a model,
 and a model stays visible while its scan is in flight — publishing does not wait on it.
@@ -73,7 +73,7 @@ and a model stays visible while its scan is in flight — publishing does not wa
 
 If a moderator has locked the NSFW property, that ruling stands and the scan never overturns
 it. This is load-bearing: flagging a model as depicting a minor deliberately sets NSFW to
-*false* and locks it, and an unattended scan must not undo that.
+_false_ and locks it, and an unattended scan must not undo that.
 
 The detection is still recorded — on the model, on the scan's own record and in the audit log —
 so a moderator reviewing it can see that the text scan disagreed with the standing ruling. Only
@@ -86,9 +86,12 @@ exactly as it was. Failed scans are retried automatically for a bounded number o
 
 ## What moderators see
 
-The matched terms, triggered labels and scan time are visible **only** in the moderation view.
-They are stripped from every creator-facing and public response, including the model owner's
-own view of their model — matched terms describe how detection works and are not shown to the
+Each triggered label with its score and threshold, plus the scan time, visible **only** in the
+moderation view. A score sitting just over its threshold marks a borderline call; one far above
+it does not.
+
+All of it is stripped from every creator-facing and public response, including the model
+owner's own view of their model — this describes how detection works and is not shown to the
 person being detected.
 
 An automatic flag also appears in the model's change history, attributed to the system rather
@@ -98,15 +101,15 @@ than to whoever last saved the model.
 
 ## Rollout and reversibility
 
-Two feature flags control the feature independently, both **off by default** and both **failing
-closed** — if the flag service is unreachable or the flag does not exist, no model is flagged.
+Two feature flags control the feature independently, both **failing closed** — if the flag
+service is unreachable or the flag does not exist, no model is flagged.
 For a path that automatically restricts other people's models, not flagging is the safe
 failure.
 
-| flag | controls | off means |
-|---|---|---|
-| submit | whether a model's text is sent for scanning at all | nothing is scanned |
-| apply | whether a verdict is written to the model | scans run and verdicts are recorded; the model is untouched |
+| flag   | controls                                           | off means                                                   |
+| ------ | -------------------------------------------------- | ----------------------------------------------------------- |
+| submit | whether a model's text is sent for scanning at all | nothing is scanned                                          |
+| apply  | whether a verdict is written to the model          | scans run and verdicts are recorded; the model is untouched |
 
 Flags are evaluated **per model**, so a percentage rollout selects a stable subset of content
 rather than following a particular author around.
@@ -152,10 +155,10 @@ per-label trigger rates exist to extrapolate from.
 Model text was previously checked by two independent mechanisms, each with its own detector,
 its own storage and its own outcome:
 
-| Mechanism | Outcome |
-|---|---|
+| Mechanism                                             | Outcome                                       |
+| ----------------------------------------------------- | --------------------------------------------- |
 | A profanity filter running inline on every model save | Marked the model NSFW and locked the property |
-| A separate classifier running on a schedule | Created an automated report |
+| A separate classifier running on a schedule           | Created an automated report                   |
 
 Neither had any notion of the non-sexual policy axes the shared pipeline already classifies for
 other content types.
