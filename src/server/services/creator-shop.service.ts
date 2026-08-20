@@ -1626,7 +1626,8 @@ export const getCreatorShopResaleStats = async ({ userId }: { userId: number }) 
 
 export const getCreatorShopReviewQueue = async ({
   limit,
-  cursor,
+  page,
+  sort,
   status,
   username,
   userId,
@@ -1639,68 +1640,78 @@ export const getCreatorShopReviewQueue = async ({
   const packsWanted = !cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE);
   const singlesWanted = !cosmeticTypes?.length || types.length > 0;
 
-  const items = await dbRead.cosmeticShopItem.findMany({
-    where: {
-      // A specific status filters to it (including Archived); no status = every
-      // status except Archived (the "All" option in the review queue).
-      ...(status ? { status } : { status: { not: CosmeticShopItemStatus.Archived } }),
-      OR: [
-        // Only creator-submitted items (exclude official/admin cosmetics).
-        ...(singlesWanted
-          ? [
-              {
-                cosmetic: {
-                  createdById: userId ?? { not: null },
-                  ...(types.length ? { type: { in: types } } : {}),
-                  ...(username
-                    ? {
-                        creator: { username: { contains: username, mode: 'insensitive' as const } },
-                      }
-                    : {}),
-                },
-              },
-            ]
-          : []),
-        ...(packsWanted
-          ? [
-              {
-                cosmeticId: null,
-                addedById: userId ?? { not: null },
+  const where: Prisma.CosmeticShopItemWhereInput = {
+    // A specific status filters to it (including Archived); no status = every
+    // status except Archived (the "All" option in the review queue).
+    ...(status ? { status } : { status: { not: CosmeticShopItemStatus.Archived } }),
+    OR: [
+      // Only creator-submitted items (exclude official/admin cosmetics).
+      ...(singlesWanted
+        ? [
+            {
+              cosmetic: {
+                createdById: userId ?? { not: null },
+                ...(types.length ? { type: { in: types } } : {}),
                 ...(username
-                  ? { addedBy: { username: { contains: username, mode: 'insensitive' as const } } }
+                  ? {
+                      creator: { username: { contains: username, mode: 'insensitive' as const } },
+                    }
                   : {}),
               },
-            ]
-          : []),
+            },
+          ]
+        : []),
+      ...(packsWanted
+        ? [
+            {
+              cosmeticId: null,
+              addedById: userId ?? { not: null },
+              ...(username
+                ? { addedBy: { username: { contains: username, mode: 'insensitive' as const } } }
+                : {}),
+            },
+          ]
+        : []),
+    ],
+  };
+
+  const { take, skip } = getPagination(limit, page);
+
+  const [items, count] = await Promise.all([
+    dbRead.cosmeticShopItem.findMany({
+      where,
+      take,
+      skip,
+      // `id` breaks ties so a page boundary can't drop or repeat an item when
+      // two submissions share a createdAt.
+      orderBy: [
+        { createdAt: sort === 'newest' ? 'desc' : 'asc' },
+        { id: sort === 'newest' ? 'desc' : 'asc' },
       ],
-    },
-    take: limit + 1,
-    ...(cursor ? { cursor: { id: cursor } } : {}),
-    orderBy: { createdAt: 'asc' },
-    select: {
-      ...creatorShopItemSelect,
-      // A pack has no cosmetic, so its author is the lister — without this the
-      // review panel has nobody to attribute it to.
-      addedBy: { select: { id: true, username: true, image: true } },
-      cosmetic: {
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          data: true,
-          videoUrl: true,
-          createdById: true,
-          source: true,
-          description: true,
-          creator: { select: { id: true, username: true, image: true } },
+      select: {
+        ...creatorShopItemSelect,
+        // A pack has no cosmetic, so its author is the lister — without this the
+        // review panel has nobody to attribute it to.
+        addedBy: { select: { id: true, username: true, image: true } },
+        cosmetic: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            data: true,
+            videoUrl: true,
+            createdById: true,
+            source: true,
+            description: true,
+            creator: { select: { id: true, username: true, image: true } },
+          },
         },
       },
-    },
-  });
+    }),
+    dbRead.cosmeticShopItem.count({ where }),
+  ]);
 
-  let nextCursor: number | undefined;
-  if (items.length > limit) nextCursor = items.pop()?.id;
-  return { items, nextCursor };
+  return getPagingData({ items, count }, take, page);
 };
 
 // Backs the review queue's creator filter: every user who has ever submitted a
