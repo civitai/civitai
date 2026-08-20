@@ -638,6 +638,7 @@ describe('getViewerMonetization — what the UI is told about a sale', () => {
 
     expect(out[1].paidAccess?.terms).toEqual({ download: { price: 800 } });
     expect(out[1].sale?.listTerms).toEqual({ download: { price: 1000 } });
+    expect(out[1].sale?.buyerTerms).toEqual({ download: { price: 800 } });
     expect(out[1].sale?.endsAt).toEqual(FUTURE);
     // The discount travels with the sale so a badge can say "20% off" without deriving it client-side.
     expect(out[1].sale?.discountType).toBe('Percent');
@@ -655,6 +656,9 @@ describe('getViewerMonetization — what the UI is told about a sale', () => {
     expect(out[1].sale?.discountType).toBe('Percent');
     expect(out[1].sale?.discountAmount).toBe(20);
     expect(out[1].sale?.endsAt).toEqual(FUTURE);
+    // And the buyer price, or the owner is shown a page of stored prices with a banner claiming a
+    // discount whose actual number appears nowhere.
+    expect(out[1].sale?.buyerTerms).toEqual({ download: { price: 800 } });
   });
 
   it('reports no sale when there is none', async () => {

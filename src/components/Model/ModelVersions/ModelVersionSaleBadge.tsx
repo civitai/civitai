@@ -9,6 +9,7 @@ import { formatDate } from '~/utils/date-helpers';
 
 export type SaleDisplay = {
   listTerms: ModelVersionTerms;
+  buyerTerms: ModelVersionTerms;
   endsAt: Date | string;
   discountType: 'Fixed' | 'Percent';
   discountAmount: number;
@@ -109,9 +110,11 @@ export function ModelVersionSaleBanner({
   if (!sale) return null;
 
   const listPrice = sale.listTerms.download?.price;
+  const buyerPrice = sale.buyerTerms.download?.price;
   const endsAt = new Date(sale.endsAt);
-  // Owner and moderator are both quoted the STORED price, so neither gets a strikethrough — striking
-  // through the same number the page already shows reads as a rendering fault, not a discount.
+  // Owner and moderator are both quoted the STORED price everywhere else on the page, so instead of a
+  // strikethrough over a number that is not moving, they are told what a BUYER pays. Without that, the
+  // banner announces a discount whose actual price appears nowhere — which is how Justin read it.
   const quotedStoredPrice = isOwner || isModerator;
 
   return (
@@ -125,6 +128,15 @@ export function ModelVersionSaleBanner({
               <SaleDiscountLabel sale={sale} size="sm" />
             </Text>
             <Text size="xs" c="dimmed">
+              {quotedStoredPrice && buyerPrice != null && listPrice != null && (
+                <>
+                  Buyers pay{' '}
+                  <Text span fw={600} c="green.7">
+                    {buyerPrice.toLocaleString()}
+                  </Text>{' '}
+                  instead of {listPrice.toLocaleString()} Buzz ·{' '}
+                </>
+              )}
               Ends {formatDate(endsAt, 'MMM D, YYYY h:mm A')}
               {isOwner && (
                 <>

@@ -444,6 +444,11 @@ export type ViewerMonetization = {
    */
   sale: {
     listTerms: ModelVersionTerms;
+    /**
+     * What a BUYER is quoted — capped then discounted. Sent even to an owner, who is otherwise shown a
+     * page full of their stored price while a banner claims a discount, with the actual number nowhere.
+     */
+    buyerTerms: ModelVersionTerms;
     endsAt: Date;
     discountType: SaleDiscountKind;
     discountAmount: number;
@@ -496,7 +501,10 @@ export async function getViewerMonetization({
     );
   });
   const feeBearing = versions.filter((v) => (v.licensingFee ?? 0) > 0 && ownerOf(v) != null);
-  const capTiers = await getCapTiers([...cappable, ...feeBearing].map(ownerOf));
+  // Owners of sale-covered versions join the batch too: they are not "cappable" (they see stored terms)
+  // but the buyer price we show them has to be capped against their own tier, like a buyer's would be.
+  const saleBearing = versions.filter((v) => rows[v.id]?.sales?.length && ownerOf(v) != null);
+  const capTiers = await getCapTiers([...cappable, ...feeBearing, ...saleBearing].map(ownerOf));
   const cappableIds = new Set(cappable.map((v) => v.id));
 
   const out: Record<number, ViewerMonetization> = {};
@@ -519,12 +527,24 @@ export async function getViewerMonetization({
       const ownerSale = row?.sales?.length
         ? bestSaleFor(gatePrices(row.terms as ModelVersionTerms).download, row.sales)
         : undefined;
+      const ownerTier = ownerSale ? capTiers.get(ownerOf(v) as number) ?? null : null;
+      const ownerBuyerTerms =
+        ownerSale && row
+          ? discountedTerms(
+              cappedTerms(row.terms as ModelVersionTerms, ownerTier, {
+                permanent: isPermanentGate(row),
+                mediaType: capMediaType(v.baseModel),
+              }),
+              row.sales
+            )
+          : undefined;
       out[v.id] = {
         paidAccess: row,
         sale:
           ownerSale && row
             ? {
                 listTerms: row.terms as ModelVersionTerms,
+                buyerTerms: (ownerBuyerTerms ?? row.terms) as ModelVersionTerms,
                 endsAt: ownerSale.endsAt,
                 discountType: ownerSale.discountType,
                 discountAmount: ownerSale.discountAmount,
@@ -564,6 +584,7 @@ export async function getViewerMonetization({
         gatePrices(saleTerms).download < gatePrices(listTerms).download
           ? {
               listTerms,
+              buyerTerms: saleTerms,
               endsAt: activeSale.endsAt,
               discountType: activeSale.discountType,
               discountAmount: activeSale.discountAmount,

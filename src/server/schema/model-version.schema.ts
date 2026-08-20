@@ -405,6 +405,8 @@ export type ModelVersionPaidAccessDto = {
    */
   sale: {
     listTerms: ModelVersionTerms;
+    /** What a buyer is quoted, so an owner can be shown it without recomputing the discount. */
+    buyerTerms: ModelVersionTerms;
     endsAt: Date;
     discountType: 'Fixed' | 'Percent';
     discountAmount: number;
