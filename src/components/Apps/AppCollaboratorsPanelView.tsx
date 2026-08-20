@@ -262,7 +262,16 @@ function OwnerTransferSection({
           Rendered from the LISTING, so it is on screen the moment the tab opens. The
           message is the server's own constant, not a paraphrase: the owner reads the same
           sentence here that the mutation would have returned. It states a CONSTRAINT and
-          instructs nothing — there is no unlink flow to send them to; see the constant. */}
+          instructs nothing.
+
+          🔴 NOT BECAUSE "there is no unlink flow to send them to", which is what this
+          comment used to say and what #4126 refuted: deleting the OAuth client cascades
+          `onDelete: SetNull` onto `AppListing.connectClientId`, so an owner-initiated
+          route out DOES exist. The copy still names no remedy for reasons re-taken on
+          their merits with that route known — it is a destructive delete rather than a
+          detach, it silently demotes the listing's sub-kind, and it is unavailable to a
+          moderator-linked owner and to the recipient who reads the same string. The full
+          argument, and what would reopen it, is at the constant. */}
       {refusedForConnectClient ? (
         <Alert
           color="yellow"
@@ -315,20 +324,32 @@ function OwnerTransferSection({
               ) : null}
             </Group>
             {/* 🔴 A LIVE OFFER ON A REFUSED LISTING IS DEAD ON ACCEPT, AND SAYING SO IS THE
-                WHOLE POINT OF THIS SECTION. The states co-exist for a real reason: a
-                revision approve can link an OAuth client while an offer sits open, which is
-                precisely why `acceptTransfer` re-asserts the refusal IN-TRANSACTION rather
-                than trusting the initiate-time check. Without this line the tab renders
-                "ownership cannot be transferred" directly above a "Transfer pending" card
-                and leaves the owner to guess which one is true.
+                WHOLE POINT OF THIS SECTION. `acceptTransfer` re-asserts the refusal
+                IN-TRANSACTION rather than trusting the initiate-time check, so the two
+                states can co-exist and the tab must say which one wins. Without this line
+                it renders "ownership cannot be transferred" directly above a "Transfer
+                pending" card and leaves the owner to guess.
+
+                🔴 HOW THE PAIR ARISES — NOT THE WAY THIS COMMENT USED TO SAY. It claimed
+                "a revision approve can link an OAuth client while an offer sits open".
+                That is false and #4126 corrected it here and in six other places: no
+                writer can move `AppListing.connectClientId` from null to non-null on an
+                existing row, so a clean listing cannot become refused mid-offer. The
+                honest account, including the schema-level `onDelete: SetNull` writer that
+                only ever UNLINKS, is at `acceptBlockedReason` in
+                `app-ownership-transfer.service.ts`. This arm still renders — a listing
+                BORN linked is refused at initiate, so a pending offer beside a refusal
+                needs a direct DB write, a migration or a future link flow to arise, and
+                the branch is gap-closure ahead of that rather than a live-bug fix. Its
+                test is still what stops the verdict being silently gated on
+                `pendingTransfer == null`.
 
                 🔴 SCOPE: THE OWNER ONLY. This is the owner's Collaborators tab. The
-                RECIPIENT's surfaces (`AppTransferOffersView`, `AppInvitesBody`) carry no
-                connect-client awareness at all, so an addressee still sees a normal-looking
-                offer and meets the refusal only on clicking accept — the same
-                learn-it-by-doing-the-work shape this section fixes for the owner, on the
-                other side of the wire. That gap is OPEN and deliberately NOT closed here;
-                it needs the recipient read to carry the verdict, which is its own change. */}
+                recipient's half of the same disclosure is NOT here — it is
+                `acceptBlockedReason`, computed server-side and rendered by
+                `AppTransferOffersView`. (This comment used to say the recipient surfaces
+                "carry no connect-client awareness at all" and that the gap was OPEN; that
+                was true when it was written and is not now.) */}
             {refusedForConnectClient ? (
               <Text size="xs" c="red.6" data-testid="apps-transfer-pending-dead">
                 {/* No "because the listing is linked to an OAuth application" here — the
