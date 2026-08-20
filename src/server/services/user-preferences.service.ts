@@ -526,7 +526,7 @@ export async function toggleHidden({
     case 'tag':
       return await toggleHiddenTags({ tagIds: data.map((x) => x.id), hidden, userId });
     case 'blockedUser':
-      return await toggleBlockUser({ targetUserId: data[0].id, userId });
+      return await toggleBlockUser({ targetUserId: data[0].id, userId, setTo: hidden });
     default:
       throw new Error('unsupported hidden toggle kind');
   }
@@ -824,8 +824,14 @@ async function toggleBlockUser({
     where: { userId_targetUserId: { userId, targetUserId } },
     select: { type: true },
   });
-  const unblocking = engagement?.type === 'Block' && setTo !== true;
-  if (!engagement)
+  const alreadyBlocked = engagement?.type === 'Block';
+  // `setTo` carries the caller's INTENT. Without it this fell back to a blind
+  // flip, so a client whose block list was stale sent "block" and got an
+  // unblock — with a success toast either way. Only fall back to flipping
+  // when no intent was supplied at all.
+  const blocking = setTo ?? !alreadyBlocked;
+
+  if (blocking && !engagement)
     await dbWrite.userEngagement
       .create({
         data: { userId, targetUserId, type: 'Block' },
@@ -836,21 +842,21 @@ async function toggleBlockUser({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else if (engagement.type === 'Block' && setTo !== true)
-    await dbWrite.userEngagement.delete({
-      where: { userId_targetUserId: { userId, targetUserId } },
-    });
-  else
+  else if (blocking && !alreadyBlocked)
     await dbWrite.userEngagement.update({
       where: { userId_targetUserId: { userId, targetUserId } },
       data: { type: 'Block' },
+    });
+  else if (!blocking && alreadyBlocked)
+    await dbWrite.userEngagement.delete({
+      where: { userId_targetUserId: { userId, targetUserId } },
     });
 
   await userFollowsCache.refresh(userId);
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
 
-  if (!unblocking) await cascadeBlockToPlacements({ userId, targetUserId });
+  if (blocking && !alreadyBlocked) await cascadeBlockToPlacements({ userId, targetUserId });
 
   return {
     added: [],
