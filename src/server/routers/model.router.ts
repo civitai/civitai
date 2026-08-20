@@ -94,7 +94,6 @@ import {
   setModelOfficial,
   setModelsCategory,
   toggleCannotPromote,
-  toggleCannotPublish,
   toggleLockComments,
 } from '~/server/services/model.service';
 import { getResourceSelectModels } from '~/server/services/resource-select.service';
@@ -359,11 +358,6 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
       toggleCannotPromote({ ...input, isModerator: ctx.user.isModerator ?? false })
-    ),
-  toggleCannotPublish: moderatorProcedure
-    .input(getByIdSchema)
-    .mutation(({ input, ctx }) =>
-      toggleCannotPublish({ ...input, isModerator: ctx.user.isModerator ?? false })
     ),
   setOfficial: moderatorProcedure
     .input(setModelOfficialSchema)

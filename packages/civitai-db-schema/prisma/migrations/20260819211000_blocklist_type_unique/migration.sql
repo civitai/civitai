@@ -6,10 +6,13 @@
 -- has happened; on a fresh environment seeded from the migrations there is nothing to merge
 -- and it applies cleanly.
 --
--- Why it matters rather than being tidiness: the read picks one row and the Redis cache is
--- keyed by type alone, so a second row's entries are silently unenforced and which row wins
--- can change on an unrelated edit. `getBlocklistDTO` now reads deterministically and logs
--- the duplicate, but only this constraint makes the state unrepresentable.
+-- Why it matters rather than being tidiness: there are now TWO writers of the same type-scoped
+-- Redis key — the main app and the moderator spoke (`apps/moderator/src/lib/server/
+-- blocklist.service.ts`, whose own header notes it writes the key the main app reads). With a
+-- duplicate row present, the two can pick different rows and each overwrite the other's cached
+-- answer for a month. Both now read deterministically and log the duplicate, but a code guard
+-- on each side is a convention two teams have to keep; this constraint is what actually makes
+-- the shared cache coherent, by making the state unrepresentable.
 --
 -- Check before applying, per environment:
 --   SELECT "type", count(*) FROM "Blocklist" GROUP BY "type" HAVING count(*) > 1;

@@ -241,12 +241,6 @@ const moderateTrainingData = async ({
   }
 };
 
-export async function handleApproveTrainingData({ input }: { input: GetByIdInput }) {
-  const modelVersionId = input.id;
-  const { gateId, workflowId, status } = await getJobIdFromVersion(modelVersionId);
-  return await moderateTrainingData({ modelVersionId, gateId, workflowId, status, approve: true });
-}
-
 export async function handleDenyTrainingData({ input }: { input: GetByIdInput }) {
   const modelVersionId = input.id;
   const { gateId, workflowId, status } = await getJobIdFromVersion(modelVersionId);

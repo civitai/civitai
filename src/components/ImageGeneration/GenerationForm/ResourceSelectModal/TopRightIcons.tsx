@@ -11,7 +11,6 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import type { TransformedModel } from '~/shared/search/models-transform';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -71,26 +70,6 @@ export function TopRightIcons({
         {`Hide content with these tags`}
       </Menu.Item>
     );
-
-  if (currentUser?.isModerator && env.NEXT_PUBLIC_MODEL_LOOKUP_URL) {
-    contextMenuItems.unshift(
-      <Menu.Item
-        component="a"
-        key="lookup-model"
-        target="_blank"
-        rel="nofollow noreferrer"
-        leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-        href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
-        onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
-          e.preventDefault();
-          e.stopPropagation();
-          window.open(`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL as string}${data.id}`, '_blank');
-        }}
-      >
-        Lookup Model
-      </Menu.Item>
-    );
-  }
 
   return (
     <>

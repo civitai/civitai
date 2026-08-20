@@ -68,7 +68,7 @@
             src={announcement.coverUrl}
             width={96}
             alt=""
-            class="h-16 w-24 shrink-0 rounded-lg object-cover"
+            class="size-16 shrink-0 rounded-lg object-cover"
           />
         {/if}
         <div class="min-w-0 flex-1">

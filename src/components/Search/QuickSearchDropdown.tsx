@@ -27,7 +27,7 @@ import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
-import { ApplyCustomFilter, BrowsingLevelFilter } from './CustomSearchComponents';
+import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import classes from './QuickSearchDropdown.module.scss';
@@ -147,17 +147,6 @@ export const QuickSearchDropdown = ({
   };
 
   const indexName = searchIndexMap[targetIndex];
-  const indexSupportsNsfwLevel = useMemo(
-    () =>
-      [
-        searchIndexMap.articles,
-        searchIndexMap.bounties,
-        searchIndexMap.models,
-        searchIndexMap.images,
-        searchIndexMap.collections,
-      ].some((i) => i === indexName),
-    [indexName]
-  );
 
   return (
     <InstantSearch
@@ -165,15 +154,11 @@ export const QuickSearchDropdown = ({
       indexName={indexName}
       future={{ preserveSharedStateOnUnmount: true }}
     >
-      {indexSupportsNsfwLevel ? (
-        <BrowsingLevelFilter
-          attributeName="nsfwLevel"
-          filters={filters}
-          hitsPerPage={dropdownItemLimit}
-        />
-      ) : (
-        <ApplyCustomFilter hitsPerPage={dropdownItemLimit} filters={filters} />
-      )}
+      <BrowsingLevelFilter
+        indexKey={targetIndex}
+        filters={filters}
+        hitsPerPage={dropdownItemLimit}
+      />
 
       <QuickSearchDropdownContent
         {...props}

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as z from 'zod';
 import { redisMock } from '~/__tests__/mocks';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 
 // Minimal NextApiRequest/Response stand-in (avoids a node-mocks-http dependency).
 function createMocks({
@@ -51,11 +52,20 @@ const { mockGetSession, mockServerSession, mockAudit } = vi.hoisted(() => ({
 // endpoint uses are stubbed, in `beforeEach`; `REDIS_SYS_KEYS` stays the REAL table, so the
 // rate-limit key this test exercises is the one production builds, and it cannot go stale.
 const mockMultiIncr = { value: 1 };
-const multiFactory = () => ({
-  set: vi.fn().mockReturnThis(),
-  incr: vi.fn().mockReturnThis(),
-  exec: vi.fn().mockImplementation(async () => ['OK', mockMultiIncr.value]),
-});
+// The chain is captured because the reply alone proves nothing: `exec` returns a number this file
+// chose, so a 429 test asserts on its own fixture. What the endpoint actually decides is the KEY and
+// the TTL it passes to `set`, and those are only visible here.
+let lastMulti: { set: ReturnType<typeof vi.fn>; incr: ReturnType<typeof vi.fn> };
+const multiFactory = () => {
+  lastMulti = {
+    set: vi.fn().mockReturnThis(),
+    incr: vi.fn().mockReturnThis(),
+  };
+  return {
+    ...lastMulti,
+    exec: vi.fn().mockImplementation(async () => ['OK', mockMultiIncr.value]),
+  };
+};
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGetSession }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -77,7 +87,11 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
     res.status(500).json({ error: 'An unexpected error occurred', message: (e as Error).message }),
 }));
 
-import { defineModeratorEndpoint, specToDoc } from '~/server/utils/moderator-endpoint';
+import {
+  defineModeratorEndpoint,
+  moderatorBoolean,
+  specToDoc,
+} from '~/server/utils/moderator-endpoint';
 
 const MOD = { id: 7, isModerator: true, permissions: [] as string[], bannedAt: null };
 
@@ -238,6 +252,59 @@ describe('defineModeratorEndpoint', () => {
     expect(handlerSpy).not.toHaveBeenCalled();
   });
 
+  // 🔴 These five exist because the suite passed green against five mutations of the builder: a
+  // rate-limit key with the actor dropped, a `set` with no NX/EX, `privileged` hardcoded true, a
+  // handler invoked twice, and reversed body/query precedence.
+  it('keys the rate limit per endpoint AND per actor, with the TTL in the same command', async () => {
+    const { handler } = build();
+    const { req, res } = createMocks({ body: { value: 1 } });
+    await handler(req as never, res as never);
+    expect(lastMulti.set).toHaveBeenCalledWith(
+      `${REDIS_SYS_KEYS.RETOOL_ENDPOINT.RATE_LIMIT}:test.ping:7`,
+      '0',
+      // NX so an in-flight window is not reset to 0 on every call; EX so a crash between SET and
+      // INCR cannot strand a TTL-less counter and lock the actor out permanently.
+      { NX: true, EX: 60 }
+    );
+  });
+
+  it('gives two actors two counters — a shared key would lock out every other moderator', async () => {
+    const { handler } = build();
+    await handler(...(Object.values(createMocks({ body: { value: 1 } })) as [never, never]));
+    const firstKey = lastMulti.set.mock.calls[0][0];
+
+    signedInAs({ id: 99 });
+    await handler(...(Object.values(createMocks({ body: { value: 1 } })) as [never, never]));
+    const secondKey = lastMulti.set.mock.calls[0][0];
+
+    expect(firstKey).not.toBe(secondKey);
+    expect(secondKey).toContain(':99');
+  });
+
+  it('runs the handler and writes the audit row exactly once', async () => {
+    const { handler, handlerSpy } = build();
+    const { req, res } = createMocks({ body: { value: 1 } });
+    await handler(req as never, res as never);
+    // A doubled call here is a doubled MODERATION EFFECT — a second strike, a second grant — and a
+    // second audit row saying so.
+    expect(handlerSpy).toHaveBeenCalledTimes(1);
+    expect(mockAudit).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a non-privileged action as non-privileged on the audit row', async () => {
+    const { handler } = build();
+    const { req, res } = createMocks({ body: { value: 1 } });
+    await handler(req as never, res as never);
+    expect(mockAudit).toHaveBeenCalledWith(expect.objectContaining({ privileged: false }));
+  });
+
+  it('lets the query string win over a disagreeing body', async () => {
+    const { handler, handlerSpy } = build();
+    const { req, res } = createMocks({ body: { value: 1 }, query: { value: '2' } });
+    await handler(req as never, res as never);
+    expect(handlerSpy).toHaveBeenCalledWith({ value: 2 }, expect.anything());
+  });
+
   it('splits `affected` out of the response and onto the audit row', async () => {
     const { handler } = build(vi.fn().mockResolvedValue({ id: 1, affected: { userIds: [2] } }));
     const { req, res } = createMocks({ body: { value: 1 } });
@@ -298,5 +365,27 @@ describe('specToDoc', () => {
       { name: 'required', type: 'string', required: true, description: 'needed' },
       { name: 'optional', type: 'string', required: false },
     ]);
+  });
+});
+
+describe('moderatorBoolean', () => {
+  // It is bound to `isModerator` on user/toggle-moderator, so the failure this prevents is a request
+  // saying "false" granting the role. `z.coerce.boolean()` is JS `Boolean()`, under which every
+  // non-empty string — "false" included — is true.
+  it.each([
+    ['false', false],
+    ['0', false],
+    [0, false],
+    ['true', true],
+    ['1', true],
+    [1, true],
+    [true, true],
+    [false, false],
+  ])('reads %o as %o', (input, expected) => {
+    expect(moderatorBoolean.parse(input)).toBe(expected);
+  });
+
+  it.each(['yes', 'no', '', 'TRUE', 2, null])('refuses %o rather than guessing', (input) => {
+    expect(moderatorBoolean.safeParse(input).success).toBe(false);
   });
 });

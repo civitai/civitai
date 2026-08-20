@@ -57,6 +57,7 @@ const packageJson = JSON.parse(readFileSync(resolve(PACKAGE_DIR, 'package.json')
 const PACKAGE_EXPORTS = {
   '.': './src/index.ts',
   './model': './src/model.db.ts',
+  './page-access': './src/page-access.db.ts',
   './tag': './src/tag.db.ts',
   './test-harness': './src/test/compile-harness.ts',
 };

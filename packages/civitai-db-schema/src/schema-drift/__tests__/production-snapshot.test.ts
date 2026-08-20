@@ -153,12 +153,20 @@ describe('production catalog snapshot (2026-08-03)', () => {
     expect(found('missing-column')).toEqual(
       expect.arrayContaining([
         'ModelFlag.sfwOnly',
-        'UserRank.thumbsUpCountDayRank',
-        'UserRank.thumbsUpCountAllTimeRank',
-        'UserRank.thumbsDownCountDayRank',
-        'UserRank.thumbsDownCountAllTimeRank',
+        'Challenge.judgingEngine',
+        'UserCosmeticShopPurchases.meta',
+        'UserProfile.sfwBio',
+        'UserProfile.sfwMessageAddedAt',
       ])
     );
+
+    // The UserRank cleanup, guarded. arrayContaining above cannot fail on an EXTRA finding, so
+    // re-declaring a dropped column would be silent without this. Controls that this is not
+    // vacuous are already in this file: the nullability case pins that UserRank still produces a
+    // missing-foreign-key finding (the differ visits the table), and the assertion above pins
+    // that the kind is still emitted. Catches the 10 thumbs* only — the other 35 exist in the
+    // frozen catalog, so re-declaring one is invisible here until the snapshot is recaptured.
+    expect(found('missing-column').filter((c) => c.startsWith('UserRank.'))).toEqual([]);
   });
 
   it('reports the one uniqueness drift', () => {

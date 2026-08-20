@@ -15,6 +15,7 @@ import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
   anyMetricHidden,
@@ -148,37 +149,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  const filterableAttributes = [
-    'availability',
-    'canGenerate',
-    'category.name',
-    'checkpointType',
-    'fileFormats',
-    'hashes',
-    'id',
-    'lastVersionAtUnix',
-    'nsfwLevel',
-    'status',
-    'tags.name',
-    'type',
-    'user.id',
-    'user.username',
-    'version.baseModel',
-    'versions.baseModel',
-    'versions.hashes',
-    'versions.id',
-    'availability',
-    'cannotPromote',
-    'poi',
-    'minor',
-  ];
-
   if (
     // Meilisearch stores sorted.
-    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+    JSON.stringify(modelsFilterableAttributes.sort()) !==
+    JSON.stringify(settings.filterableAttributes)
   ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-      filterableAttributes
+      modelsFilterableAttributes
     );
 
     console.log(

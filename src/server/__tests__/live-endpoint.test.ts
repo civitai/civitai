@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Minimal NextApiRequest/Response stand-in (avoids a node-mocks-http dependency).
-// Mirrors src/server/utils/__tests__/retool-endpoint.test.ts.
+// Mirrors src/server/utils/__tests__/moderator-endpoint.test.ts.
 function createMocks({
   method = 'GET',
   headers = {},

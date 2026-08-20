@@ -1,6 +1,4 @@
 import type {
-  Adjustment,
-  AdjustmentAction,
   Discount,
   IEventName,
   PriceNotification,
@@ -20,7 +18,6 @@ import {
   createOneTimeProductPurchaseTransaction,
   getCustomerLatestTransaction,
   getOrCreateCustomer,
-  getPaddleAdjustments,
   getPaddleCustomerSubscriptions,
   getPaddleSubscription,
   subscriptionBuzzOneTimeCharge,
@@ -29,7 +26,6 @@ import {
 } from '~/server/paddle/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
-  GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
   TransactionMetadataSchema,
   TransactionWithSubscriptionCreateInput,
@@ -1091,43 +1087,6 @@ export const cancelAllPaddleSubscriptions = async ({ customerId }: { customerId:
   const subsToCancel = subs.filter((sub) => sub.status === 'active');
   const cancelPromises = subsToCancel.map((sub) => cancelPaddleSubscription(sub.id, 'immediately'));
   return Promise.all(cancelPromises);
-};
-
-export const getAdjustmentsInfinite = async ({
-  limit = 50,
-  cursor,
-  customerId,
-  subscriptionId,
-  transactionId,
-  action,
-}: GetPaddleAdjustmentsSchema) => {
-  const data = await getPaddleAdjustments({
-    after: cursor,
-    perPage: limit + 1,
-    // Paddle is picky about empty arrays.....
-    customerId: customerId?.length ? customerId : undefined,
-    subscriptionId: subscriptionId?.length ? subscriptionId : undefined,
-    transactionId: transactionId?.length ? transactionId : undefined,
-    action: action ? (action as AdjustmentAction) : undefined,
-  });
-
-  const hasMore = data.length > limit;
-  let nextItem: Adjustment | undefined;
-  if (hasMore) {
-    data.pop();
-    nextItem = data[data.length - 1];
-  }
-
-  return {
-    // Paddle SDK returns `Adjustment` class instances (with nested AdjustmentItem/
-    // TotalAdjustments/PayoutTotalsAdjustment instances). The devalue tRPC
-    // transformer is strict and throws on class instances → 500. Coerce to plain
-    // objects; faithful since the SDK stores all data on public enumerable fields
-    // and every timestamp (createdAt/updatedAt) is already a string, so the JSON
-    // round-trip preserves the exact shape the browser received under superjson.
-    items: JSON.parse(JSON.stringify(data)) as Adjustment[],
-    nextCursor: nextItem?.id,
-  };
 };
 
 export const createOneTimePurchaseTransaction = async ({

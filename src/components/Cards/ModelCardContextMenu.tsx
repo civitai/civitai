@@ -1,5 +1,5 @@
 import { Menu } from '@mantine/core';
-import { IconBabyCarriage, IconInfoCircle, IconTagOff } from '@tabler/icons-react';
+import { IconBabyCarriage, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
@@ -15,7 +15,6 @@ import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardCon
 import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -146,28 +145,6 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
     );
 
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
-
-  if (currentUser?.isModerator && env.NEXT_PUBLIC_MODEL_LOOKUP_URL) {
-    contextMenuItems.unshift({
-      key: 'lookup-model',
-      component: (
-        <Menu.Item
-          component="a"
-          key="lookup-model"
-          target="_blank"
-          leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-          href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
-          onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
-            e.preventDefault();
-            e.stopPropagation();
-            window.open(`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`, '_blank');
-          }}
-        >
-          Lookup Model
-        </Menu.Item>
-      ),
-    });
-  }
 
   if (currentUser?.isModerator) {
     contextMenuItems.push({

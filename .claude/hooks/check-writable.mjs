@@ -127,7 +127,16 @@ const DANGEROUS_PATTERNS = [
   {
     check: (command) => prettierWriteTargets(command).some((t) => t === '*' || t.replace(/\\/g, '/').startsWith('**')),
     reason:
-      'A repo-wide `prettier --write` rewrites ~1000 committed files (the repo is not prettier-2-clean) and reformats other people\'s uncommitted work in place. Use `pnpm run prettier:write`, which scopes to dirty files.',
+      "A repo-wide `prettier --write` rewrites ~1000 committed files (the repo is not prettier-2-clean) and reformats other people's uncommitted work in place. Use `pnpm run prettier:write`, which scopes to dirty files.",
+  },
+  {
+    // The glob rule above misses the commoner spellings. `--write` must name FILES: the next token
+    // has to carry an extension, so `--write .`, `--write src` and `--write src/` are refused while
+    // `--write "src/a.ts" "src/b.ts"` passes. Explicit per-file writes are allowlisted in settings,
+    // so these two patterns are the only thing between that grant and a ~1000-file commit.
+    pattern: /prettier[^;&|]*--write\s+(?!["']?[^\s;&|"']*\.[a-z]{1,6}\b)/i,
+    reason:
+      'Name the files explicitly (`--write "src/a.ts"`), or use `pnpm run prettier:write`, which scopes to what git reports as dirty. A directory or bare `.` target reformats the whole repo.',
   },
 ];
 
@@ -142,9 +151,13 @@ const GUARDED_PATTERNS = [
       'was slow, with the matching remedy. Or add --max-time <seconds>.',
   },
   {
-    pattern: /svelte-kit\s+sync|pnpm\s+(run\s+)?check\b/i,
+    // `svelte-kit sync` alone is cheap (121 generated files) and is deliberately NOT guarded.
+    // A full build writes ~1,800 files / 25MB and is not a check — it catches nothing `svelte-check`
+    // does not, apart from Svelte's TS stripping leaving `?` on optional parameters, which
+    // check-svelte-ts.mjs now catches on write instead.
+    pattern: /(apps[\/\\](moderator|auth|creator-studio)[^;&|]*\bbuild\b|\bvite\s+build\b)/i,
     reason:
-      '`svelte-kit sync` regenerates ~690 files under .svelte-kit/, which the Vite dev server watches — the collision that froze this window repeatedly. Use `pnpm run typecheck` unless the route tree changed.',
+      'A SvelteKit build writes ~1,800 files into the workspace and is NOT a verification step — use `pnpm --filter ./apps/<app> run typecheck`. Confirm only if you are diagnosing a build-only failure or producing a real artifact.',
   },
   {
     // Only the unscoped shapes ask. `prettier --write src/components/Sticker/` runs.
@@ -152,8 +165,7 @@ const GUARDED_PATTERNS = [
       const targets = prettierWriteTargets(command);
       return targets.length === 0 ? false : targets.some(isUnscoped);
     },
-    reason:
-      'Formatting outside `pnpm run prettier:write` can reach files this change does not own. Confirm the target is scoped.',
+    reason: 'Formatting outside `pnpm run prettier:write` can reach files this change does not own. Confirm the target is scoped.',
   },
 ];
 

@@ -285,8 +285,17 @@ describe('patchUserSettings — the nested merge', () => {
     const [write] = statements;
     // The sub-object is read from the column inside the same statement — that is what
     // keeps a sibling sub-key another writer just added.
+    //
+    // The read is wrapped in a `jsonb_typeof` object test rather than the `COALESCE`
+    // this used to pin. `COALESCE` only replaces SQL NULL (an ABSENT key); a key that
+    // is PRESENT holding a non-object — JSON `null` most likely — passes straight
+    // through it, and `jsonb || jsonb` CONCATENATES rather than raising, turning the
+    // key into an array that grows on every subsequent write. Behaviour is covered in
+    // `user-settings-mergeinto-malformed.behavior.test.ts` against a real engine; this
+    // assertion pins the STATEMENT SHAPE, so both halves are named here: the read of
+    // the live column (atomicity) and the guard around it (shape).
     expect(write.text).toMatch(
-      /COALESCE\(settings->\$\d+::text, *'\{\}'::jsonb\) *\|\| *\$\d+::jsonb/
+      /CASE WHEN jsonb_typeof\(settings->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text *ELSE *'\{\}'::jsonb *END *\|\| *\$\d+::jsonb/
     );
     expect(write.values).toContainEqual('features');
     expect(write.values).toContainEqual(JSON.stringify({ someFlag: true }));

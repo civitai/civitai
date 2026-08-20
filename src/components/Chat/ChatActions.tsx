@@ -1,13 +1,18 @@
-import { ActionIcon, Group, Menu, Text, Tooltip } from '@mantine/core';
+import { Group, Menu, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
+import { ChatMemberStatus, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import {
+  IconArchive,
   IconArrowsJoin2,
   IconBell,
   IconBellOff,
   IconDoorExit,
+  IconDots,
   IconFlag,
+  IconPin,
+  IconPinnedOff,
   IconSettings,
+  IconTrash,
   IconX,
 } from '@tabler/icons-react';
 import produce from 'immer';
@@ -26,12 +31,14 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
-  // const isOwner = myMember?.isOwner === true;
   const myMember = chatObj?.chatMembers.find((cm) => cm.userId === currentUser?.id);
   const modSender = chatObj?.chatMembers.find(
     (cm) => cm.userId !== currentUser?.id && cm.isOwner === true && cm.user.isModerator === true
   );
   const cantLeave = modSender?.status === ChatMemberStatus.Joined && !myMember?.user.isModerator;
+  const isGroup = (chatObj?.chatMembers.length ?? 0) > 2;
+  const isMuted = myMember?.notifyLevel === ChatNotifyLevel.None;
+  const isPinned = !!myMember?.pinnedAt;
 
   const { mutate: modifyMembership } = trpc.chat.modifyUser.useMutation({
     onSuccess(data, req) {
@@ -46,9 +53,18 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
 
           if (isDefined(req.status)) {
             tMember.status = data.status;
+            // Accepting clears the request mark server-side; dropping it here left
+            // the conversation stuck in the Requests tab.
+            tMember.filteredAt = data.filteredAt;
           }
           if (isDefined(req.isMuted)) {
             tMember.isMuted = data.isMuted;
+          }
+          if (isDefined(req.notifyLevel)) {
+            tMember.notifyLevel = data.notifyLevel;
+          }
+          if (isDefined(req.isPinned)) {
+            tMember.pinnedAt = data.pinnedAt;
           }
         })
       );
@@ -62,7 +78,22 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
     },
   });
 
-  const toggleNotifications = () => {
+  const { mutate: clearChat } = trpc.chat.clearChat.useMutation({
+    onSuccess() {
+      useChatStore.setState({ existingChatId: undefined });
+      queryUtils.chat.getAllByUser.invalidate();
+      queryUtils.chat.getUnreadCount.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to delete conversation.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
+
+  const withMember = (update: (chatMemberId: number) => void) => {
     if (!myMember || !currentUser) {
       showErrorNotification({
         title: 'Failed to update chat membership.',
@@ -71,28 +102,22 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
       });
       return;
     }
-
-    modifyMembership({
-      chatMemberId: myMember.id,
-      isMuted: !myMember.isMuted,
-    });
+    update(myMember.id);
   };
 
-  const adjustChat = (status: ChatMemberStatus) => {
-    if (!myMember || !currentUser) {
-      showErrorNotification({
-        title: 'Failed to update chat membership.',
-        error: new Error('Could not find membership or user'),
-        autoClose: false,
-      });
-      return;
-    }
+  const toggleNotifications = () =>
+    withMember((chatMemberId) =>
+      modifyMembership({
+        chatMemberId,
+        notifyLevel: isMuted ? ChatNotifyLevel.All : ChatNotifyLevel.None,
+      })
+    );
 
-    modifyMembership({
-      chatMemberId: myMember.id,
-      status: status,
-    });
-  };
+  const togglePin = () =>
+    withMember((chatMemberId) => modifyMembership({ chatMemberId, isPinned: !isPinned }));
+
+  const adjustChat = (status: ChatMemberStatus) =>
+    withMember((chatMemberId) => modifyMembership({ chatMemberId, status }));
 
   // TODO probably don't close modal until left
   const leaveModal = () =>
@@ -104,6 +129,23 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
       onConfirm: () => adjustChat(ChatMemberStatus.Left),
     });
 
+  const deleteModal = () => {
+    if (!chatObj) return;
+    openConfirmModal({
+      title: 'Delete this conversation?',
+      children: (
+        <Text size="sm">
+          It disappears from your messages and a new conversation with this person starts empty.
+          Only your side is cleared — they keep their copy.
+        </Text>
+      ),
+      centered: true,
+      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => clearChat({ chatId: chatObj.id }),
+    });
+  };
+
   const reportModal = () => {
     if (!chatObj) return;
     openReportModal({
@@ -112,34 +154,59 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
     });
   };
 
+  const isJoined = myMember?.status === ChatMemberStatus.Joined;
+
   return (
     <Group wrap="nowrap" gap={6}>
       {!!chatObj && (
         <Menu withArrow position="bottom-end">
           <Menu.Target>
-            <LegacyActionIcon>
-              <IconSettings />
+            <LegacyActionIcon aria-label="Conversation options">
+              <IconDots />
             </LegacyActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
-            <>
-              {/*<Menu.Label>Owner Actions</Menu.Label>*/}
-              {/*TODO enable these*/}
-              {/*{isOwner && <Menu.Item leftSection={<IconUserPlus size={18} />}>Add users</Menu.Item>}*/}
-              {/*{isOwner && <Menu.Item leftSection={<IconUserX size={18} />}>Ban users</Menu.Item>}*/}
-              {/*<Menu.Label>Chat Actions</Menu.Label>*/}
-              {myMember?.status === ChatMemberStatus.Joined && (
+            {isJoined && (
+              <>
                 <Menu.Item
-                  leftSection={
-                    myMember?.isMuted ? <IconBell size={18} /> : <IconBellOff size={18} />
-                  }
+                  leftSection={isMuted ? <IconBell size={18} /> : <IconBellOff size={18} />}
                   onClick={toggleNotifications}
-                >{`${myMember?.isMuted ? 'Enable' : 'Disable'} notifications`}</Menu.Item>
-              )}
-              <Menu.Item leftSection={<IconFlag size={18} />} color="orange" onClick={reportModal}>
-                Report
+                >
+                  {`${isMuted ? 'Enable' : 'Disable'} notifications`}
+                </Menu.Item>
+                <Menu.Item
+                  leftSection={isPinned ? <IconPinnedOff size={18} /> : <IconPin size={18} />}
+                  onClick={togglePin}
+                >
+                  {`${isPinned ? 'Unpin' : 'Pin'} conversation`}
+                </Menu.Item>
+                <Menu.Item
+                  leftSection={<IconSettings size={18} />}
+                  onClick={() =>
+                    useChatStore.setState({
+                      isSettingsOpen: true,
+                      settingsScope: 'conversation',
+                    })
+                  }
+                >
+                  Conversation settings
+                </Menu.Item>
+                <Menu.Divider />
+              </>
+            )}
+            <Menu.Item leftSection={<IconFlag size={18} />} color="orange" onClick={reportModal}>
+              Report
+            </Menu.Item>
+            {isJoined && !isGroup && (
+              <Menu.Item
+                leftSection={<IconArchive size={18} />}
+                onClick={() => adjustChat(ChatMemberStatus.Ignored)}
+              >
+                Archive conversation
               </Menu.Item>
-              {myMember?.status === ChatMemberStatus.Joined ? (
+            )}
+            {isJoined ? (
+              isGroup ? (
                 <Tooltip
                   label={
                     cantLeave
@@ -155,19 +222,24 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
                     disabled={cantLeave}
                     style={cantLeave ? { pointerEvents: 'all', cursor: 'default' } : undefined}
                   >
-                    Leave
+                    Leave group
                   </Menu.Item>
                 </Tooltip>
-              ) : myMember?.status === ChatMemberStatus.Left ? (
-                <Menu.Item
-                  leftSection={<IconArrowsJoin2 size={18} />}
-                  color="green"
-                  onClick={() => adjustChat(ChatMemberStatus.Joined)}
-                >
-                  Rejoin
+              ) : (
+                <Menu.Item leftSection={<IconTrash size={18} />} color="red" onClick={deleteModal}>
+                  Delete conversation
                 </Menu.Item>
-              ) : undefined}
-            </>
+              )
+            ) : myMember?.status === ChatMemberStatus.Left ||
+              myMember?.status === ChatMemberStatus.Ignored ? (
+              <Menu.Item
+                leftSection={<IconArrowsJoin2 size={18} />}
+                color="green"
+                onClick={() => adjustChat(ChatMemberStatus.Joined)}
+              >
+                {myMember.status === ChatMemberStatus.Ignored ? 'Unarchive' : 'Rejoin'}
+              </Menu.Item>
+            ) : undefined}
 
             {/* TODO blocklist here? */}
             {/*<Menu.Item>Manage blocklist</Menu.Item>*/}
