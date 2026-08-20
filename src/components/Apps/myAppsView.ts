@@ -69,6 +69,17 @@ export type MyAppRow = {
   coverUrl: string | null;
   updatedAt: string | Date;
   /**
+   * The listing's most-recent moderation-event action — `owner-unpublish` when the OWNER
+   * took it down, a moderator action (`delist`/`purge`/…) otherwise.
+   *
+   * 🔴 ONLY MEANINGFUL WHEN `status === 'removed'`, and it is the only thing that separates
+   * "I unpublished this and may put it back" from "a moderator removed this and only a
+   * moderator can restore it". `status` alone reads `removed` for both. Optional on the type
+   * so a fixture need not spell it; absent is read as a moderator removal, which is the safe
+   * direction (it withholds a button the server would refuse rather than inventing one).
+   */
+  lastModerationAction?: string | null;
+  /**
    * The listing-completeness advisory (missing icon / cover / screenshots / description /
    * tagline / category), computed server-side by `computeListingProblems`.
    *

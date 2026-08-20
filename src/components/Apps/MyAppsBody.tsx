@@ -20,11 +20,18 @@ import {
   IconApps,
   IconChevronDown,
   IconChevronRight,
+  IconEye,
+  IconEyeOff,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useCallback, useMemo, useState } from 'react';
 
 import { ListingProblemsIndicator } from '~/components/Apps/ListingProblemsIndicator';
+import {
+  showModRemovedNotice,
+  showRepublish,
+  showUnpublish,
+} from '~/components/Apps/myAppsAuthorActions';
 import type { MyAppRow } from '~/components/Apps/myAppsView';
 import {
   historyStatusColor,
@@ -36,6 +43,11 @@ import {
   partitionMyAppRows,
   sortByRecentlyUpdated,
 } from '~/components/Apps/myAppsView';
+import { ownerListingState, ownerStateChip } from '~/components/Apps/offsiteOwnerControls';
+import {
+  OwnerUnpublishModal,
+  type OwnerUnpublishVariant,
+} from '~/components/Apps/ownerListingModals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAuthorableListingStatus } from '~/shared/constants/app-capabilities.constants';
 import { formatDate } from '~/utils/date-helpers';
@@ -228,13 +240,31 @@ function StatusBadges({ row }: { row: MyAppRow }) {
       >
         {row.role === 'owner' ? 'Owner' : 'Collaborator'}
       </Badge>
-      <Badge
-        variant="outline"
-        color={listingStatusColor(row.status)}
-        data-testid={`apps-mine-status-${row.appListingId}`}
-      >
-        {row.status}
-      </Badge>
+      {/*
+        🔴 A REMOVED LISTING'S BADGE SAYS *WHO* REMOVED IT. `status` reads `removed` for an
+        owner self-unpublish and for a moderator takedown alike, which is precisely the
+        distinction the author needs — one of those they can undo themselves and the other
+        they cannot. `ownerStateChip` returns null for every other state, so the normal
+        status badge is unchanged there. Same override the off-site and on-site submissions
+        lists apply, from the same function.
+      */}
+      {(() => {
+        const chip = ownerStateChip(
+          ownerListingState({
+            listingStatus: row.status,
+            lastModerationAction: row.lastModerationAction,
+          })
+        );
+        return (
+          <Badge
+            variant="outline"
+            color={chip ? chip.color : listingStatusColor(row.status)}
+            data-testid={`apps-mine-status-${row.appListingId}`}
+          >
+            {chip ? chip.label : row.status}
+          </Badge>
+        );
+      })()}
       {/*
         🔴 THE COMPLETENESS ADVISORY'S ONLY REMAINING HOME. It hung off the two
         `/apps/my-submissions` tables, which lost their importer when that page merged
@@ -274,6 +304,7 @@ function HistoryToggle({
       aria-expanded={expanded}
       aria-controls={historyPanelId(row.appListingId)}
       data-testid={`apps-mine-expand-${row.appListingId}`}
+      data-author-action="history"
     >
       <Group gap={4} wrap="nowrap">
         {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
@@ -287,6 +318,108 @@ function HistoryToggle({
 
 export function historyPanelId(appListingId: string): string {
   return `apps-mine-history-${appListingId}`;
+}
+
+/** The container the action ledger enumerates. See {@link RowActions}. */
+export function rowActionsTestId(appListingId: string): string {
+  return `apps-mine-actions-${appListingId}`;
+}
+
+/**
+ * EVERY author-facing control on a row, in ONE container — the takedown controls plus the
+ * History disclosure.
+ *
+ * 🔴 THE CONTAINER IS PART OF THE GUARD, not layout tidiness. `myAppsAuthorActions.ts`
+ * declares the exact set of controls each row state offers, and the ledger test enumerates
+ * `button`/`a` inside THIS element to compare against it. That comparison fails when the set
+ * shrinks — which is the regression this whole file is answering: PR #4154 dropped Unpublish
+ * and Republish from this page and three audits passed, because an absent control has
+ * nothing to assert on. It also fails when the set grows, and refuses any control here that
+ * omits `data-author-action`, so the enumeration cannot be walked by forgetting the
+ * attribute.
+ *
+ * 🔴 WHICH CONTROLS APPEAR IS DECIDED BY `myAppsAuthorActions`, NOT BY LOCAL BRANCHING. A
+ * second copy of the predicate would let the DOM and the ledger drift while both stayed
+ * green — the ledger would then be pinning itself.
+ */
+function RowActions({
+  row,
+  expanded,
+  onToggle,
+  onUnpublish,
+  onRepublish,
+  republishing,
+}: {
+  row: MyAppRow;
+  expanded: boolean;
+  onToggle: () => void;
+  onUnpublish?: (row: MyAppRow) => void;
+  onRepublish?: (row: MyAppRow) => void;
+  republishing: boolean;
+}) {
+  /**
+   * 🔴 THE HANDLER IS PART OF THE CONDITION. Rendering Unpublish with no `onUnpublish`
+   * would give the author a button that does nothing — indistinguishable, from the outside,
+   * from the bug being fixed here. The View is used directly in tests and in principle by
+   * any caller, so "the container always passes one" is an assumption, not a guarantee.
+   */
+  const canUnpublish = showUnpublish(row) && !!onUnpublish;
+  const canRepublish = showRepublish(row) && !!onRepublish;
+  return (
+    <Group
+      gap={6}
+      wrap="nowrap"
+      justify="flex-end"
+      data-testid={rowActionsTestId(row.appListingId)}
+    >
+      {canUnpublish && (
+        <Button
+          size="compact-xs"
+          variant="default"
+          color="orange"
+          leftSection={<IconEyeOff size={12} />}
+          onClick={() => onUnpublish?.(row)}
+          data-testid={`apps-mine-unpublish-${row.appListingId}`}
+          data-author-action="unpublish"
+        >
+          Unpublish
+        </Button>
+      )}
+      {canRepublish && (
+        <Button
+          size="compact-xs"
+          variant="default"
+          color="green"
+          leftSection={<IconEye size={12} />}
+          disabled={republishing}
+          loading={republishing}
+          onClick={() => onRepublish?.(row)}
+          data-testid={`apps-mine-republish-${row.appListingId}`}
+          data-author-action="republish"
+        >
+          Republish
+        </Button>
+      )}
+      <HistoryToggle row={row} expanded={expanded} onToggle={onToggle} />
+    </Group>
+  );
+}
+
+/**
+ * "Removed by a moderator" — a STATEMENT, not an action, which is why it is not in the
+ * ledger's action set and why it renders for a collaborator too.
+ *
+ * 🔴 IT EXISTS SO THE MISSING BUTTON IS LEGIBLE. An owner-unpublished row and a
+ * moderator-removed row differ only by the presence of Republish; without this line the
+ * second one is an empty cell, and an empty cell is what a dropped control looks like.
+ */
+function ModRemovedNotice({ row }: { row: MyAppRow }) {
+  if (!showModRemovedNotice(row)) return null;
+  return (
+    <Text size="xs" c="red" data-testid={`apps-mine-mod-removed-${row.appListingId}`}>
+      Removed by a moderator — contact them to restore it.
+    </Text>
+  );
 }
 
 function HistoryPanel({
@@ -405,6 +538,9 @@ type RowRenderProps = {
   onWithdraw?: (entry: MyAppHistoryEntry) => void;
   withdrawing: boolean;
   withdrawEnabled: boolean;
+  onUnpublish?: (row: MyAppRow) => void;
+  onRepublish?: (row: MyAppRow) => void;
+  republishing: boolean;
 };
 
 function rowTestId(group: 'active' | 'inactive', appListingId: string): string {
@@ -434,7 +570,10 @@ function AppTableRow(props: RowRenderProps) {
           <ListingCover row={row} />
         </Table.Td>
         <Table.Td>
-          <StatusBadges row={row} />
+          <Stack gap={4} align="flex-start">
+            <StatusBadges row={row} />
+            <ModRemovedNotice row={row} />
+          </Stack>
         </Table.Td>
         <Table.Td>
           <Text size="xs" c="dimmed">
@@ -442,7 +581,14 @@ function AppTableRow(props: RowRenderProps) {
           </Text>
         </Table.Td>
         <Table.Td>
-          <HistoryToggle row={row} expanded={expanded} onToggle={props.onToggle} />
+          <RowActions
+            row={row}
+            expanded={expanded}
+            onToggle={props.onToggle}
+            onUnpublish={props.onUnpublish}
+            onRepublish={props.onRepublish}
+            republishing={props.republishing}
+          />
         </Table.Td>
       </Table.Tr>
       <Table.Tr>
@@ -488,11 +634,19 @@ function AppCardRow(props: RowRenderProps) {
           <ListingCover row={row} />
         </Group>
         <StatusBadges row={row} />
+        <ModRemovedNotice row={row} />
         <Group justify="space-between" wrap="wrap" gap="xs">
           <Text size="xs" c="dimmed">
             Updated {formatWhen(row.updatedAt)}
           </Text>
-          <HistoryToggle row={row} expanded={expanded} onToggle={props.onToggle} />
+          <RowActions
+            row={row}
+            expanded={expanded}
+            onToggle={props.onToggle}
+            onUnpublish={props.onUnpublish}
+            onRepublish={props.onRepublish}
+            republishing={props.republishing}
+          />
         </Group>
         <HistoryPanel
           row={row}
@@ -574,6 +728,20 @@ export type MyAppsBodyViewProps = {
    * — `appListings.withdrawExternalRequest` has no such gate.
    */
   withdrawEnabled?: boolean;
+  /**
+   * OWNER TAKEDOWN CONTROLS — the pair PR #4154 dropped when it consolidated
+   * `/apps/my-submissions` into this page.
+   *
+   * 🔴 THEY ARE A PAIR, and shipping only the first is worse than shipping neither. An
+   * unpublish with no way back is a one-way door for the author: `republishOwnListing` is
+   * the only owner-reachable route from `removed` to `approved`, and without it the app can
+   * be restored only by a moderator `relistListing`. The row-state routing that decides
+   * which of the two a row offers lives in `myAppsAuthorActions.ts`.
+   */
+  onUnpublish?: (row: MyAppRow) => void;
+  onRepublish?: (row: MyAppRow) => void;
+  /** Is a republish in flight? Disables the button rather than allowing a double-fire. */
+  republishing?: boolean;
   /** Submissions whose listing was deleted — see `listMyOrphanedSubmissions`. */
   orphanedSubmissions?: OrphanedSubmissionRow[];
   /** Message from a FAILED orphan read. Never conflate with an empty one. */
@@ -596,6 +764,9 @@ export function MyAppsBodyView({
   onWithdraw,
   withdrawing = false,
   withdrawEnabled = true,
+  onUnpublish,
+  onRepublish,
+  republishing = false,
   orphanedSubmissions = [],
   orphanedError = null,
   orphanedLoading = false,
@@ -625,6 +796,9 @@ export function MyAppsBodyView({
         onWithdraw,
         withdrawing,
         withdrawEnabled,
+        onUnpublish,
+        onRepublish,
+        republishing,
       };
     },
     [
@@ -636,6 +810,9 @@ export function MyAppsBodyView({
       onWithdraw,
       withdrawing,
       withdrawEnabled,
+      onUnpublish,
+      onRepublish,
+      republishing,
     ]
   );
 
@@ -913,6 +1090,22 @@ function OrphanedSubmissionsSection({
 /** The container: `listMine` for the rows, and ONE lazy history query keyed to the open row. */
 export function MyAppsBody() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /**
+   * The row the unpublish confirmation is open for, plus its COPY VARIANT.
+   *
+   * 🔴 THE VARIANT IS PER-ROW BECAUSE THIS TABLE IS DUAL-KIND, and that is the one thing a
+   * straight lift from either source page would get wrong. `/apps/my-submissions` was two
+   * separate lists: the on-site one always passed `offline` (unpublishing an on-site app is a
+   * FULL takedown — it stops serving at its app page) and the off-site one always passed
+   * `store` (a delist; the author's own site keeps running). `/apps/mine` merges both kinds
+   * into one table, so a fixed variant would tell half the authors something untrue about
+   * what the button is about to do.
+   */
+  const [unpublishTarget, setUnpublishTarget] = useState<{
+    id: string;
+    slug: string;
+    variant: OwnerUnpublishVariant;
+  } | null>(null);
   // 🔴 `48em` is Mantine's `sm` breakpoint. `useMediaQuery` returns `undefined` before it
   // has measured, so the `=== true` keeps the first paint on the table rather than
   // flashing the card layout on desktop.
@@ -995,6 +1188,45 @@ export function MyAppsBody() {
     [withdrawVersion, withdrawListing]
   );
 
+  /**
+   * 🔴 BOTH WRITES INVALIDATE `listMine`, because both change `AppListing.status` — the very
+   * column the row's state routing reads. Without it the button stays on screen after a
+   * successful unpublish and the author's next click hits a listing that is already removed.
+   */
+  const refetchRows = useCallback(() => {
+    void utils.appListings.listMine.invalidate();
+  }, [utils]);
+
+  const republish = trpc.appListings.republishOwnListing.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({ message: 'App republished — it is live again.' });
+      refetchRows();
+    },
+    /**
+     * 🔴 THE SERVER STAYS AUTHORITATIVE. `showRepublish` is a CLIENT MIRROR of the
+     * last-event guard, so a listing a moderator took down between the render and the click
+     * still 403s ("This listing was removed by a moderator and cannot be restored by its
+     * owner."). Surfacing that message rather than swallowing it is what makes the mirror
+     * safe to have.
+     */
+    onError: (e) =>
+      showErrorNotification({ title: 'Republish failed', error: new Error(e.message) }),
+  });
+
+  const onUnpublish = useCallback((row: MyAppRow) => {
+    setUnpublishTarget({
+      id: row.appListingId,
+      slug: row.slug,
+      // On-site apps go OFFLINE; an off-site listing is only delisted from the store.
+      variant: row.kind === 'onsite' ? 'offline' : 'store',
+    });
+  }, []);
+
+  const onRepublish = useCallback(
+    (row: MyAppRow) => republish.mutate({ appListingId: row.appListingId }),
+    [republish]
+  );
+
   // An orphan is by construction a BLOCK publish request, so it only ever has one proc.
   const onWithdrawOrphan = useCallback(
     (rowToWithdraw: OrphanedSubmissionRow) => {
@@ -1004,23 +1236,41 @@ export function MyAppsBody() {
   );
 
   return (
-    <MyAppsBodyView
-      rows={(rowsQuery.data ?? []) as MyAppRow[]}
-      isLoading={rowsQuery.isLoading}
-      errorMessage={rowsQuery.error?.message ?? null}
-      compact={isCompact}
-      expandedId={expandedId}
-      onToggleExpand={setExpandedId}
-      history={(historyQuery.data ?? []) as MyAppHistoryEntry[]}
-      historyLoading={!!expandedId && historyQuery.isLoading}
-      historyError={historyQuery.error?.message ?? null}
-      onWithdraw={onWithdraw}
-      withdrawing={withdrawVersion.isPending || withdrawListing.isPending}
-      withdrawEnabled={!!features?.appBlocks}
-      orphanedSubmissions={(orphansQuery.data ?? []) as OrphanedSubmissionRow[]}
-      orphanedError={orphansQuery.error?.message ?? null}
-      orphanedLoading={orphansQuery.isLoading}
-      onWithdrawOrphan={onWithdrawOrphan}
-    />
+    <>
+      <MyAppsBodyView
+        rows={(rowsQuery.data ?? []) as MyAppRow[]}
+        isLoading={rowsQuery.isLoading}
+        errorMessage={rowsQuery.error?.message ?? null}
+        compact={isCompact}
+        expandedId={expandedId}
+        onToggleExpand={setExpandedId}
+        history={(historyQuery.data ?? []) as MyAppHistoryEntry[]}
+        historyLoading={!!expandedId && historyQuery.isLoading}
+        historyError={historyQuery.error?.message ?? null}
+        onWithdraw={onWithdraw}
+        withdrawing={withdrawVersion.isPending || withdrawListing.isPending}
+        withdrawEnabled={!!features?.appBlocks}
+        orphanedSubmissions={(orphansQuery.data ?? []) as OrphanedSubmissionRow[]}
+        orphanedError={orphansQuery.error?.message ?? null}
+        orphanedLoading={orphansQuery.isLoading}
+        onWithdrawOrphan={onWithdrawOrphan}
+        onUnpublish={onUnpublish}
+        onRepublish={onRepublish}
+        republishing={republish.isPending}
+      />
+      {/*
+        🔴 CONFIRM-GATED, REUSING THE EXISTING MODAL RATHER THAN A FRESH `confirm()`.
+        `OwnerUnpublishModal` already owns the `unpublishOwnListing` mutation, the optional
+        reason field and the two copy variants; a second implementation would be the place
+        the two surfaces come to disagree about what unpublishing does.
+      */}
+      <OwnerUnpublishModal
+        target={unpublishTarget}
+        onClose={() => setUnpublishTarget(null)}
+        onDone={refetchRows}
+        testIdPrefix="apps-mine"
+        variant={unpublishTarget?.variant ?? 'store'}
+      />
+    </>
   );
 }
