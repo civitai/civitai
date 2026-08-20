@@ -839,7 +839,13 @@ export function AppListingDetailBody({
   // nothing rendered, while this — the live path — mounted the modal with no
   // `onReported` and kept its menu item live. Spread BOTH bags; do not hand-roll
   // either half.
-  const canReview = useCanReviewListing({ ownerUserId: detail.creator?.id ?? null });
+  // `detail.kind` is threaded in so the affordance obeys the SAME store-scope kind
+  // rule the write gate applies — an external-only viewer is not offered a review
+  // control on an onsite listing the server would NOT_FOUND.
+  const canReview = useCanReviewListing({
+    ownerUserId: detail.creator?.id ?? null,
+    listingKind: detail.kind,
+  });
   const canReport = useCanReportListing();
   const report = useReportListingAffordance();
   const [reviewOpened, reviewModal] = useDisclosure(false);

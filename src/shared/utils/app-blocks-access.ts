@@ -1,4 +1,5 @@
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 
 /**
  * App Blocks — developer-surface access gate.
@@ -159,6 +160,33 @@ export type AppsStoreFeatureFlags =
  */
 export function hasAppsStoreAccess(features: AppsStoreFeatureFlags): boolean {
   return !!features?.appListings || !!features?.appBlocks || !!features?.appListingsPublicExternal;
+}
+
+/**
+ * The viewer's {@link StoreVisibilityScope}, derived CLIENT-SIDE from the resolved
+ * feature flags — the mirror of the server's `resolveStoreVisibilityScope`.
+ *
+ * 🔴 PRIORITY ORDER IS THE "NEVER NARROW A MODERATOR" INVARIANT, copied deliberately
+ * from the server resolver and not re-reasoned: axis 1 (`appListings || appBlocks`,
+ * the `isAppListingsEnabled` OR-fallback in client form) short-circuits to `full`, so
+ * a moderator who is ALSO in the external cohort is never narrowed to offsite-only.
+ * Swap the two and a mod loses the onsite half of the store.
+ *
+ * 🔴 THIS DECIDES AN AFFORDANCE, NEVER AN ENTITLEMENT. The server's scope is the real
+ * one; this exists so the UI does not offer a control the server will refuse. It is
+ * the same server/client SEAM `hasAppsStoreAccess` documents — same three Flipt keys,
+ * same `buildFliptContext` on both sides for a logged-in viewer — and it fails closed
+ * the same way (absent flags → `none`).
+ *
+ * Why derive a SCOPE rather than read a flag: reviewability is a question about a
+ * listing's KIND, and a flag name cannot answer it. Pairing this with
+ * {@link scopeAdmitsListingKind} is what keeps the button's visibility and the write
+ * gate's answer in agreement.
+ */
+export function resolveClientStoreScope(features: AppsStoreFeatureFlags): StoreVisibilityScope {
+  if (features?.appListings || features?.appBlocks) return 'full';
+  if (features?.appListingsPublicExternal) return 'public-external';
+  return 'none';
 }
 
 /**

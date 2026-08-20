@@ -125,11 +125,23 @@ const metrics =
 
 export type StoreScopePrincipal = 'user' | 'anon';
 
-/** Every store read surface that branches on a resolved scope. */
+/**
+ * Every store surface that branches on a resolved scope.
+ *
+ * 🔴 No longer read-only. `trpc-review-write` / `trpc-my-review` are the review
+ * WRITE procs, which moved off the `app-listings` flag onto this same scope (the
+ * external-only cohort could see the review affordance and be refused on submit).
+ * They are labelled distinctly from `trpc-reviews` (the public list read) on
+ * purpose: a scope mix that differs between the read and the write of the same
+ * surface is precisely the shape of that defect, and folding them into one label
+ * would make it unobservable again.
+ */
 export type StoreScopeEntrypoint =
   | 'trpc-list'
   | 'trpc-detail'
   | 'trpc-reviews'
+  | 'trpc-review-write'
+  | 'trpc-my-review'
   | 'rest-list'
   | 'rest-detail';
 

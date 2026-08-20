@@ -86,10 +86,19 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
 // listed only `useFeatureFlags` made four SIBLING suites fail to IMPORT with
 // `does not provide an export named 'useFeatureFlagsReady'` — reported as
 // `Tests no tests`, i.e. as nothing to see rather than as a failure.
-vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
-  ...(await importOriginal<typeof FeatureFlagsMod>()),
-  useFeatureFlags: () => ({ appBlocks: true, appListings: true, appBlocksPages: false }),
-}));
+// 🔴 BOTH hooks are overridden, and they must return the SAME flags. `useCanReviewListing`
+// reads `useOptionalFeatureFlags` (it must not throw outside a provider); overriding only
+// `useFeatureFlags` left the optional one resolving to the REAL null-outside-provider
+// value, i.e. store scope `none`, which silently hid the review affordance and failed two
+// tests here for a reason that had nothing to do with what they assert.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
+  const flags = { appBlocks: true, appListings: true, appBlocksPages: false };
+  return {
+    ...(await importOriginal<typeof FeatureFlagsMod>()),
+    useFeatureFlags: () => flags,
+    useOptionalFeatureFlags: () => flags,
+  };
+});
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
 // module-mock): a hand-written replacement silently breaks every importer the
 // day '~/utils/trpc' grows an export this factory omits.

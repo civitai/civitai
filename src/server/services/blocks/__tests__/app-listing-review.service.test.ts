@@ -27,7 +27,13 @@ type WriteMock = {
 };
 type ReadMock = {
   appListing: { findUnique: ReturnType<typeof vi.fn> };
-  appListingReview: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
+  appListingReview: {
+    findUnique: ReturnType<typeof vi.fn>;
+    // `getMyAppListingReview` uses findFirst, not findUnique: the store-scope KIND
+    // gate is a RELATION filter, which a unique-key lookup cannot express.
+    findFirst: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+  };
 };
 
 const SAVED_REVIEW = {
@@ -55,7 +61,11 @@ const { mockRead, mockWrite } = vi.hoisted(() => {
   write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(write));
   const read: ReadMock = {
     appListing: { findUnique: vi.fn(async () => null) },
-    appListingReview: { findUnique: vi.fn(async () => null), findMany: vi.fn(async () => []) },
+    appListingReview: {
+      findUnique: vi.fn(async () => null),
+      findFirst: vi.fn(async () => null),
+      findMany: vi.fn(async () => []),
+    },
   };
   return { mockRead: read, mockWrite: write };
 });
@@ -83,6 +93,7 @@ beforeEach(() => {
   mockWrite.appListingMetric.updateMany.mockResolvedValue({ count: 0 });
   mockRead.appListing.findUnique.mockResolvedValue(reviewableListing());
   mockRead.appListingReview.findUnique.mockResolvedValue(null);
+  mockRead.appListingReview.findFirst.mockResolvedValue(null);
   mockRead.appListingReview.findMany.mockResolvedValue([]);
 });
 
@@ -245,7 +256,7 @@ describe('upsertAppListingReview — eligibility + input gates', () => {
 
 describe('getMyAppListingReview', () => {
   it('returns the caller review from the replica', async () => {
-    mockRead.appListingReview.findUnique.mockResolvedValue({
+    mockRead.appListingReview.findFirst.mockResolvedValue({
       id: 7,
       recommended: true,
       details: 'ok',
@@ -253,13 +264,17 @@ describe('getMyAppListingReview', () => {
     });
     const res = await getMyAppListingReview(APP_ID, CALLER);
     expect(res).toMatchObject({ id: 7, recommended: true });
-    expect(mockRead.appListingReview.findUnique.mock.calls[0][0].where).toEqual({
-      appListingId_userId: { appListingId: APP_ID, userId: CALLER },
+    // The (appListingId, userId) pair is still the whole identity — `findFirst` only
+    // exists so the store-scope relation filter can AND onto it (empty under `full`).
+    expect(mockRead.appListingReview.findFirst.mock.calls[0][0].where).toEqual({
+      appListingId: APP_ID,
+      userId: CALLER,
+      appListing: { is: {} },
     });
   });
 
   it('returns null when the caller has no review', async () => {
-    mockRead.appListingReview.findUnique.mockResolvedValue(null);
+    mockRead.appListingReview.findFirst.mockResolvedValue(null);
     expect(await getMyAppListingReview(APP_ID, CALLER)).toBeNull();
   });
 });
