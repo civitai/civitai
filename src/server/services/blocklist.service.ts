@@ -6,6 +6,8 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { UpsertBlocklistSchema } from '~/server/schema/blocklist.schema';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLruCache } from '~/server/utils/lru-cache';
+import { logToAxiom } from '~/server/logging/client';
+import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 
 export type BlocklistDTO = {
   id?: number;
@@ -44,19 +46,60 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
         select: { id: true, type: true, data: true },
       });
   if (!result) throw new Error('failed to update blocklist');
-  await setCache({ type: result.type, data: result });
+  // Refresh from the deterministic read, not from `result`: caching the row just written
+  // is what let an edit to a duplicate row silently promote it to the live one.
+  await setCache({ type: result.type, data: await readBlocklistRow(result.type as BlocklistType) });
+}
+
+/**
+ * Nothing stops a type having more than one row, and `EmailDomain` has two in production
+ * — 8292 entries against 3, with the 3 present in neither the other row nor anything
+ * else. The old read took `findFirst` with no `orderBy`, so which set was live was up to
+ * Postgres; worse, `upsertBlocklist` wrote the row it had just touched into a cache key
+ * scoped to the TYPE, so the last row a moderator edited won for a month regardless. The
+ * loser's entries were simply not enforced, and the winner could change on an unrelated
+ * edit.
+ *
+ * This picks the lowest id, always, and reports the duplicate. It deliberately does NOT
+ * union the rows: for a deny-list a union blocks more, but for the benign lists a union
+ * strips more, which is a moderation bypass — one helper cannot silently pick a safe
+ * direction for both. Nor does it throw: this read gates account signup, so a duplicate
+ * row would become an outage. Deterministic-and-loud is the compromise until the rows are
+ * merged and a unique index on `type` makes it unrepresentable.
+ */
+async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
+  const rows = await dbWrite.blocklist.findMany({
+    where: { type },
+    select: { id: true, type: true, data: true },
+    orderBy: { id: 'asc' },
+  });
+
+  if (rows.length > 1) {
+    logToAxiom({
+      name: 'blocklist-duplicate-rows',
+      type: 'error',
+      message:
+        'More than one Blocklist row for a type; entries on the ignored rows are not enforced',
+      details: {
+        blocklistType: type,
+        usedId: rows[0].id,
+        ignoredIds: rows.slice(1).map((row) => row.id),
+        ignoredEntryCounts: rows.slice(1).map((row) => row.data.length),
+      },
+    }).catch(() => undefined);
+  }
+
+  // The absent-row fallback deliberately carries NO `id`: `getClientBenignLists` reads that as
+  // "no moderator row yet, use the bundled list". The moderator spoke writes the same shape into
+  // the same Redis key, so this sentinel is a cross-app contract, not a local detail.
+  return rows[0] ?? { type, data: [] };
 }
 
 export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
   const cached = await redis.get(getBlocklistKey(type));
   if (cached) return JSON.parse(cached) as BlocklistDTO;
 
-  const result = await dbWrite.blocklist
-    .findFirst({
-      where: { type },
-      select: { id: true, type: true, data: true },
-    })
-    .then((result): BlocklistDTO => (result ? result : { type, data: [] }));
+  const result = await readBlocklistRow(type);
 
   await setCache({ type: result.type, data: result });
   return result;
@@ -99,21 +142,6 @@ export async function throwOnBlockedLinkDomain(value: string) {
 // #endregion
 
 // #region [benign phrases]
-const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-// Compile a moderator-managed phrase list into a single whole-word, case-insensitive
-// matcher. Whitespace in a phrase is loosened to `[^a-zA-Z0-9]+` (the same inter-word
-// separator audit.ts uses) so "teen titans" also matches "teen  titans" / "teen-titans"
-// / "teen.titans". Zero-width alnum boundaries (again matching audit.ts) instead of `\b`
-// so a phrase whose edge is punctuation still anchors. Returns null for an empty list so
-// callers can skip the replace.
-export function buildBenignPhraseRegex(phrases: string[]): RegExp | null {
-  const cleaned = phrases.map((p) => p.trim()).filter((p) => p.length > 0);
-  if (!cleaned.length) return null;
-  const alternation = cleaned.map((p) => escapeRegex(p).replace(/\s+/g, '[^a-zA-Z0-9]+')).join('|');
-  return new RegExp(`(?<![a-zA-Z0-9])(?:${alternation})(?![a-zA-Z0-9])`, 'gi');
-}
-
 // In-process TTL cache over the Redis-backed blocklist: the scan path strips benign
 // phrases on every image, so a short-lived local copy avoids a Redis round-trip per
 // scan. TTL (not cross-pod invalidation) is the freshness bound — a moderator edit
@@ -125,11 +153,56 @@ const benignPhraseRegexCache = createLruCache<BlocklistType, { pattern: RegExp |
   fetchFn: async (type) => ({ pattern: buildBenignPhraseRegex(await getBlocklistData(type)) }),
 });
 
+export { buildBenignPhraseRegex };
+
 export async function stripBenignPhrases(text = '', type: BlocklistType) {
   if (!text) return text;
   const { pattern } = await benignPhraseRegexCache.fetch(type);
   if (!pattern) return text;
-  return text.replace(pattern, ' ');
+  // Same helper as the client gates on purpose — it carries the refusal that stops a
+  // letter-bearing gap being swallowed, and the two sides must strip identically.
+  return stripBenignPhrasesWith(text, pattern);
+}
+/**
+ * The benign lists the BROWSER needs. The search gates (`AutocompleteSearch`,
+ * `SearchLayout`) run their POI / minor / profanity checks client-side against Meili
+ * directly, so there is no server hop to strip on — the lists have to be shipped down.
+ * Public and edge-cached; these are phrases moderators have declared SAFE, so the list
+ * says nothing about what we block.
+ */
+export type ClientBenignLists = {
+  prompt: string[];
+  /** `null` means "no moderator row", which is NOT the same as an empty one — see the filter. */
+  profanityWords: string[] | null;
+  /** False when the lists could not be read. The caller MUST NOT let the edge cache this. */
+  available: boolean;
+};
+
+export async function getClientBenignLists(): Promise<ClientBenignLists> {
+  try {
+    const [prompt, profanityRow] = await Promise.all([
+      getBlocklistData(BlocklistType.PromptBenignPhrase),
+      getBlocklistDTO({ type: BlocklistType.ProfanityBenignWord }),
+    ]);
+    // A row that EXISTS but is empty is a moderator having deleted every entry — the
+    // strongest possible "do not whitelist" intent. Only a MISSING row means "not migrated",
+    // which is the case that falls back to the list shipped in the bundle.
+    const profanityWords = profanityRow.id == null ? null : profanityRow.data;
+    return { prompt, profanityWords, available: true };
+  } catch (error) {
+    // Fails OPEN, and empty is the safe direction: nothing is stripped, so the gates flag
+    // more rather than less. `available: false` exists because the caller must then skip the
+    // edge cache — a 200 carrying empty lists would otherwise be held for an hour, and every
+    // session started in that window pins it for its whole life, reinstating globally the
+    // false positives this work removes. The throw it replaced was never cached.
+    logToAxiom({
+      name: 'benign-lists-unavailable',
+      type: 'warning',
+      message: 'Serving empty benign lists to the client; search gates will not strip',
+      details: { error: error instanceof Error ? error.message : String(error) },
+    }).catch(() => undefined);
+    return { prompt: [], profanityWords: null, available: false };
+  }
 }
 // #endregion
 

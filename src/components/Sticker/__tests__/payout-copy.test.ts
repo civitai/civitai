@@ -3,6 +3,7 @@ import {
   declineConsequence,
   moderatorTakedownConsequence,
   payoutCopy,
+  placedSpendLabel,
   placementAmountLine,
   placementPaymentSummary,
   removalConsequence,
@@ -171,6 +172,21 @@ describe('placementAmountLine', () => {
 
   it('still states the amount on a paid one', () => {
     expect(placementAmountLine(false, 700)).toBe('paid 700 Buzz');
+  });
+});
+
+describe('placedSpendLabel', () => {
+  /**
+   * Same DB-enforced zero as the owner-side line above, read by the other
+   * party: on their own list a free placement must not report that they spent
+   * nothing as spending 0 Buzz.
+   */
+  it('names no amount on a free placement', () => {
+    expect(placedSpendLabel(true, 0)).toBeNull();
+  });
+
+  it('states the amount on a paid one', () => {
+    expect(placedSpendLabel(false, 700)).toBe('700 Buzz');
   });
 });
 

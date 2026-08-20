@@ -104,6 +104,9 @@ export const getAllModelsSchema = z.object({
   hidden: z.coerce.boolean().optional().default(false),
   needsReview: z.coerce.boolean().optional(),
   earlyAccess: z.coerce.boolean().optional(),
+  // booleanString, not z.coerce.boolean: the REST endpoint parses raw query strings,
+  // where coerce makes `?paidAccess=false` truthy.
+  paidAccess: booleanString().optional(),
   ids: commaDelimitedNumberArray().optional(),
   modelVersionIds: commaDelimitedNumberArray().optional(),
   supportsGeneration: z.coerce.boolean().optional(),

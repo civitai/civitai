@@ -37,6 +37,7 @@ import {
   parseStickerPlacementData,
   stickerMaxScale,
   stickerRemovableAt,
+  STICKER_PLACEMENT_QUEUE_LIMIT,
 } from '~/shared/utils/sticker-placement';
 
 const SURFACE = 'sticker' as const;
@@ -1075,6 +1076,91 @@ export async function getPendingStickerPlacements({
   });
 
   return { items, nextCursor };
+}
+
+/**
+ * The other direction: stickers YOU have placed on other people's work.
+ *
+ * The twin of the owner queue above, and of the remix gallery's sent list. It
+ * carries approved rows as well as pending ones because "where did my sticker
+ * end up" is the question it answers — a list of only what is still waiting
+ * would go empty the moment a placement succeeded.
+ *
+ * The target image belongs to someone else, so unlike the owner queue it is
+ * fetched under the same visibility rules the public feed applies: a placement
+ * whose host was unpublished or taken down keeps its row, without its picture.
+ */
+export async function getMyStickerPlacements({
+  placerId,
+  limit = STICKER_PLACEMENT_QUEUE_LIMIT,
+  domainLevels,
+  viewerLevels,
+}: {
+  placerId: number;
+  limit?: number;
+  /** Levels this domain may serve. Rows above it come back without their asset. */
+  domainLevels: number;
+  /** The viewer's own band. Marked on each row, never filtered on. */
+  viewerLevels: number;
+}) {
+  const rows = await dbRead.placement.findMany({
+    where: { surface: SURFACE, placerId, status: { in: ['pending', 'approved'] } },
+    select: {
+      id: true,
+      targetId: true,
+      ownerId: true,
+      status: true,
+      amount: true,
+      // A free row moves no Buzz, so the list has to be able to say that
+      // instead of reporting the zero its `amount` carries.
+      free: true,
+      data: true,
+      createdAt: true,
+      expiresAt: true,
+      owner: { select: { id: true, username: true, image: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+
+  // The host is another creator's image, so it has to clear the public rules
+  // rather than being sent because the placer paid to be on it.
+  const images = rows.length
+    ? await dbRead.image.findMany({
+        where: {
+          id: { in: [...new Set(rows.map((row) => row.targetId))] },
+          post: { publishedAt: { not: null } },
+          ingestion: 'Scanned',
+          tosViolation: false,
+          minor: false,
+          poi: false,
+        },
+        select: {
+          id: true,
+          url: true,
+          name: true,
+          width: true,
+          height: true,
+          type: true,
+          metadata: true,
+          nsfwLevel: true,
+        },
+      })
+    : [];
+  const byId = new Map(images.map((image) => [image.id, image]));
+
+  return rows.flatMap((row) => {
+    const data = parseStickerPlacementData(row.data);
+    if (!data) return [];
+
+    return [
+      {
+        ...row,
+        data,
+        image: toQueueImage(byId.get(row.targetId), domainLevels, viewerLevels),
+      },
+    ];
+  });
 }
 
 /**

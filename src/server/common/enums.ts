@@ -380,6 +380,10 @@ export enum BlocklistType {
   // false-flag `needsReview='minor'`. Edited by moderators at /moderator/blocklists.
   PromptBenignPhrase = 'PromptBenignPhrase',
   NegativeBenignPhrase = 'NegativeBenignPhrase',
+  // Single words that innocently CONTAIN a profanity token ("spreadsheet" holds
+  // "spread"). Suppresses a substring match from the profanity filter rather than
+  // being blanked from the text — different matcher to the two phrase lists above.
+  ProfanityBenignWord = 'ProfanityBenignWord',
 }
 
 export enum ToolSort {

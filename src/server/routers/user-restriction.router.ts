@@ -3,14 +3,16 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
-  addToAllowlistSchema,
   backfillRestrictionTriggersSchema,
   debugAuditPromptSchema,
+  getGenerationRestrictionsSchema,
+  resolveRestrictionSchema,
+  saveSuspiciousMatchSchema,
   submitRestrictionContextSchema,
 } from '~/server/schema/user-restriction.schema';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import { debugAuditPrompt, type DebugAuditMatch } from '~/utils/metadata/audit';
-import { bustPromptAllowlistCache } from '~/server/services/orchestrator/promptAuditing';
+import { resolveUserRestriction } from '~/server/services/user-restriction-resolve.service';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -40,45 +42,153 @@ export const userRestrictionRouter = router({
   // }),
   // --- Moderator endpoints ---
 
-  /** Moderator adds a trigger to the prompt allowlist (marks as benign). */
-  addToAllowlist: moderatorProcedure
-    .input(addToAllowlistSchema)
-    .mutation(async ({ ctx, input }) => {
-      const { trigger, category, reason, userRestrictionId } = input;
-      const moderatorId = ctx.user.id;
+  /** Paginated list of generation restrictions for moderator review. */
+  getAll: moderatorProcedure.input(getGenerationRestrictionsSchema).query(async ({ input }) => {
+    const { limit, page, status, username, userId } = input;
+    const offset = (page - 1) * limit;
 
-      await dbWrite.promptAllowlist.upsert({
-        where: { trigger_category: { trigger, category } },
-        create: {
-          trigger,
-          category,
-          addedBy: moderatorId,
-          reason,
-          userRestrictionId,
+    const where: NonNullable<Parameters<typeof dbRead.userRestriction.findMany>[0]>['where'] = {
+      type: 'generation',
+      ...(status && { status }),
+      ...(userId && { userId }),
+      user: {
+        deletedAt: null,
+        ...(username && { username: { contains: username, mode: 'insensitive' as const } }),
+      },
+    };
+
+    const [items, totalCount] = await Promise.all([
+      dbRead.userRestriction.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+        select: {
+          id: true,
+          userId: true,
+          status: true,
+          triggers: true,
+          createdAt: true,
+          resolvedAt: true,
+          resolvedBy: true,
+          resolvedMessage: true,
+          userMessage: true,
+          userMessageAt: true,
+          user: { select: { id: true, username: true, image: true } },
         },
-        update: {
-          addedBy: moderatorId,
-          reason,
-        },
-      });
+      }),
+      dbRead.userRestriction.count({ where }),
+    ]);
 
-      // Bust the cached allowlist so the change takes effect immediately
-      await bustPromptAllowlistCache();
+    return { items, totalCount };
+  }),
 
-      logToAxiom({
-        name: 'prompt-allowlist-entry-added',
-        type: 'info',
-        details: { trigger, category, moderatorId, userRestrictionId },
-      });
-
-      return { success: true };
-    }),
+  /** Moderator resolves a restriction — uphold or overturn. */
+  resolve: moderatorProcedure.input(resolveRestrictionSchema).mutation(async ({ ctx, input }) => {
+    await resolveUserRestriction({ ...input, moderatorId: ctx.user.id });
+    return { success: true };
+  }),
 
   /** Debug endpoint to test prompt auditing without triggering any actions. */
   debugAudit: moderatorProcedure.input(debugAuditPromptSchema).mutation(async ({ input }) => {
     const { prompt, negativePrompt } = input;
     return debugAuditPrompt(prompt, negativePrompt);
   }),
+
+  /** Get today's prohibited request counts per user from ClickHouse. */
+  getTodaysUserCounts: moderatorProcedure.query(async () => {
+    if (!clickhouse) return { userCounts: [] };
+
+    const queryResult = await clickhouse.query({
+      query: `
+        SELECT userId, count() AS count
+        FROM prohibitedRequests
+        WHERE toDate(createdDate) = today()
+        GROUP BY userId
+        ORDER BY count DESC
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const userCounts = (await queryResult.json()) as Array<{
+      userId: number;
+      count: string;
+    }>;
+
+    return {
+      userCounts: userCounts.map((row) => ({
+        userId: row.userId,
+        count: Number(row.count),
+      })),
+    };
+  }),
+
+  /** Get today's prohibited prompts from ClickHouse and run them through audit. */
+  getTodaysAuditResults: moderatorProcedure.query(async () => {
+    if (!clickhouse) return { results: [] };
+
+    // Fetch today's prohibited requests from ClickHouse
+    const queryResult = await clickhouse.query({
+      query: `
+        SELECT userId, prompt, negativePrompt, source, createdDate
+        FROM prohibitedRequests
+        WHERE toDate(createdDate) = today()
+        ORDER BY createdDate DESC
+        LIMIT 500
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const rows = (await queryResult.json()) as Array<{
+      odometer: number;
+      userId: number;
+      prompt: string;
+      negativePrompt: string;
+      source: string;
+      createdDate: string;
+    }>;
+
+    // Run each prompt through the audit system
+    const results = rows.map((row) => {
+      const auditResult = debugAuditPrompt(row.prompt, row.negativePrompt || undefined);
+      return {
+        userId: row.userId,
+        prompt: row.prompt,
+        negativePrompt: row.negativePrompt,
+        source: row.source,
+        createdDate: row.createdDate,
+        matches: auditResult.matches,
+        wouldBlock: auditResult.wouldBlock,
+        blockReason: auditResult.blockReason,
+      };
+    });
+
+    return { results };
+  }),
+
+  /** Save suspicious audit matches to Redis for later review. */
+  saveSuspiciousMatches: moderatorProcedure
+    .input(saveSuspiciousMatchSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { matches } = input;
+      const moderatorId = ctx.user.id;
+
+      // Add each match to a Redis list with timestamp and moderator info
+      const entries = matches.map((match) => ({
+        ...match,
+        flaggedBy: moderatorId,
+        flaggedAt: new Date().toISOString(),
+      }));
+
+      for (const entry of entries) {
+        await sysRedis.lPush(REDIS_SYS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, JSON.stringify(entry));
+      }
+
+      // Keep only the last 1000 entries
+      await sysRedis.lTrim(REDIS_SYS_KEYS.SYSTEM.SUSPICIOUS_AUDIT_MATCHES, 0, 999);
+
+      return { success: true, savedCount: entries.length };
+    }),
 
   /** Get suspicious audit matches from Redis. */
   getSuspiciousMatches: moderatorProcedure.query(async () => {
