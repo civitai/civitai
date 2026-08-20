@@ -407,15 +407,32 @@ describe('#4123 — a set-shaped creator scope is resolved before the own-exclud
     }
   });
 
+  // 🔴 A SECOND DOMAIN, BECAUSE ONE CANNOT DETECT A HARDCODE. With `'red'` as the
+  // only fixture value, `domain: input.domain` and a literal `domain: 'red'`
+  // produce identical calls — measured: that mutant SURVIVED the full 72-test
+  // suite. A fixture that can only ever produce the constant's own value cannot
+  // see a mutant that hardcodes the literal. `'blue'` is a value the constant
+  // cannot equal, and it matters in production: of the four `DomainColor` members
+  // only `red` maps to the red board, so a hardcode would send every green/blue
+  // caller's guard to the wrong board while the feed filtered on the right one.
+  it('reads the board for a DIFFERENT domain too — the argument is read, not hardcoded', async () => {
+    serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
+
+    await getImagesFromSearch(authedInput({ newCreators: true, domain: 'blue' }));
+
+    expect(getNewCreatorUserIdsMock.mock.calls.length).toBeGreaterThan(0);
+    for (const [args] of getNewCreatorUserIdsMock.mock.calls) {
+      expect(args).toEqual({ entity: 'images', domain: 'blue' });
+    }
+  });
+
   // Resolves follows for the CALLER, never for the creator being viewed. Both
   // fields are set and they disagree, so a mutant reading the wrong one returns a
   // different set rather than the same one by luck.
   it('resolves the followed set for the CALLER, not for the userId being viewed', async () => {
     serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
 
-    await getImagesFromSearch(
-      authedInput({ followed: true, userId: FOLLOWED_CREATOR_ID })
-    );
+    await getImagesFromSearch(authedInput({ followed: true, userId: FOLLOWED_CREATOR_ID }));
 
     expect(getUserFollowsMock).toHaveBeenCalledWith(CURRENT_USER_ID);
     expect(getUserFollowsMock).not.toHaveBeenCalledWith(FOLLOWED_CREATOR_ID);
@@ -451,14 +468,29 @@ describe('#4123 — a set-shaped creator scope is resolved before the own-exclud
   // filtering. The BitDex guard's call would be a SECOND one. Verified by
   // mutation: removing the hoist takes this count 1 -> 2.
   //
-  // 🔴 A SIBLING ASSERTION FOR THE `bdx:`-CURSOR SHAPE WAS WRITTEN AND THEN
-  // DELETED, because the mutation showed it could not fail: with the hoist removed
-  // it still read 1. The likeliest cause is that its hand-written `bdx:` cursor
-  // fixture did not decode, so `bitdexCursor` was falsy and the request never had
-  // the property the test was named for. Rather than ship an assertion that passes
-  // in both arms, the `bitdexCursor` half of the short-circuit is left argued from
-  // the code (it is the same `skipOwnExcludedCheaply` expression this case pins
-  // via `!input.currentUserId`) and is NOT claimed as tested.
+  // 🔴 THE `bdx:` HALF WAS ALMOST LEFT UNTESTED ON A WRONG DIAGNOSIS. A first
+  // version of the sibling case below passed with the hoist removed, so it was
+  // deleted as vacuous — correctly — but the accompanying note concluded the shape
+  // could not be pinned. It can: the fixture just has to be a cursor that actually
+  // DECODES. `bitdexCursor` comes from `JSON.parse` of everything after `bdx:`, so
+  // a hand-written `bdx:eyJhIjoxfQ==` (base64, not JSON) parsed to nothing, left
+  // `bitdexCursor` falsy, and the request never had the property the test was
+  // named for. The shape below is the one used in bitdex-empty-fallback.test.ts.
+  // Measured with a decoding cursor: 0 lookups with the hoist, 1 without.
+  it('a bdx:-paginated followed feed adds no creator-scope lookup of its own', async () => {
+    serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
+
+    await getImagesFromSearch(
+      authedInput({ followed: true, cursor: 'bdx:{"sortAt":1700000000,"id":101}' })
+    );
+
+    // ZERO here, unlike the anonymous case below which expects one: a
+    // BitDex-paginated request does not reach the leg that resolves follows for
+    // its own filtering, so the guard's lookup would be the ONLY one. Measured:
+    // 0 with the hoist, 1 without.
+    expect(getUserFollowsMock).not.toHaveBeenCalled();
+  });
+
   it('an anonymous newCreators feed adds no creator-scope lookup of its own', async () => {
     serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
 

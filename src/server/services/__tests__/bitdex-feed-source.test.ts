@@ -403,9 +403,18 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
    * this comment glossed it and both were refuted by measurement. The exclusion
    * holds exactly when `skipOwnExcluded` (image.service.ts, declared beside the
    * own-content pass) is true, i.e. one of: anonymous caller; a `bdx:` cursor;
-   * signed-in caller viewing another user's profile. A NON-`bdx:` cursor does
-   * NOT qualify — and that is the common case, since a request that fell back to
-   * Meilisearch carries a Meilisearch cursor on its next page.
+   * or `creatorScopeExcludesCaller` — the request is scoped to a set of creators
+   * that does not contain the caller. A NON-`bdx:` cursor does NOT qualify — and
+   * that is the common case, since a request that fell back to Meilisearch carries
+   * a Meilisearch cursor on its next page.
+   *
+   * 🔴 THE THIRD DISJUNCT USED TO READ "signed-in caller viewing another user's
+   * profile", AND #4123 REPLACED IT. That wording described only the single-
+   * `userId` case and was silent on the set-shaped ones (`followed`,
+   * `newCreators`). This was the THIRD copy of that enumeration in the repo and
+   * the last to be corrected — the other two are in image.service.ts and
+   * src/server/metrics/bitdex-feed-serve.metrics.ts, and both point readers HERE
+   * as the pin. Reference the predicate by SYMBOL when updating it again.
    *
    * This case drives an ANONYMOUS caller, which is the disjunct that makes the
    * exclusion apply — so on its own it flatters the claim. The sibling case below

@@ -3264,8 +3264,15 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // carries a MEILI cursor, which the `bdx:` decode above does not accept.
   //
   // Counting the remaining two is correct under the stated denominator — a call
-  // did go out — and is deliberately left as is. Every shape above is pinned in
-  // bitdex-feed-source.test.ts.
+  // did go out — and is deliberately left as is.
+  //
+  // ⚠️ PIN SCOPE, STATED NARROWLY ON PURPOSE: of the six rows above, exactly TWO
+  // are driven in bitdex-feed-source.test.ts — followed-with-zero-follows and
+  // `hidden`-with-none, the two the counter's behaviour turns on. The other four
+  // are read from the code, not pinned by a test there. An earlier revision of
+  // this comment said "every shape above is pinned", which was a true narrow claim
+  // widened into a false one — the exact failure this comment block exists to
+  // prevent.
   //
   // The two observations that mean "a call was made": the client reported a
   // FAILURE, or it handed back a NON-NULL result (it returns null on every
@@ -3395,14 +3402,20 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // their own feed. Deliberately NOT unified here — repointing the pre-filter at
   // the cache would change what the FEED CONTAINS, which is a different change
   // from what this decision READS.
-  // The two cheap disjuncts are evaluated FIRST and short-circuit the scope
-  // resolution entirely. Without this the `Promise.all` below runs on every
-  // request including ones already destined to skip — notably every page >= 2 of a
-  // BitDex-served Following feed (`bitdexCursor` set) and an anonymous
-  // `newCreators` request, both of which would pay a cache read whose result is
-  // then discarded. Cheap-first is also the order the old single-expression guard
-  // had by virtue of `||` short-circuiting, so this preserves it rather than
-  // introducing it.
+  //
+  // 🔴 THIS HOIST INTRODUCES THE SHORT-CIRCUIT — IT DOES NOT PRESERVE ONE. An
+  // earlier revision of this comment claimed the pre-#4123 guard already had it
+  // "by virtue of `||`". It did not: before the hoist the scope resolution was an
+  // unconditional `await Promise.all([...])` on the line ABOVE the guard, and `||`
+  // short-circuited only the read of a boolean that had already been computed. So
+  // deleting this line is NOT a no-op — it reinstates a cache read on every
+  // request already destined to skip, notably an anonymous `newCreators` request
+  // and every page >= 2 of a BitDex-served Following feed.
+  //
+  // ⚠️ It is also load-bearing for the `getUserFollows(input.currentUserId!)`
+  // call below, which dropped its own `input.currentUserId &&` guard because this
+  // line makes it unreachable when `currentUserId` is absent. Reorder or remove
+  // the hoist and that non-null assertion becomes `getUserFollows(undefined)`.
   const skipOwnExcludedCheaply = !input.currentUserId || !!bitdexCursor;
 
   // 🔴 The three scopes here must stay 1:1 with the creator-scoping filters
