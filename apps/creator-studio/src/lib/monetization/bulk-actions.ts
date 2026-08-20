@@ -3,7 +3,6 @@ export const BULK_ACTIONS = [
   'fee',
   'paidAccess',
   'usageControl',
-  'scheduleSale',
   'clearFee',
   'removeAccess',
 ] as const;
@@ -15,7 +14,6 @@ export const BULK_ACTION_TITLE: Record<BulkAction, string> = {
   fee: 'Set licensing fee',
   paidAccess: 'Set early or paid access',
   usageControl: 'Set usage control',
-  scheduleSale: 'Schedule a sale',
   clearFee: 'Clear licensing fee',
   removeAccess: 'Remove paid access',
 };
@@ -24,7 +22,6 @@ export const BULK_ACTION_FORM: Record<BulkAction, string> = {
   fee: '?/bulkSetFee',
   paidAccess: '?/bulkSetPaidAccess',
   usageControl: '?/bulkSetUsageControl',
-  scheduleSale: '?/bulkScheduleSale',
   clearFee: '?/bulkClearFee',
   removeAccess: '?/bulkRemovePaidAccess',
 };

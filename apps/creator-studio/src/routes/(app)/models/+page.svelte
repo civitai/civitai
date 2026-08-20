@@ -60,6 +60,9 @@
 
   let { data }: { data: PageData } = $props();
 
+  // Arrived from Sales via "New sale": the page is here to collect a selection and hand it back.
+  const pickingForSale = $derived(page.url.searchParams.get('for') === 'sale' && data.salesEnabled);
+
   // The tier every cap on this page resolves against (a lapse falls back to free, never to "no access").
   const tier = $derived(data.caps.capTier);
 
@@ -636,6 +639,25 @@
   </div>
 {/if}
 
+{#if pickingForSale}
+  <div
+    class="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-blue-4/40 bg-blue-4/10 p-3"
+  >
+    <span class="text-sm text-white">
+      Choose the versions to put on sale{selected.size > 0 ? ` — ${selected.size} selected` : ''}.
+    </span>
+    <Button
+      class="ml-auto"
+      size="sm"
+      disabled={selected.size === 0}
+      onclick={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
+    >
+      Continue
+    </Button>
+    <Button variant="ghost" size="sm" href="/sales">Cancel</Button>
+  </div>
+{/if}
+
 {#if data.total > 0 || selected.size > 0}
   <BulkBar
     count={selected.size}
@@ -644,6 +666,7 @@
     {offViewCount}
     {exportHref}
     onAction={(a) => (bulkAction = a)}
+    onStartSale={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
     salesEnabled={data.salesEnabled}
     onSelectAllMatching={() => {
       for (const id of data.matchingVersionIds) selected.add(id);
@@ -664,9 +687,6 @@
   suggestedFee={bulkSuggested}
   needsAffirmation={selectionNeedsAffirmation}
   permanentSlotsLeft={remainingPermanentSlots - newSlotsUsed + selected.size}
-  creatorScore={data.creatorScore}
-  sales={data.sales}
-  saleLimits={data.saleLimits}
 />
 
 {#if data.models.length === 0}

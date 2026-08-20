@@ -13,6 +13,7 @@
     offViewCount,
     exportHref,
     onAction,
+    onStartSale,
     salesEnabled = false,
     onSelectAllMatching,
     onClear,
@@ -23,6 +24,8 @@
     offViewCount: number;
     exportHref: string;
     onAction: (action: BulkAction) => void;
+    /** Hands the current selection to the sales flow, which finishes the sale in its own side panel. */
+    onStartSale: () => void;
     /** Scheduled sales are behind a flag; the bar must not offer what the action would refuse. */
     salesEnabled?: boolean;
     onSelectAllMatching: () => void;
@@ -66,6 +69,9 @@
   <Button variant="outline" size="sm" disabled={!has} onclick={() => onAction('paidAccess')}>
     Paid access
   </Button>
+  {#if salesEnabled}
+    <Button variant="outline" size="sm" disabled={!has} onclick={onStartSale}>Put on sale</Button>
+  {/if}
   <Button variant="outline" size="sm" disabled={!has} onclick={() => onAction('usageControl')}>
     Usage control
   </Button>
@@ -83,11 +89,6 @@
         <DropdownMenu.GroupHeading>Set</DropdownMenu.GroupHeading>
         <DropdownMenu.Item onSelect={() => onAction('fee')}>Licensing fee…</DropdownMenu.Item>
         <DropdownMenu.Item onSelect={() => onAction('paidAccess')}>Paid access…</DropdownMenu.Item>
-        {#if salesEnabled}
-          <DropdownMenu.Item onSelect={() => onAction('scheduleSale')}>
-            Schedule a sale…
-          </DropdownMenu.Item>
-        {/if}
         <DropdownMenu.Item onSelect={() => onAction('usageControl')}>
           Usage control…
         </DropdownMenu.Item>

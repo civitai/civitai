@@ -12,7 +12,12 @@
     SheetTitle,
     SheetDescription,
   } from '@civitai/ui/components/ui/sheet/index.js';
-  import { IconTag, IconChevronRight } from '@tabler/icons-svelte';
+  import { IconTag, IconChevronRight, IconPlus } from '@tabler/icons-svelte';
+  import { page } from '$app/state';
+  import { goto } from '$app/navigation';
+  import { deserialize } from '$app/forms';
+  import SaleFields from '$lib/components/monetization/SaleFields.svelte';
+  import { resolveSaleDraft, type SaleDraftInput } from '$lib/monetization/sales';
   import { isSaleActive, remainingSaleDays, type ModelVersionSaleWindow } from '@civitai/buzz';
   import { budgetMonthOf } from '$lib/monetization/sales';
   import type { PageData } from './$types';
@@ -51,6 +56,15 @@
       else if (result.type === 'success') {
         await invalidateAll();
         if (result.data?.cancelled) selectedId = null;
+        if (result.data?.scheduled) {
+          const skipped = Number(result.data?.skippedEarlyAccess ?? 0);
+          toast.success(
+            skipped > 0
+              ? `Sale scheduled on ${result.data?.covered} version${result.data?.covered === 1 ? '' : 's'} — ${skipped} skipped, already in early access.`
+              : 'Sale scheduled.'
+          );
+          await closeCreate();
+        }
       }
       await applyAction(result);
     };
@@ -64,6 +78,86 @@
   // sale running a day longer than they set.
   const lastDay = (s: ManageableSale) => new Date(s.endsAt.getTime() - 86_400_000);
   const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
+  // A selection handed over from Models by "New sale" / "Put on sale". Its presence is what puts this
+  // page into creation mode, so the flow is a URL the creator can back out of rather than hidden state.
+  const draftVersionIds = $derived(
+    (page.url.searchParams.get('versions') ?? '')
+      .split(',')
+      .map((v) => Number(v.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0)
+  );
+  const creating = $derived(draftVersionIds.length > 0);
+
+  let sale = $state<SaleDraftInput & { name: string }>({
+    name: '',
+    type: 'Percent',
+    amount: undefined,
+    startDate: '',
+    endDate: '',
+  });
+
+  // What the form can't see about a selection this page never listed: how much of it is early access,
+  // and the cheapest price among the rest. undefined = not known, which blocks rather than waves through.
+  let earlyAccessCount = $state(0);
+  let minCoveredPrice = $state<number | null | undefined>(undefined);
+  let loadingPreview = $state(false);
+  let previewRequest = 0;
+  $effect(() => {
+    const ids = draftVersionIds;
+    if (ids.length === 0) {
+      earlyAccessCount = 0;
+      minCoveredPrice = undefined;
+      return;
+    }
+    const seq = ++previewRequest;
+    const body = new FormData();
+    body.set('versionIds', ids.join(','));
+    loadingPreview = true;
+    fetch('?/salePreview', { method: 'POST', body })
+      .then((r) => r.text())
+      .then((r) => {
+        if (seq !== previewRequest) return;
+        const parsed = deserialize(r);
+        if (parsed.type !== 'success') {
+          earlyAccessCount = 0;
+          minCoveredPrice = undefined;
+          return;
+        }
+        earlyAccessCount = Number(parsed.data?.earlyAccess ?? 0);
+        const min = parsed.data?.minCoveredPrice;
+        minCoveredPrice = min == null ? null : Number(min);
+      })
+      .catch(() => {
+        if (seq !== previewRequest) return;
+        earlyAccessCount = 0;
+        minCoveredPrice = undefined;
+      })
+      .finally(() => {
+        if (seq === previewRequest) loadingPreview = false;
+      });
+  });
+
+  const draft = $derived(
+    resolveSaleDraft(
+      sale,
+      {
+        selectedCount: draftVersionIds.length,
+        earlyAccessCount,
+        minCoveredPrice,
+        creatorScore: data.creatorScore,
+        tier: data.capTier,
+        sales: data.sales,
+        overrides: data.saleLimits,
+        resolving: loadingPreview,
+      },
+      now
+    )
+  );
+  const canSchedule = $derived(draft.eligibility.canSchedule && (sale.amount ?? 0) > 0);
+
+  // Creation and management share one panel; leaving creation means dropping the selection from the URL.
+  const closeCreate = () => goto('/sales', { replaceState: true });
 </script>
 
 <div class="flex flex-col gap-4">
@@ -75,7 +169,15 @@
         versions you want to discount.
       </p>
     </div>
-    <span class="text-sm text-dark-2">{daysLeft} sale-days left this month</span>
+    <div class="flex items-center gap-3">
+      <span class="text-sm text-dark-2">{daysLeft} sale-days left this month</span>
+      {#if data.salesEnabled}
+        <Button href="/models?for=sale" size="sm">
+          <IconPlus class="size-4" />
+          New sale
+        </Button>
+      {/if}
+    </div>
   </div>
 
   {#if !data.salesEnabled}
@@ -88,7 +190,7 @@
       <p class="text-sm text-dark-2">
         Pick the versions you want to discount on Models, then choose “Schedule a sale”.
       </p>
-      <Button href="/models" variant="outline" size="sm">Go to Models</Button>
+      <Button href="/models?for=sale" size="sm">Pick versions</Button>
     </div>
   {:else}
     <ul class="flex flex-col gap-2">
@@ -123,6 +225,42 @@
     </ul>
   {/if}
 </div>
+
+<Sheet
+  open={creating}
+  onOpenChange={(o: boolean) => {
+    if (!o) closeCreate();
+  }}
+>
+  <SheetContent side="right" class="w-full gap-0 overflow-y-auto p-0 sm:max-w-md">
+    <SheetHeader class="border-b border-dark-4 p-5">
+      <SheetTitle class="text-white">New sale</SheetTitle>
+      <SheetDescription>
+        {draftVersionIds.length} version{draftVersionIds.length === 1 ? '' : 's'} selected
+      </SheetDescription>
+    </SheetHeader>
+
+    <form
+      method="POST"
+      action="?/scheduleSale"
+      use:enhance={submit}
+      class="flex flex-col gap-4 p-5"
+    >
+      <input type="hidden" name="versionIds" value={draftVersionIds.join(',')} />
+      <SaleFields
+        bind:sale
+        {draft}
+        selectedCount={draftVersionIds.length}
+        creatorScore={data.creatorScore}
+        overrides={data.saleLimits}
+      />
+      <div class="flex gap-2">
+        <Button type="submit" class="flex-1" disabled={!canSchedule}>Schedule sale</Button>
+        <Button type="button" variant="ghost" onclick={closeCreate}>Cancel</Button>
+      </div>
+    </form>
+  </SheetContent>
+</Sheet>
 
 <Sheet
   open={selected != null}
