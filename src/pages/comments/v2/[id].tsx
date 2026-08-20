@@ -1,90 +1,22 @@
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { buildCommentPermalink } from '~/server/utils/comment-permalink';
+import { buildCommentPermalink, commentPermalinkSelect } from '~/server/utils/comment-permalink';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
   resolver: async ({ ctx }) => {
     const { id } = ctx.params as { id: string };
-    const select = {
-      image: {
-        select: {
-          id: true,
-        },
-      },
-      post: {
-        select: {
-          id: true,
-        },
-      },
-      review: {
-        select: {
-          id: true,
-        },
-      },
-      model: {
-        select: {
-          id: true,
-        },
-      },
-      article: {
-        select: {
-          id: true,
-        },
-      },
-      bounty: {
-        select: {
-          id: true,
-        },
-      },
-      bountyEntry: {
-        select: {
-          id: true,
-        },
-      },
-      challenge: {
-        select: {
-          id: true,
-        },
-      },
-      comicChapter: {
-        select: {
-          projectId: true,
-        },
-      },
-      // The one SLUG-addressed thread parent. `appListingId` is `app_listings.serial_id`, an
-      // integer surrogate that appears nowhere in the URL, so the slug is what has to be
-      // selected here — see `buildCommentPermalink`.
-      appListing: {
-        select: {
-          slug: true,
-        },
-      },
-    };
+
+    // The select lives beside the resolver that reads it (`comment-permalink.ts`) rather than
+    // here, so the two cannot drift: the payload type is derived FROM this select, and the
+    // resolver's parameter type is derived from that payload. Narrow the select and the resolver
+    // stops compiling — which is the only thing that catches a select-correctness bug, since a
+    // mocked `dbRead` would just encode the same mistake in the fake.
     const commentV2 = await dbRead.commentV2.findUnique({
       where: { id: Number(id) },
-      select: {
-        id: true,
-        thread: {
-          select: {
-            id: true,
-            rootThread: {
-              select: {
-                id: true,
-                ...select,
-              },
-            },
-            comment: {
-              select: {
-                id: true,
-              },
-            },
-            ...select,
-          },
-        },
-      },
+      select: commentPermalinkSelect,
     });
 
     if (!commentV2) {
