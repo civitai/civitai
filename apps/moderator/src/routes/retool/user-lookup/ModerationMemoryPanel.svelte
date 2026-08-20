@@ -8,6 +8,7 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { fetchMemory } from './user-memory';
   import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
+  import StrikeList from '$lib/components/StrikeList.svelte';
   import { STRIKE_REASONS } from '$lib/moderation-reasons';
 
   let {
@@ -31,9 +32,9 @@
   let striking = $state(false);
   let strikeReason = $state('');
 
-  // One per column, so each card shows only its own refusal. No `reload` on either: nothing these
-  // write comes from `load`, and invalidating re-runs all eight lookup queries plus the account fetch
-  // behind them, including a 744M-row scan.
+  // One per column, so each card shows only its own refusal. No `reload` on notes: nothing they write
+  // comes from `load`, and invalidating re-runs the whole lookup plus the account fetch behind it,
+  // including a 744M-row scan.
   const notesForm = new FormState({
     onSuccess: () => {
       editing = null;
@@ -42,7 +43,10 @@
     },
   });
 
+  // A strike DOES change `load` — the header's active-strike chip reads it — so this one pays the
+  // invalidation cost, as the User Reports strike form already does.
   const strikeForm = new FormState({
+    reload: true,
     onSuccess: () => {
       striking = false;
       version += 1;
@@ -203,24 +207,40 @@
     {:then result}
       {#if !result}
         <p class="text-sm text-dark-2">Loading strikes…</p>
-      {:else if result.strikes.length === 0}
-        <p class="text-sm text-dark-2">No strikes on this account.</p>
+      {:else if !result.liveStrikes}
+        <p class="text-sm text-red-300">
+          Could not check strikes — treat as unknown, not none.
+        </p>
       {:else}
-        <ul class="space-y-2">
-          {#each result.strikes as strike (strike.id)}
-            <li class="text-sm">
-              <div class="flex flex-wrap items-baseline gap-x-2">
-                <Badge variant="destructive">strike</Badge>
-                <span class="text-xs text-dark-2">
-                  {strike.createdBy ?? 'unknown'} · {dateTime(strike.createdAt)}
-                </span>
-              </div>
-              {#if strike.reason}
-                <p class="text-dark-0">{strike.reason}</p>
-              {/if}
-            </li>
-          {/each}
-        </ul>
+        <StrikeList
+          strikes={result.liveStrikes}
+          empty={result.strikes.length > 0
+            ? 'No strikes issued since the Retool cutover.'
+            : 'No strikes on this account.'}
+        />
+
+        {#if result.strikes.length > 0}
+          <details class="mt-3 border-t border-dark-4 pt-3">
+            <summary class="text-xs text-dark-2">
+              {result.strikes.length} from the Retool era — history, not part of the list above
+            </summary>
+            <ul class="mt-2 space-y-2">
+              {#each result.strikes as strike (strike.id)}
+                <li class="text-sm">
+                  <div class="flex flex-wrap items-baseline gap-x-2">
+                    <Badge variant="outline">legacy</Badge>
+                    <span class="text-xs text-dark-2">
+                      {strike.createdBy ?? 'unknown'} · {dateTime(strike.createdAt)}
+                    </span>
+                  </div>
+                  {#if strike.reason}
+                    <p class="text-dark-0">{strike.reason}</p>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          </details>
+        {/if}
       {/if}
     {:catch}
       <p class="text-sm text-red-300">Could not load strikes.</p>

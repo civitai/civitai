@@ -1,5 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import { dbRead } from './db';
+import { dbRead, dbWrite } from './db';
 import { OWNED_REPORT_ENTITIES, chatReportSubject } from './report-entities';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { getModeratorContact, type ModeratorContact } from './user-signals.service';
@@ -10,7 +10,8 @@ import { getModeratorContact, type ModeratorContact } from './user-signals.servi
 //
 // Ported from Retool (UserIDByUsername / UserIDByEmail / UserContent /
 // AllCountsUnion / UserStats). Investigation only — every read goes to the replica so looking a user up
-// never touches the primary.
+// never touches the primary. The single exception is `getLiveStrikes({ readYourWrite })`, which is a
+// refetch of a row the caller just caused to be written; see it for why.
 
 export type UserIdentity = {
   id: number;
@@ -206,9 +207,19 @@ export type LiveStrike = {
  * The strike ROWS, where `getActiveStrikes` answers the header chip's "how much rope is left". Voided
  * and expired ones are included: a moderator deciding on the next action needs the account's history,
  * and a strike that has already lapsed is the thing that says this has happened before.
+ *
+ * ⚠️ `limit` truncates silently, and `SuspectPanel` already renders a count from `.length` — at 50
+ * rows that count would read as the cap.
+ *
+ * `readYourWrite` reads the PRIMARY. The strike itself is written there by the main app, and this is
+ * refetched milliseconds after that call returns, so on the replica any lag past the round trip
+ * reproduces the exact bug this serves — "the strike was issued and is not in the list".
  */
-export async function getLiveStrikes(userId: number, limit = 50): Promise<LiveStrike[]> {
-  return dbRead
+export async function getLiveStrikes(
+  userId: number,
+  { limit = 50, readYourWrite = false }: { limit?: number; readYourWrite?: boolean } = {}
+): Promise<LiveStrike[]> {
+  return (readYourWrite ? dbWrite : dbRead)
     .selectFrom('UserStrike')
     .select([
       'id',

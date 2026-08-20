@@ -10,6 +10,7 @@
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
   import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
+  import StrikeList from '$lib/components/StrikeList.svelte';
   import { STRIKE_REASONS } from '$lib/moderation-reasons';
   import { reportReasonLabel, reportStatusVariant } from '$lib/reports';
   import SuspectFilterBar from './SuspectFilterBar.svelte';
@@ -51,10 +52,6 @@
     retoolActivity: NonNullable<PageData['retoolActivity']>;
     reportsOnUser: NonNullable<PageData['reportsOnUser']>;
   } = $props();
-
-  // Read once per render rather than per row: `Date.now()` inside the loop makes every row's expiry a
-  // separate reading of the clock for no gain.
-  const now = new Date();
 
   let striking = $state(false);
   let strikeReason = $state('');
@@ -164,27 +161,12 @@
 
   <div class="mb-4">
     <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Strikes ({strikes.length})</h3>
-    {#if strikes.length === 0}
-      <p class="text-sm text-dark-2">No strikes on this account.</p>
-    {:else}
-      <ul class="space-y-1 text-sm">
-        {#each strikes as s (s.id)}
-          {@const spent = s.voidedAt != null || s.status !== 'Active' || s.expiresAt < now}
-          <li class="flex flex-wrap items-baseline gap-x-2">
-            <!-- A voided or lapsed strike still counts as history but not as rope, so it must not read
-                 the same as one holding the account at its limit. -->
-            <Badge variant={spent ? 'outline' : 'destructive'}>
-              {s.voidedAt != null ? 'voided' : s.expiresAt < now ? 'expired' : s.reason}
-            </Badge>
-            <span class="text-dark-0">{s.description}</span>
-            <span class="text-xs text-dark-2">
-              {s.points} point{s.points === 1 ? '' : 's'} · {dateTime(s.createdAt)}
-              {#if !spent}· until {dateTime(s.expiresAt)}{/if}
-            </span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+    <StrikeList
+      {strikes}
+      empty={legacyStrikeCount > 0
+        ? 'No strikes issued since the Retool cutover.'
+        : 'No strikes on this account.'}
+    />
     {#if legacyStrikeCount > 0}
       <p class="mt-1 text-xs text-dark-2">
         Plus {legacyStrikeCount} from the Retool era, in User Lookup — that table is history and is not

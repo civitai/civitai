@@ -309,10 +309,13 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
       `impersonate`) and rows reached by joining their images/models/articles (~67ms each).
       Needs the append-only migration; history only accrues from it forward.
 - [x] **Moderation memory** — `SelectUserNotes`, `InsertUpdateUserNotes`, `UserStrikes`. Notes (read,
-      add, edit-own) and strikes (read-only) against the live moderator database, served from
-      `/api/user-memory/[userId]` with writes as form actions on the page.
-      **This is the reference example for a moderator-database slice** — see
-      `moderation-memory.service.ts`.
+      add, edit-own) against the live moderator database, served from `/api/user-memory/[userId]`
+      with writes as form actions on the page.
+      **`moderation-memory.service.ts` is the reference example for a moderator-database slice**; the
+      endpoint itself is not — it also fetches the MAIN app's `UserStrike` rows (`getLiveStrikes`),
+      because "Issue strike" writes there and the moderator DB's `UserStrikes` is Retool-era history
+      nothing writes. That call is caught separately so a main-DB failure cannot take the notes down
+      with it, and `liveStrikes: null` means "could not check", not "clean".
       Writes put `locals.user.username` in `lastUpdateBy`, so the column now holds two naming schemes
       (Retool display names historically, Civitai usernames going forward). Edit-own is enforced by
       the `lastUpdateBy` predicate in the UPDATE, not in the handler.

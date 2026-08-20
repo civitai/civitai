@@ -425,7 +425,10 @@ team.
 - **`{{ }}` can contain arbitrary JS** (`select1.data.find(i => i.id === select1.value)`), not
   just field references. Read them as data-flow hints, not as expressions to translate literally.
 - **Retool queries often hit the read replica.** Keep it that way — use `dbRead` for
-  investigation screens so they never load the primary.
+  investigation screens so they never load the primary. One narrow exception exists and needs a
+  written reason: a refetch of a row the same request just caused to be written, where replica lag
+  past the round trip reproduces the bug the read is fixing (`getLiveStrikes({ readYourWrite })`).
+  Reaching for `dbWrite` because a read "feels stale" is not that case.
 - **Some queries are already ported.** Check `NAVIGATION` and `docs/moderator-app/` before
   building; images, articles, blocklists, audit and cosmetics have moved already.
 - Query IDs in the export (`GetHelpers`, `GetImageData`) are the names moderators use verbally.
