@@ -333,6 +333,7 @@ if (!global.pgGaugeInitialized) {
 
   global.pgGaugeInitialized = true;
 }
+
 /**
  * Buzz still parked in escrow because a payout leg gave up.
  *

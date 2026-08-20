@@ -43,6 +43,7 @@ type Slot = { active: number };
 // The admission-control BEHAVIOUR was always correct in the graph that serves requests; only a
 // reader in another graph saw nothing. Sharing the state makes the limit genuinely per-POD rather
 // than per-pod-per-graph, which is what the cap was always documented to mean.
+//
 // ONE key holding BOTH maps, rather than a key each. The two are a single invariant — un-sharing
 // either one reintroduces the defect on its own half — and `scripts/server-graph-watchlist.mjs`
 // carries one `globalKey` per entry, so two keys would mean two watchlist entries naming the same
@@ -67,8 +68,8 @@ const bulkheadState = (globalThis.__civitaiBulkheadState ??= {
   rejects: new Map(),
 });
 
-// Destructured once: both maps are only ever mutated in place, never reassigned, so these bindings
-// stay pointed at the shared objects for the life of the process.
+// Read out once into local aliases. Both maps are only ever mutated in place and never
+// reassigned, so these bindings stay pointed at the shared objects for the life of the process.
 const slots = bulkheadState.slots;
 
 // Process-wide reject counter (per key) for observability / tuning.
