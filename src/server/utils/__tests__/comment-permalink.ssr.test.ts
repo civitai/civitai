@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * `/comments/v2/<id>` — the SSR WIRING, as distinct from the resolution logic.
@@ -25,12 +26,23 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
  * is optional, so omission satisfies it. The `Pick` is the half that catches omission.)
  */
 
-const findUnique = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { commentV2: { findUnique } },
-  dbWrite: {},
-}));
+/**
+ * 🔴 The CANONICAL db mock — this file must NOT register the db-client specifier itself.
+ *
+ * The shared-module mock is registered once in `src/__tests__/setup.ts` and reset between files;
+ * a direct per-file mock is rejected by `no-direct-shared-module-mock.test.ts`. The reason is not
+ * style: under `--no-isolate` a module instance is per WORKER, so an ordinary source module that
+ * imports `~/server/db/client` captures whichever mock was installed when it was FIRST evaluated
+ * — and every later file silently reuses it. A per-file mock poisons files that never mocked
+ * anything. See docs/testing/shared-module-mocks.md.
+ *
+ * A test file therefore declares BEHAVIOUR only; it never registers the specifier.
+ *
+ * (`no-direct-shared-module-mock.test.ts` detects violations by REGEX over the file text, so the
+ * offending call is described here rather than spelled — writing it even inside a comment trips
+ * the guard. Found the hard way.)
+ */
+const findUnique = dbMock.dbRead.commentV2.findUnique;
 
 // The page's `createServerSideProps` wrapper resolves a session; stub it so the test exercises the
 // resolver rather than auth.
