@@ -1,7 +1,7 @@
 import { Anchor, Group, Popover, Skeleton, Text } from '@mantine/core';
 import { IconSticker } from '@tabler/icons-react';
 import type { RefObject } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   CREATOR_HOVER_DROPDOWN_CLASS,
@@ -161,8 +161,23 @@ function StickerAttributionCard({
   // them: without this, blocking someone still leaves their storefront one hover
   // away on any comment using their art. The name stays; the route and the
   // creator card do not.
-  const hiddenUsers = useHiddenPreferencesData().hiddenUsers;
-  const blocked = !!raw?.creatorId && hiddenUsers.some((user) => user.id === raw.creatorId);
+  //
+  // Three separate lists, and only one of them is a block: `hiddenUsers` is
+  // "people I hid", while a block is a *pair* — `blockedUsers` one way and
+  // `blockedByUsers` the other. `getBlockedPairIds`, which the shop filters on,
+  // is both directions, so checking hidden alone would leave a creator who
+  // blocked this viewer still one hover from their shop.
+  const preferences = useHiddenPreferencesData();
+  const suppressed = useMemo(
+    () =>
+      new Set([
+        ...preferences.hiddenUsers.map((user) => user.id),
+        ...preferences.blockedUsers.map((user) => user.id),
+        ...preferences.blockedByUsers.map((user) => user.id),
+      ]),
+    [preferences.hiddenUsers, preferences.blockedUsers, preferences.blockedByUsers]
+  );
+  const blocked = !!raw?.creatorId && suppressed.has(raw.creatorId);
   const sticker = raw && blocked ? { ...raw, shopHref: null, creatorId: null } : raw;
 
   return (
