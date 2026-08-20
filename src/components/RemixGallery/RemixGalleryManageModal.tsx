@@ -40,7 +40,10 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
-import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.utils';
+import {
+  dedupeGalleryItems,
+  remixGalleryModerating,
+} from '~/components/RemixGallery/remix-gallery.utils';
 import { QueueThumb } from '~/components/RemixGallery/SubmissionPair';
 import { VerifiedRemixBadge } from '~/components/RemixGallery/VerifiedRemixBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -112,6 +115,9 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
 
   // The card has already run this, so react-query serves it from cache.
   const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery({ imageId });
+  // `undefined` while the query is in flight, which is NOT "not the owner" — see
+  // `remixGalleryModerating`.
+  const ownerKnown = visibility !== undefined;
   const isOwner = !!currentUser && currentUser.id === visibility?.ownerId;
 
   /**
@@ -135,11 +141,17 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
    * throw "not in this gallery". Hiding them is honesty about reach, not a
    * permission check — the server is the permission check.
    *
-   * They are hidden on an owner's own gallery in this mode too, where they
-   * would work. The point of the mode is to be looking at the gallery the way a
-   * moderator does, and the toggle is one click away.
+   * On your OWN gallery in this mode they are kept, because there they work —
+   * the `ownerId = caller` scoping those queries use is satisfied. Hiding them
+   * would take away working controls that nobody asked to lose, and leave the
+   * ordinary job of clearing your queue behind a round trip through the toggle.
    */
-  const moderating = isModerator && (!isOwner || asModerator);
+  const moderating = remixGalleryModerating({ isModerator, isOwner, ownerKnown, asModerator });
+
+  // Reach, not permission: the review queue, the pinned row and the pin control
+  // all scope to `ownerId = caller` server-side, so they are empty or refusing
+  // on someone else's gallery. On your own they work in either mode.
+  const hideOwnerSections = moderating && !isOwner;
 
   // Scoped server-side. Filtering the account-wide list here meant its limit
   // truncated before the filter ran, so a busy owner saw "nothing waiting" on
@@ -312,15 +324,17 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                 : `You are moderating ${visibility?.ownerUsername ?? 'another creator'}'s gallery`}
             </Text>
             <Text size="xs" mt={2}>
-              You can remove entries here at any time — the creator has to wait a week after
-              approving one. The submitter is not refunded, and the removal is logged under your
-              name rather than the creator&apos;s. Approving, declining and pinning stay with the
-              creator.
+              You can remove entries here at any time — as the creator you would have to wait a week
+              after approving one. The submitter is not refunded, and the removal is logged as a
+              moderator action.{' '}
+              {isOwner
+                ? 'Approving, declining and pinning are unchanged — they are yours either way.'
+                : 'Approving, declining and pinning stay with the creator.'}
             </Text>
           </Alert>
         )}
 
-        {!moderating && (
+        {!hideOwnerSections && (
           <div>
             <SectionDivider
               icon={IconInbox}
@@ -617,7 +631,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
           </div>
         )}
 
-        {!moderating && (
+        {!hideOwnerSections && (
           <div>
             <SectionDivider
               icon={IconPin}
@@ -682,7 +696,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                         scopes its lookup to the caller as owner — a moderator
                         pressing this would get "not in this gallery" on every
                         press. */}
-                    {!moderating && (
+                    {!hideOwnerSections && (
                       <Tooltip
                         label={
                           atPinCap

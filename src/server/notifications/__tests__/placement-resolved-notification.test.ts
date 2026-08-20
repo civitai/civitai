@@ -140,7 +140,13 @@ describe('the remix type stops announcing declines', () => {
     expect(statusesSelectedBy(sql)).toBe('approved,removed');
     // The removal half is scoped to the owner's own action: a moderator takedown
     // is not something to announce to the person it was taken from.
-    expect(sql).toContain('p."removedBy" = \'owner\'');
+    //
+    // Keyed on the ACTOR rather than on `removedBy`. The two said the same
+    // thing until a moderator could act as one on their own gallery — that
+    // removal writes `removedBy = 'moderator'` and dropped out of this branch,
+    // so the submitter stopped being told about a removal by the creator.
+    expect(sql).toContain('p."takenDownById" = p."ownerId"');
+    expect(sql).not.toContain('p."removedBy" = \'owner\'');
     // Same two mutations the sticker type is guarded against, and they survive
     // every assertion above on this one too.
     expect(sql).toMatch(/p\."placerId"\s+"userId"/);

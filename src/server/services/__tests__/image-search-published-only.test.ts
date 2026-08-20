@@ -56,7 +56,6 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { getImagesFromSearchPreFilter, getImagesFromSearchPostFilter } from '../image.service';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const MODERATOR = 4321;
 
@@ -88,7 +87,11 @@ describe.each([
   // that one instead, which would have read as the fix not working.
   const publicationClauseFor = async (input: Record<string, unknown>) => {
     await expect(fn(input as unknown as SearchArg)).rejects.toThrow('stop here');
-    expect(fetchDocumentsAbortableMock).toHaveBeenCalled();
+    // Not just "called": the BitDex path runs a parallel own-content pass whose
+    // whole job is to re-admit the caller's own excluded rows. If that shape ever
+    // reaches a Meili builder, `calls[0]` becomes whichever fired first and both
+    // cases below would move for the wrong reason.
+    expect(fetchDocumentsAbortableMock).toHaveBeenCalledTimes(1);
     const [, request] = fetchDocumentsAbortableMock.mock.calls[0];
     const filter = String((request as { filter: string }).filter);
     const clause = filter.match(/\(publishedAtUnix <= \d+[^)]*\)/);

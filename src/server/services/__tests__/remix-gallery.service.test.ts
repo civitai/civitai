@@ -978,6 +978,31 @@ describe('owner actions', () => {
       });
     });
 
+    it('attributes a plain owner removal to the owner even when they claim otherwise', async () => {
+      // The claim reaches the ATTRIBUTION as well as the lock, and the lock test
+      // below cannot see it — that one throws before the write happens. Verified
+      // by mutation: `removedBy: isModeratorTakedown || asModerator` passes every
+      // other test in this file, and writes a moderation record for an ordinary
+      // creator removing from their own gallery.
+      //
+      // Unlocked deliberately, so the write is reached at all.
+      placementFindUnique.mockResolvedValue({
+        ...pending,
+        status: 'approved',
+        resolvedAt: new Date(Date.now() - (REMIX_GALLERY_REMOVAL_LOCK_HOURS + 1) * 60 * 60 * 1000),
+      });
+      placementUpdateMany.mockResolvedValue({ count: 1 });
+
+      await actOnRemixGallerySubmission({
+        placementId: PLACEMENT,
+        action: 'remove',
+        userId: OWNER,
+        asModerator: true,
+      });
+
+      expect(placementUpdateMany.mock.calls[0][0].data).toMatchObject({ removedBy: 'owner' });
+    });
+
     it('ignores the claim from someone who is not a moderator', async () => {
       // `asModerator` chooses between two things a moderator may already do.
       // It is not where the permission comes from, and a plain owner sending it

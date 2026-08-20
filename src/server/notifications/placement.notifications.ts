@@ -318,7 +318,15 @@ export const placementNotifications = createNotificationProcessor({
             )
             OR (
               p.status = 'removed'
-              AND p."removedBy" = 'owner'
+              -- The ACTOR, not the role they acted in. Keying on removedBy
+              -- said the same thing until a moderator could act as one on
+              -- their own gallery: that removal is written as a moderator
+              -- action, so it dropped out of this branch and the submitter
+              -- stopped being told about a removal by the creator themselves.
+              --
+              -- A genuine third-party takedown stays silent, which is the same
+              -- set this branch always excluded.
+              AND p."takenDownById" = p."ownerId"
               AND p."takenDownAt" IS NOT NULL
               AND p."takenDownAt" > '${lastSent}'
             )

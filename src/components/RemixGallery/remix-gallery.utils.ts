@@ -336,3 +336,40 @@ export const remixSubmitPickerFilters = (userId: number | undefined) =>
     sort: ImageSort.Newest,
     publishedOnly: true,
   } as const);
+
+/**
+ * Whether this modal is being used to moderate rather than to curate.
+ *
+ * Out here and pure because it decides a **refund**. The mutation reads the
+ * caller's claim rather than inferring the mode from ownership, so whatever this
+ * returns is what the server acts on — a wrong answer here keeps a submitter's
+ * Buzz and writes a moderation record, and nothing undoes either.
+ *
+ * 🔴 `ownerKnown` is the whole reason this is a function. `isOwner` is derived
+ * from a query, and while that query is in flight it is `false` — which is
+ * indistinguishable from "someone else's gallery". A moderator opening their own
+ * gallery therefore looked like a moderator on a stranger's until it resolved,
+ * and a removal in that window took the moderator branch on their own content.
+ * Unknown is not the same as false, so it is a separate input and it wins:
+ * nobody moderates anything until we know whose gallery this is.
+ *
+ * Mirrors the server's rule in `actOnRemixGallerySubmission` — the role is the
+ * permission, the claim only chooses between two things that role already
+ * allows.
+ */
+export function remixGalleryModerating({
+  isModerator,
+  isOwner,
+  ownerKnown,
+  asModerator,
+}: {
+  isModerator: boolean;
+  isOwner: boolean;
+  /** Whether the visibility query has resolved. */
+  ownerKnown: boolean;
+  asModerator: boolean;
+}) {
+  if (!isModerator) return false;
+  if (!ownerKnown) return false;
+  return !isOwner || asModerator;
+}
