@@ -55,7 +55,14 @@
     // "**/*.tsx",
     // "**/*.cjs",
     // "**/*.mjs",
-    "scripts/local-dev/*.ts",
+    // `scripts/` used to be represented here by `scripts/local-dev/*.ts` ALONE,
+    // and that entry was ALSO listed in `exclude` below. Exclude wins, so the
+    // net effect was that NOTHING under `scripts/` was typechecked — not even
+    // the one directory this list appeared to name. Measured on 23cecb57c0:
+    // `tsc -p tsconfig.json --listFilesOnly` contained 0 files under scripts/.
+    // Both globs are here, and the contradicting exclude entry is gone.
+    "scripts/**/*.ts",
+    "scripts/**/*.tsx",
     "src",
     "packages/*/src",
     "tests",
@@ -67,8 +74,34 @@
     "./node_modules",
     "./node_modules/*",
     "src/pages/api/dev-local/*.ts",
-    "scripts/local-dev/*.ts",
     "src/**/__tests__/**",
-    "packages/civitai-ui"
+    "packages/civitai-ui",
+
+    // ── scripts/ quarantine ───────────────────────────────────────────────
+    // Adding `scripts/**/*.ts` above put 36 files under `scripts/` into the
+    // program and surfaced 198 pre-existing errors, all of them in the five
+    // files below. The other 31 are clean and are checked from now on, by BOTH
+    // CI tiers, along with every file added under `scripts/` in future.
+    // (`node scripts/ci/typecheck-scripts-gate.mjs` reprints both counts.)
+    //
+    // These five are excluded BY NAME rather than by a directory glob, so the
+    // blind spot is enumerable instead of open-ended, and it can only shrink in
+    // a diff a reviewer sees. They are NOT unchecked: `tsconfig.scripts.json`
+    // is this config without these five entries, and
+    // `scripts/ci/typecheck-scripts-gate.mjs` ratchets their per-file error
+    // counts so they cannot get worse. Delete an entry here once its file is
+    // clean — nothing else needs to change.
+    //
+    // 164 of the 198 are in dev-server-test-queue.test.ts and share ONE cause:
+    // it imports an untyped `.mjs` module that carries no JSDoc, so under
+    // `allowJs` tsc infers `request({ worktree, args = [] } = {})` as taking
+    // `{ args?: never[] }` (40x TS2353) and infers the run object's `null`
+    // initializers as type `null` (123x TS18047/TS2531). Typing that module is
+    // the fix, and it is deliberately not attempted here.
+    "scripts/__tests__/dev-server-test-queue.test.ts",
+    "scripts/__tests__/dev-server-env-modes.test.ts",
+    "scripts/__tests__/dev-server-port-reservation.test.ts",
+    "scripts/__tests__/typecheck-tests-gate.test.ts",
+    "scripts/local-dev/gen_seed.ts"
   ]
 }

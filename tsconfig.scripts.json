@@ -1,0 +1,24 @@
+{
+  // Audit/measurement config for `scripts/ci/typecheck-scripts-gate.mjs`:
+  // identical to tsconfig.json in every respect EXCEPT that it does not exclude
+  // the five quarantined files listed in that config's `scripts/ quarantine`
+  // block.
+  //
+  // The delta from the base config is exactly those five entries, deliberately,
+  // and `diffLists` in the gate re-asserts it on every run. A hand-rolled
+  // narrowed program (one that picks its own `include`, or drops `src`) silently
+  // loses `src/types/global.d.ts`, which makes ambient names resolve to TS2304
+  // and collapses downstream generics into a FALSE all-clear on exactly the
+  // files being measured. Extending the real config and subtracting the
+  // quarantine is what keeps the program honest — the same reasoning, and the
+  // same shape, as `tsconfig.tests.json`.
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "./node_modules",
+    "./node_modules/*",
+    "src/pages/api/dev-local/*.ts",
+    "src/**/__tests__/**",
+    "packages/civitai-ui"
+  ]
+}
