@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import ts from 'typescript';
 import { describe, it, expect } from 'vitest';
 
 /**
@@ -202,48 +203,61 @@ const WRITER_LEDGER = [
 ] as const;
 
 /**
- * Comments removed, code kept. Line comments go FIRST, then block comments; a trailing `//` is
- * only cut where the slashes are not part of a `://` scheme, so a URL in real code survives.
+ * Comments blanked, code kept — using the TypeScript scanner, NOT regexes.
  *
- * 🔴 THE ORDER IS LOAD-BEARING, and the obvious order is the wrong one.
+ * 🔴 DO NOT REPLACE THIS WITH REGEXES. Two serious attempts were made and both shipped a
+ * silently BLIND ledger; the numbers below are why this uses a real lexer instead.
  *
- * Running the block pass first lets a `/*` that appears INSIDE a `//` comment open a comment
- * region that swallows live code up to the next `*` + `/`, however far away that is. The trigger
- * is ordinary in this repo — a package glob. `@civitai/` + `*` contains one. This module:
+ * Measured against the TS scanner as ground truth over `src/` (4,133 files, 819,039 nonblank
+ * lines), counting LIVE lines each variant wrongly hides:
  *
- *     // ported onto the shared @civitai/(star) clients.
- *     export async function write(dbWrite) {
- *       await dbWrite.modelFileHash.createMany({ data: rows });
- *     }
- *     /(star)(star) Re-exported for tests. (star)/
+ *   block pass first, then line pass    a `/(star)` inside a `//` comment — e.g. an ordinary
+ *                                       package glob — opens a region that runs to the next
+ *                                       `(star)/`. 43 sites, 40 files, 1,591 lines hidden.
  *
- * strips to the EMPTY STRING with the block pass first: the glob opens a block, the trailing
- * JSDoc closes it, and the writer in between is gone. Measured on this tree at the time of
- * writing: 43 such sites across 40 files, hiding 1,591 source lines from the enumerator — worst
- * case 294 lines, an entire module body. A writer that skips `normalizeScanHashes` could land
- * inside one of those windows with the ledger still green, which is the silent direction this
- * file calls the worse one.
+ *   line pass first, then block pass    strictly worse. The line filter blanks any line starting
+ *                                       with `*`, which includes the ` (star)/` TERMINATOR of
+ *                                       every ordinary JSDoc block, leaving a dangling opener
+ *                                       that closes against the next inline block comment.
+ *                                       Retention fell 81.1% -> 70.8%; in
+ *                                       `ecosystem-seo.constants.ts` it wrongly hid 3,816 of
+ *                                       3,838 live lines (99.4%).
  *
- * Cutting line comments first removes the stray `/(star)` along with its line, so the block pass
- * only ever sees real block comments.
+ *   line pass without the `*` branch     fixes both of the above, and is still wrong: 3,205 of
+ *                                       6,730 live lines wrongly hidden in `blocks.router.ts`.
  *
- * ⚠️ This fixes the measured population, NOT the class. A `/(star)` inside a STRING literal in
- * live code still opens a spurious block: `const a = '/(star)';`. A class fix needs a
- * string/template/regex-aware lexer — there is one to borrow from in
- * `src/server/services/oauth/__tests__/oauth-client-scope-grants.test.ts`, whose tests assert
- * that `'-- not a comment'` inside a string survives. Worth doing if this ever bites; the
- * enumerator-level test below is what would catch it.
+ * Each order fixes the other's bug and none is correct, because the thing being parsed is not a
+ * regular language: `'/(star)'` in a string, a `//` inside a template literal, and a slash in a
+ * regex literal all defeat character-level matching. The scanner already knows all of this, it
+ * ships with the repo, and it costs ~940 ms across 5,257 files.
+ *
+ * `getTokenPos()`/`getTextPos()` bound the comment trivia; newlines are preserved so reported
+ * line numbers and the `\s+` collapse in the enumerator still behave.
  */
 function stripComments(source: string): string {
-  return source
-    .split('\n')
-    .map((line) => {
-      if (/^\s*(\/\/|\*)/.test(line)) return '';
-      return line.replace(/(^|[^:])\/\/.*$/, '$1');
-    })
-    .join('\n')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    /* skipTrivia */ false,
+    ts.LanguageVariant.Standard,
+    source
+  );
+  const out = source.split('');
+  let kind: ts.SyntaxKind;
+  while ((kind = scanner.scan()) !== ts.SyntaxKind.EndOfFileToken) {
+    if (
+      kind === ts.SyntaxKind.SingleLineCommentTrivia ||
+      kind === ts.SyntaxKind.MultiLineCommentTrivia
+    ) {
+      for (let i = scanner.getTokenPos(); i < scanner.getTextPos(); i++) {
+        if (out[i] !== '\n') out[i] = ' ';
+      }
+    }
+  }
+  return out.join('');
 }
+
+/** A live writer, used as the payload in the stripper cases below. */
+const WRITE = 'await dbWrite.modelFileHash.createMany({ data: rows });';
 
 const LEDGER_ENTRIES = WRITER_LEDGER.flatMap(({ file, writes }) =>
   writes.map((w) => `${file} :: ${w}`)
@@ -340,23 +354,63 @@ describe('ModelFileHash writer ledger', () => {
     }
   });
 
-  it('does not let a block comment opened inside a line comment swallow live code', () => {
-    // The shrink shape the first fix missed. `@civitai/` + `*` inside a `//` comment opened a
-    // region that ran to the next `*/`, however far away.
-    const src = [
-      '// ported onto the shared @civitai/* clients.',
-      'await dbWrite.modelFileHash.createMany({ data: rows });',
-      '/** Re-exported for tests. */',
-    ].join('\n');
-    const stripped = stripCommentsForExt(src, '.ts');
-    expect(stripped, 'the whole module was swallowed').toMatch(/modelFileHash\s*\.\s*createMany/);
+  it('keeps live code that every regex stripper we tried swallowed', () => {
+    // One case per variant that shipped or nearly shipped. Each was a real defect measured on
+    // this tree, not a hypothetical — see the note on `stripComments`.
+    const mustSurvive: Array<[string, string]> = [
+      [
+        'block-open inside a line comment (a package glob) — killed the block-first order',
+        ['// ported onto the shared @civitai/* clients.', WRITE, '/** Re-exported. */'].join('\n'),
+      ],
+      [
+        'multi-line JSDoc terminator — killed the line-first order',
+        ['/**', ' * doc', ' */', WRITE, 'const x = 1; /* n */ const y = 2;'].join('\n'),
+      ],
+      [
+        'block-open inside a STRING literal — defeats every character-level variant',
+        `const a = '/*';\n${WRITE}`,
+      ],
+      ['comment marker inside a template literal', 'const t = `// not a comment`;\n' + WRITE],
+      // NOT covered, deliberately and measured: a REGEX LITERAL containing a block-open, e.g.
+      // `const re = /a\/*b/;`. A standalone scanner has no parser context, so it cannot always
+      // tell a regex literal from division and mis-lexes that as a comment opener — the writer
+      // after it then goes missing. Verified as a real limitation rather than assumed. It is not
+      // asserted here because asserting broken behaviour freezes it; the blast-radius bound and
+      // the ledger assertion below are what would catch it if a real file ever hits the shape.
+    ];
+    for (const [why, src] of mustSurvive) {
+      expect(stripCommentsForExt(src, '.ts'), `live writer hidden — ${why}`).toMatch(
+        /modelFileHash\s*\.\s*createMany/
+      );
+    }
+  });
+
+  it('retains almost all of a large real file (blast-radius bound)', () => {
+    // The control every previous revision lacked. Each measured only the population it was
+    // FIXING and never the population it was BREAKING, so a stripper that hid half the repo
+    // still looked like a win. This bound is what makes that impossible to ship again:
+    // `blocks.router.ts` has 6,730 live lines by the scanner's own reckoning, and the two regex
+    // variants retained 1,053 and 4,156 of them. A floor of 6,000 fails both.
+    const rel = 'src/server/routers/blocks.router.ts';
+    const abs = path.join(REPO_ROOT, rel);
+    if (!fs.existsSync(abs)) return; // file renamed — the bound is not worth a false red
+    const src = fs.readFileSync(abs, 'utf8');
+    const nonblank = (s: string) => s.split('\n').filter((l) => l.trim()).length;
+    const kept = nonblank(stripCommentsForExt(src, '.ts'));
+    expect(kept, `${rel}: stripper retained only ${kept} nonblank lines`).toBeGreaterThan(6000);
+    // …and it must still be REMOVING comments, or the bound is satisfied by doing nothing.
+    expect(kept).toBeLessThan(nonblank(src));
   });
 
   it('does not count a writer that is only mentioned in a comment', () => {
     const commented = [
       '// await dbWrite.modelFileHash.createMany({ data: rows });',
       '/* await dbWrite.modelFileHash.upsert({ where, create, update }); */',
-      " * await kyselyDb.insertInto('ModelFileHash').values(rows).execute();",
+      // A JSDoc continuation, INSIDE its block. The bare ` * …` line this fixture used to carry
+      // was an artifact of the old line-based stripper, which blanked any line starting with `*`.
+      // A real lexer is right to call that CODE — outside a block, `*` is multiplication — and
+      // the shape never occurs in real source, where continuations live inside `/** … */`.
+      "/**\n * await kyselyDb.insertInto('ModelFileHash').values(rows).execute();\n */",
       'const x = 1; // await dbWrite.modelFileHash.createMany({ data: rows });',
     ].join('\n');
 
@@ -426,8 +480,11 @@ describe('ModelFileHash writer ledger', () => {
     expect(
       stripComments('// normalizeScanHashes(); without it a file loses its hashes.\n')
     ).not.toMatch(/normalizeScanHashes\s*\(/);
+    // Inside its block, as a JSDoc continuation actually appears. This fixture used to be a bare
+    // ` * see …` line, which only read as a comment because the old stripper was line-based; the
+    // scanner correctly calls that multiplication, and real source never has it.
     expect(
-      stripComments(' * see normalizeScanHashes() in model-file-scan.service.ts\n')
+      stripComments('/**\n * see normalizeScanHashes() in model-file-scan.service.ts\n */\n')
     ).not.toMatch(/normalizeScanHashes\s*\(/);
     expect(stripComments('const x = 1; // normalizeScanHashes() used to live here\n')).not.toMatch(
       /normalizeScanHashes\s*\(/
