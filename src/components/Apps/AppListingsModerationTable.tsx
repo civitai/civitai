@@ -41,6 +41,7 @@ import {
   type SubmissionGroup,
 } from '~/components/Apps/submissionsTable';
 import { SortableTh, StatusSections, SubmissionSearch } from '~/components/Apps/submissionsTableUi';
+import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import type { ModerationListingRow } from '~/server/services/blocks/app-listing.service';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -316,7 +317,7 @@ export function AppListingsModerationTable({
                   <Table.Td>
                     {row.category ? (
                       <Badge size="sm" variant="light">
-                        {row.category}
+                        {marketplaceCategoryLabel(row.category)}
                       </Badge>
                     ) : (
                       <Text size="xs" c="dimmed">

@@ -51,6 +51,7 @@ import {
 import { dbRead } from '~/server/db/client';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
 
@@ -339,7 +340,7 @@ export default function AppDetailPage() {
                     )}
                     {detail.contentRating && (
                       <Badge variant="light" color="gray" size="sm">
-                        {detail.contentRating}
+                        {offsiteContentRatingLabel(detail.contentRating)}
                       </Badge>
                     )}
                   </Group>

@@ -560,8 +560,9 @@ describe('AppListingDetailBody', () => {
     // `formatDate` default format is `MMM D, YYYY`; base() pins 2026-03-04.
     expect(meta.element().textContent).toContain('Updated:');
     expect(meta.element().textContent).toContain('2026');
+    // 🔴 The DISPLAY label, not the stored `utility` this fixture holds.
     expect(container.querySelector('[data-testid="apps-listing-category"]')?.textContent).toBe(
-      'utility'
+      'Utility'
     );
   });
 

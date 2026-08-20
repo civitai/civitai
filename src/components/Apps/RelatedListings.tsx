@@ -11,7 +11,7 @@ import {
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   isMarketplaceCategory,
-  MARKETPLACE_CATEGORY_LABELS,
+  marketplaceCategoryLabel,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
@@ -38,9 +38,10 @@ import { trpc } from '~/utils/trpc';
  * offers a way back into the store.
  */
 
+/** Null-tolerant wrapper over the SHARED label rule (raw fallback included). */
 function categoryLabel(category: string | null): string | null {
   if (!category) return null;
-  return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
+  return marketplaceCategoryLabel(category);
 }
 
 export interface RelatedListingsProps {
