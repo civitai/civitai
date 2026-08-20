@@ -119,7 +119,9 @@ describe('parsePort / resolveDaemonPort', () => {
 describe('the write-guard hook guards the ports the skill actually uses', () => {
   it('guards the declared default', async () => {
     const { unboundedDevRequest } = await import('../../.claude/hooks/check-writable.mjs');
-    expect(unboundedDevRequest(`curl http://localhost:${DEFAULT_DAEMON_PORT}/sessions`)).toHaveLength(1);
+    expect(
+      unboundedDevRequest(`curl http://localhost:${DEFAULT_DAEMON_PORT}/sessions`)
+    ).toHaveLength(1);
     // The negative control: a port the skill does not use must stay silent, or "it guards
     // everything" would read the same as "it guards the right thing".
     expect(unboundedDevRequest('curl http://localhost:7777/sessions')).toHaveLength(0);
@@ -138,9 +140,7 @@ describe('the write-guard hook guards the ports the skill actually uses', () => 
     expect(daemonPortsGuarded({ DEV_DAEMON_PORT: 'nope' }).map(Number)).toEqual([
       DEFAULT_DAEMON_PORT,
     ]);
-    expect(daemonPortsGuarded({ DEV_DAEMON_PORT: '0' }).map(Number)).toEqual([
-      DEFAULT_DAEMON_PORT,
-    ]);
+    expect(daemonPortsGuarded({ DEV_DAEMON_PORT: '0' }).map(Number)).toEqual([DEFAULT_DAEMON_PORT]);
   });
 });
 
