@@ -6,6 +6,7 @@ import {
   getDetailPrimaryAction,
   getOwnerEditHref,
   isEditableListingStatus,
+  shouldShowConnectCapability,
   shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
@@ -672,15 +673,15 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
   });
 
   it('an empty-string connectClientId does NOT suppress it (truthiness, not nullish)', () => {
-    // Matches `app-listing.service`'s `|| null` projection — so BOTH remaining
-    // readers agree that an empty string is not a connected OAuth app.
+    // Matches `app-listing.service`'s `|| null` projection and
+    // `shouldShowConnectCapability` — so all THREE readers agree that an empty
+    // string is not a connected OAuth app.
     //
-    // 🔴 This used to say "and `getDetailPrimaryAction`'s test, so all three read
-    // the capability the same way". #4208 deleted that reader: the primary action
-    // no longer branches on `connectClientId` at all, so this predicate is the
-    // only place in this module that does. Count the readers, don't restate the
-    // number — the sibling branch that adds `shouldShowConnectCapability` takes
-    // it back up.
+    // 🔴 Count the readers, don't restate the number — it has been wrong in both
+    // directions. It said three when the third was `getDetailPrimaryAction`'s
+    // no-destination fallback; #4208 deleted that read (the CTA no longer touches
+    // the capability, and a region gate now asserts it cannot), and #4207 added
+    // `shouldShowConnectCapability`. Three again, different membership.
     expect(
       shouldShowOffsiteDisclosure({
         kind: 'offsite',
@@ -688,6 +689,15 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
         connectClientId: '',
       })
     ).toBe(true);
+    // The third reader, on the same fixture — pins the AGREEMENT rather than
+    // asserting the disclosure alone and describing the others in prose.
+    expect(
+      shouldShowConnectCapability({
+        kind: 'offsite',
+        externalUrl: 'https://ext.app',
+        connectClientId: '',
+      })
+    ).toBe(false);
   });
 
   /**
@@ -739,6 +749,237 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
     // POSITIVE CONTROL first: the read really returned this component's source.
     expect(body).toMatch(/This app runs entirely off-platform/);
     expect(body).toMatch(/shouldShowOffsiteDisclosure\(detail\.kindData\)/);
+    // …and the same for the positive counterpart (#4207): the renderer must call
+    // it, not re-derive `connectClientId` inline. A second inline copy is exactly
+    // how the two signals would drift into contradicting each other.
+    expect(body).toMatch(/shouldShowConnectCapability\(detail\.kindData\)/);
+  });
+
+  /**
+   * 🔴 THE SECURITY DOCSTRING MUST STILL DOCUMENT THIS FUNCTION.
+   *
+   * A JSDoc block attaches to whatever declaration FOLLOWS it, so inserting a
+   * helper between this docstring and its function silently re-points ~46 lines
+   * of security rationale at the helper and leaves `shouldShowOffsiteDisclosure`
+   * with no docs at all — hover shows nothing. That happened once during #4207
+   * and is invisible in a diff, which is why it is pinned rather than just fixed.
+   *
+   * This is the docstring `AppListingDetailBody`'s JSX comment tells readers to
+   * consult before changing what the sentence says.
+   */
+  it('🔴 the security docstring is still attached to the disclosure predicate', () => {
+    const view = fs.readFileSync(path.resolve(__dirname, '../appListingDetailView.ts'), 'utf8');
+    // POSITIVE CONTROL: the docstring exists and we really read this module.
+    const marker = 'EXTRACTED FROM THE JSX ON PURPOSE';
+    expect(view).toContain(marker);
+
+    // Whatever declaration follows that docstring's terminator must be the
+    // disclosure itself — not a helper that drifted in between.
+    const close = view.indexOf('\n */\n', view.indexOf(marker));
+    expect(close, 'docstring terminator not found').toBeGreaterThan(-1);
+    const following = view.slice(close + '\n */\n'.length).split('\n')[0];
+    expect(following).toMatch(/^export function shouldShowOffsiteDisclosure\b/);
+  });
+});
+
+/**
+ * 🔴 #4207 — THE TWO PERMISSION SIGNALS ARE ONE STATEMENT WITH TWO SIDES.
+ *
+ * The off-platform disclosure ("no Civitai install, account access, or
+ * permissions") and the connect indicator ("can connect to your Civitai
+ * account") are the negative and positive halves of the SAME permission claim.
+ * The failure mode that matters is not either one being wrong on its own — it is
+ * the two DISAGREEING: showing both (the page contradicts itself about account
+ * access) or showing neither (the state that made #4207 worth filing, where the
+ * capability was communicated only by an absence).
+ *
+ * 🔴 So this is asserted as a RELATIONSHIP, in one test, over both states.
+ * Testing each predicate in isolation — which the suite above already does — is
+ * exactly how a contradiction between them would be missed: both files stay
+ * green while the page says two things at once.
+ *
+ * 🔴 XOR ALONE IS NOT ENOUGH, and that is why the table below pins WHICH signal
+ * shows for WHICH state. Swapping the two predicates preserves XOR perfectly:
+ * every listing would still show exactly one signal, and a test that only
+ * checked "exactly one" would stay green while every OAuth app was labelled
+ * "no account access" — the worst possible inversion of a security claim.
+ */
+describe('🔴 the disclosure and the connect indicator, as a relationship', () => {
+  /**
+   * Distinct, non-default values on every axis, and pairwise distinct from each
+   * other — so a mutant that hardcodes any single literal still moves a row.
+   */
+  const DESTINATIONS = ['https://ext.app', 'https://other.example/path'] as const;
+  /** Truthy client ids (capability PRESENT) — two distinct, neither a default. */
+  const OAUTH_IDS = ['oauth_abc', 'oauth_zzz'] as const;
+  /** Falsy client ids (capability ABSENT) — the grandfathered shapes. */
+  const NO_OAUTH = [null, '', undefined] as const;
+
+  it('🔴 for a listing WITH a destination, EXACTLY ONE renders — and it is the right one', () => {
+    let disclosureRows = 0;
+    let indicatorRows = 0;
+
+    for (const externalUrl of DESTINATIONS) {
+      for (const connectClientId of OAUTH_IDS) {
+        const key = `url=${externalUrl} client=${String(connectClientId)}`;
+        const kindData = { kind: 'offsite', externalUrl, connectClientId } as const;
+        const disclosure = shouldShowOffsiteDisclosure(kindData);
+        const indicator = shouldShowConnectCapability(kindData);
+
+        // The relationship: never both, never neither.
+        expect(disclosure !== indicator, `XOR ${key}`).toBe(true);
+        // …and the DIRECTION, which XOR cannot see. An OAuth app must never be
+        // told it has "no account access".
+        expect(disclosure, `disclosure ${key}`).toBe(false);
+        expect(indicator, `indicator ${key}`).toBe(true);
+        indicatorRows++;
+      }
+
+      for (const connectClientId of NO_OAUTH) {
+        const key = `url=${externalUrl} client=${String(connectClientId)}`;
+        const kindData = { kind: 'offsite', externalUrl, connectClientId } as unknown as Parameters<
+          typeof shouldShowOffsiteDisclosure
+        >[0];
+        const disclosure = shouldShowOffsiteDisclosure(kindData);
+        const indicator = shouldShowConnectCapability(kindData);
+
+        expect(disclosure !== indicator, `XOR ${key}`).toBe(true);
+        expect(disclosure, `disclosure ${key}`).toBe(true);
+        expect(indicator, `indicator ${key}`).toBe(false);
+        disclosureRows++;
+      }
+    }
+
+    // 🔴 ANTI-VACUITY. Without these the test passes if the loops ran zero times,
+    // and — more importantly — it proves BOTH arms were actually exercised, so
+    // the XOR assertions above are not all coming from one side of the fork.
+    expect(indicatorRows).toBe(4); // 2 destinations x 2 truthy client ids
+    expect(disclosureRows).toBe(6); // 2 destinations x 3 falsy client ids
+  });
+
+  it('🔴 outside the domain, NEITHER renders (no destination, and on-site)', () => {
+    // The one state where "both hidden" is correct: there is no claim to make
+    // about where an app runs when it has nowhere to run. Pinned so a future
+    // change that makes the indicator unconditional on `connectClientId` — the
+    // obvious naive implementation — fails here rather than printing a
+    // permission claim over a listing with no destination.
+    let checked = 0;
+    // 🔴 `'http://insecure.app'` is deliberately NOT in this list — see the
+    // dedicated test below. The domain is TRUTHINESS on `externalUrl`, not an
+    // https check, so a non-https URL is INSIDE it.
+    for (const externalUrl of [null, '']) {
+      for (const connectClientId of ['oauth_abc', null]) {
+        const key = `url=${String(externalUrl)} client=${String(connectClientId)}`;
+        const kindData = { kind: 'offsite', externalUrl, connectClientId } as unknown as Parameters<
+          typeof shouldShowOffsiteDisclosure
+        >[0];
+        expect(shouldShowOffsiteDisclosure(kindData), `disclosure ${key}`).toBe(false);
+        expect(shouldShowConnectCapability(kindData), `indicator ${key}`).toBe(false);
+        checked++;
+      }
+    }
+    expect(checked).toBe(4);
+
+    // An on-site listing, including the cast-producer shape that smuggles in an
+    // externalUrl — the same fixture the disclosure suite uses, applied to both.
+    const onsite = {
+      kind: 'onsite',
+      appBlockId: 'blk-1',
+      hasPage: true,
+      liveUrl: 'https://blk-1.civit.ai',
+    } as unknown as Parameters<typeof shouldShowOffsiteDisclosure>[0];
+    expect(shouldShowOffsiteDisclosure(onsite)).toBe(false);
+    expect(shouldShowConnectCapability(onsite)).toBe(false);
+
+    const smuggled = {
+      ...onsite,
+      externalUrl: 'https://smuggled.example/app',
+      connectClientId: 'oauth_abc',
+    } as unknown as Parameters<typeof shouldShowOffsiteDisclosure>[0];
+    // POSITIVE CONTROL: the same object as OFF-SITE does light the indicator, so
+    // the two `false`s below are about the kind term and not an inert function.
+    expect(shouldShowConnectCapability({ ...smuggled, kind: 'offsite' })).toBe(true);
+    expect(shouldShowOffsiteDisclosure(smuggled)).toBe(false);
+    expect(shouldShowConnectCapability(smuggled)).toBe(false);
+  });
+
+  /**
+   * 🔴 A NON-HTTPS URL IS INSIDE THE DOMAIN, AND THAT IS PRE-EXISTING.
+   *
+   * `shouldShowOffsiteDisclosure` has always tested `!!externalUrl` — plain
+   * truthiness, not an https guard. The connect indicator MIRRORS that rather
+   * than narrowing it: tightening the domain to https would silently change when
+   * an existing SECURITY claim is displayed, which is a behaviour change #4207
+   * did not ask for and which belongs in its own change if it is wanted.
+   *
+   * 🔴 SCOPE — WHICH PRODUCER CAN ACTUALLY REACH THESE CELLS. Not the public
+   * store detail. `app-listing.service` applies `safeExternalUrl()` (https-only)
+   * to BOTH projections (`:255` card, `:315` detail), so a non-https column
+   * arrives at this predicate as `null`, never as `http://…`; and the submit path
+   * validates https whenever a URL is present. The ONLY producer that can deliver
+   * these values is the moderator review preview — `reviewListingPreview.ts:98`
+   * passes `row.appListing?.externalUrl ?? null` through UNGUARDED — and then
+   * only for a legacy row that already holds one.
+   *
+   * An earlier version of this note stated the divergence unconditionally, which
+   * over-warned: it read as though a public listing could show an off-platform
+   * sentence with no way to go there. It cannot. The moderator-preview path can,
+   * which is a much narrower and less alarming claim.
+   *
+   * ⚠️ Still worth knowing, NOT fixed here: on that preview path the predicates
+   * and the CTA disagree — the CTA's `safeExternalHref` treats a non-https URL as
+   * NO destination while these predicates count it as one. Predates both #4207
+   * and #4200.
+   *
+   * What this test pins is the part that IS this change's business: whatever the
+   * domain turns out to be, the two signals agree about it and still XOR.
+   */
+  it('🔴 a non-https destination stays INSIDE the domain, and the two still XOR', () => {
+    let rows = 0;
+    for (const externalUrl of ['http://insecure.app', 'javascript:alert(1)']) {
+      for (const connectClientId of ['oauth_abc', null]) {
+        const key = `url=${externalUrl} client=${String(connectClientId)}`;
+        const kindData = { kind: 'offsite', externalUrl, connectClientId } as unknown as Parameters<
+          typeof shouldShowOffsiteDisclosure
+        >[0];
+        const disclosure = shouldShowOffsiteDisclosure(kindData);
+        const indicator = shouldShowConnectCapability(kindData);
+        expect(disclosure !== indicator, `XOR ${key}`).toBe(true);
+        // Direction, as everywhere else: the capability decides which one.
+        expect(indicator, `indicator ${key}`).toBe(!!connectClientId);
+        expect(disclosure, `disclosure ${key}`).toBe(!connectClientId);
+        rows++;
+      }
+    }
+    expect(rows).toBe(4);
+  });
+
+  it('🔴 the GRANDFATHERED production listing and an OAuth one, side by side', () => {
+    // The two real shapes, asserted against each other in one place. Production
+    // (measured): `vitrine` is the single approved off-site listing with no OAuth
+    // client; `comfy`, `cosmetic-studio` and `radio` all carry one. Both arms of
+    // this test therefore describe listings that actually exist.
+    const grandfathered = {
+      kind: 'offsite',
+      externalUrl: 'https://vitrine.civitai.com/',
+      connectClientId: null,
+    } as const;
+    const oauth = {
+      kind: 'offsite',
+      externalUrl: 'https://comfy.civitai.com/',
+      connectClientId: 'oauth_comfy',
+    } as const;
+
+    expect(shouldShowOffsiteDisclosure(grandfathered)).toBe(true);
+    expect(shouldShowConnectCapability(grandfathered)).toBe(false);
+
+    expect(shouldShowOffsiteDisclosure(oauth)).toBe(false);
+    expect(shouldShowConnectCapability(oauth)).toBe(true);
+
+    // Stated as the relationship rather than four constants: the two listings
+    // must disagree on BOTH signals, in opposite directions.
+    expect(shouldShowOffsiteDisclosure(grandfathered)).not.toBe(shouldShowOffsiteDisclosure(oauth));
+    expect(shouldShowConnectCapability(grandfathered)).not.toBe(shouldShowConnectCapability(oauth));
   });
 });
 

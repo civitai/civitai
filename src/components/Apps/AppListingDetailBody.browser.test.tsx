@@ -299,6 +299,63 @@ describe('AppListingDetailBody', () => {
     expect(row?.textContent).toContain('PG');
   });
 
+  /**
+   * 🔴 #4207 — THE TWO PERMISSION SIGNALS, AS A RELATIONSHIP, AT THE RENDER LAYER.
+   *
+   * The view-model test pins the predicates; this pins that the JSX actually
+   * wires them to two mutually-exclusive Alerts. The failure that matters is the
+   * page CONTRADICTING itself — telling a viewer an OAuth app has "no account
+   * access" — so both states are asserted in ONE test rather than separately.
+   *
+   * 🔴 The absence assertions are plain `toContain` on `textContent`, NOT
+   * `expect.element(...).not.toBeInTheDocument()`, which is inert in this repo
+   * (#4197) and passes for any string whatsoever.
+   *
+   * Each state asserts one sentence PRESENT and the other ABSENT in the same
+   * container, so the present-check is the positive control for the absent-check:
+   * a container wired to nothing fails the `toContain` before the `not` can pass
+   * vacuously. Both awaits settle the render first.
+   *
+   * Fixtures are the two REAL production shapes (measured): `vitrine` is the one
+   * approved off-site listing with no OAuth client; `comfy` carries one.
+   */
+  test('🔴 #4207 disclosure XOR connect indicator — never both, never neither', async () => {
+    const DISCLOSURE = 'This app runs entirely off-platform';
+    const INDICATOR = 'can connect to your Civitai account';
+
+    const grandfathered = await renderScoped(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: {
+            kind: 'offsite',
+            externalUrl: 'https://vitrine.civitai.com/',
+            connectClientId: null,
+          },
+        })}
+      />
+    );
+    await expect.element(grandfathered.within.getByText('My App')).toBeInTheDocument();
+    expect(grandfathered.container.textContent).toContain(DISCLOSURE);
+    expect(grandfathered.container.textContent).not.toContain(INDICATOR);
+
+    const withOauth = await renderScoped(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: {
+            kind: 'offsite',
+            externalUrl: 'https://comfy.civitai.com/',
+            connectClientId: 'oauth_comfy',
+          },
+        })}
+      />
+    );
+    await expect.element(withOauth.within.getByText('My App')).toBeInTheDocument();
+    expect(withOauth.container.textContent).toContain(INDICATOR);
+    expect(withOauth.container.textContent).not.toContain(DISCLOSURE);
+  });
+
   // ── The `⋮` overflow menu ──────────────────────────────────────────────────
   //
   // 🔴 RED AT BASE. The base renders the secondary actions as a stacked full-width

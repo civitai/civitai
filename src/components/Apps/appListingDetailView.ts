@@ -244,6 +244,27 @@ export function getDetailPrimaryAction(
 }
 
 /**
+ * The DOMAIN both permission signals live in: an off-site listing that has
+ * somewhere to run.
+ *
+ * 🔴 This exists so the disclosure and the connect indicator are complements BY
+ * CONSTRUCTION rather than by coincidence. Two independently-written predicates
+ * reading the same field is exactly the shape that drifts — one gets a fix, the
+ * other does not, and the page then either makes both claims at once or neither.
+ * Factoring the shared half out means the only difference between them is the
+ * sense of one negation.
+ *
+ * A listing OUTSIDE this domain (on-site, or off-site with no destination) shows
+ * NEITHER signal, which is correct: an on-site app runs on platform, and there
+ * is no "where it runs" claim to make about a listing with nowhere to run.
+ */
+function hasOffsitePermissionSignal(
+  kindData: ListingDetail['kindData']
+): kindData is Extract<ListingDetail['kindData'], { kind: 'offsite' }> {
+  return kindData.kind === 'offsite' && !!kindData.externalUrl;
+}
+
+/**
  * Does the detail page show the "runs entirely off-platform — no Civitai
  * install, account access, or permissions" disclosure?
  *
@@ -256,21 +277,34 @@ export function getDetailPrimaryAction(
  * listing — was a change no test could catch. Here it is a pure function with
  * its own truth-table tests.
  *
- * Three conjuncts, each load-bearing:
+ * Three conjuncts, each load-bearing — now expressed as a shared DOMAIN
+ * (`hasOffsitePermissionSignal`: offsite + a destination) plus the capability
+ * term:
  *   - `offsite` — an on-site app runs ON platform, so the sentence is simply
  *     wrong about it;
- *   - no `connectClientId` — the capability check; see above;
  *   - a non-null `externalUrl` — there is no "runs off-platform" claim to make
- *     about a listing with nowhere to run.
+ *     about a listing with nowhere to run;
+ *   - no `connectClientId` — the capability check; see above.
+ *
+ * 🔴 The domain is factored out so this predicate and its positive counterpart
+ * `shouldShowConnectCapability` CANNOT DRIFT APART. They differ by exactly one
+ * negation, over one shared domain, so "both shown" and "both hidden inside the
+ * domain" are unrepresentable rather than merely untested. See that function.
  *
  * Truthiness on `connectClientId`, matching `app-listing.service`'s `|| null`,
- * so both read the capability the same way.
+ * and `shouldShowConnectCapability` below — so all THREE read the capability the
+ * same way.
  *
- * 🔴 This used to say "and the no-destination fallback above, so all THREE read
- * the capability the same way". #4208 deleted that fallback's `connectClientId`
- * test outright — the primary action no longer reads the capability at all — so
- * there are two readers here, not three. This predicate is now the ONLY place in
- * this module that branches on it.
+ * 🔴 THAT COUNT IS LOAD-BEARING AND IT MOVES — recount it against the tree, never
+ * restate it. It has now been wrong in BOTH directions. It originally read three:
+ * this predicate, the service projection, and `getDetailPrimaryAction`'s
+ * no-destination fallback. #4208 deleted that fallback's `connectClientId` test
+ * outright — the primary action no longer reads the capability at all, and a
+ * region gate in the tests asserts the CTA renderer cannot — taking it to two.
+ * #4207 then added `shouldShowConnectCapability`, bringing it back to three with
+ * DIFFERENT membership. Counted on this tree the three are: this predicate
+ * (`!connectClientId`), `shouldShowConnectCapability` (`!!connectClientId`), and
+ * `app-listing.service`'s `row.connectClientId || null` projection.
  *
  * 🔴 TWO PRODUCERS FEED THIS, and only one is the store read path.
  * `OffsiteReviewQueue`'s `ListingPreviewSection` renders `AppListingDetailBody`
@@ -289,5 +323,43 @@ export function getDetailPrimaryAction(
  * do not read "identical rendering" as universal across both producers.
  */
 export function shouldShowOffsiteDisclosure(kindData: ListingDetail['kindData']): boolean {
-  return kindData.kind === 'offsite' && !kindData.connectClientId && !!kindData.externalUrl;
+  return hasOffsitePermissionSignal(kindData) && !kindData.connectClientId;
+}
+
+/**
+ * Does the detail page show the POSITIVE "this app can connect to your Civitai
+ * account" indicator?
+ *
+ * 🔴 A CAPABILITY, NOT A KIND. #4200 deleted the off-site sub-kind because a
+ * parent category and one of its children were sharing a word; this does not
+ * bring that back. There is one off-site kind, one badge, one CTA path. What
+ * this adds is a PROPERTY of a listing — it has an OAuth client, so it can ask
+ * for access to your account — surfaced on the page body next to the
+ * disclosure. Nothing here forks the taxonomy, the kind label, or the action.
+ * If a future change makes this select a different badge or a different CTA,
+ * that is the sub-kind returning under a new name; don't.
+ *
+ * WHY IT EXISTS (#4207). "This app can connect to your Civitai account" is a
+ * permission-relevant fact, and until now it was communicated ONLY by the
+ * ABSENCE of the off-platform disclosure. A user had to notice that a sentence
+ * they had never seen was missing. That is the weakest possible form of a
+ * permission signal, and it is invisible to anyone who has not seen the other
+ * variant for comparison.
+ *
+ * 🔴 THE EXACT COMPLEMENT of `shouldShowOffsiteDisclosure` over the shared
+ * domain — same truthiness test on `connectClientId`, opposite sense. So for any
+ * listing in the domain EXACTLY ONE of the two renders, and outside it neither
+ * does. That relationship is the thing worth pinning, and it is pinned as a
+ * relationship (one test, both states) rather than as two isolated assertions —
+ * testing them separately is precisely how a contradiction between them would be
+ * missed.
+ *
+ * Truthiness, not `!= null`, matching the disclosure, `app-listing.service`'s
+ * `|| null`, and the no-destination fallback — so every reader of this field
+ * agrees. At `connectClientId === ''` this is false and the disclosure is true:
+ * an empty string is not a connected OAuth app, and that is the safe direction
+ * (we under-claim the capability rather than over-claim it).
+ */
+export function shouldShowConnectCapability(kindData: ListingDetail['kindData']): boolean {
+  return hasOffsitePermissionSignal(kindData) && !!kindData.connectClientId;
 }
