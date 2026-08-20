@@ -235,11 +235,16 @@ export function AppTransferOffersView({
                   `oauth-client.router::delete` has no referencing-listing check. What is
                   still true is the part that matters HERE: the RECIPIENT cannot do it — they
                   own neither the listing nor the client — so a remedy addressed to them
-                  would still be a dead end, and the copy stays as it is. Whether the OWNER's
-                  copy should now name that route is a PRODUCT decision, deliberately not
-                  taken in this change; the constant's own rationale in
-                  `shared/constants/app-transfer.constants.ts` rests on the refuted premise
-                  and is flagged rather than edited here. */}
+                  would still be a dead end, and the copy stays as it is.
+
+                  🔴 AND THE OWNER'S SIDE IS NOW DECIDED TOO. #4126 re-took that product
+                  question on its merits with the delete route known to exist, and kept the
+                  constraint-only wording — chiefly because the route is a destructive
+                  client delete rather than a detach, and because this very component
+                  proves the string has two audiences, one of whom can never act on it. The
+                  full argument now lives at the constant in
+                  `shared/constants/app-transfer.constants.ts`, which no longer rests on the
+                  refuted premise. */}
               {blocked ? (
                 <Alert
                   color="yellow"

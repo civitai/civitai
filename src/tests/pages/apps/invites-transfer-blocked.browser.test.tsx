@@ -233,10 +233,11 @@ describe('🔴 AN OFFER THE SERVER WILL REFUSE — said so before the click', ()
     // title cannot supply.
     await expect.element(blocked).toHaveTextContent(/split ownership/i);
     // 🔴 AND IT INSTRUCTS NOTHING. Note the reason is NOT "no unlink path exists" — one
-    // does (deleting the OAuth client cascades `SetNull`); that premise is refuted and the
-    // View's comment records it. The reason is that the RECIPIENT cannot take it: they own
-    // neither the listing nor the client, so a remedy addressed to them is a dead end
-    // whatever the owner can do. Pinned on the RENDERED text, not just on the constant.
+    // does (deleting the OAuth client cascades `SetNull`); that premise is refuted, and
+    // since #4126 the constant itself records the refutation alongside the merits-based
+    // decision. The reason that matters HERE is that the RECIPIENT cannot take the route:
+    // they own neither the listing nor the client, so a remedy addressed to them is a dead
+    // end whatever the owner can do. Pinned on the RENDERED text, not just on the constant.
     await expect.element(blocked).not.toHaveTextContent(/unlink/i);
   });
 
