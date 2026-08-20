@@ -58,7 +58,7 @@ import type { TrainingBaseModelType } from '~/utils/training';
 import type { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { bytesToKB, formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './TrainingSelectFile.module.css';
@@ -304,7 +304,7 @@ const EpochRow = ({
                             className="size-full object-cover"
                           />
                         )}
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                        <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
                           <IconZoomIn size={28} color="white" />
                         </span>
                       </button>
@@ -417,7 +417,6 @@ export default function TrainingSelectFile({
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
   );
-  const [downloading, setDownloading] = useState(false);
 
   const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess() {
@@ -465,6 +464,29 @@ export default function TrainingSelectFile({
   });
 
   const moveAssetMutation = trpc.training.moveAsset.useMutation();
+  // The orchestrator bundles every blob the run produced (epoch models + sample media)
+  // into one zip and hands back a short-lived signed URL, so nothing streams through us.
+  const archiveMutation = trpc.training.getEpochArchive.useMutation({
+    onSuccess: ({ url, omittedCount }) => {
+      if (omittedCount > 0) {
+        showWarningNotification({
+          title: 'Some files could not be included',
+          message: `${omittedCount} file${
+            omittedCount > 1 ? 's are' : ' is'
+          } no longer available and was left out of the archive.`,
+          autoClose: false,
+        });
+      }
+      window.location.assign(url);
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to prepare download',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
 
   // -- "Train Further" (steps-based pricing, AI Toolkit only) --------------------------
   // Starts a new training run that continues from a selected epoch: creates a new Pending
@@ -767,29 +789,9 @@ export default function TrainingSelectFile({
       !hasFailedWithEpochs) ||
     noEpochs;
 
-  const downloadAll = async () => {
-    if (noEpochs || downloading) return;
-
-    setDownloading(true);
-
-    // Trigger browser-native downloads sequentially with a small delay
-    // so the browser can handle multiple concurrent downloads to disk
-    for (let i = 0; i < epochs.length; i++) {
-      const epochData = epochs[i];
-      const link = document.createElement('a');
-      link.href = `/api/download/training/${modelVersion.id}?epochNumber=${epochData.epochNumber}`;
-      link.download = `${model.name}_epoch_${epochData.epochNumber}.safetensors`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      // Small delay between downloads to avoid browser throttling
-      if (i < epochs.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
-
-    setDownloading(false);
+  const downloadAll = () => {
+    if (noEpochs || archiveMutation.isPending) return;
+    archiveMutation.mutate({ modelVersionId: modelVersion.id });
   };
 
   const canGenerateWithEpochBool = canGenerateWithEpoch(completeDate);
@@ -917,14 +919,21 @@ export default function TrainingSelectFile({
           )}
           <Stack gap="xs">
             <Flex justify="flex-end" align="center" gap="md">
-              <Button
-                color="cyan"
-                leftSection={<IconFileDownload size={18} />}
-                onClick={downloadAll}
-                loading={downloading}
+              <Tooltip
+                label="Bundles every epoch model file and sample image from this run into a single zip"
+                withArrow
+                multiline
+                maw={260}
               >
-                Download All ({epochs.length})
-              </Button>
+                <Button
+                  color="cyan"
+                  leftSection={<IconFileDownload size={18} />}
+                  onClick={downloadAll}
+                  loading={archiveMutation.isPending}
+                >
+                  Download All ({epochs.length})
+                </Button>
+              </Tooltip>
             </Flex>
           </Stack>
           <Center>

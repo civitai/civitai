@@ -11,9 +11,11 @@ import {
   createTrainingRequestSchema,
   getAutoLabelUploadUrlSchema,
   getAutoLabelWorkflowSchema,
+  getTrainingEpochArchiveSchema,
   moveAssetInput,
   submitAutoLabelWorkflowSchema,
 } from '~/server/schema/training.schema';
+import { getTrainingEpochArchive } from '~/server/services/orchestrator/training/epoch-archive';
 import {
   autoCaptionHandler,
   autoTagHandler,
@@ -68,6 +70,20 @@ export const trainingRouter = router({
     .input(moveAssetInput)
     .use(isFlagProtected('imageTraining'))
     .mutation(({ input, ctx }) => moveAsset({ ...input, userId: ctx.user.id })),
+  // One zip of everything a finished run produced (epoch models + sample media).
+  // A mutation rather than a query: each call mints a short-lived signed URL from
+  // the orchestrator, which must not be served from the tRPC query cache.
+  getEpochArchive: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(getTrainingEpochArchiveSchema)
+    .use(rateLimit({ limit: 30, period: 60 }))
+    .mutation(({ input, ctx }) =>
+      getTrainingEpochArchive({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   getModelBasic: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getByIdSchema)
