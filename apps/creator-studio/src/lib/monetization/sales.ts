@@ -243,48 +243,22 @@ export function resolveSaleDraft(
   };
 }
 
-export type LiveSaleEdit = {
-  type: SaleDiscountType;
-  amount: number;
-  endsAt: Date;
-  versionIds: number[];
-};
-
 /**
- * A live sale may only get SMALLER or CHEAPER — never bigger, longer, or shallower (Justin, 2026-08-18).
- * Everything permitted moves in the buyer's favour or ends the sale, so nobody who bought during the
- * window is worse off than it advertised.
+ * The window a shorten may name: no earlier than now (or the start, for a sale that has not begun) and
+ * at least one day before the current last day — the action stores `picked + 1 day`, so naming the
+ * current last day reproduces today's end, which is not a shortening and is refused.
  *
- * Adding versions is refused for CAP EVASION rather than buyer protection — it makes the deal better for
- * buyers, but it turns one sale into a rolling one that keeps acquiring versions and re-announcing.
- *
- * Only applies once a sale has started. A scheduled sale that hasn't begun is freely editable, because
- * that is equivalent to cancelling it (which returns its days) and scheduling another.
+ * A one-day sale therefore cannot be shortened at all; `possible` is false and the caller should offer
+ * ending it instead of a control that can only fail.
  */
-export function refusalsForLiveSaleEdit(current: LiveSaleEdit, next: LiveSaleEdit): string[] {
-  const refusals: string[] = [];
-
-  if (next.endsAt.getTime() > current.endsAt.getTime())
-    refusals.push("A running sale can't be extended — end it early or let it finish.");
-
-  if (next.type !== current.type) {
-    // Fixed and percent aren't comparable without a base price, and a running sale covers versions at
-    // different prices — so "is this deeper?" has no single answer. Refusing the switch is the only rule
-    // that can't be walked into a shallower discount.
-    refusals.push("A running sale can't change between a fixed and a percentage discount.");
-  } else if (next.amount < current.amount) {
-    refusals.push("A running sale's discount can only get deeper.");
-  }
-
-  const added = next.versionIds.filter((id) => !current.versionIds.includes(id));
-  if (added.length)
-    refusals.push(
-      `A running sale can't take on more versions — schedule a new sale for ${
-        added.length === 1 ? 'it' : 'them'
-      }.`
-    );
-
-  return refusals;
+export function shortenBounds(
+  sale: { startsAt: Date; endsAt: Date },
+  now: Date
+): { min: Date; max: Date; possible: boolean } {
+  const currentLastDay = new Date(sale.endsAt.getTime() - DAY_MS);
+  const max = new Date(currentLastDay.getTime() - DAY_MS);
+  const min = new Date(Math.max(sale.startsAt.getTime(), now.getTime()));
+  return { min, max, possible: max.getTime() >= min.getTime() };
 }
 
 export type SaleUndercut = {

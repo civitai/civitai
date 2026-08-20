@@ -144,7 +144,7 @@ export type ScheduleSaleInput = {
 };
 
 export type ScheduleSaleResult =
-  | { ok: true; saleId: number; covered: number; skippedEarlyAccess: number }
+  | { ok: true; saleId: number; covered: number; skippedEarlyAccess: number; versionIds: number[] }
   | { ok: false; error: string };
 
 /** UTC midnight today — the earliest a sale may start. */
@@ -243,6 +243,9 @@ export async function scheduleSale(
       saleId: sale.id,
       covered: eligible.length,
       skippedEarlyAccess: versionIds.length - eligible.length,
+      // Returned rather than re-read after the commit: these are the rows just written, and a fresh
+      // lookup for the cache bust is a replica read that can come back empty.
+      versionIds: eligible,
     };
   });
 }
@@ -263,6 +266,9 @@ async function zeroFloorRefusal(
   if (discount.discountType === 'Percent')
     return discount.discountAmount >= 100 ? 'A sale can take at most 99% off.' : null;
 
+  // No ids means we cannot price a floor, which is not the same as there being none to clear.
+  if (!versionIds.length) return 'Could not check the prices on this sale. Try again.';
+
   const floor = lowestBuyerPrice(await coveredPriceRows(trx, userId, versionIds), tier);
   if (floor === null || discount.discountAmount < floor) return null;
   return `That discount would take the cheapest covered version (${floor} Buzz) to zero. Lower it, or clear the gate to give the model away.`;
@@ -279,7 +285,7 @@ export type SaleEditResult = { ok: true; versionIds: number[] } | { ok: false; e
  */
 export async function cancelSale(userId: number, saleId: number): Promise<SaleEditResult> {
   const now = new Date();
-  const versionIds = await versionIdsForSale(saleId);
+  const versionIds = await versionIdsForSale(saleId, dbWrite);
   const res = await dbWrite
     .updateTable('ModelVersionSale')
     .set({ canceledAt: now, updatedAt: now })
@@ -311,24 +317,28 @@ export async function shortenSale(
   endsAt: Date,
   now: Date = new Date()
 ): Promise<SaleEditResult> {
-  const versionIds = await versionIdsForSale(saleId);
+  const versionIds = await versionIdsForSale(saleId, dbWrite);
   const res = await dbWrite
     .updateTable('ModelVersionSale')
     .set({ endsAt, updatedAt: new Date() })
     .where('id', '=', saleId)
     .where('userId', '=', userId)
     .where('canceledAt', 'is', null)
-    // Earlier than it ends now, still ahead of now, and still after it started.
+    // Strictly earlier than it ends today — otherwise this is not a shortening.
     .where('endsAt', '>', endsAt)
-    .where('endsAt', '>', now)
-    .where('startsAt', '<', endsAt)
+    // 🔴 The new end must be past BOTH the start and this moment. `endsAt > now` on the column only says
+    // the sale hasn't finished; it says nothing about where the new end lands. Without this, a sale that
+    // ran Aug 1-31 can be moved to end Aug 2 on Aug 20, and `saleDaysCharged` then bills 2 days for a
+    // discount that ran 19 — 28 days handed back to a budget that is supposed to bound spending. No UI
+    // does that; a POST does.
+    .where(sql<boolean>`greatest("startsAt", ${now}::timestamp) < ${endsAt}::timestamp`)
     .executeTakeFirst();
 
   if (!Number(res.numUpdatedRows))
     return {
       ok: false,
       error:
-        "Pick a date before the sale's current end and after it starts. To stop a sale now, end it instead.",
+        "Pick a day before the sale's current last day, and not one that has already passed. To stop a running sale, end it instead.",
     };
   return { ok: true, versionIds };
 }
@@ -343,9 +353,11 @@ export async function deepenSale(
   discountAmount: number,
   tier: string | null
 ): Promise<SaleEditResult> {
-  const versionIds = await versionIdsForSale(saleId);
-
   return await dbWrite.transaction().execute(async (trx) => {
+    // Inside the transaction and on the primary: the zero-floor is measured over these ids, and a
+    // replica read here can return [] — which would price the floor against nothing and wave through a
+    // discount that takes every covered version to the 1-Buzz backstop.
+    const versionIds = await versionIdsForSale(saleId, trx);
     const sale = await trx
       .selectFrom('ModelVersionSale')
       .select(['discountType'])
@@ -535,9 +547,18 @@ export async function getManageableSales(
   return rows.map((r) => ({ ...r, versionCount: Number(r.versionCount) }));
 }
 
-/** Versions a sale covers — what the cache bust has to reach after any write that changes it. */
-export async function versionIdsForSale(saleId: number): Promise<number[]> {
-  const rows = await dbRead
+/**
+ * Versions a sale covers — what the cache bust has to reach after any write that changes it.
+ *
+ * 🔴 Defaults to the PRIMARY. Every caller runs microseconds after its own commit, and a replica read
+ * there can return [] — at which point `bustVersionCache` early-returns and the sale is invisible on
+ * site until the cache TTL lapses.
+ */
+export async function versionIdsForSale(
+  saleId: number,
+  db: typeof dbRead | typeof dbWrite = dbWrite
+): Promise<number[]> {
+  const rows = await db
     .selectFrom('ModelVersionSaleItem')
     .select('modelVersionId')
     .where('saleId', '=', saleId)

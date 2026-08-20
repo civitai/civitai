@@ -19,7 +19,7 @@
   import SaleFields from '$lib/components/monetization/SaleFields.svelte';
   import { resolveSaleDraft, type SaleDraftInput } from '$lib/monetization/sales';
   import { isSaleActive, remainingSaleDays, type ModelVersionSaleWindow } from '@civitai/buzz';
-  import { budgetMonthOf } from '$lib/monetization/sales';
+  import { budgetMonthOf, shortenBounds } from '$lib/monetization/sales';
   import type { PageData } from './$types';
 
   // Scheduled sales, listed and managed. Starting one lives on the Models tab, where the selection is;
@@ -56,8 +56,14 @@
 
   // A custom enhance callback REPLACES the default, so applyAction has to run or a refused edit looks
   // exactly like a successful one.
+  // Without this a double click posts twice: two sales scheduled, the budget spent twice. Every form on
+  // this page shares the flag because they all act on the same sale.
+  let submitting = $state(false);
+
   const submit = () => {
+    submitting = true;
     return async ({ result }: { result: any }) => {
+      submitting = false;
       if (result.type === 'failure') toast.error(String(result.data?.error ?? 'That did not work'));
       else if (result.type === 'success') {
         await invalidateAll();
@@ -84,7 +90,6 @@
   // sale running a day longer than they set.
   const lastDay = (s: ManageableSale) => new Date(s.endsAt.getTime() - 86_400_000);
   const isoDay = (d: Date) => d.toISOString().slice(0, 10);
-
   // A selection handed over from Models by "New sale" / "Put on sale". Its presence is what puts this
   // page into creation mode, so the flow is a URL the creator can back out of rather than hidden state.
   const draftVersionIds = $derived(
@@ -109,7 +114,13 @@
   // construction would capture only its first value. Today, running as long as the budget still allows —
   // the common case is "put this on sale now for as long as I can".
   $effect(() => {
-    if (!creating || sale.startDate) return;
+    if (!creating) {
+      // Reset on close so "New sale" never reopens holding the last one's dates — which, having been
+      // spent, are usually already refused.
+      sale = { name: '', type: 'Percent', amount: undefined, startDate: '', endDate: '' };
+      return;
+    }
+    if (sale.startDate) return;
     const start = new Date();
     const span = Math.max(1, daysLeft);
     sale.startDate = isoDay(start);
@@ -283,7 +294,9 @@
         overrides={data.saleLimits}
       />
       <div class="flex gap-2">
-        <Button type="submit" class="flex-1" disabled={!canSchedule}>Schedule sale</Button>
+        <Button type="submit" class="flex-1" disabled={!canSchedule || submitting}>
+          {submitting ? 'Scheduling…' : 'Schedule sale'}
+        </Button>
         <Button type="button" variant="ghost" onclick={closeCreate}>Cancel</Button>
       </div>
     </form>
@@ -335,34 +348,41 @@
         {:else}
           <!-- Only the directions the rules allow. Extending, softening and adding versions are refused by
              the server, so they are not offered here rather than offered and rejected. -->
+          {@const bounds = shortenBounds(selected, now)}
           <section class="flex flex-col gap-2">
             <span class="text-sm font-medium text-white">End earlier</span>
-            <form
-              method="POST"
-              action="?/shortenSale"
-              use:enhance={submit}
-              class="flex items-end gap-2"
-            >
-              <input type="hidden" name="saleId" value={selected.id} />
-              <div class="flex flex-col gap-1.5">
-                <Label for="sale-last-day">New last day</Label>
-                <Input
-                  id="sale-last-day"
-                  type="date"
-                  name="lastDay"
-                  class="w-40"
-                  min={isoDay(new Date(Math.max(selected.startsAt.getTime(), now.getTime())))}
-                  max={isoDay(lastDay(selected))}
-                  required
-                />
-              </div>
-              <Button type="submit" variant="outline">Shorten</Button>
-            </form>
-            <p class="text-xs text-dark-2">
-              {live
-                ? 'The days you cut are returned to your monthly budget.'
-                : 'A shorter window costs fewer sale-days.'}
-            </p>
+            {#if !bounds.possible}
+              <p class="text-xs text-dark-2">
+                This sale is down to its last day — end it below rather than shortening it.
+              </p>
+            {:else}
+              <form
+                method="POST"
+                action="?/shortenSale"
+                use:enhance={submit}
+                class="flex items-end gap-2"
+              >
+                <input type="hidden" name="saleId" value={selected.id} />
+                <div class="flex flex-col gap-1.5">
+                  <Label for="sale-last-day">New last day</Label>
+                  <Input
+                    id="sale-last-day"
+                    type="date"
+                    name="lastDay"
+                    class="w-40"
+                    min={isoDay(bounds.min)}
+                    max={isoDay(bounds.max)}
+                    required
+                  />
+                </div>
+                <Button type="submit" variant="outline" disabled={submitting}>Shorten</Button>
+              </form>
+              <p class="text-xs text-dark-2">
+                {live
+                  ? 'The days you cut are returned to your monthly budget.'
+                  : 'A shorter window costs fewer sale-days.'}
+              </p>
+            {/if}
           </section>
 
           <section class="flex flex-col gap-2">
@@ -394,7 +414,7 @@
                   required
                 />
               </div>
-              <Button type="submit" variant="outline">Apply</Button>
+              <Button type="submit" variant="outline" disabled={submitting}>Apply</Button>
             </form>
             <p class="text-xs text-dark-2">
               A running sale can only get cheaper for buyers, so a new discount has to be bigger
@@ -406,7 +426,7 @@
           <section class="flex flex-col gap-2 border-t border-dark-4 pt-5">
             <form method="POST" action="?/cancelSale" use:enhance={submit}>
               <input type="hidden" name="saleId" value={selected.id} />
-              <Button type="submit" variant="destructive" class="w-full">
+              <Button type="submit" variant="destructive" class="w-full" disabled={submitting}>
                 {live ? 'End this sale now' : 'Cancel this sale'}
               </Button>
             </form>

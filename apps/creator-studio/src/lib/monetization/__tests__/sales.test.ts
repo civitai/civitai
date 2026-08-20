@@ -3,13 +3,13 @@ import type { ModelVersionSaleWindow } from '@civitai/buzz';
 import {
   budgetMonthOf,
   maxSaleDays,
-  refusalsForLiveSaleEdit,
   resolveSaleDraft,
   resolveSaleEligibility,
   maxSaleLeadDays,
   minCreatorScoreForSale,
   resolveSaleUndercut,
   saleLengthInDays,
+  shortenBounds,
 } from '../sales';
 
 const MAX_SALE_LEAD_DAYS = maxSaleLeadDays();
@@ -180,66 +180,6 @@ describe('resolveSaleEligibility', () => {
       startsAt: days(30),
     });
     expect(r.blockedReason).toMatch(/creator score/);
-  });
-});
-
-describe('refusalsForLiveSaleEdit', () => {
-  const current = {
-    type: 'Percent' as const,
-    amount: 20,
-    endsAt: days(5),
-    versionIds: [1, 2, 3],
-  };
-
-  it('allows the whole permitted set at once: deeper, shorter, and fewer versions', () => {
-    expect(
-      refusalsForLiveSaleEdit(current, {
-        ...current,
-        amount: 35,
-        endsAt: days(2),
-        versionIds: [1, 2],
-      })
-    ).toEqual([]);
-  });
-
-  it('refuses extending the end date', () => {
-    const r = refusalsForLiveSaleEdit(current, { ...current, endsAt: days(9) });
-    expect(r).toHaveLength(1);
-    expect(r[0]).toMatch(/can't be extended/);
-  });
-
-  it('refuses a shallower discount', () => {
-    const r = refusalsForLiveSaleEdit(current, { ...current, amount: 10 });
-    expect(r).toHaveLength(1);
-    expect(r[0]).toMatch(/only get deeper/);
-  });
-
-  it('refuses switching discount type, which is how a shallower discount would sneak through', () => {
-    // 20% off a 500 version is 100 Buzz; "50 fixed" is shallower there and deeper on a 100 version, so
-    // the comparison has no answer across a multi-version sale.
-    const r = refusalsForLiveSaleEdit(current, { ...current, type: 'Fixed', amount: 50 });
-    expect(r).toHaveLength(1);
-    expect(r[0]).toMatch(/fixed and a percentage/);
-  });
-
-  it('refuses adding versions even alongside removals', () => {
-    const r = refusalsForLiveSaleEdit(current, { ...current, versionIds: [1, 4] });
-    expect(r).toHaveLength(1);
-    expect(r[0]).toMatch(/can't take on more versions/);
-  });
-
-  it('reports every violation at once rather than the first', () => {
-    const r = refusalsForLiveSaleEdit(current, {
-      type: 'Percent',
-      amount: 5,
-      endsAt: days(20),
-      versionIds: [1, 2, 3, 9],
-    });
-    expect(r).toHaveLength(3);
-  });
-
-  it('treats an unchanged sale as permitted', () => {
-    expect(refusalsForLiveSaleEdit(current, { ...current })).toEqual([]);
   });
 });
 
@@ -520,5 +460,43 @@ describe('the offered last day and the budget agree', () => {
     const d = resolveSaleDraft({ ...input, endDate: '2026-03-13' }, ctx, NOW);
     expect(d.draftDays).toBe(3);
     expect(d.eligibility.canSchedule).toBe(false);
+  });
+});
+
+describe('shortenBounds', () => {
+  // A sale scheduled 11th-13th inclusive is stored as endsAt = the 14th.
+  const sale = {
+    startsAt: new Date('2026-03-11T00:00:00Z'),
+    endsAt: new Date('2026-03-14T00:00:00Z'),
+  };
+
+  it('offers up to the day BEFORE the current last day, not the last day itself', () => {
+    // The action stores picked + 1 day. Offering the 13th would reproduce the current end, which the
+    // UPDATE refuses — a button that always fails. So the 12th is the latest useful choice.
+    const b = shortenBounds(sale, new Date('2026-03-11T12:00:00Z'));
+    expect(b.max.toISOString().slice(0, 10)).toBe('2026-03-12');
+    expect(b.possible).toBe(true);
+  });
+
+  it('never offers a day already past — the floor is now, not the start', () => {
+    const b = shortenBounds(sale, new Date('2026-03-12T09:00:00Z'));
+    expect(b.min.toISOString().slice(0, 10)).toBe('2026-03-12');
+  });
+
+  it('floors at the start for a sale that has not begun', () => {
+    const b = shortenBounds(sale, new Date('2026-03-01T00:00:00Z'));
+    expect(b.min.toISOString().slice(0, 10)).toBe('2026-03-11');
+  });
+
+  it('reports a one-day sale as unshortenable rather than offering an impossible range', () => {
+    const oneDay = {
+      startsAt: new Date('2026-03-11T00:00:00Z'),
+      endsAt: new Date('2026-03-12T00:00:00Z'),
+    };
+    expect(shortenBounds(oneDay, new Date('2026-03-11T06:00:00Z')).possible).toBe(false);
+  });
+
+  it('reports a sale on its final day as unshortenable', () => {
+    expect(shortenBounds(sale, new Date('2026-03-13T06:00:00Z')).possible).toBe(false);
   });
 });

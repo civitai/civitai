@@ -14,7 +14,6 @@ import {
   getSaleVersionsBySale,
   scheduleSale,
   shortenSale,
-  versionIdsForSale,
 } from '$lib/server/monetization/sales';
 import { resolveCreatorScore, TEST_CREATOR_SCORE_COOKIE } from '$lib/server/creator-score';
 import { minCreatorScoreForSale } from '@civitai/buzz';
@@ -173,10 +172,7 @@ export const actions: Actions = {
     );
     if (!result.ok) return fail(400, { error: result.error });
 
-    await bustVersionCache(
-      request.headers.get('cookie') ?? '',
-      await versionIdsForSale(result.saleId)
-    );
+    await bustVersionCache(request.headers.get('cookie') ?? '', result.versionIds);
 
     return {
       scheduled: true,
