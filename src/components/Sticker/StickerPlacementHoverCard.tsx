@@ -12,11 +12,17 @@ import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-// Privileged and rare: the only parts of this card that reach `placement.util`
-// and the ~40 KB behind it. Deferring them keeps that off every page that draws
-// a sticker. `ssr: false` because neither can render for a viewer the server has
-// not authorised anyway, and neither is the card's `children` — deferring the
-// card itself would blank the sticker artwork until the chunk arrived.
+// The only parts of this card that reach `placement.util`, and the placement
+// draft store and free-offer helpers behind it. Deferring them takes that off
+// the initial graph for every route that draws a sticker without rendering this
+// card — the feed and article covers among them, though not the image detail
+// page, which pulls the same chain through `ImageStickerOverlay` regardless.
+//
+// Both call sites gate on the viewer's role, which is what keeps the chunk
+// unfetched rather than merely unrendered. `ssr: false` costs nothing here
+// because neither can render for a viewer the server has not authorised, and
+// neither is the card's `children` — deferring the card itself would blank the
+// sticker artwork until the chunk arrived.
 const OwnerRemove = dynamic(
   () => import('~/components/Sticker/StickerPlacementRemoveActions').then((m) => m.OwnerRemove),
   { ssr: false }
@@ -82,6 +88,7 @@ export function StickerPlacementHoverCard({
   pending?: boolean;
   children: ReactElement;
 }) {
+  const currentUser = useCurrentUser();
   const [opened, setOpened] = useState(false);
 
   const { data, isLoading, error } = trpc.placement.getStickerPlacementDetail.useQuery(
@@ -215,11 +222,16 @@ export function StickerPlacementHoverCard({
                   for as long as the page stays open — and that value would pick
                   the confirmation's sentence about the placer's money, right
                   before an irreversible click. */}
-              <ModeratorRemove
-                placementId={placementId}
-                pending={data.status === 'pending'}
-                free={data.free}
-              />
+              {/* Gated here as well as inside the component: the guard within
+                  decides whether it renders, but only this one decides whether
+                  every hovering viewer downloads its chunk. */}
+              {currentUser?.isModerator && (
+                <ModeratorRemove
+                  placementId={placementId}
+                  pending={data.status === 'pending'}
+                  free={data.free}
+                />
+              )}
               {data.viewerIsOwner && data.status === 'approved' && (
                 <OwnerRemove
                   placementId={placementId}
