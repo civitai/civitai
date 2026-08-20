@@ -33,6 +33,9 @@ const block = (hidden?: boolean) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The cache test spies on module-scope objects. Without a restore those spies
+  // outlive it and silently cover every test declared after it.
+  vi.restoreAllMocks();
   // `mockResolvedValue`, not `...Once`: `clearAllMocks` is `mockClear`, which does
   // not drain a queued once-implementation, so a test that threw before reaching
   // `findUnique` would leak its fixture into the next one — invisibly, because the
@@ -88,6 +91,11 @@ describe('toggleHidden kind=blockedUser — honours the caller intent', () => {
     await block(false);
 
     expect(engagement.upsert).not.toHaveBeenCalled();
+    // Assert the unblock still took its own path, so deleting the else-branch
+    // outright cannot pass this test on the negative alone.
+    expect(engagement.deleteMany).toHaveBeenCalledWith({
+      where: { userId, targetUserId, type: 'Block' },
+    });
   });
 
   it('hidden=true over an existing Follow promotes the row to Block', async () => {
@@ -122,6 +130,18 @@ describe('toggleHidden kind=blockedUser — honours the caller intent', () => {
     expect(engagement.deleteMany).toHaveBeenCalled();
     expect(engagement.upsert).not.toHaveBeenCalled();
   });
+
+  it('hidden omitted with no engagement blocks — the fallback must work both ways', async () => {
+    await block(undefined);
+
+    // Without this the suite cannot tell `setTo ?? !alreadyBlocked` from
+    // `setTo === true`: every other omitted-intent case starts from a Block row,
+    // where both forms happen to agree. That mutant also makes the `findUnique`
+    // read dead code.
+    expect(engagement.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: { userId, targetUserId, type: 'Block' } })
+    );
+  });
 });
 
 // Without these the writes are correct and invisible: every read path serves the
@@ -139,6 +159,20 @@ describe('toggleHidden kind=blockedUser — cache invalidation', () => {
     expect(blocked).toHaveBeenCalledWith({ userId });
     expect(blockedBy).toHaveBeenCalledWith({ userId: targetUserId });
     expect(follows).toHaveBeenCalledWith(userId);
+  });
+
+  it('refreshes them on an unblock too, not only on a block', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+    const blocked = vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
+    const blockedBy = vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
+
+    await block(false);
+
+    // Gating the refreshes on `blocking` would leave a lifted block invisible to
+    // every read path until the hash TTL — the stale list is what caused this bug
+    // in the first place.
+    expect(blocked).toHaveBeenCalledWith({ userId });
+    expect(blockedBy).toHaveBeenCalledWith({ userId: targetUserId });
   });
 });
 
@@ -158,14 +192,47 @@ describe('toggleHidden kind=blockedUser — placement cascade', () => {
     });
   });
 
-  it('runs again on a repeat block, so a large backlog can still be drained', async () => {
+  it('cascades even when the user is ALREADY blocked', async () => {
     engagement.findUnique.mockResolvedValue({ type: 'Block' });
 
     await block(true);
 
-    // `declinePlacementsOnBlock` caps at 200 pending rows per run and swallows
-    // its own failures, so blocking again is the only user-reachable retry.
-    // Gating this on the transition would silently remove it.
+    // `declinePlacementsOnBlock` caps at 200 pending rows per direction and
+    // swallows its own failures, so blocking again is the only user-reachable
+    // retry. Gating this on `!alreadyBlocked` would silently remove it.
+    //
+    // The count alone does not prove that — a first-time block also produces 2,
+    // one per direction — so assert both legs and let the `findUnique` fixture
+    // above carry the "already blocked" part.
+    expect(declinePlacementsOnBlock).toHaveBeenCalledWith({
+      ownerId: userId,
+      placerId: targetUserId,
+      waiveFee: true,
+    });
+    expect(declinePlacementsOnBlock).toHaveBeenCalledWith({
+      ownerId: targetUserId,
+      placerId: userId,
+      waiveFee: false,
+    });
+    expect(declinePlacementsOnBlock).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs AFTER the block is committed, which is the precondition it asserts', async () => {
+    await block(true);
+
+    expect(declinePlacementsOnBlock.mock.invocationCallOrder[0]).toBeGreaterThan(
+      engagement.upsert.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('never fails the block when a cascade leg throws', async () => {
+    declinePlacementsOnBlock.mockRejectedValueOnce(new Error('buzz outage'));
+
+    await expect(block(true)).resolves.toEqual({ added: [], removed: [] });
+
+    // The block is the protection; the refunds are recoverable by the expiry job.
+    // The second direction must still be attempted after the first throws.
+    expect(engagement.upsert).toHaveBeenCalled();
     expect(declinePlacementsOnBlock).toHaveBeenCalledTimes(2);
   });
 

@@ -830,6 +830,10 @@ async function toggleBlockUser({
   // no intent was supplied at all.
   const alreadyBlocked = engagement?.type === 'Block';
   const blocking = setTo ?? !alreadyBlocked;
+  // If you ever make the read above conditional, keep the `setTo === undefined`
+  // branch explicit. Dropping the read collapses this to `setTo ?? true`, which
+  // reads harmlessly and means an omitted intent can only ever BLOCK and never
+  // unblock. Nothing in the type system catches that.
 
   // Both statements are idempotent and unconditional, which is what makes them
   // safe against a concurrent write to the same PK. Branching on the row we
@@ -841,11 +845,24 @@ async function toggleBlockUser({
   // already-removed row, and its `type` filter makes "never delete a Follow or
   // a Hide" structural rather than a branch condition.
   if (blocking)
-    await dbWrite.userEngagement.upsert({
-      where: { userId_targetUserId: { userId, targetUserId } },
-      create: { userId, targetUserId, type: 'Block' },
-      update: { type: 'Block' },
-    });
+    await dbWrite.userEngagement
+      .upsert({
+        where: { userId_targetUserId: { userId, targetUserId } },
+        create: { userId, targetUserId, type: 'Block' },
+        update: { type: 'Block' },
+      })
+      // Belt-and-braces, and deliberately not load-bearing. This call meets every
+      // documented condition for Prisma to compile it to a native
+      // `INSERT … ON CONFLICT DO UPDATE` (single model, scalar-only create/update,
+      // one unique in `where`, `where` values equal to `create` values), under
+      // which P2002 cannot be raised and this catch is dead. That was inferred
+      // from the schema, NOT observed in a query log — so if the query ever falls
+      // back to read-then-write, the loser of a concurrent block would 500 on a
+      // safety control instead of succeeding idempotently. One line to not depend
+      // on an unverified premise.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else
     await dbWrite.userEngagement.deleteMany({
       where: { userId, targetUserId, type: UserEngagementType.Block },
