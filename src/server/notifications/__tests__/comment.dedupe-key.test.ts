@@ -295,6 +295,11 @@ describe('a type that claims the dedupe key must render', () => {
           { ...base, version: 2, postId: 6, postTitle: 'P' },
           { ...base, version: 2, postId: 6, postTitle: null },
         ];
+      // SLUG-addressed, so its URL comes from `appListingSlug` rather than any id. Without this
+      // case it falls to the `default:` model3d shape, carries no slug, and renders no URL —
+      // which is precisely what this suite is here to catch.
+      case 'new-app-listing-comment':
+        return [{ ...base, version: 2, appListingSlug: 'pixel-forge', listingName: 'Pixel Forge' }];
       case 'new-article-comment':
         return [{ ...base, version: 2, articleId: 4, articleTitle: 'A' }];
       case 'new-bounty-comment':

@@ -711,6 +711,66 @@ export const commentNotifications = createNotificationProcessor({
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-post-comment');
     `,
   },
+  'new-app-listing-comment': {
+    displayName: 'New comments on your app listings',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your app listing: "${details.listingName}"`,
+      // Built by `threadUrlMap`, NOT by hand. It is the one place that knows an app listing is
+      // SLUG-addressed, and it shares `getListingDetailHref` with the store cards and the
+      // permalink page — so a route rename moves every caller at once. Hand-rolling
+      // `/apps/store-preview/${slug}` here is what would leave one of them behind.
+      url: threadUrlMap({
+        threadType: 'appListing',
+        threadParentId: null,
+        appListingSlug: details.appListingSlug,
+        commentId: details.commentId,
+      }),
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_app_listing_comment AS (
+        SELECT DISTINCT
+          al."user_id" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'commentId', c.id,
+            'appListingSlug', al.slug,
+            'listingName', al.name,
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        -- TOP-LEVEL comments only. A reply's own thread is keyed by its parent COMMENT, so it
+        -- carries no "appListingId" and never matches here — replies are already covered by
+        -- new-comment-reply / new-thread-response, which is precisely the overlap that would
+        -- otherwise double-notify.
+        JOIN "Thread" t ON t.id = c."threadId" AND t."appListingId" IS NOT NULL
+        JOIN "app_listings" al ON al."serial_id" = t."appListingId"
+        WHERE al."user_id" > 0
+          AND c."createdAt" > '${lastSent}'
+          -- Two floors, for the reason new-post-comment carries them: this type has no cursor row
+          -- until its first successful run, so it inherits the job's GLOBAL last-run — new Date(0)
+          -- on a fresh DB, and stale by the outage duration after any send-notifications outage.
+          AND c."createdAt" > '2026-08-19'
+          -- The rolling window is the one that never goes stale: it bounds any first batch to
+          -- ~7 days however far the cursor drifted.
+          AND c."createdAt" > NOW() - INTERVAL '7 days'
+          -- A commenter never notifies themselves for their own listing.
+          AND c."userId" != al."user_id"
+          AND ${notBlockedBetween('al."user_id"', 'c."userId"')}
+      )
+      SELECT
+        concat('new-comment-app-listing:owner:v2:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId"    "userId",
+        'new-app-listing-comment' "type",
+        details
+      FROM new_app_listing_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-app-listing-comment');
+    `,
+  },
   'new-article-comment': {
     displayName: 'New comments on your articles',
     category: NotificationCategory.Comment,
