@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FREE_PLACEMENTS_PER_DAY, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import {
   barFreeLabel,
   barTooltip,
@@ -543,5 +544,42 @@ describe('the tray says why free is unavailable before anything is committed', (
   it('says nothing until both facts have arrived', () => {
     expect(preCommitFreeReason(false, undefined, HAS_SLOT)).toBeNull();
     expect(preCommitFreeReason(false, SPENT, undefined)).toBeNull();
+  });
+});
+
+/**
+ * The shared-allowance clause: one string that has to stay true to two rules it
+ * does not own.
+ */
+describe('the shared-allowance note tracks the rules it describes', () => {
+  it('reads its count from the rule rather than spelling one out', () => {
+    // Goes red if `FREE_PLACEMENTS_PER_DAY` moves and the copy does not, which
+    // is the whole reason the number is derived. "one" is the English for 1; any
+    // other value renders as the digit.
+    const expected = FREE_PLACEMENTS_PER_DAY === 1 ? 'one' : String(FREE_PLACEMENTS_PER_DAY);
+    expect(SHARED_ALLOWANCE_NOTE.startsWith(`${expected} a day`)).toBe(true);
+  });
+
+  /**
+   * 🔴 A rule someone can fail.
+   *
+   * The surface list is written out in English and cannot be derived, so nothing
+   * would notice a third surface joining the shared budget — both surfaces would
+   * quietly keep describing a two-way split. This is the tripwire: add a surface
+   * to `PLACEMENT_SURFACES` and this goes red, pointing at the copy that needs
+   * the third name.
+   */
+  it('fails if a surface is added to the shared budget without updating the copy', () => {
+    expect(Object.keys(PLACEMENT_SURFACES).sort()).toEqual(['remixGallery', 'sticker']);
+  });
+
+  /**
+   * The tray appends ` · this creator reviews placements…` straight onto the
+   * price line, so a terminated sentence there renders a separator mid-sentence.
+   * Asserted on the composed line rather than on the constant, because that is
+   * where the defect is visible and the constant alone cannot show it.
+   */
+  it('leaves the tray price line open for the clause that follows it', () => {
+    expect(trayPriceLine(true, 700).endsWith('.')).toBe(false);
   });
 });

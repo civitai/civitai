@@ -1,9 +1,13 @@
+import { FREE_PLACEMENTS_PER_DAY } from '~/shared/utils/placement';
+
 /**
  * Whether the free offer is on the table, and what it says.
  *
- * Its own module with no imports, for the same reason `payout-copy.ts` is one:
- * these are the branches most worth testing and the least worth dragging
- * Mantine, tRPC and the edge image loader into a unit run to reach.
+ * One import, and it is a constants module — for the same reason `payout-copy.ts`
+ * has none: these are the branches most worth testing and the least worth
+ * dragging Mantine, tRPC and the edge image loader into a unit run to reach.
+ * `~/shared/utils/placement` pulls in none of that. It is the rules themselves,
+ * which is what the copy here has to stay true to.
  *
  * The predicate lives here rather than at each of the three places that need it
  * — the button's tray, the draft layer, and the draft itself — because three
@@ -215,10 +219,20 @@ function allowanceResetLabel(resetsAt?: Date | string) {
  * free was gone, and read a limit as a bug. Said once here, both surfaces cannot
  * drift into describing two different budgets.
  *
- * Written as a clause rather than a sentence so it can be appended to whatever
- * came before it without a second full stop.
+ * Written as a clause rather than a sentence, with **no terminating full stop**,
+ * so it can be appended to whatever came before it and still have a clause
+ * appended to it in turn — which the tray does, with a ` · ` separator.
+ *
+ * The count is read from `FREE_PLACEMENTS_PER_DAY` rather than written out, for
+ * the same reason `allowanceResetLabel` reads `resetsAt` instead of restating
+ * midnight: a number spelled into copy is a second copy of a rule, and the two
+ * are free to disagree the day the rule moves. The SURFACE list stays literal —
+ * there is no derivation of it that reads as English — so a guard test fails if
+ * a third surface is ever added to `PLACEMENT_SURFACES`.
  */
-export const SHARED_ALLOWANCE_NOTE = 'one a day, shared between stickers and remix galleries';
+export const SHARED_ALLOWANCE_NOTE = `${
+  FREE_PLACEMENTS_PER_DAY === 1 ? 'one' : FREE_PLACEMENTS_PER_DAY
+} a day, shared between stickers and remix galleries`;
 
 /**
  * The free label on the reaction bar, or `null` for no label at all.
@@ -309,7 +323,7 @@ export function barTooltip({
  */
 export const trayPriceLine = (freeAvailable: boolean, price: number) =>
   freeAvailable
-    ? `Free, or ${price} Buzz · one use either way. Your free one is ${SHARED_ALLOWANCE_NOTE}.`
+    ? `Free, or ${price} Buzz · one use either way, and your free one is ${SHARED_ALLOWANCE_NOTE}`
     : `${price} Buzz + one use`;
 
 /**

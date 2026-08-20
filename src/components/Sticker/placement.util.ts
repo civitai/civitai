@@ -331,6 +331,14 @@ export function useCreateStickerPlacement(
       // what a control elsewhere reads to decide whether to offer free at all.
       // Unkeyed for that reason; the space is per image and needs no sweep.
       void utils.placement.getFreeStanding.invalidate();
+      // 🔴 And the page-wide copy of the same fact, which is a SECOND cache of
+      // it. `getFreeAllowance` has one key for the whole feed and no target, so
+      // nothing above sweeps it — and a mounted reaction bar has no refetch
+      // trigger, so `staleTime` never expires it either. Left out, the refusal
+      // that just proved the allowance is spent leaves every other card in the
+      // feed labelled "1 free", which is the promise-then-charge this whole
+      // change exists to remove.
+      void utils.placement.getFreeAllowance.invalidate();
 
       // 🔴 Only a refusal the re-read can account for falls back to paid. The
       // free path refuses plenty of things that have nothing to do with the free
