@@ -3253,8 +3253,10 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   //   signed-in, newCreators-with-none       → 0 calls, nothing recorded  (#4123)
   //   signed-in, `hidden`-with-none, page 1  → 1 call,  `fallback_empty` recorded
   //   signed-in, unscoped, NON-`bdx:` cursor → 1 call,  `fallback_empty` recorded
-  // 🔴 ROWS 3 AND 4 USED TO READ `1 call, fallback_empty recorded`, AND #4123
-  // CHANGED THEM. A set-shaped creator scope is now resolved before the decision,
+  // 🔴 THE TWO SHAPES NAMED ON ROWS 3 AND 4 ABOVE — followed-with-zero-follows and
+  // newCreators-with-none — USED TO READ `1 call, fallback_empty recorded`, AND
+  // #4123 CHANGED THEM. (Row numbers index THIS table, which #4123 also reordered;
+  // read the shapes, not the positions.) A set-shaped creator scope is now resolved before the decision,
   // so those two doors stopped issuing the own pass and joined the other doors
   // instead of being the ones that leaked a call. That is a REDUCTION in what
   // `fallback_empty` counts — it shifts the served-ratio baseline, exactly as
@@ -3404,13 +3406,15 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // from what this decision READS.
   //
   // 🔴 THIS HOIST INTRODUCES THE SHORT-CIRCUIT — IT DOES NOT PRESERVE ONE. An
-  // earlier revision of this comment claimed the pre-#4123 guard already had it
-  // "by virtue of `||`". It did not: before the hoist the scope resolution was an
-  // unconditional `await Promise.all([...])` on the line ABOVE the guard, and `||`
-  // short-circuited only the read of a boolean that had already been computed. So
-  // deleting this line is NOT a no-op — it reinstates a cache read on every
-  // request already destined to skip, notably an anonymous `newCreators` request
-  // and every page >= 2 of a BitDex-served Following feed.
+  // earlier revision claimed the guard "already had it by virtue of `||`". Two
+  // different baselines, and neither had it: pre-#4123 there were no awaits here
+  // at all, so there was nothing to short-circuit; and in #4123's own first
+  // revision the scope resolution was an unconditional `await Promise.all([...])`
+  // on the line ABOVE the guard, where `||` short-circuited only the read of an
+  // already-computed boolean. So removing the `skipOwnExcludedCheaply ? [] :`
+  // ternary below is NOT a no-op — it reinstates a lookup on every request already
+  // destined to skip, notably an anonymous `newCreators` request and every page
+  // >= 2 of a BitDex-served Following feed.
   //
   // ⚠️ It is also load-bearing for the `getUserFollows(input.currentUserId!)`
   // call below, which dropped its own `input.currentUserId &&` guard because this

@@ -407,6 +407,21 @@ describe('#4123 — a set-shaped creator scope is resolved before the own-exclud
     }
   });
 
+  // 🔴 AND THE UNSET SHAPE, WHICH IS THE PRODUCTION DEFAULT. Both cases above
+  // pass `domain` explicitly, so `domain: input.domain ?? 'red'` — a guard-side
+  // default that would desync from the pre-filter's board — survived them both.
+  // Only red domains set `domain` at all, so `undefined` is the common case.
+  it('passes an unset domain THROUGH rather than defaulting it', async () => {
+    serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
+
+    await getImagesFromSearch(authedInput({ newCreators: true }));
+
+    expect(getNewCreatorUserIdsMock.mock.calls.length).toBeGreaterThan(0);
+    for (const [args] of getNewCreatorUserIdsMock.mock.calls) {
+      expect(args.domain).toBeUndefined();
+    }
+  });
+
   // 🔴 A SECOND DOMAIN, BECAUSE ONE CANNOT DETECT A HARDCODE. With `'red'` as the
   // only fixture value, `domain: input.domain` and a literal `domain: 'red'`
   // produce identical calls — measured: that mutant SURVIVED the full 72-test
@@ -460,23 +475,38 @@ describe('#4123 — a set-shaped creator scope is resolved before the own-exclud
 
   // The cheap disjuncts must SHORT-CIRCUIT the scope resolution, not merely
   // out-vote it: without the hoist these shapes pay a lookup whose result is then
-  // discarded, and every behavioural test still passes — so this asserts the CALL,
-  // not the outcome.
+  // discarded, and every behavioural test still passes — so these two assert the
+  // CALL, not the outcome.
   //
-  // ⚠️ The expected count is ONE, not zero, and that is not a fudge: the request
-  // falls through to the Meili leg, which resolves the same scope for its own
-  // filtering. The BitDex guard's call would be a SECOND one. Verified by
-  // mutation: removing the hoist takes this count 1 -> 2.
+  // 🔴 THE TWO CASES EXPECT DIFFERENT COUNTS, AND THE REASON IS NOT WHAT THREE
+  // EARLIER REVISIONS OF THIS COMMENT SAID. It is not that one request reaches a
+  // second leg and the other does not — both reach the pre-filter. It is WHICH
+  // HELPER each scope's other reader uses:
+  //   * `followed`     — the pre-filter reads follows with a raw
+  //                      `dbRead.userEngagement.findMany`, NOT `getUserFollows`.
+  //                      So the guard is the only caller of the mocked helper, and
+  //                      with the hoist the count is ZERO.
+  //   * `newCreators`  — the pre-filter calls the SAME `getNewCreatorUserIds`
+  //                      helper the guard does, so one call remains regardless and
+  //                      the guard's would be a SECOND.
+  // Measured both ways by mutation: removing the hoist takes the followed count
+  // 0 -> 1 and the newCreators count 1 -> 2.
+  //
+  // ⚠️ Two earlier attempts at this explanation were refuted by measurement — one
+  // blamed "the Meili leg" (which returns early here, `!metricsSearchClient`), one
+  // blamed the request "not reaching the leg that resolves follows" (it does).
+  // The asymmetry is a fact about the two helpers, not about the two requests.
   //
   // 🔴 THE `bdx:` HALF WAS ALMOST LEFT UNTESTED ON A WRONG DIAGNOSIS. A first
-  // version of the sibling case below passed with the hoist removed, so it was
-  // deleted as vacuous — correctly — but the accompanying note concluded the shape
-  // could not be pinned. It can: the fixture just has to be a cursor that actually
-  // DECODES. `bitdexCursor` comes from `JSON.parse` of everything after `bdx:`, so
-  // a hand-written `bdx:eyJhIjoxfQ==` (base64, not JSON) parsed to nothing, left
-  // `bitdexCursor` falsy, and the request never had the property the test was
-  // named for. The shape below is the one used in bitdex-empty-fallback.test.ts.
-  // Measured with a decoding cursor: 0 lookups with the hoist, 1 without.
+  // version of the case below passed with the hoist removed, so it was deleted as
+  // vacuous — correctly — but the accompanying note concluded the shape could not
+  // be pinned. It can: the fixture just has to be a cursor that actually DECODES.
+  // `bitdexCursor` is `JSON.parse` of everything after `bdx:`, so a base64-looking
+  // literal parses to nothing and leaves `bitdexCursor` falsy, and the request
+  // never has the property the test is named for. (That deleted test was never
+  // committed, so its exact fixture cannot be recovered from the repo — the
+  // MECHANISM is established, the specific literal is a reconstruction.) The shape
+  // below is the one used in bitdex-empty-fallback.test.ts.
   it('a bdx:-paginated followed feed adds no creator-scope lookup of its own', async () => {
     serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
 
@@ -484,11 +514,21 @@ describe('#4123 — a set-shaped creator scope is resolved before the own-exclud
       authedInput({ followed: true, cursor: 'bdx:{"sortAt":1700000000,"id":101}' })
     );
 
-    // ZERO here, unlike the anonymous case below which expects one: a
-    // BitDex-paginated request does not reach the leg that resolves follows for
-    // its own filtering, so the guard's lookup would be the ONLY one. Measured:
-    // 0 with the hoist, 1 without.
     expect(getUserFollowsMock).not.toHaveBeenCalled();
+  });
+
+  // 🔴 `bitdexCursor`, NOT `input.cursor` — the distinction three comments in this
+  // change call load-bearing, and which nothing pinned until now. A request that
+  // fell back to Meilisearch carries a MEILI cursor on its next page, which the
+  // `bdx:` decode rejects; such a request is NOT BitDex-paginated and must still
+  // resolve its scope. Swapping the guard to `!!input.cursor` survives every other
+  // test in this file.
+  it('a NON-bdx cursor is not a bdx: cursor — the scope is still resolved', async () => {
+    serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
+
+    await getImagesFromSearch(authedInput({ followed: true, cursor: '12345' }));
+
+    expect(getUserFollowsMock).toHaveBeenCalledTimes(1);
   });
 
   it('an anonymous newCreators feed adds no creator-scope lookup of its own', async () => {

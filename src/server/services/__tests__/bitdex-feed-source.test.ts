@@ -413,8 +413,10 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
    * `userId` case and was silent on the set-shaped ones (`followed`,
    * `newCreators`). This was the THIRD copy of that enumeration in the repo and
    * the last to be corrected — the other two are in image.service.ts and
-   * src/server/metrics/bitdex-feed-serve.metrics.ts, and both point readers HERE
-   * as the pin. Reference the predicate by SYMBOL when updating it again.
+   * src/server/metrics/bitdex-feed-serve.metrics.ts. Of those, only
+   * image.service.ts points readers at THIS file as the pin; the metrics module
+   * points at the `skipOwnExcluded` symbol instead. Reference the predicate by
+   * SYMBOL when updating it again.
    *
    * This case drives an ANONYMOUS caller, which is the disjunct that makes the
    * exclusion apply — so on its own it flatters the claim. The sibling case below
