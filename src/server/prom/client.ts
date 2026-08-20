@@ -41,12 +41,10 @@ export * from '@civitai/telemetry/client';
 // a module-init cycle (this module imports pgDb → db-helpers, which would import the
 // histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
 
-declare global {
-  // eslint-disable-next-line no-var, vars-on-top
-  var pgGaugeInitialized: boolean;
-  // eslint-disable-next-line no-var
-  var heavyBulkheadGaugeInitialized: boolean;
-}
+// `pgGaugeInitialized` / `heavyBulkheadGaugeInitialized` were declared here and are gone: a
+// globalThis flag guarding a per-graph registry is the bug this file now documents at length
+// below, not a pattern to reach for. Deduplication comes from registerInstrumentationMetric,
+// which checks the same shared registry it writes to.
 
 // Image-ingestion working-state backlog + oldest-age gauges. These are DB-derived,
 // so they must NOT hit Postgres on every /metrics scrape (~15s). The query is served
@@ -158,110 +156,139 @@ registerInstrumentationMetric(
     })
 );
 
-// Heavy-route bulkhead observability (per pod). collect()-based so it reflects the
-// live in-process state on each scrape with no per-request work. This is the signal
-// for tuning HEAVY_REQUEST_CONCURRENCY: rejects climbing means the pod is shedding.
-if (!global.heavyBulkheadGaugeInitialized) {
-  new client.Gauge({
-    name: PROM_PREFIX + 'heavy_bulkhead_active',
-    help: 'In-flight heavy-route bulkhead slots per key (per pod)',
-    labelNames: ['key'],
-    collect() {
-      for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
-    },
-  });
-  new client.Gauge({
-    name: PROM_PREFIX + 'heavy_bulkhead_rejects',
-    help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
-    labelNames: ['key'],
-    collect() {
-      for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
-    },
-  });
-  global.heavyBulkheadGaugeInitialized = true;
-}
+// 🔴 WHY EVERY GAUGE BELOW USES registerInstrumentationMetric, AND WHY A globalThis
+// "initialized" FLAG IS THE WRONG TOOL HERE.
+//
+// This module is evaluated in BOTH webpack graphs: the instrumentation graph reaches it at pod
+// start (instrumentation.node.ts -> ~/server/eventloop-longtask -> here), and the pages/API graph
+// reaches it later, on the first request that loads a route importing it — including /api/metrics
+// itself. prom-client is not in serverExternalPackages, so each graph gets its own module instance
+// and therefore its own default `client.register`. /api/metrics scrapes the PAGES graph's default
+// registry plus the globalThis-pinned `instrumentationRegistry`; the instrumentation graph's
+// default registry is scraped by nobody.
+//
+// The blocks below used to be wrapped in `if (!global.heavyBulkheadGaugeInitialized)` and
+// `if (!global.pgGaugeInitialized)`. That pairs a PROCESS-scoped flag with a GRAPH-scoped
+// registry, and the mismatch is fatal in one direction only: the instrumentation graph gets here
+// first, registers every gauge into its own unscraped registry, and sets the flag — so when the
+// pages graph evaluates this module it takes the early-out and registers NOTHING into the registry
+// that is actually served. The metrics look registered in code, in a deployed image, on a hot
+// route, and emit no series ever.
+//
+// Measured on production before the fix: civitai_app_heavy_bulkhead_{active,rejects} and all nine
+// node_postgres_* gauges = 0 series, while `civitai_app_image_ingestion_backlog` (same file, but
+// registered via registerInstrumentationMetric) = 640 series and `images_search_*` (default
+// registry, pages graph, NO globalThis flag) = 181 series. Those three groups isolate the flag as
+// the variable: same file and same registry choice differ only by the guard.
+//
+// registerInstrumentationMetric is the correct idempotence primitive because it dedupes against
+// the SHARED registry it registers into, so the two scopes agree: whichever graph arrives first
+// creates the gauge, the second finds it and reuses it, and either way it is scraped.
+//
+// The gauges are collect()-based, so it also matters WHICH graph's closure wins — the state they
+// read must be shared too. request-bulkhead.ts pins its slot/reject maps on globalThis for exactly
+// this reason; fixing this file alone would have left both gauges registered, scraped, and still
+// emitting nothing.
+registerInstrumentationMetric(
+  PROM_PREFIX + 'heavy_bulkhead_active',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'heavy_bulkhead_active',
+      help: 'In-flight heavy-route bulkhead slots per key (per pod)',
+      labelNames: ['key'],
+      registers: [instrumentationRegistry],
+      collect() {
+        for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
+      },
+    })
+);
+// Deliberately NOT this.reset()-ed: the value is cumulative per key for the life of the pod, which
+// is what makes rate() meaningful. A reset would still be atomic within collect(), but stating the
+// intent here keeps a later "tidy-up" from turning a counter-shaped gauge into a sawtooth.
+registerInstrumentationMetric(
+  PROM_PREFIX + 'heavy_bulkhead_rejects',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'heavy_bulkhead_rejects',
+      help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
+      labelNames: ['key'],
+      registers: [instrumentationRegistry],
+      collect() {
+        for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
+      },
+    })
+);
 
-if (!global.pgGaugeInitialized) {
-  new client.Gauge({
-    name: 'node_postgres_read_total_count',
-    help: 'node postgres read total count',
-    collect() {
-      this.set(pgDbRead.totalCount);
-    },
-  });
-  new client.Gauge({
-    name: 'node_postgres_read_idle_count',
-    help: 'node postgres read idle count',
-    collect() {
-      this.set(pgDbRead.idleCount);
-    },
-  });
-  new client.Gauge({
-    name: 'node_postgres_read_waiting_count',
-    help: 'node postgres read waiting count',
-    collect() {
-      this.set(pgDbRead.waitingCount);
-    },
-  });
-  new client.Gauge({
-    name: 'node_postgres_write_total_count',
-    help: 'node postgres write total count',
-    collect() {
-      this.set(pgDbWrite.totalCount);
-    },
-  });
-  new client.Gauge({
-    name: 'node_postgres_write_idle_count',
-    help: 'node postgres write idle count',
-    collect() {
-      this.set(pgDbWrite.idleCount);
-    },
-  });
-  new client.Gauge({
-    name: 'node_postgres_write_waiting_count',
-    help: 'node postgres write waiting count',
-    collect() {
-      this.set(pgDbWrite.waitingCount);
-    },
-  });
+// The pg pool gauges carried the identical defect via `global.pgGaugeInitialized` and were also
+// measured at 0 series in production. They are fixed in the same commit because they are the same
+// bug in the same file, not because the reported issue asked for them.
+const pgPoolGauge = (
+  name: string,
+  help: string,
+  read: () => number
+) =>
+  registerInstrumentationMetric(
+    name,
+    () =>
+      new client.Gauge({
+        name,
+        help,
+        registers: [instrumentationRegistry],
+        collect() {
+          this.set(read());
+        },
+      })
+  );
 
-  // Labeled pool metrics for all pools
-  new client.Gauge({
-    name: 'node_postgres_pool_total_count',
-    help: 'Total connections in pg pool',
-    labelNames: ['pool'],
-    collect() {
-      this.set({ pool: 'read' }, pgDbRead?.totalCount ?? 0);
-      this.set({ pool: 'write' }, pgDbWrite?.totalCount ?? 0);
-      this.set({ pool: 'read_long' }, pgDbReadLong?.totalCount ?? 0);
-      this.set({ pool: 'datapacket_read' }, datapacketDbRead?.totalCount ?? 0);
-    },
-  });
-  new client.Gauge({
-    name: 'node_postgres_pool_idle_count',
-    help: 'Idle connections in pg pool',
-    labelNames: ['pool'],
-    collect() {
-      this.set({ pool: 'read' }, pgDbRead?.idleCount ?? 0);
-      this.set({ pool: 'write' }, pgDbWrite?.idleCount ?? 0);
-      this.set({ pool: 'read_long' }, pgDbReadLong?.idleCount ?? 0);
-      this.set({ pool: 'datapacket_read' }, datapacketDbRead?.idleCount ?? 0);
-    },
-  });
-  new client.Gauge({
-    name: 'node_postgres_pool_waiting_count',
-    help: 'Waiting connections in pg pool',
-    labelNames: ['pool'],
-    collect() {
-      this.set({ pool: 'read' }, pgDbRead?.waitingCount ?? 0);
-      this.set({ pool: 'write' }, pgDbWrite?.waitingCount ?? 0);
-      this.set({ pool: 'read_long' }, pgDbReadLong?.waitingCount ?? 0);
-      this.set({ pool: 'datapacket_read' }, datapacketDbRead?.waitingCount ?? 0);
-    },
-  });
+pgPoolGauge('node_postgres_read_total_count', 'node postgres read total count', () => pgDbRead.totalCount);
+pgPoolGauge('node_postgres_read_idle_count', 'node postgres read idle count', () => pgDbRead.idleCount);
+pgPoolGauge(
+  'node_postgres_read_waiting_count',
+  'node postgres read waiting count',
+  () => pgDbRead.waitingCount
+);
+pgPoolGauge(
+  'node_postgres_write_total_count',
+  'node postgres write total count',
+  () => pgDbWrite.totalCount
+);
+pgPoolGauge('node_postgres_write_idle_count', 'node postgres write idle count', () => pgDbWrite.idleCount);
+pgPoolGauge(
+  'node_postgres_write_waiting_count',
+  'node postgres write waiting count',
+  () => pgDbWrite.waitingCount
+);
 
-  global.pgGaugeInitialized = true;
-}
+// Labeled pool metrics for all pools
+const pgLabelledPoolGauge = (
+  name: string,
+  help: string,
+  read: (pool: { totalCount: number; idleCount: number; waitingCount: number }) => number
+) =>
+  registerInstrumentationMetric(
+    name,
+    () =>
+      new client.Gauge({
+        name,
+        help,
+        labelNames: ['pool'],
+        registers: [instrumentationRegistry],
+        collect() {
+          this.set({ pool: 'read' }, pgDbRead ? read(pgDbRead) : 0);
+          this.set({ pool: 'write' }, pgDbWrite ? read(pgDbWrite) : 0);
+          this.set({ pool: 'read_long' }, pgDbReadLong ? read(pgDbReadLong) : 0);
+          this.set({ pool: 'datapacket_read' }, datapacketDbRead ? read(datapacketDbRead) : 0);
+        },
+      })
+  );
+
+pgLabelledPoolGauge('node_postgres_pool_total_count', 'Total connections in pg pool', (p) => p.totalCount);
+pgLabelledPoolGauge('node_postgres_pool_idle_count', 'Idle connections in pg pool', (p) => p.idleCount);
+pgLabelledPoolGauge(
+  'node_postgres_pool_waiting_count',
+  'Waiting connections in pg pool',
+  (p) => p.waitingCount
+);
 
 /**
  * Buzz still parked in escrow because a payout leg gave up.

@@ -30,10 +30,32 @@ export class BulkheadFullError extends Error {
 }
 
 type Slot = { active: number };
-const slots = new Map<string, Slot>();
+
+// PROCESS-wide, not module-wide. Next.js compiles instrumentation.ts into a SEPARATE webpack
+// bundle from the API-route/pages bundle, so a plain module-level `new Map()` here gives each
+// graph its OWN state: the request path (pages graph) increments one map while a collect()
+// closure created in the instrumentation graph reads a different, permanently empty one. That
+// is not hypothetical — it is half of why civitai_app_heavy_bulkhead_* emitted no series at all
+// between 2026-06-07 and this fix (the other half was the registry; see src/server/prom/client.ts).
+//
+// Pinning on globalThis — the real V8 global, shared across every webpack bundle in one Node
+// process — is the same mechanism instrumentationRegistry and __civitaiRedisMetrics already use.
+// The admission-control BEHAVIOUR was always correct in the graph that serves requests; only a
+// reader in another graph saw nothing. Sharing the state makes the limit genuinely per-POD rather
+// than per-pod-per-graph, which is what the cap was always documented to mean.
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiBulkheadSlots: Map<string, Slot> | undefined;
+  // eslint-disable-next-line no-var
+  var __civitaiBulkheadRejects: Map<string, number> | undefined;
+}
+
+const slots: Map<string, Slot> =
+  globalThis.__civitaiBulkheadSlots ?? (globalThis.__civitaiBulkheadSlots = new Map());
 
 // Process-wide reject counter (per key) for observability / tuning.
-const rejects = new Map<string, number>();
+const rejects: Map<string, number> =
+  globalThis.__civitaiBulkheadRejects ?? (globalThis.__civitaiBulkheadRejects = new Map());
 
 /**
  * Acquire one concurrency slot for `key`. Throws BulkheadFullError IMMEDIATELY
