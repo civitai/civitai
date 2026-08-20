@@ -451,26 +451,50 @@ describe('getDetailPrimaryAction — off-site', () => {
   });
 
   /**
-   * An empty-string client id is FALSY, which is what the deleted
-   * `resolveOffsiteSubKind` tested — so it took the no-client arm.
-   * `app-listing.service.detailKindData`'s `|| null` guarantees this never
-   * reaches the wire by THAT path, but `app-listing-actionable.service` calls
-   * this view-model directly with a listing row, so pin the truthiness here
-   * rather than relying on a caller. (`MySubmissionsList` also calls it
-   * directly, but hardcodes `kind: 'onsite'` and never reaches this branch —
-   * it is NOT an off-site caller; an earlier version of this note implied it
-   * was.) The mod-review preview builder reaches it too, via
-   * `buildListingDetailPreview` → `AppListingDetailBody`, and it uses
-   * `?? null` — see `shouldShowOffsiteDisclosure`'s docstring.
+   * 🔴 INVARIANT GUARD, NOT A CAPABILITY TEST — and its title used to claim
+   * otherwise, which is why it is relabelled rather than left alone.
+   *
+   * Before #4208 this pinned TRUTHINESS: an empty-string client id is falsy,
+   * which is what the deleted `resolveOffsiteSubKind` tested, so it took the
+   * "no client" arm instead of the Connect stub. **That arm no longer exists.**
+   * `getDetailPrimaryAction` does not read `connectClientId` at all now, so
+   * `''`, `'client-123'` and `null` are indistinguishable here BY CONSTRUCTION
+   * and this fixture exercises the no-destination path and nothing else. Left
+   * as-is it would have read as capability coverage while being unable to fail
+   * for any capability reason.
+   *
+   * Kept and widened to assert what is actually true now: the action does not
+   * vary with the capability, empty string included.
+   *
+   * The truthiness contract still matters and still has a real test — it moved
+   * to `shouldShowOffsiteDisclosure`, which does still read the field. The
+   * callers that reach this view-model directly with a raw row
+   * (`app-listing-actionable.service`; and the mod-review preview builder via
+   * `buildListingDetailPreview` → `AppListingDetailBody`, which uses `?? null`)
+   * are documented in that predicate's docstring. (`MySubmissionsList` also
+   * calls it directly but hardcodes `kind: 'onsite'` and never reaches this
+   * branch — it is NOT an off-site caller.)
    */
-  it('an empty-string connectClientId takes the no-client arm (truthiness, not nullish)', () => {
-    const action = getDetailPrimaryAction(
+  it('🔴 the action ignores connectClientId entirely, empty string included', () => {
+    const baseline = getDetailPrimaryAction(
       offsiteDetail({ connectClientId: '', externalUrl: null }),
-      {
-        canOpenPage: true,
-      }
+      { canOpenPage: true }
     );
-    expect(action.label).toBe('Unavailable');
+    expect(baseline.label).toBe('Unavailable');
+
+    // The invariant, stated as one: every capability shape yields the SAME
+    // action. Anti-vacuity — the loop must actually compare all three.
+    let compared = 0;
+    for (const connectClientId of [null, '', 'client-123']) {
+      expect(
+        getDetailPrimaryAction(offsiteDetail({ connectClientId, externalUrl: null }), {
+          canOpenPage: true,
+        }),
+        `client=${String(connectClientId)}`
+      ).toEqual(baseline);
+      compared++;
+    }
+    expect(compared).toBe(3);
   });
 
   it('🔴 no off-site listing with an https target is ever left un-navigable', () => {
@@ -648,8 +672,15 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
   });
 
   it('an empty-string connectClientId does NOT suppress it (truthiness, not nullish)', () => {
-    // Matches the projection's `|| null` and `getDetailPrimaryAction`'s test, so
-    // all three read the capability the same way.
+    // Matches `app-listing.service`'s `|| null` projection — so BOTH remaining
+    // readers agree that an empty string is not a connected OAuth app.
+    //
+    // 🔴 This used to say "and `getDetailPrimaryAction`'s test, so all three read
+    // the capability the same way". #4208 deleted that reader: the primary action
+    // no longer branches on `connectClientId` at all, so this predicate is the
+    // only place in this module that does. Count the readers, don't restate the
+    // number — the sibling branch that adds `shouldShowConnectCapability` takes
+    // it back up.
     expect(
       shouldShowOffsiteDisclosure({
         kind: 'offsite',
