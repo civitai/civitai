@@ -3577,7 +3577,14 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
     // for them. Without this a moderator's own unpublished image would be served
     // when it arrived through the main pass and dropped when it arrived through
     // this one — visibility decided by which door it came in by.
-    if (!wantsUnpublished && !input.isModerator) {
+    //
+    // `publishedOnly` withdraws that exemption, because it withdraws its
+    // premise: the main post-filter drops the `OR userId = me` carve-out for
+    // such a caller, so keeping the exemption here would restore by the back
+    // door exactly what they asked to be rid of. This is the door the remix
+    // submit picker came in by — it asks for published images only, and a
+    // moderator was still offered their own drafts.
+    if (!wantsUnpublished && (!input.isModerator || input.publishedOnly)) {
       const mergeNow = Date.now();
       ownDocs = ownDocs.filter((d) => isPublicallyPublished(d, mergeNow, stats));
     }
@@ -4044,6 +4051,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     fromPlatform,
     notPublished,
     scheduled,
+    publishedOnly,
     username,
     tags,
     tools,
@@ -4287,7 +4295,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      if (currentUserId) {
+      // `publishedOnly` is the caller saying it cannot use an unpublished row at
+      // all, so the moderator's own-content carve-out is lifted too. Without
+      // this a moderator got their own drafts in a picker whose mutation
+      // refuses them, and no other caller could opt out of that.
+      if (currentUserId && !publishedOnly) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -4958,6 +4970,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     fromPlatform,
     notPublished,
     scheduled,
+    publishedOnly,
     username,
     tags,
     tools,
@@ -5186,7 +5199,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      if (currentUserId) {
+      // `publishedOnly` is the caller saying it cannot use an unpublished row at
+      // all, so the moderator's own-content carve-out is lifted too. Without
+      // this a moderator got their own drafts in a picker whose mutation
+      // refuses them, and no other caller could opt out of that.
+      if (currentUserId && !publishedOnly) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);

@@ -14,6 +14,7 @@ import {
   Loader,
   Modal,
   Popover,
+  SegmentedControl,
   Stack,
   Text,
   Tooltip,
@@ -39,7 +40,10 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
-import { dedupeGalleryItems } from '~/components/RemixGallery/remix-gallery.utils';
+import {
+  dedupeGalleryItems,
+  remixGalleryModerating,
+} from '~/components/RemixGallery/remix-gallery.utils';
 import { QueueThumb } from '~/components/RemixGallery/SubmissionPair';
 import { VerifiedRemixBadge } from '~/components/RemixGallery/VerifiedRemixBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -111,20 +115,43 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
 
   // The card has already run this, so react-query serves it from cache.
   const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery({ imageId });
+  // `undefined` while the query is in flight, which is NOT "not the owner" — see
+  // `remixGalleryModerating`.
+  const ownerKnown = visibility !== undefined;
   const isOwner = !!currentUser && currentUser.id === visibility?.ownerId;
 
   /**
-   * A moderator on someone else's gallery, which is a different modal.
+   * Opt-in, and only offered to a moderator on their own gallery.
+   *
+   * Off by default because moderators use the site as ordinary creators and
+   * should get the creator rules on their own work unless they say otherwise.
+   * Ownership used to decide this on its own, which left a moderator able to
+   * moderate every gallery except the one they owned.
+   */
+  const [asModerator, setAsModerator] = useState(false);
+
+  /**
+   * Moderating rather than curating, which is a different modal.
    *
    * Two of the three sections are not merely disallowed for them, they are
-   * unusable: `getPendingRemixGallerySubmissions` scopes to `ownerId = caller`,
-   * so the review queue comes back empty and would render "Nothing waiting."
-   * over a gallery that has two waiting; and `setRemixGalleryPins` scopes its
-   * lookup the same way, so every drag would throw "not in this gallery".
-   * Hiding them is honesty about reach, not a permission check — the server is
-   * the permission check.
+   * unusable on someone else's gallery: `getPendingRemixGallerySubmissions`
+   * scopes to `ownerId = caller`, so the review queue comes back empty and
+   * would render "Nothing waiting." over a gallery that has two waiting; and
+   * `setRemixGalleryPins` scopes its lookup the same way, so every drag would
+   * throw "not in this gallery". Hiding them is honesty about reach, not a
+   * permission check — the server is the permission check.
+   *
+   * On your OWN gallery in this mode they are kept, because there they work —
+   * the `ownerId = caller` scoping those queries use is satisfied. Hiding them
+   * would take away working controls that nobody asked to lose, and leave the
+   * ordinary job of clearing your queue behind a round trip through the toggle.
    */
-  const moderating = isModerator && !isOwner;
+  const moderating = remixGalleryModerating({ isModerator, isOwner, ownerKnown, asModerator });
+
+  // Reach, not permission: the review queue, the pinned row and the pin control
+  // all scope to `ownerId = caller` server-side, so they are empty or refusing
+  // on someone else's gallery. On your own they work in either mode.
+  const hideOwnerSections = moderating && !isOwner;
 
   // Scoped server-side. Filtering the account-wide list here meant its limit
   // truncated before the filter ran, so a busy owner saw "nothing waiting" on
@@ -264,24 +291,50 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
       size="lg"
     >
       <Stack gap="md">
+        {isModerator && isOwner && (
+          // Only on your own gallery. Everywhere else the mode is not a choice:
+          // there is no creator role available to a moderator on someone
+          // else's gallery, and offering one would be a control that does
+          // nothing.
+          <SegmentedControl
+            fullWidth
+            size="xs"
+            value={asModerator ? 'moderate' : 'manage'}
+            onChange={(value) => setAsModerator(value === 'moderate')}
+            data={[
+              { value: 'manage', label: 'Manage as creator' },
+              { value: 'moderate', label: 'Moderate' },
+            ]}
+          />
+        )}
+
         {moderating && (
           // Not decoration. The same button in an owner's hands returns the
           // submitter's Buzz and in a moderator's keeps it, and the row records
           // which happened. Someone holding both roles should not have to
           // remember which gallery they are looking at.
+          //
+          // "Takedown" is deliberately not used here. It is our word for DMCA
+          // and NCII, and two moderators independently read this copy as one of
+          // those.
           <Alert color="red" icon={<IconShieldCheck size={18} />} p="xs">
             <Text size="sm" fw={600}>
-              You are moderating {visibility?.ownerUsername ?? 'another creator'}&apos;s gallery
+              {isOwner
+                ? 'You are moderating your own gallery'
+                : `You are moderating ${visibility?.ownerUsername ?? 'another creator'}'s gallery`}
             </Text>
             <Text size="xs" mt={2}>
-              You can take entries down. Removing one here is a moderator takedown — the submitter
-              is not refunded, and the removal is recorded against you rather than the creator.
-              Approving, declining and pinning stay with the creator.
+              You can remove entries here at any time — as the creator you would have to wait a week
+              after approving one. The submitter is not refunded, and the removal is logged as a
+              moderator action.{' '}
+              {isOwner
+                ? 'Approving, declining and pinning are unchanged — they are yours either way.'
+                : 'Approving, declining and pinning stay with the creator.'}
             </Text>
           </Alert>
         )}
 
-        {!moderating && (
+        {!hideOwnerSections && (
           <div>
             <SectionDivider
               icon={IconInbox}
@@ -578,7 +631,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
           </div>
         )}
 
-        {!moderating && (
+        {!hideOwnerSections && (
           <div>
             <SectionDivider
               icon={IconPin}
@@ -643,7 +696,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                         scopes its lookup to the caller as owner — a moderator
                         pressing this would get "not in this gallery" on every
                         press. */}
-                    {!moderating && (
+                    {!hideOwnerSections && (
                       <Tooltip
                         label={
                           atPinCap
@@ -664,27 +717,33 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                     )}
                     <RemoveEntryButton
                       item={item}
-                      isModerator={isModerator}
+                      moderating={moderating}
                       pending={actingOn(item.placementId, 'remove')}
                       onRemove={() => {
+                        // The server cannot read the mode off ownership — that
+                        // is the bug — so it is sent.
                         const remove = () =>
-                          act.mutate({ placementId: item.placementId, action: 'remove' });
+                          act.mutate({
+                            placementId: item.placementId,
+                            action: 'remove',
+                            asModerator: moderating,
+                          });
                         // Confirmed for a moderator and not for an owner, because
                         // the two are different acts: an owner removal returns the
-                        // submitter's Buzz, a moderator takedown keeps it. Nothing
+                        // submitter's Buzz, a moderator removal keeps it. Nothing
                         // undoes that, and the row records who did it.
                         if (!moderating) return remove();
                         openConfirmModal({
-                          title: 'Take this entry down',
+                          title: 'Remove this entry',
                           children: (
                             <Text size="sm">
                               This removes the remix from{' '}
-                              {visibility?.ownerUsername ?? 'the creator'}&apos;s gallery for
-                              everyone. The submitter is not refunded, and the takedown is recorded
-                              against you.
+                              {isOwner ? 'your' : `${visibility?.ownerUsername ?? 'the creator'}'s`}{' '}
+                              gallery for everyone. The submitter is not refunded, and the removal
+                              is logged as a moderator action under your name.
                             </Text>
                           ),
-                          labels: { confirm: 'Take down', cancel: 'Cancel' },
+                          labels: { confirm: 'Remove', cancel: 'Cancel' },
                           confirmProps: { color: 'red' },
                           onConfirm: remove,
                         });
@@ -728,23 +787,24 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
  * a missing `resolvedAt` shows an enabled button and lets the server rule,
  * rather than locking someone out on absent data.
  *
- * Moderators are exempt here because they are exempt on the mutation. Disabling
- * it for them would hide an action the server would allow, and a takedown is
- * the case that must not wait.
+ * Keyed on the MODE rather than on holding the moderator role, because that is
+ * what the mutation is keyed on. Reading the role alone left a moderator on
+ * their own gallery an enabled button and a server refusal — the wait still
+ * applied, and the only place it was stated was the error.
  */
 function RemoveEntryButton({
   item,
-  isModerator,
+  moderating,
   pending,
   onRemove,
 }: {
   item: RemixGalleryItem;
-  isModerator: boolean;
+  moderating: boolean;
   pending: boolean;
   onRemove: () => void;
 }) {
   const removableAt = item.resolvedAt ? remixGalleryRemovableAt(item.resolvedAt) : null;
-  const locked = !isModerator && !!removableAt && removableAt > new Date();
+  const locked = !moderating && !!removableAt && removableAt > new Date();
 
   return (
     <Tooltip
