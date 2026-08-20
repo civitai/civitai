@@ -428,15 +428,17 @@ In an existing checkout that already works:
 
 ### Git Worktrees
 
-Create one with (place it under the repos root — `scripts/defender-exclusions.ps1` excludes that path
-from Defender real-time scanning, and a tree outside it silently runs slow):
+Worktrees live in `<repos-root>/worktrees/<name>` — all of them, no prefix on the directory name. Keep
+them under the repos root: `.claude/skills/dev-server/scripts/defender-exclusions.ps1` excludes that
+path from Defender real-time scanning, and a tree outside it silently runs slow. (Run it once with
+`-ReposRoot <repos-root>` to cover the parent; its default only covers the single checkout it lives in.)
 
 ```bash
 git fetch origin main
-git worktree add <repos-root>/wt-<name> -b <branch> origin/main   # both args required — see below
-git -C <repos-root>/model-share submodule sync --recursive
-git -C <repos-root>/wt-<name> submodule update --init event-engine-common
-printf 'use flake\n' > <repos-root>/wt-<name>/.envrc && direnv allow   # from inside the worktree
+git worktree add <repos-root>/worktrees/<name> -b <branch> origin/main   # both args required — see below
+git -C <repos-root>/<primary-checkout> submodule sync --recursive
+git -C <repos-root>/worktrees/<name> submodule update --init event-engine-common
+printf 'use flake\n' > <repos-root>/worktrees/<name>/.envrc && direnv allow   # from inside the worktree
 pnpm install
 ```
 
