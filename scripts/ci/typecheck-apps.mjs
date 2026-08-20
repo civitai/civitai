@@ -46,10 +46,10 @@ import { join, resolve } from 'node:path';
 const EXCLUDED = {
   auth: [
     'Two pre-existing errors, reproduced 2026-08-19 and 2026-08-20:',
-    '  src/lib/server/auth/providers.ts:165 — Parameter \'p\' implicitly has an \'any\' type',
-    '  src/lib/server/auth/__tests__/establish-session.test.ts:100 — \'_store\' on type \'never\'',
+    "  src/lib/server/auth/providers.ts:165 — Parameter 'p' implicitly has an 'any' type",
+    "  src/lib/server/auth/__tests__/establish-session.test.ts:100 — '_store' on type 'never'",
     'Wiring it before those are fixed ships a permanently-red gate, which teaches people to',
-    'click through every other app\'s result too. Fix, then delete this entry.',
+    "click through every other app's result too. Fix, then delete this entry.",
   ].join('\n    '),
 };
 

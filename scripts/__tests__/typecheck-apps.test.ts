@@ -19,9 +19,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SCRIPT = resolve(
-  fileURLToPath(new URL('../ci/typecheck-apps.mjs', import.meta.url))
-);
+const SCRIPT = resolve(fileURLToPath(new URL('../ci/typecheck-apps.mjs', import.meta.url)));
 
 let root: string;
 beforeAll(() => {
