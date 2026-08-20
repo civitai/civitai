@@ -17,16 +17,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
  * starts storing a second hash type.
  */
 
-const { mockDbWrite, mockSubmitWorkflow } = vi.hoisted(() => ({
-  mockDbWrite: {
-    modelFile: { update: vi.fn().mockResolvedValue({}) },
-    modelFileHash: { upsert: vi.fn().mockResolvedValue({}) },
-  },
+const { mockSubmitWorkflow } = vi.hoisted(() => ({
   mockSubmitWorkflow: vi.fn(),
 }));
 
-// --- shared by both modules under test -------------------------------------
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite, dbRead: {} }));
 vi.mock('@civitai/client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   getWorkflow: vi.fn(),
@@ -35,8 +29,6 @@ vi.mock('@civitai/client', () => ({
   TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },
 }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-
 // --- orchestrator.service edges --------------------------------------------
 vi.mock('~/shared/utils/air', () => ({ stringifyAIR: vi.fn().mockReturnValue('urn:air:x') }));
 vi.mock('~/utils/delivery-worker', () => ({
@@ -76,6 +68,11 @@ vi.mock('~/server/flipt/client', () => ({
 import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { normalizeScanHashes } from '~/server/services/model-file-scan.service';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.modelFile.update.mockResolvedValue({});
+dbMock.dbWrite.modelFileHash.upsert.mockResolvedValue({});
 
 const INPUT = {
   fileId: 77,
