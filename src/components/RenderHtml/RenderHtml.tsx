@@ -15,6 +15,7 @@ import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { STICKER_JUMBO_LIMIT, stickerMaxWidth, STICKER_SIZE } from '~/shared/utils/sticker-token';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
+import { StickerAttributionHoverCard } from '~/components/Sticker/StickerAttributionHoverCard';
 
 // Match host exactly or as a subdomain (e.g. "www.youtube.com"), never as a
 // substring elsewhere in the URL — `url.includes('youtube.com')` would let
@@ -286,6 +287,10 @@ export function RenderHtml({
       {/* Not gated on `withMentions` — that prop only decides whether a mention
           becomes a link. The span carries the user either way. */}
       <MentionHoverCard containerRef={contentRef} />
+      {/* Behind the same opt-in as drawing the sticker at all, so a surface that
+          stores unsanitized HTML cannot acquire a shop link by acquiring a
+          sticker. */}
+      {allowStickers && <StickerAttributionHoverCard containerRef={contentRef} />}
     </TypographyStylesWrapper>
   );
 }

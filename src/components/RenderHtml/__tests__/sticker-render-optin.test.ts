@@ -72,4 +72,37 @@ describe('sticker rendering is opt-in', () => {
 
     expect(registers).toEqual([...MAY_REGISTER_STICKER_NODE].sort());
   });
+
+  /**
+   * The attribution card is the same containment question one step on: it turns
+   * a drawn sticker into a route to its creator's shop.
+   *
+   * Justin's call was comments now, DMs a separate decision — a card in a DM
+   * makes any sticker a stranger sends you a shop link, with no message text to
+   * report. `Sticker.tsx` is shared with chat, so mounting the card there would
+   * have shipped that decision by accident. It lives in `RenderHtml` behind the
+   * same opt-in as drawing the sticker at all.
+   */
+  it('the attribution card is mounted only by RenderHtml, and only behind the opt-in', () => {
+    const mounts = walk(SRC, [], ['.ts', '.tsx'])
+      .filter((file) => /<StickerAttributionHoverCard/.test(fs.readFileSync(file, 'utf8')))
+      .map(relative)
+      .filter((file) => !file.includes('/__tests__/'))
+      .sort();
+
+    expect(mounts).toEqual(['components/RenderHtml/RenderHtml.tsx']);
+
+    const source = fs.readFileSync(path.join(SRC, 'components/RenderHtml/RenderHtml.tsx'), 'utf8');
+    expect(source).toMatch(/allowStickers && <StickerAttributionHoverCard/);
+  });
+
+  it('🔴 the shared inline sticker component carries NO card — that is what keeps it out of DMs', () => {
+    // `Sticker.tsx` is what chat renders. A card reached from here is a card in
+    // a private message.
+    const shared = fs.readFileSync(path.join(SRC, 'components/Sticker/Sticker.tsx'), 'utf8');
+    expect(shared).not.toMatch(/HoverCard|Popover|StickerAttribution/);
+
+    const chat = fs.readFileSync(path.join(SRC, 'components/Chat/ExistingChat.tsx'), 'utf8');
+    expect(chat).not.toMatch(/StickerAttribution/);
+  });
 });

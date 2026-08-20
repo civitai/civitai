@@ -8,6 +8,7 @@ import {
 import {
   getCosmeticDetail,
   getStickerCosmetics,
+  getStickerAttribution,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
   unequipCosmetic,
@@ -39,6 +40,15 @@ export const cosmeticRouter = router({
     .input(getStickerCosmeticsSchema)
     .query(({ input }) => {
       return getStickerCosmetics(input);
+    }),
+  // Who made a sticker and where to buy it, for the attribution card on an
+  // inline sticker. Public: the answer is the same for every viewer, and the
+  // sticker is already visible to anyone reading the comment.
+  getStickerAttribution: publicProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getStickerCosmeticsSchema)
+    .query(({ input }) => {
+      return getStickerAttribution(input);
     }),
   // Remaining uses per owned sticker, so the picker can show a balance instead
   // of the user discovering it as a failed comment submit.

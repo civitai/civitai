@@ -54,6 +54,38 @@ export async function getStickerCosmetics({ ids }: GetStickerCosmeticsInput) {
     .filter((sticker) => !!sticker.slug && !!sticker.url);
 }
 
+/**
+ * Who made a sticker, and where to buy it.
+ *
+ * Separate from `getStickerCosmetics` because the shared `cosmeticCache` does not
+ * hold a creator — it selects id/name/type/data/source, and widening a cache
+ * every avatar and badge lookup goes through, to serve a hover, is the wrong
+ * trade. This is asked for one sticker at a time, when someone hovers it.
+ *
+ * Emits the href rather than the username, matching the placement card: a
+ * template literal accepts null silently, which is how `/user/null/shop` once
+ * shipped past a typecheck. No consumer can build the wrong link if none of them
+ * builds one.
+ */
+export async function getStickerAttribution({ ids }: GetStickerCosmeticsInput) {
+  const cosmetics = await dbRead.cosmetic.findMany({
+    where: { id: { in: ids }, type: CosmeticType.Sticker },
+    select: { id: true, name: true, creator: { select: { username: true, deletedAt: true } } },
+  });
+
+  return cosmetics.map((cosmetic) => {
+    // A deleted creator keeps the sticker drawable and its name worth showing;
+    // it just has nowhere to send anyone.
+    const username = cosmetic.creator?.deletedAt ? null : cosmetic.creator?.username ?? null;
+    return {
+      id: cosmetic.id,
+      name: cosmetic.name,
+      creatorName: username,
+      shopHref: username ? `/user/${username}/shop` : null,
+    };
+  });
+}
+
 export async function getOwnedStickerCosmetics(userId: number) {
   const owned = await userOwnedStickerCache.fetch([userId]);
   const ids = owned[userId]?.cosmeticIds ?? [];
