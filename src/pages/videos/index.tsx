@@ -1,7 +1,6 @@
 import { Stack, Title } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { useImageFilters } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -22,7 +21,6 @@ function VideosPage() {
         {hidden && <Title>Your Hidden Videos</Title>}
         <Stack gap="xs">
           <IsClient>
-            <ImageCategories />
             <ImagesInfinite
               filterType="videos"
               filters={{ ...filters, types: ['video'] }}
