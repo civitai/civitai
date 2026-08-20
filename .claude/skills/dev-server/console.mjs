@@ -12,7 +12,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import readline from 'readline';
-import { resolveDaemonPort } from './scripts/daemon-port.mjs';
+import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -29,8 +29,9 @@ const projectRoot = findProjectRoot(__dirname);
 const pidFile = resolve(__dirname, 'daemon.pid');
 const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
 
-const DAEMON_PORT = resolveDaemonPort();
-const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
+// The whole decision — port included — is made in scripts/daemon-port.mjs, the same module the
+// daemon reads, so this file does no arithmetic on a port and cannot drift from it.
+const DAEMON_URL = resolveDaemonUrl();
 
 // ── ANSI ──────────────────────────────────────────────────────────────────────
 const C = {

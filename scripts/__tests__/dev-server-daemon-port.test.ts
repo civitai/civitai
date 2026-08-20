@@ -1,20 +1,23 @@
 import { spawn } from 'child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import type { AddressInfo } from 'net';
-import { dirname, resolve } from 'path';
+import { dirname, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_DAEMON_PORT,
+  parsePort,
   resolveDaemonPort,
+  resolveDaemonUrl,
 } from '../../.claude/skills/dev-server/scripts/daemon-port.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const skillDir = resolve(repoRoot, '.claude/skills/dev-server');
 const daemonScript = resolve(skillDir, 'scripts/daemon.mjs');
 const cliScript = resolve(skillDir, 'cli.mjs');
+const portModule = resolve(skillDir, 'scripts/daemon-port.mjs');
 const pidFile = resolve(skillDir, 'daemon.pid');
 
 /** A port nothing holds right now. Bound and released so the number is real, not a guess. */
@@ -26,9 +29,34 @@ async function freePort(): Promise<number> {
   return port;
 }
 
+/** True once nothing answers on the port. */
+async function isDown(port: number): Promise<boolean> {
+  const res = await fetch(`http://127.0.0.1:${port}/`).catch(() => null);
+  return res === null;
+}
+
+/**
+ * Stop a daemon over its own API and WAIT for it to be gone.
+ *
+ * The wait is the point, and it is load-bearing rather than tidy. `POST /shutdown` replies 200
+ * and only then schedules `unlinkSync(pidFile); process.exit(0)` on a 100 ms timer
+ * (daemon.mjs, the /shutdown branch). Returning at the 200 therefore returns ~100 ms BEFORE the
+ * unlink, so a caller that restores the developer's pid file at that moment has it deleted out
+ * from under them a tick later — which is exactly what this file used to do, on every run of the
+ * unit suite.
+ */
+async function shutdown(port: number) {
+  await fetch(`http://127.0.0.1:${port}/shutdown`, { method: 'POST' }).catch(() => null);
+  for (let i = 0; i < 100; i++) {
+    if (await isDown(port)) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
 /**
  * The daemon writes its pid into the skill directory, and a developer running this suite has a
- * daemon of their own whose pid file that is. Every case here restores it.
+ * daemon of their own whose pid file that is. Every case here restores it — after the daemon it
+ * started is confirmed gone, never before.
  */
 async function withPidFilePreserved<T>(body: () => Promise<T>): Promise<T> {
   const saved = existsSync(pidFile) ? readFileSync(pidFile) : null;
@@ -40,31 +68,37 @@ async function withPidFilePreserved<T>(body: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Ask a daemon to stop over its own API — the one teardown that also works on Windows. */
-async function shutdown(port: number) {
-  await fetch(`http://127.0.0.1:${port}/shutdown`, { method: 'POST' }).catch(() => null);
-}
-
-describe('resolveDaemonPort', () => {
-  it('is 9444 when the variable is unset or empty', () => {
+describe('parsePort / resolveDaemonPort', () => {
+  it('is the default when the variable is unset or empty', () => {
     expect(resolveDaemonPort({})).toBe(9444);
     expect(resolveDaemonPort({ DEV_DAEMON_PORT: '' })).toBe(9444);
+    expect(resolveDaemonPort({ DEV_DAEMON_PORT: '   ' })).toBe(9444);
     expect(DEFAULT_DAEMON_PORT).toBe(9444);
   });
 
   it('honours a numeric value', () => {
     expect(resolveDaemonPort({ DEV_DAEMON_PORT: '9555' })).toBe(9555);
     expect(resolveDaemonPort({ DEV_DAEMON_PORT: ' 9555 ' })).toBe(9555);
+    expect(resolveDaemonUrl({ DEV_DAEMON_PORT: '9555' })).toBe('http://127.0.0.1:9555');
+    expect(resolveDaemonUrl({})).toBe('http://127.0.0.1:9444');
   });
 
   // parseInt — what every one of these call sites used to do — reads '9555abc' as 9555 and 'abc'
-  // as NaN. NaN reaches a URL as `http://127.0.0.1:NaN` and fails somewhere far from the cause.
+  // as NaN. NaN reaches a URL as `http://127.0.0.1:NaN` and a listen() as ERR_SOCKET_BAD_PORT,
+  // both a long way from the input that was actually wrong.
   it('refuses a value that is not a port instead of guessing one', () => {
-    expect(() => resolveDaemonPort({ DEV_DAEMON_PORT: 'abc' })).toThrow(/not a number/);
-    expect(() => resolveDaemonPort({ DEV_DAEMON_PORT: '9555abc' })).toThrow(/not a number/);
-    expect(() => resolveDaemonPort({ DEV_DAEMON_PORT: '-1' })).toThrow(/not a number/);
-    expect(() => resolveDaemonPort({ DEV_DAEMON_PORT: '0' })).toThrow(/out of range/);
-    expect(() => resolveDaemonPort({ DEV_DAEMON_PORT: '70000' })).toThrow(/out of range/);
+    for (const bad of ['abc', '9555abc', '-1', '95.5', '']) {
+      expect(() => parsePort(bad, 'X')).toThrow(/X is not a port number/);
+    }
+    expect(() => parsePort(undefined, 'X')).toThrow(/X is not a port number/);
+    // Out of range is a DIFFERENT complaint from unparseable — '0' is a number, just not a port.
+    expect(() => parsePort('0', 'X')).toThrow(/X is out of the port range/);
+    expect(() => parsePort('70000', 'X')).toThrow(/X is out of the port range/);
+  });
+
+  it('names the input in the error, so the message says what to go fix', () => {
+    expect(() => resolveDaemonPort({ DEV_DAEMON_PORT: 'nope' })).toThrow(/DEV_DAEMON_PORT/);
+    expect(() => parsePort('nope', '--port')).toThrow(/--port/);
   });
 });
 
@@ -160,40 +194,118 @@ describe('the dev daemon listens where DEV_DAEMON_PORT says', () => {
 });
 
 /**
- * The ledger. What made this bug possible was four files each deciding the port for themselves,
- * and it is not a bug any of them contains — it is a bug in the set. console.mjs in particular
- * has no end-to-end case here (it is a TUI), so a structural claim about the set is the only
- * thing standing between it and a second hardcoded 9444.
- *
- * This fails when the set grows (a new copy appears) and when it shrinks (daemon-port.mjs stops
- * owning the number).
+ * `--port` is the HIGHER-precedence input, and it used to be the unvalidated one: `parseInt`
+ * turned `--port abc` into NaN. Via cli.mjs the daemon is detached with stdio ignored, so
+ * ERR_SOCKET_BAD_PORT is invisible and the user sees only "Failed to start daemon" after a 5 s
+ * poll. Validating the environment while argv bypasses the check is not one rule in one place.
  */
-describe('nothing outside daemon-port.mjs decides the daemon port', () => {
-  const owner = resolve(skillDir, 'scripts/daemon-port.mjs');
-  const readers = [
-    resolve(skillDir, 'cli.mjs'),
-    resolve(skillDir, 'console.mjs'),
-    resolve(skillDir, 'scripts/daemon.mjs'),
-    resolve(repoRoot, 'scripts/test-unit-run.mjs'),
-  ];
-
-  it('spells 9444 exactly once, in the module that owns it', () => {
-    // The positive control for the scan itself: the owner MUST contain the literal, or a typo in
-    // these paths would read as "no copies anywhere" and pass.
-    expect(readFileSync(owner, 'utf8')).toContain('9444');
-
-    for (const file of readers) {
-      expect(`${file}: ${readFileSync(file, 'utf8').includes('9444')}`).toBe(`${file}: false`);
-    }
+describe('argv goes through the same validator as the environment', () => {
+  it('rejects a --port that is not a port, naming the flag', async () => {
+    const { parseArgs } = await import('../../.claude/skills/dev-server/scripts/daemon.mjs');
+    expect(() => parseArgs(['--port', 'abc'])).toThrow(/--port is not a port number/);
+    expect(() => parseArgs(['--port'])).toThrow(/--port is not a port number/);
+    expect(() => parseArgs(['--port', '70000'])).toThrow(/--port is out of the port range/);
+    expect(parseArgs(['--port', '9555']).port).toBe(9555);
   });
 
-  it('has every reader take the port from that module', () => {
-    for (const file of readers) {
+  // The daemon's own header says importing it must not start a daemon; resolving the port at
+  // module load would have made a bad DEV_DAEMON_PORT throw on mere import, taking down the
+  // suites that import DevSession and the port reservation without intending to run anything.
+  it('can be imported with an unusable DEV_DAEMON_PORT without throwing', async () => {
+    const code = await new Promise<number | null>((done) => {
+      const child = spawn(
+        process.execPath,
+        ['--input-type=module', '-e', `await import(${JSON.stringify(daemonScript)});`],
+        { cwd: repoRoot, env: { ...process.env, DEV_DAEMON_PORT: 'nope' }, stdio: 'ignore' }
+      );
+      child.on('exit', done);
+    });
+    expect(code).toBe(0);
+  }, 30_000);
+});
+
+/**
+ * The ledger. What made this bug possible was several files each deciding the port for
+ * themselves, and it is not a bug any of them contains — it is a bug in the SET. console.mjs in
+ * particular is a TUI with no end-to-end case here, so a claim about the set is most of what
+ * stands between it and a second hardcoded copy.
+ *
+ * The first version of this scanned a FIXED list of four readers, which could not see the set
+ * GROW — and a fifth copy already existed, in `.claude/hooks/check-writable.mjs`, while the test
+ * was green. It now walks the tree, so a file that does not exist yet is still covered.
+ */
+describe('nothing outside daemon-port.mjs decides the daemon port', () => {
+  const roots = [skillDir, resolve(repoRoot, 'scripts'), resolve(repoRoot, '.claude/hooks')];
+
+  /** Every .mjs/.js/.ts under the roots, minus node_modules and test files. */
+  function sourceFiles(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = resolve(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
+          walk(full);
+          continue;
+        }
+        if (!/\.(mjs|cjs|js|ts)$/.test(entry.name)) continue;
+        // Test files legitimately pin the expected default as a literal — a test that derived
+        // its expectation from the implementation would assert nothing.
+        if (/\.(test|spec|selftest)\./.test(entry.name)) continue;
+        out.push(full);
+      }
+    };
+    roots.forEach(walk);
+    return out;
+  }
+
+  it('finds the files it claims to scan', () => {
+    // The positive control. Without it a typo in `roots` yields an empty set, every assertion
+    // below passes vacuously, and "no second copy anywhere" would be a fact about the walk.
+    const files = sourceFiles().map((f) => relative(repoRoot, f));
+    expect(files.length).toBeGreaterThan(10);
+    expect(files).toContain('.claude/skills/dev-server/cli.mjs');
+    expect(files).toContain('.claude/skills/dev-server/console.mjs');
+    expect(files).toContain('.claude/skills/dev-server/scripts/daemon.mjs');
+    expect(files).toContain('.claude/hooks/check-writable.mjs');
+    expect(files).toContain('scripts/test-unit-run.mjs');
+  });
+
+  it('spells the port in exactly one source file', () => {
+    // \b so 19444 and 94440 are not counted as a copy of 9444.
+    const literal = new RegExp(String.raw`\b${DEFAULT_DAEMON_PORT}\b`);
+    const owner = relative(repoRoot, portModule);
+
+    const holders = sourceFiles()
+      .filter((f) => literal.test(readFileSync(f, 'utf8')))
+      .map((f) => relative(repoRoot, f))
+      .sort();
+
+    expect(holders).toEqual([owner]);
+  });
+
+  it('has every daemon client take its address from that module', () => {
+    const clients = [cliScript, resolve(skillDir, 'console.mjs')];
+    for (const file of clients) {
       const source = readFileSync(file, 'utf8');
-      // Static `from '…/daemon-port.mjs'` in three of them; test-unit-run.mjs names the path and
-      // imports it dynamically, because it must still run when `.claude/` is absent.
-      expect(`${file}: ${source.includes('daemon-port.mjs')}`).toBe(`${file}: true`);
-      expect(`${file}: ${source.includes('resolveDaemonPort(')}`).toBe(`${file}: true`);
+      const name = relative(repoRoot, file);
+      // An IMPORT, not a mention: `includes('daemon-port.mjs')` alone is satisfied by a comment,
+      // and this file's prose names the module in several of them.
+      expect(`${name}: ${/^import .*from '.*daemon-port\.mjs';$/m.test(source)}`).toBe(
+        `${name}: true`
+      );
+      // The client takes the whole URL. Resolving a PORT and then doing arithmetic on it is the
+      // shape that let a wrong-but-non-literal value through: `resolveDaemonPort() + 1` used to
+      // satisfy every assertion here.
+      expect(`${name}: ${/const DAEMON_URL = resolveDaemonUrl\(\);/.test(source)}`).toBe(
+        `${name}: true`
+      );
     }
   });
 });
@@ -233,4 +345,94 @@ describe('the CLI reaches the daemon it starts', () => {
     expect(result.stderr).not.toMatch(/Failed to start daemon/);
     expect(result.code).toBe(0);
   }, 60_000);
+
+  // The bug this file shipped in its first version: the restore raced the daemon's own unlink,
+  // so running the unit suite deleted the developer's daemon.pid and it never came back.
+  it('leaves the pid file exactly as it found it', async () => {
+    const port = await freePort();
+    const sentinel = String(Date.now());
+    const had = existsSync(pidFile);
+    const saved = had ? readFileSync(pidFile) : null;
+
+    try {
+      writeFileSync(pidFile, sentinel);
+      await withPidFilePreserved(async () => {
+        await new Promise<void>((done) => {
+          const child = spawn(process.execPath, [cliScript, 'status'], {
+            cwd: repoRoot,
+            env: { ...process.env, DEV_DAEMON_PORT: String(port) },
+            stdio: 'ignore',
+          });
+          child.on('exit', () => done());
+        });
+        await shutdown(port);
+      });
+
+      // Long enough to cover the daemon's 100 ms post-response unlink timer several times over.
+      await new Promise((r) => setTimeout(r, 600));
+      expect(existsSync(pidFile)).toBe(true);
+      expect(readFileSync(pidFile, 'utf8')).toBe(sentinel);
+    } finally {
+      if (saved) writeFileSync(pidFile, saved);
+      else rmSync(pidFile, { force: true });
+    }
+  }, 60_000);
+});
+
+/**
+ * `scripts/test-unit-run.mjs` promises, in its own comment, never to leave a caller unable to
+ * run tests because the queue is unavailable. Resolving the address can now THROW, and an
+ * unusable address is the queue being unavailable — so it has to degrade the same way. It did
+ * not: the throw escaped an un-awaited runQueued as an unhandled rejection and no tests ran.
+ */
+describe('an unusable DEV_DAEMON_PORT still runs the tests', () => {
+  it('falls back to a direct run instead of dying', async () => {
+    const script = resolve(repoRoot, 'scripts/test-unit-run.mjs');
+
+    const stderr = await new Promise<string>((done) => {
+      const child = spawn(process.execPath, [script], {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          CI: '',
+          CIVITAI_TEST_QUEUE: '1',
+          DEV_DAEMON_PORT: 'nope',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let buf = '';
+      const finish = () => {
+        child.kill('SIGKILL');
+        done(buf);
+      };
+      // The fallback is a REAL vitest run of the whole suite, so the moment the decision is
+      // observable the child is killed. Waiting for it to finish would run the suite recursively.
+      child.stderr.on('data', (d: Buffer) => {
+        buf += d.toString();
+        if (/running directly/i.test(buf)) finish();
+      });
+      child.stdout.resume();
+      child.on('exit', () => done(buf));
+      setTimeout(finish, 25_000);
+    });
+
+    // The SPECIFIC message, not just "running directly". There are two guards on this path — the
+    // targeted catch around address resolution, and a general `.catch()` on the un-awaited
+    // runQueued — and the general one also degrades to a direct run. Asserting the generic phrase
+    // was satisfied by whichever fired, so deleting the targeted guard left the suite green
+    // (measured: it survived the mutation battery). Naming the message pins which one ran.
+    expect(stderr).toMatch(/Test queue address unusable/);
+    expect(stderr).toMatch(/running directly/i);
+    expect(stderr).not.toMatch(/UnhandledPromiseRejection|ERR_UNHANDLED_REJECTION/);
+  }, 40_000);
+
+  it('does not hold a stale port module reference', () => {
+    // The module the script reaches for must actually be there; the script gates on existsSync
+    // and would silently take the direct path forever if this moved.
+    expect(existsSync(portModule)).toBe(true);
+    expect(statSync(portModule).size).toBeGreaterThan(0);
+    expect(readFileSync(resolve(repoRoot, 'scripts/test-unit-run.mjs'), 'utf8')).toContain(
+      'daemon-port.mjs'
+    );
+  });
 });

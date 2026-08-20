@@ -23,7 +23,7 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
-import { resolveDaemonPort } from './daemon-port.mjs';
+import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { TestQueue } from './test-queue.mjs';
 import {
   loadModeDefinitions,
@@ -40,8 +40,6 @@ const projectRoot = resolve(skillDir, '../../..');
 const pidFile = resolve(skillDir, 'daemon.pid');
 
 // Configuration
-// Read at module load so a hand-started daemon honours DEV_DAEMON_PORT; `--port` still wins.
-const DEFAULT_DAEMON_PORT = resolveDaemonPort();
 const DEFAULT_BASE_DEV_PORT = 3000;
 const MAX_LOG_LINES = 2000;
 
@@ -183,18 +181,26 @@ const readyPatterns = [
   /listening on/i,
 ];
 
-// Parse command line arguments
-function parseArgs() {
-  const args = process.argv.slice(2);
+// Parse command line arguments.
+//
+// The port is resolved HERE, not at module load: importing this file must not start a daemon
+// (see the `invokedDirectly` guard at the bottom), and resolving at load would additionally make
+// a bad DEV_DAEMON_PORT throw on mere import — which would take down the suites that import
+// DevSession and the port reservation without ever intending to run a daemon.
+function parseArgs(argv = process.argv.slice(2)) {
+  const args = argv;
   const config = {
-    port: DEFAULT_DAEMON_PORT,
+    port: resolveDaemonPort(),
     baseDevPort: DEFAULT_BASE_DEV_PORT,
   };
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case '--port':
-        config.port = parseInt(args[++i], 10);
+        // Through the same validator the environment gets: `--port abc` used to become NaN and
+        // surface as ERR_SOCKET_BAD_PORT, which via `cli.mjs` is invisible (the daemon is
+        // detached with stdio ignored) and reads only as "Failed to start daemon".
+        config.port = parsePort(args[++i], '--port');
         break;
       case '--base-dev-port':
         config.baseDevPort = parseInt(args[++i], 10);
@@ -2655,6 +2661,7 @@ export {
   findSessionByWorktree,
   getUsedPorts,
   listSessions,
+  parseArgs,
   sessionIsBusy,
   sessions,
 };

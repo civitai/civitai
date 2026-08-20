@@ -9,6 +9,7 @@
  */
 
 import { stdin } from 'process';
+import { readFileSync } from 'fs';
 
 // `prettier --write <targets>`: the incident was a repo-WIDE rewrite, not formatting a directory
 // this change owns. Read the targets instead of matching `--write`, so a scoped path just runs.
@@ -84,7 +85,39 @@ function isUnscoped(target) {
 // URL carrying a dev port in a query parameter — and `$(curl ...)` defeats it anyway. A guard with
 // those false positives and no override is one people route around, and the routes around it are
 // shorter than the compliant path. Asking keeps the nudge and costs a keystroke when it is wrong.
-const DEV_PORTS = /(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?):(?:30\d\d|51[67]\d|9444)\b/i;
+//
+// The daemon's port comes from the dev-server skill rather than being baked in here: it is
+// overridable via DEV_DAEMON_PORT, and a hardcoded copy meant that setting it silently switched
+// this nudge off for the daemon — the one long-lived server the rule most exists for.
+//
+// Resolved lazily and defensively, and both matter. A hook that throws breaks EVERY Bash call, so
+// a missing skill directory or a malformed DEV_DAEMON_PORT must degrade, not propagate; and doing
+// it on first use rather than at import keeps this file free of top-level await.
+let devPortsRe = null;
+function devPorts() {
+  if (devPortsRe) return devPortsRe;
+  let daemon = '';
+  try {
+    // Synchronous require-equivalent is unavailable in ESM, so the port is read from the module
+    // source. A regex over one `export const` line is deliberately duller than an import: it
+    // cannot execute skill code inside a hook that runs before every command.
+    const source = readFileSync(
+      new URL('../skills/dev-server/scripts/daemon-port.mjs', import.meta.url),
+      'utf8'
+    );
+    const declared = /export const DEFAULT_DAEMON_PORT = (\d+)/.exec(source);
+    const override = process.env.DEV_DAEMON_PORT?.trim();
+    const port = /^\d+$/.test(override ?? '') ? override : declared?.[1];
+    if (port) daemon = `|${port}`;
+  } catch {
+    /* skill absent — the 30xx/516x-517x ranges still guard the dev servers themselves */
+  }
+  devPortsRe = new RegExp(
+    String.raw`(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?):(?:30\d\d|51[67]\d${daemon})\b`,
+    'i'
+  );
+  return devPortsRe;
+}
 
 // Any of curl's, wget's or PowerShell's own timeout flags, including `-m5` and bundled shorts.
 // `-T` is wget's timeout but curl's --upload-file, and `-m` is curl's --max-time but wget's
@@ -106,7 +139,7 @@ export function unboundedDevRequest(command) {
     .split(/[;&|\n]+/)
     .map((seg) => seg.trim())
     .filter((seg) => seg && !seg.startsWith('#'))
-    .filter((seg) => DEV_PORTS.test(seg.replace(/[?&][^\s"']*/g, '')))
+    .filter((seg) => devPorts().test(seg.replace(/[?&][^\s"']*/g, '')))
     .filter((seg) => REQUEST_TOOL.test(seg))
     .filter((seg) => !isBounded(seg));
 }

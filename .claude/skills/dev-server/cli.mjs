@@ -9,7 +9,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { exitCodeFor, isTerminal as isTerminalStatus } from './scripts/test-queue.mjs';
-import { resolveDaemonPort } from './scripts/daemon-port.mjs';
+import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -30,9 +30,9 @@ const pidFile = resolve(__dirname, 'daemon.pid');
 const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
 
 // Overridable via DEV_DAEMON_PORT, so a second daemon can be exercised without touching the
-// shared one. The daemon resolves it through the same module — see scripts/daemon-port.mjs.
-const DAEMON_PORT = resolveDaemonPort();
-const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
+// shared one. The whole decision — port included — is made in scripts/daemon-port.mjs, which is
+// also what the daemon reads, so this file does no arithmetic on a port and cannot drift from it.
+const DAEMON_URL = resolveDaemonUrl();
 
 async function daemonRequest(path, options = {}) {
   const url = `${DAEMON_URL}${path}`;

@@ -100,8 +100,19 @@ async function runQueued(args) {
   // Resolved once, up front: this is the module that decides pass from fail, and a waiter that
   // discovers it cannot load that rule at the moment it must apply it has no verdict to give.
   const { exitCodeFor } = await import(pathToFileURL(QUEUE).href);
-  const { resolveDaemonPort } = await import(pathToFileURL(PORT_MODULE).href);
-  DAEMON = `http://127.0.0.1:${resolveDaemonPort()}`;
+
+  // Resolving the daemon's address can THROW — a malformed DEV_DAEMON_PORT is rejected rather
+  // than silently becoming NaN. That must not cost the caller their test run: the guarantee at
+  // :123 is that the queue being unusable degrades to a direct run, and an unusable ADDRESS is
+  // the queue being unusable. Before this catch existed the throw escaped an un-awaited
+  // `runQueued` as an unhandled rejection and no tests ran at all.
+  try {
+    const { resolveDaemonUrl } = await import(pathToFileURL(PORT_MODULE).href);
+    DAEMON = resolveDaemonUrl();
+  } catch (err) {
+    console.error(`Test queue address unusable (${err.message}); running directly.`);
+    return runDirect(args);
+  }
 
   let run;
   try {
@@ -168,7 +179,12 @@ if (
 ) {
   const args = process.argv.slice(2);
   const decision = queueDecision(args, process.env);
-  if (decision.queue && existsSync(CLI) && existsSync(QUEUE) && existsSync(PORT_MODULE))
-    runQueued(args);
-  else runDirect(args);
+  if (decision.queue && existsSync(CLI) && existsSync(QUEUE) && existsSync(PORT_MODULE)) {
+    // Un-awaited at top level, so anything runQueued throws would otherwise be an unhandled
+    // rejection that kills the process with no tests run. The same guarantee as :123.
+    runQueued(args).catch((err) => {
+      console.error(`Test queue failed (${err.message}); running directly.`);
+      runDirect(args);
+    });
+  } else runDirect(args);
 }
