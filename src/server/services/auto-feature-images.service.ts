@@ -210,13 +210,19 @@ async function fetchCandidates({
   return rows.map((r) => ({ ...r, reactions: Number(r.reactions) }));
 }
 
+/**
+ * Counts previous auto-features per creator and per source collection, over the window the caps
+ * are measured in. That window is `capWindowDays`, not the candidate-freshness `windowDays` —
+ * they used to be the same value, so tuning a cap also changed which images the job considered
+ * recent, and therefore what it picked.
+ */
 async function fetchWindowCounts({
   targetCollectionId,
-  windowDays,
+  capWindowDays,
   autoFeatureUserId,
 }: {
   targetCollectionId: number;
-  windowDays: number;
+  capWindowDays: number;
   autoFeatureUserId: number;
 }) {
   const rows = await dbRead.$queryRaw<{ userId: number; source: string | null }[]>`
@@ -227,7 +233,7 @@ async function fetchWindowCounts({
       AND ci."addedById" = ${autoFeatureUserId}
       AND ci.note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
       AND ci.status <> 'REJECTED'::"CollectionItemStatus"
-      AND ci."createdAt" >= now() - make_interval(days => ${Prisma.raw(String(windowDays))})
+      AND ci."createdAt" >= now() - make_interval(days => ${Prisma.raw(String(capWindowDays))})
   `;
 
   const creatorCounts = new Map<number, number>();
@@ -267,7 +273,7 @@ export async function runAutoFeatureImages({
     }),
     fetchWindowCounts({
       targetCollectionId: config.collectionId,
-      windowDays: config.windowDays,
+      capWindowDays: config.capWindowDays,
       autoFeatureUserId,
     }),
   ]);
@@ -288,6 +294,8 @@ export async function runAutoFeatureImages({
   const dryRun = dryRunOverride ?? config.dryRun;
   const summary = {
     dryRun,
+    windowDays: config.windowDays,
+    capWindowDays: config.capWindowDays,
     candidates: candidates.length,
     eligibleCollections: eligible.length,
     picked: picks.length,
