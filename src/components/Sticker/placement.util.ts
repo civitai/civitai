@@ -199,39 +199,13 @@ export function useForgetStickerPlacement() {
  * **A listing.** Whatever it says, the claim re-decides all of it under a lock,
  * so this only ever chooses which offer to show — never whether one is allowed.
  */
-export function useFreePlacementStanding(imageId?: number) {
+export function useFreePlacementStanding(imageId?: number, enabled = true) {
   const { data, isLoading } = trpc.placement.getFreeStanding.useQuery(
     { surface: 'sticker', targetType: 'image', targetId: imageId as number },
-    { enabled: !!imageId, staleTime: 60_000 }
+    { enabled: enabled && !!imageId, staleTime: 60_000 }
   );
 
   return { standing: data, isLoading };
-}
-
-/**
- * The viewer's daily free allowance, with no image in the question.
- *
- * **One query for a whole page.** `useFreePlacementStanding` takes an image, so
- * a reaction bar using it would fire once per card; the allowance is a property
- * of the person, so this has a single cache key and every bar on the page reads
- * the same in-flight request — measured at 40 observers to 1 fetch, including
- * when `enabled` flips true at staggered times as each card's space resolves.
- * That is what makes it affordable for the bar to stop advertising a free
- * placement the viewer does not have.
- *
- * `enabled` is the caller's, because a signed-out viewer has no allowance to
- * read and the procedure is protected — asking would be a 401 per page.
- *
- * **A listing**, like everything else on the free path: stale on return, and
- * `createFreePlacement` re-decides under a lock. It picks what to SHOW.
- */
-export function useFreePlacementAllowance(enabled = true) {
-  const { data, isLoading } = trpc.placement.getFreeAllowance.useQuery(undefined, {
-    enabled,
-    staleTime: 60_000,
-  });
-
-  return { allowance: data, isLoading };
 }
 
 export function useImagePlacementSpace(imageId?: number) {
@@ -333,14 +307,6 @@ export function useCreateStickerPlacement(
       // what a control elsewhere reads to decide whether to offer free at all.
       // Unkeyed for that reason; the space is per image and needs no sweep.
       void utils.placement.getFreeStanding.invalidate();
-      // 🔴 And the page-wide copy of the same fact, which is a SECOND cache of
-      // it. `getFreeAllowance` has one key for the whole feed and no target, so
-      // nothing above sweeps it — and a mounted reaction bar has no refetch
-      // trigger, so `staleTime` never expires it either. Left out, the refusal
-      // that just proved the allowance is spent leaves every other card in the
-      // feed labelled "1 free", which is the promise-then-charge this whole
-      // change exists to remove.
-      void utils.placement.getFreeAllowance.invalidate();
 
       // 🔴 Only a refusal the re-read can account for falls back to paid. The
       // free path refuses plenty of things that have nothing to do with the free

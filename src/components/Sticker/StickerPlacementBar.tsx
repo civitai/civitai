@@ -7,7 +7,7 @@ import { StickerHistoryButton } from '~/components/Sticker/StickerHistoryPanel';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 import { barFreeLabel, barTooltip } from '~/components/Sticker/free-offer';
 import {
-  useFreePlacementAllowance,
+  useFreePlacementStanding,
   useImagePlacementSpace,
   useStickerPlacementCounts,
   useStickerPlacements,
@@ -76,19 +76,24 @@ export function StickerPlacementBar({
   const total = count + pending;
 
   /**
-   * The viewer's own half of the answer.
+   * The viewer's own half of the answer — all of it, for this image.
    *
-   * One query for the whole page rather than one per card: the allowance belongs
-   * to the person, so every bar on a page shares one cache key and one request.
-   * That is what makes it affordable to check, and checking is the point — the
-   * label below used to be the creator's capacity alone, which promised free
-   * placements to people who had already spent theirs.
+   * **The per-image standing rather than the page-wide allowance**, which is a
+   * deliberate choice about where this bar lives *today*: one callsite, the
+   * image detail view. Feed cards mount `StickerPlacementCardBadge`, which
+   * cannot place. So the target-scoped query costs the same single request the
+   * untargeted one did, and it answers the third rule as well — "already
+   * free-placed on THIS image" — which the untargeted one structurally cannot.
    *
-   * ⚠️ Today this bar has ONE callsite, the image detail view; feed cards mount
-   * `StickerPlacementCardBadge`, which cannot place. So the present cost is one
-   * request per detail view. The per-card reasoning is for the future this
-   * component was written toward, and it is what keeps that future cheap — but
-   * do not read "per feed card" here as a description of what ships now.
+   * 🔴 **When this bar reaches feed cards, this has to change back.** A
+   * per-image query renders once per card; the allowance is a property of the
+   * person, so the page-wide form (`getFreePlacementAllowance`, still on the
+   * service, exposed then as its own procedure) is the affordable one there —
+   * at the cost of the chip over-offering on images the viewer has already used.
+   * Chosen with Justin, 2026-08-20: complete promise now, cheap promise later.
+   *
+   * Shares its key with the tray's own standing query, so opening the tray on
+   * this image costs nothing extra.
    *
    * Gated on `canPlace`, which already requires a signed-in viewer — the
    * procedure is protected, so asking without one is a 401 per page it renders
@@ -96,12 +101,12 @@ export function StickerPlacementBar({
    * alongside it can never be the reason this is false, so a test claiming to
    * pin it would be asserting something it cannot fail on.
    */
-  const { allowance } = useFreePlacementAllowance(canPlace);
+  const { standing } = useFreePlacementStanding(imageId, canPlace);
 
-  // `null` until BOTH facts are known, and absent rather than paid while the
-  // allowance is loading — a label that appears a beat late is quieter than a
-  // price that turns into "free" on every card in the feed.
-  const freeLabel = canPlace ? barFreeLabel(space ?? undefined, allowance?.remaining) : null;
+  // `null` until every fact is known, and absent rather than paid while the
+  // standing is loading — a label that appears a beat late is quieter than a
+  // price that turns into "free".
+  const freeLabel = canPlace ? barFreeLabel(space ?? undefined, standing) : null;
 
   // The invitation needs a zero that is KNOWN to be zero. `total` is fed by two
   // separate queries and a failure of either reads as empty, so an image with
@@ -147,8 +152,7 @@ export function StickerPlacementBar({
             tooltip={barTooltip({
               price: space?.price ?? 0,
               space: space ?? undefined,
-              allowanceRemaining: allowance?.remaining,
-              resetsAt: allowance?.resetsAt,
+              standing,
             })}
             // Distinct from the plus beside it, which is also "Place a sticker".
             // They share a Button.Group and an action, so identical names read
@@ -186,17 +190,14 @@ export function StickerPlacementBar({
              * slots are all currently held", which is worth saying because a
              * decline gives one back. `barTooltip` branches on both.
              *
-             * The one rule left un-checked here is "already free-placed on THIS
-             * image", which needs a per-image query — affordable on the detail
-             * view where this bar lives today, not on the feed it is written
-             * toward. The tray checks it before anything is committed, so the
-             * residual is an over-offer the tray corrects, never a wrong charge.
+             * All three rules are in hand here now, so this ladder and the
+             * tray's are the same one: `barTooltip` defers to
+             * `preCommitFreeReason` and owns only the price.
              */
             label={barTooltip({
               price: space?.price ?? 0,
               space: space ?? undefined,
-              allowanceRemaining: allowance?.remaining,
-              resetsAt: allowance?.resetsAt,
+              standing,
             })}
             withArrow
             multiline

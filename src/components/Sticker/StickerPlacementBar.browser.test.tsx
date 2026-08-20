@@ -47,12 +47,14 @@ const queryState = {
    * then adding "free" a beat later on every card in a feed.
    */
   allowanceRemaining: undefined as number | undefined,
+  /** The third rule, which only a per-image query can answer. */
+  usedHere: false,
   /** Whether a viewer is signed in at all — the other half of the query guard. */
   signedIn: true,
 };
 
 /** What the bar passed as `enabled`, verbatim — see the cost test. */
-const allowanceEnabled: (boolean | undefined)[] = [];
+const standingEnabled: (boolean | undefined)[] = [];
 
 // Spread the real module: a hand-listed mock couples this test to the whole
 // transitive import graph of the bar, and nothing warns when that graph grows.
@@ -71,18 +73,19 @@ vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
     };
   },
   // 🔴 No default value for `enabled`, deliberately. With `(enabled = true)` a
-  // mutation dropping BOTH guards at the callsite still pushes `true`, and the
-  // control below stays green while a protected query fires for signed-out
-  // viewers — a 401 per page. Undefined must arrive as undefined.
-  useFreePlacementAllowance: (enabled?: boolean) => {
-    allowanceEnabled.push(enabled);
+  // mutation dropping the guard at the callsite still pushes `true`, and the
+  // control below stays green while a protected query fires for viewers who
+  // cannot place — a 401 per page. Undefined must arrive as undefined.
+  useFreePlacementStanding: (_imageId?: number, enabled?: boolean) => {
+    standingEnabled.push(enabled);
     return {
-      allowance:
+      standing:
         queryState.allowanceRemaining == null
           ? undefined
           : {
               used: 1 - queryState.allowanceRemaining,
               remaining: queryState.allowanceRemaining,
+              usedHere: queryState.usedHere,
               resetsAt: new Date('2026-08-21T00:00:00.000Z'),
             },
       isLoading: queryState.allowanceRemaining == null,
@@ -236,6 +239,7 @@ describe('StickerPlacementBar — free slots', () => {
     // set one fails loudly instead of borrowing the previous test's value — the
     // "passes for the wrong reason" class this suite was rewritten to remove.
     allowanceRemaining: undefined as number | undefined,
+    usedHere: false,
     signedIn: true,
   };
 
@@ -287,7 +291,10 @@ describe('StickerPlacementBar — free slots', () => {
 
     // The exact state from the meeting: the creator has slots going spare and
     // the reader still may not have one.
-    expect(page.getByText(/free/i).elements()).toHaveLength(0);
+    // `\d+ free` is the label's shape, not the whole word: unanchored `/free/i`
+    // also matches wrapper elements whose subtree text contains it, and `/free$/`
+    // would let a regression to "1 free left" through.
+    expect(page.getByText(/\d+ free/).elements()).toHaveLength(0);
     // `exact`, because the default is a substring match — without it the bare
     // name also matches a button labelled "… · 1 free" and the assertion
     // survives the mutation it exists to catch.
@@ -304,7 +311,10 @@ describe('StickerPlacementBar — free slots', () => {
     });
     await renderBar();
 
-    expect(page.getByText(/free/i).elements()).toHaveLength(0);
+    // `\d+ free` is the label's shape, not the whole word: unanchored `/free/i`
+    // also matches wrapper elements whose subtree text contains it, and `/free$/`
+    // would let a regression to "1 free left" through.
+    expect(page.getByText(/\d+ free/).elements()).toHaveLength(0);
     expect(
       page.getByRole('button', { name: 'Place a sticker', exact: true }).elements()
     ).toHaveLength(1);
@@ -321,7 +331,10 @@ describe('StickerPlacementBar — free slots', () => {
     // Not "1 free", and not a promise it would have to take back: an absent
     // label becomes one, whereas a price becoming "free" is the flash this
     // ordering exists to prevent.
-    expect(page.getByText(/free/i).elements()).toHaveLength(0);
+    // `\d+ free` is the label's shape, not the whole word: unanchored `/free/i`
+    // also matches wrapper elements whose subtree text contains it, and `/free$/`
+    // would let a regression to "1 free left" through.
+    expect(page.getByText(/\d+ free/).elements()).toHaveLength(0);
   });
 
   /**
@@ -417,8 +430,49 @@ describe('StickerPlacementBar — free slots', () => {
    * flag is actually passed, and passed true where it should be, so the negative
    * is not a test that cannot fail.
    */
-  test('asks for the allowance exactly once where the viewer can place', async () => {
-    allowanceEnabled.length = 0;
+  /**
+   * 🔴 The rule the bar could not see until it took the per-image query.
+   *
+   * Free is once EVER per image, and the sticker decline path makes the gap
+   * permanent rather than a day long: free-place, the creator declines, the
+   * image's slot returns and the allowance resets — so a chip reading the
+   * allowance alone advertises "1 free" on that image every day afterwards, to
+   * the one person who can never take it.
+   */
+  test('says nothing about free on an image the viewer has already used one on', async () => {
+    Object.assign(queryState, settled, {
+      freeSlots: 4,
+      freeSlotsRemaining: 2,
+      allowanceRemaining: 1,
+      usedHere: true,
+    });
+    await renderBar();
+
+    // `\d+ free` is the label's shape, not the whole word: unanchored `/free/i`
+    // also matches wrapper elements whose subtree text contains it, and `/free$/`
+    // would let a regression to "1 free left" through.
+    expect(page.getByText(/\d+ free/).elements()).toHaveLength(0);
+  });
+
+  test('explains that one, rather than only withholding the label', async () => {
+    Object.assign(queryState, settled, {
+      freeSlots: 4,
+      freeSlotsRemaining: 2,
+      allowanceRemaining: 1,
+      usedHere: true,
+    });
+    await renderBar();
+
+    await placeButton().hover();
+    // The tray's own sentence, because the bar now defers to the same ladder —
+    // one wording per fact, which is what the tooltip used to break.
+    await expect
+      .element(page.getByText(/already used a free sticker on this image/))
+      .toBeInTheDocument();
+  });
+
+  test('asks for the standing exactly once where the viewer can place', async () => {
+    standingEnabled.length = 0;
     Object.assign(queryState, settled, {
       counts: { [IMAGE_ID]: 3 },
       freeSlots: 4,
@@ -430,13 +484,13 @@ describe('StickerPlacementBar — free slots', () => {
     // `toEqual`, not `toContain`: the exact argument, once. `toContain` passes
     // on an array that also holds a stray `false` or `undefined`, which is the
     // shape a broken guard produces.
-    expect(allowanceEnabled).toEqual([true]);
+    expect(standingEnabled).toEqual([true]);
   });
 
   /**
    * 🔴 The half that makes the control above falsifiable.
    *
-   * `getFreeAllowance` is a protectedProcedure, so asking it for a signed-out
+   * `getFreeStanding` is a protectedProcedure, so asking it for a signed-out
    * viewer is a 401 — once per page it renders on. Every other test in this file
    * is signed in, so without this one the guard is never observed being false
    * and dropping it ships green.
@@ -445,8 +499,8 @@ describe('StickerPlacementBar — free slots', () => {
    * `canPlace` false; the property under test is "a bar that cannot place does
    * not ask", not anything specific to sessions.
    */
-  test('does not ask a signed-out viewer for an allowance they cannot have', async () => {
-    allowanceEnabled.length = 0;
+  test('does not ask for the standing of a viewer who cannot place', async () => {
+    standingEnabled.length = 0;
     Object.assign(queryState, settled, {
       counts: { [IMAGE_ID]: 3 },
       freeSlots: 4,
@@ -456,8 +510,11 @@ describe('StickerPlacementBar — free slots', () => {
     });
     await renderBar();
 
-    expect(allowanceEnabled).toEqual([false]);
+    expect(standingEnabled).toEqual([false]);
     // And nothing offers them a free placement they could not claim.
-    expect(page.getByText(/free/i).elements()).toHaveLength(0);
+    // `\d+ free` is the label's shape, not the whole word: unanchored `/free/i`
+    // also matches wrapper elements whose subtree text contains it, and `/free$/`
+    // would let a regression to "1 free left" through.
+    expect(page.getByText(/\d+ free/).elements()).toHaveLength(0);
   });
 });

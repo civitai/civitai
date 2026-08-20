@@ -239,82 +239,72 @@ function allowanceResetLabel(resetsAt?: Date | string) {
  * 🔴 **This is the fix for the whole ticket.** The bar used to print the
  * creator's `N of M free` capacity, which is a fact about the IMAGE, in a place
  * every reader takes as an offer to THEM — so a viewer who had spent their day
- * saw "1 of 1 free" on every image in the feed, pressed it, and was charged.
- * Justin hit it live in a meeting; a user hit it ninety minutes after launch.
+ * saw "1 of 1 free" on every image, pressed it, and was charged. Justin hit it
+ * live in a meeting; a user hit it ninety minutes after launch.
  *
- * Both scarcities have to hold before the word "free" is allowed on screen: the
- * creator must have an open slot AND the viewer must still have their placement
- * for today. The number is the smaller of the two, because that is how many the
- * reader can actually use.
+ * All three rules have to hold before the word "free" is allowed on screen: the
+ * creator must have an open slot, the viewer must still have their placement for
+ * today, and they must not already have free-placed on this image. The number is
+ * the smaller of the two counts, because that is how many the reader can take.
  *
- * ⚠️ **`allowanceRemaining` is `undefined` while the query is in flight, and
- * that is not zero.** Rendering the paid state on `undefined` would flash the
- * price and then add a free label a beat later on every card in the feed; the
- * label is simply absent until the answer lands, which is the same thing an
- * image with no free capacity shows.
- *
- * The one rule the bar cannot see is "already used a free placement on THIS
- * image" — that needs a per-image query, which is exactly the per-card cost this
- * design avoids. The tray makes that check before anything is committed.
+ * ⚠️ **`standing` is `undefined` while the query is in flight, and that is not
+ * "no allowance".** Rendering the paid state on `undefined` would flash the
+ * price and then add a free label a beat later; the label is simply absent until
+ * the answer lands, which is what an image with no free capacity also shows.
  */
-export function barFreeLabel(
-  space: FreeCapacity | undefined,
-  allowanceRemaining: number | undefined
-) {
-  if (!space || allowanceRemaining == null) return null;
+export function barFreeLabel(space?: FreeCapacity, standing?: FreeStanding) {
+  if (!space || !standing) return null;
   if (space.freeSlots <= 0 || space.freeSlotsRemaining <= 0) return null;
-  if (allowanceRemaining <= 0) return null;
+  if (standing.remaining <= 0 || standing.usedHere) return null;
 
-  return `${Math.min(space.freeSlotsRemaining, allowanceRemaining)} free`;
+  return `${Math.min(space.freeSlotsRemaining, standing.remaining)} free`;
 }
 
 /**
  * The bar's tooltip: the price always, and the reason free is off the table when
  * it is.
  *
- * The price stays in every branch. That was already the rule — the tooltip is
- * what stopped the old label being an outright lie about cost — and it survives
- * because the reason is the addition, not the replacement.
+ * The price stays in every branch. That rule predates this change — it is what
+ * kept the old label from being an outright lie about cost — and the reason is
+ * an addition to it, never a replacement.
  *
- * Ordered like `freeRefusalMessage` and for the same reason: a refusal that is
- * permanent for this image outranks one that lifts by itself, so nobody is
- * promised a midnight reset that will not change what this creator offers.
+ * 🔴 **One ladder, not two.** An earlier version restated two of
+ * `freeRefusalMessage`'s rungs in its own words, so the bar and the tray could
+ * describe the same state differently — on the one fact this change exists to
+ * stop drifting. The bar now reads the same per-image standing the tray does, so
+ * it can defer to `preCommitFreeReason` outright and own only the price.
  *
- * It is a separate ladder because it answers a different question — this one
- * from a bar that cannot see `usedHere`, that one from a surface that can — but
- * every SENTENCE the two share now comes from one place (`spentAllowanceNote`,
- * `FREE_SLOT_TAKEN_NOTE`). What differs is which rungs exist and in what order,
- * not how any of them is worded.
-
- * ⚠️ An ERRORED allowance query is `undefined` too, and renders exactly like a
- * loading one: the bare price, no free label anywhere on the page. Deliberate
- * and fail-closed — nobody is promised something they cannot have — but it does
- * mean a 401 makes the free tier invisible rather than noisy.
+ * ⚠️ An ERRORED standing query is `undefined` too, and renders exactly like a
+ * loading one: the bare price, no free label. Deliberate and fail-closed —
+ * nobody is promised something they cannot have — but it does mean a 401 makes
+ * the free tier invisible rather than noisy.
  */
 export function barTooltip({
   price,
   space,
-  allowanceRemaining,
-  resetsAt,
+  standing,
 }: {
   price: number;
   space?: FreeCapacity;
-  allowanceRemaining?: number;
-  resetsAt?: Date | string;
+  standing?: FreeStanding;
 }) {
   const base = `Place a sticker · ${price} Buzz`;
 
-  // Nothing free is on offer here for anyone, so there is nothing to explain.
+  // Nothing free is on offer here for anyone, so there is nothing to explain —
+  // and nothing to wait for either, which is why this outranks the loading gate.
   if (!space || space.freeSlots <= 0) return base;
 
   // Still loading. Say the price and claim nothing about the offer.
-  if (allowanceRemaining == null) return base;
+  if (!standing) return base;
 
-  if (allowanceRemaining <= 0) return `${base}. ${spentAllowanceNote(resetsAt)}`;
+  if (barFreeLabel(space, standing))
+    return `Place a sticker · free, or ${price} Buzz. Your free one is ${SHARED_ALLOWANCE_NOTE}.`;
 
-  if (space.freeSlotsRemaining <= 0) return `${base}. ${FREE_SLOT_TAKEN_NOTE}`;
+  // `false` for `freeAvailable`, because the line above already established
+  // there is no offer. Everything after that is the tray's ladder, verbatim.
+  const reason = preCommitFreeReason(false, standing, space);
 
-  return `Place a sticker · free, or ${price} Buzz. Your free one is ${SHARED_ALLOWANCE_NOTE}.`;
+  return reason ? `${base}. ${reason}` : base;
 }
 
 /**

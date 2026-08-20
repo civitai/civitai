@@ -203,30 +203,6 @@ export const placementRouter = router({
       return { ...allowance, usedHere };
     }),
 
-  /**
-   * The viewer's daily allowance alone, with no target.
-   *
-   * The same listing as `getFreeStanding` minus the per-target half, and it
-   * exists because of where it is read: the reaction bar renders once per feed
-   * card, and `getFreeStanding` takes a target, so a bar asking that question
-   * would make one request per card. **The daily allowance is a property of the
-   * person, not of the image** — one query answers it for every card on the
-   * page, under a single cache key.
-   *
-   * So a surface that only needs "does this viewer have a free placement left
-   * today" asks this, and a surface deciding a specific placement asks
-   * `getFreeStanding`, which also answers "already used one here".
-   *
-   * **A listing, like its sibling.** Replica read, stale on return, and the
-   * refusal lives in `createFreePlacement` under a lock. Never gate a mutation
-   * on it.
-   *
-   * `placerId` is the session's. Off an input it would read anyone's allowance.
-   */
-  getFreeAllowance: protectedProcedure.query(({ ctx }) =>
-    getFreePlacementAllowance({ placerId: ctx.user.id })
-  ),
-
   getStickerPlacements: publicProcedure
     .input(getStickerPlacementsSchema)
     .query(({ input, ctx }) =>

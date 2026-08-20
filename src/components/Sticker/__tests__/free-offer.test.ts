@@ -390,48 +390,51 @@ describe('the reset the refusal names', () => {
 /**
  * The reaction bar, which is where this whole thing went wrong.
  *
- * The bar renders per feed card and used to print the creator's capacity —
- * `N of M free` — in a place every reader takes as an offer to themselves. Two
- * people reported the same thing within a day of launch: the label said free,
- * the placement cost Buzz.
+ * The bar printed the creator's capacity — `N of M free` — in a place every
+ * reader takes as an offer to themselves. Two people reported the same thing
+ * within a day of launch: the label said free, the placement cost Buzz.
  *
  * These sit here rather than in the component for the reason the rest of this
  * file does: the branches are the product decision, and a component test that
- * renders one of them proves nothing about the other three.
+ * renders one of them proves nothing about the other four.
  */
 describe('the bar offers free only where the reader can take it', () => {
   const SLOTS_OPEN = { freeSlots: 4, freeSlotsRemaining: 2 };
   const SLOTS_HELD = { freeSlots: 4, freeSlotsRemaining: 0 };
   const NO_FREE = { freeSlots: 0, freeSlotsRemaining: 0 };
+  const READY = { remaining: 1, usedHere: false };
 
-  it('labels the smaller of the two scarcities', () => {
+  it('labels the smaller of the two counts', () => {
     // The creator has two going spare; the reader may take one. Quoting the
     // creator's number here is the original defect.
-    expect(barFreeLabel(SLOTS_OPEN, 1)).toBe('1 free');
+    expect(barFreeLabel(SLOTS_OPEN, READY)).toBe('1 free');
     // And the other way round: a reader with allowance to spare is still bounded
     // by the image.
-    expect(barFreeLabel({ freeSlots: 4, freeSlotsRemaining: 1 }, 3)).toBe('1 free');
+    expect(
+      barFreeLabel({ freeSlots: 4, freeSlotsRemaining: 1 }, { remaining: 3, usedHere: false })
+    ).toBe('1 free');
   });
 
   it.each([
-    ['the viewer has spent their day', SLOTS_OPEN, 0],
-    ['the creator takes no free placements', NO_FREE, 1],
-    ['every slot on the image is held', SLOTS_HELD, 1],
-  ])('says nothing when %s', (_name, space, remaining) => {
-    expect(barFreeLabel(space, remaining)).toBeNull();
+    ['the viewer has spent their day', SLOTS_OPEN, { remaining: 0, usedHere: false }],
+    ['they already used a free one here', SLOTS_OPEN, { remaining: 1, usedHere: true }],
+    ['the creator takes no free placements', NO_FREE, READY],
+    ['every slot on the image is held', SLOTS_HELD, READY],
+  ])('says nothing when %s', (_name, space, standing) => {
+    expect(barFreeLabel(space, standing)).toBeNull();
   });
 
   /**
-   * 🔴 `undefined` is not zero.
+   * 🔴 `undefined` is not "no allowance".
    *
-   * In flight, the honest render is no label at all. Treating it as zero shows
-   * the paid state and then adds "free" a beat later on every card in the feed;
-   * treating it as one promises something that may not exist. Absent becomes
-   * present quietly, which is the only transition that costs the reader nothing.
+   * In flight, the honest render is no label at all. Treating it as spent shows
+   * the paid state and then adds "free" a beat later; treating it as available
+   * promises something that may not exist. Absent becomes present quietly, which
+   * is the only transition that costs the reader nothing.
    */
-  it('claims nothing while the allowance is still loading', () => {
+  it('claims nothing while the standing is still loading', () => {
     expect(barFreeLabel(SLOTS_OPEN, undefined)).toBeNull();
-    expect(barFreeLabel(undefined, 1)).toBeNull();
+    expect(barFreeLabel(undefined, READY)).toBeNull();
   });
 });
 
@@ -440,6 +443,9 @@ describe('the bar tooltip names the price, and the reason when there is one', ()
   const SLOTS_HELD = { freeSlots: 4, freeSlotsRemaining: 0 };
   const NO_FREE = { freeSlots: 0, freeSlotsRemaining: 0 };
   const RESETS = new Date('2026-08-21T00:00:00.000Z');
+  const READY = { remaining: 1, usedHere: false, resetsAt: RESETS };
+  const SPENT = { remaining: 0, usedHere: false, resetsAt: RESETS };
+  const USED_HERE = { remaining: 1, usedHere: true, resetsAt: RESETS };
 
   /**
    * The price in every branch. That rule predates this change — it is what kept
@@ -447,23 +453,17 @@ describe('the bar tooltip names the price, and the reason when there is one', ()
    * addition to it, never a replacement.
    */
   it.each([
-    ['free on offer', SLOTS_OPEN, 1],
-    ['a spent allowance', SLOTS_OPEN, 0],
-    ['slots all held', SLOTS_HELD, 1],
-    ['a creator who takes none', NO_FREE, 1],
-  ])('quotes the price with %s', (_name, space, remaining) => {
-    expect(
-      barTooltip({ price: 100, space, allowanceRemaining: remaining, resetsAt: RESETS })
-    ).toMatch(/100 Buzz/);
+    ['free on offer', SLOTS_OPEN, READY],
+    ['a spent allowance', SLOTS_OPEN, SPENT],
+    ['a free one already used here', SLOTS_OPEN, USED_HERE],
+    ['slots all held', SLOTS_HELD, READY],
+    ['a creator who takes none', NO_FREE, READY],
+  ])('quotes the price with %s', (_name, space, standing) => {
+    expect(barTooltip({ price: 100, space, standing })).toMatch(/100 Buzz/);
   });
 
   it('explains a spent allowance and names what it is shared with', () => {
-    const tip = barTooltip({
-      price: 100,
-      space: SLOTS_OPEN,
-      allowanceRemaining: 0,
-      resetsAt: RESETS,
-    });
+    const tip = barTooltip({ price: 100, space: SLOTS_OPEN, standing: SPENT });
 
     expect(tip).toMatch(/used today's free placement/);
     // The second ticket, in the sentence that needs it most: this reader's
@@ -475,21 +475,43 @@ describe('the bar tooltip names the price, and the reason when there is one', ()
   });
 
   /**
+   * 🔴 One ladder, asserted as one.
+   *
+   * An earlier version of this tooltip wrote its own wording for two of these
+   * states, so the bar and the tray could describe the same fact differently.
+   * Now it defers, and this pins that: the sentence after the price IS the
+   * tray's, character for character.
+   */
+  it.each([
+    ['already used here', SLOTS_OPEN, USED_HERE],
+    ['slots all held', SLOTS_HELD, READY],
+    ['allowance spent', SLOTS_OPEN, SPENT],
+  ])('says exactly what the tray says — %s', (_name, space, standing) => {
+    const reason = preCommitFreeReason(false, standing, space);
+
+    expect(reason).not.toBeNull();
+    expect(barTooltip({ price: 100, space, standing })).toBe(
+      `Place a sticker · 100 Buzz. ${reason}`
+    );
+  });
+
+  /**
    * The two zeroes that look alike. `freeSlotsRemaining === 0` is both "takes no
    * free placements" and "all currently held", and only `freeSlots` separates
    * them — the first has nothing to say, the second says something worth acting
    * on, because a decline returns the slot.
    */
   it('tells a held slot apart from a creator who takes none', () => {
-    const held = barTooltip({ price: 100, space: SLOTS_HELD, allowanceRemaining: 1 });
-    const none = barTooltip({ price: 100, space: NO_FREE, allowanceRemaining: 1 });
-
-    expect(held).toMatch(/comes back if the creator declines/);
-    expect(none).toBe('Place a sticker · 100 Buzz');
+    expect(barTooltip({ price: 100, space: SLOTS_HELD, standing: READY })).toMatch(
+      /comes back if the creator declines/
+    );
+    expect(barTooltip({ price: 100, space: NO_FREE, standing: READY })).toBe(
+      'Place a sticker · 100 Buzz'
+    );
   });
 
   it('offers both prices when free is genuinely available', () => {
-    const tip = barTooltip({ price: 100, space: SLOTS_OPEN, allowanceRemaining: 1 });
+    const tip = barTooltip({ price: 100, space: SLOTS_OPEN, standing: READY });
 
     expect(tip).toMatch(/free, or 100 Buzz/);
     expect(tip).toMatch(new RegExp(SHARED_ALLOWANCE_NOTE));
@@ -498,22 +520,21 @@ describe('the bar tooltip names the price, and the reason when there is one', ()
   /**
    * Loading is not "spent". A tooltip asserting a reset time from a defaulted
    * zero tells a reader with a free placement in hand that they have none — for
-   * as long as the query takes, on every card.
+   * as long as the query takes.
    */
-  it('promises and refuses nothing while the allowance is unknown', () => {
-    const tip = barTooltip({ price: 100, space: SLOTS_OPEN, allowanceRemaining: undefined });
-
-    expect(tip).toBe('Place a sticker · 100 Buzz');
+  it('promises and refuses nothing while the standing is unknown', () => {
+    expect(barTooltip({ price: 100, space: SLOTS_OPEN, standing: undefined })).toBe(
+      'Place a sticker · 100 Buzz'
+    );
   });
 
   /**
    * The space query is in flight too, and the bar passes `space ?? undefined`
-   * while it is. Its own case rather than folded into the one above: dropping
-   * the `!space ||` guard is a TypeError on `space.freeSlots`, not a copy bug,
-   * and nothing else in this file would catch it.
+   * while it is. Its own case: dropping the `!space ||` guard is a TypeError on
+   * `space.freeSlots`, not a copy bug, and nothing else here would catch it.
    */
   it('survives having no space at all', () => {
-    expect(barTooltip({ price: 100, space: undefined, allowanceRemaining: 1 })).toBe(
+    expect(barTooltip({ price: 100, space: undefined, standing: READY })).toBe(
       'Place a sticker · 100 Buzz'
     );
   });
@@ -580,7 +601,7 @@ describe('the tray says why free is unavailable before anything is committed', (
     expect(reason).not.toMatch(/first/i);
     // And the bar says the same sentence for the same state, which is the point
     // of it being a constant rather than two hand-written lines.
-    expect(barTooltip({ price: 100, space: held, allowanceRemaining: 1 })).toContain(
+    expect(barTooltip({ price: 100, space: held, standing: READY })).toContain(
       FREE_SLOT_TAKEN_NOTE
     );
   });
