@@ -12,6 +12,13 @@ The conventions being enforced are the root [`CLAUDE.md`](../../../CLAUDE.md) an
 For work in `apps/moderator`, `apps/auth` or `apps/creator-studio`, use `svelte-review` instead — these
 agents do not cover SvelteKit and will produce noise there.
 
+**These five lanes are pre-authorised. They do not count against a standing instruction not to spawn
+subagents unasked** — running them needs no separate permission, and neither does chasing a lane that
+goes idle. That covers the review lanes only; everything else about spawning is unchanged. The
+pre-authorisation lives here so it travels with the skill rather than through a relay: an agent cannot
+tell a real global ruling from a mistaken one by reading someone's summary of it, so twice on 2026-08-19
+agents correctly declined a relayed "he already said yes" and raised it instead.
+
 This complements the built-in `/code-review`, which already handles generic correctness. What these five
 add is Civitai-specific: *which* service, *which* component, *which* trap.
 
