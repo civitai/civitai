@@ -39,36 +39,63 @@ two tools side by side, which is a comparison that stops being possible today. A
   08-17. Recorded here because an independent re-report is what says an item is still live — and this one
   would have broken the moment Retool stopped answering.
 
-- [ ] **A strike is issued but never appears.** Issuing a strike from User Lookup marks the account as
-      carrying an active strike, but the Strikes section on both Basic Info and Notes & Strikes shows none
-      — after a refresh. So the write lands and the read does not show it.
+- [x] **A strike is issued but never appears.** ✅ Fixed. Two stores, exactly as the open P2 below
+      suspected: "Issue strike" writes the main app's `UserStrike`, and the Strikes list was reading the
+      moderator database's Retool-era `UserStrikes`, which nothing writes. So every strike issued from
+      this app was invisible on the panel that issued it, on both Basic Info and Notes & Strikes.
 
-      Two things worth separating before diagnosing. The strike *write* was repointed this week to
-      `/api/mod/strike/create`, authenticated as the acting moderator rather than by a shared API key
-      (`d0820283c0`), which removed the old "`CIVITAI_MOD_API_KEY` is not configured" refusal — so a strike
-      that now succeeds where it used to be rejected is expected. The report is about the display half,
-      which that change did not touch. The reporter also checked Retool and saw no strike there either,
-      but flagged that as possibly the cutoff rather than a second symptom; that half can no longer be
-      re-checked after today.
+      `/api/user-memory/<id>` now serves `getLiveStrikes` alongside the legacy rows, and the panel renders
+      the live ones with the Retool-era table demoted to a collapsed count beneath them. The rendering is
+      the `StrikeList` component that User Reports already used, now shared, so the two lists cannot drift
+      — the two surfaces previously disagreed about the same account.
 
-- [ ] **The Chats panel in User Lookup shows nothing.** Reported as showing only a moderator contact, on
-      an account confirmed — against Retool, while that was still possible — to have chat history. The
-      reporter's own follow-up concluded it was a permissions problem.
+      The strike *write* was repointed this week to `/api/mod/strike/create`, authenticated as the acting
+      moderator rather than by a shared API key (`d0820283c0`), which removed the old
+      "`CIVITAI_MOD_API_KEY` is not configured" refusal. That change was not the cause and is not the fix;
+      it is why the reporter had a landed strike to not see.
 
-      **Likely already fixed, and needs confirming rather than building.** `e14a5428dd` repaired a bug in
-      which a permission required the page it was declared under: `/users` exists only as a "Not built
-      yet" placeholder, so every permission naming it seeded to nobody, could not be granted on `/admin`
-      (any save re-trimmed it), and silently became admin-only. That is the shape of "it works for
-      an admin and shows nothing for me". Grants are now page grants and action grants, independent, and
-      the storage prefix moved from `capability:` to `grant:` — **the existing rows must be repointed and
-      the actions re-ticked on `/admin` before this can be judged fixed.**
+- [x] **The Chats panel in User Lookup shows nothing.** ✅ Fixed — and **it was never a permissions
+      problem**, which both the reporter's own follow-up and this file's first triage assumed. The panel
+      is scoped by design: `getModeratorContact` counts only chats a **moderator** posted in, and the
+      panel says so in its own subtitle. An account with a decade of ordinary DMs and no moderator contact
+      correctly rendered "No moderator contact on record" — which reads as a broken panel, which is
+      exactly how it was reported.
+
+      The real gap was that the account's own chats had no route from here at all. The panel now links
+      into Chat Audit's username search and the empty state says what it means rather than just being
+      empty.
+
+      **The link is labelled "every chat this account has posted in", and the wording is load-bearing.**
+      Chat Audit's username search joins `ChatMessage` — message *authorship* — while membership lives in
+      `ChatMember`. An account that received unsolicited DMs and never replied is in N chats and matches
+      none of them. The first draft of this fix said "every chat this account is in", which would have
+      recreated the same false-empty reading one page over. A membership-mode search is the fuller fix
+      and nobody has asked for it; the builder in `entity-url.ts` carries the caveat so the next caller
+      cannot re-make the mistake.
+
+      The permissions half is still real and still in
+      [`action-grants-review.md`](action-grants-review.md) — it just was not this.
 
 ## P1 — reported defects
 
 - [ ] **Comment highlighting does not work on article comments.** Flagged by the reporter as a
       pre-existing bug rather than a regression: following a report or a deep link to an article comment
-      does not highlight the row it landed on. It works elsewhere, so the highlight helper is reached but
-      the article-comment surface does not apply it.
+      does not highlight the row it landed on. It works elsewhere.
+
+      **Read end to end and not reproduced from the code — needs a live repro before anyone changes
+      anything.** The whole path is entity-agnostic and the article-specific hazards are each already
+      handled: `/comments/v2/<id>` resolves an article thread through `rootThread` for replies,
+      `threadUrlMap` emits `?highlight=` for `article`, the slug redirect passes the query through with
+      `buildPassthroughQuery` and drops to 307 whenever a query is present so a cached 308 cannot strand
+      it, and the article page force-mounts its comments on `?highlight=` rather than waiting for the
+      IntersectionObserver. `ArticleDetailComments` renders `<Comment>` identically to the post, image and
+      bounty surfaces, and the highlight class is applied in shared code from a shared context.
+
+      So the next step is watching it fail with the URL in hand, not another reading pass. **No
+      article-specific difference was found at all** — a second pass checked the one candidate, a loading
+      gate of `isLoading || isFetching`, and article is not an outlier: bounty, challenge, Model3D and app
+      listings gate the same way, and post and image are the two that use `isLoading` alone. Whatever is
+      failing here is not visible in the article surface's own code.
 
 ## P2 — needs a decision or clarification
 
@@ -78,38 +105,59 @@ two tools side by side, which is a comparison that stops being possible today. A
 
 ## P3 — improvements, after parity
 
-- [ ] **Open Image Lookup and Article Lookup from the image and article context menus**, as moderator-only
-      items. Both menus already have a `Moderator` section to hang them off —
-      `ImageMenuItems.tsx` (the `{isModerator && …}` block under `<Menu.Label>Moderator</Menu.Label>`)
-      and `ArticleContextMenu.tsx` — and both moderator pages already take the id as `?q=`:
-      `<mod app>/retool/image-lookup?q=<imageId>` and `<mod app>/retool/article-lookup?q=<articleId>`.
-      So this is two menu items, not a feature.
+- [x] **Open Image Lookup and Article Lookup from the image and article context menus** — ✅ done, as
+      moderator-only items in both. Two path helpers in
+      [`~/shared/constants/moderator-app`](../../src/shared/constants/moderator-app.ts) plus one menu item
+      each, on the single `NEXT_PUBLIC_MODERATOR_APP_URL` the repoint P0 above established, so no new
+      configuration.
 
-      **The thing this asked to settle is settled.** It proposed choosing between one env var per target
-      and a single moderator-app base URL; the repoint P0 above took the second, so there is now one
-      `NEXT_PUBLIC_MODERATOR_APP_URL` and the per-target paths live in
-      [`~/shared/constants/moderator-app`](../../src/shared/constants/moderator-app.ts). Adding image and
-      article is two menu items plus two path helpers there, and no new configuration.
+      One correction to the triage: `ImageMenuItems.tsx` did have a `Moderator` section to hang the item
+      off, but `ArticleContextMenu.tsx` did not — its moderator-only items are interleaved with the
+      owner's. It has one now, matching the post menu.
 
-- [ ] **Put Buzz send/deduct on the dashboard audit list.** The request came with a restatement of an
-      existing decision — that sending and removing Buzz should be limited to two people — which was
-      already true and was confirmed in-channel by another moderator, so no permission change is implied.
-      The new part is surfacing those actions in the dashboard's audit list, where the highest-blast-radius
-      actions are already visible.
+- [x] **Put Buzz send/deduct on the dashboard audit list.** ✅ Fixed, though not as filed: the actions
+      were **already on the list and illegible**, rather than missing. `sendBuzz` has always written
+      `ModActivity` as `buzz:send:<colour>:<type>:<amount>`, and the dashboard's own labeller turned that
+      into **"User buzz flags"** — because it read the presence of a `:` as "this is a flag write", when a
+      colon is just the separator every parameterised activity uses. `toggleModerator:true`,
+      `grantCosmetic:<id>`, `restriction:<status>` and `comments:<action>:<count>` were all mislabelled
+      the same way, and every Buzz row — send and deduct alike — collapsed into that one line.
+
+      Flag activities are now named (`minor`, `poi`, `spamWhitelist`, `deservedMute`) instead of inferred,
+      and `buzz`, `comments` and `reviews` keep their verb, so send and deduct are two rows. The amount
+      and colour still go: this panel answers who last worked something, not what the row said.
+
+      The restatement that came with the request — that sending and removing Buzz is limited to two
+      people — was already true and needs no change; it is §2 of
+      [`action-grants-review.md`](action-grants-review.md).
 
       Related and already shipped: `user.buzz.send` is a declared action grant, ticked per role on
-      `/admin` (`e14a5428dd`). If it currently appears to be held by nobody, that is the prefix rename in
-      the P0 Chats item above, not a policy change.
+      `/admin` (`e14a5428dd`). If it currently appears to be held by nobody, that is the `capability:` →
+      `grant:` prefix rename, not a policy change — §1 and §2 of
+      [`action-grants-review.md`](action-grants-review.md).
 
 ---
 
 ## Shipped this round
+
+- **Issued strikes are visible again** — the P0 above. One shared `StrikeList` now renders both surfaces,
+  so User Lookup and User Reports can no longer disagree about the same account.
+- **The Chats panel reaches the account's chats** — the other P0 above, and not the permissions problem
+  everyone took it for.
+- **The dashboard audit list names what it is showing** — Buzz send and deduct were on it already, under
+  the label "User buzz flags", along with five other mislabelled action families.
+- **Image Lookup and Article Lookup are on their context menus** — the P3 above.
 
 - **The four lookup env vars are off Retool**, closing the carried P0 and the re-reported "lookup user"
   button with it. The one that needed code rather than config was **Lookup Post**: `3239ac735b` deleted it
   believing the spoke had no post page, when Bulk Image Manager is that page. It is back on the post
   context menu, and the empty `Moderator` label that deletion left behind is no longer empty. Full
   per-target breakdown in the carried P0 below.
+
+Two of the four fixes this round were **misdiagnosed in this file before anyone read the code** — the
+strike display was filed as a display bug and was two stores, and the Chats panel was filed as
+permissions and was scope. Both were repeated from a reporter's own guess. Worth a habit: a reporter says
+what they saw, and that half is reliable; what they think caused it is a lead, not a finding.
 
 The two `e14a5428dd` references above are work that landed *before* this round was triaged
 and that plausibly resolves parts of it — they are marked open deliberately, because "probably fixed by
@@ -153,6 +201,9 @@ round still reads as the record of what was reported that day.
       seeding them against an ungranted page is what silently zeroed them. Every action grant is now an
       explicit tick, and until that pass happens the actions are held by nobody.
 
+      **The pass itself is [`action-grants-review.md`](action-grants-review.md)** — every permission and
+      page enumerated, with what breaks while each is unticked.
+
 ## P1 — reported defects
 
 - [ ] **User Lookup unavailable for the staff role** *(08-17)*. Not a defect — the `/admin` grant in
@@ -167,13 +218,26 @@ round still reads as the record of what was reported that day.
 - [ ] **Why are banned users' comics queued for review at all?** *(08-18)*. Raised as a possible better
       fix for the comics 500. It is a queue-predicate question, not that defect.
 
+      **The predicate is now known; the decision is not made.** `getComicReviewQueue` filters on the
+      IMAGE only — `needsReview IS NOT NULL AND ingestion != 'Scanned'`, unioned with
+      `tosViolation = true` — and joins the author purely to display them. It already selects
+      `u.bannedAt` and `u.deletedAt` and does not filter on either, so a banned author's panels queue
+      exactly like anyone else's. So this is one `where` clause away either direction.
+
+      What is still missing is the volume: how much of the queue is banned-author panels decides whether
+      this is a cleanup or a rounding error. That query needs a database connection this session did not
+      have (the prod replica refused TLS), so it is unmeasured, not unanswerable.
+
 ## P2 — decisions, not implementation
 
 - [ ] **`ReToolActions` vs `ModActivity`** *(08-17)* — two mod-action logs that nothing reconciles. A
       recommendation is on the table; it needs a human's yes.
-- [ ] **Two strike systems** *(08-17)* — this app writes the Retool-era `UserStrikes`, not the main app's
-      newer `Strike`. **Worth re-reading against the strike display report above**: two stores is a
-      candidate explanation for a strike that writes and does not appear.
+- [ ] **Two strike systems** *(08-17)* — **the decision is narrower than it was, and it was the cause of
+      the P0 above.** This app no longer writes `UserStrikes`: `d0820283c0` moved the write to the main
+      app's system, and the display now reads it (P0 above). What is left is a data question, not a
+      routing one — whether the 12.7k Retool-era `UserStrikes` rows get migrated into `UserStrike`, or
+      stay where they are as read-only history. They are shown as history today, which is the safe
+      default but not a decision.
 - [ ] **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`** *(08-17)* — add
       them to the schema, or accept the raw `sql` read.
 - [ ] **`RatingChanges`** *(08-17, narrowed 08-20)* — the rating audit trail, the one Front Page Audit
