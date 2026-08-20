@@ -93,7 +93,9 @@
       .map((v) => Number(v.trim()))
       .filter((n) => Number.isInteger(n) && n > 0)
   );
-  const creating = $derived(draftVersionIds.length > 0);
+  // Flag-gated as well as URL-driven: a ?versions= link must not open a form whose submit would be
+  // refused with a 403 the creator can do nothing about.
+  const creating = $derived(draftVersionIds.length > 0 && data.salesEnabled);
 
   let sale = $state<SaleDraftInput & { name: string }>({
     name: '',

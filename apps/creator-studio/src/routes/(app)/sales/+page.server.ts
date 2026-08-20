@@ -68,6 +68,10 @@ const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 const salesOff = async (userId: number) =>
   !(await getFlipt().isEnabled('scheduled-model-sales', String(userId)));
 
+// 🔴 THIS is the gate. Hiding the nav link is cosmetics: the model-page banner links straight here for
+// every owner with a live sale, and those owners may not be in the flag's segment — so a bookmark, that
+// link, or a typed path all land in this load and must get a deliberate answer, never a half-rendered
+// page. Every action re-checks for the same reason.
 export const load: PageServerLoad = async ({ locals, parent, cookies }) => {
   const { membership } = await parent();
   const salesEnabled = await getFlipt().isEnabled('scheduled-model-sales', String(locals.user.id));

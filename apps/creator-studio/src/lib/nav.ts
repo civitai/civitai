@@ -81,6 +81,18 @@ export function activeNavHref(pathname: string): string | undefined {
 
 // `isMember` here is the Creator Program gate (B1) — the single bar the Studio's member-only surfaces key on,
 // not subscription tier. Callers pass `membership.isCreatorProgramMember`.
-export function navForMember(isMember: boolean): NavItem[] {
-  return NAV.filter((item) => (item.nonMemberOnly ? !isMember : true));
+export function navForMember(
+  isMember: boolean,
+  features: { salesEnabled?: boolean } = {}
+): NavItem[] {
+  return NAV.filter((item) => (item.nonMemberOnly ? !isMember : true)).map((item) =>
+    // A flagged-off child is dropped, not disabled: offering a link whose page answers "not available
+    // on your account" is a worse gate than never showing it.
+    item.children
+      ? {
+          ...item,
+          children: item.children.filter((c) => c.href !== '/sales' || features.salesEnabled),
+        }
+      : item
+  );
 }

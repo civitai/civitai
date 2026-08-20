@@ -3,11 +3,12 @@ import { hubLogoutUrl } from '@civitai/auth';
 import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
 import { resolveMembership, TEST_MEMBERSHIP_COOKIE } from '$lib/server/membership';
+import { getFlipt } from '$lib/server/flipt';
 import { TEST_MODELS_SCORE_COOKIE } from '$lib/server/creator-score';
 
 // Resolve membership once for the whole layout — nav, chrome, and per-page gating all key off it. The logout
 // URL points at the hub because a spoke can't clear the shared cookie itself.
-export const load: LayoutServerLoad = ({ locals, url, cookies }) => {
+export const load: LayoutServerLoad = async ({ locals, url, cookies }) => {
   // Every route in this (app) group is gated — the guard (hooks.server.ts) redirects unauthenticated requests
   // before this runs, so `user` is always present here. (The public landing lives outside the group.)
   const user = locals.user;
@@ -15,7 +16,12 @@ export const load: LayoutServerLoad = ({ locals, url, cookies }) => {
   const testMembership = cookies.get(TEST_MEMBERSHIP_COOKIE) ?? null;
   const membership = resolveMembership(user, testMembership ?? undefined);
 
+  // Read here rather than per page: the nav has to know, and a link to a page that answers "not
+  // available on your account" is a worse gate than no link at all. Flag reads are cached in-process.
+  const salesEnabled = await getFlipt().isEnabled('scheduled-model-sales', String(user.id));
+
   return {
+    salesEnabled,
     user: { id: user.id, username: user.username ?? null, image: user.image ?? null },
     isModerator: user.isModerator === true,
     testMembership,
