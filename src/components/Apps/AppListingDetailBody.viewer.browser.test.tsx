@@ -486,6 +486,44 @@ describe('screenshot viewer — accessibility', () => {
     expect(document.getElementById(labelledBy!)?.textContent).toBe('My App screenshots');
   });
 
+  /**
+   * 🔴 THE VIEWER IMAGE'S `alt`, WHICH HAD NO ASSERTIONS AT ALL. An independent sweep
+   * mutated it in both directions — back to the duplicated caption, and to an
+   * unconditional `alt=""` — and BOTH survived a fully green suite, while the tile's
+   * equivalent change was well covered. The change was defensible; the silence was not.
+   *
+   * The rule is the same as the tile's and is asserted in both directions here: empty
+   * when the caption is rendered as text beside it (so a screen reader is not told the
+   * same string twice), and a describing fallback when there is no caption and nothing
+   * else names the image.
+   */
+  test('the viewer image is alt="" when a caption is shown beside it', async () => {
+    const { container } = await renderBody(base({ screenshots: okShots(3) }));
+    await userEvent.click(tiles(container)[1]);
+    await expectShowing(1);
+
+    // The caption IS on screen — so the image must not repeat it.
+    expect(viewerCaptionText()).toBe('Shot two');
+    expect(viewerImage()?.getAttribute('alt')).toBe('');
+  });
+
+  test('the viewer image keeps a describing alt when the shot has NO caption', async () => {
+    const { container } = await renderBody(
+      base({
+        screenshots: [
+          { url: okShot(0), caption: null },
+          { url: okShot(1), caption: null },
+        ],
+      })
+    );
+    await userEvent.click(tiles(container)[1]);
+    await expectShowing(1);
+
+    // Nothing else names it, so the alt has to.
+    expect(document.querySelector('[data-testid="apps-listing-screenshot-caption"]')).toBeNull();
+    expect(viewerImage()?.getAttribute('alt')).toBe('My App screenshot 2');
+  });
+
   test('focus moves INTO the dialog when it opens', async () => {
     const { container } = await renderBody(base({ screenshots: okShots(5) }));
     await userEvent.click(tiles(container)[1]);
@@ -502,6 +540,18 @@ describe('screenshot viewer — accessibility', () => {
    * 🔴 FOCUS RETURNS TO THE TILE THAT OPENED IT — to that tile, not to "some tile".
    * The listing has five, and the one opened is the fourth, so a restore that
    * defaulted to the first or to the gallery container fails here.
+   *
+   * 🔴 THE `{ArrowRight}` IS LOAD-BEARING; DO NOT "SIMPLIFY" IT AWAY. It is what makes
+   * this test able to kill the guard that is the entire reason `useOpenerFocusReturn`
+   * exists — `if (opened && !prevOpenedRef.current)`. Without the second half of that
+   * condition the hook re-captures `document.activeElement` on EVERY render while open,
+   * which is exactly the Mantine defect it replaces, re-created by hand. Every focus
+   * test in this PR previously opened and immediately closed, so the viewer never
+   * re-rendered while open and the guard never saw a second render: mutating it to a
+   * bare `if (opened)` left the whole suite GREEN. One arrow key re-renders the viewer
+   * mid-flight, the capture is overwritten with something inside the dialog, and the
+   * restore lands on `<body>`. Measured both ways — green at HEAD, and
+   * `expected <body> to be <button>` at the mutant.
    */
   test('focus returns to the ORIGINATING tile on close', async () => {
     const { container } = await renderBody(base({ screenshots: okShots(5) }));
@@ -512,6 +562,11 @@ describe('screenshot viewer — accessibility', () => {
     // Control: focus really did leave the tile, so the assertion after the close is
     // about a restore and not about focus that never moved.
     await vi.waitFor(() => expect(document.activeElement).not.toBe(opener));
+
+    // …and the viewer is USED before it is closed, so the opener has to survive a
+    // re-render rather than merely a mount/unmount pair. See the header.
+    await userEvent.keyboard('{ArrowRight}');
+    await expectShowing(4);
 
     await userEvent.keyboard('{Escape}');
     await vi.waitFor(() => expect(viewer()).toBeNull());
@@ -792,6 +847,35 @@ describe('screenshot viewer — nested inside the moderator review modal', () =>
     await vi.waitFor(() => expect(viewer()).toBeNull());
     expect(outerBody()).not.toBeNull();
   });
+
+  /**
+   * 🔴 THE VIEWER'S OWN FOCUS RETURN, ASSERTED **NESTED** — because being in a stack
+   * is exactly the condition that breaks Mantine's built-in one.
+   *
+   * Inside a `Modal.Stack`, `trapFocus` is `ctx.currentId === stackId`, so it FLIPS
+   * while a modal stays open (the stack registers members in an effect, so it flips on
+   * the very first open). `useModal` feeds it into
+   * `useFocusReturn({ opened, shouldReturnFocus: trapFocus && returnFocus })`, whose
+   * deps are `[opened, shouldReturnFocus]` — so each flip re-runs the effect with
+   * `opened === true` and re-takes the `lastActiveElement.current = document.activeElement`
+   * branch, overwriting the element the modal was opened from with whatever has focus
+   * by then. Measured on the review modal: focus lands on `<body>`.
+   *
+   * The un-nested version of this test (`focus returns to the ORIGINATING tile on
+   * close`) cannot see that, because with no stack ancestor `stackId` is inert and
+   * nothing flips. Same assertion, second measured point.
+   */
+  test('Esc returns focus to the originating TILE even when nested', async () => {
+    const opener = await openNestedViewer(base({ screenshots: okShots(5) }));
+    // Control: focus really did leave the tile, so the assertion below is about a
+    // restore and not about focus that never moved.
+    await vi.waitFor(() => expect(document.activeElement).not.toBe(opener));
+
+    await userEvent.keyboard('{Escape}');
+    await vi.waitFor(() => expect(viewer()).toBeNull());
+
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+  });
 });
 
 describe('screenshot viewer — broken screenshots', () => {
@@ -999,21 +1083,41 @@ describe('screenshot viewer — broken screenshots', () => {
    * The same reset closes an OPEN viewer, for the same reason: `openIndex` is a
    * position too, and holding it across a swap points the viewer at a screenshot the
    * user never asked to see.
+   *
+   * 🔴 THE REPLACEMENT LIST IS THE **SAME LENGTH**, AND THAT IS A CORRECTION FOUND BY
+   * AN INDEPENDENT SWEEP. This test used to swap 3 screenshots for a 1-screenshot list,
+   * and it PASSED BY CONVERGENCE: with `setOpenIndex(null)` deleted, the stale
+   * `openIndex = 2` pointed past the end of the new list, so `shots[2]` was undefined,
+   * so the VIEWER'S RESCUE EFFECT called `onClose()` — the viewer shut anyway, for a
+   * reason that had nothing to do with the reset. The mutant survived a green suite.
+   *
+   * A same-length swap removes that escape route: index 2 is still a valid, viable
+   * screenshot in the new list, so nothing rescues, and a viewer that fails to close
+   * sits there showing `okShot(32)` — the new list's third screenshot, which the user
+   * never opened. That is the failure this test has to be able to see.
+   *
+   * 🔴 This was the THIRD convergence-class instrument failure in this change, in the
+   * very area hardened against convergence one round earlier. When adding an assertion
+   * here, ask specifically: is there a SECOND mechanism that produces this same
+   * observable?
    */
-  test('a NEW screenshot list closes an open viewer', async () => {
+  test('a NEW screenshot list of the SAME LENGTH closes an open viewer', async () => {
     const { container, rerender } = await renderWithProviders(
       <AppListingDetailBody detail={base({ screenshots: okShots(3) })} />
     );
     await userEvent.click(tiles(container)[2]);
     await expectShowing(2);
 
-    await rerender(
-      <AppListingDetailBody
-        detail={base({ screenshots: [{ url: okShot(20), caption: 'Only one' }] })}
-      />
-    );
+    const replacement = [
+      { url: okShot(30), caption: 'Fresh one' },
+      { url: okShot(31), caption: 'Fresh two' },
+      { url: okShot(32), caption: 'Fresh three' },
+    ];
+    await rerender(<AppListingDetailBody detail={base({ screenshots: replacement })} />);
 
     await vi.waitFor(() => expect(viewer()).toBeNull());
+    // …and specifically NOT by having quietly swapped to the new list's third shot.
+    expect(viewerImage()).toBeNull();
   });
 
   /**

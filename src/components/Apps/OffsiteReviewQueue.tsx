@@ -34,6 +34,7 @@ import {
 import { useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
+import { useOpenerFocusReturn } from '~/components/Apps/useOpenerFocusReturn';
 import {
   buildListingCardPreview,
   buildListingDetailPreview,
@@ -316,10 +317,16 @@ export function OffsiteReviewModal({
 }) {
   const busyRef = useRef(false);
   const isOnsite = request?.kind === 'onsite';
+  // Inside the stack Mantine's own focus return captures the wrong element and drops
+  // the moderator on `<body>` — measured. This restores the opener; the
+  // `returnFocus={false}` below leaves Mantine's inert so there is one owner.
+  // (Deleting that prop alone did NOT break the focus tests — see the hook's header.)
+  useOpenerFocusReturn(!!request);
   return (
     <Modal.Stack>
       <Modal
         stackId="offsite-review"
+        returnFocus={false}
         opened={!!request}
         onClose={() => {
           if (busyRef.current) return;

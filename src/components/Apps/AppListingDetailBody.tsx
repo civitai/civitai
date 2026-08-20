@@ -417,6 +417,7 @@ function ScreenshotTile({
   index,
   onOpen,
   onBroken,
+  autoFocus,
 }: {
   shot: ListingGalleryScreenshot;
   name: string;
@@ -424,6 +425,8 @@ function ScreenshotTile({
   index: number;
   onOpen: () => void;
   onBroken: () => void;
+  /** Marks this tile as where a re-armed ancestor focus trap should land. */
+  autoFocus: boolean;
 }) {
   return (
     <Card withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
@@ -434,6 +437,18 @@ function ScreenshotTile({
         // third tile" and asserts the viewer opened on shot 3 is otherwise asserting
         // against its own fixture order rather than against the wiring.
         data-screenshot-index={index}
+        // 🔴 MANTINE'S OWN RE-FOCUS TARGET, and the only thing that survives a
+        // nested close. When the screenshot viewer closes inside the moderator
+        // review modal, the review modal's `trapFocus` flips back on, and
+        // `useFocusTrap`'s effect then calls `focusNode` UNCONDITIONALLY on a
+        // `setTimeout` — it does not check whether focus is already somewhere
+        // sensible. `focusNode` prefers `[data-autofocus]` over the first tabbable,
+        // so marking the tile the viewer was opened from is what makes that
+        // re-focus land on the tile instead of the review modal's close button.
+        // Any synchronous restore loses this race by construction: the trap's
+        // timeout is scheduled from an ANCESTOR effect, which React runs after
+        // ours.
+        data-autofocus={autoFocus ? '' : undefined}
         // Paired with a ring, never a bare `outline: none` — keyboard focus has to
         // stay visible on a tile whose whole job is to be activated by keyboard.
         className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-5"
@@ -517,6 +532,16 @@ function ScreenshotGallery({
   // has to skip the same shots the grid has dropped (see `ScreenshotTile`).
   const [broken, setBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  // The tile the viewer was LAST opened from. Distinct from `openIndex` because it
+  // has to outlive the close — the ancestor focus trap re-focuses on a timeout, by
+  // which point `openIndex` is already null. See `ScreenshotTile`'s `data-autofocus`.
+  //
+  // 🔴 KEYING THIS ON `openIndex` INSTEAD DOES NOT MERELY MISS THE RESTORE — IT WEDGES
+  // THE PAGE. Measured: with `data-autofocus` on the tile that is currently OPEN, a
+  // nested viewer pegs the browser (a mutation run producing no output at all in five
+  // minutes, reproduced standalone). The marker must name a tile that is BEHIND a
+  // closed viewer, never one behind an open one.
+  const [lastOpenedIndex, setLastOpenedIndex] = useState<number | null>(null);
   const markBroken = useCallback(
     (index: number) => setBroken((prev) => withBrokenIndex(prev, index)),
     []
@@ -543,6 +568,7 @@ function ScreenshotGallery({
     setSeenUrls(urls);
     setBroken(NO_BROKEN_SCREENSHOTS);
     setOpenIndex(null);
+    setLastOpenedIndex(null);
   }
 
   if (shots.length === 0) return null;
@@ -570,7 +596,11 @@ function ScreenshotGallery({
             shot={shot}
             name={name}
             index={index}
-            onOpen={() => setOpenIndex(index)}
+            autoFocus={lastOpenedIndex === index}
+            onOpen={() => {
+              setOpenIndex(index);
+              setLastOpenedIndex(index);
+            }}
             onBroken={() => markBroken(index)}
           />
         ))}

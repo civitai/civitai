@@ -2,6 +2,7 @@ import { ActionIcon, Modal, Text, Tooltip } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { useEffect } from 'react';
+import { useOpenerFocusReturn } from '~/components/Apps/useOpenerFocusReturn';
 import {
   adjacentViableIndex,
   viewerPosition,
@@ -26,22 +27,35 @@ import type { ListingGalleryScreenshot } from '~/server/schema/blocks/app-listin
  *     supplies, for free and correctly, every a11y requirement this feature has:
  *     `role="dialog"` + `aria-modal="true"` + `aria-labelledby` wired to the `title`
  *     (`ModalBaseContent.mjs:41-43`), `trapFocus` (focus moves INTO the dialog on
- *     open), `closeOnEscape`, and `returnFocus` — all defaulting to `true`
- *     (`Modal.mjs:26-37`). None of it is hand-rolled here.
- *   - **The full-screen media chrome** — `fullScreen` + `withOverlay={false}` + the
- *     `styles={{ inner, content, body }}` block — is taken from
- *     `TrainingSampleViewer` / `GeneratedOutputLightbox` / `Model3DLightbox`, the
- *     three existing lightboxes, which set those three keys identically. It is the
- *     repo's de-facto full-screen-media convention; it has simply never been
- *     extracted. 🔴 THIS VIEWER DIVERGES IN ONE KEY, DELIBERATELY: all three also set
- *     `header: { position: 'absolute', right: 0, zIndex: 10 }` and this one does not,
- *     because none of them renders a `title` — their header holds a close button and
- *     nothing else, so lifting it out of the flow buys the media its full height. This
- *     viewer's header carries the dialog's visible label, which has to stay readable
- *     and in flow; absolute-positioning it would float the listing's name over the
- *     screenshot. (An earlier version of this bullet said the block was "copied
- *     verbatim" and that all three "share it identically" — the rendering was right,
- *     the claim was not.)
+ *     open) and `closeOnEscape` — both defaulting to `true` (`Modal.mjs:26-37`).
+ *     🔴 `returnFocus` IS THE EXCEPTION, and this bullet used to claim otherwise:
+ *     it is switched OFF here and replaced by `useOpenerFocusReturn`, because inside
+ *     the `Modal.Stack` this viewer joins, Mantine's version captures the wrong
+ *     element (see that hook's header). Everything else on this list really is
+ *     Mantine's.
+ *   - **The full-screen media chrome** — `fullScreen` + `withOverlay={false}` + a
+ *     `styles` block — follows the three existing lightboxes: `TrainingSampleViewer`
+ *     (`:206-211`), `GeneratedOutputLightbox` (`:100-105`) and `Model3DLightbox`
+ *     (`:37-42`). 🔴 MEASURED KEY BY KEY, because two earlier versions of this bullet
+ *     described it wrongly:
+ *       · `inner` — identical in all three, and here: `{ position: 'absolute' }`.
+ *       · `content` — identical in all three, and here:
+ *         `{ display:'flex', flexDirection:'column', overflow:'hidden' }`.
+ *       · `header` — identical in all three (`{ position:'absolute', right:0,
+ *         zIndex:10 }`) and DELIBERATELY ABSENT here. None of them renders a `title`,
+ *         so their header holds only a close button and lifting it out of the flow
+ *         buys the media its full height. This viewer's header carries the dialog's
+ *         visible label, which must stay readable and in flow; absolute-positioning it
+ *         would float the listing's name over the screenshot.
+ *       · `body` — the three do NOT agree. `TrainingSampleViewer` uses
+ *         `{ flex:1, minHeight:0, display:'flex', flexDirection:'column', padding:16 }`;
+ *         the other two use `{ flex:1, minHeight:0, overflow:'hidden', padding:16 }`.
+ *         This viewer matches `TrainingSampleViewer` — ONE of the three, not all —
+ *         because like it, this one stacks an indicator, the media and a caption
+ *         vertically rather than filling the body with a single element.
+ *     (History, since it is the point: round 1 of review caught an overclaim about
+ *     `header`; the narrowed rewrite was still wrong, on `body`. This version was
+ *     measured against all three files rather than reasoned about.)
  *   - **`useHotkeys` from `@mantine/hooks`** for the arrow keys — the convention at
  *     every arrow-nav site in the repo (`TrainingSampleViewer.tsx:154`,
  *     `GeneratedOutputLightbox.tsx:32`, `ImageDetailProvider`). There is no shared
@@ -114,6 +128,14 @@ export function AppListingScreenshotViewer({
   onClose,
 }: AppListingScreenshotViewerProps) {
   const opened = index !== null;
+
+  // 🔴 Focus return is OURS, not Mantine's — see `useOpenerFocusReturn`. Inside the
+  // `Modal.Stack` this viewer joins, Mantine's `returnFocus` captures the wrong
+  // element (the stack flips `trapFocus` while the modal is open, which re-arms its
+  // capture). Measured: nested, Esc landed focus on the review modal's chrome
+  // instead of the tile. `returnFocus={false}` below turns Mantine's off so there is
+  // exactly one owner — measured as a convention, not as a second load-bearing half.
+  useOpenerFocusReturn(opened);
   const viable = index !== null && !broken.has(index) && !!shots[index];
   const shot = viable && index !== null ? shots[index] : undefined;
 
@@ -176,6 +198,7 @@ export function AppListingScreenshotViewer({
       opened={opened}
       onClose={onClose}
       fullScreen
+      returnFocus={false}
       withOverlay={false}
       // 🔴 STACK MEMBERSHIP — this is what stops ONE Escape closing this viewer AND
       // whatever dialog it is nested inside. `preview` renders this body inside the
@@ -207,17 +230,12 @@ export function AppListingScreenshotViewer({
       // the body, which is where a screen reader will read it in document order.
       title={`${name} screenshots`}
       closeButtonProps={{ 'aria-label': 'Close screenshot viewer' }}
-      // 🔴 The full-screen media chrome, adapted from the three existing lightboxes
-      // (`TrainingSampleViewer`, `GeneratedOutputLightbox`, `Model3DLightbox`), which
-      // all three set `inner` / `content` / `body` exactly as below. They ALSO set
-      // `header: { position: 'absolute', right: 0, zIndex: 10 }`, and this one
-      // deliberately does not: that rule lifts a header containing nothing but a close
-      // button out of the flow so the media can use the full height. This viewer
-      // renders a `title`, so its header carries text that has to stay readable and in
-      // flow — an absolute header would overlap the image with the listing's name.
-      // (An earlier version of this comment claimed the block was "copied verbatim"
-      // and that all three "share it identically". The rendering is right; the claim
-      // was not.)
+      // 🔴 The full-screen media chrome. `inner` and `content` are identical across
+      // all three existing lightboxes; `body` matches `TrainingSampleViewer` only (the
+      // other two use `overflow:'hidden'` in place of the flex column); and `header` is
+      // omitted on purpose because this viewer, unlike all three, renders a `title`.
+      // Key-by-key measurement and the reasoning are in this file's header — read it
+      // before "aligning" this block with a sibling lightbox.
       styles={{
         inner: { position: 'absolute' },
         content: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
