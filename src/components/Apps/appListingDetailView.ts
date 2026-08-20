@@ -244,6 +244,27 @@ export function getDetailPrimaryAction(
 }
 
 /**
+ * The DOMAIN both permission signals live in: an off-site listing that has
+ * somewhere to run.
+ *
+ * 🔴 This exists so the disclosure and the connect indicator are complements BY
+ * CONSTRUCTION rather than by coincidence. Two independently-written predicates
+ * reading the same field is exactly the shape that drifts — one gets a fix, the
+ * other does not, and the page then either makes both claims at once or neither.
+ * Factoring the shared half out means the only difference between them is the
+ * sense of one negation.
+ *
+ * A listing OUTSIDE this domain (on-site, or off-site with no destination) shows
+ * NEITHER signal, which is correct: an on-site app runs on platform, and there
+ * is no "where it runs" claim to make about a listing with nowhere to run.
+ */
+function hasOffsitePermissionSignal(
+  kindData: ListingDetail['kindData']
+): kindData is Extract<ListingDetail['kindData'], { kind: 'offsite' }> {
+  return kindData.kind === 'offsite' && !!kindData.externalUrl;
+}
+
+/**
  * Does the detail page show the "runs entirely off-platform — no Civitai
  * install, account access, or permissions" disclosure?
  *
@@ -295,27 +316,6 @@ export function getDetailPrimaryAction(
  * empty string is not a connected OAuth app — but it is a real difference, so
  * do not read "identical rendering" as universal across both producers.
  */
-/**
- * The DOMAIN both permission signals live in: an off-site listing that has
- * somewhere to run.
- *
- * 🔴 This exists so the disclosure and the connect indicator are complements BY
- * CONSTRUCTION rather than by coincidence. Two independently-written predicates
- * reading the same field is exactly the shape that drifts — one gets a fix, the
- * other does not, and the page then either makes both claims at once or neither.
- * Factoring the shared half out means the only difference between them is the
- * sense of one negation.
- *
- * A listing OUTSIDE this domain (on-site, or off-site with no destination) shows
- * NEITHER signal, which is correct: an on-site app runs on platform, and there
- * is no "where it runs" claim to make about a listing with nowhere to run.
- */
-function hasOffsitePermissionSignal(
-  kindData: ListingDetail['kindData']
-): kindData is Extract<ListingDetail['kindData'], { kind: 'offsite' }> {
-  return kindData.kind === 'offsite' && !!kindData.externalUrl;
-}
-
 export function shouldShowOffsiteDisclosure(kindData: ListingDetail['kindData']): boolean {
   return hasOffsitePermissionSignal(kindData) && !kindData.connectClientId;
 }

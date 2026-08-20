@@ -745,6 +745,32 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
     // how the two signals would drift into contradicting each other.
     expect(body).toMatch(/shouldShowConnectCapability\(detail\.kindData\)/);
   });
+
+  /**
+   * 🔴 THE SECURITY DOCSTRING MUST STILL DOCUMENT THIS FUNCTION.
+   *
+   * A JSDoc block attaches to whatever declaration FOLLOWS it, so inserting a
+   * helper between this docstring and its function silently re-points ~46 lines
+   * of security rationale at the helper and leaves `shouldShowOffsiteDisclosure`
+   * with no docs at all — hover shows nothing. That happened once during #4207
+   * and is invisible in a diff, which is why it is pinned rather than just fixed.
+   *
+   * This is the docstring `AppListingDetailBody`'s JSX comment tells readers to
+   * consult before changing what the sentence says.
+   */
+  it('🔴 the security docstring is still attached to the disclosure predicate', () => {
+    const view = fs.readFileSync(path.resolve(__dirname, '../appListingDetailView.ts'), 'utf8');
+    // POSITIVE CONTROL: the docstring exists and we really read this module.
+    const marker = 'EXTRACTED FROM THE JSX ON PURPOSE';
+    expect(view).toContain(marker);
+
+    // Whatever declaration follows that docstring's terminator must be the
+    // disclosure itself — not a helper that drifted in between.
+    const close = view.indexOf('\n */\n', view.indexOf(marker));
+    expect(close, 'docstring terminator not found').toBeGreaterThan(-1);
+    const following = view.slice(close + '\n */\n'.length).split('\n')[0];
+    expect(following).toMatch(/^export function shouldShowOffsiteDisclosure\b/);
+  });
 });
 
 /**
@@ -872,18 +898,29 @@ describe('🔴 the disclosure and the connect indicator, as a relationship', () 
    * 🔴 A NON-HTTPS URL IS INSIDE THE DOMAIN, AND THAT IS PRE-EXISTING.
    *
    * `shouldShowOffsiteDisclosure` has always tested `!!externalUrl` — plain
-   * truthiness, not an https guard — so a listing with `http://…` shows the
-   * off-platform disclosure today. The connect indicator MIRRORS that rather
+   * truthiness, not an https guard. The connect indicator MIRRORS that rather
    * than narrowing it: tightening the domain to https would silently change when
    * an existing SECURITY claim is displayed, which is a behaviour change #4207
    * did not ask for and which belongs in its own change if it is wanted.
    *
-   * ⚠️ Worth knowing, NOT fixed here: this diverges from the primary CTA, which
-   * routes through `safeExternalHref` and treats a non-https URL as NO
-   * destination. So such a listing shows a permission sentence about running
-   * off-platform while offering no way to go there. That inconsistency predates
-   * both #4207 and #4200; it is recorded here so the next reader does not
-   * mistake it for something this change introduced.
+   * 🔴 SCOPE — WHICH PRODUCER CAN ACTUALLY REACH THESE CELLS. Not the public
+   * store detail. `app-listing.service` applies `safeExternalUrl()` (https-only)
+   * to BOTH projections (`:255` card, `:315` detail), so a non-https column
+   * arrives at this predicate as `null`, never as `http://…`; and the submit path
+   * validates https whenever a URL is present. The ONLY producer that can deliver
+   * these values is the moderator review preview — `reviewListingPreview.ts:98`
+   * passes `row.appListing?.externalUrl ?? null` through UNGUARDED — and then
+   * only for a legacy row that already holds one.
+   *
+   * An earlier version of this note stated the divergence unconditionally, which
+   * over-warned: it read as though a public listing could show an off-platform
+   * sentence with no way to go there. It cannot. The moderator-preview path can,
+   * which is a much narrower and less alarming claim.
+   *
+   * ⚠️ Still worth knowing, NOT fixed here: on that preview path the predicates
+   * and the CTA disagree — the CTA's `safeExternalHref` treats a non-https URL as
+   * NO destination while these predicates count it as one. Predates both #4207
+   * and #4200.
    *
    * What this test pins is the part that IS this change's business: whatever the
    * domain turns out to be, the two signals agree about it and still XOR.
