@@ -7,6 +7,7 @@ import {
   Loader,
   MultiSelect,
   NumberInput,
+  Pagination,
   Paper,
   ScrollArea,
   Select,
@@ -22,6 +23,7 @@ import {
   IconAlertTriangle,
   IconPackage,
   IconArrowBackUp,
+  IconArrowsSort,
   IconBan,
   IconBolt,
   IconBox,
@@ -45,7 +47,7 @@ import {
 import type { Icon as TablerIcon } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import type { ComponentProps, ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -54,7 +56,6 @@ import {
   useQueryCreatorShopReviewQueue,
   useQueryCreatorShopReviewQueueCreators,
 } from '~/components/CreatorShop/creator-shop.util';
-import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
@@ -67,9 +68,11 @@ import {
   submissionFeeLabel,
 } from '~/components/CreatorShop/creator-shop.constants';
 import {
+  reviewQueueSortOptions,
   reviewQueueTypeOptions,
   type ReviewQueueFilterType,
 } from '~/components/CreatorShop/Submit/submit.constants';
+import type { ReviewQueueSort } from '~/server/schema/creator-shop.schema';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -167,6 +170,48 @@ function MoneyTile({
   );
 }
 
+// Rendered above AND below the list: the Published queue is long enough that
+// having to scroll back to either end to change page is the problem paging was
+// added to solve.
+function QueuePagination({
+  page,
+  totalPages,
+  onChange,
+  position,
+}: {
+  page: number;
+  totalPages: number;
+  onChange: (page: number) => void;
+  position: 'top' | 'bottom';
+}) {
+  if (totalPages <= 1) return null;
+
+  return (
+    <Group
+      justify="center"
+      px="sm"
+      py={8}
+      style={
+        position === 'top'
+          ? { borderBottom: CREATOR_SHOP_BORDER }
+          : { borderTop: CREATOR_SHOP_BORDER }
+      }
+    >
+      {/* No siblings, tight gap — the column is 380px and the control has to
+          survive a three-digit page count. */}
+      <Pagination
+        size="sm"
+        gap={4}
+        siblings={0}
+        value={page}
+        onChange={onChange}
+        total={totalPages}
+        withEdges
+      />
+    </Group>
+  );
+}
+
 function DetailRow({ label, value, last }: { label: string; value: ReactNode; last?: boolean }) {
   return (
     <Group
@@ -201,6 +246,8 @@ function CreatorShopReviewPage() {
   const [selectedCreator, setSelectedCreator] = useState<{ id: number; username: string } | null>(
     null
   );
+  const [sort, setSort] = useState<ReviewQueueSort>('oldest');
+  const [page, setPage] = useState(1);
 
   const { creators, isLoading: loadingCreators } = useQueryCreatorShopReviewQueueCreators(
     !!currentUser?.isModerator
@@ -210,24 +257,50 @@ function CreatorShopReviewPage() {
     [creators]
   );
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    useQueryCreatorShopReviewQueue({
-      enabled: !!currentUser?.isModerator,
-      status: statusFilter === 'all' ? undefined : statusFilter,
-      userId: selectedCreator?.id,
-      cosmeticTypes: typeFilter,
-    });
+  const { data, isLoading } = useQueryCreatorShopReviewQueue({
+    enabled: !!currentUser?.isModerator,
+    status: statusFilter === 'all' ? undefined : statusFilter,
+    userId: selectedCreator?.id,
+    cosmeticTypes: typeFilter,
+    sort,
+    page,
+  });
   const { reviewItem, deleteItem, takedownItem } = useMutateCreatorShop();
 
-  const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
+  const items = useMemo(() => data?.items ?? [], [data]);
+  const totalItems = data?.totalItems ?? 0;
+  const totalPages = data?.totalPages ?? 1;
+
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [reason, setReason] = useState('');
   const [activeFlags, setActiveFlags] = useState<Set<string>>(() => new Set());
   const [modOffsets, setModOffsets] = useState<CosmeticOffsets>(ZERO_OFFSETS);
 
+  const queueViewportRef = useRef<HTMLDivElement>(null);
+
+  // Paging from the bottom control would otherwise leave the list scrolled to
+  // the end, so the new page opens on its last few items.
+  function goToPage(next: number) {
+    setPage(next);
+    queueViewportRef.current?.scrollTo({ top: 0 });
+  }
+
+  // Any change to what the queue holds invalidates the page number the
+  // moderator is on, so every control that reshapes the list goes through this.
+  function changeQuery(apply: () => void) {
+    apply();
+    goToPage(1);
+  }
+
   useEffect(() => {
     setSelectedId((cur) => (cur && items.some((i) => i.id === cur) ? cur : items[0]?.id ?? null));
   }, [items]);
+
+  // Reviewing items shrinks the queue, and the last page can disappear out from
+  // under the moderator — leaving them on an empty page with no way back.
+  useEffect(() => {
+    if (!isLoading && page > totalPages) setPage(totalPages);
+  }, [isLoading, page, totalPages]);
 
   // Load any existing review note + fit offsets when the selection changes.
   useEffect(() => {
@@ -438,7 +511,7 @@ function CreatorShopReviewPage() {
     });
   };
 
-  const pendingCount = statusFilter === CosmeticShopItemStatus.PendingReview ? items.length : null;
+  const pendingCount = statusFilter === CosmeticShopItemStatus.PendingReview ? totalItems : null;
 
   return (
     <Stack gap={0} className="w-full">
@@ -466,7 +539,7 @@ function CreatorShopReviewPage() {
             size="sm"
             w={190}
             value={statusFilter}
-            onChange={(v) => setStatusFilter((v as StatusFilter) ?? 'all')}
+            onChange={(v) => changeQuery(() => setStatusFilter((v as StatusFilter) ?? 'all'))}
             data={statusFilterOptions}
             allowDeselect={false}
             leftSection={<IconFilter size={16} />}
@@ -477,7 +550,7 @@ function CreatorShopReviewPage() {
             w={230}
             data={reviewQueueTypeOptions}
             value={typeFilter}
-            onChange={(v) => setTypeFilter(v as ReviewQueueFilterType[])}
+            onChange={(v) => changeQuery(() => setTypeFilter(v as ReviewQueueFilterType[]))}
             placeholder={typeFilter.length ? undefined : 'All types'}
             clearable
             comboboxProps={{ withinPortal: true }}
@@ -489,11 +562,13 @@ function CreatorShopReviewPage() {
             searchable
             clearable
             value={selectedCreator ? String(selectedCreator.id) : null}
-            onChange={(v) => {
-              if (!v) return setSelectedCreator(null);
-              const opt = creatorOptions.find((o) => o.value === v);
-              setSelectedCreator(opt ? { id: Number(v), username: opt.label } : null);
-            }}
+            onChange={(v) =>
+              changeQuery(() => {
+                if (!v) return setSelectedCreator(null);
+                const opt = creatorOptions.find((o) => o.value === v);
+                setSelectedCreator(opt ? { id: Number(v), username: opt.label } : null);
+              })
+            }
             data={creatorOptions}
             nothingFoundMessage={loadingCreators ? 'Loading…' : 'No creators found'}
             leftSection={<IconSearch size={16} />}
@@ -521,13 +596,49 @@ function CreatorShopReviewPage() {
       ) : (
         <Group gap={0} align="stretch" wrap="nowrap" style={{ minHeight: 'calc(100vh - 160px)' }}>
           {/* Queue */}
-          <div className="shrink-0" style={{ width: 380, borderRight: CREATOR_SHOP_BORDER }}>
-            <ScrollArea.Autosize mah="calc(100vh - 160px)">
+          <div
+            className="flex shrink-0 flex-col"
+            style={{
+              width: 380,
+              height: 'calc(100vh - 160px)',
+              borderRight: CREATOR_SHOP_BORDER,
+            }}
+          >
+            <Group
+              justify="space-between"
+              align="center"
+              gap="xs"
+              wrap="nowrap"
+              px="sm"
+              py={8}
+              style={{ borderBottom: CREATOR_SHOP_BORDER }}
+            >
+              <Select
+                size="xs"
+                w={150}
+                value={sort}
+                onChange={(v) => changeQuery(() => setSort((v as ReviewQueueSort) ?? 'oldest'))}
+                data={reviewQueueSortOptions}
+                allowDeselect={false}
+                leftSection={<IconArrowsSort size={14} />}
+                comboboxProps={{ withinPortal: true }}
+              />
+              <Text size="xs" c="dimmed" className="whitespace-nowrap">
+                {numberWithCommas(totalItems)} {totalItems === 1 ? 'item' : 'items'}
+              </Text>
+            </Group>
+            <QueuePagination
+              page={page}
+              totalPages={totalPages}
+              onChange={goToPage}
+              position="top"
+            />
+            <ScrollArea viewportRef={queueViewportRef} style={{ flex: 1, minHeight: 0 }}>
               <Stack gap={0}>
                 {items.map((item) => {
                   const active = item.id === selectedId;
-                  // Triage is oldest-first regardless of what already happened
-                  // to an item, so the queue has to say which ones are re-reviews.
+                  // The queue is ordered by submission date and says nothing
+                  // about an item's history, so re-reviews need their own marker.
                   const itemPrior = priorReviewFromHistory(
                     ((item.meta ?? {}) as CosmeticShopItemMeta).history
                   );
@@ -589,17 +700,14 @@ function CreatorShopReviewPage() {
                     </UnstyledButton>
                   );
                 })}
-                {hasNextPage && (
-                  <InViewLoader
-                    loadFn={fetchNextPage}
-                    loadCondition={!isFetchingNextPage}
-                    className="flex justify-center py-3"
-                  >
-                    <Loader size="sm" />
-                  </InViewLoader>
-                )}
               </Stack>
-            </ScrollArea.Autosize>
+            </ScrollArea>
+            <QueuePagination
+              page={page}
+              totalPages={totalPages}
+              onChange={goToPage}
+              position="bottom"
+            />
           </div>
 
           {/* Detail */}
