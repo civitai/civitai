@@ -238,7 +238,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   // Holds the url this handler pushed, so the guard below waives that navigation and no other.
+  // The ref is what the guard reads (synchronously, mid-navigation); the state is only the
+  // button's spinner, since the awaited push is a real round trip to the destination.
   const savingDraftRef = useRef<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
 
   const handleSaveAsDraft = async () => {
     // A second click would push again and let the first push's `finally` re-arm the guard
@@ -259,6 +262,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     const destination = safeInternalPath(returnUrl, fallback);
 
     savingDraftRef.current = destination;
+    setSavingDraft(true);
     try {
       await router.push(destination);
     } catch {
@@ -268,6 +272,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       // A push that fails or is cancelled leaves this component mounted, and a bypass that
       // outlives its own navigation disables the unsaved-changes guard for good.
       savingDraftRef.current = null;
+      setSavingDraft(false);
     }
   };
 
@@ -276,7 +281,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     // unpublished, the user can't republish from this page anyway —
     // showing the "you haven't published this post" warning is misleading.
     unsavedChanges: !post.publishedAt && !deleted && !isUnpublishedByParent,
-    message: `You haven't published this post, all images will stay hidden. Do you wish to continue?`,
+    // Every edit is autosaved and the provider flushes anything still pending on the way out,
+    // so nothing is lost here — what the user needs warning about is that a draft is invisible
+    // until they publish it, which is the mistake this prompt was added to prevent.
+    message: `Your changes are saved, but this post is still a draft — it stays hidden until you publish it. Leave anyway?`,
     bypassRef: savingDraftRef,
   });
   // #endregion
@@ -454,7 +462,12 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       )}
 
       {!post.publishedAt && !isUnpublishedByParent && !deleted && (
-        <Button variant="default" onClick={handleSaveAsDraft} disabled={!features.canWrite}>
+        <Button
+          variant="default"
+          onClick={handleSaveAsDraft}
+          loading={savingDraft}
+          disabled={!features.canWrite}
+        >
           Save as Draft
         </Button>
       )}

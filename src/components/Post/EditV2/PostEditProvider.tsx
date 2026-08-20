@@ -220,6 +220,11 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
 
   useEffect(() => {
     const handleBrowsingAway = async () => {
+      // Runs after `useCatchNavigation`'s guard (registered first, by a descendant), so by here
+      // the navigation is going ahead. Flush before the snapshot below: an edit still inside the
+      // autosave debounce would otherwise be dropped on unmount, and the snapshot would record
+      // the value it replaced.
+      store.getState().flushPendingSaves();
       if (postId) {
         // console.log('browse away');
         await queryUtils.post.get.invalidate({ id: postId });
