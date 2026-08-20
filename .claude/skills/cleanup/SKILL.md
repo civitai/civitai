@@ -10,8 +10,8 @@ consolidated list.
 
 | Agent | Reviews |
 | --- | --- |
-| `comment-review` | Comments: still true? earns its place? or should the code have said it? |
-| `docs-drift-review` | Docs the session made wrong — stale paths, done checklist items, contradictions |
+| `comment-review` | Comments: still true? earns its place? said in the fewest words? |
+| `docs-drift-review` | Docs the session made wrong — stale paths, done checklist items, contradictions — plus padding |
 
 Both lanes are read-only and neither has an automated gate — comments aren't type-checked and docs are
 never executed, so typecheck, lint, prettier and every test suite pass over both. That is the whole

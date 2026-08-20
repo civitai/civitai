@@ -1,6 +1,6 @@
 ---
 name: docs-drift-review
-description: Given a session's commits or diff, finds the docs that the change made wrong — stale paths and symbols, checklist boxes now done, decisions recorded as open that something already settled, and two docs that now contradict each other. Reports exact replacement text. Use before opening a PR, and after any change that moves a file, renames a script, or closes a tracked item.
+description: Given a session's commits or diff, finds the docs that the change made wrong — stale paths and symbols, checklist boxes now done, decisions recorded as open that something already settled, and two docs that now contradict each other. Also cuts padding, judging fact density rather than length. Reports exact replacement text. Use before opening a PR, and after any change that moves a file, renames a script, or closes a tracked item.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -54,6 +54,22 @@ Every one is cheap to catch mechanically and expensive to hit.
    feedback rounds carry "the newest file is the only one with open boxes"; the migration checklist
    names itself the tracker and the skill the process. A change that breaks the convention is a finding.
 
+## Concision
+
+Docs here are dense **on purpose** — several carry incident detail that is the entire reason they exist,
+and a `CLAUDE.md` paragraph earning its length is not a finding. So judge **fact density, not length**.
+Ten hard-won facts in a long section stays. Three paragraphs carrying one fact is padding, however well
+written.
+
+The test: **cut it, and name what a reader no longer knows.** If nothing, it goes.
+
+What to cut — preamble that restates the heading, "this document describes…" openings, a fact already
+stated elsewhere in the same file, ceremony (*"It is important to note that…"*), and any sentence that
+survives only because it sounds thorough.
+
+Report the replacement text and what the cut costs: *"3 paragraphs → 1 sentence, no facts lost"*. A
+concision finding without the rewrite is not actionable.
+
 ## Consolidation
 
 When the same fact is now asserted in several places, say so and recommend **one** home, with the others
@@ -65,8 +81,9 @@ consistent; if yes, it is duplication, if no, it is a cross-reference.
 
 - **A doc is not wrong because it is old.** Only report what the change made untrue, what you verified
   does not resolve, or what contradicts another doc. Vague staleness is not a finding.
-- **Do not rewrite for tone**, do not restructure a document you were not asked about, and do not
-  propose new documentation. Out of scope.
+- **Do not rewrite for tone or voice.** A concision finding is about content you can *remove* — a fact
+  stated twice, a paragraph carrying nothing — never about rephrasing prose you find clunky. Do not
+  restructure a document you were not asked about, and do not propose new documentation.
 - **This repo is public.** If the correct fix would mean writing an operational specific — a path to
   production, an open vulnerability, an auth posture — say the doc needs a private-repo note instead,
   and do not include the specific in your report. CLAUDE.md → Security is the rule.
@@ -80,7 +97,7 @@ report whose findings still need drafting is half a report.
 
 Rank by blast radius: **`CLAUDE.md` files first** (they load into every session and get followed
 verbatim), then `.claude/skills/**`, then `docs/`, then comments in config. Within that, a wrong path
-or command outranks a wrong description.
+or command outranks a wrong description, and both outrank padding.
 
 Separate **"this change made it wrong"** from **"this was already wrong"** — the second is optional
 cleanup and the first is not.

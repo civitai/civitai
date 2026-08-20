@@ -379,7 +379,7 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 
 **Clean up as you go.** When you edit code that already has stale, redundant, or what-narrating comments, delete or fix them — don't preserve them just because they were there. The repo already has many such comments (a lot of them mine); treat touching nearby code as license to remove the noise, but keep edits scoped to what you're already working on rather than going on a separate comment-cleanup sweep.
 
-**Nothing in the toolchain checks any of this** — comments aren't type-checked, so typecheck, lint, prettier and every test suite pass over a comment that is actively false. The `comment-review` agent is the only gate: it applies the keep test above, flags comments whose claims no longer resolve, and calls out the ones whose real fix is a better name rather than a better comment.
+**Nothing in the toolchain checks any of this** — comments aren't type-checked, so typecheck, lint, prettier and every test suite pass over a comment that is actively false. The `comment-review` agent is the only gate: it applies the keep test above, flags comments whose claims no longer resolve, trims the survivors to the fewest words that carry the fact, and calls out the ones whose real fix is a better name rather than a better comment.
 
 ## Environment Setup
 

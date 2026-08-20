@@ -1,6 +1,6 @@
 ---
 name: comment-review
-description: Reviews the comments in a diff against the repo's comment guideline (CLAUDE.md → Coding Standards → Comments) — deletes what-narration, change-log narration and reviewer-justification, keeps the non-obvious why, and flags comments that are now factually FALSE. Judges whether each comment should exist at all, on the premise that the code should be self-documenting. Use before calling a segment done, alongside the correctness/reuse/test reviews.
+description: Reviews the comments in a diff against the repo's comment guideline (CLAUDE.md → Coding Standards → Comments) — deletes what-narration, change-log narration and reviewer-justification, keeps the non-obvious why, trims the keepers to the fewest words that carry the fact, and flags comments that are now factually FALSE. Judges whether each comment should exist at all, on the premise that the code should be self-documenting. Use before calling a segment done, alongside the correctness/reuse/test reviews.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -34,7 +34,7 @@ restate it. The operative test is the one it calls **the keep test**:
 > without it. If the answer is "it's helpful context" or "it explains why this is correct," delete it.
 
 Apply it literally. **Write down the future edit.** If you cannot finish the sentence "without this
-comment, someone would later ___ and break ___", the comment goes. Not being able to name the failure
+comment, someone would later `X` and break `Y`", the comment goes. Not being able to name the failure
 means the code already says it — or should.
 
 ## Delete
@@ -59,6 +59,21 @@ Worked example that passes, from `scripts/prisma-enum-generator.mjs`: the note s
 prettier-formatted because the committed copy is wrapped, so raw output fails `db:check-generated` and
 dirties the file on every `pnpm install`. Nameable future edit — someone drops the prettier call as a
 pointless dependency and silently re-reds the gate. It survives.
+
+## Concision
+
+A comment can pass the keep test and still be twice the length it needs. Judge survivors on **fact
+density, not length** — a long comment carrying four non-obvious facts earns its lines; three sentences
+carrying one does not.
+
+Cut, in this order: throat-clearing (*"Note that…"*, *"It's worth mentioning…"*), restating the
+signature, hedging, and any sentence whose removal would not change what the next editor does. Most
+keepers are one or two lines.
+
+If a comment genuinely needs a paragraph, that is usually the code or the naming asking for the fix
+instead — report it as that, not as a long comment.
+
+Always propose the trimmed wording. "Too long" is not a finding.
 
 ## When the answer is "fix the code, not the comment"
 
@@ -92,11 +107,11 @@ a failed job, so we check the body" — that is a keeper, not a naming problem.
 
 ## Report
 
-For each finding: `file:line`, the comment, the verdict — **false** / **delete** / **fix the code
-instead** / **keep** — and for a delete, the failed keep test in one clause ("no edit goes wrong; the
-function name says it").
+For each finding: `file:line`, the comment, the verdict — **false** / **delete** / **trim** / **fix the
+code instead** / **keep** — and for a delete, the failed keep test in one clause ("no edit goes wrong;
+the function name says it"). A **trim** carries the replacement wording.
 
-Order: **false comments first**, then fix-the-code-instead, then deletions grouped by kind.
+Order: **false comments first**, then fix-the-code-instead, then deletions grouped by kind, then trims.
 
 **Findings only.** Do not inventory the comments you read and approved. Say plainly if the diff's
 comments are clean — that is a real and common outcome, and the guideline's whole point is that the
