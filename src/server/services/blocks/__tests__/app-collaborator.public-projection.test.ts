@@ -36,6 +36,10 @@ function row(over: Partial<HydratedListing> = {}): HydratedListing {
     cover: null,
     user: { id: 7, username: 'owner', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: { manifest: {}, currentVersionDeployedAt: new Date() },
     screenshots: [],
     ...over,

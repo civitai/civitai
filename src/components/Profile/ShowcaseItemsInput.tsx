@@ -5,6 +5,7 @@ import React, { useMemo, useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
+import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { IconTrash } from '@tabler/icons-react';
@@ -115,7 +116,7 @@ export const ShowcaseItemsInput = ({
           <QuickSearchDropdown
             supportedIndexes={['models', 'images']}
             onItemSelected={onItemSelected}
-            filters={`user.username='${username}'`}
+            filters={`user.username = ${quoteMeiliValue(username)}`}
             dropdownItemLimit={25}
           />
         )}

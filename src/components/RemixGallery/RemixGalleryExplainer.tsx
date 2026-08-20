@@ -1,11 +1,8 @@
 import { Anchor, CloseButton, Text } from '@mantine/core';
 import { IconHierarchy } from '@tabler/icons-react';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
+import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
-
-// Declared in the notice registry so the persisted-id set stays enumerable.
-const ALERT_ID = FEATURE_NOTICES.remixGalleryExplainer.id;
 
 /**
  * Where the reasoning lives in full, for anyone who wants it.
@@ -27,41 +24,26 @@ const EARNINGS_ARTICLE =
  * `DismissibleAlert` would have given us: this explains a feature, not a
  * one-off event, and someone who has read it should not meet it again on their
  * phone. Same pattern as {@link ../Alerts/NavTidyNotice}, down to the
- * optimistic update and the `!!settings` guard.
+ * optimistic update and the resolved-settings guard.
+ *
+ * 🔴 The first site to consume a notice `audience`. The registry marks this
+ * notice as announcing the `remixGallery` rollout, so `isInAudience` is the
+ * per-user answer to that flag and is ANDed into the render condition below.
+ * Its parent gates on the same flag, so this does not narrow who sees it today
+ * — it makes the notice carry its own gate, so a future mount site cannot show
+ * an announcement to someone who does not have the thing being announced.
  */
 export function RemixGalleryExplainer() {
   const currentUser = useCurrentUser();
-  const utils = trpc.useUtils();
+  const { isDismissed, hasSettings, isInAudience, dismiss } = useFeatureNotice(
+    FEATURE_NOTICES.remixGalleryExplainer
+  );
 
-  const { data: settings } = trpc.user.getSettings.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
-
-  const dismiss = trpc.user.dismissAlert.useMutation({
-    onMutate: async () => {
-      await utils.user.getSettings.cancel();
-      const prev = utils.user.getSettings.getData();
-      utils.user.getSettings.setData(undefined, (old) => ({
-        ...old,
-        dismissedAlerts: [...(old?.dismissedAlerts ?? []), ALERT_ID],
-      }));
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
-    },
-    // The optimistic write spreads `...old`, so a cache seeded from a failed SSR
-    // snapshot could persist a truncated settings object. One refetch per
-    // dismiss, which is rare — not one per mount.
-    onSettled: () => {
-      utils.user.getSettings.invalidate();
-    },
-  });
-
-  const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
   // Signed out there is nowhere to record a dismissal, so showing it would mean
-  // showing it forever.
-  if (!currentUser || !settings || isDismissed) return null;
+  // showing it forever. `hasSettings` (not `isLoading`) is what proves a
+  // settings object resolved, so an errored fetch cannot flash this at someone
+  // who already dismissed it.
+  if (!currentUser || !hasSettings || isDismissed || !isInAudience) return null;
 
   return (
     <div className="flex gap-2 rounded-md border border-blue-2 bg-blue-0 p-2 dark:border-blue-9/30 dark:bg-blue-9/20">
@@ -86,7 +68,7 @@ export function RemixGalleryExplainer() {
         radius="xl"
         className="ml-auto shrink-0"
         aria-label="Dismiss"
-        onClick={() => dismiss.mutate({ alertId: ALERT_ID })}
+        onClick={() => dismiss()}
       />
     </div>
   );

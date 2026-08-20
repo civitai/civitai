@@ -11,6 +11,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // default hands the callback `dbMock.dbWrite`, which would collapse that into the direct calls.
 const { mockTx } = vi.hoisted(() => ({
   mockTx: {
+    $queryRaw: vi.fn(),
     model: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
@@ -27,7 +28,7 @@ const { mockTx } = vi.hoisted(() => ({
 }));
 
 // Both entry points read and write on dbWrite throughout — `modelVersion.findMany`
-// (model.service:2806), `paidAccess.findMany` (:2815), `entityAccess.findMany` (:2825) and
+// (model.service:2806), `entityAccess.findMany` and
 // `.deleteMany` (:2915), `model.findUniqueOrThrow` (:2877), `$transaction` (:2967),
 // `post.findMany` (:3028), `image.findMany` (:3032) — so the old alias's split was never exercised.
 const mockDbRead = dbMock.dbRead;
@@ -139,9 +140,19 @@ const HOUR = 60 * 60 * 1000;
 const future = () => new Date(Date.now() + HOUR);
 const past = () => new Date(Date.now() - HOUR);
 
+// Either side of the 30-day purchase window.
+const WINDOW_DAYS = 30;
+const boughtLongAgo = () => new Date(Date.now() - (WINDOW_DAYS + 1) * 24 * HOUR);
+const boughtRecently = () => new Date(Date.now() - (WINDOW_DAYS - 1) * 24 * HOUR);
+
 type VersionRow = { id: number; meta: Record<string, unknown> | null };
 type GateRow = { entityId: number; endsAt: Date | null };
-type AccessRow = { accessToId: number; accessorId: number; meta: Record<string, unknown> | null };
+type AccessRow = {
+  accessToId: number;
+  accessorId: number;
+  meta: Record<string, unknown> | null;
+  addedAt: Date | null;
+};
 
 function setupRefundData({
   versions = [{ id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } }] as VersionRow[],
@@ -151,6 +162,7 @@ function setupRefundData({
       accessToId: VERSION_ID,
       accessorId: BUYER_ID,
       meta: { 'download-buzzTransactionId': 'tx-1' },
+      addedAt: boughtRecently(),
     },
   ] as AccessRow[],
   amounts = { 'tx-1': 300 } as Record<string, number>,
@@ -159,6 +171,8 @@ function setupRefundData({
   spentFrom = {} as Record<string, string>,
 } = {}) {
   mockDbWrite.modelVersion.findMany.mockResolvedValue(versions);
+  // 🔴 Still seeded although the requirement no longer reads PaidAccess — see the note in
+  // model-version.unpublish-refund.service.test.ts. Removing it defuses the gate-state tests.
   mockDbWrite.paidAccess.findMany.mockResolvedValue(gates);
   mockDbWrite.entityAccess.findMany.mockResolvedValue(accessRows);
   mockGetMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
@@ -166,10 +180,23 @@ function setupRefundData({
   ]);
 }
 
-function setupUnpublishWrites() {
+function setupModelStatus(status: string) {
+  mockTx.model.findUniqueOrThrow.mockResolvedValue({ status });
+}
+
+function setupUnpublishWrites({
+  // What the model update reports back: EVERY version of the model, drafts included — it carries no
+  // where clause. Distinct from the transitioning set below, and conflating the two is the bug this
+  // fixture exists to expose.
+  allVersionIds = [VERSION_ID, OTHER_VERSION_ID],
+  transitioningVersionIds = [VERSION_ID],
+}: { allVersionIds?: number[]; transitioningVersionIds?: number[] } = {}) {
+  mockTx.$executeRaw.mockResolvedValue(transitioningVersionIds.length);
+  // Default: an ordinary published model. The violation cases override it.
+  setupModelStatus('Published');
   mockTx.model.update.mockResolvedValue({
     userId: OWNER_ID,
-    modelVersions: [{ id: VERSION_ID }],
+    modelVersions: allVersionIds.map((id) => ({ id })),
   });
   mockDbWrite.model.findUniqueOrThrow.mockResolvedValue({ name: 'Test Model', userId: OWNER_ID });
   mockDbWrite.post.findMany.mockResolvedValue([]);
@@ -182,7 +209,7 @@ beforeEach(() => {
 });
 
 describe('getModelEarlyAccessRefundRequirement', () => {
-  it('returns nothing and skips the gate lookup when no version was ever purchased', async () => {
+  it('returns nothing and reads no grants when no version was ever purchased', async () => {
     mockDbWrite.modelVersion.findMany.mockResolvedValue([
       { id: VERSION_ID, meta: null },
       { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: false } },
@@ -190,24 +217,48 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0, totalsByAccount: {} });
-    expect(mockDbWrite.paidAccess.findMany).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      purchases: [],
+      buyerCount: 0,
+      totalBuzz: 0,
+      totalsByAccount: {},
+      exemptBuyerCount: 0,
+    });
+    expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
   });
 
-  it('ignores versions whose early access window has already lapsed', async () => {
+  // Inverted deliberately. This asserted that a lapsed window exempts the seller; it no longer does,
+  // because the gate's state is something the creator can change and a purchase is not. A lapsed
+  // early-access window bought the buyer some days of access, not the right to lose the version.
+  it('still owes a refund when the early access window has lapsed but the purchase is recent', async () => {
     setupRefundData({ gates: [{ entityId: VERSION_ID, endsAt: past() }] });
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result).toEqual({ purchases: [], buyerCount: 0, totalBuzz: 0, totalsByAccount: {} });
-    expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      purchases: [{ modelVersionId: VERSION_ID, buyerId: BUYER_ID, buzzTransactionIds: ['tx-1'] }],
+      buyerCount: 1,
+      totalBuzz: 300,
+      totalsByAccount: { yellow: 300 },
+      exemptBuyerCount: 0,
+    });
   });
 
-  it('only looks at grants on versions whose gate is still active', async () => {
+  // The hole this predicate exists to close: clearing the gate is one ordinary editor save away.
+  it('still owes a refund when the gate row is gone entirely', async () => {
+    setupRefundData({ gates: [] });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.buyerCount).toBe(1);
+    expect(result.totalBuzz).toBe(300);
+  });
+
+  it('looks at grants on every purchased version, whatever its gate says', async () => {
     setupRefundData({
       versions: [
-        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
-        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
+        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
+        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
       ],
       gates: [
         { entityId: VERSION_ID, endsAt: future() },
@@ -219,7 +270,7 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     expect(mockDbWrite.entityAccess.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ accessToId: { in: [VERSION_ID] } }),
+        where: expect.objectContaining({ accessToId: { in: [VERSION_ID, OTHER_VERSION_ID] } }),
       })
     );
     expect(result.purchases).toEqual([
@@ -230,8 +281,8 @@ describe('getModelEarlyAccessRefundRequirement', () => {
   it('skips grants with no purchase transaction and sums both download and generation purchases', async () => {
     setupRefundData({
       versions: [
-        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
-        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
+        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
+        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true }, publishedAt: past() },
       ],
       gates: [
         { entityId: VERSION_ID, endsAt: null },
@@ -247,6 +298,7 @@ describe('getModelEarlyAccessRefundRequirement', () => {
             'download-buzzTransactionId': 'tx-1',
             'generation-buzzTransactionId': 'tx-2',
           },
+          addedAt: boughtRecently(),
         },
         // Same buyer on a second version — one buyer, two purchases.
         {
@@ -284,11 +336,13 @@ describe('getModelEarlyAccessRefundRequirement', () => {
             'download-buzzTransactionId': 'tx-1',
             'generation-buzzTransactionId': 'tx-2',
           },
+          addedAt: boughtRecently(),
         },
         {
           accessToId: VERSION_ID,
           accessorId: OTHER_BUYER_ID,
           meta: { 'download-buzzTransactionId': 'tx-3' },
+          addedAt: boughtRecently(),
         },
       ],
       amounts: { 'tx-1': 300, 'tx-2': 200, 'tx-3': 25 },
@@ -301,6 +355,106 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     expect(result.totalsByAccount).toEqual({ blue: 300, yellow: 225 });
     expect(result.totalBuzz).toBe(525);
+  });
+
+  it('drops purchases made longer ago than the window and counts those buyers as exempt', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toEqual([]);
+    expect(result.totalBuzz).toBe(0);
+    expect(result.exemptBuyerCount).toBe(1);
+    // Nothing is priced for an exempt buyer — the ledger is never asked.
+    expect(mockGetMultiAccountTransactionsByPrefix).not.toHaveBeenCalled();
+  });
+
+  it('refunds the recent buyer and exempts the old one on the same version', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: boughtRecently(),
+        },
+        {
+          accessToId: VERSION_ID,
+          accessorId: OTHER_BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-2' },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+      amounts: { 'tx-1': 300, 'tx-2': 900 },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toEqual([
+      { modelVersionId: VERSION_ID, buyerId: BUYER_ID, buzzTransactionIds: ['tx-1'] },
+    ]);
+    expect(result.buyerCount).toBe(1);
+    expect(result.exemptBuyerCount).toBe(1);
+    // The exempt buyer's 900 must not reach the total the owner is asked to pay.
+    expect(result.totalBuzz).toBe(300);
+  });
+
+  it('counts a buyer once when several of their purchases have aged out', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: boughtLongAgo(),
+        },
+        {
+          accessToId: OTHER_VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-2' },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+      versions: [
+        { id: VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
+        { id: OTHER_VERSION_ID, meta: { hadEarlyAccessPurchase: true } },
+      ],
+      gates: [
+        { entityId: VERSION_ID, endsAt: null },
+        { entityId: OTHER_VERSION_ID, endsAt: null },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.exemptBuyerCount).toBe(1);
+  });
+
+  it('keeps owing a refund on a purchase with no recorded date', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: null,
+        },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toHaveLength(1);
+    expect(result.exemptBuyerCount).toBe(0);
   });
 });
 
@@ -326,6 +480,7 @@ describe('unpublishModelById — early access refund gate', () => {
             'download-buzzTransactionId': 'tx-1',
             'generation-buzzTransactionId': 'tx-2',
           },
+          addedAt: boughtRecently(),
         },
       ],
       amounts: { 'tx-1': 300, 'tx-2': 200 },
@@ -336,6 +491,14 @@ describe('unpublishModelById — early access refund gate', () => {
     await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, refundEarlyAccess: true });
 
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledTimes(2);
+    // The buyer reads this line in their Buzz history, so it has to name what was taken down.
+    // Nothing else pins the model wording — the scope argument defaults, and a flipped default
+    // is invisible to every other assertion in both refund suites.
+    expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining('(model unpublished)'),
+      })
+    );
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ externalTransactionIdPrefix: 'tx-1' })
     );
@@ -393,6 +556,7 @@ describe('unpublishModelById — early access refund gate', () => {
             'download-buzzTransactionId': 'tx-1',
             'generation-buzzTransactionId': 'tx-2',
           },
+          addedAt: boughtRecently(),
         },
       ],
       amounts: { 'tx-1': 300, 'tx-2': 500 },
@@ -408,13 +572,254 @@ describe('unpublishModelById — early access refund gate', () => {
     expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
   });
 
+  it('unpublishes without consent or refunds once every buyer has aged out', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1' },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+    });
+    setupUnpublishWrites();
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+    expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.entityAccess.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.model.update).toHaveBeenCalled();
+  });
+
+  // The gate rests entirely on hadEarlyAccessPurchase now that PaidAccess is out of the predicate,
+  // and this is the one operation that used to destroy it: the version rows were written with the
+  // MODEL's meta object, replacing the column. An owner could unpublish, shedding the flag, and then
+  // delete the version with every guard that reads it gone.
+  // The take-down is one raw statement: status and meta together, scoped by the model and the two
+  // statuses. These read the SQL itself, because the two properties that matter — that meta is
+  // MERGED rather than replaced, and that the WHERE picks the transitioning rows — live entirely in
+  // the static template segments. An assertion on the interpolated payload is byte-identical under
+  // `meta = COALESCE(meta,'{}') || payload` and under `meta = payload`, which is the bug this code
+  // exists to prevent.
+  // The take-down is the first $executeRaw in the transaction; the Post metadata update is the
+  // second. Found by its SQL rather than by position, so reordering cannot silently repoint these.
+  const takeDownCall = () =>
+    mockTx.$executeRaw.mock.calls.find(([strings]) =>
+      (strings as unknown as string[]).join('').includes('UPDATE "ModelVersion"')
+    );
+  const takeDownSql = () =>
+    ((takeDownCall()?.[0] ?? []) as unknown as string[]).join('?').replace(/\s+/g, ' ');
+  const takeDownParams = () => takeDownCall()?.slice(1) ?? [];
+
+  it('merges the unpublish keys into each version meta instead of replacing it', async () => {
+    setupRefundData({ accessRows: [] });
+    setupUnpublishWrites();
+
+    // A reason means a moderator now — an owner supplying one is refused outright.
+    await unpublishModelById({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      isModerator: true,
+      reason: 'duplicate',
+    });
+
+    expect(takeDownSql()).toContain(
+      `SET "status" = ?::"ModelStatus", "meta" = COALESCE("meta", '{}'::jsonb) ||`
+    );
+    // Every key the notification and the audit trail read, not just the one that is easiest to find.
+    expect(JSON.parse(takeDownParams()[1] as string)).toEqual({
+      unpublishedReason: 'duplicate',
+      customMessage: undefined,
+      unpublishedAt: expect.any(String),
+      unpublishedBy: OWNER_ID,
+    });
+    // A reasoned take-down puts the VERSION at UnpublishedViolation, which the nested updateMany
+    // this replaced did not do — it always wrote plain Unpublished. That difference decides whether
+    // an owner can republish the version afterwards, and it is what restore-models has to match.
+    expect(takeDownParams()[0]).toBe('UnpublishedViolation');
+    expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('UnpublishedViolation');
+    // And the version's updatedAt is stamped — raw SQL gets no @updatedAt.
+    expect(takeDownSql()).toContain('"updatedAt" = NOW()');
+  });
+
+  it('takes down only the versions that were published or scheduled', async () => {
+    setupRefundData({ accessRows: [] });
+    setupUnpublishWrites();
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+    const sql = takeDownSql();
+    expect(sql).toContain('WHERE "modelId" = ?');
+    expect(sql).toContain('AND "status" IN (?::"ModelStatus", ?::"ModelStatus")');
+    // Exact, not substring: the params carry an ISO timestamp whose millisecond field makes a
+    // substring search on a 3-digit id both flaky and misleading.
+    expect(takeDownParams()).toEqual([
+      'Unpublished',
+      expect.any(String),
+      MODEL_ID,
+      'Published',
+      'Scheduled',
+    ]);
+  });
+
+  // 🔴 An owner-initiated unpublish carries no reason. Writing the status unconditionally would put
+  // a model a moderator took down back to plain Unpublished — and owner republish is blocked only
+  // WHILE the status is UnpublishedViolation, so that is an owner-reachable way to clear the flag.
+  describe('a model already taken down for a violation', () => {
+    it('keeps the violation status through a reasonless unpublish', async () => {
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('UnpublishedViolation');
+    });
+
+    it('decides from the STATUS, not from a reason in meta', async () => {
+      // 2,327 of 43,492 violation rows in prod carry no reason in meta. Keying the guard on meta
+      // fails open for exactly the rows nobody wrote through this code.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, meta: {} });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('UnpublishedViolation');
+    });
+
+    it('leaves the moderator record intact — actor, explanation and timestamp', async () => {
+      // customMessage is the ONLY explanation rendered when the reason is 'other', which is the
+      // largest bucket in prod; and refreshing unpublishedAt re-fires the take-down notification.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+      const moderatorRecord = {
+        unpublishedReason: 'other',
+        customMessage: 'Reviewed by a human',
+        unpublishedAt: '2020-01-01T00:00:00.000Z',
+        unpublishedBy: 999,
+      };
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, meta: { ...moderatorRecord } });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.meta).toEqual(moderatorRecord);
+    });
+
+    // Negative control: a guard that preserved unconditionally would leave every ordinary unpublish
+    // unrecorded, and each assertion above would still pass.
+    it('still stamps an ordinary unpublish of a model that carries no violation', async () => {
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+      const data = mockTx.model.update.mock.calls[0][0].data;
+      expect(data.status).toBe('Unpublished');
+      expect(data.meta).toEqual(
+        expect.objectContaining({ unpublishedBy: OWNER_ID, unpublishedAt: expect.any(String) })
+      );
+    });
+
+    // The too-wide direction. A guard that also fired on a stale `meta.unpublishedReason` would
+    // escalate ordinary owner unpublishes to UnpublishedViolation for any model taken down once and
+    // republished since — and every assertion above would still pass.
+    it('does not escalate a published model carrying a stale reason in meta', async () => {
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('Published');
+
+      await unpublishModelById({
+        id: MODEL_ID,
+        userId: OWNER_ID,
+        meta: { unpublishedReason: 'duplicate', customMessage: 'from a previous take-down' },
+      });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('Unpublished');
+    });
+
+    it('preserves Deleted too, not UnpublishedViolation alone', async () => {
+      // Deleted is the other moderator-only status; clearing it clears the republish gate and
+      // publishModelById then nulls deletedAt, completing an owner-driven restore.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('Deleted');
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+      expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('Deleted');
+    });
+
+    it('takes the versions down without restamping their meta', async () => {
+      // The version rows are what unpublish.notifications.ts selects on, per version, with no
+      // status predicate. Merging unpublishedAt into them on a preserved take-down re-fires the
+      // notification with the owner named as the actor of a moderator's decision.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+      expect(takeDownParams()[0]).toBe('UnpublishedViolation');
+      expect(JSON.parse(takeDownParams()[1] as string)).toEqual({});
+    });
+
+    it('refuses a reason from someone who is not a moderator', async () => {
+      // Otherwise the guard's precondition — "an owner-initiated unpublish carries no reason" — is
+      // an assumption, and an owner can rewrite the moderator's verdict by supplying one.
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+
+      await expect(
+        unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, reason: 'duplicate' })
+      ).rejects.toThrowError(/Only a moderator/);
+
+      // customMessage alone is refused too — it is the conjunct a later simplification deletes for
+      // free, and it is the field that carries the explanation for reason 'other'.
+      await expect(
+        unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, customMessage: 'mine now' })
+      ).rejects.toThrowError(/Only a moderator/);
+
+      expect(mockTx.model.update).not.toHaveBeenCalled();
+    });
+
+    // A moderator acting deliberately still writes their own verdict over the old one.
+    it('lets a moderator restate the violation with a new reason', async () => {
+      setupRefundData({ accessRows: [] });
+      setupUnpublishWrites();
+      setupModelStatus('UnpublishedViolation');
+
+      await unpublishModelById({
+        id: MODEL_ID,
+        userId: 999,
+        isModerator: true,
+        reason: 'duplicate',
+        customMessage: 'new note',
+        meta: { unpublishedReason: 'other', customMessage: 'old' },
+      });
+
+      const data = mockTx.model.update.mock.calls[0][0].data;
+      expect(data.status).toBe('UnpublishedViolation');
+      // All four, not two: a customMessage falling back to the stored one leaves a new verdict
+      // carrying the old explanation.
+      expect(data.meta).toEqual({
+        unpublishedReason: 'duplicate',
+        customMessage: 'new note',
+        unpublishedAt: expect.any(String),
+        unpublishedBy: 999,
+      });
+    });
+  });
+
   it('does not gate or refund on a moderator unpublish', async () => {
     setupRefundData();
     setupUnpublishWrites();
 
     await unpublishModelById({ id: MODEL_ID, userId: 1, isModerator: true });
 
-    expect(mockDbWrite.paidAccess.findMany).not.toHaveBeenCalled();
+    // A moderator take-down must not even price the refund — that read is the owner's gate.
+    expect(mockDbWrite.entityAccess.findMany).not.toHaveBeenCalled();
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(mockTx.model.update).toHaveBeenCalled();
   });

@@ -12,7 +12,6 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { Meta } from '~/components/Meta/Meta';
-import { Model3DCategories } from '~/components/Model3D/Feed/Model3DCategories';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { Model3DSort } from '~/server/schema/model3d.schema';
@@ -32,9 +31,6 @@ import { trpc } from '~/utils/trpc';
  * Discovery affordances:
  *   - SortFilter (Newest / Most Downloaded / Highest Rated / Most Liked)
  *   - PeriodFilter (Day / Week / Month / Year / AllTime)
- *   - Category-tag scroller via `Model3DCategories` — mod-curated tags
- *     linked from the `'model3d category'` system tag (mirrors what
- *     `/images`, `/posts`, `/articles` do)
  *   - Animated toggle — filters on the PolyGen `enableAnimation` flag
  *     stored on `Model3D.generationParams`. Rigging used to have its own
  *     toggle but the Meshy API binds rigging to animation (rigging is
@@ -74,9 +70,8 @@ function Model3DsPage() {
     return raw && PERIOD_VALUES.has(raw) ? (raw as MetricTimeframe) : MetricTimeframe.AllTime;
   }, [query.period]);
 
-  // Category-tag selection now rides on the canonical `?tags=` array (the
-  // `Model3DCategories` scroller emits + reads it, mirroring how the other
-  // feed pages do it). The bespoke single `?tagId=` query param is gone.
+  // Read-only since the category scroller was removed: `?tags=` still filters
+  // the feed so existing deep links keep working, but nothing on the page sets it.
   const tagIds = useMemo(
     () => parseNumericStringArray(router.query.tags) ?? [],
     [router.query.tags]
@@ -137,12 +132,6 @@ function Model3DsPage() {
 
       <MasonryContainer>
         <Stack gap="md">
-          {/* Category-tag scroller — mod-curated set linked from the
-              `'model3d category'` system tag, fetched by
-              `Model3DCategories` via `useCategoryTags`. Matches what
-              `/images`, `/posts`, and `/articles` show in the same slot. */}
-          <Model3DCategories />
-
           {isLoading || loadingPreferences ? (
             <Center p="xl">
               <Loader size="xl" />

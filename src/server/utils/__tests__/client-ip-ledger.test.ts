@@ -27,7 +27,7 @@ import path from 'path';
  *
  * 🔴 WHY THE WALK COVERS `src/` AND NOT `src/server/`. It used to be rooted at
  * `src/server`, and two of the derivation sites live under `src/pages` —
- * `src/pages/api/auth/callback.ts` and `src/pages/api/mod/retool/comment.ts`,
+ * `src/pages/api/auth/callback.ts` and `src/pages/api/mod/comment/remove-as-tos.ts`,
  * both of which held the library edge at the time and were invisible to it. A
  * ledger that cannot see half the population is not a ledger; it reports a clean
  * set because it never looked. Widening the root is what makes "the set matches
@@ -45,7 +45,7 @@ import path from 'path';
  * on the analytics wire),
  * `src/server/services/__tests__/image-search.client-ip.test.ts` (the address in
  * the search-actor hash),
- * `src/__tests__/pages/api/mod/retool/comment.client-ip.test.ts`
+ * `src/__tests__/pages/api/mod/comment/remove-as-tos.client-ip.test.ts`
  * (the address in the moderation audit trail),
  * `src/__tests__/pages/api/auth/callback.client-ip.test.ts` (the address the
  * spoke forwards), and the four suites beside
@@ -196,7 +196,14 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
     symbol: 'resolveClientIpOrNull',
     why: 'Anonymous search-actor hashing. Must agree with the ctx.ip-fed sibling call sites.',
   },
-  'pages/api/mod/retool/comment.ts': {
+  'server/controllers/image.controller.ts': {
+    symbol: 'resolveClientIpOrNull',
+    why:
+      'Forwards the acting moderator’s address to the moderator spoke, which records it on the '  +
+      'image-moderation audit row. Attribution, not enforcement — and the field is optional, so the '  +
+      'falsy sentinel is preserved.',
+  },
+  'pages/api/mod/comment/remove-as-tos.ts': {
     symbol: 'resolveClientIpOrNull',
     why: 'Moderation audit-trail actor. Optional field, so the undefined sentinel is preserved.',
   },

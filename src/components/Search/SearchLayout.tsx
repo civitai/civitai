@@ -42,6 +42,7 @@ import type { UiState } from 'instantsearch.js';
 import { includesInappropriate } from '~/utils/metadata/audit';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
+import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import classes from './SearchLayout.module.scss';
 import clsx from 'clsx';
 
@@ -154,16 +155,24 @@ export function SearchLayout({
     setInstantSearchQuery(query);
   }, []);
 
+  const benignPhrases = useBenignPhrases();
+
   const isIllegalSearch = useMemo(() => {
     if (!searchQuery) return false;
 
-    const illegalSearch = includesInappropriate({ prompt: searchQuery });
+    // Detection reads the whitelisted copy; the query sent to Meili stays the raw text.
+    const illegalSearch = includesInappropriate({ prompt: benignPhrases.strip(searchQuery) });
     return illegalSearch === 'minor';
-  }, [searchQuery]);
+  }, [searchQuery, benignPhrases]);
 
   // Track illegal search separately to avoid side effects in useMemo
   useEffect(() => {
     if (!searchQuery || !isIllegalSearch) return;
+    // Hold the event until the benign lists arrive. Before then `strip` is the identity
+    // function, so a moderator-whitelisted query still reads as illegal here — and firing a
+    // CSAM tracking event for it is exactly the false positive this work exists to remove.
+    // The gate itself still applies while loading; only the side effect waits.
+    if (!benignPhrases.settled) return;
 
     const { sortBy: index } = parsedQuery || {};
     trackAction({
@@ -173,7 +182,7 @@ export function SearchLayout({
         index,
       },
     }).catch(() => undefined);
-  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy]);
+  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy, benignPhrases.settled]);
 
   // Check profanity in search query
   const profanityAnalysis = useCheckProfanity(searchQuery, {

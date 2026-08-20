@@ -129,7 +129,7 @@ describe('src/pages holds no test files', () => {
     expect(routeFiles).toContain('_app.tsx');
     expect(routeFiles).toContain('_document.tsx');
     expect(routeFiles).toContain('api/auth/callback.ts');
-    expect(routeFiles).toContain('api/mod/retool/comment.ts');
+    expect(routeFiles).toContain('api/mod/comment/remove-as-tos.ts');
 
     // And it reaches them in BULK, not just the four named above — a walk that
     // recursed one level would satisfy the anchors alone. Deliberately loose

@@ -3,7 +3,6 @@ import {
   deleteModelVersionHandler,
   earlyAccessModelVersionsOnTimeframeHandler,
   getModelVersionForEditHandler,
-  getModelVersionForTrainingReviewHandler,
   getModelVersionHandler,
   getModelVersionOwnerHandler,
   getModelVersionRunStrategiesHandler,
@@ -20,6 +19,7 @@ import {
   upsertModelVersionHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { getUnpublishImpact } from '~/server/routers/model-version.unpublish-impact';
 import {
   mergeVersionsSchema,
   deleteExplorationPromptSchema,
@@ -183,6 +183,17 @@ export const modelVersionRouter = router({
     .input(unpublishModelSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelVersionHandler),
+  // Priced at the scope the unpublish will ACTUALLY run at. Taking down the last published version
+  // takes the model with it, and the model-scoped requirement covers every version — including
+  // siblings already down that still hold refundable grants, which a moderator take-down leaves in
+  // place. A dialog priced per-version there would show a creator one figure and debit another, and
+  // when the version figure is zero and the model figure is not, the mutation refuses with no way
+  // to consent. `scope` is what the dialog words itself from; it is not decoration.
+  getUnpublishImpact: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .query(({ input }) => getUnpublishImpact(input.id)),
   upsertExplorationPrompt: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(upsertExplorationPromptSchema)
@@ -223,9 +234,6 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .query(modelVersionDonationGoalHandler),
-  getTrainingDetails: moderatorProcedure
-    .input(getByIdSchema)
-    .query(getModelVersionForTrainingReviewHandler),
   publishPrivateModelVersion: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(getByIdSchema)

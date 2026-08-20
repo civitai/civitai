@@ -19,6 +19,7 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
+import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import { searchIndexMap } from '~/components/Search/search.types';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
@@ -50,7 +51,7 @@ export default function ModelShowcaseCollectionModal({
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
 
-  const filters: string[] = ['type = Model', `user.username = ${username}`];
+  const filters: string[] = ['type = Model', `user.username = ${quoteMeiliValue(username)}`];
 
   function handleSelect(collectionId: number) {
     onSelect(collectionId);

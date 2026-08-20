@@ -1,60 +1,295 @@
-.chatMessage {
-  border-radius: var(--mantine-spacing-xs);
-  padding: calc(var(--mantine-spacing-xs) / 2) var(--mantine-spacing-xs);
-  width: max-content;
-  max-width: 70%;
-  white-space: pre-line;
+/* Mono + tabular is what separates chrome from prose in the design. */
+.dayChip {
+  align-self: center;
+  border-radius: 100px;
+  border: 1px solid var(--chat-line);
+  background-color: var(--chat-panel);
+  color: var(--chat-text-dim);
+  padding: 2px 12px;
+  margin: 10px 0 4px;
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
 }
 
-.replyMessage {
-  text-overflow: ellipsis;
-  overflow: hidden;
-  overflow-wrap: normal;
-  background-color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-7));
-  font-size: var(--mantine-spacing-sm);
-}
+/* Full-bleed, square: the hover band spanning the pane is the cue that the row
+   is one message. An inset rounded rect reads as a card instead. */
+.messageRow {
+  position: relative;
+  padding: 4px 14px 3px;
 
-.myDetails {
-  flex-direction: row-reverse;
-}
+  &:hover,
+  &:focus-within {
+    background-color: var(--chat-hover);
+  }
 
-.myMessage {
-  background-color: light-dark(var(--mantine-color-blue-4), var(--mantine-color-blue-8));
-}
-
-.otherMessage {
-  background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-3));
-}
-
-.stickerOnlyMessage {
-  background-color: transparent;
-  padding: 0;
-  max-width: 100%;
-}
-
-.highlightRow {
-  &:hover {
-    > button {
-      display: initial;
-    }
+  /* Consecutive messages from one sender collapse under a single header. */
+  &.grouped {
+    padding-top: 1px;
   }
 }
 
+.messageHead {
+  margin-bottom: 2px;
+}
+
+.messageTime {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 10px;
+  color: var(--chat-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Aligns a grouped message under its header's username rather than the avatar. */
+.messageBody {
+  padding-left: 34px;
+  min-width: 0;
+}
+
+/* The mockup's density: a chat pane is narrow, and body-size text in it reads
+   as a document rather than a conversation. */
+.messageText {
+  white-space: pre-line;
+  overflow-wrap: break-word;
+  width: fit-content;
+  max-width: 100%;
+  font-family: var(--chat-msg-font);
+  font-size: var(--chat-msg-size);
+  color: var(--chat-text);
+  line-height: 1.5;
+  background-color: var(--chat-bubble);
+  padding: var(--chat-bubble-pad);
+  border-radius: var(--chat-bubble-radius);
+
+  /* ChatMessageContent wraps every run in a Mantine <Text>, which writes its own
+     font-size onto the span — so sizing this container alone changes nothing. */
+  :global(.mantine-Text-root) {
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  /* Must outrank the inherit rule above, which is also two classes deep. */
+  .jumboEmoji {
+    font-size: 38px;
+    line-height: 1.15;
+  }
+}
+
+/* A tint rather than a slab: the quote is a whisper attached to the message,
+   not a second card competing with it. */
+.replyQuote {
+  display: block;
+  border-left: 2px solid var(--chat-accent);
+  background-color: var(--chat-accent-soft);
+  border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
+  padding: 3px 9px;
+  margin: 2px 0 4px;
+  max-width: 420px;
+}
+
+.replyQuoteName {
+  display: block;
+  color: var(--chat-accent);
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.replyQuoteText {
+  color: var(--chat-text-dim);
+  font-size: 11.5px;
+  line-height: 1.4;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  /* Same as .messageText: the quoted content is rendered by ChatMessageContent,
+     whose Mantine <Text> writes its own font-size onto the span. */
+  :global(.mantine-Text-root) {
+    font-size: inherit;
+    line-height: inherit;
+  }
+}
+
+.mine {
+  background-color: var(--chat-bubble-me);
+}
+
+/* A sticker or a lone jumbo emoji IS the message. A themed bubble around it
+   reads as a frame drawn on the artwork, and the sticker's own transparency
+   stops being transparent. Doubled to outrank `.mine`, which is equally
+   specific and would otherwise win on source order. */
+.standalone.standalone {
+  background-color: transparent;
+  padding: 0;
+}
+
+.editedTag {
+  font-size: 10px;
+  color: var(--chat-meta);
+  margin-left: 6px;
+  user-select: none;
+}
+
+.messageActions {
+  position: absolute;
+  top: -10px;
+  right: 14px;
+  display: none;
+  gap: 2px;
+  padding: 2px;
+  z-index: 5;
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid var(--chat-line);
+  background-color: var(--chat-panel-strong);
+  box-shadow: 0 4px 14px light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 55%));
+
+  .messageRow:hover &,
+  .messageRow:focus-within & {
+    display: flex;
+  }
+}
+
+.systemNote {
+  align-self: center;
+  text-align: center;
+  color: var(--chat-meta);
+  border-top: 1px dashed var(--chat-line);
+  border-bottom: 1px dashed var(--chat-line);
+  padding: 6px 4px;
+  margin: 6px 0;
+  width: 100%;
+}
+
+/* ---- composer ---- */
+
 .chatInput {
-  border-radius: 0;
-  border-left: 0;
-  border-top: 0;
-  border-bottom: 0;
+  border: none;
+  background-color: transparent;
+  font-family: var(--chat-msg-font);
+  font-size: var(--chat-msg-size);
+  line-height: 1.45;
+  min-height: 30px;
+  padding: 7px 4px;
+}
+
+.composerRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 8px;
+  padding: 4px 5px 4px 4px;
+  border-radius: var(--chat-radius);
+  border: 1px solid var(--chat-line);
+  background-color: var(--chat-panel);
+
+  &:focus-within {
+    border-color: var(--chat-accent);
+  }
+}
+
+.sendButton:not(:disabled):not([data-disabled]) {
+  background-color: var(--chat-send);
+}
+
+/* Disabled has to stay a filled circle, or the composer loses its anchor the
+   moment the field is empty. */
+.sendButton:disabled,
+.sendButton[data-disabled] {
+  background-color: var(--chat-panel);
+  color: var(--chat-meta);
+}
+
+.replyStrip {
+  border-left: 2px solid var(--chat-accent);
+  background-color: var(--chat-accent-soft);
+  border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
+  margin: 8px 8px 0;
+  padding-bottom: var(--mantine-spacing-xs);
+}
+
+.composerFoot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 6px;
+}
+
+.hint {
+  font-size: 10.5px;
+  color: var(--chat-meta);
+
+  b {
+    color: var(--chat-text-dim);
+    font-weight: 600;
+  }
+}
+
+.counter {
+  margin-left: auto;
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--chat-meta);
+
+  &.near {
+    color: light-dark(var(--mantine-color-orange-8), var(--mantine-color-orange-4));
+  }
+
+  &.over {
+    color: light-dark(var(--mantine-color-red-8), var(--mantine-color-red-4));
+    font-weight: 700;
+  }
 }
 
 .isTypingBox {
   position: sticky;
   bottom: 0;
   display: inline-flex;
-  // Uncomment the following lines if needed:
-  // backdrop-filter: blur(16px);
-  // background-color: light-dark(
-  //   rgba(var(--mantine-color-green-7), 0.1),
-  //   rgba(var(--mantine-color-green-2), 0.1)
-  // );
+}
+
+/* Sits directly above the composer rather than floating: the chat pane is
+   narrow and a portalled dropdown lands outside it at several widths. */
+.suggestList {
+  margin: 0 8px;
+  max-height: 210px;
+  overflow-y: auto;
+  border: 1px solid var(--chat-line);
+  border-radius: var(--mantine-radius-sm);
+  background-color: var(--chat-panel-strong);
+  box-shadow: 0 6px 18px light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 55%));
+}
+
+.suggestItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 5px 9px;
+  font-size: 12.5px;
+  color: var(--chat-text-dim);
+}
+
+.suggestActive {
+  background-color: var(--chat-accent-soft);
+  color: var(--chat-accent);
+}
+
+.suggestGlyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.suggestSlug {
+  font-family: var(--mantine-font-family-monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

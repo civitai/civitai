@@ -20,6 +20,7 @@ import {
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
+import { REJECTED_IS_FINAL } from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -281,7 +282,7 @@ export const updateCreatorShopPack = async ({
   if (!isModerator && existing.addedById !== userId)
     throw throwBadRequestError('You can only manage your own shop items');
   if (existing.status === CosmeticShopItemStatus.Rejected)
-    throw throwBadRequestError('Rejected items cannot be edited');
+    throw throwBadRequestError(REJECTED_IS_FINAL);
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be edited');
 

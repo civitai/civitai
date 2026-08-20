@@ -3,7 +3,7 @@ import { Pool, types, type PoolConfig } from 'pg';
 
 // Re-export `sql` so apps build raw fragments without a direct kysely dependency — the db layer owns it.
 export { sql } from 'kysely';
-export type { RawBuilder } from 'kysely';
+export type { Generated, RawBuilder } from 'kysely';
 
 // Kysely client builder. Standalone — imports only kysely + pg (NOT the Prisma client /
 // db-helpers / env), so a Vite/SSR app can import `@civitai/db/kysely` without pulling Prisma.
@@ -115,14 +115,46 @@ export function createKyselyClients<DB>(
     ? forceSslNoVerify(replicaConnectionString)
     : replicaConnectionString;
 
+  // Pool sizing defaults for the connection-string path. Callers that pass only a connection string
+  // otherwise inherit pg's own defaults, and one of those is actively harmful: pg leaves
+  // `connectionTimeoutMillis` unset and treats that as "wait forever", so once the pool is exhausted
+  // every further caller queues indefinitely and never errors — a pool problem surfaces as an
+  // unbounded hang rather than a failure. A finite timeout makes it fail fast at the call site.
+  //
+  // These pools carry NO acquire-latency metric and NO retry: the error reaches the caller as-is,
+  // and a caller that wants either has to add it (see the transient-error retry in
+  // apps/notifications). `max`/`idleTimeoutMillis` match the sibling `createPool` factory;
+  // `connectionTimeoutMillis` is deliberately STRICTER than createPool (which defaults it to 0) and
+  // matches the value the monolith already runs in production.
+  //
+  // Caller-supplied values win — `poolConfig` is spread last.
+  // ORDER-DEPENDENT: this snapshots `poolConfig.connectionString`, so the `sslNoVerify` rewrite
+  // above must stay ABOVE it — otherwise the primary pool silently connects without
+  // `sslmode=no-verify`. Pinned by the sslNoVerify case in kysely.pool-defaults.test.ts.
+  const config: PoolConfig = {
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    ...poolConfig,
+  };
+
   const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
-  const primary = make(pool ?? new Pool(poolConfig));
+  // node-postgres emits 'error' on the POOL when an IDLE client dies — a managed database dropping idle
+  // connections, a network blip, a laptop sleeping. `error` is a special event in Node: with no listener
+  // it is rethrown, so an idle-connection drop takes down the process or fails the next request rather
+  // than being retired quietly. The pool already discards the bad client; this only stops the throw.
+  const guard = (p: Pool) => {
+    p.on('error', (err) => console.error('[db] idle client error (pool will recycle it)', err));
+    return p;
+  };
+
+  const primary = make(pool ?? guard(new Pool(config)));
   if (singleClient) return { db: primary };
 
   const dbRead =
     readPool || replicaString
-      ? make(readPool ?? new Pool({ ...poolConfig, connectionString: replicaString }))
+      ? make(readPool ?? guard(new Pool({ ...config, connectionString: replicaString })))
       : primary;
   return { dbRead, dbWrite: primary };
 }

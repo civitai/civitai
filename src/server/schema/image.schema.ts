@@ -262,7 +262,6 @@ export const imageModerationSchema = z.object({
   reviewAction: z.enum(['unblock', 'block']),
   violationType: z.enum(ViolationType).optional(),
   violationDetails: z.string().optional(),
-  removeMinorFlag: z.boolean().optional(),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 export type ImageModerationUnblockSchema = {
@@ -503,18 +502,6 @@ export const getEntitiesCoverImage = z.object({
   ),
 });
 
-export type ImageReviewQueueInput = z.infer<typeof imageReviewQueueInputSchema>;
-export const imageReviewQueueInputSchema = z.object({
-  limit: z.number().min(0).max(200).default(100),
-  cursor: z.union([z.bigint(), z.number()]).optional(),
-  needsReview: z.string().nullish(),
-  tagReview: z.boolean().optional(),
-  reportReview: z.boolean().optional(),
-  tagIds: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  browsingLevel: z.number().default(allBrowsingLevelsFlag),
-});
-
 export type ScanJobsOutput = z.output<typeof scanJobsSchema>;
 export const scanJobsSchema = z.looseObject({
   scans: z.record(z.string(), z.number()).default({}),
@@ -528,35 +515,6 @@ export const updateImageNsfwLevelSchema = z.object({
   nsfwLevel: z.enum(NsfwLevel),
   status: z.enum(ReportStatus).optional(),
   reason: z.string().optional(),
-});
-
-export const getImageRatingRequestsSchema = paginationSchema.extend({
-  status: z.enum(ReportStatus).array().optional(),
-});
-
-export type ImageRatingReviewOutput = z.infer<typeof imageRatingReviewInput>;
-export const imageRatingReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.number().optional(),
-});
-
-export type DownleveledReviewOutput = z.infer<typeof downleveledReviewInput>;
-export const downleveledReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.string().optional(),
-  originalLevel: z.nativeEnum(NsfwLevel).optional(),
-});
-
-export type IngestionErrorReviewInput = z.infer<typeof ingestionErrorReviewInput>;
-export const ingestionErrorReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.number().optional(),
-});
-
-export type ResolveIngestionErrorInput = z.infer<typeof resolveIngestionErrorInput>;
-export const resolveIngestionErrorInput = z.object({
-  id: z.number(),
-  nsfwLevel: z.enum(NsfwLevel),
 });
 
 export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;

@@ -60,6 +60,13 @@ const mocks = vi.hoisted(() => ({
 // CivitaiSessionContext", crashing every card render. Mock a signed-out viewer.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
+/**
+ * This suite mounts ANONYMOUSLY (the mock above), and recents are ACCOUNT-scoped
+ * (#4048) with `null` — signed out — as its own bucket, not a wildcard. Seeds
+ * must therefore be written as `null`, or the body reads an empty rail.
+ */
+const SESSION_OWNER_ID: number | null = null;
+
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
 // module-mock): a hand-written replacement silently breaks every importer the
 // day '~/utils/trpc' grows an export this factory omits — the whole FILE then
@@ -408,14 +415,17 @@ describe('AppListingsMarketplaceBody', () => {
   });
 
   test('🔴 a viewer WITH recents sees the rail BELOW the controls and ABOVE the grid (CLS)', async () => {
-    recordRecentlyOpenedApp({
-      id: 'ab_1',
-      blockId: 'gen-matrix',
-      slug: 'gen-matrix',
-      kind: 'onsite',
-      hasPage: true,
-      name: 'Gen Matrix',
-    });
+    recordRecentlyOpenedApp(
+      {
+        id: 'ab_1',
+        blockId: 'gen-matrix',
+        slug: 'gen-matrix',
+        kind: 'onsite',
+        hasPage: true,
+        name: 'Gen Matrix',
+      },
+      SESSION_OWNER_ID
+    );
     renderWithProviders(<AppListingsMarketplaceBody />);
 
     const rail = page.getByTestId('apps-recent-rail');
@@ -443,7 +453,7 @@ describe('AppListingsMarketplaceBody', () => {
   });
 
   test('a LEGACY {id, blockId} recents entry still renders (resolved, not dropped)', async () => {
-    recordRecentlyOpenedApp({ id: 'ab_legacy', blockId: 'legacy-app' });
+    recordRecentlyOpenedApp({ id: 'ab_legacy', blockId: 'legacy-app' }, SESSION_OWNER_ID);
     renderWithProviders(<AppListingsMarketplaceBody />);
     const item = page.getByTestId('apps-recent-rail-item');
     await expect.element(item).toBeInTheDocument();

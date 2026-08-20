@@ -368,6 +368,9 @@ export const serverSchema = z
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
+    // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
+    // here via the moderator catchall page during the transition.
+    MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
@@ -723,6 +726,11 @@ export const serverSchema = z
     // verifies orders/* HMAC. Admin auth: the custom app uses the client_credentials
     // grant (CLIENT_ID + CLIENT_SECRET → short-lived token); set SHOPIFY_ADMIN_TOKEN
     // instead only if using a static store custom-app token.
+    // ClickUp -> Known Issues board sync. Signing secret ClickUp returns when the
+    // webhook is created; unset disables the receiver (503) rather than trusting
+    // unsigned deliveries.
+    CLICKUP_WEBHOOK_SECRET: z.string().optional(),
+
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
     SHOPIFY_CLIENT_ID: z.string().optional(),

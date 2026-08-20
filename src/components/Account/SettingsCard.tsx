@@ -190,6 +190,13 @@ export function SettingsCard() {
           </>
         )}
 
+        {flags.buzz && (
+          <>
+            <Divider label="Buzz Preferences" mb={-12} />
+            <HideBlueBuzzToggle />
+          </>
+        )}
+
         <Divider label="Features" />
         <EarlyAdopterToggle />
         {normalizedToggleableFeatures.length > 0 && (
@@ -251,6 +258,23 @@ function StickerMotionToggle() {
       checked={!(disableStickerMotion ?? false)}
       disabled={isPending}
       onChange={(e) => mutate({ disableStickerMotion: !e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+function HideBlueBuzzToggle() {
+  const { hideBlueBuzzInHeader } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="hideBlueBuzzInHeader"
+      label="Hide Blue Buzz in the header"
+      description="The header adds your Blue Buzz into one balance with the rest. Turn this on to leave it out and show only the rest. Your Blue Buzz is still yours to spend, and the account menu lists both either way."
+      checked={hideBlueBuzzInHeader ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ hideBlueBuzzInHeader: e.target.checked })}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );

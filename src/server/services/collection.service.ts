@@ -79,7 +79,11 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import {
+  DETAIL_BACKED_REASONS,
+  resolveRejectionCopy,
+} from '~/shared/constants/collection-rejection.constants';
+import type { CollectionItemRejectionReason, MediaType } from '~/shared/utils/prisma/enums';
 import {
   ChallengeSource,
   CollectionContributorPermission,
@@ -847,7 +851,8 @@ export const saveItemInCollections = async ({
 
   // Check if any featured collections are involved and validate ONCE
   const featuredCollections = collections.filter(
-    (c) => c.userId === -1 && !c.mode && c.name.includes('Featured')
+    (c) =>
+      c.userId === -1 && !c.mode && c.name.includes('Featured') && !unwrittenCollectionIds.has(c.id)
   );
   if (featuredCollections.length > 0) {
     // Validate once for all featured collections instead of in the loop
@@ -1537,6 +1542,8 @@ export type CollectionItemExpanded = {
   status?: CollectionItemStatus;
   createdAt: Date | null;
   scores?: { userId: number; score: number }[] | null;
+  rejectionReason?: CollectionItemRejectionReason | null;
+  rejectionDetail?: string | null;
 } & (ModelCollectionItem | PostCollectionItem | ImageCollectionItem | ArticleCollectionItem);
 
 // Helper to parse cursor for collection items
@@ -1639,6 +1646,8 @@ export const getCollectionItemsByCollectionId = async ({
     createdAt: Date | null;
     scores?: { userId: number; score: number }[];
     sortKey?: number;
+    rejectionReason?: CollectionItemRejectionReason | null;
+    rejectionDetail?: string | null;
   }[];
   let currentSeed: number | undefined;
 
@@ -1760,6 +1769,8 @@ export const getCollectionItemsByCollectionId = async ({
         articleId: number | null;
         status: CollectionItemStatus | null;
         createdAt: Date | null;
+        rejectionReason: CollectionItemRejectionReason | null;
+        rejectionDetail: string | null;
       }[]
     >`
       SELECT
@@ -1769,6 +1780,11 @@ export const getCollectionItemsByCollectionId = async ({
         ci."imageId",
         ci."articleId",
         ${forReview ? Prisma.sql`ci."status"::text as status,` : Prisma.sql``}
+        ${
+          forReview
+            ? Prisma.sql`ci."rejectionReason"::text as "rejectionReason", ci."rejectionDetail",`
+            : Prisma.sql``
+        }
         ci."createdAt"
       FROM "CollectionItem" ci
       ${
@@ -2284,12 +2300,8 @@ export const setCollectionAiReview = async ({
   });
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  // updateCollectionItemsStatus only notifies on Contest collections, so anywhere else the job
-  // would reject people silently — and the beggars cron deletes rejected rows within the hour.
   if (aiReview.enabled && collection.mode !== CollectionMode.Contest)
-    throw throwBadRequestError(
-      'AI review can only be enabled on Contest collections; submitters would not be notified of a rejection.'
-    );
+    throw throwBadRequestError('AI review can only be enabled on Contest collections.');
 
   const key = collectionAiReviewKey(collectionId);
   await dbWrite.keyValue.upsert({
@@ -2306,7 +2318,7 @@ export const updateCollectionItemsStatus = async ({
   userId,
   isModerator,
   isSystem,
-  reason,
+  rejectionDetail,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
@@ -2316,9 +2328,24 @@ export const updateCollectionItemsStatus = async ({
    * Never accept this from a tRPC input.
    */
   isSystem?: boolean;
-  reason?: string;
+  /**
+   * Free text shown to the submitter, for the reasons that have no fixed copy. Deliberately not
+   * part of the wire schema: a reviewer writes about someone else's entry, so only the AI review
+   * job supplies this. Never accept it from a tRPC input.
+   */
+  rejectionDetail?: string;
 }) => {
-  const { collectionId, collectionItemIds, status } = input;
+  const { collectionId, collectionItemIds, status, rejectionReason } = input;
+
+  const isRejection = status === CollectionItemStatus.REJECTED;
+  const persistedReason = isRejection ? rejectionReason ?? null : null;
+  // Only the detail-backed reasons ever read the detail back, so anything else would leave text
+  // on the row that no surface displays.
+  const persistedDetail =
+    persistedReason && DETAIL_BACKED_REASONS.has(persistedReason)
+      ? rejectionDetail?.trim() || null
+      : null;
+  const reason = resolveRejectionCopy({ reason: persistedReason, detail: persistedDetail });
 
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
@@ -2386,13 +2413,15 @@ export const updateCollectionItemsStatus = async ({
 
   // Capture prior state before the status write so we only notify on real transitions.
   const priorItems =
-    collection.mode === CollectionMode.Contest && isReviewOutcome && collectionItemIds.length > 0
+    isReviewOutcome && collectionItemIds.length > 0
       ? await dbWrite.collectionItem.findMany({
           where: { id: { in: collectionItemIds }, collectionId },
           select: {
             id: true,
             addedById: true,
             status: true,
+            rejectionReason: true,
+            rejectionDetail: true,
             imageId: true,
             articleId: true,
             modelId: true,
@@ -2407,7 +2436,9 @@ export const updateCollectionItemsStatus = async ({
       SET "reviewedById" = ${userId},
       "reviewedAt" = ${new Date()},
       "updatedAt" = ${new Date()},
-      "status" = ${status}::"CollectionItemStatus"
+      "status" = ${status}::"CollectionItemStatus",
+      "rejectionReason" = ${persistedReason}::"CollectionItemRejectionReason",
+      "rejectionDetail" = ${persistedDetail}
       WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
     `;
   }
@@ -2420,8 +2451,17 @@ export const updateCollectionItemsStatus = async ({
 
     await Promise.all(
       priorItems.map(async (item) => {
-        // Skip missing submitter, self-review, and no-op status changes.
-        if (!item.addedById || item.addedById === userId || item.status === status) return;
+        // A re-reject rewrites the stored reason, so "same status" alone is not a no-op: without
+        // the copy comparison the row would end up disagreeing with the sentence the submitter read.
+        const isNoop =
+          item.status === status &&
+          resolveRejectionCopy({
+            reason: item.rejectionReason,
+            detail: item.rejectionDetail,
+          }) === reason;
+
+        // Skip missing submitter, self-review, and no-op reviews.
+        if (!item.addedById || item.addedById === userId || isNoop) return;
 
         await createNotification({
           type: notificationType,

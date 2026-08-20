@@ -4,7 +4,6 @@ import { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -112,7 +111,6 @@ function UserModelsPage() {
             </Group>
             {viewingPublished ? (
               <>
-                <CategoryTags />
                 <ModelsInfinite
                   filters={{
                     ...queryFilters,
@@ -137,7 +135,6 @@ function UserModelsPage() {
               </>
             ) : viewingPrivate ? (
               <>
-                <CategoryTags />
                 <ModelsInfinite
                   filters={{
                     ...queryFilters,

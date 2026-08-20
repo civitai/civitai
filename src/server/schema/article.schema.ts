@@ -1,4 +1,4 @@
-import { ArticleStatus, MetricTimeframe, ReportStatus } from '~/shared/utils/prisma/enums';
+import { ArticleStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 
 import { CacheTTL, constants } from '~/server/common/constants';
@@ -153,19 +153,6 @@ export const unpublishArticleSchema = z.object({
 
 export type UnpublishArticleSchema = z.infer<typeof unpublishArticleSchema>;
 
-export const restoreArticleSchema = z.object({
-  id: z.number(),
-});
-
-export type RestoreArticleSchema = z.infer<typeof restoreArticleSchema>;
-
-export const getModeratorArticlesSchema = infiniteQuerySchema.extend({
-  username: z.string().optional(),
-  status: z.nativeEnum(ArticleStatus).optional(),
-});
-
-export type GetModeratorArticlesSchema = z.infer<typeof getModeratorArticlesSchema>;
-
 // --- Article rating review / dispute ---
 
 export type CreateArticleRatingReviewInput = z.infer<typeof createArticleRatingReviewSchema>;
@@ -173,25 +160,6 @@ export const createArticleRatingReviewSchema = z.object({
   articleId: z.number(),
   suggestedLevel: z.number().int().positive(),
   userComment: z.string().max(500).optional(),
-});
-
-export type GetArticleRatingReviewsInput = z.infer<typeof getArticleRatingReviewsSchema>;
-export const getArticleRatingReviewsSchema = z.object({
-  limit: z.number().min(1).max(100).default(50),
-  cursor: z.number().optional(),
-  status: z.nativeEnum(ReportStatus).default(ReportStatus.Pending),
-});
-
-export type ResolveArticleRatingReviewInput = z.infer<typeof resolveArticleRatingReviewSchema>;
-// Single-action resolution: every resolve pins the article at `appliedLevel`
-// (override). The Actioned/Unactioned status is no longer a client input — the
-// server derives it from `appliedLevel` vs the review's `suggestedLevel`
-// (granted vs overrode-differently). See
-// docs/superpowers/specs/2026-06-25-article-rating-review-single-action-design.md
-export const resolveArticleRatingReviewSchema = z.object({
-  reviewId: z.number(),
-  appliedLevel: z.number().int().positive(),
-  modComment: z.string().max(1000).optional(),
 });
 
 export type GetMyArticleRatingReviewInput = z.infer<typeof getMyArticleRatingReviewSchema>;

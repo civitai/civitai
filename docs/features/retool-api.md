@@ -1,4 +1,22 @@
-# Retool API (mod-callable HTTP endpoints)
+# Retool API — REMOVED (2026-08-18)
+
+> 🔴 **These endpoints no longer exist.** Retool was switched off, and `/api/mod/retool/*` together
+> with the `defineRetoolEndpoint` builder were deleted. Every route described below now returns 404.
+>
+> **What replaced them:** one endpoint per action under `/api/mod/*`, built with
+> `defineModeratorEndpoint` (`src/server/utils/moderator-endpoint.ts`). They are browsable, with their
+> schemas and a per-endpoint test form, at **`/moderator/api`**, and machine-readable at
+> `/api/mod/openapi.json`.
+>
+> **The one difference that matters if you are porting a caller:** the old family authenticated a
+> *shared* moderator API key as a Bearer token. The new one authenticates the **acting moderator** —
+> a session cookie, or that moderator's own API key — so `privileged` permissions, rate-limit buckets
+> and audit attribution are all per person rather than per key.
+>
+> This file is kept only so links to it explain themselves. Nothing below is live.
+
+---
+
 
 These endpoints replace direct Retool → Postgres writes for moderator workflows. Every action runs a typed handler, validates input with Zod, applies a per-action rate limit, and emits a ClickHouse audit event before responding.
 

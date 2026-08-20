@@ -1,7 +1,13 @@
 import { isFlipt } from '~/server/flipt/client';
-import { narrowStoreScope, type StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
+import {
+  narrowStoreScope,
+  storeScopeRank,
+  widerStoreScope,
+  type StoreVisibilityScope,
+} from '~/shared/utils/store-visibility-scope';
 import {
   recordPublicCatalogDecision,
+  type PublicCatalogOutcome,
   type StoreScopeEntrypoint,
 } from '~/server/prom/store-scope.metrics';
 
@@ -42,14 +48,23 @@ import {
  *   1. NARROW first ({@link narrowStoreScope}) — #4041's fail-closed rule is
  *      applied unchanged and FIRST, so an absent or uninterpretable value can never
  *      be mistaken for an entitlement.
- *   2. A caller who resolved a real scope (`full` for a moderator / app-dev-tester,
- *      `public-external` for the external-only cohort) is returned VERBATIM. The
- *      public grant is a FLOOR, never a ceiling: it can only ever lift a caller who
- *      resolved `none`, and it short-circuits before the kill switch is even read,
- *      so a privileged caller is unaffected by this module in every configuration.
- *   3. Everyone else — `none` — gets {@link PUBLIC_APPS_CATALOG_SCOPE}, unless the
- *      operator kill switch is on, in which case they get `none` and the endpoints
- *      go back to an empty page / 404.
+ *   2. A caller already AT OR ABOVE the floor — compared by
+ *      {@link storeScopeRank}, never by naming a scope — is returned VERBATIM and
+ *      never pays for the kill-switch eval, because the grant has nothing it could
+ *      add to them. With today's `full` floor that is exactly the `full` callers.
+ *   3. Everyone else meets the grant. If the operator kill switch is ON the grant is
+ *      withheld and the caller gets THEIR OWN resolved scope back — `none` for an
+ *      anonymous caller (empty page / 404), `public-external` for the external-only
+ *      cohort. Otherwise they get the WIDER of their own scope and
+ *      {@link PUBLIC_APPS_CATALOG_SCOPE}.
+ *
+ * 🔴 THE INVARIANT THAT REPLACES THE OLD SHORT-CIRCUIT: this module NEVER returns a
+ * scope narrower than the one the caller resolved, in any configuration of the kill
+ * switch. The pre-#4048 code got that for free by returning early for every non-
+ * `none` scope; the widening restructure has to state it and test it, because the
+ * one edit that would break it — closing the withheld branch to a literal `'none'` —
+ * looks like the obviously-correct thing to write. `widerStoreScope` on one arm and
+ * the caller's own scope on the other are what keep it true.
  *
  * ## The fail-closed invariant this preserves (read this before "simplifying" it)
  *
@@ -64,19 +79,32 @@ import {
  * the two public REST handlers and nothing else imports it.
  *
  * ⚠️ Honest consequence, stated rather than discovered later: while the grant is
- * active, `public-external` is not a narrower answer than the public floor at these
- * two endpoints — the floor is already `full`, so a caller in the external-only
- * cohort and an anonymous caller read the same catalog here. The distinction starts
- * to matter again the moment the kill switch is thrown, and it has always mattered
- * on the tRPC/page surfaces, which this module does not touch.
+ * active and the floor is `full`, a caller in the external-only cohort and an
+ * anonymous caller read the SAME catalog at these two endpoints — the cohort member
+ * is WIDENED to the floor rather than held at `public-external`. That is deliberate.
+ * The floor is public: withholding onsite listings from a signed-in cohort member
+ * that an anonymous caller can read anyway protects nothing, and doing it produced a
+ * live inversion where signing in REDUCED what `GET /api/v1/apps` returned
+ * (civitai#4048 — measured 14 items anonymous vs 4 for the cohort). The distinction
+ * between the two callers reappears the moment the kill switch is thrown — the
+ * cohort member keeps `public-external`, the anonymous caller drops to `none` — and
+ * it has always mattered on the tRPC/page surfaces, which this module does not touch.
  */
 
 /**
- * What the public catalog is readable AS. `full` — both `onsite` and `offsite`
- * approved listings, which is what `GET /api/v1/apps` has been serving publicly all
- * along (measured: 14 items, 10 onsite + 4 offsite). This constant exists so
- * narrowing the public catalog later (e.g. to `public-external`) is a one-line,
- * reviewable product decision rather than an edit threaded through two handlers.
+ * The public catalog FLOOR — what a caller with no scope of their own is lifted to.
+ * `full` — both `onsite` and `offsite` approved listings, which is what
+ * `GET /api/v1/apps` has been serving publicly all along (measured: 14 items,
+ * 10 onsite + 4 offsite). This constant exists so narrowing the public catalog later
+ * (e.g. to `public-external`) is a one-line, reviewable product decision rather than
+ * an edit threaded through two handlers.
+ *
+ * 🔴 THE RESOLVER MUST STAY CORRECT UNDER THAT ONE-LINE EDIT. Nothing below compares
+ * against a named scope; it compares RANKS against whatever this constant holds. Set
+ * it to `public-external` and a `full` caller still short-circuits as `privileged`,
+ * a `public-external` caller short-circuits too, and a `none` caller is lifted to
+ * `public-external`. The suite runs that configuration explicitly rather than
+ * trusting the reading.
  *
  * Approved-only, deploy-gated and maturity-gated filtering still applies inside the
  * listing service — `full` is a KIND predicate, not "everything in the table".
@@ -85,8 +113,12 @@ export const PUBLIC_APPS_CATALOG_SCOPE: StoreVisibilityScope = 'full';
 
 /**
  * Operator KILL SWITCH for the public catalog. Flipt flag; when it resolves TRUE the
- * public grant is withheld and an unauthenticated caller is back to an empty page /
- * 404. Privileged callers are unaffected (they never reach it).
+ * public GRANT is withheld — every caller is left with the scope they resolved for
+ * themselves and nothing more. For an unauthenticated caller that is `none`, i.e. an
+ * empty page / 404, which is the whole point of the switch. It is NOT a global
+ * blackout: a caller in the external-only cohort still reads `public-external`
+ * through it, and a `full` caller never reaches it at all. The switch withdraws the
+ * public floor; it cannot take away an entitlement the caller already had.
  *
  * 🔴 THE POLARITY IS THE WHOLE POINT — it is a DISABLE flag, not an ENABLE flag.
  * `isFlipt` returns `false` for a flag that does not exist and for an unreachable
@@ -119,6 +151,49 @@ async function isPublicAppsCatalogDisabled(): Promise<boolean> {
 }
 
 /**
+ * The decision itself, with the FLOOR and the kill-switch read passed in — the whole
+ * of the policy, and the only copy of it.
+ *
+ * The floor is a PARAMETER rather than a closed-over constant for one reason: the
+ * constant is documented as a one-line product edit, and a test that cannot run the
+ * narrowed-floor configuration against THIS function has to re-implement the policy
+ * to check it, which pins a copy instead of the code. `resolvePublicAppsCatalogScope`
+ * supplies {@link PUBLIC_APPS_CATALOG_SCOPE}; nothing else should.
+ *
+ * @param readKillSwitch a THUNK, not a boolean — the privileged branch must return
+ *   without evaluating it, so a caller at or above the floor pays no Flipt round trip
+ *   in any configuration. Passing an already-awaited boolean would quietly lose that.
+ * @returns the scope to serve AND the outcome to record, so the counter cannot drift
+ *   out of step with the branch that was actually taken.
+ */
+export async function decidePublicCatalogScope(
+  resolved: unknown,
+  floor: StoreVisibilityScope,
+  readKillSwitch: () => Promise<boolean>
+): Promise<{ scope: StoreVisibilityScope; outcome: PublicCatalogOutcome }> {
+  // 1. #4041's rule, first and unchanged: anything uninterpretable becomes `none`.
+  const scope = narrowStoreScope(resolved);
+  // 2. Already at or above the floor ⇒ the grant has nothing to add. Compared by
+  //    RANK, not by naming a scope, so this stays correct if the floor is narrowed —
+  //    and so a privileged caller never pays for the kill-switch read below.
+  if (storeScopeRank(scope) >= storeScopeRank(floor)) {
+    return { scope, outcome: 'privileged' };
+  }
+  // 3. The grant, unless an operator has withheld it. 🔴 WITHHELD RETURNS THE
+  //    CALLER'S OWN SCOPE, NEVER A LITERAL `'none'`: the switch withdraws the public
+  //    FLOOR, it does not revoke an entitlement the caller resolved for themselves.
+  //    Writing `scope: 'none'` here narrows the external-only cohort on a surface
+  //    they are entitled to read, which is the invariant stated in the module doc.
+  if (await readKillSwitch()) {
+    return { scope, outcome: 'withheld' };
+  }
+  // 4. Lift to the floor — `widerStoreScope`, so this can only ever RAISE the
+  //    caller's scope. A plain `scope: floor` would be a NARROWING for any caller
+  //    above a later-narrowed floor.
+  return { scope: widerStoreScope(scope, floor), outcome: 'granted' };
+}
+
+/**
  * Resolve what the PUBLIC REST catalog endpoints may serve this caller.
  *
  * @param resolved the raw value from `resolveStoreVisibilityScope` — typed `unknown`
@@ -131,20 +206,11 @@ export async function resolvePublicAppsCatalogScope(
   resolved: unknown,
   entrypoint: StoreScopeEntrypoint
 ): Promise<StoreVisibilityScope> {
-  // 1. #4041's rule, first and unchanged: anything uninterpretable becomes `none`.
-  const scope = narrowStoreScope(resolved);
-  // 2. A caller who resolved a real scope keeps it verbatim — and never pays for the
-  //    kill-switch eval, so this module cannot narrow, widen or slow a privileged
-  //    read in any configuration.
-  if (scope !== 'none') {
-    recordPublicCatalogDecision('privileged', entrypoint);
-    return scope;
-  }
-  // 3. The public floor, unless an operator has withheld it.
-  if (await isPublicAppsCatalogDisabled()) {
-    recordPublicCatalogDecision('withheld', entrypoint);
-    return 'none';
-  }
-  recordPublicCatalogDecision('granted', entrypoint);
-  return PUBLIC_APPS_CATALOG_SCOPE;
+  const { scope, outcome } = await decidePublicCatalogScope(
+    resolved,
+    PUBLIC_APPS_CATALOG_SCOPE,
+    isPublicAppsCatalogDisabled
+  );
+  recordPublicCatalogDecision(outcome, entrypoint);
+  return scope;
 }

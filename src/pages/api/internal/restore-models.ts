@@ -25,7 +25,11 @@ export default JobEndpoint(async function (req: NextApiRequest, res: NextApiResp
     WHERE mv."modelId" IN (${modelIds.join(',')})
     AND jsonb_typeof(mv.meta->'unpublishedAt') != 'undefined'
     AND (mv.meta->>'unpublishedReason') = 'duplicate'
-    AND mv."status" = 'Unpublished'
+    -- Both encodings: take-downs before the single-statement rewrite left the version at
+    -- 'Unpublished' with a reason in meta; after it, a reasoned take-down writes
+    -- 'UnpublishedViolation'. Matching only the first silently restores an arbitrary subset —
+    -- the older rows — and reports 200 either way.
+    AND mv."status" IN ('Unpublished', 'UnpublishedViolation')
     GROUP BY 1, 2
   `);
 

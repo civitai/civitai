@@ -124,10 +124,27 @@ export const getServerSideProps = createServerSideProps({
 });
 
 /**
- * Derive a coarse sentiment label from the recommend percentage. Inlined
- * here — no shared helper exists for this on the AI-model side (they show
- * raw thumbs counts instead of a sentiment band). Bands mirror the common
- * Steam-style scale, scaled down to fit the typical Civitai review volume.
+ * Derive a coarse sentiment label from the recommend percentage. Bands mirror the
+ * common Steam-style scale, scaled down to fit the typical Civitai review volume.
+ *
+ * 🔴 DELIBERATELY NOT the shared ladder in `~/utils/rating-label` (used by the model
+ * version page and the app-store listing detail), and this is a decision that was
+ * measured rather than a helper nobody noticed. Two structural differences:
+ *
+ *   1. That ladder takes a 0–1 proportion; this takes an integer PERCENT, which is
+ *      what the caller already computes for the badge beside this label.
+ *   2. That ladder's WORD widens with the review COUNT — "Overwhelmingly …" is
+ *      withheld until 500 reviews. This one's word depends on the percentage alone,
+ *      with a single `< 5` insufficient-data floor ("Too few reviews", a label the
+ *      shared ladder has no band for).
+ *
+ * Across the whole `pct × count` grid the two agree except at the extremes, and they
+ * agree COMPLETELY once the count clears ~500 — so difference (2) is the entire
+ * divergence, and it only bites below the volume a 3D model reaches. Adopting the
+ * shared ladder here would re-word live verdicts (6/6 recommends: "Overwhelmingly
+ * positive" → "Positive"). The decision, the grid measurement and the reason it cannot
+ * be folded into one band set are recorded in `src/utils/__tests__/rating-label.test.ts`
+ * beside the allowlist entry that keeps this function visible to that guard.
  */
 function sentimentLabel(recommendPct: number, ratingCount: number): string {
   if (ratingCount < 5) return 'Too few reviews';

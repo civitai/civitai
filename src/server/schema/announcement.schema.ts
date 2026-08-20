@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { DomainColor } from '~/shared/utils/prisma/enums';
+import { imageSchema } from '~/server/schema/image.schema';
 
 export const domainColorEnum = z.enum(DomainColor);
 
@@ -71,5 +72,69 @@ export const getAnnouncementsPagedSchema = paginationSchema.extend({
 
 export type GetCurrentAnnouncementsSchema = z.infer<typeof getCurrentAnnouncementsSchema>;
 export const getCurrentAnnouncementsSchema = z.object({
+  domain: domainColorEnum.optional(),
+});
+
+/**
+ * A creator's own announcement.
+ *
+ * 🔴 This schema is the boundary that keeps a creator off the sitewide surfaces, and it
+ * does it by omission: there is no `metadata.type` here, so `site` / `generator` /
+ * `training` are not expressible on this path at all — not rejected by a check someone can
+ * later loosen. `targetUserIds` and `notifyTargetedUsers` are absent for the same reason;
+ * a creator's audience is their followers, resolved at send time, never a supplied list.
+ *
+ * `domain` IS creator-settable: DomainColor selects an audience, it does not widen reach.
+ */
+export const upsertCreatorAnnouncementSchema = z.object({
+  id: z.number().optional(),
+  title: z.string().trim().min(1).max(120),
+  content: z.string().trim().min(1).max(5000),
+  emoji: z.string().max(8).optional(),
+  color: z.string().max(32).optional(),
+  domain: z.array(domainColorEnum).nonempty().default([DomainColor.all]),
+  startsAt: z.date().nullish(),
+  endsAt: z.date().nullish(),
+  // No `disabled`. Nothing can distinguish a row a creator hid from one a moderator took
+  // down, so accepting the field lets a creator restore a moderated announcement by
+  // sending `disabled: false` — for free, since that path spends no slot. Creators end an
+  // announcement by deleting it or by setting an endsAt.
+  /** Shows on the author's profile only: no feed, no notification, no allowance spent. */
+  profileOnly: z.boolean().default(false),
+  coverImage: imageSchema.optional(),
+  action: z
+    .object({
+      // An absolute URL, or a site-relative path so one announcement resolves on whichever
+      // domain the viewer is on (/models/123 works on both .com and .red).
+      //
+      // 🔴 The relative branch is deliberately `/` followed by something that is not `/`.
+      // A scheme-relative `//evil.com` is a fully external link that merely looks relative,
+      // and `javascript:` / `data:` URIs are excluded by requiring http(s) on the absolute
+      // branch rather than by blacklisting schemes.
+      link: z
+        .string()
+        .trim()
+        .refine(
+          (value) =>
+            /^\/(?!\/)/.test(value) ||
+            (() => {
+              try {
+                return ['http:', 'https:'].includes(new URL(value).protocol);
+              } catch {
+                return false;
+              }
+            })(),
+          { message: 'Enter a full https:// link or a path beginning with /' }
+        ),
+      linkText: z.string().trim().min(1).max(40),
+    })
+    .optional(),
+});
+export type UpsertCreatorAnnouncementSchema = z.infer<typeof upsertCreatorAnnouncementSchema>;
+
+export const getCreatorAnnouncementsSchema = z.object({
+  userId: z.number(),
+  limit: z.number().min(1).max(50).default(10),
+  // Stamped from the request host by applyRequestDomainColor, never sent by the client.
   domain: domainColorEnum.optional(),
 });

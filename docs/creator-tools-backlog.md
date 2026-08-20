@@ -57,14 +57,22 @@ they are a decision or a verification, not a known way in.
       generation cost is the only clearly displayed cost. A creator viewing their own model cannot
       tell whether it is under paid access or early access, or at what price, without opening the
       edit form. Show access type and price on the model page itself, for the owner at minimum.
-- [ ] **Keep the price visible on the download action.** The price a buyer will pay should remain
-      readable on the Download button rather than appearing only mid-purchase, so a creator can
-      confirm at a glance that a model is priced as intended.
-- [ ] **Verify paid-access sales are classified correctly in creator analytics.** Sales of
-      paid-access-only models were reported appearing under Early Access in the analytics breakdown.
-      The misclassification appears to have stopped for new sales but was never confirmed fixed.
-  - [ ] Confirm current sales classify correctly for a model with paid access and no early access.
-  - [ ] Decide whether historical rows carrying the wrong classification are corrected or left.
+- [x] **Keep the price visible on the download action.** The price badge was rendered only when the
+      *viewer* had to pay, and an owner always has download permission — so a creator could never see
+      their own model's price on its own page. The button now also takes an informational listed
+      price, shown to the owner and moderators with a "Buyers pay N Buzz" tooltip so it cannot be
+      misread as a charge to them.
+- [x] **Verify paid-access sales are classified correctly in creator analytics.** Confirmed fixed.
+      Permanent (paid) access and timed early access are now distinguished by both a transaction id
+      prefix and a description prefix, and analytics classifies on those.
+  - [x] Current sales classify correctly: permanent-access sales appear from the cutover instant
+        onward and carry their own marker, so a paid-access-only model no longer reports early
+        access.
+  - [x] Historical rows are resolved at read time rather than rewritten, using the gate the version
+        carries now. Only sales in the window between permanent access becoming purchasable and the
+        ledger learning to name it are ambiguous; that window is closed and cannot grow. The one
+        case still attributed wrongly is a version that ran early access and later switched to
+        permanent — its older revenue moves into the permanent column.
 
 ## P2 — cross-domain publishing and collections
 
@@ -80,6 +88,18 @@ they are a decision or a verification, not a known way in.
       represents a submitted model, so a model whose first image is rated above the collection's
       limit is rejected on presentation grounds even when it has qualifying images. This is the
       direct cause of otherwise-valid SFW event submissions being turned away.
+- [ ] **Let a model present as SFW while its gallery may carry mature content.** A creator
+      building on a base model whose licence restricts mature use wants to publish and promote the
+      model as SFW — SFW name, SFW cover, SFW official images — without that presentation being
+      contradicted by what the community later posts to its gallery. Two capabilities are missing: a
+      deliberate SFW badge that states how the model is presented rather than being inferred from
+      its images, and the ability to suppress mature images in the gallery of a model published
+      under a licence that forbids them. The second is only needed for models carrying a provider
+      badge, so scope it to those rather than building a general gallery control.
+  - [ ] Answer the creator-facing question first, separately from any of the above: whether
+        publishing a mature derivative of a licence-restricted base model puts the creator's own
+        account at risk. It is a policy answer, it needs no code, and it is currently blocking
+        creators from starting the work.
 
 ## P3 — model management friction
 
@@ -97,8 +117,9 @@ they are a decision or a verification, not a known way in.
   - [x] Reaction notifications need no filter: they are milestones ("your comment reached 5
         reactions"), aggregated with no acting user to compare against.
 
-- [ ] **Identify the version in the model-version tooltip.** The tooltip does not include the
-      version name, so a creator with many versions of one model must open each to tell them apart.
+- [x] **Identify the version in the model-version tooltip.** Already fixed in Creator Studio: the
+      truncating name cell's tooltip carries the full row label including the version name, which is
+      the only thing distinguishing two rows of the same model when grouping by version.
 - [ ] **Persist model upload settings between models.** The publishing settings block resets on every
       new model. Remember the previous values, or support named templates, so a creator releasing
       models repeatedly does not re-enter the same configuration each time.
@@ -107,12 +128,18 @@ they are a decision or a verification, not a known way in.
       set; optional follower notification on launch; a per-month cap on promotions per creator so
       notifications cannot be used as a spam channel. Optionally, automatic percentage-based price
       decay after a model has been listed N days, with a price-drop notification.
-- [ ] **Let creators filter the balance display to earned Buzz only.** The combined balance in the
-      top-right makes it hard to read earnings at a glance. Offer a setting to show only the earned
-      (yellow) balance.
+- [x] **Let creators filter the balance display to earned Buzz only.** Already shipped: an account
+      setting hides the non-earned balance from the header, leaving only the earned figure. It
+      predates the request, so the ask is really a discoverability problem — creators wrote their own
+      browser scripts for a toggle that already existed.
 - [ ] **Add a models-sold-today counter.** Creators track daily sales manually. A running count for
       the current day, visible without opening analytics, covers the need.
-- [ ] **Add video categories to the leaderboards.** Video creators have no leaderboard to place on.
+- [ ] **Add video leaderboards, and all-time leaderboards.** Video creators have no leaderboard to
+      place on at all. Requested shape: a video board split SFW / mature over the trailing 30 days,
+      and an equivalent split for video *model* creators — splitting further by individual model was
+      judged too granular. Separately, every leaderboard today covers a trailing 30 days and there is
+      no all-time board of any kind, so creators with a long back catalogue have nowhere that
+      reflects it. The all-time request is independent of video and can ship on its own.
 
 ## P4 — discoverability and reach
 
@@ -138,9 +165,14 @@ they are a decision or a verification, not a known way in.
       creators want to hide items they never use. Either per-item visibility in settings, or a
       denser layout. Related: the color coding on those entries no longer maps to anything
       meaningful and should be re-derived or dropped.
-- [ ] **Expose exact Buzz balances where precision matters.** The abbreviated display rounds to whole
-      millions, so large balances cannot be read precisely. The underlying account endpoint already
-      returns the exact figure.
+- [ ] **Show the exact balance on hover in the header.** Mostly built already: the balance component
+      takes an "abbreviate" switch, and its tooltip lists the exact figure per account type. The user
+      menu already uses both. The gap is only that the header balance passes no tooltip at all, so
+      hovering the top-right number gives nothing — which is where large balances get read as whole
+      millions.
+  - [ ] Treat this as a real change, not a prop addition: the header balance renders inside the user
+        menu's popover trigger, so adding a hover overlay there has to be checked against the menu
+        still opening on click.
 - [ ] **Document and price heavier training via the API.** Programmatic LoRA training is already
       possible through the orchestration API, but the path is not discoverable from creator-facing
       docs, and there is no offering for larger jobs such as checkpoint training at a premium rate.

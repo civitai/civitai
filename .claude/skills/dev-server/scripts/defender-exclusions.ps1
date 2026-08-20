@@ -8,12 +8,17 @@
 
 #Requires -RunAsAdministrator
 
-# Add-MpPreference accepts a path that does not exist, so a wrong root here reports success and
-# excludes nothing. Override with -ReposRoot on any machine that doesn't use this layout.
-param([string]$ReposRoot = 'C:\Dev\Repos\work')
+# Defaults to the repo this script lives in. A hardcoded root was wrong on any machine using a
+# different layout, and Add-MpPreference accepts a path that does not exist — so it reported success
+# and excluded nothing. Pass -ReposRoot to cover a whole repos parent directory instead.
+param([string]$ReposRoot = (& git -C $PSScriptRoot rev-parse --show-toplevel))
+
+if (-not $ReposRoot -or -not (Test-Path $ReposRoot)) {
+  throw "ReposRoot '$ReposRoot' does not exist. Add-MpPreference would accept it silently and exclude nothing."
+}
 
 $paths = @(
-  $ReposRoot,
+  (Resolve-Path $ReposRoot).Path,
   "$env:LOCALAPPDATA\pnpm",
   "$env:LOCALAPPDATA\pnpm-store"
 )

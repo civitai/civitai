@@ -749,11 +749,16 @@ export async function processTimedUnmutes(): Promise<{ unmutedCount: number }> {
       // evaluateStrikeEscalation handles re-muting if points are still high.
       // Only manually unmute if escalation returned 'none' (points < 2) or 'unmuted'.
       if (action === 'none') {
+        // The mute it protected is over, so the flag goes with it — otherwise a later strike
+        // escalation on the same account would find a stale `manualMute` and refuse to de-escalate.
+        const existing = await dbRead.user.findUnique({ where: { id }, select: { meta: true } });
+        const meta = (existing?.meta ?? {}) as Record<string, unknown>;
         await updateUserById({
           id,
           data: {
             muted: false,
             muteExpiresAt: null,
+            meta: { ...meta, manualMute: false },
           },
           updateSource: 'timed-unmute',
         });

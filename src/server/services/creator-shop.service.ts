@@ -11,10 +11,12 @@ import {
 } from '~/server/services/cosmetic.service';
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
 import {
+  REJECTED_IS_FINAL,
   appendItemHistory,
   buildCosmeticData,
   creatorGrantRemaining,
   patchCosmeticData,
+  wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
 import { stickerEconomicsFromCosmeticData } from '~/shared/utils/sticker-token';
@@ -438,6 +440,9 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       title: true,
       meta: true,
       addedById: true,
+      // Archiving overwrites `status`, so on the restore path this column is the
+      // only thing left on an item that predates the history log.
+      rejectionReason: true,
       // Prior values, so an edit can record what it moved from.
       description: true,
       availableQuantity: true,
@@ -478,7 +483,7 @@ export const updateCreatorShopItem = async ({
     throw throwBadRequestError('Packs are edited through the pack editor');
   // Rejected is terminal; archived items must be restored before editing.
   if (existing.status === CosmeticShopItemStatus.Rejected)
-    throw throwBadRequestError('Rejected items cannot be edited');
+    throw throwBadRequestError(REJECTED_IS_FINAL);
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be edited');
 
@@ -825,6 +830,10 @@ export const archiveCreatorShopItem = async ({
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Item is already archived');
+  // Archiving is how a rejection used to be laundered: Archived overwrites the
+  // status, and restoring re-enters review with the verdict cleared.
+  if (existing.status === CosmeticShopItemStatus.Rejected)
+    throw throwBadRequestError(REJECTED_IS_FINAL);
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: { status: CosmeticShopItemStatus.Archived, archivedAt: new Date() },
@@ -876,6 +885,10 @@ export const setCreatorShopItemListed = async ({
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Restore this item before changing its listing');
+  // Listing resets an item to PendingReview and clears the verdict, so without
+  // this a rejected item is one call away from being back in the queue unedited.
+  if (existing.status === CosmeticShopItemStatus.Rejected)
+    throw throwBadRequestError(REJECTED_IS_FINAL);
 
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
@@ -928,6 +941,18 @@ export const unarchiveCreatorShopItem = async ({
   };
   if (meta.takedown)
     throw throwBadRequestError('This item was taken down and cannot be restored to sale');
+  // Archiving a rejected item is blocked now, but items archived before that was
+  // true still exist, and restoring one would clear its verdict. Nothing appends
+  // to an archived item's history, so a verdict recorded there is still the last
+  // one — it cannot have aged out of the cap while the item sat archived.
+  //
+  // An item old enough to have no history at all leaves only `rejectionReason`,
+  // which a change request sets too. That is not enough to convict, so it is
+  // refused for the creator (who must never be able to resubmit a rejection) and
+  // left to a moderator, who can read the reason and decide.
+  const rejectionUnprovable = !meta.history?.length && !!existing.rejectionReason;
+  if (wasLastReviewARejection(meta.history) || (rejectionUnprovable && !isModerator))
+    throw throwBadRequestError(REJECTED_IS_FINAL);
   return dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
@@ -1725,6 +1750,10 @@ export const reviewCreatorShopItem = async ({
   if (!item) throw throwNotFoundError('Shop item not found');
   if (item.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be reviewed');
+  // Rejected is deliberately NOT blocked here: this procedure is
+  // moderatorProcedure, so a second verdict is the one way back from a mistaken
+  // rejection, and it stays out of the creator's hands. Every path a creator can
+  // reach — edit, list, archive, restore — refuses a rejected item.
   if (action === 'revert' && item.status !== CosmeticShopItemStatus.Published)
     throw throwBadRequestError('Only published items can be reverted to pending review');
 

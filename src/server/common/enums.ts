@@ -61,6 +61,7 @@ export enum PostSort {
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',
+  Oldest = 'Oldest',
 }
 
 export enum ImageType {
@@ -140,6 +141,8 @@ export enum SignalMessages {
   ChatNewMessage = 'chat:new-message',
   ChatNewRoom = 'chat:new-room',
   ChatTypingStatus = 'chat:typing-status',
+  ChatMessageDeleted = 'chat:message-deleted',
+  ChatMessageUpdated = 'chat:message-updated',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
@@ -377,6 +380,10 @@ export enum BlocklistType {
   // false-flag `needsReview='minor'`. Edited by moderators at /moderator/blocklists.
   PromptBenignPhrase = 'PromptBenignPhrase',
   NegativeBenignPhrase = 'NegativeBenignPhrase',
+  // Single words that innocently CONTAIN a profanity token ("spreadsheet" holds
+  // "spread"). Suppresses a substring match from the profanity filter rather than
+  // being blanked from the text — different matcher to the two phrase lists above.
+  ProfanityBenignWord = 'ProfanityBenignWord',
 }
 
 export enum ToolSort {
@@ -432,17 +439,6 @@ export enum ExternalModerationType {
   Clavata = 'Clavata',
 }
 
-export enum ModReviewType {
-  Minor = 'minor',
-  POI = 'poi',
-  Reported = 'reported',
-  CSAM = 'csam',
-  BlockedTags = 'tag',
-  NewUsers = 'newUser',
-  Appeals = 'appeal',
-  RuleViolations = 'modRule',
-  RemixSource = 'remixSource',
-}
 
 export enum MarketplacePaymentMethod {
   CashApp = 'CashApp',

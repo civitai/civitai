@@ -14,11 +14,17 @@
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { dirname, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = resolve(repoRoot, '.claude/skills/dev-server/cli.mjs');
-const DAEMON = 'http://127.0.0.1:9444';
+// The queue module owns the one rule that decides pass from fail. It is imported dynamically
+// rather than at the top of the file because it lives under `.claude/`, which the direct path
+// must keep working without: a static import would fail the whole script when the skill is absent.
+const QUEUE = resolve(repoRoot, '.claude/skills/dev-server/scripts/test-queue.mjs');
+// Same override the CLI honours. Without it this file can only ever talk to the shared daemon,
+// which is why the verdict below had no test: there was no way to stand a fake one up beside it.
+const DAEMON = `http://127.0.0.1:${parseInt(process.env.DEV_DAEMON_PORT || '9444', 10)}`;
 const POLL_MS = 2000;
 
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -74,7 +80,24 @@ function ensureDaemon() {
   });
 }
 
+/**
+ * The queue keeps a bounded window of a run's output. Dropping the oldest lines is fine; dropping
+ * them SILENTLY is not, because a truncated log is indistinguishable from a complete one — that is
+ * how a clipped log gets quoted as a full-suite pass. Say the number out loud instead.
+ */
+function warnIfLogsDropped(state) {
+  if (!state.logsDropped) return;
+  console.error(
+    `WARNING: this log is INCOMPLETE — the queue dropped the oldest ${state.logsDropped} of ` +
+      `${state.logIndex} output lines. Do not read the text above as the whole run.`
+  );
+}
+
 async function runQueued(args) {
+  // Resolved once, up front: this is the module that decides pass from fail, and a waiter that
+  // discovers it cannot load that rule at the moment it must apply it has no verdict to give.
+  const { exitCodeFor } = await import(pathToFileURL(QUEUE).href);
+
   let run;
   try {
     run = await post('/test-runs', { worktree: repoRoot, args });
@@ -123,8 +146,12 @@ async function runQueued(args) {
     if (state.status !== 'queued' && state.status !== 'running') {
       if (state.status !== 'completed')
         console.error(`Run ${state.status}${state.error ? `: ${state.error}` : ''}`);
-      // Only a completed run that exited 0 is a pass; a cancelled or timed-out run can carry a 0.
-      process.exit(state.status === 'completed' && state.exitCode === 0 ? 0 : state.exitCode || 1);
+      warnIfLogsDropped(state);
+      // The verdict comes from the queue's own `exitCodeFor`, never from a second copy of the rule
+      // here. The copy that used to live on this line read `state.exitCode || 1`, which passes a
+      // signal-killed run's recorded -1 straight through: `process.exit(-1)` gives the shell 255,
+      // the exact number `exitCodeFor` exists to avoid, and `[ $? -eq 1 ]` misreads it.
+      process.exit(exitCodeFor(state));
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
@@ -136,6 +163,6 @@ if (
 ) {
   const args = process.argv.slice(2);
   const decision = queueDecision(args, process.env);
-  if (decision.queue && existsSync(CLI)) runQueued(args);
+  if (decision.queue && existsSync(CLI) && existsSync(QUEUE)) runQueued(args);
   else runDirect(args);
 }

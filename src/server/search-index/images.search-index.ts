@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import type { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
+import type { SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { clickhouse } from '~/server/clickhouse/client';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
@@ -17,6 +17,7 @@ import {
   userBasicCache,
 } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { imagesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
@@ -54,23 +55,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'stats.tippedAmountCountAllTime',
   ];
 
-  const filterableAttributes: FilterableAttributes = [
-    'id',
-    'createdAtUnix',
-    'tagNames',
-    'user.username',
-    'baseModel',
-    'aspectRatio',
-    'nsfwLevel',
-    'combinedNsfwLevel',
-    'type',
-    'toolNames',
-    'techniqueNames',
-    'flags.promptNsfw',
-    'poi',
-    'minor',
-  ];
-
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
       searchableAttributes
@@ -92,10 +76,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   if (
-    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+    JSON.stringify(imagesFilterableAttributes.sort()) !==
+    JSON.stringify(settings.filterableAttributes)
   ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-      filterableAttributes
+      imagesFilterableAttributes
     );
 
     console.log(

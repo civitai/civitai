@@ -33,7 +33,6 @@ import {
   IconEdit,
   IconExclamationMark,
   IconFlag,
-  IconInfoCircle,
   IconLock,
   IconLockOff,
   IconPlus,
@@ -124,6 +123,7 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
@@ -520,17 +520,34 @@ export default function ModelDetailsV2({
   });
   const handleUnpublishModel = async () => {
     try {
-      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch({ id });
+      // The client's global default is `staleTime: Infinity` (`src/utils/trpc.ts`), and `fetchQuery`
+      // applies it — so without this the dialog can show a Buzz figure cached from an earlier open.
+      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch(
+        { id },
+        { staleTime: 0 }
+      );
+      const exemptNote =
+        refund.exemptBuyerCount > 0
+          ? ` ${refund.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access and are not refunded.`
+          : '';
       if (refund.purchaseCount > 0) {
         openConfirmModal({
           title: 'Refund early access buyers',
           children: `${
             refund.buyerCount
-          } member(s) purchased early access to this model. Unpublishing it now will refund them a total of ${refund.totalBuzz.toLocaleString()} Buzz from your account and revoke their early access. Do you want to continue?`,
+          } member(s) bought early access to this model in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing it now will refund them a total of ${refund.totalBuzz.toLocaleString()} Buzz from your account and revoke their early access.${exemptNote} Do you want to continue?`,
           centered: true,
           labels: { confirm: 'Refund & Unpublish', cancel: 'Cancel' },
           confirmProps: { color: 'yellow' },
           onConfirm: () => unpublishModelMutation.mutate({ id, refundEarlyAccess: true }),
+        });
+      } else if (refund.exemptBuyerCount > 0) {
+        openConfirmModal({
+          title: 'Unpublish model',
+          children: `${refund.exemptBuyerCount} member(s) bought early access to this model, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access to the model and are not refunded, and nothing is taken from your account. Do you want to continue?`,
+          centered: true,
+          labels: { confirm: 'Unpublish', cancel: 'Cancel' },
+          onConfirm: () => unpublishModelMutation.mutate({ id }),
         });
       } else {
         unpublishModelMutation.mutate({ id });
@@ -1073,16 +1090,6 @@ export default function ModelDetailsV2({
                         )}
                         {currentUser && isModerator && (
                           <>
-                            {env.NEXT_PUBLIC_MODEL_LOOKUP_URL && (
-                              <Menu.Item
-                                component="a"
-                                target="_blank"
-                                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                                href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
-                              >
-                                Lookup Model
-                              </Menu.Item>
-                            )}
                             {published && (
                               <Menu.Item
                                 color="yellow"

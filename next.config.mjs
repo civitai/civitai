@@ -16,6 +16,51 @@ const withBundleAnalyzer = bundlAnalyzer({
 });
 
 /**
+ * Runtime files of every installed `@swc/helpers`, force-included into the standalone output.
+ *
+ * WHY. `output: 'standalone'` ships the subset @vercel/nft traced, not `node_modules`. nft
+ * resolves a bare specifier under the `require`/`default` conditions; Node (>= 22.10)
+ * additionally honours `module-sync` for a CJS `require`. When a package's `exports` map points
+ * those two at different files, the build traces one and the running process asks for the other.
+ *
+ * Next's own `dist/shared/lib/constants.js` does
+ * `require('@swc/helpers/_/_interop_require_default')`, reached from the generated `server.js`
+ * via `next` -> `config.js` -> `constants.js` — i.e. before any application code. On
+ * @swc/helpers 0.5.15 (next 16.3.0) that subpath exported only `{ import, default }` and both
+ * resolvers landed on `cjs/_interop_require_default.cjs`. 0.5.17+ added `module-sync` ->
+ * `esm/_interop_require_default.js`, and next 16.3.1 bumped its dependency to 0.5.23 — so the
+ * image shipped `cjs/` only and every pod crash-looped on
+ * `MODULE_NOT_FOUND .../@swc/helpers/esm/_interop_require_default.js` (civitai#4075) with the
+ * build, the unit suite, typecheck, ESLint and the compiled-branch gate all green.
+ *
+ * BOTH condition branches of EVERY copy, not the one file missing today: which helper Next
+ * requires, and which branch each resolver picks, are upstream details that move. ~950 KB per
+ * copy (426 files across the two copies installed today). Version- and hash-agnostic globs —
+ * `@swc+helpers@*` covers whatever the next bump resolves to, and the flat form covers a hoisted
+ * (non-pnpm) layout. A non-matching glob is a silent no-op, which is exactly why this is NOT the
+ * guard: the guard is
+ * `scripts/ci/assert-standalone-boot-graph.mjs`, run against the runtime filesystem in the
+ * Dockerfile's runner stage, which fails the build if this ever stops landing the files.
+ *
+ * ATTACHED TO EXISTING ROUTE KEYS ON PURPOSE. This is a process-wide boot dependency, not a
+ * route's, and `copyTracedFiles` unions every entry's traced set into the single
+ * `.next/standalone` node_modules — so any one entry carrying it is enough. A `'**'` key does
+ * match every route (keys are picomatch'd with `contains: true`), but it would make all 572
+ * entries read/parse/rewrite their `.nft.json` concurrently — 826 MB of JSON in one
+ * `Promise.all` — on a build already tuned against OOM. These keys are API routes: always
+ * present, never statically prerendered (an entry in `staticPages` has its includes skipped),
+ * and already include-keyed, so they cost no additional entry. Three of them for redundancy: if
+ * one route is ever renamed or removed the files still ship, and if all three go the boot gate
+ * turns the build red rather than letting a broken image out.
+ */
+const swcHelpersRuntimeFiles = [
+  './node_modules/@swc/helpers/esm/**/*',
+  './node_modules/@swc/helpers/cjs/**/*',
+  './node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/esm/**/*',
+  './node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/cjs/**/*',
+];
+
+/**
  * Don't be scared of the generics here.
  * All they do is to give us autocompletion when using this.
  *
@@ -153,6 +198,7 @@ export default defineNextConfig(
       '@civitai/telemetry',
       '@civitai/auth',
       '@civitai/notifications',
+      '@civitai/moderation',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
@@ -192,8 +238,8 @@ export default defineNextConfig(
       '/safety': ['./src/static-content/**/*'],
       '/region-blocked': ['./src/static-content/**/*'],
       '/content/[[...slug]]': ['./src/static-content/**/*'],
-      '/api/trpc/[trpc]': ['./src/static-content/**/*'],
-      '/api/v1/content/[[...slug]]': ['./src/static-content/**/*'],
+      '/api/trpc/[trpc]': ['./src/static-content/**/*', ...swcHelpersRuntimeFiles],
+      '/api/v1/content/[[...slug]]': ['./src/static-content/**/*', ...swcHelpersRuntimeFiles],
       // /api/og uses next/og's `ImageResponse`, which on the nodejs runtime
       // lazily require()s `next/dist/compiled/@vercel/og/index.node.js` (plus its
       // resvg/yoga WASM + fonts). @vercel/nft cannot follow that dynamic require,
@@ -209,6 +255,7 @@ export default defineNextConfig(
       '/api/og': [
         './node_modules/next/dist/compiled/@vercel/og/**/*',
         './node_modules/.pnpm/next@*/node_modules/next/dist/compiled/@vercel/og/**/*',
+        ...swcHelpersRuntimeFiles,
       ],
     },
     experimental: {
@@ -230,6 +277,24 @@ export default defineNextConfig(
       //
       // Off because the builder's memory ceiling is now enforced and that ~+33% peak RSS is
       // what puts the release build over it. Re-enable only with a measured peak-RSS margin.
+      //
+      // SECOND REASON THIS FLAG MATTERS, and the reason to revisit it: the emitted server
+      // chunk COUNT is what drives the intermittent `Two or more assets with different
+      // content were emitted to the same output path` build failure. Turbopack names a
+      // server chunk `<namespace>_<7-char-hash>._.js`, and that hash's first character is
+      // bounded in practice to {0,1,2} — so the usable space is ~2 x 38^6, not 38^7, and
+      // the failure is an ordinary birthday collision between two UNRELATED chunks. It is
+      // deterministic for a given module graph (so a rebuild of the same commit fails
+      // again), and it moves to a different pair whenever the graph changes at all — which
+      // is why bisecting finds a commit but never a responsible file.
+      //
+      // Turning this flag ON is the only lever here that attacks the mechanism, because
+      // P(collision) grows with the SQUARE of the chunk count. Measured on one tree:
+      // 24,552 server chunks with the flag off vs 7,122 with it on (-71%).
+      // See claudedocs/turbopack-chunk-hash-collision-2026-08-18.md before flipping it —
+      // in particular, this flag is BROKEN on Next 16.3.0 (it fails the build with 19
+      // `__turbopack_context__.a is not a function` PostCSS errors) and only usable from
+      // 16.3.1 onward.
       turbopackServerSideNestedAsyncChunking: false,
       // Not the same as omitting it: Next 16.3.0 defaults this to true, and turbopack-build
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in

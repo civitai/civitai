@@ -250,12 +250,16 @@ export const placementNotifications = createNotificationProcessor({
    * The submitter's side of the same decision. They paid and then waited, and
    * without this the only signal that anything happened is their Buzz balance.
    *
-   * Approve and decline share one type so the two cannot disagree about what
-   * counts as resolved — the message branches on the stored status instead.
+   * Announces an outcome the submitter benefits from hearing and stays silent on
+   * the ones they don't: approval, and an owner removing an entry that was
+   * already live in their gallery. A decline is deliberately not announced —
+   * Justin's call, 2026-08-18 — on the grounds that "X declined you" mostly buys
+   * the placer a grudge against a creator who is entitled to say no. The
+   * placements page still shows it.
    *
-   * Deliberately excludes `expired`: nobody decided anything, the refund is
-   * full, and telling someone their submission was rejected when the owner
-   * simply never looked is both wrong and worse.
+   * Also excludes `expired`, for a different reason: nobody decided anything and
+   * the refund is full, so any message here would describe a decision that was
+   * never made.
    */
   'remix-gallery-resolved': {
     displayName: 'Your remix submission was answered',
@@ -273,6 +277,10 @@ export const placementNotifications = createNotificationProcessor({
           message: `${details.ownerUsername} removed your remix from their gallery`,
           url,
         };
+      // Unreachable for anything sent from now on -- the query stopped selecting
+      // declines. Kept because the message is rendered at READ time from the
+      // stored details, so deleting this branch would blank the notifications
+      // already delivered to people who were declined before that changed.
       return { message: `${details.ownerUsername} declined your remix submission`, url };
     },
     prepareQuery: async ({ lastSent }) => `
@@ -304,12 +312,23 @@ export const placementNotifications = createNotificationProcessor({
           -- approval trail.
           AND (
             (
-              p.status IN ('approved', 'declined')
+              p.status = 'approved'
               AND p."resolvedAt" IS NOT NULL
               AND p."resolvedAt" > '${lastSent}'
             )
             OR (
               p.status = 'removed'
+              -- removedBy is the MODE the remover acted in, not their role:
+              -- 'owner' for a creator and for a moderator in manage-as-creator
+              -- mode, 'moderator' for moderate mode or someone else's gallery.
+              -- So this reads "not acting as a moderator", which is the rule.
+              --
+              -- Read as a role it looks wrong once a moderator can act as one on
+              -- their own gallery, and keying on the actor instead
+              -- (takenDownById = ownerId) looks like the fix. It is not: that
+              -- announces a moderator-mode removal as a creator's, and does the
+              -- same to every moderation-tool removal on the actor's own
+              -- gallery. Tried in #4148 and reverted.
               AND p."removedBy" = 'owner'
               AND p."takenDownAt" IS NOT NULL
               AND p."takenDownAt" > '${lastSent}'
@@ -326,6 +345,75 @@ export const placementNotifications = createNotificationProcessor({
         'remix-gallery-resolved' "type",
         details
       FROM data
+      -- A row means opted OUT. This type shipped without the clause, so its
+      -- toggle rendered, saved, and changed nothing -- there is no global filter
+      -- on this path (createNotificationsBulk does no settings lookup), so a
+      -- processor that omits it is unmuteable. Kept on one line because the
+      -- polarity guard matches the clause as a literal.
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'remix-gallery-resolved')
+    `,
+  },
+
+  /**
+   * The sticker placer's side, and the gap Ellie reported: a placement could be
+   * accepted and the only signal was the placer's Buzz balance moving.
+   *
+   * Approval only — Justin's call, 2026-08-18. No decline, no expiry, no
+   * removal of any kind. The asymmetry with the remix type, which also announces
+   * an owner removal, is deliberate: a remix that is removed was already live in
+   * someone's gallery, where a declined sticker never appeared anywhere.
+   *
+   * Covers free placements as well as paid, unlike the pending pair, which split
+   * because their messages quote an amount and a free row's is 0. This one names
+   * no amount, so one type serves both and a creator muting it mutes both.
+   *
+   * An `auto` space approves at the call site, so its placer gets this seconds
+   * after placing, confirming something they watched happen. Left that way on
+   * purpose: no column distinguishes an auto approval from a fast one, and the
+   * only discriminator available -- the gap between `createdAt` and
+   * `resolvedAt` -- would be a rule we invented and would have to keep true.
+   */
+  'sticker-placement-resolved': {
+    displayName: 'Your sticker placement was accepted',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.ownerUsername} accepted your sticker`,
+      url: `/images/${details.imageId}`,
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."placerId" "userId",
+          p.id "placementId",
+          p.status "status",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'ownerId', p."ownerId",
+            'ownerUsername', u.username,
+            'status', p.status
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."ownerId"
+        WHERE p.surface = 'sticker'
+          AND p."targetType" = 'image'
+          AND p.status = 'approved'
+          -- Keyed off when the owner acted, never off createdAt: a placement
+          -- made before the last run and accepted after it would be missed
+          -- entirely by a createdAt window.
+          AND p."resolvedAt" IS NOT NULL
+          AND p."resolvedAt" > '${lastSent}'
+      )
+      SELECT
+        -- The status is in the key even though only one status can reach here.
+        -- It costs nothing now and is what stops a later branch -- a removal,
+        -- say -- from being deduped away silently against the approval's key.
+        CONCAT('sticker-placement-resolved:',"status",':',"placementId") "key",
+        "userId",
+        'sticker-placement-resolved' "type",
+        details
+      FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'sticker-placement-resolved')
     `,
   },
 });

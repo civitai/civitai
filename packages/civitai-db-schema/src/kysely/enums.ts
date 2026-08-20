@@ -253,6 +253,7 @@ export const ModelHashType = {
   SHA256: 'SHA256',
   CRC32: 'CRC32',
   BLAKE3: 'BLAKE3',
+  SHA256_12: 'SHA256_12',
 } as const;
 export type ModelHashType = (typeof ModelHashType)[keyof typeof ModelHashType];
 export const ScanResultCode = {
@@ -436,6 +437,7 @@ export const CosmeticType = {
   ProfileDecoration: 'ProfileDecoration',
   ProfileBackground: 'ProfileBackground',
   Sticker: 'Sticker',
+  ChatTheme: 'ChatTheme',
 } as const;
 export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];
 export const CosmeticSource = {
@@ -549,6 +551,17 @@ export const CollectionItemStatus = {
   REJECTED: 'REJECTED',
 } as const;
 export type CollectionItemStatus = (typeof CollectionItemStatus)[keyof typeof CollectionItemStatus];
+export const CollectionItemRejectionReason = {
+  OffTopic: 'OffTopic',
+  WrongFormat: 'WrongFormat',
+  Duplicate: 'Duplicate',
+  Quality: 'Quality',
+  RulesViolation: 'RulesViolation',
+  Other: 'Other',
+  Automated: 'Automated',
+} as const;
+export type CollectionItemRejectionReason =
+  (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
 export const CollectionContributorPermission = {
   VIEW: 'VIEW',
   ADD: 'ADD',
@@ -658,6 +671,12 @@ export const ChatMemberStatus = {
   Kicked: 'Kicked',
 } as const;
 export type ChatMemberStatus = (typeof ChatMemberStatus)[keyof typeof ChatMemberStatus];
+export const ChatNotifyLevel = {
+  All: 'All',
+  Mentions: 'Mentions',
+  None: 'None',
+} as const;
+export type ChatNotifyLevel = (typeof ChatNotifyLevel)[keyof typeof ChatNotifyLevel];
 export const ChatMessageType = {
   Markdown: 'Markdown',
   Image: 'Image',

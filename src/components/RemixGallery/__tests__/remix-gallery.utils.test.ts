@@ -7,6 +7,8 @@ import {
   freeSubmissionOffer,
   galleryDialogImages,
   paidSubmissionOpen,
+  remixGalleryModerating,
+  remixSubmitPickerFilters,
   submissionMethod,
   trimToWholeRows,
 } from '~/components/RemixGallery/remix-gallery.utils';
@@ -389,5 +391,61 @@ describe('galleryDialogImages', () => {
     expect(result).toHaveLength(100);
     expect(result[0].id).toBe(70);
     expect(result[result.length - 1].id).toBe(169);
+  });
+});
+
+describe('remixSubmitPickerFilters', () => {
+  // Both of these were reported from the picker: a moderator was offered their
+  // own drafts, which the submit mutation refuses, and the grid opened on a
+  // year-old image because the feed sorts by reactions unless told otherwise.
+  // Neither is visible in a rendered grid — a picker missing them looks like a
+  // picker.
+  it('asks for published images only', () => {
+    expect(remixSubmitPickerFilters(7).publishedOnly).toBe(true);
+  });
+
+  it('asks for the newest first, not the feed default', () => {
+    expect(remixSubmitPickerFilters(7).sort).toBe('Newest');
+  });
+
+  it('scopes the picker to the submitter', () => {
+    // The picker offers your own work to submit. Dropping this would offer
+    // everyone's, and every one of them would be refused.
+    expect(remixSubmitPickerFilters(7).userId).toBe(7);
+  });
+});
+
+describe('remixGalleryModerating', () => {
+  const base = { isModerator: true, isOwner: false, ownerKnown: true, asModerator: false };
+
+  it('moderates another creator gallery without being asked', () => {
+    // There is no creator role available there, so there is nothing to choose.
+    expect(remixGalleryModerating(base)).toBe(true);
+  });
+
+  it('leaves a moderator on their own gallery under the creator rules by default', () => {
+    expect(remixGalleryModerating({ ...base, isOwner: true })).toBe(false);
+  });
+
+  it('moderates your own gallery only when you ask', () => {
+    expect(remixGalleryModerating({ ...base, isOwner: true, asModerator: true })).toBe(true);
+  });
+
+  it('gives a non-moderator nothing, whatever they claim', () => {
+    expect(remixGalleryModerating({ ...base, isModerator: false, asModerator: true })).toBe(false);
+  });
+
+  // 🔴 The reason this is a function at all. `isOwner` comes from a query and is
+  // `false` while it is in flight, which is indistinguishable from a stranger's
+  // gallery — so a moderator opening their OWN gallery moderated it for as long
+  // as that query took, and a removal in that window kept the submitter's Buzz.
+  it('refuses to moderate anything until it knows whose gallery this is', () => {
+    expect(remixGalleryModerating({ ...base, ownerKnown: false })).toBe(false);
+  });
+
+  it('stays refused while unknown even when the mode was explicitly asked for', () => {
+    expect(
+      remixGalleryModerating({ ...base, ownerKnown: false, isOwner: true, asModerator: true })
+    ).toBe(false);
   });
 });

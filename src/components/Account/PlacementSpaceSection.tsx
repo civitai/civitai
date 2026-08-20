@@ -24,6 +24,7 @@ import {
 } from '~/shared/utils/sticker-placement';
 import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
+import { pendingCount } from '~/components/Placement/queue-counts';
 import { placementPriceCaption, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -61,6 +62,7 @@ export function PlacementSpaceSection() {
     isError: spacesFailed,
   } = trpc.placement.getMySpaces.useQuery({ surface: 'sticker' }, { enabled });
   const { data: pending } = trpc.placement.getPending.useQuery({}, { enabled });
+  const { data: sent } = trpc.placement.getMyStickerPlacements.useQuery({}, { enabled });
 
   const stored = spaces?.[0];
   // Seeded from the surface defaults, not from `off`. With no row the cascade
@@ -126,6 +128,8 @@ export function PlacementSpaceSection() {
   // tells an owner with 200 waiting that they have 50, which is the same lie
   // the unpaged queue told.
   const waitingLabel = pending?.nextCursor ? `${waiting}+` : `${waiting}`;
+
+  const placedCount = pendingCount(sent ?? []);
   const caption = placementPriceCaption(
     'sticker',
     price === '' ? DEFAULT_PRICE ?? 0 : price,
@@ -282,16 +286,17 @@ export function PlacementSpaceSection() {
         />
       )}
 
-      {/* The queue is otherwise unreachable: the notification links to the image,
-          and nothing else in the app points at it. */}
+      {/* Both queues are otherwise unreachable: the notification links to the
+          image, and nothing else in the app points at either side. Two buttons
+          rather than one link, matching the remix gallery — each direction has a
+          count, and a count needs somewhere to sit. */}
       {/* A real button, and `component="a"` rather than `component={Link}` —
           Mantine's polymorphic button drops its styles through the Next link,
-          which is why this read as bare text. The count rides in the button so
-          it has somewhere to live. */}
+          which is why this read as bare text. */}
       <Group gap="xs" wrap="nowrap">
         <Button
           component="a"
-          href="/user/sticker-placements"
+          href="/user/sticker-placements?tab=received"
           variant={waiting > 0 ? 'light' : 'default'}
           size="sm"
           rightSection={
@@ -310,6 +315,21 @@ export function PlacementSpaceSection() {
           }
         >
           Review pending stickers
+        </Button>
+        <Button
+          component="a"
+          href="/user/sticker-placements?tab=sent"
+          variant="default"
+          size="sm"
+          rightSection={
+            placedCount > 0 ? (
+              <Badge size="sm" variant="light" circle>
+                {placedCount}
+              </Badge>
+            ) : undefined
+          }
+        >
+          Stickers you&apos;ve placed
         </Button>
       </Group>
 

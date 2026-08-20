@@ -31,13 +31,27 @@ import { describe, expect, it } from 'vitest';
  *     `containers/` build separate images on separate release cadences and float
  *     today; pinning them changes what those services run, so it belongs in its own
  *     change rather than riding along in a no-op.
- *   - `flake.nix`, which is a FOURTH declaration (the NixOS dev shell) and is on a
- *     different major. It cannot be brought into line by editing one line: the
- *     pinned nixpkgs' newest Node 24 is older than the version pinned here, so
- *     agreeing would mean moving the nixpkgs pin as well. Asserting it here would
- *     only produce a red gate nobody can fix in the change that trips it.
- *     `engines.node` is bracketed at MAJOR granularity partly for this reason: a
- *     patch-exact floor would be violated by every dev shell on day one.
+ *   - `flake.nix`, which is a FOURTH declaration (the NixOS dev shell). It is no
+ *     longer on a different major, and it is no longer unchecked — but it is still
+ *     out of scope HERE, for a reason that has changed.
+ *
+ *     What used to be true: the pinned nixpkgs' newest Node 24 was older than the
+ *     version pinned here, so agreeing would have meant moving the nixpkgs pin too,
+ *     and asserting it would have produced a red gate nobody could fix in the change
+ *     that tripped it. That is no longer the case. The flake.lock bump to the
+ *     2026-08-18 nixpkgs made `nodejs_24` exactly 24.19.0, and `flake.nix` now
+ *     DERIVES its Node major by reading this `.nvmrc` rather than naming one.
+ *
+ *     Why it still does not belong in this file: answering "which Node does the dev
+ *     shell provide?" means evaluating Nix, which a Vitest suite cannot do. The
+ *     assertion lives where it can be made — `checks.toolchain-pins` in `flake.nix`,
+ *     run by `nix flake check` and by `nix run .#doctor`, implemented in
+ *     `scripts/nix/check-node-pin.py`. That guard deliberately does NOT re-check the
+ *     three declarations below; this file owns them, and a predicate open-coded at
+ *     two sites is how the two start disagreeing.
+ *
+ *     `engines.node` is still bracketed at MAJOR granularity, but no longer because
+ *     the dev shell would violate a patch-exact floor — it does not any more.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../..');

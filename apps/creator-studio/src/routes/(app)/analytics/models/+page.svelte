@@ -12,6 +12,8 @@
   import { page } from '$app/state';
   import { tableSortState } from '$lib/state/table-sort.svelte';
   import { formatRange } from '$lib/date-range';
+  import { impressionsComparable } from '$lib/impressions';
+  import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
   import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import {
     BANKABLE_CURRENCIES,
@@ -28,6 +30,7 @@
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
+  const impressionsDeltaOk = $derived(impressionsComparable(data.compare.from));
   const perPage = $derived(analyticsPageSize.value);
 
   type Row = NonNullable<PageData['modelPerformance']>[number];
@@ -63,6 +66,8 @@
   const CASH_SORT_PREFIX = 'cash:';
 
   const grouping = modelGroupingState(() => data.grouping);
+  // Impressions are a MODEL-level number, so they only have a cell to live in when versions are rolled up.
+  const showImpressions = $derived(grouping.value === 'model');
 
   // The name cell truncates, so its tooltip has to carry the whole label the row shows — including the
   // version, which is the only thing distinguishing two rows of the same model in version grouping.
@@ -105,6 +110,10 @@
       }
       existing.generations += v.generations;
       existing.prevGenerations += v.prevGenerations;
+      // Impressions are already the model's total on every version row — summing would multiply it by the
+      // version count.
+      existing.impressions = v.impressions;
+      existing.prevImpressions = v.prevImpressions;
       existing.downloads += v.downloads;
       existing.prevDownloads += v.prevDownloads;
       existing.buzzTotal += v.buzzTotal;
@@ -200,11 +209,15 @@
       ? m.generations
       : key === 'downloads'
         ? m.downloads
-        : key.startsWith(CHANNEL_SORT_PREFIX)
-          ? channelTotal(m, key.slice(CHANNEL_SORT_PREFIX.length) as (typeof CHANNELS)[number])
-          : key.startsWith(CASH_SORT_PREFIX)
-            ? cashCell(m, key.slice(CASH_SORT_PREFIX.length))
-            : m.generations;
+        : key === 'impressions'
+          ? showImpressions
+            ? m.impressions
+            : m.generations
+          : key.startsWith(CHANNEL_SORT_PREFIX)
+            ? channelTotal(m, key.slice(CHANNEL_SORT_PREFIX.length) as (typeof CHANNELS)[number])
+            : key.startsWith(CASH_SORT_PREFIX)
+              ? cashCell(m, key.slice(CASH_SORT_PREFIX.length))
+              : m.generations;
   const sorted = $derived.by(() => {
     const list = [...rows];
     const dir = sortDir === 'desc' ? -1 : 1;
@@ -216,6 +229,10 @@
 </script>
 
 <AnalyticsHeader range={data.range} compare={data.compare} />
+
+{#if showImpressions}
+  <ImpressionsNotice />
+{/if}
 
 {#if data.modelPerformance && data.modelPerformance.length > 0}
   <div class="cs-panel p-4">
@@ -307,6 +324,15 @@
       <Table.Header>
         <Table.Row>
           <Table.Head>{grouping.value === 'model' ? 'Model' : 'Model · version'}</Table.Head>
+          {#if showImpressions}
+            <Table.Head class="p-0">
+              {@render sortButton(
+                'impressions',
+                'Impressions',
+                'Times this model appeared in a feed, counted against the model rather than any one version.'
+              )}
+            </Table.Head>
+          {/if}
           <Table.Head class="p-0">
             {@render sortButton('generations', 'Generations', 'Generations using this model')}
           </Table.Head>
@@ -336,34 +362,52 @@
               {#if m.modelId}
                 <a
                   href="/analytics/models/{m.modelId}"
-                  class="group flex items-center gap-1 font-medium text-blue-4 hover:text-blue-3"
+                  class="group flex items-start gap-1 font-medium text-blue-4 hover:text-blue-3"
                   title={rowLabel(m)}
                 >
-                  <span
-                    class="min-w-0 truncate underline decoration-blue-4/40 underline-offset-2 group-hover:decoration-blue-3"
-                  >
-                    {m.modelName ?? 'Model ' + m.modelId}{#if m.versionName}<span
-                        class="text-dark-3"
+                  <span class="min-w-0 flex-1">
+                    <span
+                      class="block truncate underline decoration-blue-4/40 underline-offset-2 group-hover:decoration-blue-3"
+                    >
+                      {m.modelName ?? 'Model ' + m.modelId}
+                    </span>
+                    {#if m.versionName}
+                      <span class="block truncate text-sm font-normal text-dark-2"
+                        >{m.versionName}</span
                       >
-                        · {m.versionName}</span
-                      >{/if}
+                    {/if}
                   </span>
-                  <IconChevronRight size={14} class="shrink-0" />
+                  <IconChevronRight size={14} class="mt-1 shrink-0" />
                 </a>
               {:else}
                 <div class="truncate text-dark-2" title={rowLabel(m)}>
-                  Version {m.modelVersionId}{#if m.versionName}<span class="text-dark-3">
-                      · {m.versionName}</span
-                    >{/if}
+                  Version {m.modelVersionId}
                 </div>
+                {#if m.versionName}
+                  <div class="truncate text-sm text-dark-2" title={m.versionName}>
+                    {m.versionName}
+                  </div>
+                {/if}
               {/if}
-              <div class="truncate text-xs text-dark-3">
+              <div class="truncate text-xs text-dark-2">
                 {m.modelType ?? '—'}{#if grouping.value === 'model' && m.modelId != null}
                   {@const n = versionCounts.get(m.modelId) ?? 1}
                   · {n} version{n === 1 ? '' : 's'}
                 {/if}
               </div>
             </Table.Cell>
+            {#if showImpressions}
+              <Table.Cell class="align-top text-right">
+                <div class="tabular-nums {m.impressions ? 'text-white' : 'text-dark-4'}">
+                  {m.impressions ? num(m.impressions) : '—'}
+                </div>
+                {#if m.impressions && impressionsDeltaOk}
+                  <div class="mt-0.5">
+                    <DeltaChip current={m.impressions} previous={m.prevImpressions} />
+                  </div>
+                {/if}
+              </Table.Cell>
+            {/if}
             <Table.Cell class="align-top text-right">
               <div class="tabular-nums {m.generations ? 'text-white' : 'text-dark-4'}">
                 {m.generations ? num(m.generations) : '—'}

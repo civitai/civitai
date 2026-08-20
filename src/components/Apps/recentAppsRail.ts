@@ -3,9 +3,10 @@
  *
  * Turns the tolerant localStorage `RecentApp[]` (see `recentlyOpenedAppsStore`)
  * into the exact list the `/apps` store rail renders, and decides each entry's
- * link target. Extracted as a pure module on purpose: CI does not run the
- * civitai browser-mode (`component`) suites at all (they need Chromium), so the
- * coverage that actually runs on a PR has to live in the node `unit` project —
+ * link target. Extracted as a pure module on purpose: the browser-mode
+ * (`component`) suites run only in the PR preview pipeline — report-only, not a
+ * required check, and skipped whenever the preview build fails — so the coverage
+ * that runs on every PR has to live in the node `unit` project —
  * mirroring `appListingCardView` / `appListingDetailView`. (Neither project
  * BLOCKS a merge — the `Unit tests` job is `continue-on-error` — so "runs on
  * every PR" is the whole of the claim.)

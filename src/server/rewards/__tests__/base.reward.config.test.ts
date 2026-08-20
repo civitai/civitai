@@ -51,7 +51,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 import { createBuzzEvent, ON_DEMAND_REWARD_SCRIPT } from '~/server/rewards/base.reward';
 import type { BuzzEventLog } from '~/server/rewards/base.reward';
 import { goodContentReward } from '~/server/rewards/passive/goodContent.reward';
-import { invalidateRewardConfigCache } from '~/server/rewards/reward-config';
+import { configFromStoredValue, invalidateRewardConfigCache } from '~/server/rewards/reward-config';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -61,6 +61,11 @@ redisMock.redis.hGet.mockImplementation((...args: any[]) => h.hGetImpl(...args))
 const findUnique = dbMock.dbRead.keyValue.findUnique;
 const configure = (rewards: Record<string, unknown>) =>
   findUnique.mockResolvedValue({ value: { rewards } });
+
+// `describeConfig` is handed the config rather than reading one, so the operator
+// views cannot pick up the grant path's per-pod memo. Resolves the same row
+// `configure` stores, through the same parser the grant path uses.
+const storedConfig = (rewards: Record<string, unknown>) => configFromStoredValue({ rewards });
 
 const AWARD_AMOUNT = 100;
 const CAP = 1000;
@@ -409,9 +414,9 @@ describe('a multi-entry cap table refuses the override', () => {
   // `capOverridable` is the only thing standing between an operator raising the
   // monthly cap and silently raising the per-entity one by the same number.
   it('leaves both caps at their compiled amounts', async () => {
-    configure({ testTwoCapReward: { cap: 5000 } });
-
-    const described = await twoCapReward().describeConfig();
+    const described = await twoCapReward().describeConfig(
+      storedConfig({ testTwoCapReward: { cap: 5000 } })
+    );
 
     expect(described.capOverridable).toBe(false);
     expect(described.effective.cap).toBeUndefined();
@@ -574,9 +579,11 @@ describe('the on-demand Lua keeps the properties the model assumes', () => {
 
 describe('describeConfig() answers "which rewards are on" from one place', () => {
   it('reports the default beside the effective value and names refused fields', async () => {
-    configure({ testProcessableReward: { enabled: false, awardAmount: 999999 } });
+    const config = storedConfig({
+      testProcessableReward: { enabled: false, awardAmount: 999999 },
+    });
 
-    expect(await processableReward().describeConfig()).toMatchObject({
+    expect(await processableReward().describeConfig(config)).toMatchObject({
       type: 'testProcessableReward',
       defaults: { awardAmount: AWARD_AMOUNT, cap: CAP },
       effective: { enabled: false, awardAmount: AWARD_AMOUNT, cap: CAP },

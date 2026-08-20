@@ -70,6 +70,18 @@ every existing and future worktree of that clone inherits it until you sync.
 
 ## Verifying locally
 
+All of these need the repo's own toolchain — node `24.19.0` (the version in
+`.nvmrc`) and pnpm 10.x. **Nothing stops you running them on the wrong node**:
+`engines.node` is advisory, so `pnpm install` prints `WARN Unsupported engine`
+and continues. That is why this is worth stating rather than leaving to the
+tooling — the wrong major shows up as spurious test failures attributed to your
+branch, not as an error at install time. On NixOS there is a second, louder
+failure: outside the dev shell there are no `PRISMA_*_ENGINE_*` paths, so Prisma
+goes looking for a `linux-nixos` engine that has never been published.
+
+`nvm use` picks the right node up from `.nvmrc`; with Nix, prefix any of these
+with `nix develop -c`, or use direnv (`cp .envrc.example .envrc && direnv allow`).
+
 ```bash
 pnpm typecheck                 # full repo
 pnpm test:unit:run             # ~8,900 unit tests, node env

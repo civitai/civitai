@@ -53,3 +53,22 @@ export type GetBugReportStatsInput = z.infer<typeof getBugReportStatsInput>;
 export const getBugReportStatsInput = z.object({
   bugIds: z.number().int().positive().array().min(1).max(200),
 });
+
+// ClickUp fires this at us on every task event we subscribe to. `after` is
+// deliberately `unknown`: it carries an array for tag/watcher edits and a number
+// for priority, and a union that rejected those would fail the WHOLE delivery —
+// dropping any status item beside them, and eventually tripping ClickUp's
+// consecutive-failure webhook disable. Narrowing happens in the service.
+export type ClickupWebhookPayload = z.infer<typeof clickupWebhookSchema>;
+export const clickupWebhookSchema = z.object({
+  event: z.string(),
+  task_id: z.string().optional(),
+  history_items: z
+    .array(
+      z.object({
+        field: z.string().optional(),
+        after: z.unknown(),
+      })
+    )
+    .optional(),
+});

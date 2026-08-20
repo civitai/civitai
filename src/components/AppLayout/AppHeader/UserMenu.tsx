@@ -45,6 +45,7 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { HeaderUserBuzz } from '~/components/AppLayout/AppHeader/HeaderUserBuzz';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -86,7 +87,7 @@ export function UserMenu() {
             })}
           >
             <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
-            {features.buzz && currentUser && <UserBuzz pr="sm" />}
+            {features.buzz && currentUser && <HeaderUserBuzz />}
           </div>
           <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
         </UnstyledButton>

@@ -241,8 +241,10 @@ fire-and-forget tracker (3 retries, then Axiom log) already makes it non-legal-g
 
 ### Phase 1: Retool mod action
 
-New domain file `src/pages/api/mod/retool/audit.ts` using the existing
-`defineRetoolEndpoint` registry (auth + rate limit + its own audit trail for free):
+New endpoint under `src/pages/api/mod/audit/` using `defineModeratorEndpoint` (auth + rate limit +
+its own audit trail for free). **Updated 2026-08-19:** this originally named `defineRetoolEndpoint` and
+one file per domain with an `action` field; that family was deleted with Retool. It is now one route per
+action — see [`moderator-endpoints.md`](moderator-endpoints.md). The sketch below keeps the old shape:
 
 ```ts
 changeHistory: retoolAction({

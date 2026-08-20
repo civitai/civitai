@@ -8,7 +8,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * validation shell over the well-tested `submitVersion` service
  * (publish-request.orchestration.test.ts), so this exercises only the shell.
  *
- * Following the repo's `retool-endpoint.test.ts` convention, we mock
+ * Following the repo's `moderator-endpoint.test.ts` convention, we mock
  * `~/server/utils/endpoint-helpers` rather than drive the real `withAxiom`
  * wrapper (heavy, and its closure is captured at module-load so a per-file
  * vi.mock of withAxiom is unreliable in the full-suite run). The `ModEndpoint`
@@ -231,5 +231,105 @@ describe('POST /api/blocks/submit-version', () => {
     await invoke(makeReq({ body: { bundleBase64 } }), res);
     expect(res._status).toBe(400);
     expect(res._body).toEqual({ message: 'bundle exceeds 50 MiB' });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #4059 build provenance. The route's job is to pass the client's CLAIM
+  // through unchanged and to reject a malformed one with a message that names
+  // the field — a provenance rejection reported as "Invalid bundle payload"
+  // sends the author hunting the zip.
+  // ---------------------------------------------------------------------------
+  const SHA = '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3';
+
+  it('passes sourceCommit + sourceDirty through to the service verbatim', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sourceCommit: SHA, sourceDirty: true } }), res);
+    expect(res._status).toBe(200);
+    const arg = mockSubmitVersion.mock.calls[0][0];
+    expect(arg.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    expect(arg.sourceDirty).toBe(true);
+  });
+
+  it('passes sourceDirty:false through as FALSE, not as absent', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sourceCommit: SHA, sourceDirty: false } }), res);
+    expect(res._status).toBe(200);
+    const arg = mockSubmitVersion.mock.calls[0][0];
+    expect(arg.sourceDirty).toBe(false);
+  });
+
+  it('a submit with NO provenance still reaches the service with both undefined', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(200);
+    const arg = mockSubmitVersion.mock.calls[0][0];
+    expect(arg.sourceCommit).toBeUndefined();
+    expect(arg.sourceDirty).toBeUndefined();
+  });
+
+  // 🔴 JSON `null` = UNKNOWN and must NOT 400 — pinned at the ROUTE as well as
+  // at the schema, so the two surfaces cannot disagree in isolation.
+  it('JSON null on both provenance fields is a 200 (UNKNOWN), reaching the service as undefined', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sourceCommit: null, sourceDirty: null } }), res);
+    expect(res._status).toBe(200);
+    expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
+    const arg = mockSubmitVersion.mock.calls[0][0];
+    // undefined, NOT null — undefined is what makes Prisma omit the column.
+    expect(arg.sourceCommit).toBeUndefined();
+    expect(arg.sourceDirty).toBeUndefined();
+    expect(arg.sourceCommit).not.toBeNull();
+    expect(arg.sourceDirty).not.toBeNull();
+  });
+
+  it('JSON null on ONE field does not take a valid SIBLING down with it', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sourceCommit: SHA, sourceDirty: null } }), res);
+    expect(res._status).toBe(200);
+    const arg = mockSubmitVersion.mock.calls[0][0];
+    expect(arg.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    expect(arg.sourceDirty).toBeUndefined();
+  });
+
+  it('400s a malformed sourceCommit with a message NAMING the field, and never submits', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sourceCommit: 'not-a-sha' } }), res);
+    expect(res._status).toBe(400);
+    expect((res._body as { message: string }).message).toContain('sourceCommit');
+    // 🔴 The rejection must NOT be reported as a bundle problem.
+    expect((res._body as { message: string }).message).not.toBe('Invalid bundle payload');
+    // And it is a rejection, not a silent drop.
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('400s an UPPERCASE sourceCommit (lowercase 40-hex only)', async () => {
+    const res = makeRes();
+    await invoke(
+      makeReq({ body: { bundleBase64, sourceCommit: '4F3A9C2E17B06D85FA1C39E470B28D6AC519E0F3' } }),
+      res
+    );
+    expect(res._status).toBe(400);
+    expect((res._body as { message: string }).message).toContain('sourceCommit');
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('400s a non-boolean sourceDirty with a message NAMING the field', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64, sourceDirty: 'true' } }), res);
+    expect(res._status).toBe(400);
+    expect((res._body as { message: string }).message).toContain('sourceDirty');
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('BUNDLE rejections keep the exact legacy message (unchanged by #4059)', async () => {
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64: '' } }), res);
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({ message: 'Invalid bundle payload' });
+
+    const res2 = makeRes();
+    await invoke(makeReq({ body: {} }), res2);
+    expect(res2._status).toBe(400);
+    expect(res2._body).toEqual({ message: 'Invalid bundle payload' });
   });
 });

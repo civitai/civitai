@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Minimal NextApiRequest/Response stand-in (avoids node-mocks-http), mirroring
-// the retool-endpoint test harness.
+// the moderator-endpoint test harness.
 function createMocks({
   method = 'POST',
   headers = {},
@@ -435,5 +435,110 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(400);
     expect((res._getJSONData() as { message: string }).message).toContain('50 MiB');
+  });
+
+  // ---------------------------------------------------------------------------
+  // #4059 build provenance. 🔴 THIS is the route the `civitai` CLI posts to —
+  // the session route beside it is the mod-browser front door. Wiring only that
+  // one would leave the CLI's provenance silently stripped, which is exactly the
+  // inert-feature shape #4059 exists to close. Both routes are wired; both are
+  // pinned.
+  // ---------------------------------------------------------------------------
+  const SHA = '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3';
+
+  it('passes sourceCommit + sourceDirty through to the service verbatim', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, sourceCommit: SHA, sourceDirty: true },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const callArg = mockSubmitVersion.mock.calls[0][0];
+    expect(callArg.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    expect(callArg.sourceDirty).toBe(true);
+  });
+
+  it('passes sourceDirty:false through as FALSE, not as absent', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, sourceCommit: SHA, sourceDirty: false },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion.mock.calls[0][0].sourceDirty).toBe(false);
+  });
+
+  it('a submit with NO provenance still reaches the service with both undefined', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const callArg = mockSubmitVersion.mock.calls[0][0];
+    expect(callArg.sourceCommit).toBeUndefined();
+    expect(callArg.sourceDirty).toBeUndefined();
+  });
+
+  // 🔴 JSON `null` = UNKNOWN, and it MUST NOT 400. Asserted at the ROUTE and not
+  // only at the schema: the schema test exercises one surface, and "verified in
+  // isolation" is how a seam defect survives. This is the surface an actual CLI
+  // hits, and a 400 here rejects the WHOLE SUBMIT over an advisory field.
+  it('JSON null on both provenance fields is a 200 (UNKNOWN), reaching the service as undefined', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, sourceCommit: null, sourceDirty: null },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion).toHaveBeenCalledOnce();
+    const callArg = mockSubmitVersion.mock.calls[0][0];
+    // undefined, NOT null — undefined is what makes Prisma omit the column.
+    expect(callArg.sourceCommit).toBeUndefined();
+    expect(callArg.sourceDirty).toBeUndefined();
+    expect(callArg.sourceCommit).not.toBeNull();
+    expect(callArg.sourceDirty).not.toBeNull();
+  });
+
+  it('JSON null on ONE field does not take a valid SIBLING down with it', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, sourceCommit: SHA, sourceDirty: null },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const callArg = mockSubmitVersion.mock.calls[0][0];
+    expect(callArg.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    expect(callArg.sourceDirty).toBeUndefined();
+  });
+
+  it('400s a malformed sourceCommit with a message NAMING the field, and never submits', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: { ...goodBody, sourceCommit: 'not-a-sha' },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(400);
+    const msg = (res._getJSONData() as { message: string }).message;
+    expect(msg).toContain('sourceCommit');
+    expect(msg).not.toBe('Invalid bundle payload');
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('BUNDLE rejections keep the exact legacy message (unchanged by #4059)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: { bundleBase64: '' },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(400);
+    expect(res._getJSONData()).toEqual({ message: 'Invalid bundle payload' });
   });
 });

@@ -38,11 +38,9 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
-import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import {
   contestCollectionReactionsHidden,
   isCollectionSubsmissionPeriod,
@@ -60,7 +58,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { SortFilter } from '~/components/Filters';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -74,7 +71,6 @@ import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDr
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
@@ -191,7 +187,6 @@ const ModelCollection = ({
                   maxPopoverHeight={'calc(75vh - var(--header-height))'}
                 />
               </Group>
-              <CategoryTags />
             </>
           )}
           {isContestCollection && collection.tags.length > 0 && (
@@ -332,7 +327,6 @@ const ImageCollection = ({
                   onChange={(value) => replace(value)}
                 />
               </Group>
-              <ImageCategories />
             </>
           )}
 
@@ -385,13 +379,16 @@ const ImageCollection = ({
     </ImageContextMenuProvider>
   );
 };
+// Contest rotation randomises the sort on each render to spread entry visibility. Oldest is
+// held out of that pool deliberately: it is the only ascending sort, so a roll landing on it
+// pins the earliest submissions to the top of every contest feed for that render.
+const contestPostSorts = Object.values(PostSort).filter((sort) => sort !== PostSort.Oldest);
+
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
-  const sort = isContestCollection
-    ? getRandom(Object.values(PostSort))
-    : query.sort ?? PostSort.Newest;
+  const sort = isContestCollection ? getRandom(contestPostSorts) : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
     ? {
@@ -428,7 +425,6 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
               />
               <PostFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>
-            <PostCategories />
           </>
         )}
         <ReactionSettingsProvider settings={{ hideReactionCount: !isContestCollection }}>
@@ -480,7 +476,6 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
               />
               <ArticleFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>
-            <ArticleCategories />
           </>
         )}
         <ArticlesInfinite filters={filters} disableStoreFilters />

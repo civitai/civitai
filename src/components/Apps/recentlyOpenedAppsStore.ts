@@ -30,9 +30,58 @@
  *    acceptance rule; the write path runs the same gate, and the rail's
  *    `resolveRecentApp` applies exactly the same rule on read, so nothing that
  *    is accepted for write can be silently dropped on read.
+ *  - ACCOUNT-SCOPED: the stored blob carries the id of the account that wrote
+ *    it, and a read by any OTHER viewer returns `[]`. See below.
+ *
+ * 🔴 ACCOUNT SCOPING — WHY THE OWNER ID IS PERSISTED (#4048)
+ *
+ * localStorage is per BROWSER PROFILE, not per ACCOUNT, and nothing clears it on
+ * a sign-in / sign-out / account switch. Observed in production: a browser
+ * profile used first by a moderator session and later signed in as a
+ * lower-privileged cohort account rendered a "Recently opened" rail of six apps
+ * that account cannot see — the entries carry `name`/`iconUrl`/`slug`
+ * themselves, so the rail renders them without fetching anything, and every
+ * detail page behind them 404s for that viewer. Not a disclosure (the names were
+ * already in that browser), but stale and dead-ended.
+ *
+ * So a stored blob is an ENVELOPE stamped with its owner:
+ * `{ v, ownerId, apps }`. `ownerId` is the numeric user id, or `null` for the
+ * SIGNED-OUT viewer — which is that viewer's OWN bucket, not a wildcard: an
+ * anonymous blob is not readable by a signed-in viewer and vice versa. A read
+ * whose `ownerId` does not match returns `[]`.
+ *
+ * 🔴 DELIBERATE ONE-TIME RESET. A pre-v4 blob is a BARE `RecentApp[]` with no
+ * owner recorded, and that owner is unknowable — the browser holds no evidence
+ * of who wrote it. It is therefore DROPPED on read rather than attributed to
+ * whoever reads it next, because attributing it IS the bug above. Every existing
+ * viewer's rail resets once and repopulates on their next app open; the list is
+ * capped at `MAX_RECENTS` per kind and is pure personalisation, so the cost of
+ * the reset is one lost convenience shortcut and the cost of guessing is showing
+ * one account's history to another. (Same reasoning for a blob whose `v` we do
+ * not recognise, e.g. one written by a NEWER build after a rollback.)
+ *
+ * The owner id is passed IN by each caller (`useCurrentUser()?.id ?? null`) —
+ * this module stays React-free and session-free, so it can be unit-tested in the
+ * node project and imported from anywhere. `recentsCallSites.test.ts` is the
+ * ledger that pins the exact set of modules allowed to call it.
  */
 
 export const RECENTLY_OPENED_APPS_KEY = 'recentlyOpenedApps';
+
+/**
+ * Persisted envelope version. Bumped from the implicit "bare array" v3 shape to
+ * carry `ownerId`; a blob at any other version is dropped (see the header).
+ */
+export const RECENTS_ENVELOPE_VERSION = 4;
+
+/**
+ * The account a recents blob belongs to: a numeric user id, or `null` for the
+ * signed-out viewer.
+ *
+ * 🔴 `null` is a REAL bucket, not "unknown" and not "any". The anonymous
+ * viewer's recents are readable only by the anonymous viewer.
+ */
+export type RecentsOwnerId = number | null;
 
 /**
  * Max distinct apps retained PER KIND (newest-first).
@@ -64,9 +113,13 @@ export type RecentAppKind = 'onsite' | 'offsite';
  * previously-shipped version are still in the wild and must keep parsing:
  *   - v1 wrote `{id, blockId}`.
  *   - v2 added `{name?, iconUrl?}`.
- *   - v3 (this) adds `{slug?, kind?, hasPage?, externalUrl?}` so an entry can
- *     link to the unified store detail (`/apps/store-preview/<slug>`) and so an
- *     OFF-SITE listing — which has NO `blockId` at all — is representable.
+ *   - v3 adds `{slug?, kind?, hasPage?, externalUrl?}` so an entry can link to
+ *     the unified store detail (`/apps/store-preview/<slug>`) and so an OFF-SITE
+ *     listing — which has NO `blockId` at all — is representable.
+ *   - v4 (this) leaves the ENTRY shape untouched and wraps the LIST in an
+ *     owner-stamped envelope (see the module header). v1–v3 wrote a bare array,
+ *     which is why the entry tolerance below still matters: a v3 entry inside a
+ *     v4 envelope is exactly a v3 entry.
  * The single hard invariant a stored entry must satisfy to survive a read is
  * "it has a handle that is navigable FOR ITS KIND" — `slug` for an off-site
  * entry (it has no AppBlock, so `blockId` cannot stand in), `blockId` OR `slug`
@@ -182,38 +235,90 @@ function capPerKind(entries: RecentApp[]): RecentApp[] {
 }
 
 /**
- * Read the recents list (newest-first, capped per kind). Returns `[]` on the
- * server, an empty store, a parse error, or any localStorage access throw.
+ * Type-guard a parsed blob down to the v4 owner-stamped envelope, or `null` when
+ * it is not one.
+ *
+ * `null` (i.e. "there are no recents for anybody here") is returned for:
+ *  - a BARE ARRAY — the pre-v4 shape. It records no owner and the owner cannot
+ *    be recovered, so it is dropped rather than attributed to the current reader
+ *    (see the module header: attributing it is the defect this change fixes).
+ *  - any other `v`, including a FUTURE one written by a newer build before a
+ *    rollback — we cannot know what its fields mean.
+ *  - an `ownerId` that is neither `null` nor a finite number: hand-edited, so
+ *    "whose is this?" has no answer.
+ *
+ * A recognised envelope whose `apps` is missing / not an array degrades to an
+ * empty list via `coerce`, not to a throw — fail-soft, like everything else here.
  */
-export function getRecentlyOpenedApps(): RecentApp[] {
+function coerceEnvelope(raw: unknown): { ownerId: RecentsOwnerId; apps: RecentApp[] } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const src = raw as Record<string, unknown>;
+  if (src.v !== RECENTS_ENVELOPE_VERSION) return null;
+  const owner = src.ownerId;
+  const ownerIsValid = owner === null || (typeof owner === 'number' && Number.isFinite(owner));
+  if (!ownerIsValid) return null;
+  return { ownerId: owner as RecentsOwnerId, apps: coerce(src.apps) };
+}
+
+/**
+ * Read `ownerId`'s recents list (newest-first, capped per kind). Returns `[]` on
+ * the server, an empty store, a parse error, any localStorage access throw — and,
+ * 🔴 crucially, whenever the stored blob belongs to a DIFFERENT viewer (a
+ * different account, or the signed-out bucket vs a signed-in one, in either
+ * direction).
+ *
+ * @param ownerId the CURRENT viewer's user id, or `null` if signed out. Callers
+ *   pass `useCurrentUser()?.id ?? null`; this module deliberately does not know
+ *   how to obtain it (it must stay React-free and server-safe).
+ */
+export function getRecentlyOpenedApps(ownerId: RecentsOwnerId): RecentApp[] {
   if (!isClient()) return [];
   try {
     const raw = window.localStorage.getItem(RECENTLY_OPENED_APPS_KEY);
     if (!raw) return [];
+    const envelope = coerceEnvelope(JSON.parse(raw));
+    // Unownable blob (legacy / unknown version / corrupt owner) → no recents.
+    if (!envelope) return [];
+    // Someone else's recents. `!==` on `number | null` is what makes the
+    // anonymous bucket a bucket rather than a wildcard.
+    if (envelope.ownerId !== ownerId) return [];
     // Cap on READ too, so a blob written by an older build (flat cap) or by hand
     // can't hand a consumer more than the budget.
-    return capPerKind(coerce(JSON.parse(raw)));
+    return capPerKind(envelope.apps);
   } catch {
     return [];
   }
 }
 
 /**
- * Record that `app` was just opened: prepend it (newest-first), de-dup by `id`
- * (an existing entry moves to the front, not duplicated), and cap to
- * `MAX_RECENTS` PER KIND. Returns the new list (or `[]` on the server).
+ * Record that `app` was just opened BY `ownerId`: prepend it (newest-first),
+ * de-dup by `id` (an existing entry moves to the front, not duplicated), and cap
+ * to `MAX_RECENTS` PER KIND. Returns the new list (or `[]` on the server).
  * Fail-soft: a write throw (quota / private mode) is swallowed.
+ *
+ * The write is always stamped with `ownerId`, and it starts from what THAT owner
+ * can read — so an app opened after an account switch replaces the previous
+ * account's blob rather than appending to it. One bucket is persisted at a time;
+ * switching back does not restore the earlier account's list, which is the
+ * accepted cost of not keeping several accounts' browsing histories side by side
+ * in one browser profile.
  */
-export function recordRecentlyOpenedApp(app: RecentApp): RecentApp[] {
+export function recordRecentlyOpenedApp(app: RecentApp, ownerId: RecentsOwnerId): RecentApp[] {
   if (!isClient()) return [];
   // Run the WRITE through the same acceptance gate the READ applies, so a caller
   // can never persist an entry the reader would silently drop. One gate, two
   // directions — they cannot drift.
   const [clean] = coerce([app]);
-  if (!clean) return getRecentlyOpenedApps();
-  const next = capPerKind([clean, ...getRecentlyOpenedApps().filter((a) => a.id !== clean.id)]);
+  if (!clean) return getRecentlyOpenedApps(ownerId);
+  const next = capPerKind([
+    clean,
+    ...getRecentlyOpenedApps(ownerId).filter((a) => a.id !== clean.id),
+  ]);
   try {
-    window.localStorage.setItem(RECENTLY_OPENED_APPS_KEY, JSON.stringify(next));
+    window.localStorage.setItem(
+      RECENTLY_OPENED_APPS_KEY,
+      JSON.stringify({ v: RECENTS_ENVELOPE_VERSION, ownerId, apps: next })
+    );
   } catch {
     // Quota / private-mode / serialization failure — degrade silently; the
     // in-memory `next` is still returned so a caller can update local state.
@@ -221,7 +326,13 @@ export function recordRecentlyOpenedApp(app: RecentApp): RecentApp[] {
   return next;
 }
 
-/** Clear the recents list (used by tests + a potential "clear" affordance). */
+/**
+ * Clear the recents list (used by tests + a potential "clear" affordance).
+ *
+ * Owner-AGNOSTIC by design: it removes the whole key, whoever owns it. There is
+ * only ever one bucket persisted, and "forget my recents" must work even when
+ * what is stored belongs to a previous account.
+ */
 export function clearRecentlyOpenedApps(): void {
   if (!isClient()) return;
   try {

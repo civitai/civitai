@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.18",
+  "version": "5.1.27",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -108,7 +108,8 @@
     "madge:orphans": "madge --orphans --image ./public/orphans-graph.svg --ts-config ./tsconfig.json --extensions ts,tsx src/",
     "depcheck": "depcheck",
     "generate-types": "typed-scss-modules src",
-    "ts-script": "NODE_ENV=development tsx"
+    "ts-script": "NODE_ENV=development tsx",
+    "generate:moderator-endpoints": "node scripts/generate-moderator-endpoint-catalog.mjs"
   },
   "prisma": {
     "schema": "packages/civitai-db-schema/prisma/schema.prisma",
@@ -127,6 +128,7 @@
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
+    "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
     "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",
@@ -266,7 +268,7 @@
     "meilisearch": "0.33.0",
     "motion": "^11.11.17",
     "msgpackr": "^1.10.2",
-    "next": "^16.3.0",
+    "next": "^16.3.1",
     "nodemailer": "^6.8.0",
     "obscenity": "^0.4.5",
     "openai": "^4.73.0",
@@ -433,8 +435,7 @@
       "utf-8-validate"
     ],
     "patchedDependencies": {
-      "@mantine/hooks": "patches/@mantine__hooks.patch",
-      "next@16.3.0": "patches/next@16.3.0.patch"
+      "@mantine/hooks": "patches/@mantine__hooks.patch"
     }
   }
 }

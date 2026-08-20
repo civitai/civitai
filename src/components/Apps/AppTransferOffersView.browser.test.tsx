@@ -28,6 +28,12 @@ function offer(over: Partial<IncomingTransferRow> & { transferId: string }): Inc
     fromUserId: 10,
     expiresAt: new Date('2026-08-17T12:00:00Z'),
     createdAt: new Date('2026-08-10T12:00:00Z'),
+    // The default is the TRANSFERABLE offer, so every pre-existing arm below keeps
+    // describing the ordinary case. The blocked branch is driven from the PAGE, in
+    // `src/tests/pages/apps/invites-transfer-blocked.browser.test.tsx` — deliberately not
+    // from a prop here, because a prop-driven arm is exactly what let #3935's owner-side
+    // defect sit green for months.
+    acceptBlockedReason: null,
     ...over,
   };
 }

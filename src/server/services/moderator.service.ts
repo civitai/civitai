@@ -60,6 +60,13 @@ type ComicProjectModActivity = {
   activity: 'tosViolation' | 'unpublishChapter' | 'setNsfwLevel';
 };
 
+/** A sticker placement, not the image it sits on: entity ids are per-type, so recording a placement
+ *  under 'image' would collide with real image ids and show a takedown on an unrelated image. */
+type PlacementModActivity = {
+  entityType: 'placement';
+  activity: 'removePlacement';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
@@ -72,6 +79,7 @@ type ModActivity = {
   | ImpersonateModActivity
   | UserModActivity
   | ComicProjectModActivity
+  | PlacementModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

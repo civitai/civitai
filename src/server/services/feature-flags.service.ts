@@ -282,7 +282,6 @@ const featureFlags = createFeatureFlags({
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
   appealReports: isDev ? ['mod'] : ['granted'],
-  reviewTrainingData: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
     toggleable: true,
@@ -291,6 +290,10 @@ const featureFlags = createFeatureFlags({
     description: 'Send and receive DMs from users across the site.',
     availability: ['blue', 'red', 'user'],
   },
+  // The whole DM redesign (868kguhpy): rebuilt message surface, Inbox/Requests
+  // rail, chat settings, per-conversation controls, emoji. Mods only until it
+  // ramps; everyone else keeps the current chat, which still ships alongside it.
+  chatRedesign: { availability: ['mod'], fliptKey: 'chat-redesign' },
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
   vault: ['user'],
@@ -299,6 +302,10 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
+  // One flag drives both halves of creator announcements: these surfaces and the
+  // Creator Studio composer. Both apps must read the key `creator-announcements`
+  // verbatim — a flag only one side honours ships the half-visible state.
+  creatorAnnouncements: { availability: ['mod'], fliptKey: 'creator-announcements' },
   // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.
@@ -385,7 +392,6 @@ const featureFlags = createFeatureFlags({
   canBuyBuzz: ['public'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
-  paddleAdjustments: ['granted'],
   announcements: ['granted'],
   blocklists: ['granted'],
   toolSearch: ['public'],
@@ -411,7 +417,6 @@ const featureFlags = createFeatureFlags({
   datapacketRead: ['public'],
   modelVersionPopularity: ['mod'],
   kinguinIframe: ['dev'],
-  trainingModelsModeration: ['granted'],
   serviceStatus: ['granted'],
   cashManagement: { availability: ['granted'], fliptKey: 'feature-cash-management' },
   auctionsMod: ['granted'],
