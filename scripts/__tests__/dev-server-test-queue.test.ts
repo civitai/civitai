@@ -290,6 +290,46 @@ describe('dev-server test queue', () => {
     expect(queue.running.size).toBe(0);
   });
 
+  /**
+   * Releasing the SLOT matters more than releasing the file descriptors.
+   *
+   * `dispose()` does real IO and calls back into `onLog`, and it sits above the detach/release/
+   * settle that free the slot. Unguarded, a throw there skips all three and the queue is wedged —
+   * the identical failure the settle was added to fix. It also aborts the loop, leaving every
+   * remaining run unkilled.
+   */
+  it.each([
+    ['shutdown', (q: ReturnType<typeof build>) => q.shutdown()],
+    [
+      'the sweep force-release',
+      (q: ReturnType<typeof build>) => {
+        now += 60_001;
+        q.sweep();
+        now += 5_000;
+        q.sweep();
+      },
+    ],
+  ])('frees the slot on %s even when dispose throws', (_name, act) => {
+    const queue = build({ killGraceMs: 5_000 });
+    runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
+      const handle = new EventEmitter() as FakeRun & { dispose: () => void };
+      handle.kill = vi.fn();
+      handle.finish = () => {};
+      handle.dispose = () => {
+        throw new Error('capture release blew up');
+      };
+      handle.worktree = worktree;
+      runner.started.push(handle);
+      return handle;
+    };
+
+    const run = queue.request({ worktree: '/wt/a' });
+    expect(() => act(queue)).not.toThrow();
+
+    expect(queue.running.size).toBe(0);
+    expect(['cancelled', 'timeout']).toContain(queue.get(run.id).status);
+  });
+
   // A runner that predates `dispose` must not crash the sweep — the queue calls it optionally.
   it('tolerates a handle with no dispose', () => {
     const queue = build({ killGraceMs: 5_000 });

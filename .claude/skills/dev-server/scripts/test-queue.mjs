@@ -19,6 +19,16 @@ import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { StringDecoder } from 'string_decoder';
 
+/**
+ * How much the tail reads at a time.
+ *
+ * Exported because two tests pin behaviour AT this boundary — a line and a multi-byte character
+ * straddling it — and a private copy of the number in the test file means widening the window
+ * here makes both of those controls vacuous while they stay green. Measured: at 128 KiB with a
+ * hand-copied constant, the whole suite passed with the StringDecoder deleted outright.
+ */
+export const READ_WINDOW_BYTES = 64 * 1024;
+
 export const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_ABANDON_AFTER_MS = 10 * 60 * 1000;
 const DEFAULT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
@@ -90,8 +100,8 @@ export function createOutputCapture(onLine) {
   // incomplete sequence back until the bytes that finish it arrive.
   const decoder = new StringDecoder('utf8');
 
-  // Hoisted: the tail runs 10x a second per run, and this was a fresh 64 KiB allocation each time.
-  const buf = Buffer.allocUnsafe(64 * 1024);
+  // Hoisted: the tail runs 10x a second per run, and this was a fresh allocation each time.
+  const buf = Buffer.allocUnsafe(READ_WINDOW_BYTES);
 
   const drain = (final = false) => {
     for (;;) {
@@ -103,7 +113,7 @@ export function createOutputCapture(onLine) {
         // Same argument as the short-read break below: stopping here silently would report a
         // clipped log with `logsDropped: 0`, which is the one thing the queue's log contract
         // promises cannot happen. A read we cannot complete is said out loud instead.
-        if (final) onLine(`[capture truncated: ${err.code ?? err.message}]`);
+        if (final) onLine(`[capture truncated: ${err?.code ?? err?.message ?? String(err)}]`);
         break;
       }
       if (read <= 0) break;
@@ -396,7 +406,17 @@ export class TestQueue {
       if (run.killRequestedAt !== null && at - run.killRequestedAt >= this.killGraceMs) {
         // Before dropping the reference: the handle owns a capture file, two descriptors and a
         // tail interval, and none of them are released by anything else on this path.
-        run.handle?.dispose?.();
+        //
+        // Guarded, because `dispose()` does real IO and calls back into `onLog`. If it throws,
+        // everything below — the detach, the release, the settle — is skipped and the slot is
+        // held forever, which is the wedge this branch exists to break. Measured with a throwing
+        // dispose: status `running`, running.size 1, against `cancelled` / 0 when it returns.
+        // Releasing the slot matters more than releasing the file descriptors.
+        try {
+          run.handle?.dispose?.();
+        } catch {
+          /* the slot must be freed regardless */
+        }
         run.handle = null;
         this.release(id);
         this.settle(
@@ -447,7 +467,14 @@ export class TestQueue {
       // every time". That was wrong — measured in both arms, the file was unlinked either way,
       // because the daemon does linger long enough for the child's exit. The dispose earns its
       // place by releasing the interval and the descriptors deterministically, not by that.)
-      run.handle?.dispose?.();
+      // Guarded for the same reason as the sweep's force-release: a throwing dispose must not
+      // skip the settle below and leave the queue wedged — and it would also abort this loop,
+      // leaving every remaining run unkilled and the caller's `process.exit(0)` unreached.
+      try {
+        run.handle?.dispose?.();
+      } catch {
+        /* the slot must be freed regardless */
+      }
       run.handle = null;
       this.release(id);
       this.settle(run, 'cancelled', null, 'daemon-shutdown');

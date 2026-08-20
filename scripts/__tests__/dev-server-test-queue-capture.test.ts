@@ -1,7 +1,8 @@
 import type * as ChildProcess from 'child_process';
 import { EventEmitter } from 'events';
-import { existsSync, writeSync } from 'fs';
+import { closeSync, existsSync, openSync, rmSync, writeFileSync, writeSync } from 'fs';
 import { dirname, resolve } from 'path';
+import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,7 +12,7 @@ vi.mock('child_process', async (importOriginal) => ({
   spawn: (...args: unknown[]) => spawnMock(...args),
 }));
 
-const { createOutputCapture, defaultStartRun } = await import(
+const { createOutputCapture, defaultStartRun, READ_WINDOW_BYTES } = await import(
   '../../.claude/skills/dev-server/scripts/test-queue.mjs'
 );
 
@@ -98,7 +99,9 @@ describe('a run that exits without flushing still has all of its output', () => 
     const lines: string[] = [];
     const cap = createOutputCapture((line: string) => lines.push(line));
     try {
-      const READ_WINDOW = 64 * 1024;
+      // The module's own window, not a copy of the number: with a hand-copied 64 KiB here, the
+      // whole suite passed at a 128 KiB window with the StringDecoder deleted outright.
+      const READ_WINDOW = READ_WINDOW_BYTES;
       // Pad so the 3-byte U+23AF begins one byte before the window ends, splitting it 1 + 2.
       const pad = Buffer.alloc(READ_WINDOW - 1, 0x61); // 'a'
       // The control this test needs and its sibling already has: without a straddle the
@@ -136,9 +139,10 @@ describe('a line that straddles a read boundary survives whole', () => {
     const lines: string[] = [];
     const cap = createOutputCapture((line: string) => lines.push(line));
     try {
-      // Land a line's midpoint exactly past the 64 KiB buffer: pad to just under, then write a
-      // marked line long enough to cross it.
-      const READ_WINDOW = 64 * 1024;
+      // Land a line's midpoint exactly past the read window: pad to just under, then write a
+      // marked line long enough to cross it. Taken from the module so widening it there cannot
+      // silently make this control vacuous.
+      const READ_WINDOW = READ_WINDOW_BYTES;
       const filler = `${'f'.repeat(99)}\n`;
       const padding = filler.repeat(Math.floor((READ_WINDOW - 50) / filler.length));
       const straddler = `STRADDLE-${'s'.repeat(400)}-END`;
@@ -305,7 +309,7 @@ describe('the queue hands its child the capture file, not a pipe', () => {
    * interval surviving a close would read whatever file next claimed that descriptor and splice
    * its bytes into this run's log.
    */
-  it('drains before releasing, and stops the tail before closing the descriptors', () => {
+  it('drains before releasing the descriptors', () => {
     const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
     spawnMock.mockReturnValue(child);
 
@@ -323,8 +327,59 @@ describe('the queue hands its child the capture file, not a pipe', () => {
 
     // Drained, not lost — this fails outright if dispose closes before draining.
     expect(messages).toContain('written but never drained');
-    // The descriptor is closed, so the tail cannot still be reading it.
+    // The descriptor is closed.
     expect(() => writeSync(stdio[1], 'x')).toThrow();
+  });
+
+  /**
+   * The tail must actually STOP, and this is not cosmetic.
+   *
+   * I previously argued this mutant had no observable effect because a surviving interval would
+   * just throw on the closed descriptor. That is wrong, and measurably so: descriptor NUMBERS are
+   * reused, so once the next `openSync` claims the freed fd the surviving interval reads whatever
+   * file now owns it and splices those bytes into a terminal run's log. Measured against the
+   * mechanism: 4,246 lines of an unrelated file, versus 0 with the clearInterval in place.
+   *
+   * Driven with fake timers so the 100 ms tick is reached without waiting for it.
+   */
+  it('stops the tail, so a reused descriptor cannot splice another file into the log', () => {
+    vi.useFakeTimers();
+    const foreign = resolve(tmpdir(), `civitai-fd-probe-${process.pid}-${Date.now()}.log`);
+    const foreignFds: number[] = [];
+    try {
+      const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
+      spawnMock.mockReturnValue(child);
+
+      const messages: string[] = [];
+      const handle = defaultStartRun({
+        worktree: repoRoot,
+        args: [],
+        onLog: (_level: string, message: string) => messages.push(message),
+        onExit: () => {},
+      });
+
+      handle.dispose();
+      const before = messages.length;
+
+      // Claim the descriptors the capture just released, and fill the new file with something
+      // unmistakable. A surviving tail would read THIS.
+      //
+      // BOTH of them, and that detail is the test: the capture closed two fds, `openSync` hands
+      // back the LOWEST free number, and the tail reads from `readFd` — the higher of the pair.
+      // Claiming only one takes writeFd's number and the mutant goes unobserved, which is exactly
+      // how the first version of this test passed against a surviving interval.
+      writeFileSync(foreign, 'FOREIGN-SECRET\n'.repeat(500));
+      foreignFds.push(openSync(foreign, 'r'), openSync(foreign, 'r'));
+
+      vi.advanceTimersByTime(1000);
+
+      expect(messages.slice(before)).toEqual([]);
+      expect(messages.some((m) => m.includes('FOREIGN-SECRET'))).toBe(false);
+    } finally {
+      for (const fd of foreignFds) closeSync(fd);
+      rmSync(foreign, { force: true });
+      vi.useRealTimers();
+    }
   });
 
   /**
