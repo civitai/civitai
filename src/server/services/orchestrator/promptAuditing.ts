@@ -1,13 +1,11 @@
-import { CacheTTL, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
-import { dbRead } from '~/server/db/client';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
-import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   auditPromptEnriched,
@@ -192,45 +190,6 @@ async function clearBlockedPromptsAfterMute(userId: number) {
   await sysRedis.del(key);
 }
 
-// --- Prompt Allowlist Cache ---
-// Caches the set of allowlisted (trigger, category) pairs used to filter out
-// false positives from prompt auditing before counting toward mute thresholds.
-type AllowlistEntry = { trigger: string; category: string };
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function getCachedPromptAllowlist(): Promise<Set<string>> {
-  const entries = await fetchThroughCache(
-    REDIS_KEYS.SYSTEM.PROMPT_ALLOWLIST,
-    async () => {
-      const rows = await dbRead.promptAllowlist.findMany({
-        select: { trigger: true, category: true },
-      });
-      return rows as AllowlistEntry[];
-    },
-    { ttl: CacheTTL.day }
-  );
-  // Build a Set of "trigger:category" keys for O(1) lookup
-  return new Set(entries.map((e) => `${e.trigger}:${e.category}`));
-}
-
-/** Bust the prompt allowlist cache (call after adding/removing entries). */
-export async function bustPromptAllowlistCache() {
-  await bustFetchThroughCache(REDIS_KEYS.SYSTEM.PROMPT_ALLOWLIST);
-}
-
-/** Filter triggers against the allowlist, returning only non-allowlisted triggers. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function filterAllowlistedTriggers(
-  triggers: PromptTrigger[],
-  allowlist: Set<string>
-): PromptTrigger[] {
-  if (allowlist.size === 0) return triggers;
-  return triggers.filter((t) => {
-    if (!t.matchedWord) return true; // no specific word to match — keep it
-    return !allowlist.has(`${t.matchedWord}:${t.category}`);
-  });
-}
-
 export interface AuditPromptOptions {
   prompt: string;
   negativePrompt?: string;
@@ -282,12 +241,6 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     // If isGreen is false (civitai.com/red), run standard NSFW blocking
     const checkProfanity = isGreen;
 
-    // NOTE: Allowlist runtime filtering is disabled for now. The allowlist management
-    // endpoints remain active so moderators can curate entries. To re-enable, uncomment
-    // the allowlist fetch below and use filterAllowlistedTriggers() on each trigger set.
-    // const allowlist = await getCachedPromptAllowlist();
-    const allowlist = new Set<string>();
-
     // Moderator-managed benign phrases (proper nouns / technical terms that
     // coincidentally contain a detection token) are blanked before auditing, so the
     // generation gate and the post-generation scan audit agree on what's benign.
@@ -309,19 +262,17 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       null;
 
     if (!success) {
-      // Filter out allowlisted triggers before counting toward mute
-      const remainingTriggers = filterAllowlistedTriggers(triggers, allowlist);
-      if (remainingTriggers.length > 0) {
+      if (triggers.length > 0) {
         const regexBlock = {
-          blockedFor: remainingTriggers.map((t) => t.message),
-          triggers: remainingTriggers,
+          blockedFor: triggers.map((t) => t.message),
+          triggers,
           type: 'regex',
         };
         // A hard block short-circuits. A soft one must NOT — throwing here would
         // skip the external classifier below, so appending any overridable word
         // ("… pee") to a prompt would buy a click-through past it. Hold the block
         // and let external moderation run first; it can only escalate.
-        if (!isSoftBlock(remainingTriggers)) throw regexBlock;
+        if (!isSoftBlock(triggers)) throw regexBlock;
         softRegexBlock = regexBlock;
       }
     }
@@ -340,12 +291,10 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         message: cat,
         matchedWord: cat,
       }));
-      // Filter out allowlisted external triggers
-      const remainingTriggers = filterAllowlistedTriggers(externalTriggers, allowlist);
-      if (remainingTriggers.length > 0) {
+      if (externalTriggers.length > 0) {
         throw {
-          blockedFor: remainingTriggers.map((t) => t.message),
-          triggers: remainingTriggers,
+          blockedFor: externalTriggers.map((t) => t.message),
+          triggers: externalTriggers,
           type: 'external',
         };
       }

@@ -3363,15 +3363,6 @@ export type Product = {
   defaultPriceId: string | null;
   provider: Generated<PaymentProvider>;
 };
-export type PromptAllowlist = {
-  id: Generated<number>;
-  trigger: string;
-  category: string;
-  addedBy: number;
-  reason: string | null;
-  userRestrictionId: number | null;
-  createdAt: Generated<Timestamp>;
-};
 export type PurchasableReward = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
@@ -4460,7 +4451,6 @@ export type DB = {
   PressMention: PressMention;
   Price: Price;
   Product: Product;
-  PromptAllowlist: PromptAllowlist;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
   Question: Question;

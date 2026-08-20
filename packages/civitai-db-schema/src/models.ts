@@ -5013,16 +5013,6 @@ export interface UserRestriction {
   userMessageAt: Date | null;
 }
 
-export interface PromptAllowlist {
-  id: number;
-  trigger: string;
-  category: string;
-  addedBy: number;
-  reason: string | null;
-  userRestrictionId: number | null;
-  createdAt: Date;
-}
-
 export interface UserStrike {
   id: number;
   userId: number;
