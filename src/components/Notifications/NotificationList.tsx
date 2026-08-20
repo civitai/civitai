@@ -6,6 +6,8 @@ import type { MouseEvent } from 'react';
 import React, { useMemo } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useNotificationThumbnails } from '~/components/Notifications/notification-thumbnails';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import type { NotificationGetAll } from '~/types/router';
@@ -54,6 +56,7 @@ export function NotificationList({
   searchText,
 }: Props) {
   const router = useRouter();
+  const thumbnails = useNotificationThumbnails(items);
 
   const fullItems = useMemo(() => {
     return items
@@ -90,6 +93,7 @@ export function NotificationList({
         const notificationDetails = notification.details;
         const details = notification.fullDetails;
 
+        const thumbnail = thumbnails.get(Number(notificationDetails?.imageId));
         const systemNotification = notification.type === 'system-announcement';
         const milestoneNotification = notification.type.includes('milestone');
 
@@ -169,6 +173,16 @@ export function NotificationList({
                   </Group>
                 </Stack>
               </Group>
+              {thumbnail && (
+                <EdgeMedia
+                  src={thumbnail.url}
+                  type={thumbnail.type}
+                  width={90}
+                  alt=""
+                  anim={false}
+                  className="size-12 shrink-0 rounded-md object-cover"
+                />
+              )}
             </Group>
           </Paper>
         );
