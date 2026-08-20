@@ -104,6 +104,9 @@ export const getAllModelsSchema = z.object({
   hidden: z.coerce.boolean().optional().default(false),
   needsReview: z.coerce.boolean().optional(),
   earlyAccess: z.coerce.boolean().optional(),
+  // booleanString, not z.coerce.boolean: the REST endpoint parses raw query strings,
+  // where coerce makes `?paidAccess=false` truthy.
+  paidAccess: booleanString().optional(),
   ids: commaDelimitedNumberArray().optional(),
   modelVersionIds: commaDelimitedNumberArray().optional(),
   supportsGeneration: z.coerce.boolean().optional(),
@@ -508,15 +511,6 @@ export type PublishPrivateModelInput = z.infer<typeof publishPrivateModelSchema>
 export const publishPrivateModelSchema = z.object({
   modelId: z.number(),
   publishVersions: z.boolean(),
-});
-
-export type GetTrainingModerationFeedSchema = z.infer<typeof getTrainingModerationFeedSchema>;
-export const getTrainingModerationFeedSchema = infiniteQuerySchema.extend({
-  username: z.string().optional(),
-  dateFrom: z.date().optional(),
-  dateTo: z.date().optional(),
-  cannotPublish: z.boolean().optional(),
-  workflowId: z.string().optional(),
 });
 
 // Training models list schema with filtering and sorting

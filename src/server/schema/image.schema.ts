@@ -262,7 +262,6 @@ export const imageModerationSchema = z.object({
   reviewAction: z.enum(['unblock', 'block']),
   violationType: z.enum(ViolationType).optional(),
   violationDetails: z.string().optional(),
-  removeMinorFlag: z.boolean().optional(),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 export type ImageModerationUnblockSchema = {
@@ -327,6 +326,48 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 
 // TODO try using ".strict()", fix "authed" as unrecognized key
 
+// Params the search index physically can't serve — these must use the DB
+// (getAllImages). The decision is server-side: there is no client `useIndex`
+// flag, so a client can't force the expensive un-indexed path on a broad query.
+// Correctness-critical filters (wrong results if the index ignored them):
+// - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
+//   unique cache keys in BitDex that hurt cache hit rate)
+// - collectionId: requires relational joins through CollectionItem
+// - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
+// - imageId: not a search-index filter
+// - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
+//   a modelId-only query would silently return the global feed (matches the
+//   /api/v1/images legacy-method logic)
+// Ordering-only:
+// - prioritizedUserIds: DB-level user prioritization (TODO in getAllImagesIndex).
+//   Only forces the DB when scoped to a model (its sole legit use — the model
+//   showcase carousel, which always pairs it with modelVersionId). Sent alone it
+//   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
+//
+// A hub can only be served from the index, so this list is also the set `hubId`
+// cannot be combined with. Both the dispatcher and that rejection read it here so
+// the two cannot drift.
+export function requiresImageDbPath(input: {
+  postId?: number | null;
+  postIds?: number[] | null;
+  collectionId?: number | null;
+  reactions?: unknown[] | null;
+  imageId?: number | null;
+  modelId?: number | null;
+  modelVersionId?: number | null;
+  prioritizedUserIds?: number[] | null;
+}) {
+  return (
+    !!input.postId ||
+    !!input.postIds?.length ||
+    !!input.collectionId ||
+    !!input.reactions?.length ||
+    !!input.imageId ||
+    (!!input.modelId && !input.modelVersionId) ||
+    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId))
+  );
+}
+
 // faux-extends imagesQueryParamSchema output type
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
@@ -361,6 +402,10 @@ export const getInfiniteImagesSchema = baseQuerySchema
     types: z.array(z.enum(MediaType)).optional(),
     userId: z.number().optional(),
     username: usernameSchema.optional(),
+    // Serve a user-composed hub. The source ids are resolved server-side from
+    // this id — the client never sends them. An arbitrary client-supplied OR
+    // group would be an unbounded-cost query anyone could post.
+    hubId: z.number().optional(),
     // Restrict the feed to creators currently on the "new & upcoming" board. The
     // board id is resolved server-side from this flag plus the request domain —
     // the client never supplies a user list.
@@ -410,6 +455,17 @@ export const getInfiniteImagesSchema = baseQuerySchema
     // not read it (browsing level is the authoritative cap).
     includePG13: z.boolean().optional(),
   })
+  .superRefine((value, ctx) => {
+    // A hub is only expressible on the index. Combined with an input that forces
+    // the DB path the request has no correct answer, so refuse it rather than
+    // serve one of the two filters and label it as the other.
+    if (value.hubId && requiresImageDbPath(value))
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['hubId'],
+        message: 'A hub feed cannot be combined with this filter',
+      });
+  })
   .transform((value) => {
     if (value.withTags) {
       if (!value.include) value.include = [];
@@ -446,18 +502,6 @@ export const getEntitiesCoverImage = z.object({
   ),
 });
 
-export type ImageReviewQueueInput = z.infer<typeof imageReviewQueueInputSchema>;
-export const imageReviewQueueInputSchema = z.object({
-  limit: z.number().min(0).max(200).default(100),
-  cursor: z.union([z.bigint(), z.number()]).optional(),
-  needsReview: z.string().nullish(),
-  tagReview: z.boolean().optional(),
-  reportReview: z.boolean().optional(),
-  tagIds: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  browsingLevel: z.number().default(allBrowsingLevelsFlag),
-});
-
 export type ScanJobsOutput = z.output<typeof scanJobsSchema>;
 export const scanJobsSchema = z.looseObject({
   scans: z.record(z.string(), z.number()).default({}),
@@ -471,35 +515,6 @@ export const updateImageNsfwLevelSchema = z.object({
   nsfwLevel: z.enum(NsfwLevel),
   status: z.enum(ReportStatus).optional(),
   reason: z.string().optional(),
-});
-
-export const getImageRatingRequestsSchema = paginationSchema.extend({
-  status: z.enum(ReportStatus).array().optional(),
-});
-
-export type ImageRatingReviewOutput = z.infer<typeof imageRatingReviewInput>;
-export const imageRatingReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.number().optional(),
-});
-
-export type DownleveledReviewOutput = z.infer<typeof downleveledReviewInput>;
-export const downleveledReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.string().optional(),
-  originalLevel: z.nativeEnum(NsfwLevel).optional(),
-});
-
-export type IngestionErrorReviewInput = z.infer<typeof ingestionErrorReviewInput>;
-export const ingestionErrorReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.number().optional(),
-});
-
-export type ResolveIngestionErrorInput = z.infer<typeof resolveIngestionErrorInput>;
-export const resolveIngestionErrorInput = z.object({
-  id: z.number(),
-  nsfwLevel: z.enum(NsfwLevel),
 });
 
 export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;

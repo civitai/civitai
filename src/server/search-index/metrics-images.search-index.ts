@@ -46,6 +46,11 @@ const filterableAttributes = [
   'toolIds',
   'techniqueIds',
   'tagIds',
+  // Membership is narrowed to ACCEPTED items in non-private collections. Both
+  // halves matter: private membership would let a hub surface an image because
+  // it sits in someone else's private collection, and it is also 88% of all
+  // membership rows — narrowing is the leak fix and the cardinality fix at once.
+  'collectionIds',
   'userId',
   'nsfwLevel',
   'combinedNsfwLevel',
@@ -185,6 +190,11 @@ type ImageTechnique = {
 
 type ImageTags = Awaited<ReturnType<typeof tagIdsForImagesCache.fetch>>;
 
+type ImageCollections = {
+  id: number;
+  collectionIds: number[];
+};
+
 const transformData = async ({
   images,
   imageTags,
@@ -192,18 +202,25 @@ const transformData = async ({
   tools,
   techniques,
   modelVersions,
+  collections,
 }: {
   images: SearchBaseImage[];
   imageTags: ImageTags;
   metrics: Metrics[];
   tools: ImageTool[];
   techniques: ImageTechnique[];
+  collections: ImageCollections[];
   modelVersions: ModelVersions[];
 }) => {
+  // Map rather than a per-image filter: the tools/techniques scans above are
+  // O(images x rows) and collections is the widest of the three.
+  const collectionsById = new Map(collections.map((c) => [c.id, c]));
+
   const records = images
     .map(({ publishedAt, nsfwLevelLocked, promptNsfw, ...imageRecord }) => {
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id);
       const imageTechniques = techniques.filter((t) => t.imageId === imageRecord.id);
+      const imageCollections = collectionsById.get(imageRecord.id);
 
       const {
         modelVersionIdsAuto,
@@ -246,6 +263,7 @@ const transformData = async ({
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
         tagIds: imageTags[imageRecord.id]?.tags ?? [],
+        collectionIds: imageCollections?.collectionIds ?? [],
         flags: Object.keys(flags).length > 0 ? flags : undefined,
       };
     })
@@ -261,7 +279,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 100, // Avoids hogging too much memory.
-  pullSteps: 5,
+  pullSteps: 6,
   prepareBatches: async ({ db, pg, jobContext }, lastUpdatedAt) => {
     const lastUpdateIso = lastUpdatedAt?.toISOString();
     const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
@@ -466,6 +484,26 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
 
         result.modelVersions ??= [];
         result.modelVersions.push(...modelVersions);
+        continue;
+      }
+
+      if (step === 5) {
+        logger(`Pulling collections :: ${indexName} ::`, batchLogKey, subBatchLogKey);
+
+        const collections = await db.$queryRaw<ImageCollections[]>`
+          SELECT
+            ci."imageId" as id,
+            coalesce(array_agg(DISTINCT ci."collectionId"), '{}') as "collectionIds"
+          FROM "CollectionItem" ci
+          JOIN "Collection" c ON c."id" = ci."collectionId"
+          WHERE ci."imageId" IN (${Prisma.join(batch)})
+            AND ci."status" = 'ACCEPTED'
+            AND c."read" <> 'Private'
+          GROUP BY ci."imageId";
+        `;
+
+        result.collections ??= [];
+        result.collections.push(...collections);
         continue;
       }
 

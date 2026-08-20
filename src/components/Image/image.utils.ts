@@ -54,6 +54,7 @@ export const imagesQueryParamSchema = z
       .optional(),
     collectionId: numericString(),
     collectionTagId: numericString(),
+    hubId: numericString(),
     hideAutoResources: booleanString(),
     hideManualResources: booleanString(),
     followed: booleanString(),

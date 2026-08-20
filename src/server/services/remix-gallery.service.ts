@@ -411,11 +411,13 @@ export async function actOnRemixGallerySubmission({
   action,
   userId,
   isModerator = false,
+  asModerator = false,
 }: {
   placementId: number;
   action: OwnerAction;
   userId: number;
   isModerator?: boolean;
+  asModerator?: boolean;
 }) {
   const placement = await dbWrite.placement.findUnique({
     where: { id: placementId },
@@ -476,9 +478,17 @@ export async function actOnRemixGallerySubmission({
     // which is indistinguishable from an honest removal and costs the submitter
     // everything they paid.
     //
-    // A moderator is exempt: a takedown is a moderation record rather than an
-    // owner decision, and the abusive cases are the ones that must not wait.
-    const isModeratorTakedown = isModerator && placement.ownerId !== userId;
+    // A moderator is exempt: a removal by a moderator is a moderation record
+    // rather than an owner decision, and the abusive cases are the ones that
+    // must not wait. On their own gallery they are exempt only when they asked
+    // to be — otherwise a moderator would silently never be held to the wait
+    // their own submitters were promised.
+    //
+    // `isModerator` is the permission and `asModerator` only picks between two
+    // things this caller may already do, so the claim is read INSIDE the role
+    // check rather than beside it. On someone else's gallery there is no
+    // creator role to go back to, so the claim is not asked for.
+    const isModeratorTakedown = isModerator && (placement.ownerId !== userId || asModerator);
     if (!isModeratorTakedown) {
       // Falls back to `createdAt` rather than skipping when `resolvedAt` is
       // absent. Gating the check on the column being set made this fail OPEN:
@@ -507,10 +517,12 @@ export async function actOnRemixGallerySubmission({
       where: { id: placementId, status: 'approved' },
       data: {
         status: 'removed',
-        // A moderator acting on someone else's gallery is a moderation record,
-        // not an owner decision, and the two refund differently everywhere else
-        // in this system. Recording it as `owner` would misattribute it.
-        removedBy: isModerator && placement.ownerId !== userId ? 'moderator' : 'owner',
+        // A moderator acting as one is a moderation record, not an owner
+        // decision, and the two refund differently everywhere else in this
+        // system. Recording it as `owner` would misattribute it — including on
+        // their own gallery, where the moderator exemption above is what let
+        // the removal through at all.
+        removedBy: isModeratorTakedown ? 'moderator' : 'owner',
         // Not `resolvedAt`/`resolvedById`: those record who approved it, and
         // overwriting them here would destroy the approval trail.
         takenDownAt: new Date(),

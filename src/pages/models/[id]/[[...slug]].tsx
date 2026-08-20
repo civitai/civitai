@@ -33,7 +33,6 @@ import {
   IconEdit,
   IconExclamationMark,
   IconFlag,
-  IconInfoCircle,
   IconLock,
   IconLockOff,
   IconPlus,
@@ -1091,16 +1090,6 @@ export default function ModelDetailsV2({
                         )}
                         {currentUser && isModerator && (
                           <>
-                            {env.NEXT_PUBLIC_MODEL_LOOKUP_URL && (
-                              <Menu.Item
-                                component="a"
-                                target="_blank"
-                                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                                href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
-                              >
-                                Lookup Model
-                              </Menu.Item>
-                            )}
                             {published && (
                               <Menu.Item
                                 color="yellow"

@@ -2,7 +2,6 @@ import { Stack, Title } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
-import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
@@ -35,7 +34,6 @@ function ArticlesPage() {
       <MasonryContainer>
         <Stack gap="xs">
           {query.favorites && <Title>Your Bookmarked Articles</Title>}
-          <ArticleCategories />
           <ArticlesInfinite filters={query} />
         </Stack>
       </MasonryContainer>

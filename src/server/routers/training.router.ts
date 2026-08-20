@@ -38,12 +38,11 @@ import {
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const TRAINING_ANNOUNCEMENT_KEY = 'training-announcement';
-const announcementColors = ['yellow', 'red', 'blue', 'green', 'gray'] as const;
-const trainingAnnouncementSchema = z.object({
-  message: z.string().max(2000),
-  color: z.enum(announcementColors).default('yellow'),
-});
-type TrainingAnnouncement = z.infer<typeof trainingAnnouncementSchema>;
+// Written by the moderator app's Training Models page; read here for the training form's alert box.
+type TrainingAnnouncement = {
+  message: string;
+  color: 'yellow' | 'red' | 'blue' | 'green' | 'gray';
+};
 
 export const trainingRouter = router({
   /**
@@ -147,12 +146,5 @@ export const trainingRouter = router({
     .query(async () => {
       const announcement = await dbKV.get<TrainingAnnouncement>(TRAINING_ANNOUNCEMENT_KEY);
       return announcement ?? null;
-    }),
-
-  setAnnouncement: moderatorProcedure
-    .input(trainingAnnouncementSchema)
-    .mutation(async ({ input }) => {
-      await dbKV.set(TRAINING_ANNOUNCEMENT_KEY, input);
-      return { success: true };
     }),
 });

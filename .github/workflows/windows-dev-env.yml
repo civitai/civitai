@@ -1,0 +1,128 @@
+name: Windows dev-env smoke
+
+# Non-blocking canary for the DEFAULT (non-Nix) contributor setup on native Windows.
+#
+# WHY: every other job in this repo runs on ubuntu-latest, so nothing validates
+# Windows — while Windows support is real and actively maintained:
+# `.claude/skills/dev-server/scripts/defender-exclusions.ps1`, `win32` branches in
+# `scripts/test-unit-run.mjs`, `scripts/test-perf/bench.mjs`,
+# `.claude/skills/dev-server/console.mjs` and `.../scripts/worktree.mjs`, plus
+# `it.skipIf(process.platform === 'win32')` guards in `scripts/__tests__/`.
+# A supported platform verified by nothing is how a contributor's first hour gets
+# spent on a break nobody else can reproduce.
+#
+# THE SPECIFIC EXPOSURE this is aimed at: `pnpm install` runs two lifecycle hooks —
+# `preinstall` (`npx only-allow pnpm`) and `postinstall` (`pnpm run db:generate`,
+# i.e. `node scripts/generate-slim-schema.js && prisma generate --no-hints`). The
+# Makefile carried `# TODO fix postinstall on git bash` against exactly that path.
+# That target was ALSO dead for everyone — `npm i` exits 1 under `only-allow` — so
+# the hook path went a long time without being exercised on Windows by anybody.
+# Un-breaking the target means the next Windows contributor is the first to walk
+# it in a long while. This job walks it first.
+#
+# BOTH SHELLS ON PURPOSE: `pwsh` is the Windows default, `bash` is Git Bash — and
+# the TODO above was Git-Bash-specific. A pwsh-only job would not reproduce it, and
+# would report green over the one case we have written evidence about.
+#
+# DELIBERATELY NON-BLOCKING (`continue-on-error: true`) to start. A gate that lands
+# red on day one and stops unrelated PRs trains everyone to click through, which is
+# strictly worse than no gate. Turn it off once this has been green long enough to
+# mean something.
+#
+# DELIBERATELY NOT starting the compose stack: those are Linux containers, and
+# Docker on Windows runners is slow and flaky — it would buy noise, not signal.
+# This covers everything up to `pnpm dev`; the services half is Linux-identical
+# and already exercised by the ubuntu jobs.
+#
+# COST: `windows-latest` is a standard GitHub-hosted runner, which is free for
+# public repositories. This adds no Actions minutes.
+
+on:
+  pull_request:
+    branches: [main, release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-dev-env-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Windows dev-env (${{ matrix.shell }})
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [pwsh, bash]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+      # `submodules: true` is CI's equivalent of the documented
+      # `git submodule update --init event-engine-common`. Without it the install
+      # fails in a way that looks like a code defect rather than a missing checkout
+      # step — the exact confusion that cost a session earlier.
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Report rather than assume. `engines.node` is ADVISORY — pnpm prints
+      # `WARN Unsupported engine` and exits 0 on a wrong major — so a mismatch here
+      # would otherwise surface later as unrelated-looking failures.
+      - name: Toolchain actually in use
+        run: |
+          node --version
+          pnpm --version
+
+      # THE STEP UNDER TEST. Both lifecycle hooks run here.
+      - name: pnpm install (runs preinstall + postinstall)
+        run: pnpm install --frozen-lockfile
+
+      # POSITIVE CONTROL — the half that makes the green mean something.
+      #
+      # `pnpm install` exiting 0 is NOT proof the postinstall hook did its job: a
+      # hook that silently no-ops also exits 0, and the missing client then surfaces
+      # much later as a confusing runtime error. So assert the artifact.
+      #
+      # This particular artifact is a genuine control because
+      # `packages/civitai-db-schema/prisma/schema.prisma` is GITIGNORED — it cannot
+      # arrive from the checkout, so its presence proves the hook executed here.
+      #
+      # Runs under `node` rather than the matrix shell on purpose: this checks an
+      # artifact, not shell behaviour, and it keeps the assertion free of pwsh-vs-bash
+      # quoting differences.
+      - name: Assert postinstall actually generated the slim schema
+        shell: node {0}
+        run: |
+          const fs = require('fs');
+          const f = 'packages/civitai-db-schema/prisma/schema.prisma';
+          if (!fs.existsSync(f)) {
+            console.log(`::error title=postinstall did not run::${f} is absent after \`pnpm install\`. It is gitignored, so it can only come from the postinstall hook (\`pnpm run db:generate\`). The install reported success, so the hook failed silently or was skipped.`);
+            process.exit(1);
+          }
+          const lines = fs.readFileSync(f, 'utf8').split('\n').length;
+          console.log(`${f}: ${lines} lines`);
+          // A truncated or empty generate also exits 0. 50 is far below any real
+          // schema and far above an accidental stub, so it separates the two
+          // without pinning a number that ordinary schema churn would trip.
+          if (lines < 50) {
+            console.log(`::error title=slim schema looks truncated::${f} exists but has only ${lines} lines.`);
+            process.exit(1);
+          }
+
+      # Standalone re-run: the hook working once inside `pnpm install` does not mean
+      # a contributor can run it by hand, which the docs tell them to do.
+      - name: db:generate standalone
+        run: pnpm run db:generate

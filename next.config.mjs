@@ -198,6 +198,7 @@ export default defineNextConfig(
       '@civitai/telemetry',
       '@civitai/auth',
       '@civitai/notifications',
+      '@civitai/moderation',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
@@ -373,6 +374,21 @@ export default defineNextConfig(
       // here would be pruned to nothing at build time anyway since
       // SERVER_DOMAIN_* env vars aren't exposed as Docker build ARGs.
       return [
+        {
+          // `/apps/my-submissions` merged into `/apps/mine` — one author table over every
+          // app you own or hold a seat on, with each app's submission history nested in
+          // its row. The page component is DELETED, not emptied: a stub whose only job is
+          // to redirect is dead code that reads as a live route.
+          //
+          // 🔴 `statusCode: 301`, not `permanent: true`. Next maps `permanent` to **308**,
+          // which preserves the request METHOD — correct in general, but this is a GET-only
+          // author page whose inbound links are bookmarks, notification URLs and search
+          // results, and 301 is the status those consumers cache and rewrite on. The two
+          // options are mutually exclusive in Next's schema, so this is `statusCode` alone.
+          source: '/apps/my-submissions',
+          destination: '/apps/mine',
+          statusCode: 301,
+        },
         {
           source: '/api/download/training-data/:modelVersionId',
           destination: '/api/download/models/:modelVersionId?type=Training%20Data',

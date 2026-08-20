@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as SubscriptionsService from '~/server/services/subscriptions.service';
 import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
@@ -47,44 +48,40 @@ function fakePrepaidTokens({
 }
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
-const {
-  mockDbWrite,
-  mockDeliverMonthlyCosmetics,
-  mockRefreshSession,
-  mockGetPrepaidTokens,
-} = vi.hoisted(() => {
-  const mockCustomerSubscription = {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    delete: vi.fn(),
-    updateManyAndReturn: vi.fn(),
-  };
+const { mockDbWrite, mockDeliverMonthlyCosmetics, mockRefreshSession, mockGetPrepaidTokens } =
+  vi.hoisted(() => {
+    const mockCustomerSubscription = {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      delete: vi.fn(),
+      updateManyAndReturn: vi.fn(),
+    };
 
-  const mockProduct = {
-    findMany: vi.fn(),
-  };
+    const mockProduct = {
+      findMany: vi.fn(),
+    };
 
-  return {
-    mockDbWrite: {
-      customerSubscription: mockCustomerSubscription,
-      product: mockProduct,
-      $transaction: vi.fn(async (callback: (tx: any) => Promise<any>) => {
-        return callback({
-          customerSubscription: mockCustomerSubscription,
-          product: mockProduct,
-        });
-      }),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-    mockDeliverMonthlyCosmetics: vi.fn().mockResolvedValue(undefined),
-    mockRefreshSession: vi.fn().mockResolvedValue(undefined),
-    mockGetPrepaidTokens: vi.fn().mockImplementation(fakePrepaidTokens),
-  };
-});
+    return {
+      mockDbWrite: {
+        customerSubscription: mockCustomerSubscription,
+        product: mockProduct,
+        $transaction: vi.fn(async (callback: (tx: any) => Promise<any>) => {
+          return callback({
+            customerSubscription: mockCustomerSubscription,
+            product: mockProduct,
+          });
+        }),
+        $queryRaw: vi.fn(),
+        $executeRaw: vi.fn(),
+      },
+      mockDeliverMonthlyCosmetics: vi.fn().mockResolvedValue(undefined),
+      mockRefreshSession: vi.fn().mockResolvedValue(undefined),
+      mockGetPrepaidTokens: vi.fn().mockImplementation(fakePrepaidTokens),
+    };
+  });
 
 // Mock modules
 vi.mock('~/env/server', () => ({
@@ -120,13 +117,16 @@ vi.mock('~/server/db/client', () => ({
   // returns nothing lets the sync complete as a no-op (0 synced).
   dbRead: {
     product: { findMany: vi.fn().mockResolvedValue([]) },
-    cosmetic: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(null) },
+    cosmetic: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
   dbWrite: mockDbWrite,
 }));
 
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/services/subscriptions.service')>();
+  const actual = await importOriginal<typeof SubscriptionsService>();
   return {
     ...actual,
     deliverMonthlyCosmetics: mockDeliverMonthlyCosmetics,
@@ -146,9 +146,9 @@ vi.mock('~/utils/errorHandling', () => ({
 }));
 
 // Mock dayjs to use standard dayjs that respects vi.useFakeTimers
-vi.mock('~/shared/utils/dayjs', () => {
-  const dayjs = require('dayjs');
-  return { default: dayjs };
+vi.mock('~/shared/utils/dayjs', async () => {
+  const dayjs = await import('dayjs');
+  return { default: dayjs.default };
 });
 
 // Mock the createJob to return a Job-like object for testing
@@ -252,9 +252,7 @@ describe('prepaid-membership-jobs', () => {
       const unlockedTokens = updatedMeta.tokens.filter(
         (t: PrepaidToken) => t.status === 'unlocked'
       );
-      const lockedTokens = updatedMeta.tokens.filter(
-        (t: PrepaidToken) => t.status === 'locked'
-      );
+      const lockedTokens = updatedMeta.tokens.filter((t: PrepaidToken) => t.status === 'locked');
       expect(unlockedTokens).toHaveLength(1);
       expect(lockedTokens).toHaveLength(1);
       expect(unlockedTokens[0].unlockedAt).toContain('2024-01-15');
@@ -316,9 +314,7 @@ describe('prepaid-membership-jobs', () => {
       const updatedMeta = JSON.parse(updates[0].metadata);
 
       // Legacy token should be unlocked
-      const unlocked = updatedMeta.tokens.filter(
-        (t: PrepaidToken) => t.status === 'unlocked'
-      );
+      const unlocked = updatedMeta.tokens.filter((t: PrepaidToken) => t.status === 'unlocked');
       expect(unlocked).toHaveLength(1);
       expect(unlocked[0].id).toMatch(/^legacy_/);
 
@@ -388,9 +384,7 @@ describe('prepaid-membership-jobs', () => {
         id: `sub_${i}`,
         userId: i + 1,
         metadata: {
-          tokens: [
-            { id: `tok_${i}`, tier: 'bronze', status: 'locked', buzzAmount: 10000 },
-          ],
+          tokens: [{ id: `tok_${i}`, tier: 'bronze', status: 'locked', buzzAmount: 10000 }],
         },
         tier: 'bronze',
       }));
@@ -511,9 +505,7 @@ describe('prepaid-membership-jobs', () => {
         id: 'sub_1',
         userId: 1,
         metadata: {
-          tokens: [
-            { id: 'tok_1', tier: 'gold', status: 'claimed', buzzAmount: 50000 },
-          ],
+          tokens: [{ id: 'tok_1', tier: 'gold', status: 'claimed', buzzAmount: 50000 }],
           proratedDays: {},
         },
         currentPeriodStart: new Date('2023-12-15'),
@@ -698,7 +690,111 @@ describe('prepaid-membership-jobs', () => {
       expect(updatedMeta.tokens).toHaveLength(4);
       // Gold token still claimed, silver tokens still locked (unlock job handles unlocking later)
       expect(updatedMeta.tokens.find((t: PrepaidToken) => t.id === 'tok_1').status).toBe('claimed');
-      expect(updatedMeta.tokens.filter((t: PrepaidToken) => t.tier === 'silver' && t.status === 'locked')).toHaveLength(3);
+      expect(
+        updatedMeta.tokens.filter((t: PrepaidToken) => t.tier === 'silver' && t.status === 'locked')
+      ).toHaveLength(3);
+    });
+
+    it('should resolve the tier to the cash product, not the buzz-purchase or referral variant', async () => {
+      vi.setSystemTime(new Date('2024-01-15T00:00:00Z'));
+
+      // Both variants share tier 'gold' with the cash product, and one brackets it on each
+      // side: dropping the exclusion lands on the referral variant under first-writer-wins
+      // and on the Buzz variant under the last-writer-wins this bug came from.
+      const tierProducts = [
+        {
+          id: 'prod_referral_gold',
+          name: 'Gold Membership (Referral)',
+          metadata: { tier: 'gold', referralGrantable: true, rewardsMultiplier: 1 },
+          provider: 'Civitai',
+          prices: [{ id: 'price_referral_gold', currency: 'USD', interval: 'month', active: true }],
+        },
+        ...createTierProducts(),
+        {
+          id: 'prod_buzz_gold',
+          name: 'Gold Membership (Buzz)',
+          metadata: { tier: 'gold', buzzPurchase: 'true', rewardsMultiplier: 1 },
+          provider: 'Civitai',
+          prices: [{ id: 'price_buzz_gold', currency: 'USD', interval: 'month', active: true }],
+        },
+      ];
+
+      const expiringMembership = {
+        id: 'sub_1',
+        userId: 1,
+        metadata: {
+          tokens: [{ id: 'tok_1', tier: 'gold', status: 'locked', buzzAmount: 50000 }],
+          proratedDays: {},
+        },
+        currentPeriodStart: new Date('2023-12-15'),
+        currentPeriodEnd: new Date('2024-01-15'),
+        product: {
+          id: 'prod_buzz_gold',
+          metadata: { tier: 'gold', buzzPurchase: 'true' },
+        },
+        price: { id: 'price_buzz_gold', interval: 'month' },
+      };
+
+      mockDbWrite.product.findMany.mockResolvedValue(tierProducts);
+      mockDbWrite.customerSubscription.findMany.mockResolvedValue([expiringMembership]);
+      mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
+
+      await processPrepaidMembershipTransitions.run().result;
+
+      const updates = JSON.parse(mockDbWrite.$executeRaw.mock.calls[0][1]);
+      expect(updates[0].productId).toBe('prod_gold');
+      expect(updates[0].priceId).toBe('price_gold');
+    });
+
+    it('should order the tier product query deterministically', async () => {
+      vi.setSystemTime(new Date('2024-01-15T00:00:00Z'));
+
+      mockDbWrite.product.findMany.mockResolvedValue(createTierProducts());
+      mockDbWrite.customerSubscription.findMany.mockResolvedValue([]);
+
+      await processPrepaidMembershipTransitions.run().result;
+
+      expect(mockDbWrite.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { id: 'asc' },
+          include: expect.objectContaining({
+            prices: expect.objectContaining({ orderBy: { id: 'asc' } }),
+          }),
+        })
+      );
+    });
+
+    it('should leave productId and priceId alone when the tier product is unchanged', async () => {
+      vi.setSystemTime(new Date('2024-01-15T00:00:00Z'));
+
+      const expiringMembership = {
+        id: 'sub_1',
+        userId: 1,
+        metadata: {
+          tokens: [{ id: 'tok_1', tier: 'gold', status: 'locked', buzzAmount: 50000 }],
+          proratedDays: {},
+        },
+        currentPeriodStart: new Date('2023-12-15'),
+        currentPeriodEnd: new Date('2024-01-15'),
+        product: {
+          id: 'prod_gold',
+          metadata: { tier: 'gold', monthlyBuzz: 50000 },
+        },
+        price: { id: 'price_gold', interval: 'month' },
+      };
+
+      mockDbWrite.product.findMany.mockResolvedValue(createTierProducts());
+      mockDbWrite.customerSubscription.findMany.mockResolvedValue([expiringMembership]);
+      mockDbWrite.$executeRaw.mockResolvedValue({ count: 1 });
+
+      await processPrepaidMembershipTransitions.run().result;
+
+      const updates = JSON.parse(mockDbWrite.$executeRaw.mock.calls[0][1]);
+      // null means "leave the column as-is" to the batch UPDATE's CASE expressions.
+      expect(updates[0].productId).toBeNull();
+      expect(updates[0].priceId).toBeNull();
+      // The rollover itself still happened.
+      expect(updates[0].currentPeriodEnd).toBeTruthy();
     });
 
     it('should not process if no expiring memberships', async () => {
@@ -736,8 +832,20 @@ describe('prepaid-membership-jobs', () => {
 
       const tokens: PrepaidToken[] = [
         { id: 'tok_1', tier: 'gold', status: 'locked', buzzAmount: 50000 },
-        { id: 'tok_2', tier: 'gold', status: 'unlocked', buzzAmount: 50000, unlockedAt: '2024-01-14T01:00:00Z' },
-        { id: 'tok_3', tier: 'gold', status: 'claimed', buzzAmount: 50000, claimedAt: '2024-01-13T00:00:00Z' },
+        {
+          id: 'tok_2',
+          tier: 'gold',
+          status: 'unlocked',
+          buzzAmount: 50000,
+          unlockedAt: '2024-01-14T01:00:00Z',
+        },
+        {
+          id: 'tok_3',
+          tier: 'gold',
+          status: 'claimed',
+          buzzAmount: 50000,
+          claimedAt: '2024-01-13T00:00:00Z',
+        },
       ];
 
       const expiredMembership = {
@@ -786,7 +894,13 @@ describe('prepaid-membership-jobs', () => {
       vi.setSystemTime(new Date('2024-01-15T02:00:00Z'));
 
       const tokens: PrepaidToken[] = [
-        { id: 'tok_1', tier: 'gold', status: 'claimed', buzzAmount: 50000, claimedAt: '2024-01-10T00:00:00Z' },
+        {
+          id: 'tok_1',
+          tier: 'gold',
+          status: 'claimed',
+          buzzAmount: 50000,
+          claimedAt: '2024-01-10T00:00:00Z',
+        },
       ];
 
       const expiredMembership = {
@@ -823,9 +937,7 @@ describe('prepaid-membership-jobs', () => {
           userId: 1,
           status: 'active',
           metadata: {
-            tokens: [
-              { id: 'tok_a', tier: 'gold', status: 'locked', buzzAmount: 50000 },
-            ],
+            tokens: [{ id: 'tok_a', tier: 'gold', status: 'locked', buzzAmount: 50000 }],
           },
           currentPeriodEnd: new Date('2024-01-14'),
         },
@@ -835,7 +947,13 @@ describe('prepaid-membership-jobs', () => {
           status: 'active',
           metadata: {
             tokens: [
-              { id: 'tok_b', tier: 'silver', status: 'claimed', buzzAmount: 25000, claimedAt: '2024-01-10T00:00:00Z' },
+              {
+                id: 'tok_b',
+                tier: 'silver',
+                status: 'claimed',
+                buzzAmount: 25000,
+                claimedAt: '2024-01-10T00:00:00Z',
+              },
             ],
           },
           currentPeriodEnd: new Date('2024-01-13'),
@@ -846,7 +964,13 @@ describe('prepaid-membership-jobs', () => {
           status: 'active',
           metadata: {
             tokens: [
-              { id: 'tok_c', tier: 'bronze', status: 'unlocked', buzzAmount: 10000, unlockedAt: '2024-01-12T00:00:00Z' },
+              {
+                id: 'tok_c',
+                tier: 'bronze',
+                status: 'unlocked',
+                buzzAmount: 10000,
+                unlockedAt: '2024-01-12T00:00:00Z',
+              },
             ],
           },
           currentPeriodEnd: new Date('2024-01-10'),
@@ -880,7 +1004,13 @@ describe('prepaid-membership-jobs', () => {
           status: 'active',
           metadata: {
             tokens: [
-              { id: 'tok_a', tier: 'gold', status: 'claimed', buzzAmount: 50000, claimedAt: '2024-01-10T00:00:00Z' },
+              {
+                id: 'tok_a',
+                tier: 'gold',
+                status: 'claimed',
+                buzzAmount: 50000,
+                claimedAt: '2024-01-10T00:00:00Z',
+              },
             ],
           },
           currentPeriodEnd: new Date('2024-01-14'),
@@ -890,9 +1020,7 @@ describe('prepaid-membership-jobs', () => {
           userId: 2,
           status: 'active',
           metadata: {
-            tokens: [
-              { id: 'tok_b', tier: 'silver', status: 'locked', buzzAmount: 25000 },
-            ],
+            tokens: [{ id: 'tok_b', tier: 'silver', status: 'locked', buzzAmount: 25000 }],
           },
           currentPeriodEnd: new Date('2024-01-13'),
         },
@@ -918,7 +1046,13 @@ describe('prepaid-membership-jobs', () => {
         status: 'expired_claimable',
         metadata: {
           tokens: [
-            { id: 'tok_1', tier: 'gold', status: 'unlocked', buzzAmount: 50000, unlockedAt: '2024-01-14T00:00:00Z' },
+            {
+              id: 'tok_1',
+              tier: 'gold',
+              status: 'unlocked',
+              buzzAmount: 50000,
+              unlockedAt: '2024-01-14T00:00:00Z',
+            },
           ],
         },
         currentPeriodEnd: new Date('2024-01-14'),

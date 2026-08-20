@@ -58,6 +58,7 @@ export const appRouter = router({
   track: lazy(() => import('./track.router').then((m) => m.trackRouter)),
   training: lazy(() => import('./training.router').then((m) => m.trainingRouter)),
   user: lazy(() => import('./user.router').then((m) => m.userRouter)),
+  userHub: lazy(() => import('./user-hub.router').then((m) => m.userHubRouter)),
   userRestriction: lazy(() =>
     import('~/server/routers/user-restriction.router').then((m) => m.userRestrictionRouter)
   ),
@@ -126,7 +127,6 @@ export const appRouter = router({
   ),
   games: lazy(() => import('~/server/routers/games.router').then((m) => m.gamesRouter)),
   paddle: lazy(() => import('~/server/routers/paddle.router').then((m) => m.paddleRouter)),
-  blocklist: lazy(() => import('~/server/routers/blocklist.router').then((m) => m.blocklistRouter)),
   challenge: lazy(() => import('~/server/routers/challenge.router').then((m) => m.challengeRouter)),
   dailyChallenge: lazy(() =>
     import('~/server/routers/daily-challenge.router').then((m) => m.dailyChallengeRouter)
@@ -143,22 +143,11 @@ export const appRouter = router({
   emerchantpay: lazy(() => import('./emerchantpay.router').then((m) => m.emerchantpayRouter)),
   comics: lazy(() => import('./comics.router').then((m) => m.comicsRouter)),
   strike: lazy(() => import('~/server/routers/strike.router').then((m) => m.strikeRouter)),
-  rewardsBonusEvent: lazy(() =>
-    import('./rewards-bonus-event.router').then((m) => m.rewardsBonusEventRouter)
-  ),
+  rewardsBonusEvent: lazy(() => import('./rewards-bonus-event.router').then((m) => m.rewardsBonusEventRouter)),
   rewardConfig: lazy(() => import('./reward-config.router').then((m) => m.rewardConfigRouter)),
-  oauthClient: lazy(() =>
-    import('~/server/routers/oauth-client.router').then((m) => m.oauthClientRouter)
-  ),
-  oauthConsent: lazy(() =>
-    import('~/server/routers/oauth-consent.router').then((m) => m.oauthConsentRouter)
-  ),
-  scannerReview: lazy(() =>
-    import('~/server/routers/scanner-review.router').then((m) => m.scannerReviewRouter)
-  ),
-  scannerPolicies: lazy(() =>
-    import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)
-  ),
+  oauthClient: lazy(() => import('~/server/routers/oauth-client.router').then((m) => m.oauthClientRouter)),
+  oauthConsent: lazy(() => import('~/server/routers/oauth-consent.router').then((m) => m.oauthConsentRouter)),
+  scannerPolicies: lazy(() => import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)),
 });
 
 // export type definition of API

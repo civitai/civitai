@@ -14,8 +14,13 @@ export const systemNotifications = createNotificationProcessor({
     displayName: 'Terms of Service Violation',
     category: NotificationCategory.System,
     toggleable: false,
+    // `details.reason` is absent on every notification written before it existed, and on the paths
+    // that still do not classify a removal — so the unreasoned wording stays, rather than rendering
+    // "violation: undefined" over the whole backlog.
     prepareMessage: ({ details }) => ({
-      message: `Your ${details.entity} on "${details.modelName}" has been removed due to a Terms of Service violation.`,
+      message: details.reason
+        ? `Your ${details.entity} on "${details.modelName}" has been removed for a Terms of Service violation: ${details.reason}.`
+        : `Your ${details.entity} on "${details.modelName}" has been removed due to a Terms of Service violation.`,
       url: details.url,
     }),
   },

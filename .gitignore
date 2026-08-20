@@ -45,6 +45,10 @@ yarn-error.log*
 .env*
 !.env-example
 !.env.example
+# `.env*` also matches `.envrc`, which is how the flake gets loaded. The real
+# .envrc stays ignored (it holds machine-local secrets); the example is tracked
+# so the flake is discoverable from a clean clone.
+!.envrc.example
 
 # vercel
 .vercel

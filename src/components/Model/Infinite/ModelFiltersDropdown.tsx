@@ -104,6 +104,7 @@ export function DumbModelFiltersDropdown({
       status: undefined,
       checkpointType: undefined,
       earlyAccess: undefined,
+      paidAccess: undefined,
       supportsGeneration: false,
       hidden: undefined,
       fileFormats: undefined,
@@ -120,6 +121,7 @@ export function DumbModelFiltersDropdown({
         status: undefined,
         checkpointType: undefined,
         earlyAccess: undefined,
+        paidAccess: undefined,
         supportsGeneration: undefined,
         hidden: undefined,
         fileFormats: undefined,
@@ -155,6 +157,7 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.status?.length ?? 0) +
     (showCheckpointType && mergedFilters.checkpointType ? 1 : 0) +
     (!hideEarlyAccess && mergedFilters.earlyAccess ? 1 : 0) +
+    (!hideEarlyAccess && mergedFilters.paidAccess ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.isFeatured ? 1 : 0) +
@@ -244,13 +247,24 @@ export function DumbModelFiltersDropdown({
         )}
 
         <Group gap={8} mb={4}>
+          {/* The shop pins Early Access on, so neither toggle can do anything
+              useful there. (Gate kinds are disjoint per VERSION, not per model —
+              a model with one permanent and one timed version matches both.) */}
           {!hideEarlyAccess && (
-            <FilterChip
-              checked={mergedFilters.earlyAccess}
-              onChange={(checked) => patchPending({ earlyAccess: checked })}
-            >
-              <span>Early Access</span>
-            </FilterChip>
+            <>
+              <FilterChip
+                checked={mergedFilters.earlyAccess}
+                onChange={(checked) => patchPending({ earlyAccess: checked })}
+              >
+                <span>Early Access</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.paidAccess}
+                onChange={(checked) => patchPending({ paidAccess: checked })}
+              >
+                <span>Paid Access</span>
+              </FilterChip>
+            </>
           )}
           {flags.imageGeneration && (
             <FilterChip

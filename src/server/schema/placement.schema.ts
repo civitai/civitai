@@ -249,6 +249,12 @@ export const getRemixGalleryFreeEligibilitySchema = z.object({
 export const actOnRemixGallerySubmissionSchema = z.object({
   placementId: z.number().int().positive(),
   action: z.enum(['approve', 'decline', 'remove']),
+  // A moderator acting on their OWN gallery, which ownership alone cannot
+  // express: without it they get creator rules on their own content and can
+  // moderate everyone except themselves. Requested, never inferred — moderators
+  // browsing the site as ordinary users is the default and stays that way.
+  // Ignored for anyone who is not a moderator.
+  asModerator: z.boolean().optional(),
 });
 
 export const retractRemixGallerySubmissionSchema = z.object({
@@ -298,5 +304,10 @@ export const getMyRemixGallerySubmissionsSchema = z.object({
 
 export const getPendingStickerPlacementsSchema = z.object({
   cursor: placementQueueCursorSchema,
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
+
+/** Same marking rule as the owner queue: the placer's own band, not a filter. */
+export const getMyStickerPlacementsSchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });

@@ -741,8 +741,17 @@ async function processTags({
   prompt?: string;
 }): Promise<ProcessedTag[]> {
   if (prompt) {
-    // Detect real person in prompt
-    const realPersonName = includesPoi(prompt);
+    // Detect real person in prompt. Strips the moderator-managed benign phrases first, as
+    // the audit path does — without it a whitelisted proper noun is still written as a
+    // confidence-100 tag, which reaches the image search index. This is the orchestrator
+    // path; `getTagsFromIncomingTags` in the webhook is the legacy twin of this function
+    // and needs the same treatment.
+    const realPersonName = includesPoi(
+      // Normalized first, as both audit paths do. Stripping the raw text while the audit that
+      // runs next reads the normalized copy means two different alphabets decide what counts
+      // as whitelisted for the same prompt.
+      await stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase)
+    );
     if (realPersonName) {
       const tagName =
         typeof realPersonName === 'object' ? realPersonName.matchedText : realPersonName;

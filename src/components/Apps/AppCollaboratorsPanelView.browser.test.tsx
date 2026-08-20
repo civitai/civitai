@@ -535,8 +535,10 @@ describe('AppCollaboratorsPanelView — ownership transfer (owner half)', () => 
    *
    * A connect-linked off-site listing is refused at initiate AND again in-transaction at
    * accept, with a message that names the REASON (the credentials/split-ownership
-   * consequence) rather than a remedy — there is no unlink path in the product, so the
-   * string deliberately instructs nothing. Collapsing it into a generic "something went
+   * consequence) rather than a remedy. 🔴 NOT because "there is no unlink path in the
+   * product" — that premise is FALSE and #4126 refuted it (deleting the OAuth client
+   * cascades `onDelete: SetNull`); the string instructs nothing on merits recorded at the
+   * constant. Collapsing it into a generic "something went
    * wrong" would leave the owner with a control that fails forever and no way to learn
    * why, so the message is asserted VERBATIM against the server's own exported constant
    * rather than against a paraphrase.

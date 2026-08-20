@@ -103,6 +103,12 @@ model3d) share `TagScroller` and it has no other usages, so this one change cove
 Chosen over SSR-seeding `useCategoryTags` (cleaner first paint, no reserved space,
 but more plumbing) for being surgical and zero-risk.
 
+> **Superseded (2026-08-19).** The category tag filter bar was removed from every
+> feed-like surface, and `TagScroller` and its five `*Categories` consumers were
+> deleted with it (ClickUp 868ku6983). The shift this section describes can no
+> longer occur, because the element that caused it no longer renders. The file
+> links above point at deleted paths and are kept for the record.
+
 **Verified (local dev build, same `layout-shift` harness):**
 
 | Page      | Before (prod field) | After (local)                         |

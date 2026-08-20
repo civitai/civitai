@@ -9,6 +9,7 @@
  */
 
 import { stdin } from 'process';
+import { readFileSync } from 'fs';
 
 // `prettier --write <targets>`: the incident was a repo-WIDE rewrite, not formatting a directory
 // this change owns. Read the targets instead of matching `--write`, so a scoped path just runs.
@@ -84,7 +85,57 @@ function isUnscoped(target) {
 // URL carrying a dev port in a query parameter — and `$(curl ...)` defeats it anyway. A guard with
 // those false positives and no override is one people route around, and the routes around it are
 // shorter than the compliant path. Asking keeps the nudge and costs a keystroke when it is wrong.
-const DEV_PORTS = /(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?):(?:30\d\d|51[67]\d|9444)\b/i;
+//
+// The daemon's port comes from the dev-server skill rather than being baked in here. A hardcoded
+// copy meant a second daemon was never guarded at all; replacing the default with the override
+// then meant the FIRST one stopped being guarded. Both are live, so the set is additive.
+//
+// Defensive on purpose: a hook that throws breaks EVERY Bash call, so a missing skill directory
+// or a malformed DEV_DAEMON_PORT must degrade, not propagate.
+let devPortsRe = null;
+export function daemonPortsGuarded(env = process.env) {
+  const ports = new Set();
+  try {
+    // Synchronous require-equivalent is unavailable in ESM, so the port is read from the module
+    // source. A regex over the declaration is deliberately duller than an import: it cannot
+    // execute skill code inside a hook that runs before every command.
+    //
+    // Anchored on `export const`, loose only about spacing and digit separators. An earlier
+    // version dropped the anchor to survive a reformat — which it never needed to, since a
+    // reformat does not rewrite `export const NAME =` — and that let the FIRST match anywhere in
+    // the file win, including one inside a comment.
+    const source = readFileSync(
+      new URL('../skills/dev-server/scripts/daemon-port.mjs', import.meta.url),
+      'utf8'
+    );
+    const declared = /export\s+const\s+DEFAULT_DAEMON_PORT\s*=\s*([\d_]+)/.exec(source);
+    if (declared) ports.add(declared[1].replace(/_/g, ''));
+  } catch {
+    /* skill absent — the 30xx/516x-517x ranges still guard the dev servers themselves */
+  }
+
+  // The override ADDS a port, it does not move one. `DEV_DAEMON_PORT` stands a second daemon
+  // BESIDE the shared one (SKILL.md), so both are live and both need guarding. Replacing the
+  // default here silently un-guarded the shared daemon for anyone who set the variable.
+  const override = env.DEV_DAEMON_PORT?.trim();
+  if (/^\d+$/.test(override ?? '') && Number(override) >= 1 && Number(override) <= 65535) {
+    ports.add(String(Number(override)));
+  }
+  return [...ports];
+}
+
+// The laziness lives here, not in daemonPortsGuarded: building the pattern on first use rather
+// than at import keeps this file free of top-level await. Per-process cache, and the process is
+// per-command, so it cannot go stale within a run.
+function devPorts() {
+  if (devPortsRe) return devPortsRe;
+  const daemon = daemonPortsGuarded().map((p) => `|${p}`).join('');
+  devPortsRe = new RegExp(
+    String.raw`(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?):(?:30\d\d|51[67]\d${daemon})\b`,
+    'i'
+  );
+  return devPortsRe;
+}
 
 // Any of curl's, wget's or PowerShell's own timeout flags, including `-m5` and bundled shorts.
 // `-T` is wget's timeout but curl's --upload-file, and `-m` is curl's --max-time but wget's
@@ -106,7 +157,7 @@ export function unboundedDevRequest(command) {
     .split(/[;&|\n]+/)
     .map((seg) => seg.trim())
     .filter((seg) => seg && !seg.startsWith('#'))
-    .filter((seg) => DEV_PORTS.test(seg.replace(/[?&][^\s"']*/g, '')))
+    .filter((seg) => devPorts().test(seg.replace(/[?&][^\s"']*/g, '')))
     .filter((seg) => REQUEST_TOOL.test(seg))
     .filter((seg) => !isBounded(seg));
 }
@@ -127,7 +178,16 @@ const DANGEROUS_PATTERNS = [
   {
     check: (command) => prettierWriteTargets(command).some((t) => t === '*' || t.replace(/\\/g, '/').startsWith('**')),
     reason:
-      'A repo-wide `prettier --write` rewrites ~1000 committed files (the repo is not prettier-2-clean) and reformats other people\'s uncommitted work in place. Use `pnpm run prettier:write`, which scopes to dirty files.',
+      "A repo-wide `prettier --write` rewrites ~1000 committed files (the repo is not prettier-2-clean) and reformats other people's uncommitted work in place. Use `pnpm run prettier:write`, which scopes to dirty files.",
+  },
+  {
+    // The glob rule above misses the commoner spellings. `--write` must name FILES: the next token
+    // has to carry an extension, so `--write .`, `--write src` and `--write src/` are refused while
+    // `--write "src/a.ts" "src/b.ts"` passes. Explicit per-file writes are allowlisted in settings,
+    // so these two patterns are the only thing between that grant and a ~1000-file commit.
+    pattern: /prettier[^;&|]*--write\s+(?!["']?[^\s;&|"']*\.[a-z]{1,6}\b)/i,
+    reason:
+      'Name the files explicitly (`--write "src/a.ts"`), or use `pnpm run prettier:write`, which scopes to what git reports as dirty. A directory or bare `.` target reformats the whole repo.',
   },
 ];
 
@@ -142,9 +202,13 @@ const GUARDED_PATTERNS = [
       'was slow, with the matching remedy. Or add --max-time <seconds>.',
   },
   {
-    pattern: /svelte-kit\s+sync|pnpm\s+(run\s+)?check\b/i,
+    // `svelte-kit sync` alone is cheap (121 generated files) and is deliberately NOT guarded.
+    // A full build writes ~1,800 files / 25MB and is not a check — it catches nothing `svelte-check`
+    // does not, apart from Svelte's TS stripping leaving `?` on optional parameters, which
+    // check-svelte-ts.mjs now catches on write instead.
+    pattern: /(apps[\/\\](moderator|auth|creator-studio)[^;&|]*\bbuild\b|\bvite\s+build\b)/i,
     reason:
-      '`svelte-kit sync` regenerates ~690 files under .svelte-kit/, which the Vite dev server watches — the collision that froze this window repeatedly. Use `pnpm run typecheck` unless the route tree changed.',
+      'A SvelteKit build writes ~1,800 files into the workspace and is NOT a verification step — use `pnpm --filter ./apps/<app> run typecheck`. Confirm only if you are diagnosing a build-only failure or producing a real artifact.',
   },
   {
     // Only the unscoped shapes ask. `prettier --write src/components/Sticker/` runs.
@@ -152,8 +216,7 @@ const GUARDED_PATTERNS = [
       const targets = prettierWriteTargets(command);
       return targets.length === 0 ? false : targets.some(isUnscoped);
     },
-    reason:
-      'Formatting outside `pnpm run prettier:write` can reach files this change does not own. Confirm the target is scoped.',
+    reason: 'Formatting outside `pnpm run prettier:write` can reach files this change does not own. Confirm the target is scoped.',
   },
 ];
 

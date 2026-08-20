@@ -23,9 +23,9 @@ import React, {
   Fragment,
 } from 'react';
 import type { InstantSearchProps, SearchBoxProps } from 'react-instantsearch';
-import { Configure, InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
+import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
-import { getModelUrl, slugit } from '~/utils/string-helpers';
+import { slugit } from '~/utils/string-helpers';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
@@ -50,7 +50,11 @@ import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/
 import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
 import { isDefined, paired } from '~/utils/type-guards';
 import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
-import { QS } from '~/utils/qs';
+import {
+  buildSearchPageUrl,
+  checkAIR,
+  parseQuery,
+} from '~/components/AutocompleteSearch/autocomplete-query';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -64,6 +68,7 @@ import { truncate } from 'lodash-es';
 import { usePathname } from 'next/navigation';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
+import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -163,12 +168,12 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
-      <BrowsingLevelFilter indexKey={targetIndex} filters={filters} />
       <AutocompleteSearchContent
         {...props}
         indexName={targetIndex}
         ref={ref}
         onTargetChange={handleTargetChange}
+        baseFilters={filters}
       />
     </InstantSearch>
   );
@@ -179,6 +184,7 @@ AutocompleteSearch.displayName = 'AutocompleteSearch';
 type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;
   onTargetChange: (target: T) => void;
+  baseFilters: string[];
 };
 
 function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
@@ -189,6 +195,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     searchBoxProps,
     indexName: indexNameProp,
     onTargetChange,
+    baseFilters,
     ...autocompleteProps
   }: AutocompleteSearchProps<TKey>,
   ref: React.ForwardedRef<{ focus: () => void }>
@@ -218,8 +225,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
   const [search, setSearch] = useState(query);
-  const [filters, setFilters] = useState('');
-  const [searchPageQuery, setSearchPageQuery] = useState('');
+  const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const { trackSearch, trackAction } = useTrackEvent();
@@ -236,11 +242,18 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   });
 
   // Check for illegal search first
+  const benignPhrases = useBenignPhrases();
+  // Detection reads the whitelisted copy; the query sent to Meili stays the raw text.
+  const auditedSearch = useMemo(
+    () => benignPhrases.strip(debouncedSearch),
+    [benignPhrases, debouncedSearch]
+  );
+
   const isIllegalSearch = useMemo(() => {
     if (!debouncedSearch) return false;
-    const illegalSearch = includesInappropriate({ prompt: debouncedSearch });
+    const illegalSearch = includesInappropriate({ prompt: auditedSearch });
     return illegalSearch === 'minor';
-  }, [debouncedSearch]);
+  }, [debouncedSearch, auditedSearch]);
 
   // Check profanity in search query (only if not illegal and domain is green)
   const profanityAnalysis = useCheckProfanity(debouncedSearch, {
@@ -251,11 +264,13 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const items = useMemo(() => {
     const isIllegalQuery = debouncedSearch
-      ? includesInappropriate({ prompt: debouncedSearch }) === 'minor'
+      ? includesInappropriate({ prompt: auditedSearch }) === 'minor'
       : false;
     const canPerformQuery = debouncedSearch
-      ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
+      ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(auditedSearch)
       : true;
+    // Raw text on purpose: this reads a different list (blocked NSFW words) which the benign
+    // phrases do not carve out, and it blocks rather than flags.
     const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
 
     if (isIllegalQuery) {
@@ -366,18 +381,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     focus: focusInput,
   }));
 
+  // Not the refined `query`: `parseQuery` has already stripped the `#tag`/`@user` tokens out of it.
+  const searchPageUrl = () => buildSearchPageUrl(indexName, search);
+
   const handleSubmit = () => {
     if (search) {
-      const { query: cleanedSearch, searchPageQuery: currSearchPageQuery } = parseQuery(
-        indexName,
-        search
-      );
-      const queryString = QS.stringify({
-        query: cleanedSearch.trim(), // Search should be more accurate than query as it was the latest written.
-        ...QS.parse(currSearchPageQuery),
-      });
-
-      router.push(`/search/${indexName}?${queryString}`, undefined, { shallow: false });
+      router.push(searchPageUrl(), undefined, { shallow: false });
 
       blurInput();
     }
@@ -420,9 +429,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       trackSearch({ query: search, index: searchIndexMap[indexName] }).catch(() => null);
     } else {
       // when view more is clicked
-      router.push(`/search/${indexName}?query=${encodeURIComponent(item.value)}`, undefined, {
-        shallow: false,
-      });
+      router.push(searchPageUrl(), undefined, { shallow: false });
     }
 
     setSelectedItem({ label: item.key, value });
@@ -447,17 +454,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       return;
     }
 
-    const {
-      query: cleanedSearch,
-      filters,
-      searchPageQuery,
-    } = parseQuery(indexName, debouncedSearch);
+    const { query: cleanedSearch, filters } = parseQuery(indexName, debouncedSearch);
 
     setQuery(cleanedSearch);
-    setFilters(filters);
-    setSearchPageQuery(searchPageQuery);
+    setQueryFilters(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query]);
+  }, [debouncedSearch, query, indexName]);
 
   // Clear selected item after search changes
   useEffect(() => {
@@ -493,7 +495,11 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   return (
     <>
-      <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
+      <BrowsingLevelFilter
+        indexKey={indexNameProp}
+        filters={[...baseFilters, queryFilters]}
+        hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT}
+      />
       <Group className={classes.wrapper} gap={0} wrap="nowrap">
         <Select
           key={pathname}
@@ -588,8 +594,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
-                    Your search includes terms tied to real people. Content depicting real people
-                    is filtered from search results.
+                    Your search includes terms tied to real people. Content depicting real people is
+                    filtered from search results.
                   </Text>
                 </Stack>
               );
@@ -692,71 +698,3 @@ const IndexRenderItem: Record<SearchIndexKey, React.ComponentType<any>> = {
   comics: ComicsSearchItem,
 };
 
-const queryFilters: Record<
-  string,
-  { AIR?: RegExp; filters: Record<string, RegExp>; searchPageMap: Record<string, string> }
-> = {
-  models: {
-    AIR: /^civitai:(?<modelId>\d+)@(?<modelVersionId>\d+)/g,
-    filters: {
-      'tags.name': /(^|\s+)(?<not>!|-)?#(?<value>\w+)/g,
-      'user.username': /(^|\s+)(?<not>!|-)?@(?<value>\w+)/g,
-      'versions.hashes': /(^|\s+)(?<not>!|-)?hash:(?<value>[A-Za-z0-9_.-]+)/g,
-    },
-    searchPageMap: {
-      'user.username': 'users',
-      'tags.name': 'tags',
-    },
-  },
-};
-
-function checkAIR(index: string, query: string) {
-  const filterAttributes = queryFilters[index] ?? {};
-
-  if (!filterAttributes?.AIR) {
-    return null;
-  }
-
-  const { AIR } = filterAttributes;
-  const [match] = query.matchAll(AIR);
-
-  if (!match) return null;
-
-  if (index === 'models') {
-    const modelId = match?.groups?.modelId;
-    const modelVersionId = match?.groups?.modelVersionId;
-
-    if (!modelId || !modelVersionId) return null;
-
-    return getModelUrl({ modelId: Number(modelId), modelVersionId: Number(modelVersionId) });
-  }
-
-  return null;
-}
-
-function parseQuery(index: string, query: string) {
-  const filterAttributes = queryFilters[index];
-  const filters = [];
-  const searchPageQuery = [];
-
-  if (filterAttributes) {
-    for (const [attribute, regex] of Object.entries(filterAttributes.filters)) {
-      for (const match of query.matchAll(regex)) {
-        const cleanedMatch = match?.groups?.value?.trim();
-        const not = match?.groups?.not !== undefined;
-        if (!cleanedMatch) continue;
-        filters.push(`${not ? 'NOT ' : ''}${attribute} = ${quoteMeiliValue(cleanedMatch)}`);
-        searchPageQuery.push(
-          `${filterAttributes.searchPageMap[attribute] ?? attribute}=${encodeURIComponent(
-            cleanedMatch ?? ''
-          )}`
-        );
-      }
-
-      query = query.replace(regex, '');
-      if (query.length === 0 && filters.length !== 0) query = ' ';
-    }
-  }
-
-  return { query, filters: filters.join(' AND '), searchPageQuery: searchPageQuery.join('&') };
-}

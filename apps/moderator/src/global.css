@@ -23,13 +23,15 @@
   body {
     @apply bg-background font-sans text-foreground antialiased;
   }
-
-  a {
-    @apply text-blue-4 no-underline;
-  }
 }
 
 @layer components {
+  /* Opt-in link styling for content anchors. NOT a blanket `a` rule — that would override component-rendered
+     links (sidebar items, pagination, button-as-link) which must inherit their component's color. */
+  .link {
+    @apply text-blue-4 hover:underline;
+  }
+
   .page-header {
     @apply mb-7;
   }

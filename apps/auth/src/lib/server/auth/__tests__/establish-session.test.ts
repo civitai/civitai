@@ -31,6 +31,7 @@ vi.mock('../device', () => ({
 
 import { establishSession } from '../session';
 import type { SessionUser } from '@civitai/auth';
+import type { Cookies } from '@sveltejs/kit';
 
 const user = (id: number): SessionUser =>
   ({
@@ -43,18 +44,30 @@ const user = (id: number): SessionUser =>
     createdAt: new Date(),
     isModerator: false,
     muted: false,
-  }) as unknown as SessionUser;
+  } as unknown as SessionUser);
 
 // A minimal Cookies stub: in-memory get + a set that records the queued cookie.
-function makeCookies(initial: Record<string, string> = {}) {
+//
+// It implements the WHOLE `Cookies` interface (get/getAll/set/delete/serialize — five members) rather than
+// casting a partial object, so it is assignable to `establishSession`'s parameter with no cast at all. The
+// previous `as never` satisfied that parameter the blunt way, but `never` has no properties, so reading
+// `_store` back in an assertion was itself a type error.
+type CookiesStub = Cookies & { _store: Map<string, string> };
+
+function makeCookies(initial: Record<string, string> = {}): CookiesStub {
   const store = new Map(Object.entries(initial));
-  const set = vi.fn((name: string, value: string) => store.set(name, value));
   return {
     _store: store,
-    set,
+    set: vi.fn((name: string, value: string) => {
+      store.set(name, value);
+    }),
     get: (name: string) => store.get(name),
-    delete: vi.fn(),
-  } as never;
+    getAll: () => [...store].map(([name, value]) => ({ name, value })),
+    delete: vi.fn((name: string) => {
+      store.delete(name);
+    }),
+    serialize: (name: string, value: string) => `${name}=${value}`,
+  };
 }
 
 beforeEach(() => vi.clearAllMocks());

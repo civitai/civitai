@@ -450,11 +450,7 @@ export const ApplyCustomFilter = ({
 }: { filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
   const filters = useMemo(() => joinFilterClauses(_filters), [_filters]);
 
-  const { refine } = useConfigure({ ...props, filters });
-
-  useEffect(() => {
-    refine({ filters });
-  }, [filters]);
+  useConfigure({ ...props, filters });
 
   return null;
 };

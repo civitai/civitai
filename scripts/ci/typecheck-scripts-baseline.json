@@ -1,0 +1,14 @@
+{
+  "_comment": "Type errors in the files tsconfig.json quarantines out of the scripts/ typecheck. Entries may shrink or disappear freely; adding one, or raising a count, is a deliberate act visible in review. Regenerate with: node scripts/ci/typecheck-scripts-gate.mjs --write-baseline",
+  "config": "tsconfig.scripts.json",
+  "scriptFilesInProgram": 37,
+  "totalErrors": 202,
+  "files": {
+    "scripts/__tests__/dev-server-daemon-port.test.ts": 4,
+    "scripts/__tests__/dev-server-env-modes.test.ts": 14,
+    "scripts/__tests__/dev-server-port-reservation.test.ts": 7,
+    "scripts/__tests__/dev-server-test-queue.test.ts": 164,
+    "scripts/__tests__/typecheck-tests-gate.test.ts": 11,
+    "scripts/local-dev/gen_seed.ts": 2
+  }
+}

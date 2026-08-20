@@ -3,16 +3,14 @@ import {
   equipCosmeticSchema,
   getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
-  grantCosmeticsToUsersSchema,
   purchaseStickerUsesSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
   getCosmeticDetail,
   getStickerCosmetics,
+  getStickerAttribution,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
-  grantCosmeticsToUsers,
-  revokeCosmeticsFromUsers,
   unequipCosmetic,
 } from '~/server/services/cosmetic.service';
 import {
@@ -43,6 +41,15 @@ export const cosmeticRouter = router({
     .query(({ input }) => {
       return getStickerCosmetics(input);
     }),
+  // Who made a sticker and where to buy it, for the attribution card on an
+  // inline sticker. Public: the answer is the same for every viewer, and the
+  // sticker is already visible to anyone reading the comment.
+  getStickerAttribution: publicProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getStickerCosmeticsSchema)
+    .query(({ input }) => {
+      return getStickerAttribution(input);
+    }),
   // Remaining uses per owned sticker, so the picker can show a balance instead
   // of the user discovering it as a failed comment submit.
   getStickerBalances: protectedProcedure
@@ -72,12 +79,6 @@ export const cosmeticRouter = router({
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);
   }),
-  grantToUsers: moderatorProcedure
-    .input(grantCosmeticsToUsersSchema)
-    .mutation(({ input }) => grantCosmeticsToUsers(input)),
-  revokeFromUsers: moderatorProcedure
-    .input(grantCosmeticsToUsersSchema)
-    .mutation(({ input }) => revokeCosmeticsFromUsers(input)),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)

@@ -55,7 +55,6 @@ import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
   GetMyTrainingModelsSchema,
-  GetTrainingModerationFeedSchema,
   IngestModelInput,
   LimitOnly,
   MigrateResourceToCollectionInput,
@@ -302,6 +301,21 @@ export async function getActiveEarlyAccessModelIds(): Promise<number[]> {
   return rows.map((r) => Number(r.modelId));
 }
 
+// Permanent gates only. `timeframeDays IS NULL` is the discriminator, not `endsAt`:
+// a timed gate carries a NULL `endsAt` until it is materialized at publish, so
+// keying off `endsAt` would sweep in pending early access. The rule is owned by
+// `paid-access.service.ts` — change it there and here together.
+export async function getPermanentPaidAccessModelIds(): Promise<number[]> {
+  const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT mv."modelId"
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE pa."entityType" = 'ModelVersion' AND pa."timeframeDays" IS NULL
+      AND mv.status = 'Published'::"ModelStatus"
+  `;
+  return rows.map((r) => Number(r.modelId));
+}
+
 export const getModelsRaw = async ({
   input,
   include,
@@ -364,6 +378,7 @@ export const getModelsRaw = async ({
     allowCommercialUse,
     ids,
     earlyAccess,
+    paidAccess,
     supportsGeneration,
     fromPlatform,
     needsReview,
@@ -735,6 +750,16 @@ export const getModelsRaw = async ({
         JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
         WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
           AND pamv.status = 'Published'::"ModelStatus" AND pa."endsAt" > NOW()
+      )`
+    );
+  }
+  if (paidAccess) {
+    AND.push(
+      Prisma.sql`EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
+        WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
+          AND pamv.status = 'Published'::"ModelStatus" AND pa."timeframeDays" IS NULL
       )`
     );
   }
@@ -1192,6 +1217,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     ids,
     needsReview,
     earlyAccess,
+    paidAccess,
     supportsGeneration,
     followed,
     collectionId,
@@ -1281,6 +1307,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
   if (earlyAccess) {
     AND.push({ id: { in: await getActiveEarlyAccessModelIds() } });
+  }
+
+  if (paidAccess) {
+    AND.push({ id: { in: await getPermanentPaidAccessModelIds() } });
   }
 
   if (supportsGeneration) {
@@ -4654,32 +4684,6 @@ export const toggleCannotPromote = async ({
   };
 };
 
-export const toggleCannotPublish = async ({
-  id,
-  isModerator,
-}: GetByIdInput & {
-  isModerator: boolean;
-}) => {
-  if (!isModerator) throw throwAuthorizationError();
-  const model = await getModel({ id, select: { id: true, meta: true } });
-  if (!model) throw throwNotFoundError(`No model with id ${id}`);
-  const modelMeta = model.meta as ModelMeta | null;
-  const currentCannotPublish = modelMeta?.cannotPublish ?? false;
-  const cannotPublish = !currentCannotPublish;
-  const updated = await dbWrite.model.update({
-    where: { id },
-    data: {
-      meta: modelMeta ? { ...modelMeta, cannotPublish } : { cannotPublish },
-    },
-    select: { id: true, meta: true },
-  });
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-  return {
-    id: updated.id,
-    meta: updated.meta as ModelMeta | null,
-  };
-};
-
 export const setModelOfficial = async ({
   id,
   isOfficial,
@@ -4757,126 +4761,6 @@ export async function getTopWeeklyEarners(fresh = false) {
 
   return results;
 }
-
-export const getTrainingModelsForModerators = async ({
-  limit = DEFAULT_PAGE_SIZE,
-  cursor,
-  username,
-  dateFrom,
-  dateTo,
-  cannotPublish,
-  workflowId,
-}: GetTrainingModerationFeedSchema) => {
-  const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
-  const cursorWhere = cursor ? { id: { lt: cursor } } : {};
-
-  const where: Prisma.ModelWhereInput = {
-    ...cursorWhere,
-    uploadType: ModelUploadType.Trained,
-    deletedAt: null,
-    ...(username && {
-      user: {
-        username,
-      },
-    }),
-    ...(dateFrom && {
-      createdAt: {
-        gte: dateFrom,
-        ...(dateTo && { lte: dateTo }),
-      },
-    }),
-    ...(dateTo &&
-      !dateFrom && {
-        createdAt: {
-          lte: dateTo,
-        },
-      }),
-    ...(cannotPublish !== undefined && {
-      meta: cannotPublish
-        ? { path: ['cannotPublish'], equals: true }
-        : { not: { path: ['cannotPublish'], equals: true } },
-    }),
-    modelVersions: {
-      some: {
-        files: {
-          some: {
-            type: 'Training Data',
-            dataPurged: false,
-            ...(workflowId && {
-              metadata: {
-                path: ['trainingResults', 'workflowId'],
-                equals: workflowId,
-              },
-            }),
-          },
-        },
-      },
-    },
-  };
-
-  const items = await dbRead.model.findMany({
-    take,
-    skip,
-    where,
-    orderBy: { id: 'desc' },
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      nsfw: true,
-      poi: true,
-      minor: true,
-      tosViolation: true,
-      status: true,
-      createdAt: true,
-      publishedAt: true,
-      meta: true,
-      user: {
-        select: simpleUserSelect,
-      },
-      modelVersions: {
-        where: {
-          files: {
-            some: {
-              type: 'Training Data',
-              dataPurged: false,
-            },
-          },
-        },
-        select: {
-          id: true,
-          name: true,
-          status: true,
-          baseModel: true,
-          trainingStatus: true,
-          createdAt: true,
-          files: {
-            where: {
-              type: 'Training Data',
-              dataPurged: false,
-            },
-            select: {
-              id: true,
-              name: true,
-              url: true,
-              sizeKB: true,
-              createdAt: true,
-              metadata: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      },
-    },
-  });
-
-  const nextCursor = items.length > 0 ? items[items.length - 1].id : undefined;
-
-  return {
-    items: items.map(withoutMinorHashMeta),
-    nextCursor,
-  };
-};
 
 export async function transferModelOwnership({
   modelIds,

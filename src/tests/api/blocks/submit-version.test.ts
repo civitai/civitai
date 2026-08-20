@@ -8,7 +8,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * validation shell over the well-tested `submitVersion` service
  * (publish-request.orchestration.test.ts), so this exercises only the shell.
  *
- * Following the repo's `retool-endpoint.test.ts` convention, we mock
+ * Following the repo's `moderator-endpoint.test.ts` convention, we mock
  * `~/server/utils/endpoint-helpers` rather than drive the real `withAxiom`
  * wrapper (heavy, and its closure is captured at module-load so a per-file
  * vi.mock of withAxiom is unreliable in the full-suite run). The `ModEndpoint`
