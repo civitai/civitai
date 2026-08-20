@@ -100,8 +100,19 @@ two tools side by side, which is a comparison that stops being possible today. A
 ## P2 — needs a decision or clarification
 
 - [ ] **A paged list has no "load more".** Reported as loading a fixed number of rows with no way to page
-      further back. The report identifies the list by screenshot only and several panels page this way, so
-      **the first step is confirming which one** — not building a control on all of them.
+      further back, identified by screenshot only.
+
+      **One panel in User Lookup matched and has been fixed; the reporter still needs to confirm it is the
+      one they meant.** A sweep of every list panel found exactly one showing a fixed number of rows with
+      no control of any kind: the two counterparty-totals lists in **Buzz movement**, hard-sliced to ten
+      while heading themselves with the full count — so an account with 47 counterparties read "(47)" over
+      ten rows with nothing saying it had been truncated. That is the farming question the panel exists to
+      answer, silently cut off. It now uses the shared `ShowMoreButton`, which knows the difference between
+      "show all 47" and "show the 47 that loaded" when the server already capped the window.
+
+      Every other list panel already had an expand control — the eight on `ListCard`, plus Mod Activity,
+      Trainings and Prompt Audit — so if this was not the screenshot, the remaining candidate is a
+      *server*-capped list rather than a client-sliced one, and that is a different fix.
 
 ## P3 — improvements, after parity
 
@@ -251,8 +262,14 @@ round still reads as the record of what was reported that day.
 - [ ] **Show "recently worked" and "time sweeps" beside the queues they describe** *(08-17)*.
 - [ ] **Whether the `/images/*` triage queues join the sweep tracking** *(08-17)* — a decision, not an
       oversight.
-- [ ] **Link a report to the site it originated from** *(08-17)* — not implementable as asked: `Report`
-      has no origin column.
+- [ ] **Link a report to the site it originated from** *(08-17)* — **filed as not implementable; that was
+      too strong.** `Report` has no origin *column*, but it has `details Json?`, which `createReport`
+      already writes to (it stamps `reportType` there). So the origin can be captured going forward as one
+      more key, with no migration.
+
+      What genuinely cannot be done is the retroactive half: reports already filed carry no origin and
+      never will. So the decision is whether a forward-only answer is worth having — not whether one is
+      possible.
 - [ ] **The "Admin Attention" report reason is too vague to action** *(08-17)* — remove it or merge it.
       Changes what reporters see, so it is not a moderator-side call alone.
 - [ ] **The mod changelog modal disappears once a model is unpublished** *(08-17)*, so the changes and the
