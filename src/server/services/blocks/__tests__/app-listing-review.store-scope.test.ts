@@ -5,6 +5,9 @@ import {
   listAppListingReviews,
   upsertAppListingReview,
 } from '~/server/services/blocks/app-listing-review.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockRead = dbMock.dbRead;
+const mockWrite = dbMock.dbWrite;
 
 /**
  * W13 — the review WRITE path's STORE-SCOPE KIND GATE.
@@ -56,20 +59,6 @@ const SAVED_REVIEW = {
   updatedAt: new Date('2026-08-19T09:15:00Z'),
 };
 
-const { mockRead, mockWrite } = vi.hoisted(() => {
-  const write: WriteMock = {
-    $transaction: vi.fn(),
-    appListingReview: { findUnique: vi.fn(), upsert: vi.fn() },
-    appListingMetric: { upsert: vi.fn(), updateMany: vi.fn() },
-  };
-  const read: ReadMock = {
-    appListing: { findUnique: vi.fn() },
-    appListingReview: { findFirst: vi.fn(), findMany: vi.fn() },
-  };
-  return { mockRead: read, mockWrite: write };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/server/utils/cache-helpers', () => ({ bustCacheTag: vi.fn(async () => undefined) }));
 
 /** An APPROVED listing of the given kind, owned by someone other than the caller. */
@@ -79,8 +68,8 @@ function listingOfKind(id: string, kind: 'onsite' | 'offsite') {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockWrite.$transaction.mockImplementation(
-    async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite)
+  mockWrite.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+    cb(mockWrite)
   );
   mockWrite.appListingReview.findUnique.mockResolvedValue(null);
   mockWrite.appListingReview.upsert.mockResolvedValue(SAVED_REVIEW);

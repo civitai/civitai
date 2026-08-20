@@ -142,7 +142,11 @@ describe('public-external viewer (the external-only tester cohort)', () => {
     renderWithProviders(
       <>
         {mountedSentinel()}
-        <ReviewListingButton appListingId="apl_offsite_kt4" ownerUserId={OWNER_ID} listingKind="offsite" />
+        <ReviewListingButton
+          appListingId="apl_offsite_kt4"
+          ownerUserId={OWNER_ID}
+          listingKind="offsite"
+        />
       </>
     );
     await expectCtaShown();
@@ -152,7 +156,11 @@ describe('public-external viewer (the external-only tester cohort)', () => {
     renderWithProviders(
       <>
         {mountedSentinel()}
-        <ReviewListingButton appListingId="apl_onsite_zw9" ownerUserId={OWNER_ID} listingKind="onsite" />
+        <ReviewListingButton
+          appListingId="apl_onsite_zw9"
+          ownerUserId={OWNER_ID}
+          listingKind="onsite"
+        />
       </>
     );
     await expectCtaHidden();
@@ -164,7 +172,11 @@ describe('public-external viewer (the external-only tester cohort)', () => {
     renderWithProviders(
       <>
         {mountedSentinel()}
-        <ReviewListingButton appListingId="apl_offsite_kt4" ownerUserId={OWNER_ID} listingKind="offsite" />
+        <ReviewListingButton
+          appListingId="apl_offsite_kt4"
+          ownerUserId={OWNER_ID}
+          listingKind="offsite"
+        />
       </>
     );
     await page.getByRole('button', { name: CTA }).click();
@@ -187,7 +199,11 @@ describe('full-scope viewers are unchanged (the moderator control)', () => {
     renderWithProviders(
       <>
         {mountedSentinel()}
-        <ReviewListingButton appListingId="apl_onsite_zw9" ownerUserId={OWNER_ID} listingKind="onsite" />
+        <ReviewListingButton
+          appListingId="apl_onsite_zw9"
+          ownerUserId={OWNER_ID}
+          listingKind="onsite"
+        />
       </>
     );
     await expectCtaShown();
@@ -198,7 +214,11 @@ describe('full-scope viewers are unchanged (the moderator control)', () => {
     renderWithProviders(
       <>
         {mountedSentinel()}
-        <ReviewListingButton appListingId="apl_onsite_zw9" ownerUserId={OWNER_ID} listingKind="onsite" />
+        <ReviewListingButton
+          appListingId="apl_onsite_zw9"
+          ownerUserId={OWNER_ID}
+          listingKind="onsite"
+        />
       </>
     );
     await expectCtaShown();
@@ -212,7 +232,11 @@ describe('full-scope viewers are unchanged (the moderator control)', () => {
     renderWithProviders(
       <>
         {mountedSentinel()}
-        <ReviewListingButton appListingId="apl_onsite_zw9" ownerUserId={OWNER_ID} listingKind="onsite" />
+        <ReviewListingButton
+          appListingId="apl_onsite_zw9"
+          ownerUserId={OWNER_ID}
+          listingKind="onsite"
+        />
       </>
     );
     await expectCtaShown();
@@ -225,7 +249,11 @@ describe('none-scope and the pre-existing gates', () => {
     renderWithProviders(
       <>
         {mountedSentinel()}
-        <ReviewListingButton appListingId="apl_offsite_kt4" ownerUserId={OWNER_ID} listingKind="offsite" />
+        <ReviewListingButton
+          appListingId="apl_offsite_kt4"
+          ownerUserId={OWNER_ID}
+          listingKind="offsite"
+        />
       </>
     );
     await expectCtaHidden();
@@ -238,7 +266,11 @@ describe('none-scope and the pre-existing gates', () => {
     renderWithProviders(
       <>
         {mountedSentinel()}
-        <ReviewListingButton appListingId="apl_offsite_kt4" ownerUserId={OWNER_ID} listingKind="offsite" />
+        <ReviewListingButton
+          appListingId="apl_offsite_kt4"
+          ownerUserId={OWNER_ID}
+          listingKind="offsite"
+        />
       </>
     );
     await expectCtaHidden();
@@ -250,7 +282,11 @@ describe('none-scope and the pre-existing gates', () => {
     renderWithProviders(
       <>
         {mountedSentinel()}
-        <ReviewListingButton appListingId="apl_offsite_kt4" ownerUserId={OWNER_ID} listingKind="offsite" />
+        <ReviewListingButton
+          appListingId="apl_offsite_kt4"
+          ownerUserId={OWNER_ID}
+          listingKind="offsite"
+        />
       </>
     );
     await expectCtaHidden();
