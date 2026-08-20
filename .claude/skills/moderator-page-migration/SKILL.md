@@ -108,7 +108,7 @@ absence is recoverable (analytics, a self-healing metric); delegating is for the
 | zod schema in `src/server/schema/` | zod in the spoke; reuse for the action's parse |
 | Redis, ClickHouse, S3, email, notifications, Buzz, orchestrator | the `@civitai/*` packages, already deps of the app |
 | feature flag (`flag: strikes`) | **nothing** — no Flipt in the spoke by decision. Access is the role gate in `hooks.server.ts` |
-| moderation data with no Prisma model (notes, strikes, mutes) | `getModeratorDb()` — a second database, hand-typed in `moderator-db-types.ts` |
+| moderation data with no Prisma model (notes, image help requests) | `getModeratorDb()` — a second database, hand-typed in `moderator-db-types.ts`. **Not mutes or strikes** — both live in the main DB (`User.muteExpiresAt`, `UserStrike`); the side tables are Retool-era history. |
 
 **Adding a package the app does not have yet** is three edits, not one: `workspace:*` in
 `apps/moderator/package.json`, the name in `ssr.noExternal` in `vite.config.ts`, then `pnpm install`.

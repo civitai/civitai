@@ -126,6 +126,34 @@ The vitest suites are projects in `vitest.config.mts`. The unit suite is **two**
 `No test files found`. A selector matching one project and not the other is a green run over a
 suite you did not run — the scripts above already use `'unit*'` for this reason.
 
+#### Run the suites that cover your change; run the WHOLE suite once, at the end
+
+The full unit suite is ~19,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
+queue — so running it between edits blocks everyone else's runs for minutes at a time. Name the covering
+suites before you start editing and run those on each iteration:
+
+```bash
+pnpm exec vitest run --project 'unit*' src/server/services/__tests__/strike.service.test.ts
+```
+
+Find them by grepping for the symbol, not by intuition — `grep -rln '<fn>' src --include=*.test.ts`.
+Add `pnpm run test:lint-rules` (~1s) whenever you touch a transaction, a mock, or a module-scope
+constant, since those guards are tests rather than eslint rules.
+
+Then run the full suite **once** before committing. That last run is not optional — a service in
+`src/server/services/` is imported widely enough that a behaviour change can surface anywhere — but one
+run is what it is for.
+
+🔴 **`vitest related` does NOT narrow this codebase — do not reach for it.** It walks the *importer*
+graph transitively, and `user.service.ts` is a hub, so almost everything is related to almost
+everything. Measured 2026-08-20: `src/server/services/mute-provenance.ts`, a **new leaf module imported
+by three files**, selected **473 test files / 7,889 tests** — 40% of the suite, for the same wall-clock
+as running all of it. Two source files gave the identical number.
+
+⚠️ **A green full-suite run can still hide a failure you caused.** Read the failing-file list, not the
+count: when 17 tests fail across 7 files, `git stash` and re-run those same files to see whether they
+already failed on `main`. On Windows several do — see the portability notes below.
+
 #### Worker count: uncapped by default, `VITEST_MAX_WORKERS` / `--max-workers` to size it
 A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`).
 

@@ -45,9 +45,12 @@ off. Moderator-database slices *can* be ticked once they work: the app reads and
 
 ## The moderator database (`retool_db` in the exports)
 
-User notes, strikes, timed mutes and image help requests live in a database of their own, never in
-Civitai's. **The app reads and writes it through `getModeratorDb()`** — port these queries like any
-other; there is no need to wait for a data migration.
+User notes and image help requests live in a database of their own, never in Civitai's. (Legacy
+`UserStrikes` and `TimedMutes` are there too but are **not** the live implementations — strikes go
+through `strike/create` and timed mutes are `User.muteExpiresAt`. `TimedMutes` is not even typed.)
+
+**The app reads and writes this database through `getModeratorDb()`** — port these queries like any other;
+there is no need to wait for a data migration.
 
 ```ts
 import { getModeratorDb } from '$lib/server/moderator-db';
