@@ -292,13 +292,19 @@ function hasOffsitePermissionSignal(
  * domain" are unrepresentable rather than merely untested. See that function.
  *
  * Truthiness on `connectClientId`, matching `app-listing.service`'s `|| null`,
- * so both read the capability the same way.
+ * and `shouldShowConnectCapability` below — so all THREE read the capability the
+ * same way.
  *
- * 🔴 This used to say "and the no-destination fallback above, so all THREE read
- * the capability the same way". #4208 deleted that fallback's `connectClientId`
- * test outright — the primary action no longer reads the capability at all — so
- * there are two readers here, not three. This predicate is now the ONLY place in
- * this module that branches on it.
+ * 🔴 THAT COUNT IS LOAD-BEARING AND IT MOVES — recount it against the tree, never
+ * restate it. It has now been wrong in BOTH directions. It originally read three:
+ * this predicate, the service projection, and `getDetailPrimaryAction`'s
+ * no-destination fallback. #4208 deleted that fallback's `connectClientId` test
+ * outright — the primary action no longer reads the capability at all, and a
+ * region gate in the tests asserts the CTA renderer cannot — taking it to two.
+ * #4207 then added `shouldShowConnectCapability`, bringing it back to three with
+ * DIFFERENT membership. Counted on this tree the three are: this predicate
+ * (`!connectClientId`), `shouldShowConnectCapability` (`!!connectClientId`), and
+ * `app-listing.service`'s `row.connectClientId || null` projection.
  *
  * 🔴 TWO PRODUCERS FEED THIS, and only one is the store read path.
  * `OffsiteReviewQueue`'s `ListingPreviewSection` renders `AppListingDetailBody`

@@ -673,15 +673,15 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
   });
 
   it('an empty-string connectClientId does NOT suppress it (truthiness, not nullish)', () => {
-    // Matches `app-listing.service`'s `|| null` projection — so BOTH remaining
-    // readers agree that an empty string is not a connected OAuth app.
+    // Matches `app-listing.service`'s `|| null` projection and
+    // `shouldShowConnectCapability` — so all THREE readers agree that an empty
+    // string is not a connected OAuth app.
     //
-    // 🔴 This used to say "and `getDetailPrimaryAction`'s test, so all three read
-    // the capability the same way". #4208 deleted that reader: the primary action
-    // no longer branches on `connectClientId` at all, so this predicate is the
-    // only place in this module that does. Count the readers, don't restate the
-    // number — the sibling branch that adds `shouldShowConnectCapability` takes
-    // it back up.
+    // 🔴 Count the readers, don't restate the number — it has been wrong in both
+    // directions. It said three when the third was `getDetailPrimaryAction`'s
+    // no-destination fallback; #4208 deleted that read (the CTA no longer touches
+    // the capability, and a region gate now asserts it cannot), and #4207 added
+    // `shouldShowConnectCapability`. Three again, different membership.
     expect(
       shouldShowOffsiteDisclosure({
         kind: 'offsite',
@@ -689,6 +689,15 @@ describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => 
         connectClientId: '',
       })
     ).toBe(true);
+    // The third reader, on the same fixture — pins the AGREEMENT rather than
+    // asserting the disclosure alone and describing the others in prose.
+    expect(
+      shouldShowConnectCapability({
+        kind: 'offsite',
+        externalUrl: 'https://ext.app',
+        connectClientId: '',
+      })
+    ).toBe(false);
   });
 
   /**
