@@ -17,7 +17,8 @@ const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nu
 
 export function PostEditForm() {
   const post = usePostEditStore((state) => state.post);
-  const setPendingSave = usePostEditStore((state) => state.setPendingSave);
+  const updatePost = usePostEditStore((state) => state.updatePost);
+  const registerPendingSave = usePostEditStore((state) => state.registerPendingSave);
   const { postTitle, collectionId } = usePostEditParams();
   const form = useForm({
     schema: formSchema,
@@ -26,6 +27,17 @@ export function PostEditForm() {
   const debounce = useDebouncer(1000);
 
   const { mutate } = trpc.post.update.useMutation({
+    // Applied when the request is SENT, not when it lands. The provider snapshots the store into
+    // the `post.getEdit` cache on `routeChangeStart` and nothing refetches it (staleTime is
+    // Infinity), so a save flushed on the way out would otherwise still be in flight when that
+    // snapshot is taken — the next visit then seeds the form from the pre-edit values and its
+    // first autosave writes them back over the server.
+    onMutate({ title, detail }) {
+      updatePost((data) => {
+        if (title !== undefined) data.title = title ?? null;
+        if (detail !== undefined) data.detail = detail ?? null;
+      });
+    },
     onError(error) {
       showErrorNotification({
         title: 'Failed to update post',
@@ -38,29 +50,25 @@ export function PostEditForm() {
     const subscription = form.watch(({ title, detail }, { name }) => {
       if (!post) return;
       const state = name ? form.getFieldState(name) : ({} as ReturnType<typeof form.getFieldState>);
-      if (state.isDirty || state.isTouched) {
-        // Single-shot: a flush can't cancel the debounce timer, so whichever fires
-        // first has to make the other a no-op or the same edit is saved twice.
-        let saved = false;
-        const save = () => {
-          if (saved) return;
-          saved = true;
-          setPendingSave(null);
+      if (state.isDirty || state.isTouched)
+        debounce(() =>
           mutate({
             id: post.id,
             title:
               title && title.length > titleCharLimit ? title.substring(0, titleCharLimit) : title,
             detail,
-          });
-        };
-        setPendingSave(save);
-        debounce(save);
-      }
+          })
+        );
     });
     return () => {
       subscription.unsubscribe();
     };
   }, []); // eslint-disable-line
+
+  useEffect(
+    () => registerPendingSave('post-detail', debounce.flush),
+    [registerPendingSave, debounce]
+  );
 
   const controls = [
     'heading',

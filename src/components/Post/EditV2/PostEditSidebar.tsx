@@ -37,6 +37,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
+import { safeInternalPath } from '~/utils/url-helpers';
 import { isValidAIGeneration, hasImageLicenseViolation } from '~/utils/image-utils';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageResourceHelper } from '~/shared/utils/prisma/models';
@@ -78,7 +79,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     collectionId,
     collectionTagId,
     images,
-    flushPendingSave,
+    flushPendingSaves,
   ] = usePostEditStore((state) => [
     state.updatePost,
     state.isReordering,
@@ -87,7 +88,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     state.collectionId,
     state.collectionTagId,
     state.images,
-    state.flushPendingSave,
+    state.flushPendingSaves,
   ]);
   const todayRef = useRef(new Date());
 
@@ -170,7 +171,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           });
           if (publishedAt && afterPublish) await afterPublish({ postId: id, publishedAt });
           else {
-            if (returnUrl) router.push(returnUrl);
+            if (returnUrl) router.push(safeInternalPath(returnUrl, `/posts/${post.id}`));
             else router.push({ pathname: `/posts/${post.id}`, query: removeEmpty({ returnUrl }) });
           }
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
@@ -236,17 +237,38 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     });
   };
 
-  const savingDraftRef = useRef(false);
+  // Holds the url this handler pushed, so the guard below waives that navigation and no other.
+  const savingDraftRef = useRef<string | null>(null);
 
-  const handleSaveAsDraft = () => {
-    flushPendingSave();
-    savingDraftRef.current = true;
-    // `section=draft` because the posts tab defaults to Published, where the post
-    // just saved is by definition absent.
-    router.push(
-      returnUrl ??
-        (currentUser ? `/user/${currentUser.username}/posts?section=draft` : `/posts/${post.id}`)
-    );
+  const handleSaveAsDraft = async () => {
+    // A second click would push again and let the first push's `finally` re-arm the guard
+    // mid-navigation, prompting on a navigation the user explicitly asked for.
+    if (savingDraftRef.current) return;
+
+    flushPendingSaves();
+
+    // Only the owner has a drafts section to land on — `/posts/[postId]/edit` also admits
+    // moderators, and the profile posts page shows Published for anyone but the owner.
+    const isOwner = currentUser?.id === post.user.id;
+    // `section=draft` because the posts tab defaults to Published, where the post just saved
+    // is by definition absent.
+    const fallback =
+      isOwner && currentUser.username
+        ? `/user/${currentUser.username}/posts?section=draft`
+        : `/posts/${post.id}`;
+    const destination = safeInternalPath(returnUrl, fallback);
+
+    savingDraftRef.current = destination;
+    try {
+      await router.push(destination);
+    } catch {
+      // swallowed: a rejected push is a navigation that didn't happen, and the only
+      // thing to do about it is the reset below
+    } finally {
+      // A push that fails or is cancelled leaves this component mounted, and a bypass that
+      // outlives its own navigation disables the unsaved-changes guard for good.
+      savingDraftRef.current = null;
+    }
   };
 
   useCatchNavigation({
@@ -431,8 +453,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Button.Group>
       )}
 
-      {!post.publishedAt && !isUnpublishedByParent && (
-        <Button variant="default" onClick={handleSaveAsDraft}>
+      {!post.publishedAt && !isUnpublishedByParent && !deleted && (
+        <Button variant="default" onClick={handleSaveAsDraft} disabled={!features.canWrite}>
           Save as Draft
         </Button>
       )}

@@ -1,6 +1,6 @@
 import { ActionIcon, Collapse, Text, Textarea } from '@mantine/core';
 import { IconMessagePlus, IconTrash } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -21,6 +21,7 @@ export function PostImageTechnique({
   const [opened, setOpened] = useState(!!technique.notes?.length);
   const [notes, setNotes] = useState(technique.notes ?? '');
   const updateImage = usePostEditStore((state) => state.updateImage);
+  const registerPendingSave = usePostEditStore((state) => state.registerPendingSave);
   const removeTechniqueMutation = trpc.image.removeTechniques.useMutation({
     onSuccess: (response, { data }) => {
       for (const { imageId, techniqueId } of data) {
@@ -53,7 +54,9 @@ export function PostImageTechnique({
   };
 
   const updateTechniqueMutation = trpc.image.updateTechniques.useMutation({
-    onSuccess: (_, { data }) => {
+    // onMutate, not onSuccess: the provider snapshots the store into the `post.getEdit`
+    // cache on `routeChangeStart`, so a note flushed on the way out has not landed yet.
+    onMutate: ({ data }) => {
       for (const { imageId, techniqueId, notes } of data) {
         updateImage(imageId, (image) => {
           const technique = image.techniques.find((x) => x.id === techniqueId);
@@ -70,6 +73,11 @@ export function PostImageTechnique({
       });
     });
   };
+
+  useEffect(
+    () => registerPendingSave(`technique:${image.id}:${technique.id}`, debouncer.flush),
+    [registerPendingSave, debouncer, image.id, technique.id]
+  );
 
   const dirty = notes.length && notes !== technique.notes;
   const saving = updateTechniqueMutation.isPending;

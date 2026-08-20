@@ -57,7 +57,6 @@ type State = {
   post?: PostDetailEditable;
   images: ControlledImage[];
   isReordering: boolean;
-  pendingSave: (() => void) | null;
   collectionId?: number | null;
   collectionTagId: number | null;
   collectionItemExists?: boolean;
@@ -66,8 +65,9 @@ type State = {
   setImages: (cb: (images: ControlledImage[]) => ControlledImage[]) => void;
   updateImage: (id: number, cb: (image: PostEditImageDetail) => void) => void;
   toggleReordering: () => void;
-  setPendingSave: (fn: (() => void) | null) => void;
-  flushPendingSave: () => void;
+  /** Returns its own unregister, so callers can use it as an effect cleanup. */
+  registerPendingSave: (key: string, flush: () => void) => () => void;
+  flushPendingSaves: () => void;
   updateCollection: (
     collectionId: number | null,
     tagId?: number | null,
@@ -78,10 +78,16 @@ type State = {
 
 // #region [create store]
 type Store = ReturnType<typeof createContextStore>;
-const createContextStore = (post?: PostDetailEditable) =>
-  createStore<State>()(
+const createContextStore = (post?: PostDetailEditable) => {
+  // Deliberately outside the store's reactive state: these are per-mount callbacks, not data.
+  // Keeping them here means registering costs no `set()` (so no notification to every
+  // subscriber, and nothing extra for the devtools middleware to serialize) and lets the many
+  // tool/technique rows register at once — a single slot would silently drop all but the last.
+  const pendingSaves = new Map<string, () => void>();
+
+  return createStore<State>()(
     devtools(
-      immer((set, get) => ({
+      immer((set) => ({
         post,
         images:
           post?.images.map((data, index) => ({
@@ -89,7 +95,6 @@ const createContextStore = (post?: PostDetailEditable) =>
             data: { ...data, index },
           })) ?? [],
         isReordering: false,
-        pendingSave: null,
         collectionId: post?.collectionId,
         collectionTagId: post?.collectionTagId ?? null,
         collectionItemExists: post?.collectionItemExists,
@@ -115,15 +120,14 @@ const createContextStore = (post?: PostDetailEditable) =>
           set((state) => {
             state.isReordering = !state.isReordering;
           }),
-        setPendingSave: (fn) => set({ pendingSave: fn }),
-        // The form autosaves on a debounce whose timer is cleared on unmount, so an
-        // edit made within that window is dropped by any navigation. Anything that
-        // navigates deliberately must flush first or it silently discards that edit.
-        flushPendingSave: () => {
-          const { pendingSave } = get();
-          if (!pendingSave) return;
-          set({ pendingSave: null });
-          pendingSave();
+        registerPendingSave: (key, flush) => {
+          pendingSaves.set(key, flush);
+          return () => {
+            if (pendingSaves.get(key) === flush) pendingSaves.delete(key);
+          };
+        },
+        flushPendingSaves: () => {
+          for (const flush of pendingSaves.values()) flush();
         },
         updateCollection: (collectionId, tagId, collectionItemExists) =>
           set({
@@ -133,9 +137,16 @@ const createContextStore = (post?: PostDetailEditable) =>
             collectionItemExists: collectionItemExists ?? true,
           }),
       })),
-      { name: 'PostDetailEditable' }
+      {
+        name: 'PostDetailEditable',
+        // `import.meta.env` doesn't exist in a Next bundle, so zustand's own default resolves
+        // to enabled everywhere — which serializes the whole store, images included, on every
+        // `set()` for anyone with the Redux devtools extension installed.
+        enabled: process.env.NODE_ENV !== 'production',
+      }
     )
   );
+};
 // #endregion
 
 // #region [state context]
