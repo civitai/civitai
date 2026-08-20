@@ -159,7 +159,21 @@ async function getEligibleCollectionIds(poolFallback: number[]) {
   return state.eligibleIds.filter((id) => poolFallback.includes(id));
 }
 
-async function fetchCandidates({
+/**
+ * `make_interval(days => n)` with `n` inlined rather than bound. Prisma binds a JS number as int8
+ * and `make_interval` takes int4, so a bound parameter throws 42883 on every run. Callers pass a
+ * value the schema has already bounded to an integer, which is what makes inlining it safe.
+ */
+const intervalDays = (days: number) =>
+  Prisma.sql`make_interval(days => ${Prisma.raw(String(days))})`;
+
+/**
+ * Built rather than issued so a test can read `.sql` off it directly. The alternative is
+ * reconstructing the text from a mocked tagged template, which means guessing at Prisma's
+ * internals — a guess that already exists in three other test files, and whose failure mode is a
+ * suite that keeps passing over SQL it can no longer read.
+ */
+export function buildCandidatesQuery({
   collectionIds,
   targetCollectionId,
   windowDays,
@@ -168,9 +182,7 @@ async function fetchCandidates({
   targetCollectionId: number;
   windowDays: number;
 }) {
-  const rows = await dbRead.$queryRaw<
-    { imageId: number; userId: number; collectionId: number; curatedAt: Date; reactions: bigint }[]
-  >`
+  return Prisma.sql`
     WITH cand AS (
       SELECT DISTINCT ON (ci."imageId")
              ci."imageId", ci."collectionId",
@@ -179,9 +191,7 @@ async function fetchCandidates({
       WHERE ci."collectionId" = ANY(${collectionIds}::int[])
         AND ci.status = 'ACCEPTED'
         AND ci."imageId" IS NOT NULL
-        AND COALESCE(ci."reviewedAt", ci."createdAt") >= now() - make_interval(days => ${Prisma.raw(
-          String(windowDays)
-        )})
+        AND COALESCE(ci."reviewedAt", ci."createdAt") >= now() - ${intervalDays(windowDays)}
       ORDER BY ci."imageId", COALESCE(ci."reviewedAt", ci."createdAt") DESC
     )
     SELECT c."imageId", i."userId", c."collectionId", c."curatedAt",
@@ -206,20 +216,36 @@ async function fetchCandidates({
           AND existing."imageId" = c."imageId"
       )
   `;
+}
+
+async function fetchCandidates(args: {
+  collectionIds: number[];
+  targetCollectionId: number;
+  windowDays: number;
+}) {
+  const rows = await dbRead.$queryRaw<
+    { imageId: number; userId: number; collectionId: number; curatedAt: Date; reactions: bigint }[]
+  >(buildCandidatesQuery(args));
 
   return rows.map((r) => ({ ...r, reactions: Number(r.reactions) }));
 }
 
-async function fetchWindowCounts({
+/**
+ * Counts previous auto-features per creator and per source collection, over the window the caps
+ * are measured in. That window is `capWindowDays`, not the candidate-freshness `windowDays` —
+ * they used to be the same value, so tuning a cap also changed which images the job considered
+ * recent, and therefore what it picked.
+ */
+export function buildWindowCountsQuery({
   targetCollectionId,
-  windowDays,
+  capWindowDays,
   autoFeatureUserId,
 }: {
   targetCollectionId: number;
-  windowDays: number;
+  capWindowDays: number;
   autoFeatureUserId: number;
 }) {
-  const rows = await dbRead.$queryRaw<{ userId: number; source: string | null }[]>`
+  return Prisma.sql`
     SELECT i."userId", split_part(ci.note, ':', 2) AS source
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
@@ -227,8 +253,18 @@ async function fetchWindowCounts({
       AND ci."addedById" = ${autoFeatureUserId}
       AND ci.note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
       AND ci.status <> 'REJECTED'::"CollectionItemStatus"
-      AND ci."createdAt" >= now() - make_interval(days => ${Prisma.raw(String(windowDays))})
+      AND ci."createdAt" >= now() - ${intervalDays(capWindowDays)}
   `;
+}
+
+async function fetchWindowCounts(args: {
+  targetCollectionId: number;
+  capWindowDays: number;
+  autoFeatureUserId: number;
+}) {
+  const rows = await dbRead.$queryRaw<{ userId: number; source: string | null }[]>(
+    buildWindowCountsQuery(args)
+  );
 
   const creatorCounts = new Map<number, number>();
   const collectionCounts = new Map<number, number>();
@@ -267,7 +303,7 @@ export async function runAutoFeatureImages({
     }),
     fetchWindowCounts({
       targetCollectionId: config.collectionId,
-      windowDays: config.windowDays,
+      capWindowDays: config.capWindowDays,
       autoFeatureUserId,
     }),
   ]);
@@ -288,6 +324,8 @@ export async function runAutoFeatureImages({
   const dryRun = dryRunOverride ?? config.dryRun;
   const summary = {
     dryRun,
+    windowDays: config.windowDays,
+    capWindowDays: config.capWindowDays,
     candidates: candidates.length,
     eligibleCollections: eligible.length,
     picked: picks.length,
