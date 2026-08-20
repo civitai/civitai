@@ -4,6 +4,10 @@ import { trpc } from '~/utils/trpc';
 
 type WithDetails = { details?: Record<string, unknown> | null };
 
+export type NotificationThumbnailImage = NonNullable<
+  ReturnType<typeof useNotificationThumbnails> extends Map<number, infer T> ? T : never
+>;
+
 /**
  * Notifications that name an image, deduped, in the order they appear.
  *

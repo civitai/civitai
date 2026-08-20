@@ -6,9 +6,7 @@ import type { MouseEvent } from 'react';
 import React, { useMemo } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { NotificationThumbnail } from '~/components/Notifications/NotificationThumbnail';
 import {
   notificationImageId,
   useNotificationThumbnails,
@@ -182,39 +180,7 @@ export function NotificationList({
                   </Group>
                 </Stack>
               </Group>
-              {thumbnail && (
-                <div className="relative size-12 shrink-0 overflow-hidden rounded-md">
-                  {/*
-                   * Hidden preferences decide whether the viewer may see the image
-                   * at all; this decides whether they asked to see it uncovered.
-                   * The two are not the same set — with blur on, the mask covers
-                   * every mature level, including the ones inside the viewer's own
-                   * browsing level — so filtering alone would render plainly, in a
-                   * dropdown over whatever page they are on, what the rest of the
-                   * app blurs.
-                   *
-                   * `explain={false}`: the Show overlay is a button and a badge,
-                   * which do not fit 48px. The blurhash is the whole affordance
-                   * here, and the row already opens the image.
-                   */}
-                  <ImageGuard2 image={thumbnail} explain={false}>
-                    {(safe) =>
-                      safe ? (
-                        <EdgeMedia
-                          src={thumbnail.url}
-                          type={thumbnail.type}
-                          width={90}
-                          alt=""
-                          anim={false}
-                          className="size-full object-cover"
-                        />
-                      ) : (
-                        <MediaHash {...thumbnail} />
-                      )
-                    }
-                  </ImageGuard2>
-                </div>
-              )}
+              {thumbnail && <NotificationThumbnail image={thumbnail} />}
             </Group>
           </Paper>
         );
