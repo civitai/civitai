@@ -507,7 +507,7 @@ function ExternalCreateForm() {
                 <Button
                   variant="default"
                   component={Link}
-                  href="/apps/my-submissions"
+                  href="/apps/mine"
                   disabled={busy}
                 >
                   Cancel
@@ -799,7 +799,7 @@ function ExternalCreateForm() {
                   <Group justify="flex-end">
                     <Button
                       component={Link}
-                      href="/apps/my-submissions"
+                      href="/apps/mine"
                       rightSection={<IconExternalLink size={16} />}
                     >
                       View my submissions

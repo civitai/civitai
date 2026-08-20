@@ -5,8 +5,12 @@ import {
 } from '~/server/notifications/base.notifications';
 import {
   CommentNotificationPriority,
+  appListingSlugJoin,
+  appListingSlugResolved,
   commentDedupeKeyByVersion,
+  threadTypeLabel,
   threadUrlMap,
+  withIndefiniteArticle,
 } from '~/server/notifications/comment.notifications';
 
 // Moveable (possibly)
@@ -20,10 +24,19 @@ export const mentionNotifications = createNotificationProcessor({
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
       if (isCommentV2) {
         const url = threadUrlMap(details);
+        // The shared `threadTypeLabel` names the ENTITY; `'comment thread'` is this sentence's
+        // own shaping of the unaddressable fallback ("…on a comment thread" reads, "…on a
+        // comment" does not) and stays local — folding it into the shared map would give the
+        // reply consumers "a comment thread comment you made".
+        //
+        // The article comes from `withIndefiniteArticle`, which is handed the noun and nothing
+        // else, so it cannot disagree with the word printed beside it. See its docstring.
+        const noun =
+          details.threadType === 'comment' ? 'comment thread' : threadTypeLabel(details.threadType);
         return {
-          message: `${details.username} mentioned you in a comment on a${
-            ['a', 'e', 'i', 'o', 'u'].includes(details.threadType[0]) ? 'n' : ''
-          } ${details.threadType === 'comment' ? 'comment thread' : details.threadType}`,
+          message: `${details.username} mentioned you in a comment on ${withIndefiniteArticle(
+            noun
+          )}`,
           url,
         };
       } else if (details.mentionedIn === 'comment') {
@@ -88,8 +101,12 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
+              -- App-store listings are SLUG-addressed, so this arm keys on the JOINED slug
+              -- rather than an id column — see appListingSlugJoin.
+              WHEN al.slug IS NOT NULL THEN 'appListing'
               ELSE 'comment'
             END,
+             'appListingSlug', al.slug,
              'commentParentId', COALESCE(
                 t."imageId",
                 t."modelId",
@@ -124,15 +141,15 @@ export const mentionNotifications = createNotificationProcessor({
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" t ON t.id = c."threadId"
         LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
+        ${appListingSlugJoin('COALESCE(root."appListingId", t."appListingId")')}
         WHERE (c."createdAt" > '${lastSent}')
           AND c.content LIKE '%"mention:%'
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
-          -- Same appListing exclusion the reply processors carry: those threads are addressed by SLUG,
-          -- so threadUrlMap can't build a URL for them yet.
-          AND root."appListingId" IS NULL
-          AND t."appListingId" IS NULL
+          -- Same slug-resolution guard the reply processors carry: those threads are addressed by
+          -- SLUG, the join above supplies it, and only a row the join failed on is dropped.
+          AND ${appListingSlugResolved('COALESCE(root."appListingId", t."appListingId")')}
 
         UNION
 

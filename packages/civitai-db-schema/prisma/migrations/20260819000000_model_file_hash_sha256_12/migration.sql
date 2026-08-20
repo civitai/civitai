@@ -13,15 +13,31 @@
 -- AlterEnum
 ALTER TYPE "ModelHashType" ADD VALUE IF NOT EXISTS 'SHA256_12';
 
--- Backfill is NOT run here. ADD VALUE cannot be referenced in the same transaction that adds
--- it, and this is ~1.5M rows.
+-- Backfill is NOT run here. ADD VALUE cannot be referenced in the same transaction that adds it,
+-- and this is ~1.5M rows.
 --
--- 🔴 THE BACKFILL IS NOT IMPLEMENTED. This comment (and docs/image-resource-hash-matching.md)
--- used to describe a `GET /api/admin/temp/backfill-sha256-12` endpoint. That file has never
--- existed on any branch — `git log --diff-filter=A -- src/pages/api/admin/temp/backfill-sha256-12.ts`
--- returns nothing. Anyone following the old instruction gets a 404, not a backfill.
+-- The backfill HAS been applied to production (2026-08-19): every SHA256 row whose ModelFile
+-- still exists carries a SHA256_12 sibling, and detection resolves 12-char LoRA hashes. It ran
+-- from a throwaway endpoint that was deliberately never committed, so there is nothing in the
+-- repo to point at and nothing to re-run here.
 --
--- Consequence, and it is not a broken state: files scanned AFTER the release that ships
--- normalizeScanHashes() get their SHA256_12 row from the scan path. Files scanned BEFORE it keep
--- failing 12-char LoRA detection exactly as they do today, indefinitely, until someone either
--- writes the backfill or replays them through /api/mod/reprocess-scan.
+-- Any OTHER environment still needs it. The value is derivable from rows already present — no
+-- file access, no orchestrator, no re-scan — so it is a plain INSERT ... SELECT, batched by
+-- fileId to keep each statement bounded:
+--
+--   INSERT INTO "ModelFileHash" ("fileId", type, hash, "createdAt")
+--   SELECT src."fileId", 'SHA256_12', LEFT(src.hash::text, 12), NOW()
+--   FROM "ModelFileHash" src
+--   WHERE src.type = 'SHA256'
+--     AND src."fileId" >= $from AND src."fileId" < $to
+--     AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf.id = src."fileId")
+--   ON CONFLICT ("fileId", type) DO NOTHING;
+--
+-- 🔴 The EXISTS guard is required, not defensive. ModelFileHash holds rows whose ModelFile is
+-- gone (70 in prod, despite the FK being ON DELETE CASCADE and reporting convalidated), so
+-- selecting from ModelFileHash does not guarantee the FK will accept the derived row. Without
+-- it, one orphan aborts the whole statement with a 23503.
+--
+-- Until it runs in a given environment, files scanned after the release that ships
+-- normalizeScanHashes() get their SHA256_12 from the scan path; older files keep failing 12-char
+-- LoRA detection. That is the pre-fix behaviour, not a broken half-state.

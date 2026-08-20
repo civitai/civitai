@@ -2,7 +2,7 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 
 // Part A: the app icon opens a Menu of the Civitai App PLATFORM's own pages
-// (Apps home / Installed apps / My submissions / Review). "Review" is gated on
+// (Apps home / Installed apps / My apps / Review). "Review" is gated on
 // the viewer's moderator flag. Part B: the ⋯ menu gains a "Permissions &
 // activity" item (only when an appBlockId is threaded) that opens a per-app
 // transparency drawer.
@@ -78,8 +78,10 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     const installed = page.getByRole('menuitem', { name: 'Installed apps' }).element();
     expect(installed.getAttribute('href')).toBe('/apps/installed');
 
-    const submissions = page.getByRole('menuitem', { name: 'My submissions' }).element();
-    expect(submissions.getAttribute('href')).toBe('/apps/my-submissions');
+    // Was "My submissions" → `/apps/my-submissions`; that page merged into `/apps/mine`
+    // and 301s there, so the in-app link points at the surviving route directly.
+    const mine = page.getByRole('menuitem', { name: 'My apps' }).element();
+    expect(mine.getAttribute('href')).toBe('/apps/mine');
   });
 
   test('"Review" is HIDDEN for a non-moderator viewer', async () => {

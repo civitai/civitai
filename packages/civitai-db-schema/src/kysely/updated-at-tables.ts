@@ -73,6 +73,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'SavedModel',
   'Tag',
   'TrustedSpokeDomain',
+  'UserHub',
   'UserMembershipOverride',
   'UserRestriction',
   'Vault',

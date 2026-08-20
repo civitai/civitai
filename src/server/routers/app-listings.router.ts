@@ -893,6 +893,58 @@ export const appListingsRouter = router({
       });
     }),
 
+  /**
+   * AUTHOR: ONE listing's full publish history — the LAZY, per-row read behind the merged
+   * `/apps/mine` table's expandable rows.
+   *
+   * 🔴 PER-LISTING AND FETCHED ON EXPAND, deliberately. The page it replaced issued TWO
+   * unbounded per-user queries on mount (`blocks.listMyPublishRequests`, which fans out to
+   * four more queries, plus `appListings.listMySubmissions`) to render history nobody had
+   * asked to see. Here the table renders from `listMine` alone and this proc runs only for
+   * the row the caller actually opened.
+   *
+   * 🔴 NOT gated on the marketplace `appBlocks` flag — `appDeveloperProcedure`
+   * (`app-blocks-author`) only, matching the merged page's own SSR gate. `appBlocks` is
+   * store VISIBILITY; requiring it would blank an author's own history whenever store
+   * access is narrowed. (`blocks.listMyPublishRequests` carries `enforceAppBlocksFlag`,
+   * which is why it is not the read used here.)
+   *
+   * The union-of-two-tables reasoning lives in the service's module header — read it before
+   * changing either query.
+   */
+  listingHistory: appDeveloperProcedure
+    // Same `{ appListingId }` shape and bounds as `getAuthoringContext`; a second identical
+    // schema would just be a second thing to keep in step.
+    .input(appListingAuthoringContextSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { listListingHistory } = await import(
+        '~/server/services/blocks/app-listing-history.service'
+      );
+      return listListingHistory({ appListingId: input.appListingId, userId: ctx.user.id });
+    }),
+
+  /**
+   * AUTHOR: the caller's own submissions whose LISTING NO LONGER EXISTS.
+   *
+   * 🔴 THE ONE DELIBERATELY SUBMITTER-SCOPED READ ON THIS PAGE, and the exception proves
+   * the rule. Every other read here is ownership∪seat because an app exists to key on; a
+   * first version that was rejected or withdrawn had its pre-approval DRAFT listing
+   * DELETED (the slug release), so there is no app row left and `submitted_by_user_id` is
+   * the only identity the surviving record carries. Without this proc that population is
+   * unreachable from anywhere in the product — including from the "your app was rejected"
+   * notification, which now points here.
+   *
+   * Same `appBlocksAuthor`-only gate as the page and `listingHistory`.
+   */
+  listMyOrphanedSubmissions: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.user) return [];
+    const { listMyOrphanedSubmissions } = await import(
+      '~/server/services/blocks/app-listing-history.service'
+    );
+    return listMyOrphanedSubmissions({ userId: ctx.user.id });
+  }),
+
   /** MOD: pending off-site review queue (read-only in PR-a; approve/reject in PR-b). */
   listPendingRequests: moderatorProcedure
     .input(listOffsiteRequestsSchema)

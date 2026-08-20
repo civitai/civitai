@@ -131,3 +131,43 @@ export const scopeMemberPrivacy =
           // off their own membership.
           lastViewedMessageId: null,
         };
+
+/**
+ * Rebuild the `Date` fields on a chat message that arrived over a websocket.
+ *
+ * A signal payload is JSON, so every date on it is a string — but the handler
+ * receives it typed as the router's own output, where those fields are `Date`.
+ * Nothing in the type system objects, and nothing objects at write time either:
+ * the value lands in the react-query cache and the throw happens later, in
+ * whichever consumer first calls a `Date` method on it. That was `isSameDay`,
+ * two components away, taking the whole page down through the error boundary.
+ *
+ * So the conversion belongs here, once, on the way in — not at each consumer,
+ * and not as a cast at one call site that the next date field would outlive.
+ */
+export function reviveChatMessageDates<
+  T extends {
+    createdAt: Date;
+    editedAt?: Date | null;
+    deletedAt?: Date | null;
+    referenceMessage?: { createdAt: Date; deletedAt?: Date | null } | null;
+  }
+>(message: T): T {
+  const toDate = (value: Date | string) => (value instanceof Date ? value : new Date(value));
+  const toDateOrNull = <V extends Date | null | undefined>(value: V) =>
+    (value == null ? value : toDate(value as Date)) as V;
+
+  return {
+    ...message,
+    createdAt: toDate(message.createdAt),
+    editedAt: toDateOrNull(message.editedAt),
+    deletedAt: toDateOrNull(message.deletedAt),
+    referenceMessage: message.referenceMessage
+      ? {
+          ...message.referenceMessage,
+          createdAt: toDate(message.referenceMessage.createdAt),
+          deletedAt: toDateOrNull(message.referenceMessage.deletedAt),
+        }
+      : message.referenceMessage,
+  };
+}

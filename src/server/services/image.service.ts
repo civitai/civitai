@@ -1538,6 +1538,13 @@ export const getAllImages = async (
     userId?: number;
   }
 ) => {
+  // Fail loud rather than serve unfiltered. This path has no way to express a
+  // hub — collection membership lives on the search index, not in a column here —
+  // so a hubId arriving means the dispatcher routed wrongly. Returning results
+  // would hand the caller the global feed labelled as their hub.
+  if (input.hubId)
+    throw new Error('getAllImages cannot serve a hub; hub queries must use the index path');
+
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
     username: input.user?.username,
@@ -2906,6 +2913,10 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   // When provided, getImagesFromSearch skips its own Flipt evaluation.
   bitdexMode?: string | null;
   actor?: string;
+  // Per-request memo of `resolveHubSources`, set by `resolvedHubSources` below.
+  // `undefined` means "not resolved yet"; `null` is a resolved answer meaning the
+  // hub is not the viewer's, which callers must serve as nothing.
+  resolvedHub?: ResolvedHubSources | null;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3236,23 +3247,44 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   //   1. `!input.currentUserId`                                  — anonymous caller
   //   2. `bitdexCursor`                — a `bdx:` cursor, i.e. a BitDex-paginated
   //                                      request (NOT any paginated request)
-  //   3. `input.userId && input.userId !== input.currentUserId`
-  //                                    — signed-in, viewing another user's profile
+  //   3. `creatorScopeExcludesCaller`  — the request is scoped to a set of
+  //                                      creators that does not contain the
+  //                                      caller (#4123). Reference it BY SYMBOL:
+  //                                      it is computed from three scopes and a
+  //                                      gloss of it drifts, which is what
+  //                                      happened to the `input.userId` version
+  //                                      this replaced.
   // If none holds, the own-content pass is issued regardless of what the feed
   // query did, a call goes out, and the request IS counted.
   //
   // Measured, driving the real path (each row is a request that walks a door):
   //   signed-in, other user's profile        → 0 calls, nothing recorded
   //   signed-in, `bdx:` cursor               → 0 calls, nothing recorded
-  //   signed-in, NON-`bdx:` cursor           → 1 call,  `fallback_empty` recorded
-  //   signed-in, first page                  → 1 call,  `fallback_empty` recorded
-  // The third row is why "any paginated request" was wrong, and it is the NORMAL
+  //   signed-in, followed-with-zero-follows  → 0 calls, nothing recorded  (#4123)
+  //   signed-in, newCreators-with-none       → 0 calls, nothing recorded  (#4123)
+  //   signed-in, `hidden`-with-none, page 1  → 1 call,  `fallback_empty` recorded
+  //   signed-in, unscoped, NON-`bdx:` cursor → 1 call,  `fallback_empty` recorded
+  // 🔴 THE TWO SHAPES followed-with-zero-follows AND newCreators-with-none USED TO
+  // READ `1 call, fallback_empty recorded`, AND #4123 CHANGED THEM. (Named by
+  // shape, not by row number: #4123 reordered this table.) A set-shaped creator scope is now resolved before the decision,
+  // so those two doors stopped issuing the own pass and joined the other doors
+  // instead of being the ones that leaked a call. That is a REDUCTION in what
+  // `fallback_empty` counts — it shifts the served-ratio baseline, exactly as
+  // #4122 did. Do not compare that ratio across #4123.
+  // The last row is why "any paginated request" was wrong, and it is the NORMAL
   // shape: a request that walks a door falls back to Meili, so its next page
   // carries a MEILI cursor, which the `bdx:` decode above does not accept.
   //
-  // Counting those requests is correct under the stated denominator — a call did
-  // go out — and is deliberately left as is. Both shapes are pinned in
-  // bitdex-feed-source.test.ts.
+  // Counting the remaining two is correct under the stated denominator — a call
+  // did go out — and is deliberately left as is.
+  //
+  // ⚠️ PIN SCOPE, STATED NARROWLY ON PURPOSE: of the six rows above, exactly TWO
+  // are driven in bitdex-feed-source.test.ts — followed-with-zero-follows and
+  // `hidden`-with-none, the two the counter's behaviour turns on. The other four
+  // are read from the code, not pinned by a test there. An earlier revision of
+  // this comment said "every shape above is pinned", which was a true narrow claim
+  // widened into a false one — the exact failure this comment block exists to
+  // prevent.
   //
   // The two observations that mean "a call was made": the client reported a
   // FAILURE, or it handed back a NON-NULL result (it returns null on every
@@ -3327,9 +3359,109 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   //
   // Content-scoping filters from the main query are applied so the second pass
   // only returns content relevant to the current view (e.g. same model, same post).
-  // Skip entirely if viewing another user's profile (userId !== currentUserId).
-  const skipOwnExcluded =
-    !input.currentUserId || bitdexCursor || (input.userId && input.userId !== input.currentUserId);
+  //
+  // 🔴 #4123 — THE CREATOR SCOPE CAN BE A SET, AND IT WAS RESOLVED TOO LATE.
+  //
+  // This decision used to read `input.userId` alone — "skip entirely if viewing
+  // another user's profile". That covers a feed addressed to ONE creator, and
+  // since #4122 one addressed by handle. But a Following or new-creators feed has
+  // no `userId` at all: its creator scope is a SET, resolved later and locally
+  // inside `getImagesFromBitdexPreFilter`. The `userId`-shaped test therefore read
+  // `undefined`, did not fire, the second pass ran anyway, and the caller's own
+  // private/blocked/nsfw0 content was merged into a feed that exists to show OTHER
+  // people's work. Not a cross-user exposure — every document returned belongs to
+  // the caller — but the feed misrepresents whose work it is showing, and Following
+  // is a primary browsing surface.
+  //
+  // Generalised to the invariant both shapes share: THE OWN PASS BELONGS ONLY IN A
+  // FEED WHOSE CREATOR SCOPE CONTAINS THE CALLER. A single `userId` is a
+  // one-element set, so the old disjunct is SUBSUMED here rather than left sitting
+  // beside this one — one rule in one place, so a third scope shape cannot be added
+  // to one test and missed by the other.
+  //
+  // ⚠️ MEMBERSHIP, not "is this feed scoped to somebody else". `toggleFollowUser`
+  // creates `{ userId, targetUserId }` with no `userId !== targetUserId` guard, so
+  // a caller CAN sit inside their own followed set, and can be on the
+  // new-and-upcoming board. Both are pinned as positive controls in
+  // `src/server/services/__tests__/bitdex-followed-own-excluded-scope.test.ts`; a
+  // blanket "never run the second pass on a scoped feed" fails them.
+  //
+  // COST: both helpers are cached — `getNewCreatorUserIds` via `fetchThroughCache`
+  // (genuinely shared: the pre-filter calls the very same helper), and
+  // `getUserFollows` via `userFollowsCache`. ⚠️ `getUserFollows` is NOT already on
+  // this path: the search legs read follows with a raw
+  // `dbRead.userEngagement.findMany` (`getImagesFromSearchPreFilter`,
+  // `getImagesFromBitdexPreFilter`, `getImagesFromSearchPostFilter`), and the only
+  // other `getUserFollows` call in this file is in `getAllImages`, the legacy SQL
+  // feed. So this introduces a NEW `userFollowsCache` dependency into the
+  // image-search hot path rather than reusing one. Steady-state cost is still
+  // small — `cacheNotFound` defaults to true, so a zero-follow caller is
+  // negatively cached instead of falling through to the DB every request — but
+  // the basis is "a new, cheap cache read", not "a read we already do".
+  //
+  // The cheap disjuncts are evaluated FIRST and short-circuit the awaits entirely,
+  // so an anonymous request and any `bdx:`-paginated page (i.e. every page ≥2 of a
+  // BitDex-served Following feed) pay nothing here.
+  //
+  // ⚠️ THE STALENESS WINDOW IS REPLICA LAG, NOT CACHE TTL — and the cache is the
+  // FRESHER of the two. `userFollowsCache.refresh()` re-reads through `lookupFn(…,
+  // true)`, i.e. dbWrite, and `toggleFollowUser` calls it on both follow and
+  // unfollow; the pre-filter reads the REPLICA. So the reachable disagreement is a
+  // caller who has just self-followed: for the replica-lag window this guard says
+  // "in scope" and runs the own pass while the replica-derived filter still
+  // excludes them. It needs a self-follow to reach at all, is self-healing, and
+  // the other direction merely withholds the caller's own excluded content from
+  // their own feed. Deliberately NOT unified here — repointing the pre-filter at
+  // the cache would change what the FEED CONTAINS, which is a different change
+  // from what this decision READS.
+  //
+  // 🔴 THIS HOIST INTRODUCES THE SHORT-CIRCUIT — IT DOES NOT PRESERVE ONE. An
+  // earlier revision claimed the guard "already had it by virtue of `||`". Two
+  // different baselines, and neither had it: pre-#4123 there were no awaits here
+  // at all, so there was nothing to short-circuit; and in #4123's own first
+  // revision the scope resolution was an unconditional `await Promise.all([...])`
+  // on the line ABOVE the guard, where `||` short-circuited only the read of an
+  // already-computed boolean. So removing the `skipOwnExcludedCheaply ? [] :`
+  // ternary below is NOT a no-op — it reinstates a lookup on every request already
+  // destined to skip, notably an anonymous `newCreators` request and every page
+  // >= 2 of a BitDex-served Following feed.
+  //
+  // ⚠️ It is also load-bearing for the `getUserFollows(input.currentUserId!)`
+  // call below, which dropped its own `input.currentUserId &&` guard because this
+  // line makes it unreachable when `currentUserId` is absent. Reorder or remove
+  // the hoist and that non-null assertion becomes `getUserFollows(undefined)`.
+  const skipOwnExcludedCheaply = !input.currentUserId || !!bitdexCursor;
+
+  // 🔴 The four scopes here must stay 1:1 with the creator-scoping filters
+  // `getImagesFromBitdexPreFilter` applies — `followed`, `newCreators`, `userId`
+  // and a creator-only hub. That coupling IS the correctness argument: the guard has to read
+  // the same creator scope the feed is filtered by, or it decides from a
+  // different set than the one that shaped the results. The ARGUMENTS matter as
+  // much as the calls — `entity` and `domain` select which board
+  // `getNewCreatorUserIds` reads, and passing a different `domain` here would
+  // silently consult the SFW board while the feed filters on the red one. Pinned
+  // by argument assertions in bitdex-followed-own-excluded-scope.test.ts.
+  const creatorScopes = skipOwnExcludedCheaply
+    ? []
+    : await Promise.all([
+        input.userId ? [input.userId] : null,
+        input.followed ? getUserFollows(input.currentUserId!) : null,
+        input.newCreators ? getNewCreatorUserIds({ entity: 'images', domain: input.domain }) : null,
+        // A hub is a creator scope ONLY when every arm of it is one. The arms are
+        // ORed, so a hub carrying a model source can match an image whose author
+        // is outside `userIds`, and treating that as a creator scope would skip
+        // the own-excluded pass for a feed the caller does legitimately appear in.
+        // Resolution is memoized on `input`, so this costs no extra query — the
+        // filter build below reads the same answer.
+        hubCreatorScope(await resolvedHubSources(input)),
+      ]);
+  // `some`, not `every`: the pre-filter ANDs these scopes, so exclusion by ANY
+  // one of them excludes the caller from the feed.
+  const creatorScopeExcludesCaller = creatorScopes.some(
+    (scope) => scope !== null && !scope.includes(input.currentUserId!)
+  );
+
+  const skipOwnExcluded = skipOwnExcludedCheaply || creatorScopeExcludesCaller;
 
   let ownExcludedPromise: ReturnType<typeof queryBitdex> | null = null;
   if (!skipOwnExcluded) {
@@ -3511,6 +3643,16 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
 
     // Content-scope filtering — narrow unscoped results to the current view
     //
+    // A hub is not expressible here: this pass fetches the viewer's own excluded
+    // content unscoped, and the narrowing below enumerates scalar inputs only, so
+    // a hub's source set has nothing to match against. Dropping the pass entirely
+    // is the fail-closed choice — the alternative is the viewer's own private,
+    // blocked and unscanned images from anywhere in their account appearing in a
+    // hub they may have composed entirely from other creators. It also keeps the
+    // two backends agreeing: Meili carries these carve-outs inside clauses ANDed
+    // with the hub group, so they stay hub-scoped there.
+    if (input.hubId) ownDocs = [];
+
     // Creator scope first, because it is the one the rest of this list was
     // missing. The second pass asks BitDex for `userId = currentUserId` and
     // nothing else, so on a view pinned to a single creator these documents
@@ -3828,6 +3970,16 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
+  // The fifth filter builder, and the one with no hub clause. Unreachable today
+  // only because the REST zod for /api/v1/images does not declare `hubId` and
+  // strips unknown keys — the same accident the hideChallenges comment above
+  // describes. Adding the key to that schema without a clause here would serve an
+  // unfiltered feed from one of three branches, so fail loudly instead.
+  if (input.hubId)
+    throw new Error(
+      'getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path'
+    );
+
   try {
     const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
       id: input.currentUserId,
@@ -4038,6 +4190,81 @@ export async function getImagesFromFeedSearch(
   }
 }
 
+import type { ResolvedHubSources } from '~/server/services/user-hub.service';
+import { resolveHubSources } from '~/server/services/user-hub.service';
+import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
+
+// The OR-group a hub's sources become. Mirrors the single-`modelVersionId`
+// branch below, including its two gates: a hub must honour hideAutoResources /
+// hideManualResources or it silently ignores two filters the user set.
+//
+// Returns null when the hub resolved to nothing. Callers must return an empty
+// page for null — never fall through unfiltered, which would serve the global
+// feed to someone who asked for their hub.
+// The creator scope a hub represents, or null when it is not purely one. Null means
+// "not a creator scope", which leaves the own-excluded pass alone — never "empty
+// scope", which would exclude the caller from their own feed.
+function hubCreatorScope(sources: ResolvedHubSources | null) {
+  if (!sources || !sources.userIds.length) return null;
+  if (sources.modelVersionIds.length || sources.collectionIds.length) return null;
+  return sources.userIds;
+}
+
+// One resolution per request, memoized on the input object itself. A hub feed page
+// runs the BitDex pass loop up to 8 times and can then fall through to Meili, and
+// each of those rebuilt the whole filter — 8-9 resolutions of the same hub, at 3 SQL
+// statements each. The memo is per-request state, not a cache: nothing outlives the
+// object, so there is no TTL, no invalidation, and no way to serve one viewer's hub
+// resolution to another.
+async function resolvedHubSources(input: ImageSearchInput) {
+  if (!input.hubId) return null;
+  if (input.resolvedHub !== undefined) return input.resolvedHub;
+  const sources = await resolveHubSources({ hubId: input.hubId, userId: input.currentUserId });
+  input.resolvedHub = sources;
+  return sources;
+}
+
+type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
+
+// The single enumeration of the arms a hub ORs together. Both backends build their
+// own clause syntax from this, so an arm added here cannot reach one of them only —
+// which is how the BitDex copy drifted into a third builder.
+// Returns null for "no arm", which callers must treat as "serve nothing"; treating
+// it as "no filter" hands the caller the global feed as their hub.
+function hubFilterArms(
+  sources: ResolvedHubSources,
+  {
+    hideAutoResources,
+    hideManualResources,
+  }: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
+): HubFilterArm[] | null {
+  const arms: HubFilterArm[] = [];
+  if (sources.userIds.length) arms.push({ field: 'userId', ids: sources.userIds });
+  if (sources.modelVersionIds.length) {
+    arms.push({ field: 'postedToId', ids: sources.modelVersionIds });
+    if (!hideAutoResources) arms.push({ field: 'modelVersionIds', ids: sources.modelVersionIds });
+    if (!hideManualResources)
+      arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
+  }
+  // Guarded, not merely unused: filtering on an attribute the index has not been
+  // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
+  if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
+    arms.push({ field: 'collectionIds', ids: sources.collectionIds });
+
+  return arms.length ? arms : null;
+}
+
+function buildHubFilter(
+  sources: ResolvedHubSources,
+  input: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
+): string | null {
+  const arms = hubFilterArms(sources, input);
+  if (!arms) return null;
+  return `(${arms
+    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
+    .join(' OR ')})`;
+}
+
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
@@ -4084,6 +4311,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     newCreators,
+    hubId,
     domain,
     // TODO check the unused stuff in here
   } = input;
@@ -4181,6 +4409,13 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
+  }
+
+  if (hubId) {
+    const sources = await resolvedHubSources(input);
+    const hubFilter = sources && buildHubFilter(sources, input);
+    if (!hubFilter) return { data: [], nextCursor: undefined };
+    filters.push(hubFilter);
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -4832,6 +5067,25 @@ export async function getImagesFromBitdexPreFilter(
     filters.push(_in('userId', newCreatorIds.map(_int)));
   }
 
+  // Hubs are served here rather than declined, so they ride the BitDex migration
+  // instead of pinning themselves to Meili. Returning null anywhere below means
+  // "cannot serve this" and falls through to Meili — never "no filter", which
+  // would hand the caller the global feed as their hub.
+  if (input.hubId) {
+    const sources = await resolvedHubSources(input);
+    if (!sources) return null;
+
+    // Collection membership is not a BitDex field. While collection sources are
+    // switched off this cannot happen; once they are enabled, a hub containing one
+    // has to go to Meili, because filtering on a field BitDex does not know 400s
+    // the whole query rather than just that clause.
+    if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length) return null;
+
+    const arms = hubFilterArms(sources, { hideAutoResources, hideManualResources });
+    if (!arms) return null;
+    filters.push(_or(...arms.map((arm) => _in(arm.field, arm.ids.map(_int)))));
+  }
+
   // --- NSFW Browsing Level ---
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
   else browsingLevel = onlySelectableLevels(browsingLevel);
@@ -5004,6 +5258,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     blockedFor,
     // TODO check the unused stuff in here
     newCreators,
+    hubId,
     domain,
   } = input;
   let { browsingLevel, userId } = input;
@@ -5085,6 +5340,13 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
+  }
+
+  if (hubId) {
+    const sources = await resolvedHubSources(input);
+    const hubFilter = sources && buildHubFilter(sources, input);
+    if (!hubFilter) return { data: [], nextCursor: undefined };
+    filters.push(hubFilter);
   }
 
   // nb: commenting this out while we try checking existence in the db

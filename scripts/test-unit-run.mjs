@@ -22,9 +22,15 @@ const CLI = resolve(repoRoot, '.claude/skills/dev-server/cli.mjs');
 // rather than at the top of the file because it lives under `.claude/`, which the direct path
 // must keep working without: a static import would fail the whole script when the skill is absent.
 const QUEUE = resolve(repoRoot, '.claude/skills/dev-server/scripts/test-queue.mjs');
-// Same override the CLI honours. Without it this file can only ever talk to the shared daemon,
-// which is why the verdict below had no test: there was no way to stand a fake one up beside it.
-const DAEMON = `http://127.0.0.1:${parseInt(process.env.DEV_DAEMON_PORT || '9444', 10)}`;
+// Same override the CLI and the daemon honour, and from the same module, so no two of the three
+// can disagree about where the daemon is. Without it this file could only ever talk to the shared
+// daemon, which is why the verdict below had no test: there was no way to stand a fake one up
+// beside it. Imported on the queue path only, for the reason given above QUEUE.
+const PORT_MODULE = resolve(repoRoot, '.claude/skills/dev-server/scripts/daemon-port.mjs');
+let DAEMON = null;
+// Whether the queue has taken ownership of this run. Once it has, a later failure must NOT be
+// answered by starting a second, unqueued suite — see the note where this is set.
+let accepted = false;
 const POLL_MS = 2000;
 
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -98,6 +104,19 @@ async function runQueued(args) {
   // discovers it cannot load that rule at the moment it must apply it has no verdict to give.
   const { exitCodeFor } = await import(pathToFileURL(QUEUE).href);
 
+  // Resolving the daemon's address can THROW — a malformed DEV_DAEMON_PORT is rejected rather
+  // than silently becoming NaN. That must not cost the caller their test run: the
+  // "Test queue unreachable" guarantee below is that an unusable queue degrades to a direct run,
+  // and an unusable ADDRESS is the queue being unusable. Before this catch existed the throw
+  // escaped an un-awaited `runQueued` as an unhandled rejection and no tests ran at all.
+  try {
+    const { resolveDaemonUrl } = await import(pathToFileURL(PORT_MODULE).href);
+    DAEMON = resolveDaemonUrl();
+  } catch (err) {
+    console.error(`Test queue address unusable (${err.message}); running directly.`);
+    return runDirect(args);
+  }
+
   let run;
   try {
     run = await post('/test-runs', { worktree: repoRoot, args });
@@ -111,6 +130,19 @@ async function runQueued(args) {
       return runDirect(args);
     }
   }
+
+  // From here the daemon has ACCEPTED the run, and that changes what a failure may do. Falling
+  // back to a direct run now would start a second, unqueued full suite beside one the queue is
+  // already holding a slot for — which is precisely the serialisation this script exists to
+  // provide. The "Lost contact with the test queue" branch below already decided this for the
+  // status-code form of the same condition; the network form gets the same answer.
+  //
+  // Not airtight, and the gap is worth naming rather than implying it away: the daemon enqueues
+  // INSIDE the response write, so the slot is taken before the client can observe it. Lose the
+  // response between those two points and this flag is still false while the run is queued —
+  // the one window where a duplicate can still happen. Closing it needs an idempotency key on
+  // the enqueue, not a flag here.
+  accepted = true;
 
   if (run.status === 'queued') {
     console.error(
@@ -163,6 +195,27 @@ if (
 ) {
   const args = process.argv.slice(2);
   const decision = queueDecision(args, process.env);
-  if (decision.queue && existsSync(CLI) && existsSync(QUEUE)) runQueued(args);
-  else runDirect(args);
+  if (decision.queue && existsSync(CLI) && existsSync(QUEUE) && existsSync(PORT_MODULE)) {
+    // Un-awaited at top level, so anything runQueued throws would otherwise be an unhandled
+    // rejection that kills the process with no tests run.
+    //
+    // What it does about it depends on whether the queue took the run. Before acceptance,
+    // degrading to a direct run keeps the "Test queue unreachable" guarantee. AFTER acceptance
+    // it would start a
+    // second, unqueued suite beside the one the queue is holding a slot for, so it exits 2 — the
+    // same verdict :159 already gives when the poll comes back with a bad status.
+    //
+    // `err?.message` rather than `err.message`: a non-Error throw would otherwise print
+    // `(undefined)`, and a null throw would raise inside the handler and land back at the
+    // unhandled rejection this exists to prevent.
+    runQueued(args).catch((err) => {
+      const detail = err?.message ?? String(err);
+      if (accepted) {
+        console.error(`Lost contact with the test queue (${detail}). The run may still be queued.`);
+        process.exit(2);
+      }
+      console.error(`Test queue failed (${detail}); running directly.`);
+      runDirect(args);
+    });
+  } else runDirect(args);
 }

@@ -358,7 +358,13 @@ jobs:
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
   apps:
-    name: App unit tests
+    # Named for BOTH things it runs. It used to be "App unit tests", and the typecheck steps
+    # were added under that name — so a type error in an app would have rendered in the checks
+    # list as a failing unit-test job, pointing the reader at the wrong suite. Safe to rename:
+    # neither `main` nor `release` has any required_status_checks (re-verified 2026-08-20 via
+    # the branch-protection API, not inherited from the earlier note), so no merge gate keys
+    # on the old string.
+    name: App unit tests + typecheck
     runs-on: ubuntu-latest
     # The `apps/*` suites — the same gap as `packages` above, in the sibling directory, and
     # missed when that one was closed: the root config registered `packages/*/vitest.config.*`
@@ -401,3 +407,26 @@ jobs:
       - name: Assert every app suite actually ran
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
+
+      # ── App typechecks ──────────────────────────────────────────────────
+      # No app under `apps/` was typechecked by anything before this. The root
+      # `pnpm run typecheck` is bounded by the root tsconfig `include` — `src`,
+      # `packages/*/src`, `scripts/local-dev/*.ts`, `tests`, `test`,
+      # `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers (this
+      # workflow's `typecheck` job and the `tekton / typecheck` status) run that
+      # same script, so the gap could not close on its own.
+      #
+      # Parked in this job rather than its own: `pnpm install` is the expensive
+      # part and this job has already paid for it. The tradeoff is that a type
+      # error renders under this job's name — hence the job rename above.
+      #
+      # Deliberately ONE step driving a script, not one `pnpm --filter` step per
+      # app. Per-app steps abort at the first red app, so a shared type change
+      # that breaks several of them reports one; and `pnpm --filter <name>` EXITS
+      # 0 WHEN THE NAME MATCHES NOTHING (measured, pnpm 10.28.1 — it prints "No
+      # projects matched the filters" and succeeds), so a hardcoded list of
+      # package names is one chance per app for a rename to turn this gate into a
+      # green no-op. The script derives the app set from disk, proves each filter
+      # selected a real package, and collects every failure. See its header.
+      - name: Typecheck apps
+        run: node scripts/ci/typecheck-apps.mjs

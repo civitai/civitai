@@ -121,7 +121,7 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     renderWithProviders(<AppsSubNavView summary={NONE} context={AUTHOR} currentPath="/apps" />);
     // None of the summary-driven tabs should render.
     expect(tab('Installed').elements()).toHaveLength(0);
-    expect(tab('My submissions').elements()).toHaveLength(0);
+    expect(tab('My apps').elements()).toHaveLength(0);
     expect(tab('Revenue').elements()).toHaveLength(0);
     expect(tab('Review').elements()).toHaveLength(0);
   });
@@ -132,12 +132,19 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     );
     await expect.element(tab('Installed')).toBeInTheDocument();
     // The other conditionals stay hidden.
-    expect(tab('My submissions').elements()).toHaveLength(0);
+    expect(tab('My apps').elements()).toHaveLength(0);
     expect(tab('Revenue').elements()).toHaveLength(0);
     expect(tab('Review').elements()).toHaveLength(0);
   });
 
-  test('My submissions shows ONLY when hasSubmissions', async () => {
+  /**
+   * 🔴 "My submissions" IS GONE — its page merged into `/apps/mine` and 301s there — and
+   * `hasSubmissions` now widens "My apps" instead. This case pins the MIGRATION: a viewer
+   * whose only signal is submission history must still reach the surviving page, or the
+   * merge silently strips the nav route from a whole population (a submitter whose every
+   * listing was deleted has `hasEditableApps: false`).
+   */
+  test('🔴 hasSubmissions alone still lights My apps — and no My submissions tab remains', async () => {
     renderWithProviders(
       <AppsSubNavView
         summary={{ ...NONE, hasSubmissions: true }}
@@ -145,10 +152,24 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
         currentPath="/apps"
       />
     );
-    await expect.element(tab('My submissions')).toBeInTheDocument();
+    await expect.element(tab('My apps')).toBeInTheDocument();
+    expect(tab('My apps').element().getAttribute('href')).toBe('/apps/mine');
+    expect(tab('My submissions').elements()).toHaveLength(0);
     expect(tab('Installed').elements()).toHaveLength(0);
     expect(tab('Revenue').elements()).toHaveLength(0);
     expect(tab('Review').elements()).toHaveLength(0);
+  });
+
+  test('hasEditableApps alone also lights My apps (the collaborator path is unchanged)', async () => {
+    renderWithProviders(
+      <AppsSubNavView
+        summary={{ ...NONE, hasEditableApps: true }}
+        context={AUTHOR}
+        currentPath="/apps"
+      />
+    );
+    await expect.element(tab('My apps')).toBeInTheDocument();
+    expect(tab('Installed').elements()).toHaveLength(0);
   });
 
   test('Revenue shows ONLY when hasApprovedApps', async () => {
@@ -161,7 +182,7 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     );
     await expect.element(tab('Revenue')).toBeInTheDocument();
     expect(tab('Installed').elements()).toHaveLength(0);
-    expect(tab('My submissions').elements()).toHaveLength(0);
+    expect(tab('My apps').elements()).toHaveLength(0);
     expect(tab('Review').elements()).toHaveLength(0);
   });
 
@@ -171,7 +192,7 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     );
     await expect.element(tab('Review')).toBeInTheDocument();
     expect(tab('Installed').elements()).toHaveLength(0);
-    expect(tab('My submissions').elements()).toHaveLength(0);
+    expect(tab('My apps').elements()).toHaveLength(0);
     expect(tab('Revenue').elements()).toHaveLength(0);
   });
 
@@ -183,7 +204,6 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
       'My apps',
       'Invites',
       'Installed',
-      'My submissions',
       'Revenue',
       'Review',
     ]) {
@@ -206,7 +226,7 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
   // dedicated non-author tests above are what pin them now.
   test('the four summary-driven tabs are independent of isAuthor (non-author, all-true summary)', async () => {
     renderWithProviders(<AppsSubNavView summary={ALL} context={NOT_AUTHOR} currentPath="/apps" />);
-    for (const name of ['Marketplace', 'Installed', 'My submissions', 'Revenue', 'Review']) {
+    for (const name of ['Marketplace', 'Installed', 'Revenue', 'Review']) {
       await expect.element(tab(name)).toBeInTheDocument();
     }
     // …while the author gate removes Create (asserted here) along with `My apps`
@@ -403,13 +423,13 @@ describe('AppsSubNavView (active tab reflects the current route)', () => {
   // the tabs that DID render.
   test('with Create hidden, the active route still lights the right tab', async () => {
     renderWithProviders(
-      <AppsSubNavView summary={ALL} context={NOT_AUTHOR} currentPath="/apps/my-submissions" />
+      <AppsSubNavView summary={ALL} context={NOT_AUTHOR} currentPath="/apps/installed" />
     );
-    await expect.element(tab('My submissions')).toBeInTheDocument();
+    await expect.element(tab('Installed')).toBeInTheDocument();
     expect(tab('Create').elements()).toHaveLength(0);
-    expect(tab('My submissions').element().getAttribute('aria-selected')).toBe('true');
+    expect(tab('Installed').element().getAttribute('aria-selected')).toBe('true');
     // Every other rendered tab is unselected — exactly one highlight.
-    for (const name of ['Marketplace', 'Installed', 'Revenue', 'Review']) {
+    for (const name of ['Marketplace', 'Revenue', 'Review']) {
       expect(tab(name).element().getAttribute('aria-selected')).toBe('false');
     }
   });
@@ -445,7 +465,6 @@ describe('AppsSubNavView (each tab navigates to its route)', () => {
       ['My apps', '/apps/mine'],
       ['Invites', '/apps/invites'],
       ['Installed', '/apps/installed'],
-      ['My submissions', '/apps/my-submissions'],
       ['Revenue', '/apps/revenue'],
       ['Review', '/apps/review'],
     ];

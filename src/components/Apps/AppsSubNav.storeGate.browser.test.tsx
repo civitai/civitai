@@ -175,7 +175,9 @@ describe('AppsSubNav — store-visibility gate matches resolveAppsPageAccess', (
       'Marketplace',
       'Create',
       'Installed',
-      'My submissions',
+      // "My submissions" was here until its page merged into `/apps/mine`; `hasSubmissions`
+      // now lights "My apps", which sits after Installed in the link table.
+      'My apps',
       'Revenue',
       'Review',
     ]);
@@ -263,7 +265,7 @@ describe('AppsSubNav — the getNavSummary query gate stays on appBlocks', () =>
     await expect.element(tab('Marketplace')).toBeInTheDocument();
     expect(mocks.navSummaryEnabled.length).toBeGreaterThan(0); // the hook did run
     expect(mocks.navSummaryEnabled.every((e) => e === false)).toBe(true);
-    for (const name of ['Installed', 'My submissions', 'Revenue', 'Review']) {
+    for (const name of ['Installed', 'My apps', 'Revenue', 'Review']) {
       expect(tab(name).elements()).toHaveLength(0);
     }
   });
