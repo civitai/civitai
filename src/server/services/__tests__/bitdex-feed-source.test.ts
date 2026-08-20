@@ -403,9 +403,20 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
    * this comment glossed it and both were refuted by measurement. The exclusion
    * holds exactly when `skipOwnExcluded` (image.service.ts, declared beside the
    * own-content pass) is true, i.e. one of: anonymous caller; a `bdx:` cursor;
-   * signed-in caller viewing another user's profile. A NON-`bdx:` cursor does
-   * NOT qualify — and that is the common case, since a request that fell back to
-   * Meilisearch carries a Meilisearch cursor on its next page.
+   * or `creatorScopeExcludesCaller` — the request is scoped to a set of creators
+   * that does not contain the caller. A NON-`bdx:` cursor does NOT qualify — and
+   * that is the common case, since a request that fell back to Meilisearch carries
+   * a Meilisearch cursor on its next page.
+   *
+   * 🔴 THE THIRD DISJUNCT USED TO READ "signed-in caller viewing another user's
+   * profile", AND #4123 REPLACED IT. That wording described only the single-
+   * `userId` case and was silent on the set-shaped ones (`followed`,
+   * `newCreators`). This was the THIRD copy of that enumeration in the repo and
+   * the last to be corrected — the other two are in image.service.ts and
+   * src/server/metrics/bitdex-feed-serve.metrics.ts. Of those, only
+   * image.service.ts points readers at THIS file as the pin; the metrics module
+   * points at the `skipOwnExcluded` symbol instead. Reference the predicate by
+   * SYMBOL when updating it again.
    *
    * This case drives an ANONYMOUS caller, which is the disjunct that makes the
    * exclusion apply — so on its own it flatters the claim. The sibling case below
@@ -434,36 +445,43 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
    * 🔴 THE CASE THAT REFUTES THE ABSOLUTE VERSION OF THE CLAIM ABOVE, PINNED SO
    * IT CANNOT BE RE-ASSERTED.
    *
-   * A signed-in caller on the first page opening the Following feed with zero
-   * follows: the FEED query returns early inside the builder and never reaches
-   * the client — but no disjunct of `skipOwnExcluded` holds here (signed in, no
-   * `bdx:` cursor, not viewing another user's profile), so the own-content pass
-   * IS issued, completes, and counts. One call went out, so the request is
-   * recorded as `fallback_empty`.
+   * A signed-in caller whose `hidden` feed has no hidden images: the FEED query
+   * returns early inside the builder and never reaches the client — but no
+   * disjunct of `skipOwnExcluded` holds here, so the own-content pass IS issued,
+   * completes, and counts. One call went out, so the request is recorded as
+   * `fallback_empty`.
    *
    * That is defensible under the stated denominator — "requests that ENGAGED the
-   * backend" — and it is deliberately NOT changed here. What was wrong was the
-   * claim that all five doors are excluded: `currentUserId` is a PRECONDITION of
-   * two of them (`hidden`-with-no-hidden-images, followed-with-zero-follows), so
-   * for those two the exclusion can never apply at all.
+   * backend" — and it is deliberately NOT changed. What was wrong was the claim
+   * that all five doors are excluded: `currentUserId` is a PRECONDITION of two of
+   * them, so for those two the exclusion can never apply at all.
    *
-   * Measured before being written: `calls=1 ownCalls=1
-   * moved=["fallback_empty|primary"]`.
+   * 🔴 THIS CASE USED TO BE DRIVEN BY followed-with-zero-follows, AND #4123 MOVED
+   * IT HERE. That fix makes the own-content pass conditional on the request's
+   * CREATOR SCOPE containing the caller, so a Following feed with zero follows now
+   * issues zero calls and records nothing — it joined the other doors instead of
+   * being the one that leaked a call. `hidden` is not a creator scope, so this
+   * door is untouched by that change and still drives the state this case needs.
    *
-   * 🔴 This is also the ONLY killing case for `if (ownExcluded)
-   * bitdexCallsObserved++` — the third observation site, which had no mutation
-   * killing it. Delete that line and this case goes red, because the request then
-   * looks like it made no calls at all.
+   * 🔴 Retargeted rather than deleted BECAUSE it is the ONLY killing case for
+   * `if (ownExcluded) bitdexCallsObserved++` — the third observation site, which
+   * has no other mutation killing it. Rewriting the followed case to expect zero
+   * calls and stopping there would have left that line untested while every suite
+   * stayed green. Delete that line and this case goes red, because the request
+   * then looks like it made no calls at all.
    */
-  it('🔴 PRIMARY, signed-in, followed-with-zero-follows: the own-content pass still counts', async () => {
+  it('🔴 PRIMARY, signed-in, hidden-with-no-hidden-images: the own-content pass still counts', async () => {
     getFliptVariantMock.mockResolvedValue('primary');
     queryBitdexMock.mockResolvedValue({ documents: [], cursor: undefined });
+    // The door: signed in, so the `!currentUserId` line does not fire, and the
+    // hidden-image lookup comes back empty so the builder returns null after it.
+    dbMock.dbRead.imageEngagement.findMany.mockResolvedValue([]);
     const before = await readOutcomes();
 
     const result = await getImagesFromSearch({
       ...baseInput,
       currentUserId: CURRENT_USER_ID,
-      followed: true,
+      hidden: true,
     });
 
     const after = await readOutcomes();
@@ -476,6 +494,34 @@ describe('bitdex_primary_result_total moves, and moves a DIFFERENT series per ou
 
     expect(result.source).toBe('meili');
     expect(seriesThatMoved(before, after)).toEqual([key('fallback_empty', 'primary')]);
+  });
+
+  /**
+   * The counterpart, and the reason the case above had to move: after #4123 a
+   * Following feed with zero follows makes NO BitDex call at all, so it records
+   * nothing. The caller's creator scope is the empty set, which does not contain
+   * them, so the own-content pass is not issued.
+   *
+   * This is a REDUCTION in what `fallback_empty` counts, and it is deliberate —
+   * the request never engaged the backend, so counting it overstated the fallback
+   * population. ⚠️ It also shifts the served-ratio baseline, exactly as #4122 did.
+   * Do not compare that ratio across this change.
+   */
+  it('🔴 PRIMARY, signed-in, followed-with-zero-follows: no call goes out, so nothing is recorded', async () => {
+    getFliptVariantMock.mockResolvedValue('primary');
+    queryBitdexMock.mockResolvedValue({ documents: [], cursor: undefined });
+    const before = await readOutcomes();
+
+    const result = await getImagesFromSearch({
+      ...baseInput,
+      currentUserId: CURRENT_USER_ID,
+      followed: true,
+    });
+
+    const after = await readOutcomes();
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+    expect(result.source).toBe('meili');
+    expect(seriesThatMoved(before, after)).toEqual([]);
   });
 
   it('SHADOW, BitDex answers with documents → served{mode="shadow"} +1 (Meili still serves the user)', async () => {

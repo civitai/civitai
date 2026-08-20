@@ -62,10 +62,23 @@
 //   2. a `bdx:` cursor — i.e. a BITDEX-paginated request, which is NOT the same
 //      as any paginated request: a request that fell back to Meilisearch carries
 //      a Meilisearch cursor on its next page and does NOT match
-//   3. signed-in caller viewing ANOTHER user's profile
+//   3. `creatorScopeExcludesCaller` — the request is scoped to a set of creators
+//      that does not contain the caller. Named BY SYMBOL deliberately: it is
+//      computed from three scopes (`userId`, `followed`, `newCreators`) and any
+//      gloss of it drifts. This disjunct REPLACED "signed-in caller viewing
+//      another user's profile" in #4123; that wording described only the
+//      single-`userId` case and was silent on the set-shaped ones.
 // When none holds, the own-content query goes out regardless of what the feed
 // query did, so the request made a call and IS counted even though its feed
 // query never left the process.
+//
+// 🔴 #4123 CHANGED WHICH DOORS THIS COUNTS, so the enumeration above it is no
+// longer uniform. `followed`-with-zero-follows and `newCreators`-with-none are
+// now excluded (their creator scope is the empty set, which does not contain the
+// caller, so no second query goes out); `hidden`-with-no-hidden-images is still
+// counted, because `hidden` is not a creator scope. That is a REDUCTION in the
+// `fallback_empty` population and it SHIFTS THE SERVED-RATIO BASELINE, exactly as
+// #4122 did — do not compare that ratio across #4123.
 //
 // Counting it is correct under "requests that ENGAGED the backend". It is simply
 // not the same set as "requests whose FEED query went out", and a dashboard must

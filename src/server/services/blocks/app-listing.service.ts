@@ -23,6 +23,7 @@ import type {
   ListingSort,
   OffsiteSubKind,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import { queryCache } from '~/server/utils/cache-helpers';
 
 /**
@@ -164,19 +165,16 @@ function safeExternalUrl(url: string | null | undefined): string | null {
   return url && /^https:\/\//i.test(url) ? url : null;
 }
 
-/** Build a CDN icon URL from an icon Image row (or null). */
-function iconUrl(icon: { url: string | null } | null | undefined): string | null {
-  return icon?.url ? getEdgeUrl(icon.url, { width: 256 }) : null;
-}
+/**
+ * Build a CDN icon URL from an icon Image row (or null).
+ *
+ * Thin alias over the shared projection in `listing-media-url.ts` — the author-facing
+ * `listMine` read needs the same hop, and two copies is two places to drift a width.
+ */
+const iconUrl = listingIconUrl;
 
 /** Cover URL = the cover Image, else the first screenshot's Image, else null. */
-function coverUrl(
-  cover: { url: string | null } | null | undefined,
-  firstScreenshotUrl: string | null
-): string | null {
-  if (cover?.url) return getEdgeUrl(cover.url, { width: 1200 });
-  return firstScreenshotUrl;
-}
+const coverUrl = listingCoverUrl;
 
 function creatorChip(
   user: { id: number; username: string | null; image: string | null } | null | undefined

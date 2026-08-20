@@ -87,8 +87,9 @@ hash: hash?.replace('0x', '').slice(0, 12),   // correct as written — leave it
 SwarmUI's `sui_models[].hash` is a **tensorhash**, not a file SHA256 — per its own spec, linked at
 `swarmui.metadata.ts:21`: *"a hash of the data of the model processing only its tensor sections and
 not its header (ie to allow metadata to change without affecting the hash)"*. That is the same
-quantity as `AutoV3`, which prod stores truncated to 12 by the `truncate_autov3_hash()` trigger
-(`SUBSTRING(NEW.hash FROM 1 FOR 12)`).
+quantity as `AutoV3`, which we store truncated to 12. (Prod did that in a `truncate_autov3_hash()`
+trigger, `SUBSTRING(NEW.hash FROM 1 FOR 12)`; `normalizeScanHashes()` took it over in application
+code and migration `20260819010000` drops the trigger.)
 
 So `.slice(0, 12)` lands **exactly on `AutoV3`** — the one 12-character value that does match.
 Truncating to 10 would produce a 10-character *tensor*-hash prefix, and `AutoV2` is a *file*-hash
@@ -243,11 +244,11 @@ mirroring what generation tools emit; this fills the one entry that was missing.
 | Change | Where |
 |---|---|
 | `SHA256_12` enum value | `schema.full.prisma`, migration `20260819000000_model_file_hash_sha256_12` |
-| Derive it | `normalizeScanHashes()` in `src/server/services/model-file-scan.service.ts`, called by both `ModelFileHash` writers. It also truncates AutoV3, which `/api/mod/reprocess-scan` needs independently since it replays `rawScanResult` where AutoV3 is still full-length. |
-| Backfill existing files | `src/pages/api/admin/temp/backfill-sha256-12.ts` |
+| Derive it | `normalizeScanHashes()` in `src/server/services/model-file-scan.service.ts`. Produces every truncated form (AutoV3, SHA256_12) in one place, in application code. Both hash-writing paths call it — `applyScanOutcome` and `/api/mod/reprocess-scan`, which needs it independently because it replays `rawScanResult` where AutoV3 is still full-length. |
+| Guard it | `src/server/services/__tests__/model-file-hash-writers.test.ts` — a ledger of every `ModelFileHash` writer, enumerated from source, failing when the set grows or shrinks; plus behavioural cases in `reprocess-scan-hash-derivation.test.ts` and `model-file-hash-writer-exemption.test.ts` |
+| Backfill existing files | 🔴 **not implemented** — see below |
 | Detection SQL | **unchanged** |
 | Public API | **unchanged** — the new type is returned alongside the others, exactly as `AutoV2` (also a `SHA256` truncation) already is |
-| Public API | **unchanged** — the new type is returned alongside the others, as  (also a sha256 truncation) already is |
 
 ### Why not a prefix match in SQL
 
@@ -261,18 +262,22 @@ uploader is warned about. Adding rows introduces no new code path, so none of th
 Storage is net negative anyway: +400 MB of rows against −577 MB from dropping `modelfilehash_hash`,
 an index on `lower(hash)` over a `citext` column with **849 lifetime scans**.
 
-### Backfill
+### Backfill — 🔴 NOT IMPLEMENTED
 
-Derived entirely from stored `SHA256` rows — no file access, no orchestrator, no re-scan. One call
-runs the whole thing, batching internally and logging a resumable cursor after every batch:
+This section previously documented a `GET /api/admin/temp/backfill-sha256-12` endpoint, and the
+`20260819000000` migration told the operator to run it. **That file has never existed on any
+branch** (`git log --diff-filter=A -- src/pages/api/admin/temp/backfill-sha256-12.ts` returns
+nothing), so following either instruction gets a 404.
 
-```
-GET /api/admin/temp/backfill-sha256-12?token=$WEBHOOK_TOKEN                (dry run)
-GET /api/admin/temp/backfill-sha256-12?token=$WEBHOOK_TOKEN&dryRun=false   (apply)
-```
+The design it described is still the right one — derive entirely from stored `SHA256` rows, no file
+access, no orchestrator, no re-scan; batch internally, log a resumable cursor, idempotent via
+`ON CONFLICT ("fileId", type) DO NOTHING` — it just has not been written.
 
-Idempotent via `ON CONFLICT ("fileId", type) DO NOTHING`. Until it finishes, un-backfilled files
-keep failing detection exactly as they do today — there is no half-broken state.
+Until it is, the split is: files scanned **after** the release that ships `normalizeScanHashes()`
+get their `SHA256_12` row from the scan path; files scanned **before** it keep failing 12-char LoRA
+detection exactly as they do today, indefinitely. That is not a half-broken state, but it is also
+not self-healing — the existing corpus needs either this backfill or a replay through
+`/api/mod/reprocess-scan`.
 
 ### One accepted behaviour change
 

@@ -12,8 +12,6 @@
  * concrete `Submission` / `OffsiteSubmission` types.
  */
 
-import { APPS_PAGE_WIDTHS } from '~/components/Apps/appsPageWidths';
-
 // ── layout ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -74,30 +72,13 @@ export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
 export const SUBMISSIONS_CONTAINER_CHROME = 34;
 
 /**
- * The `AppsPageLayout` container width (raw px) for /apps/my-submissions.
- *
- * `AppsPageLayout` defaults to `size='xl'` = Mantine's 1320 px token, and that is a
- * MAX-width — so the card computed a CONSTANT 1286 px at every viewport >= 1320 px,
- * permanently below {@link SUBMISSIONS_TABLE_MIN_WIDTH}. Left at `'xl'`, the scroll
- * container would simply have converted the silent clip into a scrollbar that is
- * always there on desktop. Widening the container past the floor is what actually
- * removes the overflow at desktop widths; the scroll container remains the safety
- * net below that (narrow desktop, tablet, mobile) and for future column growth.
- *
- * `Container` accepts a raw number — the store index already widens this way. The
- * value is not viewport-clamped by us: `Container` is max-width, so a narrower
- * viewport just yields a narrower container and the table scrolls, as intended.
- *
- * 🔴 NO LONGER A LOCAL LITERAL. The full-width pass moved every `/apps/*` width
- * into one module (`appsPageWidths.ts`), so this now READS THROUGH to the shared
- * `/apps/my-submissions` entry (1920) instead of carrying its own 1500. Keeping
- * the alias means the page and the guards below keep referring to the constant
- * whose name states WHY the width matters for THIS page; the invariant
- * `MY_SUBMISSIONS_CONTAINER_SIZE - SUBMISSIONS_CONTAINER_CHROME >=
- * SUBMISSIONS_TABLE_MIN_WIDTH` is asserted in `__tests__/submissionsTable.test.ts`
- * and would fail if someone ever narrowed the shared width below the table floor.
+ * 🔴 `MY_SUBMISSIONS_CONTAINER_SIZE` LIVED HERE AND IS GONE. `/apps/my-submissions` was
+ * merged into `/apps/mine` and 301s there; the container-width alias moved with the page
+ * it belongs to and is now `MY_APPS_CONTAINER_SIZE` in `myAppsView.ts`, reading through to
+ * `APPS_PAGE_WIDTHS['/apps/mine']` (also 1920 — see that entry for why the merged table
+ * took the wide width). {@link SUBMISSIONS_CONTAINER_CHROME} stays here because the
+ * scroll-floor arithmetic it belongs to is still this module's.
  */
-export const MY_SUBMISSIONS_CONTAINER_SIZE: number = APPS_PAGE_WIDTHS['/apps/my-submissions'];
 
 /** Sortable columns shared by both tables. */
 export type SortColumn = 'app' | 'status' | 'submitted' | 'reviewed';

@@ -210,7 +210,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         ? 'Sent for review — your current version stays live until a moderator re-approves.'
         : 'Your changes are saved.',
     });
-    void router.push('/apps/my-submissions');
+    void router.push('/apps/mine');
   }
 
   async function handleSave() {
@@ -250,7 +250,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         if (!scalarChanged && !assetsDirty) {
           // Nothing to review — just return to the list.
           showSuccessNotification({ title: 'No changes', message: 'Nothing to submit for review.' });
-          void router.push('/apps/my-submissions');
+          void router.push('/apps/mine');
           return;
         }
         if (scalarChanged) {
@@ -552,7 +552,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       </Stepper>
 
       <Group justify="space-between">
-        <Button variant="default" component={Link} href="/apps/my-submissions" disabled={saving}>
+        <Button variant="default" component={Link} href="/apps/mine" disabled={saving}>
           Cancel
         </Button>
         <Button
