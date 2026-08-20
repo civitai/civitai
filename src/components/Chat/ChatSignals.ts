@@ -6,7 +6,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
-import { shouldNotifyForMessage } from '~/shared/utils/chat';
+import { reviveChatMessageDates, shouldNotifyForMessage } from '~/shared/utils/chat';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -58,7 +58,7 @@ export const useChatNewMessageSignal = () => {
           // are appended to the end of the array during infinite scrolling.
           // Therefore, new incoming messages must be appended to `pages[0]`.
           const newestPage = old.pages[0];
-          newestPage.items.push(updated);
+          newestPage.items.push(reviveChatMessageDates(updated));
         })
       );
 
@@ -73,7 +73,6 @@ export const useChatNewMessageSignal = () => {
 
           const thisChat = old.find((o) => o.id === updated.chatId);
           if (!thisChat) return old;
-          // TODO I don't really know why, but updating the data like this does not cast dates automatically
           thisChat.messages = [
             {
               content: updated.content,

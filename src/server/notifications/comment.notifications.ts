@@ -1,10 +1,95 @@
-import { isEmpty, startCase } from 'lodash-es';
+import { isEmpty } from 'lodash-es';
+import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { NotificationCategory } from '~/server/common/enums';
 import {
   createNotificationProcessor,
   notBlockedBetween,
 } from '~/server/notifications/base.notifications';
 import { QS } from '~/utils/qs';
+
+/**
+ * SQL fragment resolving an app-store listing's public SLUG for a CommentsV2 thread.
+ *
+ * Every OTHER thread entity is id-addressed, so its URL is built straight from
+ * `threadParentId` (the id the thread row already carries). App-listing pages are
+ * SLUG-addressed (`/apps/store-preview/<slug>`) while `Thread.appListingId` holds
+ * `app_listings.serial_id` — an INTEGER surrogate that appears nowhere in the URL. So the
+ * slug has to be joined in, and `appListingSlug` carried in `details` beside the ids.
+ *
+ * LEFT JOIN, and the caller pairs it with `appListingSlugResolved` below: an app-listing
+ * thread whose listing row does not resolve must be DROPPED rather than emitted with a
+ * `/apps/store-preview/undefined` link.
+ *
+ * `expr` is the SQL expression naming the thread's `appListingId` — `root."appListingId"`
+ * where only the root thread is in scope, `COALESCE(root."appListingId", t."appListingId")`
+ * where the entity parent may sit on either.
+ */
+export const appListingSlugJoin = (expr: string) =>
+  `LEFT JOIN "app_listings" al ON al."serial_id" = ${expr}`;
+
+/**
+ * Companion guard for `appListingSlugJoin`. Keeps every non-app-listing thread, and keeps an
+ * app-listing thread only when the join produced a slug.
+ *
+ * 🔴 This is NOT the old blanket `appListingId IS NULL` exclusion it replaced. That one dropped
+ * EVERY app-listing thread because no URL could be built for any of them; this one drops only the
+ * rows the join failed on (structurally unreachable today — `slug` is `NOT NULL` and the FK is
+ * `ON DELETE SET NULL`, so a resolvable `appListingId` always has a slug).
+ */
+export const appListingSlugResolved = (expr: string) => `(${expr} IS NULL OR al.slug IS NOT NULL)`;
+
+/**
+ * Human-readable noun for a thread type in notification copy.
+ *
+ * `threadType` is an entity KEY. Most read as English by accident of naming; the three that do
+ * not are listed here, because a user should never be shown an identifier.
+ *
+ * `model3d` is a REORDERING, not just a spacing fix — "3D model", matching what the owner-facing
+ * `new-3d-model-comment` copy already calls it, so the same thing has one name across the whole
+ * notification family. It is also the one label whose first character is a DIGIT; the article is
+ * chosen from the noun by `withIndefiniteArticle`, so "a 3D model" falls out rather than being
+ * special-cased, and the test table pins it.
+ *
+ * ONE map, read by every consumer that names a thread in a sentence (`new-mention`,
+ * `new-comment-reply`, `new-thread-response`), so the same thread is called the same thing
+ * wherever the user meets it. It used to live at one call site only, which is exactly how two
+ * of the three shipped the raw key.
+ *
+ * 🔴 A `Map`, not an object literal, and that is a correctness choice rather than a style one.
+ * An object-literal lookup answers for keys it never declared — `labels['toString']` is a
+ * truthy Function, which `??` does not catch — so a `threadType` of `toString`/`constructor`
+ * would put a function body in a user-facing sentence. `Map.get` only ever returns what was
+ * `set`. (`threadUrlMap` below has the same object-literal shape and the same latent hazard;
+ * pre-existing and out of scope here, but do not copy it.)
+ */
+const THREAD_TYPE_LABELS = new Map<string, string>([
+  ['appListing', 'app listing'],
+  ['bountyEntry', 'bounty entry'],
+  ['model3d', '3D model'],
+]);
+
+export const threadTypeLabel = (threadType: string): string =>
+  THREAD_TYPE_LABELS.get(threadType) ?? threadType;
+
+/**
+ * `"an app listing"` / `"a model"` — a noun with its indefinite article.
+ *
+ * 🔴 It takes the NOUN, never a thread type, and that signature is the guard rather than a
+ * style choice. The article must agree with the word actually printed, and the way to
+ * guarantee that is to leave the article-picker nothing else to read: no `threadType` is in
+ * scope here, so "article derived from the raw entity key" is not expressible.
+ *
+ * The previous shape — a label computed at the call site with `label[0]` tested beside it —
+ * left that mutation available and *unkillable*: rebinding it to `threadType[0]` changed no
+ * output, because every reachable thread type and its label start with letters of the same
+ * vowel-ness. Composing the two functions removes the expression instead of testing it.
+ */
+export const withIndefiniteArticle = (noun: string): string =>
+  `${['a', 'e', 'i', 'o', 'u'].includes(noun[0]) ? 'an' : 'a'} ${noun}`;
+
+/** The noun a thread is called in copy, article included: `"an app listing"`, `"a model"`. */
+export const threadTypeWithArticle = (threadType: string): string =>
+  withIndefiniteArticle(threadTypeLabel(threadType));
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
   const queryString = QS.stringify({
@@ -25,6 +110,18 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     challenge: `/challenges/${threadParentId}?${queryString}`,
     comicChapter: `/comics/${threadParentId}?${queryString}`,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
+    // The one SLUG-addressed entry — see `appListingSlugJoin`. `threadParentId` is NOT the
+    // address here (it is `app_listings.serial_id`, which the URL never contains), so this
+    // branch reads `details.appListingSlug` instead and shares `getListingDetailHref` with
+    // the store cards so a route rename cannot move one without the other.
+    //
+    // No slug ⇒ `undefined`, i.e. the same "unaddressable" outcome an unknown threadType
+    // gets. A missing slug must never render as `/apps/store-preview/undefined`, and
+    // `undefined` here also leaves `commentDedupeKeyIfAddressable` free for a purpose-built
+    // notification, exactly as the `'comment'` fallback does.
+    appListing: details.appListingSlug
+      ? `${getListingDetailHref(details.appListingSlug)}?${queryString}`
+      : undefined,
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
@@ -202,7 +299,9 @@ export const commentNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       const url = threadUrlMap(details);
       return {
-        message: `${details.username} replied to a ${details.threadType} comment you made`,
+        message: `${details.username} replied to ${threadTypeWithArticle(
+          details.threadType
+        )} comment you made`,
         url,
       };
     },
@@ -239,8 +338,14 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN root."challengeId" IS NOT NULL THEN 'challenge'
                 WHEN root."model3dId" IS NOT NULL THEN 'model3d'
+                -- App-store listing threads are SLUG-addressed, so this arm keys on the
+                -- JOINED slug rather than on an id column. al only joins through
+                -- root."appListingId", so a non-null slug already means: this is an
+                -- appListing thread AND its listing resolved.
+                WHEN al.slug IS NOT NULL THEN 'appListing'
                 ELSE 'comment'
                 END,
+             'appListingSlug', al.slug,
              'commentParentId', t."commentId",
              'commentParentType', 'comment',
             'username', u.username
@@ -250,13 +355,14 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "CommentV2" pc ON pc.id = t."commentId"
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" root ON root.id = t."rootThreadId"
+        ${appListingSlugJoin('root."appListingId"')}
         WHERE c."createdAt" > '${lastSent}' AND c."userId" != pc."userId"
           AND ${notBlockedBetween('pc."userId"', 'c."userId"')}
-          -- Exclude appListing (app-store listing) threads: they are addressed by
-          -- SLUG, not the id this query has, so threadUrlMap can't build a reply
-          -- URL (→ url:undefined). appListing reply notifications are deferred
-          -- until a slug-resolving URL exists. (appListingId lives on the root.)
-          AND root."appListingId" IS NULL
+          -- appListing (app-store listing) threads DO emit replies now — the join above
+          -- resolves the slug threadUrlMap needs. This drops only the rows that join
+          -- failed on, so we never ship an unlinkable notification. (appListingId lives
+          -- on the root here.)
+          AND ${appListingSlugResolved('root."appListingId"')}
       )
       SELECT
         concat('new-comment-reply:owner:v2:', details->>'commentId') "key",
@@ -283,7 +389,11 @@ export const commentNotifications = createNotificationProcessor({
 
       const url = threadUrlMap(details);
       return {
-        message: `${details.username} responded to a ${startCase(
+        // Was `a ${startCase(threadType)}` — Title Case mid-sentence, with a hardcoded "a" that
+        // was already wrong for every vowel-initial type ("a Article thread", "a Image thread").
+        // The shared label + article fixes the article for all of them and stops `appListing`
+        // printing as a raw key.
+        message: `${details.username} responded to ${threadTypeWithArticle(
           details.threadType
         )} thread you're in`,
         url,
@@ -356,8 +466,11 @@ export const commentNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
+              -- SLUG-addressed; see the same arm in new-comment-reply above.
+              WHEN al.slug IS NOT NULL THEN 'appListing'
               ELSE 'comment'
             END,
+             'appListingSlug', al.slug,
              'commentParentId', COALESCE(
                 t."imageId",
                 t."modelId",
@@ -392,16 +505,14 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "Thread" t ON t.id = c."threadId"
         JOIN "User" u ON c."userId" = u.id
         LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
+        ${appListingSlugJoin('COALESCE(root."appListingId", t."appListingId")')}
         WHERE c."createdAt" > '${lastSent}'
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
-          -- Exclude appListing (app-store listing) threads — same reason as
-          -- new-comment-reply above: no slug-resolving URL yet, so a reply here
-          -- would emit a notification with url:undefined. Guard BOTH the root and
-          -- the immediate thread (the entity parent may sit on either here).
-          AND root."appListingId" IS NULL
-          AND t."appListingId" IS NULL
+          -- appListing threads emit here too, via the joined slug. COALESCE over BOTH the
+          -- root and the immediate thread, because the entity parent may sit on either.
+          AND ${appListingSlugResolved('COALESCE(root."appListingId", t."appListingId")')}
       )
       SELECT
         concat('new-thread-response:user:', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') "key",

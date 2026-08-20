@@ -28,6 +28,9 @@ import { trpc } from '~/utils/trpc';
  */
 const keepComposerFocus = (e: ReactMouseEvent) => e.preventDefault();
 
+/** Both tabs share one height so the panel never resizes under the pointer. */
+const PICKER_BODY_HEIGHT = 'h-[220px]';
+
 export function StickerPicker({
   onSelect,
   onSelectEmoji,
@@ -144,104 +147,110 @@ export function StickerPicker({
                 </Tabs.List>
               </Tabs>
             )}
-            {withEmoji && tab === 'emoji' ? (
-              !emoji.length ? (
-                <Text size="xs" c="dimmed" ta="center" py="sm">
-                  No matches
-                </Text>
-              ) : (
-                <ScrollArea.Autosize mah={220} type="auto">
-                  <div className="grid grid-cols-7 gap-1">
-                    {emoji.map((item) => (
-                      <UnstyledButton
-                        key={item.slug}
-                        title={`:${item.slug}:`}
-                        aria-label={item.slug}
-                        className="flex items-center justify-center rounded p-1 text-xl leading-none hover:bg-gray-2 dark:hover:bg-dark-5"
-                        onClick={() => {
-                          onSelectEmoji?.(item.char);
-                          setOpened(false);
-                          setQuery('');
-                        }}
-                      >
-                        {item.char}
-                      </UnstyledButton>
-                    ))}
-                  </div>
-                </ScrollArea.Autosize>
-              )
-            ) : (
-              <>
-                {isLoading ? (
-                  <div className="flex justify-center py-4">
-                    <Loader size="sm" />
-                  </div>
-                ) : !sticker.length ? (
-                  <Text size="xs" c="dimmed" ta="center" py="sm">
-                    You don&apos;t own any stickers yet. Grab some in the shop.
-                  </Text>
-                ) : !filtered.length ? (
-                  <Text size="xs" c="dimmed" ta="center" py="sm">
+            {/* The panel is a fixed box whatever is in it. Sized to content, it
+                stood tall for the 64 base emoji and short for a handful of
+                stickers, so switching tabs resized the popover under the
+                pointer — and an empty search collapsed it further. */}
+            <div className={clsx(PICKER_BODY_HEIGHT, 'flex flex-col')}>
+              {withEmoji && tab === 'emoji' ? (
+                !emoji.length ? (
+                  <Text size="xs" c="dimmed" ta="center" className="my-auto">
                     No matches
                   </Text>
                 ) : (
-                  <ScrollArea.Autosize mah={220} type="auto">
-                    <div className="grid grid-cols-6 gap-1">
-                      {filtered.map((item) => {
-                        const remaining = balancesLoaded
-                          ? balances.get(item.id) ?? null
-                          : undefined;
-                        const exhausted = remaining === 0;
-                        const balanceLabel = stickerBalanceLabel(remaining);
-                        return (
-                          <UnstyledButton
-                            key={item.id}
-                            // Stickers are consumable in comments; showing the balance
-                            // here is what keeps "not enough uses" from arriving as a
-                            // failed submit.
-                            title={
-                              remaining === undefined
-                                ? `:${item.slug}:`
-                                : remaining === null
-                                ? `:${item.slug}: · unlimited`
-                                : exhausted
-                                ? `:${item.slug}: · out of uses — buy more`
-                                : `:${item.slug}: · ${remaining} left`
-                            }
-                            className={clsx(
-                              'relative flex items-center justify-center rounded p-1 hover:bg-gray-2 dark:hover:bg-dark-5',
-                              exhausted && 'opacity-40'
-                            )}
-                            onClick={() => {
-                              // Exhausted opens the top-up rather than doing nothing:
-                              // a dead button is where the author leaves.
-                              if (exhausted) {
-                                setTopUp(item);
-                                return;
-                              }
-                              onSelect(item);
-                              setOpened(false);
-                              setQuery('');
-                            }}
-                          >
-                            <EdgeImage
-                              src={item.url}
-                              options={{ width: 64, anim: item.animated }}
-                              style={{ width: 28, height: 28, objectFit: 'contain' }}
-                            />
-                            {balanceLabel && (
-                              <span className="absolute bottom-0 right-0 rounded bg-dark-7/80 px-1 text-[10px] leading-tight text-white">
-                                {balanceLabel}
-                              </span>
-                            )}
-                          </UnstyledButton>
-                        );
-                      })}
+                  <ScrollArea h="100%" type="auto">
+                    <div className="grid grid-cols-7 gap-1">
+                      {emoji.map((item) => (
+                        <UnstyledButton
+                          key={item.slug}
+                          title={`:${item.slug}:`}
+                          aria-label={item.slug}
+                          className="flex items-center justify-center rounded p-1 text-xl leading-none hover:bg-gray-2 dark:hover:bg-dark-5"
+                          onClick={() => {
+                            onSelectEmoji?.(item.char);
+                            setOpened(false);
+                            setQuery('');
+                          }}
+                        >
+                          {item.char}
+                        </UnstyledButton>
+                      ))}
                     </div>
-                  </ScrollArea.Autosize>
-                )}
-              </>
-            )}
+                  </ScrollArea>
+                )
+              ) : (
+                <>
+                  {isLoading ? (
+                    <div className="my-auto flex justify-center">
+                      <Loader size="sm" />
+                    </div>
+                  ) : !sticker.length ? (
+                    <Text size="xs" c="dimmed" ta="center" className="my-auto">
+                      You don&apos;t own any stickers yet. Grab some in the shop.
+                    </Text>
+                  ) : !filtered.length ? (
+                    <Text size="xs" c="dimmed" ta="center" className="my-auto">
+                      No matches
+                    </Text>
+                  ) : (
+                    <ScrollArea h="100%" type="auto">
+                      <div className="grid grid-cols-6 gap-1">
+                        {filtered.map((item) => {
+                          const remaining = balancesLoaded
+                            ? balances.get(item.id) ?? null
+                            : undefined;
+                          const exhausted = remaining === 0;
+                          const balanceLabel = stickerBalanceLabel(remaining);
+                          return (
+                            <UnstyledButton
+                              key={item.id}
+                              // Stickers are consumable in comments; showing the balance
+                              // here is what keeps "not enough uses" from arriving as a
+                              // failed submit.
+                              title={
+                                remaining === undefined
+                                  ? `:${item.slug}:`
+                                  : remaining === null
+                                  ? `:${item.slug}: · unlimited`
+                                  : exhausted
+                                  ? `:${item.slug}: · out of uses — buy more`
+                                  : `:${item.slug}: · ${remaining} left`
+                              }
+                              className={clsx(
+                                'relative flex items-center justify-center rounded p-1 hover:bg-gray-2 dark:hover:bg-dark-5',
+                                exhausted && 'opacity-40'
+                              )}
+                              onClick={() => {
+                                // Exhausted opens the top-up rather than doing nothing:
+                                // a dead button is where the author leaves.
+                                if (exhausted) {
+                                  setTopUp(item);
+                                  return;
+                                }
+                                onSelect(item);
+                                setOpened(false);
+                                setQuery('');
+                              }}
+                            >
+                              <EdgeImage
+                                src={item.url}
+                                options={{ width: 64, anim: item.animated }}
+                                style={{ width: 28, height: 28, objectFit: 'contain' }}
+                              />
+                              {balanceLabel && (
+                                <span className="absolute bottom-0 right-0 rounded bg-dark-7/80 px-1 text-[10px] leading-tight text-white">
+                                  {balanceLabel}
+                                </span>
+                              )}
+                            </UnstyledButton>
+                          );
+                        })}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
       </Popover.Dropdown>

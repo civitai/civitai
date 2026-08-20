@@ -129,12 +129,16 @@ export const APPS_PAGE_WIDTHS = {
   '/apps': APPS_WIDE_PAGE_WIDTH,
   '/apps/installed': APPS_WIDE_PAGE_WIDTH,
   /**
-   * Was 1500, a number derived from `SUBMISSIONS_TABLE_MIN_WIDTH` (1424) plus
-   * chrome so the submissions table stopped scrolling on desktop. 1920 is
-   * strictly wider, so that property is preserved — the table's scroll container
-   * remains the safety net below 1424 + chrome.
+   * `/apps/mine` — the merged author table (it absorbed `/apps/my-submissions`, which now
+   * 301s here and has no page file).
+   *
+   * 🔴 MOVED FROM 1100 TO 1920 WITH THE MERGE, and the reason is the content, not the
+   * route. At 1100 this page was a single-column card list; it is now a table carrying an
+   * icon, a cover, three badges and a date per row, i.e. the same class of surface as the
+   * wide table it replaced (which held this width under its own key). Leaving it readable
+   * would have re-created the exact clip the wide width was introduced to fix.
    */
-  '/apps/my-submissions': APPS_WIDE_PAGE_WIDTH,
+  '/apps/mine': APPS_WIDE_PAGE_WIDTH,
   /**
    * NARROW TABLE, not wide. Four short columns (Kind / App / Submitter /
    * Submitted) cannot spend 1920 — see {@link APPS_NARROW_TABLE_PAGE_WIDTH}. The
@@ -172,8 +176,6 @@ export const APPS_PAGE_WIDTHS = {
   '/apps/listing/[appListingId]/edit': APPS_READABLE_PAGE_WIDTH,
   /** The invitee's pending-invitation inbox — a short card list. */
   '/apps/invites': APPS_READABLE_PAGE_WIDTH,
-  /** "My apps" — listings owned or held via an accepted seat. A single-column list. */
-  '/apps/mine': APPS_READABLE_PAGE_WIDTH,
   /** Per-app revenue detail. */
   '/apps/[appBlockId]/revenue': APPS_READABLE_PAGE_WIDTH,
   /** The developer get-started explainer — prose. */

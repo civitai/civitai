@@ -302,7 +302,7 @@ export function ManifestEditForm({
       {mutation.data && (
         <Alert color="green" variant="light">
           Submitted as review request <code>{mutation.data.publishRequestId}</code>. Track it on{' '}
-          <Link href="/apps/my-submissions">My submissions</Link>.
+          <Link href="/apps/mine">My apps</Link>.
         </Alert>
       )}
     </Stack>
