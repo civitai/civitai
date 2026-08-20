@@ -13,6 +13,7 @@
     user: 'username',
     content: 'message text',
   };
+
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -23,7 +24,8 @@
   </h3>
   <p class="mb-3 text-xs text-dark-2">
     A number is read as a chat id, a name as a username, anything else as message text. Prefix with
-    <code>@</code> to force a username.
+    <code>@</code> to force a username.{#if search.mode === 'content'}
+      Message text is searched over the last {search.contentSearchDays} days.{/if}
   </p>
 
   <!-- A numeric term is a valid chat id AND a valid username, and guessing wrong means showing two
@@ -44,7 +46,11 @@
   {/if}
 
   {#if search.chats.length === 0}
-    <p class="text-sm text-dark-2">No chats matched.</p>
+    <p class="text-sm text-dark-2">
+      No chats matched.{#if search.mode === 'content'}
+        Message text is searched over the last {search.contentSearchDays} days only — an older conversation
+        would not appear here.{/if}
+    </p>
   {:else}
     <ul class="space-y-1.5 text-sm">
       {#each search.chats as chat (chat.chatId)}

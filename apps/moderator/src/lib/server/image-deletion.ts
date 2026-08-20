@@ -6,10 +6,13 @@ import { getStorage } from './storage';
 import { getSysRedis } from './redis';
 import { bustCachedObject } from './cache';
 import { bustPostGalleryCaches } from './image-moderation-effects';
-import { syncSearchIndex } from './search-index';
+import { syncSearchIndexBulk } from './search-index';
 
 export async function deleteImagesByIds(ids: number[]): Promise<void> {
   const affectedPostIds = new Set<number>();
+  // Only ids whose row was actually deleted — the loop `continue`s past a missing one, and de-indexing
+  // an image that still exists would hide it from search while it is live on the site.
+  const deleted: number[] = [];
   for (const id of ids) {
     try {
       await dbWrite.deleteFrom('CollectionItem').where('imageId', '=', id).execute();
@@ -20,6 +23,10 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
         .returning(['url', 'postId'])
         .executeTakeFirst();
       if (!image) continue;
+      // Recorded HERE, not after the S3 work below: a throw from the storage delete or the shared-url
+      // check lands in the catch with the row already gone, and the id would never be de-indexed —
+      // leaving a deleted image in Meilisearch.
+      deleted.push(id);
       if (image.postId != null) affectedPostIds.add(image.postId);
 
       if (image.url) {
@@ -39,8 +46,6 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
         }
       }
 
-      void syncSearchIndex({ entityType: 'image', entityId: id, action: 'delete' });
-
       await getSysRedis()
         .packed.set(`${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${id}` as RedisKeyTemplateSys, 'false', {
           EX: 60 * 5,
@@ -53,6 +58,8 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
       console.error('[image-deletion] failed to delete image', id, err);
     }
   }
+
+  void syncSearchIndexBulk({ entityType: 'image', entityIds: deleted, action: 'delete' });
 
   if (affectedPostIds.size) {
     const postIds = [...affectedPostIds];

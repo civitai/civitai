@@ -56,6 +56,9 @@ export type ChatSearch = {
   /** The term is all digits AND a real username, so the moderator may have meant the person rather than
    *  the chat. Set so the page can offer the other reading instead of silently showing strangers' DMs. */
   ambiguousUsername: boolean;
+  /** The content-search window, carried so the page states the SAME number the query used. Two
+   *  independent `90`s is how a page ends up promising 90 days over a 30-day query. */
+  contentSearchDays: number;
 };
 
 // Retool had three inputs (chat id / username / message content), each with its own query. One box, with
@@ -82,6 +85,22 @@ const escapeLike = (term: string) => term.replace(/[\\%_]/g, (c) => '\\' + c);
 
 const SEARCH_LIMIT = 50;
 
+/**
+ * Message-content search is bounded, and says so on the page.
+ *
+ * `ChatMessage.content` has no index, so an ILIKE is a full scan of 4.2M rows. Measured on production:
+ * 1.4s for a common term and **2.6s for one with no hits** — a miss is the slow case, because proving a
+ * negative reads everything, and probing an unknown spam string is exactly when a moderator misses.
+ * Bounding to 90 days halves the worst case (1.2s) and covers 258k of the 4.2M rows.
+ *
+ * This is a mitigation, not the fix. The fix is a partial GIN trigram index on the same window —
+ * `pg_trgm` is already installed in production and 90 days is only 26MB of text, so the index lands
+ * around 50-90MB against the 208MB already on this table. Deferred deliberately: nothing is blocked on
+ * this search, and a FULL index would cover 457MB of text for a query that is not on any hot path.
+ * See `.claude/skills/retool-migration/MIGRATIONS.md` §D, "Chat message-text search performance".
+ */
+const CONTENT_SEARCH_DAYS = 90;
+
 export async function searchChats(rawTerm: string): Promise<ChatSearch | null> {
   const term = rawTerm.trim();
   if (!term) return null;
@@ -101,8 +120,9 @@ export async function searchChats(rawTerm: string): Promise<ChatSearch | null> {
     mode,
     term,
     truncated,
-    // Content search has no index to use — 4.2M rows, ~3s. Only runs when a moderator asks for it.
+    // Content search has no index to use, so it scans. Only runs when a moderator asks for it.
     slow: mode === 'content',
+    contentSearchDays: CONTENT_SEARCH_DAYS,
     ambiguousUsername: mode === 'chat' && (await usernameExists(term)),
     chats: ids.length ? await summariseChats(ids) : [],
   };
@@ -140,6 +160,7 @@ async function findChatIds(
     );
   }
 
+  const since = new Date(Date.now() - CONTENT_SEARCH_DAYS * 86_400_000);
   return take(
     await dbRead
       .selectFrom('ChatMessage')
@@ -147,6 +168,7 @@ async function findChatIds(
       .distinct()
       .where('content', 'ilike', '%' + escapeLike(term) + '%')
       .where('userId', '!=', SYSTEM_USER_ID)
+      .where('createdAt', '>', since)
       .orderBy('chatId', 'desc')
       .limit(SEARCH_LIMIT + 1)
       .execute()
