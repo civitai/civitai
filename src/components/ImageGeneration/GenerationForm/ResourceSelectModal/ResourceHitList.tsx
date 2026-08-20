@@ -1,7 +1,7 @@
 import { Button, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
@@ -15,6 +15,10 @@ import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/Generation
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
 
+// A page whose every model filters out client-side still advances the cursor, so keep
+// going — but stop after this many so a permanently over-filtered query can't spin.
+const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+
 export function ResourceHitList({ query }: { query: string }) {
   const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
 
@@ -24,9 +28,9 @@ export function ResourceHitList({ query }: { query: string }) {
 
   const {
     items,
+    data: queryData,
     isLoading,
     isFetching,
-    isFetchingNextPage,
     fetchNextPage,
     hasNextPage,
     isError,
@@ -132,6 +136,22 @@ export function ResourceHitList({ query }: { query: string }) {
     return ret;
   }, [canGenerate, featured, models, resources, tab, filterVersions]);
 
+  // Bounds the auto-continue below. Counts pages that arrived and contributed no
+  // renderable card; resets as soon as one does, or when the query changes. Keyed on
+  // `data.pages.length` growing rather than on a render, so unrelated re-renders don't
+  // consume the budget.
+  const emptyPageStreakRef = useRef(0);
+  const lastPageCountRef = useRef(0);
+  const pageCount = queryData?.pages.length ?? 0;
+  if (filtered.length > 0) emptyPageStreakRef.current = 0;
+  else if (pageCount > lastPageCountRef.current) emptyPageStreakRef.current += 1;
+  lastPageCountRef.current = pageCount;
+  useEffect(() => {
+    emptyPageStreakRef.current = 0;
+    lastPageCountRef.current = 0;
+  }, [query, tab]);
+  const emptyPageStreak = emptyPageStreakRef.current;
+
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (
       <ResourceSelectCard data={data} height={height} selectSource={selectSource} />
@@ -170,6 +190,27 @@ export function ResourceHitList({ query }: { query: string }) {
             </Button>
           </Stack>
         </Center>
+      </div>
+    );
+
+  // A page can load perfectly well and still render nothing: the server filter is a
+  // superset of what filterVersions and the hidden-preferences pass accept. Falling
+  // through to the empty state would be terminal, because it returns before the
+  // InViewLoader below ever mounts — so keep paginating instead. Bounded, because a
+  // zero-height sentinel is instantly in view and would otherwise chain-fetch as fast
+  // as the server answers.
+  if (!filtered.length && hasNextPage && emptyPageStreak < MAX_CONSECUTIVE_EMPTY_PAGES)
+    return (
+      <div className="p-3 py-5">
+        {hiddenCount > 0 && (
+          <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
+        )}
+        <Center mt="md">
+          <Loader />
+        </Center>
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching}>
+          <Center style={{ height: 36 }} my="md" />
+        </InViewLoader>
       </div>
     );
 
@@ -237,12 +278,25 @@ export function ResourceHitList({ query }: { query: string }) {
         />
       </MasonryProvider>
 
-      {items.length > 0 && hasNextPage && (
-        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
+      {/* `!isError` is the loop fix, and unmounting is the only thing that works:
+          `fetchNextPage` resolves rather than rejects on error (query-core only
+          rethrows for a per-call `throwOnError`), so the failed page never lands in
+          `data`, `hasNextPage` stays true, and the sentinel re-fires every
+          `loadTimeout` — roughly every 500ms, indefinitely — each fire holding a
+          slot on the one Meili limiter that bypasses the circuit breaker. */}
+      {items.length > 0 && hasNextPage && !isError && (
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching}>
           <Center style={{ height: 36 }} my="md">
             <Loader />
           </Center>
         </InViewLoader>
+      )}
+      {items.length > 0 && isError && (
+        <Center my="md">
+          <Button onClick={() => refetch()} variant="light" size="xs">
+            Load more
+          </Button>
+        </Center>
       )}
     </div>
   );
