@@ -1,4 +1,4 @@
-import { isEmpty, startCase } from 'lodash-es';
+import { isEmpty } from 'lodash-es';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { NotificationCategory } from '~/server/common/enums';
 import {
@@ -37,6 +37,40 @@ export const appListingSlugJoin = (expr: string) =>
  * `ON DELETE SET NULL`, so a resolvable `appListingId` always has a slug).
  */
 export const appListingSlugResolved = (expr: string) => `(${expr} IS NULL OR al.slug IS NOT NULL)`;
+
+/**
+ * Human-readable noun for a thread type in notification copy.
+ *
+ * `threadType` is an entity KEY, and most of them happen to read as English. `appListing` does
+ * not — untranslated it prints "an appListing" — so it gets a label.
+ *
+ * ONE map, read by every consumer that names a thread in a sentence (`new-mention`,
+ * `new-comment-reply`, `new-thread-response`), so the same thread is called the same thing
+ * wherever the user meets it. It used to live at one call site only, which is exactly how two
+ * of the three shipped the raw key.
+ */
+export const threadTypeLabel = (threadType: string): string =>
+  threadType === 'appListing' ? 'app listing' : threadType;
+
+/**
+ * `"an app listing"` / `"a model"` — a noun with its indefinite article.
+ *
+ * 🔴 It takes the NOUN, never a thread type, and that signature is the guard rather than a
+ * style choice. The article must agree with the word actually printed, and the way to
+ * guarantee that is to leave the article-picker nothing else to read: no `threadType` is in
+ * scope here, so "article derived from the raw entity key" is not expressible.
+ *
+ * The previous shape — a label computed at the call site with `label[0]` tested beside it —
+ * left that mutation available and *unkillable*: rebinding it to `threadType[0]` changed no
+ * output, because every reachable thread type and its label start with letters of the same
+ * vowel-ness. Composing the two functions removes the expression instead of testing it.
+ */
+export const withIndefiniteArticle = (noun: string): string =>
+  `${['a', 'e', 'i', 'o', 'u'].includes(noun[0]) ? 'an' : 'a'} ${noun}`;
+
+/** The noun a thread is called in copy, article included: `"an app listing"`, `"a model"`. */
+export const threadTypeWithArticle = (threadType: string): string =>
+  withIndefiniteArticle(threadTypeLabel(threadType));
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
   const queryString = QS.stringify({
@@ -246,7 +280,9 @@ export const commentNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       const url = threadUrlMap(details);
       return {
-        message: `${details.username} replied to a ${details.threadType} comment you made`,
+        message: `${details.username} replied to ${threadTypeWithArticle(
+          details.threadType
+        )} comment you made`,
         url,
       };
     },
@@ -334,7 +370,11 @@ export const commentNotifications = createNotificationProcessor({
 
       const url = threadUrlMap(details);
       return {
-        message: `${details.username} responded to a ${startCase(
+        // Was `a ${startCase(threadType)}` — Title Case mid-sentence, with a hardcoded "a" that
+        // was already wrong for every vowel-initial type ("a Article thread", "a Image thread").
+        // The shared label + article fixes the article for all of them and stops `appListing`
+        // printing as a raw key.
+        message: `${details.username} responded to ${threadTypeWithArticle(
           details.threadType
         )} thread you're in`,
         url,

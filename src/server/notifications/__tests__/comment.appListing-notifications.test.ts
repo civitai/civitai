@@ -175,24 +175,35 @@ describe('prepareMessage — an appListing thread produces a linked notification
     });
   });
 
-  it('new-comment-reply: exact URL', () => {
+  // 🔴 SECOND DELIBERATE INVERSION IN THIS FILE. The first version of these two assertions
+  // pinned `'ada replied to a appListing comment you made'` and
+  // `"ada responded to a App Listing thread you're in"` — the raw entity key and a Title-Cased
+  // key, each behind a hardcoded "a". That was a real defect shipped as an intended contract:
+  // the label existed but only `new-mention` used it. Both consumers now read the same shared
+  // `threadTypeLabel` + `withIndefiniteArticle`, so all three sentences name a thread the same
+  // way and the article agrees with the noun.
+  it('new-comment-reply: exact URL + human-readable copy', () => {
     const msg = commentDefs['new-comment-reply'].prepareMessage({
       type: 'new-comment-reply',
       details: appListingDetails(),
     });
 
-    expect(msg?.url).toBe(`/apps/store-preview/${SLUG}?${QUERY}`);
-    expect(msg?.message).toBe('ada replied to a appListing comment you made');
+    expect(msg).toEqual({
+      message: 'ada replied to an app listing comment you made',
+      url: `/apps/store-preview/${SLUG}?${QUERY}`,
+    });
   });
 
-  it('new-thread-response: exact URL', () => {
+  it('new-thread-response: exact URL + human-readable copy', () => {
     const msg = commentDefs['new-thread-response'].prepareMessage({
       type: 'new-thread-response',
       details: appListingDetails(),
     });
 
-    expect(msg?.url).toBe(`/apps/store-preview/${SLUG}?${QUERY}`);
-    expect(msg?.message).toBe("ada responded to a App Listing thread you're in");
+    expect(msg).toEqual({
+      message: "ada responded to an app listing thread you're in",
+      url: `/apps/store-preview/${SLUG}?${QUERY}`,
+    });
   });
 
   it('all three emit NO url when the slug is missing (no broken-link notification)', () => {
@@ -240,6 +251,100 @@ describe('prepareMessage — an appListing thread produces a linked notification
       url: undefined,
     });
   });
+});
+
+/**
+ * The copy seam: three sentences, in two modules, that each name a thread.
+ *
+ * `new-mention` had a label for `appListing` and the two reply consumers did not, so the same
+ * thread was "an app listing" in one notification and "a appListing" / "a App Listing" in the
+ * others. Each consumer was individually tested and individually fine; nothing asserted the
+ * RELATIONSHIP between them. These tests pin the relationship — every consumer, every reachable
+ * thread type, at full-string precision.
+ */
+describe('thread naming is one rule shared by all three consumers', () => {
+  /**
+   * Every `threadType` the notification SQL can emit: the eleven CASE arms plus the `comment`
+   * fallback. `question`/`answer` are filtered out of the thread-response and mention queries
+   * but survive in new-comment-reply's CASE, so they are reachable and belong here.
+   *
+   * The expected noun is the entity key VERBATIM except `appListing` — the map is deliberately
+   * narrow, so this table doubles as the negative control on it. (`bountyEntry` and `model3d`
+   * still print as raw camelCase keys; pre-existing, and out of scope here — see the PR body.)
+   */
+  const NOUNS: Record<string, string> = {
+    image: 'an image',
+    model: 'a model',
+    post: 'a post',
+    question: 'a question',
+    answer: 'an answer',
+    review: 'a review',
+    article: 'an article',
+    bounty: 'a bounty',
+    bountyEntry: 'a bountyEntry',
+    challenge: 'a challenge',
+    model3d: 'a model3d',
+    appListing: 'an app listing',
+  };
+
+  const forType = (threadType: string) =>
+    threadType === 'appListing'
+      ? appListingDetails()
+      : details({ threadType, mentionedIn: 'comment' });
+
+  it.each(Object.entries(NOUNS))(
+    '%s → "%s" in all three sentences, with the article that noun requires',
+    (threadType, noun) => {
+      const d = { ...forType(threadType), mentionedIn: 'comment' };
+
+      expect(
+        mentionDefs['new-mention'].prepareMessage({ type: 'new-mention', details: d })?.message
+      ).toBe(`ada mentioned you in a comment on ${noun}`);
+
+      expect(
+        commentDefs['new-comment-reply'].prepareMessage({ type: 'new-comment-reply', details: d })
+          ?.message
+      ).toBe(`ada replied to ${noun} comment you made`);
+
+      expect(
+        commentDefs['new-thread-response'].prepareMessage({
+          type: 'new-thread-response',
+          details: d,
+        })?.message
+      ).toBe(`ada responded to ${noun} thread you're in`);
+    }
+  );
+
+  it.each(Object.keys(NOUNS))(
+    '%s: the article agrees with the noun PRINTED, read back out of each message',
+    (threadType) => {
+      // Derived from the message string, never from the implementation — so a consumer that
+      // reintroduces the raw entity key behind a hardcoded "a" fails here on its own terms.
+      // "a appListing" is caught because the printed noun starts with a vowel and the printed
+      // article does not match it. This is the assertion the shipped defect would have failed.
+      const d = { ...forType(threadType), mentionedIn: 'comment' };
+      const messages = [
+        mentionDefs['new-mention'].prepareMessage({ type: 'new-mention', details: d })!.message,
+        commentDefs['new-comment-reply'].prepareMessage({
+          type: 'new-comment-reply',
+          details: d,
+        })!.message,
+        commentDefs['new-thread-response'].prepareMessage({
+          type: 'new-thread-response',
+          details: d,
+        })!.message,
+      ];
+
+      for (const message of messages) {
+        const m = message.match(/\b(an?) ([a-zA-Z0-9]+)/g)!;
+        // The LAST "a/an <word>" in each sentence is the thread noun (the mention sentence
+        // opens with "a comment", which is the message's own word, not the thread's).
+        const [article, word] = m[m.length - 1].split(' ');
+        const expected = ['a', 'e', 'i', 'o', 'u'].includes(word[0].toLowerCase()) ? 'an' : 'a';
+        expect(article, `"${message}" — "${article} ${word}"`).toBe(expected);
+      }
+    }
+  );
 });
 
 describe('generated SQL — the blanket exclusion is gone, the slug join is live', () => {

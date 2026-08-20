@@ -8,7 +8,9 @@ import {
   appListingSlugJoin,
   appListingSlugResolved,
   commentDedupeKeyByVersion,
+  threadTypeLabel,
   threadUrlMap,
+  withIndefiniteArticle,
 } from '~/server/notifications/comment.notifications';
 
 // Moveable (possibly)
@@ -22,20 +24,19 @@ export const mentionNotifications = createNotificationProcessor({
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
       if (isCommentV2) {
         const url = threadUrlMap(details);
-        // `threadType` is an entity KEY, and most of them happen to read as English. `appListing`
-        // does not — untranslated it renders "…on an appListing" — so it gets a label, the same
-        // way the `comment` fallback already does. Every other type keeps its key verbatim, and
-        // the a/an test reads the LABEL so the article agrees with the word actually printed.
-        const threadLabel =
-          details.threadType === 'appListing'
-            ? 'app listing'
-            : details.threadType === 'comment'
-            ? 'comment thread'
-            : details.threadType;
+        // The shared `threadTypeLabel` names the ENTITY; `'comment thread'` is this sentence's
+        // own shaping of the unaddressable fallback ("…on a comment thread" reads, "…on a
+        // comment" does not) and stays local — folding it into the shared map would give the
+        // reply consumers "a comment thread comment you made".
+        //
+        // The article comes from `withIndefiniteArticle`, which is handed the noun and nothing
+        // else, so it cannot disagree with the word printed beside it. See its docstring.
+        const noun =
+          details.threadType === 'comment' ? 'comment thread' : threadTypeLabel(details.threadType);
         return {
-          message: `${details.username} mentioned you in a comment on a${
-            ['a', 'e', 'i', 'o', 'u'].includes(threadLabel[0]) ? 'n' : ''
-          } ${threadLabel}`,
+          message: `${details.username} mentioned you in a comment on ${withIndefiniteArticle(
+            noun
+          )}`,
           url,
         };
       } else if (details.mentionedIn === 'comment') {
