@@ -3327,9 +3327,59 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   //
   // Content-scoping filters from the main query are applied so the second pass
   // only returns content relevant to the current view (e.g. same model, same post).
-  // Skip entirely if viewing another user's profile (userId !== currentUserId).
-  const skipOwnExcluded =
-    !input.currentUserId || bitdexCursor || (input.userId && input.userId !== input.currentUserId);
+  //
+  // 🔴 #4123 — THE CREATOR SCOPE CAN BE A SET, AND IT WAS RESOLVED TOO LATE.
+  //
+  // This decision used to read `input.userId` alone — "skip entirely if viewing
+  // another user's profile". That covers a feed addressed to ONE creator, and
+  // since #4122 one addressed by handle. But a Following or new-creators feed has
+  // no `userId` at all: its creator scope is a SET, resolved later and locally
+  // inside `getImagesFromBitdexPreFilter`. The `userId`-shaped test therefore read
+  // `undefined`, did not fire, the second pass ran anyway, and the caller's own
+  // private/blocked/nsfw0 content was merged into a feed that exists to show OTHER
+  // people's work. Not a cross-user exposure — every document returned belongs to
+  // the caller — but the feed misrepresents whose work it is showing, and Following
+  // is a primary browsing surface.
+  //
+  // Generalised to the invariant both shapes share: THE OWN PASS BELONGS ONLY IN A
+  // FEED WHOSE CREATOR SCOPE CONTAINS THE CALLER. A single `userId` is a
+  // one-element set, so the old disjunct is SUBSUMED here rather than left sitting
+  // beside this one — one rule in one place, so a third scope shape cannot be added
+  // to one test and missed by the other.
+  //
+  // ⚠️ MEMBERSHIP, not "is this feed scoped to somebody else". `toggleFollowUser`
+  // creates `{ userId, targetUserId }` with no `userId !== targetUserId` guard, so
+  // a caller CAN sit inside their own followed set, and can be on the
+  // new-and-upcoming board. Both are pinned as positive controls in
+  // `src/server/services/__tests__/bitdex-followed-own-excluded-scope.test.ts`; a
+  // blanket "never run the second pass on a scoped feed" fails them.
+  //
+  // COST: both helpers are cached (`getUserFollows` via `userFollowsCache`,
+  // `getNewCreatorUserIds` via `fetchThroughCache`) and are the same helpers the
+  // Meili leg already calls for these two scopes, so a scoped request adds a cache
+  // read rather than a query. In practice the await is free where it matters: an
+  // unscoped feed and an own-profile feed resolve to literals with nothing to
+  // await, and the two scopes that DO await are the ones this guard then skips.
+  //
+  // ⚠️ `getUserFollows` is the CACHED set, while `getImagesFromBitdexPreFilter`
+  // reads `userEngagement` directly, so the two can disagree while the cache is
+  // stale. `toggleFollowUser` refreshes that cache on both follow and unfollow, so
+  // the window is write-propagation, not the entry's TTL. Both directions are
+  // benign and self-healing: a stale "caller is in the set" re-admits the old
+  // behaviour for that window; a stale "caller is not in the set" withholds the
+  // caller's own excluded content from their own feed. Deliberately NOT unified
+  // here — repointing the pre-filter at the cache would change what the FEED
+  // CONTAINS, which is a different change from what this decision READS.
+  const creatorScopes = await Promise.all([
+    input.userId ? [input.userId] : null,
+    input.currentUserId && input.followed ? getUserFollows(input.currentUserId) : null,
+    input.newCreators ? getNewCreatorUserIds({ entity: 'images', domain: input.domain }) : null,
+  ]);
+  const creatorScopeExcludesCaller = creatorScopes.some(
+    (scope) => scope !== null && !scope.includes(input.currentUserId!)
+  );
+
+  const skipOwnExcluded = !input.currentUserId || bitdexCursor || creatorScopeExcludesCaller;
 
   let ownExcludedPromise: ReturnType<typeof queryBitdex> | null = null;
   if (!skipOwnExcluded) {
