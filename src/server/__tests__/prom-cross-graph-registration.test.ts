@@ -109,9 +109,10 @@ describe('request-bulkhead state is process-wide, not graph-wide', () => {
     vi.resetModules();
     const graphB = await import('~/server/utils/request-bulkhead');
 
-    expect(
-      Object.fromEntries(graphB.bulkheadSnapshot().map((s) => [s.key, s.active]))
-    ).toEqual({ 'heavy-image': 2, 'other-key': 1 });
+    expect(Object.fromEntries(graphB.bulkheadSnapshot().map((s) => [s.key, s.active]))).toEqual({
+      'heavy-image': 2,
+      'other-key': 1,
+    });
   });
 });
 
@@ -128,7 +129,9 @@ describe('prom/client registers into the registry /api/metrics scrapes', () => {
 
     // Before the fix both gauges went to the per-graph default `client.register` behind a
     // globalThis flag, so this lookup returned undefined no matter how many graphs ran.
-    expect(instrumentationRegistry.getSingleMetric('civitai_app_heavy_bulkhead_active')).toBeTruthy();
+    expect(
+      instrumentationRegistry.getSingleMetric('civitai_app_heavy_bulkhead_active')
+    ).toBeTruthy();
     expect(
       instrumentationRegistry.getSingleMetric('civitai_app_heavy_bulkhead_rejects')
     ).toBeTruthy();

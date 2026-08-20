@@ -222,11 +222,7 @@ registerInstrumentationMetric(
 // The pg pool gauges carried the identical defect via `global.pgGaugeInitialized` and were also
 // measured at 0 series in production. They are fixed in the same commit because they are the same
 // bug in the same file, not because the reported issue asked for them.
-const pgPoolGauge = (
-  name: string,
-  help: string,
-  read: () => number
-) =>
+const pgPoolGauge = (name: string, help: string, read: () => number) =>
   registerInstrumentationMetric(
     name,
     () =>
@@ -240,8 +236,16 @@ const pgPoolGauge = (
       })
   );
 
-pgPoolGauge('node_postgres_read_total_count', 'node postgres read total count', () => pgDbRead.totalCount);
-pgPoolGauge('node_postgres_read_idle_count', 'node postgres read idle count', () => pgDbRead.idleCount);
+pgPoolGauge(
+  'node_postgres_read_total_count',
+  'node postgres read total count',
+  () => pgDbRead.totalCount
+);
+pgPoolGauge(
+  'node_postgres_read_idle_count',
+  'node postgres read idle count',
+  () => pgDbRead.idleCount
+);
 pgPoolGauge(
   'node_postgres_read_waiting_count',
   'node postgres read waiting count',
@@ -252,7 +256,11 @@ pgPoolGauge(
   'node postgres write total count',
   () => pgDbWrite.totalCount
 );
-pgPoolGauge('node_postgres_write_idle_count', 'node postgres write idle count', () => pgDbWrite.idleCount);
+pgPoolGauge(
+  'node_postgres_write_idle_count',
+  'node postgres write idle count',
+  () => pgDbWrite.idleCount
+);
 pgPoolGauge(
   'node_postgres_write_waiting_count',
   'node postgres write waiting count',
@@ -282,8 +290,16 @@ const pgLabelledPoolGauge = (
       })
   );
 
-pgLabelledPoolGauge('node_postgres_pool_total_count', 'Total connections in pg pool', (p) => p.totalCount);
-pgLabelledPoolGauge('node_postgres_pool_idle_count', 'Idle connections in pg pool', (p) => p.idleCount);
+pgLabelledPoolGauge(
+  'node_postgres_pool_total_count',
+  'Total connections in pg pool',
+  (p) => p.totalCount
+);
+pgLabelledPoolGauge(
+  'node_postgres_pool_idle_count',
+  'Idle connections in pg pool',
+  (p) => p.idleCount
+);
 pgLabelledPoolGauge(
   'node_postgres_pool_waiting_count',
   'Waiting connections in pg pool',
