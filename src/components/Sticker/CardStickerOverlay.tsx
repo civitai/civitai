@@ -73,7 +73,19 @@ export const offsetWithin = (el: HTMLElement, stop: Element | null) => {
  * A consequence worth knowing rather than fixing: `cover` crops, so a sticker
  * placed low on a tall image is outside the visible box and not shown in a feed.
  */
-export function CardStickerOverlay({ imageId }: { imageId: number }) {
+export function CardStickerOverlay({
+  imageId,
+  artworkWidth = CARD_ARTWORK_WIDTH,
+}: {
+  imageId: number;
+  /**
+   * What the CDN is asked for, when the host draws the media wider than a card.
+   * A sticker's drawn size is a fraction of the measured box, so a host with a
+   * bigger box needs a bigger request or it upscales artwork someone was paid
+   * for. `PostStickerOverlay` keeps 512 at 800px wide for the same reason.
+   */
+  artworkWidth?: number;
+}) {
   const currentUser = useCurrentUser();
   const revealed = useStickerRevealStore((state) => state.revealed);
   const batch = useStickerPlacementBatch(imageId);
@@ -138,7 +150,7 @@ export function CardStickerOverlay({ imageId }: { imageId: number }) {
             viewerId={currentUser?.id}
             interactive={false}
             sticker={batch?.sticker}
-            artworkWidth={CARD_ARTWORK_WIDTH}
+            artworkWidth={artworkWidth}
             treatment={batch.treatment}
             surface="card"
           />

@@ -46,9 +46,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
-import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
-import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
+import { ArticleCoverStickers } from '~/components/Article/ArticleCoverStickers';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -472,17 +470,22 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
             <Stack gap="xs">
               {image && (
-                <StickerPlacementBatchProvider imageIds={[image.id]}>
-                  <AspectRatio
-                    ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
-                  >
+                <AspectRatio
+                  ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
+                >
+                  {/*
+                    AspectRatio sizes every direct child, and ImageGuard2 renders
+                    the blur explainer as a sibling of its content — so the guard
+                    goes inside this div rather than around it, or the explainer
+                    becomes a second sized child positioned against the page
+                    instead of the cover. It is also the box the sticker overlay
+                    measures the media against, which needs one shared offset
+                    parent.
+                  */}
+                  <div className="relative size-full">
                     <ImageGuard2 image={image} connectType="article" connectId={article.id}>
                       {(safe) => (
-                        // The overlay measures the cover against this box, so it
-                        // has to be the offset parent of both the media and
-                        // itself — and it sits outside the link, or every
-                        // sticker becomes part of the cover's click target.
-                        <div className="relative size-full">
+                        <>
                           <RoutedDialogLink
                             name="imageDetail"
                             state={{ imageId: image.id, withoutPost: true }}
@@ -514,20 +517,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                               </div>
                             </Center>
                           </RoutedDialogLink>
-                          {safe && features.stickerPlacement && (
-                            <>
-                              <CardStickerOverlay imageId={image.id} />
-                              <StickerPlacementCardBadge
-                                imageId={image.id}
-                                className="absolute bottom-2 right-2 z-10"
-                              />
-                            </>
-                          )}
-                        </div>
+                          <ArticleCoverStickers imageId={image.id} safe={safe} />
+                        </>
                       )}
                     </ImageGuard2>
-                  </AspectRatio>
-                </StickerPlacementBatchProvider>
+                  </div>
+                </AspectRatio>
               )}
 
               {article.contentJson && (
