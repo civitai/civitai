@@ -1,5 +1,6 @@
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
-import { dbRead, dbWrite } from './db';
+import { dbWrite } from './db';
+import { logToAxiom } from './axiom';
 import { getRedis } from './redis';
 
 // Writes BOTH the Blocklist table AND the shared Redis cache (same key/shape/TTL the main app reads), so
@@ -28,7 +29,12 @@ async function setCache(data: BlocklistDTO) {
  * both must agree, because they read and write the SAME Redis key.
  */
 async function readBlocklistRow(type: string): Promise<BlocklistDTO> {
-  const rows = await dbRead
+  // `dbWrite`, not `dbRead`, and this is load-bearing: both writers below re-read through here
+  // and then cache the result for a MONTH. Off the replica, a write-then-read races replication
+  // and would pin the PRE-EDIT row into a key the main app also reads — a moderator's change
+  // silently undone for 30 days, which is the failure this function exists to prevent. The
+  // writers already read writer-side for the same reason.
+  const rows = await dbWrite
     .selectFrom('Blocklist')
     .select(['id', 'type', 'data'])
     .where('type', '=', type)
@@ -36,12 +42,21 @@ async function readBlocklistRow(type: string): Promise<BlocklistDTO> {
     .execute();
 
   if (rows.length > 1) {
-    console.error(
-      `[blocklist] ${rows.length} rows for type ${type}; using id ${rows[0].id}, ignoring ${rows
-        .slice(1)
-        .map((row) => row.id)
-        .join(', ')} — entries on the ignored rows are NOT enforced`
-    );
+    // Axiom rather than console: this is a standing data anomaly no moderator will ever see,
+    // not a failure attached to an action in flight. Same `name` as the main app's report so
+    // the same anomaly from either app is one searchable thing.
+    void logToAxiom({
+      name: 'blocklist-duplicate-rows',
+      type: 'error',
+      message: 'More than one Blocklist row for a type; entries on the ignored rows are not enforced',
+      details: {
+        app: 'moderator',
+        blocklistType: type,
+        usedId: rows[0].id,
+        ignoredIds: rows.slice(1).map((row) => row.id),
+        ignoredEntryCounts: rows.slice(1).map((row) => row.data.length),
+      },
+    });
   }
 
   return rows[0] ?? { type, data: [] };
