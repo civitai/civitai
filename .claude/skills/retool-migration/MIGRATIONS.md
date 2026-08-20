@@ -144,19 +144,29 @@ Listed so they are not rediscovered as oversights. None is "next up".
 
 - [ ] **`/api/mod/retool/user` capabilities** — editing bio/socials, `ToggleMod`, `UpdateUserDeets`.
       Needs a user API key the spoke should not hold. **A decision, not a build.**
-- [ ] **Destructive content actions from User Lookup** — bulk delete / ToS of comments, purge all content,
-      cosmetics removal. Search-index and cache side effects the spoke does not own. Same decision as
-      account actions. (Note: image removal itself **is** now built, on Bulk Image Manager and User Reports.)
+- [ ] **Destructive content actions from User Lookup** — bulk delete / ToS of comments, purge all
+      content, cosmetics removal. **Not blocked on ownership — corrected 2026-08-20.** Both side effects
+      that were cited as "the spoke does not own them" are already solved here:
+      - **Cache busting**: `cache.ts` writes the same Redis keys the main app reads
+        (`bustCachedObject`, `bustCacheTag`, and the per-domain helpers).
+      - **Search index**: `syncSearchIndex` already calls `/api/internal/search-index-update`.
+      What is missing is **bulk**. The endpoint's zod schema takes one `entityId`, while the
+      `queueUpdate` beneath it already accepts an array — so batching is a schema change on
+      `src/pages/api/internal/search-index-update.ts` plus a batching `syncSearchIndex`, not new
+      plumbing. Do that first, then port the actions as direct Kysely mutations.
 - [ ] **Timed-mute expiry** — nothing expires a timed mute automatically. Retool had no scheduler either.
       Needs a cron job, or the feature is bookkeeping only.
-- [ ] **Add / subtract Buzz, rewards eligibility** — the ticket itself suggests a separate app. **This is an
-      open question, not a settled decision** — the last time a ticket aside was recorded as settled here, a
-      daily-use capability went unported for weeks.
+- [x] ~~**Add / subtract Buzz, rewards eligibility**~~ — **BUILT, corrected 2026-08-20.** `sendBuzz`
+      (behind the `user.buzz.send` grant) and `setRewardsEligibility` are in `user-actions.service.ts`,
+      wired as form actions and rendered by `BuzzTransactionPanel` and `AccountActionsPanel`. The
+      "maybe a separate app" ticket aside was recorded here as a blocker and outlived the work that
+      closed it — the second time this row has misled, and the reason Rule 7 exists.
 - [ ] **Notification history** (`GetNotifications` / `ViewNotifications`) — a seventh datasource. The app now
       has `@civitai/notifications` wired for *sending*; **reading history is a different connection.**
-- [ ] **Attribution backfill** — `createdBy`/`lastUpdateBy`/`handledBy` are free text. Spoke writes put
-      `locals.user.username` there, so those columns now hold two naming schemes (Retool display names
-      historically, Civitai usernames going forward). The name → userId mapping is a separate migration.
+- [ ] **Attribution backfill and ID consolidation** — nine free-text attribution columns across eight
+      tables, plus a `TimedMutes.userId` that is `text` and a `ReToolActions` with no subject column at
+      all. Tracked separately, with the inventory and ordering:
+      [`moderator-db-backfill-tasks.md`](../../../docs/moderator-app/moderator-db-backfill-tasks.md).
 - [ ] **Chat message-text search performance** — ~3s over 4.2M unindexed rows. A `pg_trgm` GIN index would
       fix it; that is an infra decision.
 
@@ -355,7 +365,7 @@ more porting — none of it is "next up":
 - ~~**Issuing a strike**, **notifying a user** — need the notification system.~~ **UNBLOCKED** — both are
   built on User Reports (`issueStrike`, and a `notify` action over `@civitai/notifications`). What is left
   on *this* page is wiring its own panel to them: porting work, not a blocker.
-- **Add / subtract Buzz**, **rewards eligibility** — the ticket itself suggests a separate app.
+- ~~**Add / subtract Buzz**, **rewards eligibility**~~ — **BUILT.** `sendBuzz` behind `user.buzz.send`, and `setRewardsEligibility`.
 - **Notification history** — needs a Notifications DB connection the spoke does not have.
 
 ### Asked for in the ticket

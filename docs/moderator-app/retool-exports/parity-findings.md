@@ -263,10 +263,11 @@ the committed raw export: it is a **Paddle account-linking workflow**, three pan
 paddleCustomerId account` (`textInput14` "Enter User Id" → `button95` "Remove Link"), and
 `3. Link Paddle Account` (`textInput12`).
 
-- [ ] **Not ported, and deliberately not built without a decision.** Two of the three panes WRITE to a
-      billing identifier on `User`, which is a different risk class from the rest of this page. The
-      lookup pane alone is harmless; the link/unlink pair needs someone to say whether the spoke should
-      own it at all. `paddleCustomerId` is already read and shown on the identity panel.
+- [x] **BUILT — corrected 2026-08-20.** All three panes shipped as one `linkPaddle` form action:
+      submitting an id another account holds returns that account rather than moving it, and a second
+      submit does the move explicitly (`findPaddleCustomerOwner` / `setPaddleCustomer`, plus an unlink
+      path). The "needs a decision before the spoke owns a billing write" note was left unticked after
+      the work landed and was still being cited as a blocker months later.
 
 ## Cross-cutting
 
