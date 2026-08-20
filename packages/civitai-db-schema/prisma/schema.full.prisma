@@ -8116,4 +8116,5 @@ model UserHubSource {
 
   @@unique([hubId, type, targetId])
   @@index([hubId])
+  @@index([type, targetId])
 }

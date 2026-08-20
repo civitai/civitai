@@ -90,6 +90,25 @@ describe('resolveHubSources', () => {
     expect([...(result?.modelVersionIds ?? [])].sort((a, b) => a - b)).toEqual([30, 31]);
   });
 
+  it('ranks versions per model in the emitted SQL', async () => {
+    // The fake below does its own partitioning, so it cannot observe the clause that
+    // makes the real query partition — delete `PARTITION BY mv."modelId"` and every
+    // value-level assertion in this file stays green while production ranks all
+    // models in one list. These two literals live wholly in the static segments of
+    // the template, so reading them off `strings` is honest.
+    findFirstHub.mockResolvedValue({
+      sources: [{ type: UserHubSourceType.Model, targetId: 20 }],
+    });
+    stubVersions({ 20: [30, 31] });
+
+    await resolveHubSources({ hubId: 1, userId: 5 });
+
+    const strings = queryRaw.mock.calls[0][0] as TemplateStringsArray;
+    const sql = strings.join('?');
+    expect(sql).toContain('PARTITION BY mv."modelId"');
+    expect(sql).toContain('ORDER BY mv.id DESC');
+  });
+
   it('gives each model source its own share of the cap, so an older model still contributes', async () => {
     // Ranking every model's versions in ONE `id desc` list is the regression: the
     // high-version model spends the whole cap and model 21 contributes nothing

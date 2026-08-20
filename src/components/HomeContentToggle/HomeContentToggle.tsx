@@ -68,6 +68,11 @@ export const homeOptions: HomeOption[] = [
     new: new Date('2026-06-30'),
   },
   {
+    key: 'hubs',
+    url: '/hubs',
+    icon: (props: IconProps) => <IconLayoutGrid {...props} />,
+  },
+  {
     key: 'posts',
     url: '/posts',
     icon: (props: IconProps) => <IconLayoutList {...props} />,
@@ -108,12 +113,6 @@ export const homeOptions: HomeOption[] = [
     icon: (props: IconProps) => <IconContract {...props} />,
     grouped: true,
     // new: new Date('2025-05-26'),
-  },
-  {
-    key: 'hubs',
-    url: '/hubs',
-    icon: (props: IconProps) => <IconLayoutGrid {...props} />,
-    grouped: true,
   },
   {
     key: 'shop',

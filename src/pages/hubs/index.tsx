@@ -1,4 +1,6 @@
-import { ActionIcon, Button, Card, Center, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Button, Card, Center, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { useState } from 'react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { IconLayoutGrid, IconPlus, IconTrash } from '@tabler/icons-react';
 import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -26,8 +28,12 @@ export default function HubsPage() {
   const createMutation = trpc.userHub.upsert.useMutation({
     onSuccess: () => utils.userHub.getAll.invalidate(),
   });
+  // Tracks WHICH hub is being deleted: `isPending` alone is one flag for the whole
+  // list, so deleting one hub spun the button on every row.
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const deleteMutation = trpc.userHub.delete.useMutation({
     onSuccess: () => utils.userHub.getAll.invalidate(),
+    onSettled: () => setDeletingId(null),
   });
 
   if (!currentUser) return <NotFound />;
@@ -77,20 +83,23 @@ export default function HubsPage() {
                   </Link>
                   <PopConfirm
                     message={`Delete "${hub.name}"? Its sources go with it, and this cannot be undone.`}
-                    onConfirm={() => deleteMutation.mutate({ id: hub.id })}
+                    onConfirm={() => {
+                      setDeletingId(hub.id);
+                      deleteMutation.mutate({ id: hub.id });
+                    }}
                     confirmButtonColor="red"
                     width={260}
                     withArrow
                     withinPortal
                   >
-                    <ActionIcon
+                    <LegacyActionIcon
                       variant="subtle"
                       color="red"
                       aria-label={`Delete ${hub.name}`}
-                      loading={deleteMutation.isPending}
+                      loading={deletingId === hub.id}
                     >
                       <IconTrash size={18} />
-                    </ActionIcon>
+                    </LegacyActionIcon>
                   </PopConfirm>
                 </Group>
               </Card>

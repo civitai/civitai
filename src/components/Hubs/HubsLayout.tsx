@@ -127,7 +127,6 @@ function HubsSidebarContent({ activeHubId }: { activeHubId?: number }) {
               <div className="pt-2">
                 <HubSourcePanel
                   hubId={activeHub.id}
-                  name={activeHub.name}
                   maxSources={hubLimits.sourcesPerHub}
                   sources={activeHub.sources.map(({ id: _id, ...source }) => source)}
                 />

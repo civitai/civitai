@@ -2913,6 +2913,10 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   // When provided, getImagesFromSearch skips its own Flipt evaluation.
   bitdexMode?: string | null;
   actor?: string;
+  // Per-request memo of `resolveHubSources`, set by `resolvedHubSources` below.
+  // `undefined` means "not resolved yet"; `null` is a resolved answer meaning the
+  // hub is not the viewer's, which callers must serve as nothing.
+  resolvedHub?: ResolvedHubSources | null;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3428,9 +3432,9 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // the hoist and that non-null assertion becomes `getUserFollows(undefined)`.
   const skipOwnExcludedCheaply = !input.currentUserId || !!bitdexCursor;
 
-  // 🔴 The three scopes here must stay 1:1 with the creator-scoping filters
-  // `getImagesFromBitdexPreFilter` applies — `followed`, `newCreators` and
-  // `userId`. That coupling IS the correctness argument: the guard has to read
+  // 🔴 The four scopes here must stay 1:1 with the creator-scoping filters
+  // `getImagesFromBitdexPreFilter` applies — `followed`, `newCreators`, `userId`
+  // and a creator-only hub. That coupling IS the correctness argument: the guard has to read
   // the same creator scope the feed is filtered by, or it decides from a
   // different set than the one that shaped the results. The ARGUMENTS matter as
   // much as the calls — `entity` and `domain` select which board
@@ -3443,6 +3447,13 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
         input.userId ? [input.userId] : null,
         input.followed ? getUserFollows(input.currentUserId!) : null,
         input.newCreators ? getNewCreatorUserIds({ entity: 'images', domain: input.domain }) : null,
+        // A hub is a creator scope ONLY when every arm of it is one. The arms are
+        // ORed, so a hub carrying a model source can match an image whose author
+        // is outside `userIds`, and treating that as a creator scope would skip
+        // the own-excluded pass for a feed the caller does legitimately appear in.
+        // Resolution is memoized on `input`, so this costs no extra query — the
+        // filter build below reads the same answer.
+        hubCreatorScope(await resolvedHubSources(input)),
       ]);
   // `some`, not `every`: the pre-filter ANDs these scopes, so exclusion by ANY
   // one of them excludes the caller from the feed.
@@ -4190,6 +4201,29 @@ import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema'
 // Returns null when the hub resolved to nothing. Callers must return an empty
 // page for null — never fall through unfiltered, which would serve the global
 // feed to someone who asked for their hub.
+// The creator scope a hub represents, or null when it is not purely one. Null means
+// "not a creator scope", which leaves the own-excluded pass alone — never "empty
+// scope", which would exclude the caller from their own feed.
+function hubCreatorScope(sources: ResolvedHubSources | null) {
+  if (!sources || !sources.userIds.length) return null;
+  if (sources.modelVersionIds.length || sources.collectionIds.length) return null;
+  return sources.userIds;
+}
+
+// One resolution per request, memoized on the input object itself. A hub feed page
+// runs the BitDex pass loop up to 8 times and can then fall through to Meili, and
+// each of those rebuilt the whole filter — 8-9 resolutions of the same hub, at 3 SQL
+// statements each. The memo is per-request state, not a cache: nothing outlives the
+// object, so there is no TTL, no invalidation, and no way to serve one viewer's hub
+// resolution to another.
+async function resolvedHubSources(input: ImageSearchInput) {
+  if (!input.hubId) return null;
+  if (input.resolvedHub !== undefined) return input.resolvedHub;
+  const sources = await resolveHubSources({ hubId: input.hubId, userId: input.currentUserId });
+  input.resolvedHub = sources;
+  return sources;
+}
+
 type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
 
 // The single enumeration of the arms a hub ORs together. Both backends build their
@@ -4378,7 +4412,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   }
 
   if (hubId) {
-    const sources = await resolveHubSources({ hubId, userId: currentUserId });
+    const sources = await resolvedHubSources(input);
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
@@ -5038,7 +5072,7 @@ export async function getImagesFromBitdexPreFilter(
   // "cannot serve this" and falls through to Meili — never "no filter", which
   // would hand the caller the global feed as their hub.
   if (input.hubId) {
-    const sources = await resolveHubSources({ hubId: input.hubId, userId: currentUserId });
+    const sources = await resolvedHubSources(input);
     if (!sources) return null;
 
     // Collection membership is not a BitDex field. While collection sources are
@@ -5309,7 +5343,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   }
 
   if (hubId) {
-    const sources = await resolveHubSources({ hubId, userId: currentUserId });
+    const sources = await resolvedHubSources(input);
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);

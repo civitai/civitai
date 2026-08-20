@@ -62,6 +62,8 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
   }
 
   if (!id) {
+    if (!data.name) throw throwBadRequestError('A new hub needs a name');
+
     const count = await dbRead.userHub.count({ where: { userId } });
     if (count >= hubLimits.hubsPerUser)
       throw throwBadRequestError(`You can have at most ${hubLimits.hubsPerUser} hubs`);
@@ -69,6 +71,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
     return dbWrite.userHub.create({
       data: {
         ...data,
+        name: data.name,
         sort: data.sort ?? ImageSort.Newest,
         period: data.period ?? MetricTimeframe.AllTime,
         mediaTypes: data.mediaTypes ?? [],
@@ -83,12 +86,16 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
   const existing = await dbRead.userHub.findFirst({ where: { id, userId }, select: { id: true } });
   if (!existing) throw throwNotFoundError('Hub not found');
 
-  if (!sources) return dbWrite.userHub.update({ where: { id }, data, select: hubSelect });
+  if (!sources) return dbWrite.userHub.update({ where: { id, userId }, data, select: hubSelect });
 
   return dbWrite.$transaction(async (tx) => {
     await tx.userHubSource.deleteMany({ where: { hubId: id } });
     return tx.userHub.update({
-      where: { id },
+      // Scoped by userId as well as id, like every read here. Redundant while
+      // `UserHub.userId` never changes; the moment hub sharing lands — which the
+      // rail already anticipates — a check in a prior SELECT is a check that can
+      // disagree with the write.
+      where: { id, userId },
       data: { ...data, sources: { create: sources.map(({ id: _, ...source }) => source) } },
       select: hubSelect,
     });
@@ -108,7 +115,7 @@ export async function setUserHubOrder({ ids, userId }: SetUserHubOrderInput & { 
   if (owned.length !== ids.length) throw throwNotFoundError('Hub not found');
 
   await dbWrite.$transaction(
-    ids.map((id, index) => dbWrite.userHub.update({ where: { id }, data: { index } }))
+    ids.map((id, index) => dbWrite.userHub.update({ where: { id, userId }, data: { index } }))
   );
 }
 
@@ -222,11 +229,13 @@ async function assertHubSourcesUsable({
     select: { id: true, name: true, read: true, metadata: true },
   });
 
-  // Returns a POSITIONAL array aligned with `ids`, not an id-keyed map. Indexing
-  // it by collection id reads an unrelated slot — almost always undefined, which
-  // fails closed and so hid the fact that the permission check never ran.
   const permissionList = await getUserCollectionPermissionsByIds({ ids: collectionIds, userId });
-  const permissions = new Map(collectionIds.map((id, index) => [id, permissionList[index]]));
+  // Keyed on the row's own `collectionId`, not on position. Positional is correct
+  // today only because the function ends in `ids.map(...)`; the obvious future
+  // change — returning only the collections it found — would silently shift every
+  // permission by one, and this is the caller where that misattribution is a
+  // private-collection read check.
+  const permissions = new Map(permissionList.map((p) => [p.collectionId, p]));
 
   for (const id of collectionIds) {
     const collection = collections.find((c) => c.id === id);

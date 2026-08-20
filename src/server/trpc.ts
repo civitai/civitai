@@ -473,18 +473,10 @@ const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
 });
 export const appDeveloperProcedure = protectedProcedure.use(hasAppBlocksAuthor);
 
-/**
- * Hubs are dark until the `user-hubs` Flipt flag exists. Fail-CLOSED: `userHubs`
- * carries no static availability, so an absent flag / Flipt-down leaves every hub
- * procedure refusing, which is the pre-hubs behaviour.
- */
-const hasUserHubs = t.middleware(({ ctx, next }) => {
-  const features = getFeatureFlags(ctx);
-  if (!features.userHubs)
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'Hubs are not available yet' });
-  return next();
-});
-export const userHubProcedure = protectedProcedure.use(hasUserHubs);
+// Hubs are dark until the `user-hubs` Flipt flag exists. Fail-CLOSED: `userHubs`
+// carries no static availability, so an absent flag / Flipt-down leaves every hub
+// procedure refusing, which is the pre-hubs behaviour.
+export const userHubProcedure = protectedProcedure.use(isFlagProtected('userHubs'));
 
 /**
  * Verified procedure to prevent users from making actions

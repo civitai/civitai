@@ -29,7 +29,9 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async () => {
       await utils.userHub.getById.invalidate({ id: hubId });
-      await utils.image.getInfinite.invalidate();
+      // Scoped to this hub: an unkeyed invalidate refetches every mounted
+      // image.getInfinite query, not only the feed behind this filter.
+      await utils.image.getInfinite.invalidate({ hubId });
     },
     onError: (error) =>
       showErrorNotification({ title: 'Could not save hub', error: new Error(error.message) }),
@@ -42,7 +44,6 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
   const save = (changes: { sort?: HubSort; period?: MetricTimeframe }) =>
     upsert.mutate({
       id: hub.id,
-      name: hub.name,
       sort: changes.sort ?? sort,
       period: changes.period ?? hub.period,
     });

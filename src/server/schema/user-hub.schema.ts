@@ -9,10 +9,14 @@ export const hubLimits = {
   aliasLength: 60,
   // Caps the RESOLVED ids, which is a different quantity from the source count:
   // one Model source expands to every version of that model, and each version id
-  // is then repeated across three filter arms. Measured on prod, the feed's
-  // filter cost is linear at ~0.5ms per id — 3,867 ids (reachable by adding 50
-  // high-version models from the UI) took 2.9-5.6s and produced a 502 against the
-  // 5s deadline. 800 ids, the realistic "models I actually use" case, is ~830ms.
+  // is then repeated across three filter arms.
+  //
+  // The cost is NOT linear per id — measured against the prod metrics index, a
+  // full 5-iteration page carrying the cap's 2,250 filter ids costs ~180ms more
+  // than a trivial filter, not the ~1.1s a linear model predicts. What justifies
+  // the cap is the COLD tail: an uncapped 50-model hub (3,867 ids, 11,601 in the
+  // filter, 53KB) measured 2.4s on a first-touch id set, and that is the shape
+  // that produced a 502 against the 5s deadline.
   resolvedVersionIds: 750,
 } as const;
 
@@ -54,7 +58,11 @@ export const userHubSourceSchema = z.object({
 
 export const upsertUserHubSchema = z.object({
   id: z.number().optional(),
-  name: z.string().trim().min(1).max(hubLimits.nameLength),
+  // Optional for the same reason as `sources` below: a rename, a sort change and a
+  // source toggle are three writers of one row, and any writer that resends its own
+  // cached copy of a field it did not change can revert another's edit. Required on
+  // CREATE, enforced in the service where the create branch is explicit.
+  name: z.string().trim().min(1).max(hubLimits.nameLength).optional(),
   // Deliberately NOT `.default()`. These are applied to an UPDATE, so a default
   // means "an omitted field is silently overwritten" rather than "left alone" —
   // which reset a user's sort and period every time they toggled a source off.

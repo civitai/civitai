@@ -277,6 +277,14 @@ export const getInfiniteImagesHandler = async ({
 }) => {
   const { user, features, signal } = ctx;
 
+  // The hub pages and the whole hub router are behind `userHubs`, but `hubId` is a
+  // plain feed input, so `/images?hubId=N` would keep serving a hub after the flag
+  // was turned back off — the feed under someone else's chrome. Refused rather than
+  // ignored: silently dropping the filter serves the GLOBAL feed to a caller who
+  // asked for a hub.
+  if (input.hubId && !features.userHubs)
+    throw throwAuthorizationError('Hubs are not available yet');
+
   const requiresDbPath = requiresImageDbPath(input);
 
   // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it

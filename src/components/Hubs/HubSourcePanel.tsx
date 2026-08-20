@@ -25,12 +25,10 @@ const sourceLabels: Record<UserHubSourceType, string> = {
 
 export function HubSourcePanel({
   hubId,
-  name,
   sources,
   maxSources,
 }: {
   hubId: number;
-  name: string;
   sources: HubSource[];
   maxSources: number;
 }) {
@@ -46,7 +44,7 @@ export function HubSourcePanel({
       ]);
       // The feed is keyed on hubId, not on the source list, so it will not refetch
       // on its own when the sources behind it change.
-      await utils.image.getInfinite.invalidate();
+      await utils.image.getInfinite.invalidate({ hubId });
       setPending(null);
     },
     onError: (error) => {
@@ -59,7 +57,7 @@ export function HubSourcePanel({
 
   const save = (next: HubSource[]) => {
     setPending(next);
-    upsert.mutate({ id: hubId, name, sources: next.map((s, index) => ({ ...s, index })) });
+    upsert.mutate({ id: hubId, sources: next.map((s, index) => ({ ...s, index })) });
   };
 
   const addSource = (type: UserHubSourceType, targetId: number, rawAlias: string) => {
