@@ -45,7 +45,6 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
       name: hub.name,
       sort: changes.sort ?? sort,
       period: changes.period ?? hub.period,
-      sources: hub.sources.map(({ id: _id, ...source }) => source),
     });
 
   return (

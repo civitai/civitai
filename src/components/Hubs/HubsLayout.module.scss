@@ -30,6 +30,14 @@
 .content {
   flex: 1;
   min-width: 0;
+
+  // The collapse toggle lives in the gutter at right: -32px so it stays reachable
+  // once the rail slides out; without this it lands on top of the hub title.
+  padding-left: 36px;
+
+  @container (max-width: theme('screens.sm')) {
+    padding-left: 0;
+  }
 }
 
 .drawerButton {

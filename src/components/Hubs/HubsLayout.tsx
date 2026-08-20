@@ -1,5 +1,19 @@
-import { Button, Card, Container, Drawer, Group, Stack, Text, TextInput } from '@mantine/core';
 import {
+  Button,
+  Card,
+  Collapse,
+  Container,
+  Drawer,
+  Group,
+  ScrollArea,
+  Stack,
+  Text,
+  TextInput,
+  UnstyledButton,
+} from '@mantine/core';
+import {
+  IconChevronDown,
+  IconChevronRight,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
   IconMenu2,
@@ -38,6 +52,7 @@ function HubsSidebarContent({ activeHubId }: { activeHubId?: number }) {
   const router = useRouter();
   const utils = trpc.useUtils();
   const [search, setSearch] = useState('');
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   const { data: hubs = [] } = trpc.userHub.getAll.useQuery();
 
@@ -86,12 +101,40 @@ function HubsSidebarContent({ activeHubId }: { activeHubId?: number }) {
       )}
 
       {activeHubId && activeHub && (
-        <HubSourcePanel
-          hubId={activeHub.id}
-          name={activeHub.name}
-          maxSources={hubLimits.sourcesPerHub}
-          sources={activeHub.sources.map(({ id: _id, ...source }) => source)}
-        />
+        <Card withBorder p="xs">
+          <UnstyledButton
+            className="w-full"
+            aria-expanded={sourcesOpen}
+            aria-label="Sources"
+            onClick={() => setSourcesOpen((value) => !value)}
+          >
+            <Group justify="space-between" wrap="nowrap">
+              <Group gap={4} wrap="nowrap">
+                {sourcesOpen ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
+                <Text fw={600}>Sources</Text>
+              </Group>
+              <Text size="xs" c="dimmed">
+                {activeHub.sources.length} / {hubLimits.sourcesPerHub}
+              </Text>
+            </Group>
+          </UnstyledButton>
+
+          {/* Mounted only once opened, which is also what defers the panel's chunk:
+              `dynamic` starts fetching as soon as the component renders, so
+              rendering it collapsed would pull instantsearch on every hub load. */}
+          <Collapse in={sourcesOpen}>
+            {sourcesOpen && (
+              <div className="pt-2">
+                <HubSourcePanel
+                  hubId={activeHub.id}
+                  name={activeHub.name}
+                  maxSources={hubLimits.sourcesPerHub}
+                  sources={activeHub.sources.map(({ id: _id, ...source }) => source)}
+                />
+              </div>
+            )}
+          </Collapse>
+        </Card>
       )}
 
       {visible.length === 0 ? (
@@ -134,17 +177,14 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <Container fluid className={classes.container}>
-      {!!currentUser && (
+      {!!currentUser && !isMobile && (
         <Card
           className={classes.sidebar}
           w={300}
           mr="xs"
           p={0}
           // No inline `overflow` here on purpose — see the note in the SCSS module.
-          style={{
-            marginLeft: showSidebar ? 0 : 'calc(-300px - var(--mantine-spacing-xs))',
-            maxHeight: 'calc(100dvh - var(--header-height) - var(--footer-height) - 68px)',
-          }}
+          style={{ marginLeft: showSidebar ? 0 : 'calc(-300px - var(--mantine-spacing-xs))' }}
           withBorder
         >
           <LegacyActionIcon
@@ -154,7 +194,13 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
           >
             {showSidebar ? <IconLayoutSidebarLeftCollapse /> : <IconLayoutSidebarLeftExpand />}
           </LegacyActionIcon>
-          <HubsSidebarContent activeHubId={activeHubId} />
+          {/* The height cap lives on the scroller, not the Card: capping the Card
+              while it stays `overflow: visible` (which the toggle in the gutter
+              needs) puts the overflow outside the border and past the viewport,
+              with nothing to scroll it. */}
+          <ScrollArea.Autosize mah="calc(100dvh - var(--header-height) - var(--footer-height) - 68px)">
+            <HubsSidebarContent activeHubId={activeHubId} />
+          </ScrollArea.Autosize>
         </Card>
       )}
 

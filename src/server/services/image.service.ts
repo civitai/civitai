@@ -3824,32 +3824,45 @@ import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema'
 // Returns null when the hub resolved to nothing. Callers must return an empty
 // page for null — never fall through unfiltered, which would serve the global
 // feed to someone who asked for their hub.
-function buildHubFilter(
+type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
+
+// The single enumeration of the arms a hub ORs together. Both backends build their
+// own clause syntax from this, so an arm added here cannot reach one of them only —
+// which is how the BitDex copy drifted into a third builder.
+// Returns null for "no arm", which callers must treat as "serve nothing"; treating
+// it as "no filter" hands the caller the global feed as their hub.
+function hubFilterArms(
   sources: ResolvedHubSources,
   {
     hideAutoResources,
     hideManualResources,
   }: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
-): string | null {
-  const arms: string[] = [];
-  if (sources.userIds.length)
-    arms.push(makeMeiliImageSearchFilter('userId', `IN [${sources.userIds.join(',')}]`));
+): HubFilterArm[] | null {
+  const arms: HubFilterArm[] = [];
+  if (sources.userIds.length) arms.push({ field: 'userId', ids: sources.userIds });
   if (sources.modelVersionIds.length) {
-    const ids = sources.modelVersionIds.join(',');
-    arms.push(makeMeiliImageSearchFilter('postedToId', `IN [${ids}]`));
-    if (!hideAutoResources) arms.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${ids}]`));
+    arms.push({ field: 'postedToId', ids: sources.modelVersionIds });
+    if (!hideAutoResources) arms.push({ field: 'modelVersionIds', ids: sources.modelVersionIds });
     if (!hideManualResources)
-      arms.push(makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${ids}]`));
+      arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
   }
   // Guarded, not merely unused: filtering on an attribute the index has not been
   // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
   if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
-    arms.push(
-      makeMeiliImageSearchFilter('collectionIds', `IN [${sources.collectionIds.join(',')}]`)
-    );
+    arms.push({ field: 'collectionIds', ids: sources.collectionIds });
 
-  if (!arms.length) return null;
-  return `(${arms.join(' OR ')})`;
+  return arms.length ? arms : null;
+}
+
+function buildHubFilter(
+  sources: ResolvedHubSources,
+  input: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
+): string | null {
+  const arms = hubFilterArms(sources, input);
+  if (!arms) return null;
+  return `(${arms
+    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
+    .join(' OR ')})`;
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
@@ -4658,16 +4671,9 @@ export async function getImagesFromBitdexPreFilter(
     // the whole query rather than just that clause.
     if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length) return null;
 
-    const hubClauses: FilterClause[] = [];
-    if (sources.userIds.length) hubClauses.push(_in('userId', sources.userIds.map(_int)));
-    if (sources.modelVersionIds.length) {
-      const versionIds = sources.modelVersionIds.map(_int);
-      hubClauses.push(_in('postedToId', versionIds));
-      if (!hideAutoResources) hubClauses.push(_in('modelVersionIds', versionIds));
-      if (!hideManualResources) hubClauses.push(_in('modelVersionIdsManual', versionIds));
-    }
-    if (!hubClauses.length) return null;
-    filters.push(_or(...hubClauses));
+    const arms = hubFilterArms(sources, { hideAutoResources, hideManualResources });
+    if (!arms) return null;
+    filters.push(_or(...arms.map((arm) => _in(arm.field, arm.ids.map(_int)))));
   }
 
   // --- NSFW Browsing Level ---

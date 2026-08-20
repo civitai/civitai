@@ -40,7 +40,14 @@ export const userHubSourceSchema = z.object({
   id: z.number().optional(),
   type: z.enum(UserHubSourceType),
   targetId: z.number().int().positive(),
-  alias: z.string().trim().max(hubLimits.aliasLength).nullish(),
+  // A display label, not identity. Model names routinely run past 60 characters,
+  // and rejecting the mutation loses the whole source list rather than the tail of
+  // one label.
+  alias: z
+    .string()
+    .trim()
+    .transform((value) => value.slice(0, hubLimits.aliasLength))
+    .nullish(),
   enabled: z.boolean().default(true),
   index: z.number().int().min(0).default(0),
 });
@@ -55,7 +62,11 @@ export const upsertUserHubSchema = z.object({
   sort: hubSortSchema.optional(),
   period: z.enum(MetricTimeframe).optional(),
   mediaTypes: z.array(z.enum(MediaType)).optional(),
-  sources: z.array(userHubSourceSchema).max(hubLimits.sourcesPerHub).default([]),
+  // Optional, and NOT defaulted: an omitted list means "leave the sources alone".
+  // Every caller sending its own cached copy of the full list turned a sort change
+  // into a full replacement, so a save issued before another one's invalidate
+  // settled reverted it.
+  sources: z.array(userHubSourceSchema).max(hubLimits.sourcesPerHub).optional(),
 });
 
 export const setUserHubOrderSchema = z.object({

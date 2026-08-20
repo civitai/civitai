@@ -13,12 +13,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // circuits the builder before any filter is assembled, which would make an
 // assertion about the emitted filter vacuous.
 
+import type * as BitdexClient from '~/server/bitdex/client';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as FliptClient from '~/server/flipt/client';
 
-const { fetchDocumentsMock, resolveHubSourcesMock } = vi.hoisted(() => ({
+const { fetchDocumentsMock, resolveHubSourcesMock, queryBitdexMock } = vi.hoisted(() => ({
   fetchDocumentsMock: vi.fn(),
   resolveHubSourcesMock: vi.fn(),
+  queryBitdexMock: vi.fn(),
 }));
 
 vi.mock('../../../../event-engine-common/feeds', () => ({
@@ -63,12 +65,18 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   getFliptBoolean: vi.fn().mockResolvedValue(false),
 }));
 
+vi.mock('~/server/bitdex/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof BitdexClient>()),
+  queryBitdex: queryBitdexMock,
+}));
+
 vi.mock('~/server/services/user-hub.service', () => ({
   resolveHubSources: resolveHubSourcesMock,
 }));
 
 import {
   getAllImages,
+  getImagesFromBitdexPreFilter,
   getImagesFromFeedSearch,
   getImagesFromSearchPostFilter,
   getImagesFromSearchPreFilter,
@@ -100,7 +108,13 @@ const emittedFilter = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   fetchDocumentsMock.mockResolvedValue({ results: [], total: 0 });
+  queryBitdexMock.mockResolvedValue({ documents: [], cursor: undefined });
 });
+
+// BitDex is a THIRD path a hub request can take, selected per user by a flag. It
+// builds its own clause syntax, so nothing in the Meili tests above says anything
+// about it.
+const bitdexFilters = () => JSON.stringify(queryBitdexMock.mock.calls[0]?.[1] ?? null);
 
 describe('hub filter reaches the search backend', () => {
   it('emits every source arm, ORed together', async () => {
@@ -114,10 +128,11 @@ describe('hub filter reaches the search backend', () => {
     await getImagesFromSearchPreFilter(input(1));
 
     const filter = emittedFilter();
-    expect(filter).toContain('userId IN [10,11]');
-    expect(filter).toContain('postedToId IN [20,21]');
-    expect(filter).toContain('modelVersionIds IN [20,21]');
-    expect(filter).toContain('modelVersionIdsManual IN [20,21]');
+    // Asserted as ONE string, not arm by arm: every per-arm `toContain` stays green
+    // when `' OR '` becomes `' AND '`, and an ANDed hub returns nothing at all.
+    expect(filter).toContain(
+      '(userId IN [10,11] OR postedToId IN [20,21] OR modelVersionIds IN [20,21] OR modelVersionIdsManual IN [20,21])'
+    );
   });
 
   it('honours hideAutoResources and hideManualResources', async () => {
@@ -210,5 +225,78 @@ describe('builders that cannot serve a hub refuse it', () => {
 
   it('getImagesFromFeedSearch throws rather than returning an unfiltered page', async () => {
     await expect(getImagesFromFeedSearch(input(1))).rejects.toThrow(/cannot serve a hub/i);
+  });
+});
+
+describe('the BitDex builder carries the same hub arm', () => {
+  it('ORs every source arm into the emitted clause set', async () => {
+    resolveHubSourcesMock.mockResolvedValue({
+      userIds: [10],
+      modelVersionIds: [20],
+      collectionIds: [],
+      truncated: false,
+    });
+
+    await getImagesFromBitdexPreFilter(input(1));
+
+    // The whole group as one string, for the same reason as the Meili assertion:
+    // arm-by-arm checks stay green when `_or` becomes `_and`.
+    expect(bitdexFilters()).toContain(
+      '{"Or":[{"In":["userId",[{"Integer":10}]]},{"In":["postedToId",[{"Integer":20}]]},{"In":["modelVersionIds",[{"Integer":20}]]},{"In":["modelVersionIdsManual",[{"Integer":20}]]}]}'
+    );
+  });
+
+  it('honours hideAutoResources and hideManualResources', async () => {
+    resolveHubSourcesMock.mockResolvedValue({
+      userIds: [],
+      modelVersionIds: [20],
+      collectionIds: [],
+      truncated: false,
+    });
+
+    await getImagesFromBitdexPreFilter({
+      ...input(1),
+      hideAutoResources: true,
+      hideManualResources: true,
+    });
+
+    const filters = bitdexFilters();
+    expect(filters).toContain('"postedToId"');
+    expect(filters).not.toContain('"modelVersionIds"');
+    expect(filters).not.toContain('"modelVersionIdsManual"');
+  });
+
+  it('declines rather than querying when the hub resolves to nothing', async () => {
+    // Returning null falls through to Meili. Pushing no filter instead would serve
+    // the global BitDex feed as somebody's hub.
+    resolveHubSourcesMock.mockResolvedValue(null);
+
+    const result = await getImagesFromBitdexPreFilter(input(1));
+
+    expect(result).toBeNull();
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+  });
+
+  it('declines when the hub has no enabled sources', async () => {
+    resolveHubSourcesMock.mockResolvedValue({
+      userIds: [],
+      modelVersionIds: [],
+      collectionIds: [],
+      truncated: false,
+    });
+
+    const result = await getImagesFromBitdexPreFilter(input(1));
+
+    expect(result).toBeNull();
+    expect(queryBitdexMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves a non-hub query untouched', async () => {
+    // Negative control: the declines above are about the hub arm, not the builder
+    // refusing everything.
+    await getImagesFromBitdexPreFilter(input(undefined));
+
+    expect(queryBitdexMock).toHaveBeenCalled();
+    expect(resolveHubSourcesMock).not.toHaveBeenCalled();
   });
 });

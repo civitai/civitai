@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { Prisma } from '@prisma/client';
 import type {
   SetUserHubOrderInput,
   UpsertUserHubInput,
@@ -49,14 +50,16 @@ export async function getUserHubById({ id, userId }: { id: number; userId: numbe
 export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & { userId: number }) {
   const { id, sources, ...data } = input;
 
-  const duplicate = new Set<string>();
-  for (const source of sources) {
-    const key = `${source.type}:${source.targetId}`;
-    if (duplicate.has(key)) throw throwBadRequestError('A source was added twice');
-    duplicate.add(key);
-  }
+  if (sources) {
+    const duplicate = new Set<string>();
+    for (const source of sources) {
+      const key = `${source.type}:${source.targetId}`;
+      if (duplicate.has(key)) throw throwBadRequestError('A source was added twice');
+      duplicate.add(key);
+    }
 
-  await assertHubSourcesUsable({ sources, userId });
+    await assertHubSourcesUsable({ sources, userId });
+  }
 
   if (!id) {
     const count = await dbRead.userHub.count({ where: { userId } });
@@ -71,7 +74,7 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
         mediaTypes: data.mediaTypes ?? [],
         userId,
         index: count,
-        sources: { create: sources.map(({ id: _, ...source }) => source) },
+        sources: { create: (sources ?? []).map(({ id: _, ...source }) => source) },
       },
       select: hubSelect,
     });
@@ -79,6 +82,8 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
 
   const existing = await dbRead.userHub.findFirst({ where: { id, userId }, select: { id: true } });
   if (!existing) throw throwNotFoundError('Hub not found');
+
+  if (!sources) return dbWrite.userHub.update({ where: { id }, data, select: hubSelect });
 
   return dbWrite.$transaction(async (tx) => {
     await tx.userHubSource.deleteMany({ where: { hubId: id } });
@@ -137,27 +142,50 @@ export async function resolveHubSources({
     hub.sources.filter((s) => s.type === type).map((s) => s.targetId);
 
   const modelIds = byType(UserHubSourceType.Model);
-  // Newest first, so a truncated expansion keeps the versions people are actually
-  // posting to rather than an arbitrary slice.
-  const versionsOfModels = modelIds.length
-    ? await dbRead.modelVersion.findMany({
-        where: { modelId: { in: modelIds } },
-        select: { id: true },
-        orderBy: { id: 'desc' },
-        take: hubLimits.resolvedVersionIds + 1,
-      })
-    : [];
-
   const explicitVersionIds = byType(UserHubSourceType.ModelVersion);
-  const allVersionIds = [...new Set([...explicitVersionIds, ...versionsOfModels.map((v) => v.id)])];
-  // Explicit ModelVersion sources are kept whole — the user picked those by hand.
-  // Only the expansion is trimmed.
+
+  // Explicit ModelVersion sources are kept whole — the user picked those by hand —
+  // so only what is left of the cap is available to expand Model sources into.
+  const budget = Math.max(0, hubLimits.resolvedVersionIds - new Set(explicitVersionIds).size);
+
+  // Each Model source gets its own share of that budget. Ranking every model's
+  // versions in one `id desc` list instead would let one high-version model spend
+  // the whole cap, leaving an older model contributing nothing while its row still
+  // reads enabled in the rail.
+  const perModel = modelIds.length ? Math.max(1, Math.floor(budget / modelIds.length)) : 0;
+
+  let truncated = false;
+  const versionIdsOfModels: number[] = [];
+  if (modelIds.length && perModel > 0) {
+    // One round trip, and the row count is bounded by the share rather than by how
+    // many versions the models happen to have. The extra rank is only read to tell
+    // whether anything was left behind.
+    const ranked = await dbRead.$queryRaw<{ id: number; modelId: number; rn: bigint }[]>`
+      SELECT id, "modelId", rn
+      FROM (
+        SELECT mv.id, mv."modelId", ROW_NUMBER() OVER (PARTITION BY mv."modelId" ORDER BY mv.id DESC) AS rn
+        FROM "ModelVersion" mv
+        WHERE mv."modelId" IN (${Prisma.join(modelIds)})
+      ) ranked
+      WHERE rn <= ${perModel + 1}
+      ORDER BY id DESC
+    `;
+    for (const row of ranked) {
+      if (Number(row.rn) > perModel) truncated = true;
+      else versionIdsOfModels.push(row.id);
+    }
+  } else if (modelIds.length) {
+    truncated = true;
+  }
+
+  const allVersionIds = [...new Set([...explicitVersionIds, ...versionIdsOfModels])];
   const modelVersionIds = allVersionIds.slice(0, hubLimits.resolvedVersionIds);
+  if (allVersionIds.length > modelVersionIds.length) truncated = true;
 
   return {
     userIds: byType(UserHubSourceType.User),
     modelVersionIds,
-    truncated: allVersionIds.length > modelVersionIds.length,
+    truncated,
     collectionIds: byType(UserHubSourceType.Collection),
   };
 }

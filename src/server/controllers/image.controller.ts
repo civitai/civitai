@@ -69,6 +69,7 @@ import type {
   UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
 } from './../schema/image.schema';
+import { requiresImageDbPath } from './../schema/image.schema';
 import {
   getAllImages,
   getEntityCoverImage,
@@ -283,31 +284,7 @@ export const getInfiniteImagesHandler = async ({
 }) => {
   const { user, features, signal } = ctx;
 
-  // Params the search index physically can't serve â€” these must use the DB
-  // (getAllImages). The decision is server-side: there is no client `useIndex`
-  // flag, so a client can't force the expensive un-indexed path on a broad query.
-  // Correctness-critical filters (wrong results if the index ignored them):
-  // - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
-  //   unique cache keys in BitDex that hurt cache hit rate)
-  // - collectionId: requires relational joins through CollectionItem
-  // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
-  // - imageId: not a search-index filter
-  // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
-  //   a modelId-only query would silently return the global feed (matches the
-  //   /api/v1/images legacy-method logic)
-  // Ordering-only:
-  // - prioritizedUserIds: DB-level user prioritization (TODO in getAllImagesIndex).
-  //   Only forces the DB when scoped to a model (its sole legit use â€” the model
-  //   showcase carousel, which always pairs it with modelVersionId). Sent alone it
-  //   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
-  const requiresDbPath =
-    !!input.postId ||
-    !!input.postIds?.length ||
-    !!input.collectionId ||
-    !!input.reactions?.length ||
-    !!input.imageId ||
-    (!!input.modelId && !input.modelVersionId) ||
-    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
+  const requiresDbPath = requiresImageDbPath(input);
 
   // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
   // can only run when the index can serve the query.

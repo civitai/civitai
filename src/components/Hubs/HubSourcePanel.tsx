@@ -1,10 +1,11 @@
-import { ActionIcon, Badge, Card, Group, Stack, Switch, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Group, Stack, Switch, Text, Tooltip } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { showErrorNotification } from '~/utils/notifications';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { hubLimits } from '~/server/schema/user-hub.schema';
 import { trpc } from '~/utils/trpc';
 
 type HubSource = {
@@ -61,7 +62,10 @@ export function HubSourcePanel({
     upsert.mutate({ id: hubId, name, sources: next.map((s, index) => ({ ...s, index })) });
   };
 
-  const addSource = (type: UserHubSourceType, targetId: number, alias: string) => {
+  const addSource = (type: UserHubSourceType, targetId: number, rawAlias: string) => {
+    // Match what the server stores, so the optimistic row is not a different
+    // string from the one that comes back.
+    const alias = rawAlias.trim().slice(0, hubLimits.aliasLength);
     if (current.some((s) => s.type === type && s.targetId === targetId)) return;
     if (current.length >= maxSources) {
       showErrorNotification({
@@ -74,96 +78,83 @@ export function HubSourcePanel({
   };
 
   return (
-    <Card withBorder p="md">
-      <Stack gap="sm">
-        <Group justify="space-between">
-          <Text fw={600}>Sources</Text>
-          <Text size="xs" c="dimmed">
-            {current.length} / {maxSources}
-          </Text>
-        </Group>
+    <Stack gap="sm">
+      <QuickSearchDropdown
+        disableInitialSearch
+        supportedIndexes={['users', 'models', 'collections']}
+        startingIndex="users"
+        dropdownItemLimit={25}
+        disabled={upsert.isPending}
+        placeholder="Add a creator, model or collection"
+        onItemSelected={(entity, item) => {
+          if (entity.entityType === 'User') {
+            const user = item as SearchIndexDataMap['users'][number];
+            addSource(UserHubSourceType.User, user.id, user.username ?? `User ${user.id}`);
+          } else if (entity.entityType === 'Model') {
+            const model = item as SearchIndexDataMap['models'][number];
+            addSource(UserHubSourceType.Model, model.id, model.name);
+          } else if (entity.entityType === 'Collection') {
+            const collection = item as SearchIndexDataMap['collections'][number];
+            addSource(UserHubSourceType.Collection, collection.id, collection.name);
+          }
+        }}
+      />
 
-        <QuickSearchDropdown
-          disableInitialSearch
-          supportedIndexes={['users', 'models', 'collections']}
-          startingIndex="users"
-          dropdownItemLimit={25}
-          disabled={upsert.isPending}
-          placeholder="Add a creator, model or collection"
-          onItemSelected={(entity, item) => {
-            if (entity.entityType === 'User') {
-              const user = item as SearchIndexDataMap['users'][number];
-              addSource(UserHubSourceType.User, user.id, user.username ?? `User ${user.id}`);
-            } else if (entity.entityType === 'Model') {
-              const model = item as SearchIndexDataMap['models'][number];
-              addSource(UserHubSourceType.Model, model.id, model.name);
-            } else if (entity.entityType === 'Collection') {
-              const collection = item as SearchIndexDataMap['collections'][number];
-              addSource(UserHubSourceType.Collection, collection.id, collection.name);
-            }
-          }}
-        />
-
-        {current.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            Nothing here yet. Search above to follow a creator, a model or a public collection.
-          </Text>
-        ) : (
-          <Stack gap={4}>
-            {current.map((source) => (
-              <Group
-                key={`${source.type}-${source.targetId}`}
-                justify="space-between"
-                wrap="nowrap"
-              >
-                <Group gap="xs" wrap="nowrap" className="min-w-0">
-                  <Badge size="sm" variant="light">
-                    {sourceLabels[source.type]}
-                  </Badge>
-                  <Text size="sm" lineClamp={1}>
-                    {source.alias ?? `#${source.targetId}`}
-                  </Text>
-                </Group>
-                <Group gap="xs" wrap="nowrap">
-                  <Tooltip label={source.enabled ? 'Showing in this hub' : 'Hidden from this hub'}>
-                    <Switch
-                      size="xs"
-                      checked={source.enabled}
-                      disabled={upsert.isPending}
-                      aria-label={`Toggle ${source.alias ?? source.targetId}`}
-                      onChange={(event) =>
-                        save(
-                          current.map((s) =>
-                            s.type === source.type && s.targetId === source.targetId
-                              ? { ...s, enabled: event.currentTarget.checked }
-                              : s
-                          )
-                        )
-                      }
-                    />
-                  </Tooltip>
-                  <ActionIcon
-                    size="sm"
-                    variant="subtle"
-                    color="red"
+      {current.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          Nothing here yet. Search above to follow a creator, a model or a public collection.
+        </Text>
+      ) : (
+        <Stack gap={4}>
+          {current.map((source) => (
+            <Group key={`${source.type}-${source.targetId}`} justify="space-between" wrap="nowrap">
+              <Group gap="xs" wrap="nowrap" className="min-w-0">
+                <Badge size="sm" variant="light">
+                  {sourceLabels[source.type]}
+                </Badge>
+                <Text size="sm" lineClamp={1}>
+                  {source.alias ?? `#${source.targetId}`}
+                </Text>
+              </Group>
+              <Group gap="xs" wrap="nowrap">
+                <Tooltip label={source.enabled ? 'Showing in this hub' : 'Hidden from this hub'}>
+                  <Switch
+                    size="xs"
+                    checked={source.enabled}
                     disabled={upsert.isPending}
-                    aria-label={`Remove ${source.alias ?? source.targetId}`}
-                    onClick={() =>
+                    aria-label={`Toggle ${source.alias ?? source.targetId}`}
+                    onChange={(event) =>
                       save(
-                        current.filter(
-                          (s) => !(s.type === source.type && s.targetId === source.targetId)
+                        current.map((s) =>
+                          s.type === source.type && s.targetId === source.targetId
+                            ? { ...s, enabled: event.currentTarget.checked }
+                            : s
                         )
                       )
                     }
-                  >
-                    <IconTrash size={16} />
-                  </ActionIcon>
-                </Group>
+                  />
+                </Tooltip>
+                <ActionIcon
+                  size="sm"
+                  variant="subtle"
+                  color="red"
+                  disabled={upsert.isPending}
+                  aria-label={`Remove ${source.alias ?? source.targetId}`}
+                  onClick={() =>
+                    save(
+                      current.filter(
+                        (s) => !(s.type === source.type && s.targetId === source.targetId)
+                      )
+                    )
+                  }
+                >
+                  <IconTrash size={16} />
+                </ActionIcon>
               </Group>
-            ))}
-          </Stack>
-        )}
-      </Stack>
-    </Card>
+            </Group>
+          ))}
+        </Stack>
+      )}
+    </Stack>
   );
 }

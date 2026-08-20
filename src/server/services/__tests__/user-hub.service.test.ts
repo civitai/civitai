@@ -15,7 +15,7 @@ vi.mock('~/server/services/collection.service', () => ({
 }));
 
 import { resolveHubSources, upsertUserHub } from '~/server/services/user-hub.service';
-import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
+import { HUB_COLLECTION_SOURCES_ENABLED, hubLimits } from '~/server/schema/user-hub.schema';
 import {
   CollectionReadConfiguration,
   MetricTimeframe,
@@ -25,11 +25,27 @@ import { ImageSort } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const findFirstHub = dbMock.dbRead.userHub.findFirst;
 const findManyCollections = dbMock.dbRead.collection.findMany;
-const findManyVersions = dbMock.dbRead.modelVersion.findMany;
+const queryRaw = dbMock.dbRead.$queryRaw;
+
+// Stands in for the ranked ModelVersion query: it reads the model ids and the rank
+// limit out of the emitted template rather than assuming them, so a change to
+// either shows up here instead of being absorbed.
+function stubVersions(versionsByModel: Record<number, number[]>) {
+  queryRaw.mockImplementation((_strings: TemplateStringsArray, ...values: unknown[]) => {
+    const modelIds = (values[0] as { values: number[] }).values;
+    const rankLimit = values[1] as number;
+    const rows: { id: number; modelId: number; rn: bigint }[] = [];
+    for (const modelId of modelIds) {
+      const ids = [...(versionsByModel[modelId] ?? [])].sort((a, b) => b - a);
+      ids.slice(0, rankLimit).forEach((id, i) => rows.push({ id, modelId, rn: BigInt(i + 1) }));
+    }
+    return Promise.resolve(rows.sort((a, b) => b.id - a.id));
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
-  findManyVersions.mockResolvedValue([]);
+  stubVersions({});
 });
 
 describe('resolveHubSources', () => {
@@ -63,7 +79,7 @@ describe('resolveHubSources', () => {
         { type: UserHubSourceType.Collection, targetId: 40 },
       ],
     });
-    findManyVersions.mockResolvedValue([{ id: 30 }, { id: 31 }]);
+    stubVersions({ 20: [30, 31] });
 
     const result = await resolveHubSources({ hubId: 1, userId: 5 });
 
@@ -72,6 +88,44 @@ describe('resolveHubSources', () => {
     // 31 is both explicit and expanded — it must appear once, or the filter
     // carries a duplicate id for every version a user pinned by hand.
     expect([...(result?.modelVersionIds ?? [])].sort((a, b) => a - b)).toEqual([30, 31]);
+  });
+
+  it('gives each model source its own share of the cap, so an older model still contributes', async () => {
+    // Ranking every model's versions in ONE `id desc` list is the regression: the
+    // high-version model spends the whole cap and model 21 contributes nothing
+    // while its row still reads enabled.
+    findFirstHub.mockResolvedValue({
+      sources: [
+        { type: UserHubSourceType.Model, targetId: 20 },
+        { type: UserHubSourceType.Model, targetId: 21 },
+      ],
+    });
+    const manyNewIds = Array.from({ length: 800 }, (_, i) => 100_000 + i);
+    const fewOldIds = [1, 2, 3, 4, 5];
+    stubVersions({ 20: manyNewIds, 21: fewOldIds });
+
+    const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+    const ids = result?.modelVersionIds ?? [];
+    expect(ids.length).toBeLessThanOrEqual(hubLimits.resolvedVersionIds);
+    for (const id of fewOldIds) expect(ids).toContain(id);
+    expect(ids.some((id) => manyNewIds.includes(id))).toBe(true);
+    // Model 20 was cut short, and that has to be visible on the result rather than
+    // inferred from a short list.
+    expect(result?.truncated).toBe(true);
+  });
+
+  it('leaves truncated false when every version fits', async () => {
+    // Negative control: without it, `truncated = true` unconditionally passes the
+    // assertion above.
+    findFirstHub.mockResolvedValue({
+      sources: [{ type: UserHubSourceType.Model, targetId: 20 }],
+    });
+    stubVersions({ 20: [30, 31] });
+
+    const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+    expect(result?.truncated).toBe(false);
   });
 
   it('only resolves enabled sources', async () => {
@@ -120,6 +174,48 @@ describe('upsertUserHub', () => {
     const arg = dbMock.dbWrite.userHub.create.mock.calls[0][0];
     expect(arg.data.sort).toBe(ImageSort.Newest);
     expect(arg.data.period).toBe(MetricTimeframe.AllTime);
+
+    // The half the title used to claim and never exercised: the same call shape
+    // against an existing hub must not carry those values, or toggling a source
+    // resets the user's sort.
+    dbMock.dbRead.userHub.findFirst.mockResolvedValue({ id: 9 });
+
+    await upsertUserHub({ id: 9, name: 'defaults', sources: [], userId: 5 });
+
+    const updateArg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(updateArg.data.sort).toBeUndefined();
+    expect(updateArg.data.period).toBeUndefined();
+  });
+
+  it('leaves the sources alone when the input omits them', async () => {
+    // A rename and a sort change both used to resend their own cached copy of the
+    // whole list, so either could revert a source edit made in between. With the
+    // list omitted the update must not touch UserHubSource at all.
+    dbMock.dbRead.userHub.findFirst.mockResolvedValue({ id: 9 });
+
+    await upsertUserHub({ id: 9, name: 'renamed', userId: 5 });
+
+    expect(dbMock.dbWrite.userHubSource.deleteMany).not.toHaveBeenCalled();
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.sources).toBeUndefined();
+    expect(arg.data.name).toBe('renamed');
+  });
+
+  it('still replaces the sources when the input carries them', async () => {
+    // Negative control for the test above: without it, an update branch that
+    // dropped source writes entirely would pass.
+    dbMock.dbRead.userHub.findFirst.mockResolvedValue({ id: 9 });
+
+    await upsertUserHub({
+      id: 9,
+      name: 'renamed',
+      sources: [{ type: UserHubSourceType.User, targetId: 10, enabled: true, index: 0 }],
+      userId: 5,
+    });
+
+    expect(dbMock.dbWrite.userHubSource.deleteMany).toHaveBeenCalledWith({ where: { hubId: 9 } });
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.sources.create).toHaveLength(1);
   });
 });
 

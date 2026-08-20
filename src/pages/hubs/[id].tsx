@@ -15,7 +15,8 @@ import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  resolver: async ({ session, features }) => {
+    if (!features?.userHubs) return { notFound: true };
     if (!session?.user) return { redirect: { destination: '/login', permanent: false } };
   },
 });
@@ -83,13 +84,7 @@ export default Page(
                 setName(hub.name);
                 return;
               }
-              upsert.mutate({
-                id: hub.id,
-                name: trimmed,
-                sort,
-                period: hub.period,
-                sources: hub.sources.map(({ id: _id, ...source }) => source),
-              });
+              upsert.mutate({ id: hub.id, name: trimmed });
             }}
           />
 
@@ -105,7 +100,14 @@ export default Page(
             <ImagesInfinite
               showEof
               disableStoreFilters
-              filters={{ hubId: hub.id, sort, period: hub.period }}
+              filters={{
+                hubId: hub.id,
+                sort,
+                period: hub.period,
+                // Stored on the hub and empty by default; an empty list means
+                // "every type", which is what omitting the filter does.
+                types: hub.mediaTypes.length ? hub.mediaTypes : undefined,
+              }}
             />
           )}
         </div>

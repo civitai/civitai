@@ -10,6 +10,7 @@ import {
   IconCube,
   IconFileText,
   IconHome,
+  IconLayoutGrid,
   IconLayoutList,
   IconMoneybag,
   IconPhoto,
@@ -109,6 +110,12 @@ export const homeOptions: HomeOption[] = [
     // new: new Date('2025-05-26'),
   },
   {
+    key: 'hubs',
+    url: '/hubs',
+    icon: (props: IconProps) => <IconLayoutGrid {...props} />,
+    grouped: true,
+  },
+  {
     key: 'shop',
     url: '/shop',
     icon: (props: IconProps) => <IconShoppingBag {...props} />,
@@ -129,6 +136,7 @@ export function filterHomeOptions(features: FeatureAccess) {
         key === '3d-models' && !features.model3dFeed,
         key === 'posts' && !features.postsNavItem,
         key === 'events' && !features.eventsNavItem,
+        key === 'hubs' && !features.userHubs,
       ].some((b) => b)
   );
 }

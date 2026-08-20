@@ -2,6 +2,7 @@ import { ActionIcon, Button, Card, Center, Group, Loader, Stack, Text, Title } f
 import { IconLayoutGrid, IconPlus, IconTrash } from '@tabler/icons-react';
 import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -9,7 +10,8 @@ import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  resolver: async ({ session, features }) => {
+    if (!features?.userHubs) return { notFound: true };
     if (!session?.user) return { redirect: { destination: '/login', permanent: false } };
   },
 });
@@ -73,15 +75,23 @@ export default function HubsPage() {
                         : `${hub.sources.length} source${hub.sources.length === 1 ? '' : 's'}`}
                     </Text>
                   </Link>
-                  <ActionIcon
-                    variant="subtle"
-                    color="red"
-                    aria-label={`Delete ${hub.name}`}
-                    loading={deleteMutation.isPending}
-                    onClick={() => deleteMutation.mutate({ id: hub.id })}
+                  <PopConfirm
+                    message={`Delete "${hub.name}"? Its sources go with it, and this cannot be undone.`}
+                    onConfirm={() => deleteMutation.mutate({ id: hub.id })}
+                    confirmButtonColor="red"
+                    width={260}
+                    withArrow
+                    withinPortal
                   >
-                    <IconTrash size={18} />
-                  </ActionIcon>
+                    <ActionIcon
+                      variant="subtle"
+                      color="red"
+                      aria-label={`Delete ${hub.name}`}
+                      loading={deleteMutation.isPending}
+                    >
+                      <IconTrash size={18} />
+                    </ActionIcon>
+                  </PopConfirm>
                 </Group>
               </Card>
             ))}
