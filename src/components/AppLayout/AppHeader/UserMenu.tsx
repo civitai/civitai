@@ -43,6 +43,7 @@ import {
 } from '~/components/CivitaiWrapped/AccountProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { HeaderUserBuzz } from '~/components/AppLayout/AppHeader/HeaderUserBuzz';
@@ -249,22 +250,7 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
               <item.icon stroke={1.5} color={item.color} />
               <span className="text-sm leading-none">{item.label}</span>
               {item.currency && <CurrencyIcon currency={Currency.BUZZ} size={16} />}
-              {!!item.badge && (
-                // Falsy-guarded rather than `!== undefined`: a zero queue must
-                // draw nothing at all. `circle` is dropped past 99 because the
-                // fixed one- or two-character disc clips the "+" off "99+" —
-                // same trick the placement queue's own tab badge uses.
-                <Badge
-                  color="yellow"
-                  variant="filled"
-                  size="sm"
-                  ml={4}
-                  circle={item.badge <= 99}
-                  px={item.badge > 99 ? 6 : undefined}
-                >
-                  {item.badge > 99 ? '99+' : item.badge}
-                </Badge>
-              )}
+              <QueueCountBadge count={item.badge ?? 0} max={99} ml={4} />
               {!!item.newUntil && Date.now() < item.newUntil.getTime() && (
                 <Badge color="green.8" variant="filled" size="sm" ml={4}>
                   NEW

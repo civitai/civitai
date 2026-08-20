@@ -22,6 +22,12 @@ import {
   STICKER_PLACEMENT_MIN_SCALE,
   stickerMaxScale,
 } from '~/shared/utils/sticker-placement';
+import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
+import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
+import {
+  PLACEMENT_QUEUE_RECEIVED_URL,
+  PLACEMENT_QUEUE_SENT_URL,
+} from '~/components/Placement/queue-routes';
 import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import { pendingCount } from '~/components/Placement/queue-counts';
@@ -47,6 +53,7 @@ const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SUR
  * finds out from their earnings.
  */
 export function PlacementSpaceSection() {
+  const { pendingPlacements } = useQueryNotificationsCount();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
@@ -61,7 +68,10 @@ export function PlacementSpaceSection() {
     isPending: spacesPending,
     isError: spacesFailed,
   } = trpc.placement.getMySpaces.useQuery({ surface: 'sticker' }, { enabled });
-  const { data: pending } = trpc.placement.getPending.useQuery({}, { enabled });
+  // The paged `placement.getPending` query this card used to make is gone with
+  // the count that needed it: it fetched 50 rows and joined every image just to
+  // read `.length` for a badge, on a settings page that never renders one of
+  // them.
   const { data: sent } = trpc.placement.getMyStickerPlacements.useQuery({}, { enabled });
 
   const stored = spaces?.[0];
@@ -123,11 +133,13 @@ export function PlacementSpaceSection() {
 
   const cap = range?.max ?? 0;
   const freeSlotCap = range?.freeSlotCap ?? 0;
-  const waiting = pending?.items.length ?? 0;
-  // One page's worth is a floor, not a total. Badging it as an exact number
-  // tells an owner with 200 waiting that they have 50, which is the same lie
-  // the unpaged queue told.
-  const waitingLabel = pending?.nextCursor ? `${waiting}+` : `${waiting}`;
+  // The real count, not this page's `items.length`. That was one page's worth —
+  // a floor badged with a `+`, which told an owner with 200 waiting that they
+  // had "50+". It rides on `checkNotifications`, already in flight for the
+  // notification bell, so this costs no request; and it is now the SAME number
+  // the user menu shows, where before this card and the menu answered "how many
+  // are waiting on me" differently.
+  const waiting = pendingPlacements;
 
   const placedCount = pendingCount(sent ?? []);
   const caption = placementPriceCaption(
@@ -286,39 +298,27 @@ export function PlacementSpaceSection() {
         />
       )}
 
-      {/* Both queues are otherwise unreachable: the notification links to the
-          image, and nothing else in the app points at either side. Two buttons
-          rather than one link, matching the remix gallery — each direction has a
-          count, and a count needs somewhere to sit. */}
+      {/* No longer the only way in — the user menu carries the received queue
+          and the pending notification now lands on it — but still the right
+          place for both directions, next to the space controls that create the
+          queue. Two buttons rather than one link, matching the remix gallery:
+          each direction has a count, and a count needs somewhere to sit. */}
       {/* A real button, and `component="a"` rather than `component={Link}` —
           Mantine's polymorphic button drops its styles through the Next link,
           which is why this read as bare text. */}
       <Group gap="xs" wrap="nowrap">
         <Button
           component="a"
-          href="/user/sticker-placements?tab=received"
+          href={PLACEMENT_QUEUE_RECEIVED_URL}
           variant={waiting > 0 ? 'light' : 'default'}
           size="sm"
-          rightSection={
-            waiting > 0 ? (
-              <Badge
-                size="sm"
-                color="yellow"
-                variant="filled"
-                // See the remix tab badge: a disc clips the "+" off "50+".
-                circle={!pending?.nextCursor}
-                px={pending?.nextCursor ? 6 : undefined}
-              >
-                {waitingLabel}
-              </Badge>
-            ) : undefined
-          }
+          rightSection={<QueueCountBadge count={waiting} />}
         >
           Review pending stickers
         </Button>
         <Button
           component="a"
-          href="/user/sticker-placements?tab=sent"
+          href={PLACEMENT_QUEUE_SENT_URL}
           variant="default"
           size="sm"
           rightSection={

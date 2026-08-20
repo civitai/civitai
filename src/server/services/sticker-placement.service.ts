@@ -1230,7 +1230,16 @@ export async function actOnStickerPlacements({
  * back and costs the owner their fee. A badge that hid those would count down to
  * zero while the queue still had rows in it.
  *
- * `[ownerId, surface, status, createdAt, id]` covers this exactly.
+ * `[ownerId, surface, status, createdAt, id]` covers this exactly — verified on
+ * prod, not inferred: the planner takes it as an Index Only Scan with all three
+ * equality columns in the Index Cond.
+ *
+ * One divergence from the queue page it counts for, which is deliberate but is
+ * NOT "the same number": the page drops rows whose `data` will not parse, after
+ * fetching them. So this count can read higher than the rows the page renders.
+ * An unparseable row is still pending, still holds a slot and still expires, so
+ * counting it is the honest answer — but do not read the two as guaranteed
+ * equal.
  */
 export async function getPendingStickerPlacementCount({ ownerId }: { ownerId: number }) {
   return dbRead.placement.count({

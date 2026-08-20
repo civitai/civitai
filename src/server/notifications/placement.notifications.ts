@@ -1,5 +1,6 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { PLACEMENT_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
 
 /**
  * A pending placement is invisible to the creator until something tells them.
@@ -33,7 +34,7 @@ export const placementNotifications = createNotificationProcessor({
       // The queue, not `/images/${details.imageId}` — see the note at the top of
       // this file. Static, because the whole point is the rows this owner has
       // not seen; a per-placement URL would land them back on one image.
-      url: `/user/sticker-placements?tab=received`,
+      url: PLACEMENT_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
@@ -113,7 +114,7 @@ export const placementNotifications = createNotificationProcessor({
       // Same queue as the paid one: a free placement holds a slot and expires
       // the same way, and splitting the two destinations would teach an owner
       // two different routes for one job.
-      url: `/user/sticker-placements?tab=received`,
+      url: PLACEMENT_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (

@@ -18,20 +18,32 @@ describe('isMigratedModeratorHref ignores query and hash', () => {
     expect(isMigratedModeratorHref('/moderator/images#anchor')).toBe(true);
   });
 
+  it('strips only the query, not a real sub-path', () => {
+    // `images/123` is a migrated sub-path; the strip must take `?tab=x` and
+    // leave the `/123`. Asserting a bare key here instead would have been
+    // inert — a path with no `?` in it cannot observe the strip at all.
+    expect(isMigratedModeratorHref('/moderator/images/123?tab=x')).toBe(true);
+  });
+
   it('does not invent a migration for a route that has not moved', () => {
-    // The pre-filtered sticker link. If creator-shop ever migrates this flips,
-    // which is the point — it flips for both of its nav entries at once.
+    // Not a check on the strip — `creator-shop` is in no branch of the map, so
+    // this is false with the strip and without it. It is here as a tripwire for
+    // the day creator-shop migrates, because on that day BOTH of its nav
+    // entries have to flip together and the query-carrying one is the one that
+    // would otherwise be missed.
     expect(isMigratedModeratorHref('/moderator/creator-shop')).toBe(false);
     expect(isMigratedModeratorHref('/moderator/creator-shop?type=sticker')).toBe(false);
   });
 
-  it('leaves non-moderator hrefs alone', () => {
-    expect(isMigratedModeratorHref('/user/sticker-placements?tab=received')).toBe(false);
-  });
-
-  it('still preserves the sub-path when resolving', () => {
-    // Guards the stripping from being pushed down into resolveMigratedRoute,
-    // where it would eat a real sub-path.
+  it('preserves query and sub-path when RESOLVING, which is a different job', () => {
+    // 🔴 The strip belongs in the href check ONLY. Pushed down into the
+    // resolver it would silently drop the pre-filtering off a redirect — which
+    // is what makes the query-carrying nav entry worth having.
+    //
+    // The input has to contain a `?` for this to observe that mutation: an
+    // input without one is identical before and after the strip, so a bare
+    // `resolveMigratedRoute('image-tags')` assertion pinned nothing.
+    expect(resolveMigratedRoute('images/123?tab=x')).toBe('images/123?tab=x');
     expect(resolveMigratedRoute('image-tags')).toBe('images/tags');
   });
 });

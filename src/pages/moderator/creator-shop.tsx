@@ -6,11 +6,11 @@ import {
   Group,
   Loader,
   MultiSelect,
-  SegmentedControl,
   NumberInput,
   Pagination,
   Paper,
   ScrollArea,
+  SegmentedControl,
   Select,
   SimpleGrid,
   Stack,
@@ -312,21 +312,32 @@ function CreatorShopReviewPage() {
   // page, and `replace` rather than `push` so narrowing a filter does not build
   // a back-button trail through every intermediate selection.
   useEffect(() => {
-    const next: Record<string, string> = {};
+    // Everything this effect does NOT own is carried through untouched. Building
+    // the query from scratch erased utm/ref params and anything else a link
+    // arrived with — the shared `useZodRouteParams` merges for the same reason.
+    const preserved = Object.entries(router.query).filter(
+      ([key, value]) => typeof value === 'string' && key !== 'status' && key !== 'type'
+    ) as [string, string][];
+
+    const next: Record<string, string> = Object.fromEntries(preserved);
     if (statusFilter !== CosmeticShopItemStatus.PendingReview) next.status = statusFilter;
     if (typeFilter.length) next.type = typeFilter.join(',');
 
-    const current = new URLSearchParams(
+    // Sorted on both sides before comparing: `router.query` arrives in the
+    // URL's key order and `next` in insertion order, so an unsorted compare
+    // reported a difference for a pure reordering and fired one pointless
+    // replace on arrival from the pre-filtered nav link.
+    const render = (entries: [string, string][]) =>
+      new URLSearchParams([...entries].sort(([a], [b]) => a.localeCompare(b))).toString();
+
+    const current = render(
       Object.entries(router.query).flatMap(([key, value]) =>
         typeof value === 'string' ? [[key, value] as [string, string]] : []
       )
     );
-    const desired = new URLSearchParams(next);
-    // Compare rendered strings rather than objects: an effect that replaces on
-    // every render loops, and `router.query` is a new object each time.
-    if (current.toString() === desired.toString()) return;
+    if (current === render(Object.entries(next))) return;
 
-    router.replace({ query: next }, undefined, { shallow: true });
+    router.replace({ pathname: router.pathname, query: next }, undefined, { shallow: true });
     // `router` is deliberately out of the deps — it changes identity on every
     // navigation, which would re-run this against its own write.
     // eslint-disable-next-line react-hooks/exhaustive-deps

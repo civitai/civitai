@@ -26,6 +26,7 @@ import { PlacementFreeFilter } from '~/components/Placement/PlacementFreeFilter'
 import { useWithheldHref } from '~/components/Placement/useWithheldHref';
 import { selectionAfterHidingFree, visibleQueueRows } from '~/components/Placement/free-filter';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
+import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import {
   placedSpendLabel,
@@ -103,19 +104,9 @@ export default function StickerPlacements() {
               <Tabs.Tab
                 value="received"
                 rightSection={
-                  waiting || hasNextPage ? (
-                    // `circle` fixes the width to a one- or two-character disc,
-                    // so the "+" of a truncated count clips to "5…". A pill for
-                    // the wider label, the disc for the plain count.
-                    <Badge
-                      size="sm"
-                      variant="filled"
-                      circle={!hasNextPage}
-                      px={hasNextPage ? 6 : undefined}
-                    >
-                      {hasNextPage ? `${waiting}+` : waiting}
-                    </Badge>
-                  ) : null
+                  // Truncated, not capped: this counts one page, so a next
+                  // cursor means the real number is higher.
+                  <QueueCountBadge count={waiting} truncated={!!hasNextPage} color="blue" />
                 }
               >
                 Received

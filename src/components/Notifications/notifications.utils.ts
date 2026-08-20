@@ -106,52 +106,92 @@ export const useQueryNotificationsCount = () => {
     : { ...data, all: data.all + announcements.length, announcements: announcements.length };
 };
 
+/**
+ * Keys on the `checkNotifications` payload that are NOT notification category
+ * counts, and must survive "mark all as read".
+ *
+ * 🔴 This set is load-bearing, and the reason is not obvious from the code it
+ * guards. The two branches that key off a category name are safe only because
+ * they test `category.toLowerCase() in counts` and this key is camelCase —
+ * `'pendingplacements'` matches nothing. That is a casing accident, not a
+ * design. Rename this field to lowercase, or add a NotificationCategory that
+ * lowercases into it, and the category branch would start subtracting a
+ * placement count out of the bell's total.
+ *
+ * The blanket branch has no such accident protecting it: it iterates every key,
+ * so a non-category count added to this payload is zeroed by one click on "mark
+ * all as read" and — since the query is `staleTime: Infinity` with no
+ * invalidation anywhere — stays zero until a full page load. That is exactly
+ * what shipped when `pendingPlacements` was added: for an owner without the
+ * `stickerPlacement` flag, whose menu entry is gated on a nonzero count, the
+ * wipe did not just clear the badge, it removed the entry.
+ */
+export const NON_CATEGORY_COUNT_KEYS: ReadonlySet<string> = new Set(['pendingPlacements']);
+
+type NotificationCounts = Record<string, number>;
+
+/**
+ * The optimistic count update for `notification.markRead`, as a pure function so
+ * it can be tested without a mutation, a provider, or a click.
+ *
+ * Extracted rather than left inline because the bug above was invisible in a
+ * closure inside a `useMutation` option: nothing could reach it to assert on it.
+ */
+export function applyMarkReadToCounts<T extends NotificationCounts>(
+  old: T | undefined,
+  { id, category }: { id?: unknown; category?: string | null }
+): T {
+  const categoryStr = category?.toLowerCase();
+  // Widened to the index signature for the body, narrowed back on return: the
+  // branches below index by a category name computed at runtime, which TS will
+  // not allow on a generic. The cast is the dynamic access, not a claim that
+  // every key is a category — see NON_CATEGORY_COUNT_KEYS.
+  const newCounts: NotificationCounts = { ...old, all: old?.all ?? 0 };
+
+  if (id) {
+    // if we have an id, set that category-- and all-- and that's it
+    newCounts['all']--;
+    if (!!categoryStr && categoryStr in newCounts) {
+      newCounts[categoryStr]--;
+    }
+  } else if (!!categoryStr) {
+    // otherwise, if we have a category, set that to 0 and -X from all
+    if (categoryStr in newCounts) {
+      newCounts['all'] -= newCounts[categoryStr] ?? 0;
+      newCounts[categoryStr] = 0;
+    }
+  } else {
+    // if we don't, set every CATEGORY to 0 — see NON_CATEGORY_COUNT_KEYS.
+    for (const key of Object.keys(newCounts)) {
+      if (NON_CATEGORY_COUNT_KEYS.has(key)) continue;
+      newCounts[key] = 0;
+    }
+  }
+
+  for (const key of Object.keys(newCounts)) {
+    // Skipped by name here too, not because a count can go negative — it cannot
+    // — but so that every loop over this object states the same rule. A loop
+    // that happens to be harmless is where the next one gets copied from.
+    if (NON_CATEGORY_COUNT_KEYS.has(key)) continue;
+    if (newCounts[key] < 0) newCounts[key] = 0;
+  }
+
+  return newCounts as T;
+}
+
 export const useMarkReadNotification = () => {
   const queryUtils = trpc.useUtils();
   const queryClient = useQueryClient();
 
   const mutation = trpc.notification.markRead.useMutation({
     async onMutate({ category, all, id }) {
-      // Lower notification count
+      // Also used by the notification-feed updater below.
       const categoryStr = category?.toLowerCase();
 
       await queryUtils.user.checkNotifications.cancel();
-      queryUtils.user.checkNotifications.setData(undefined, (old) => {
-        // Intersected with an index signature rather than typed as one: these
-        // updaters index by a category name computed at runtime, but the query's
-        // data is now a fixed shape (it carries `pendingPlacements` alongside
-        // the category counts), and a bare Record<string, number> is no longer
-        // assignable back to it.
-        const newCounts = { ...old, all: old?.all ?? 0 } as NonNullable<typeof old> &
-          Record<string, number>;
-
-        if (id) {
-          // if we have an id, set that category-- and all-- and that's it
-          newCounts['all']--;
-          if (!!categoryStr && categoryStr in newCounts) {
-            newCounts[categoryStr]--;
-          }
-        } else {
-          if (!!categoryStr) {
-            // otherwise, if we have a category, set that to 0 and -X from all
-            if (categoryStr in newCounts) {
-              newCounts['all'] -= newCounts[categoryStr] ?? 0;
-              newCounts[categoryStr] = 0;
-            }
-          } else {
-            // if we don't, set everything to 0
-            for (const key of Object.keys(newCounts)) {
-              newCounts[key] = 0;
-            }
-          }
-        }
-
-        for (const key of Object.keys(newCounts)) {
-          if (newCounts[key] < 0) newCounts[key] = 0;
-        }
-
-        return newCounts;
-      });
+      queryUtils.user.checkNotifications.setData(undefined, (old) =>
+        applyMarkReadToCounts(old, { id, category })
+      );
 
       // Mark as read in notification feed
       const queryKey = getQueryKey(trpc.notification.getAllByUser);
@@ -222,11 +262,9 @@ export const useNotificationSignal = () => {
       );
 
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
-        // Intersected with an index signature rather than typed as one: these
-        // updaters index by a category name computed at runtime, but the query's
-        // data is now a fixed shape (it carries `pendingPlacements` alongside
-        // the category counts), and a bare Record<string, number> is no longer
-        // assignable back to it.
+        // Writes two named keys only, so unlike the mark-read updater it cannot
+        // touch a non-category count. The cast is the index access, not a claim
+        // that every key here is a category.
         const newCounts = { ...old, all: old?.all ?? 0 } as NonNullable<typeof old> &
           Record<string, number>;
         newCounts[updated.category.toLowerCase()] =

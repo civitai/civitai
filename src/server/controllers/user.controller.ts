@@ -259,10 +259,18 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   const { id } = ctx.user;
 
   try {
-    const unreadCount = await getUserNotificationCount({
-      userId: id,
-      unread: true,
-    });
+    // Concurrent, not serial: these hit two different backends — the
+    // notifications service over HTTP (with its own retries) and the main
+    // Postgres replica — with no data dependency between them. Awaiting them in
+    // sequence tacked a full DB round trip onto a request already waiting on a
+    // retrying HTTP call.
+    const [unreadCount, pendingPlacements] = await Promise.all([
+      getUserNotificationCount({ userId: id, unread: true }),
+      // Degrades to 0 rather than failing the request, matching
+      // getUserNotificationCount: an under-reported badge for one session beats
+      // taking the notification bell down with it.
+      getPendingStickerPlacementCount({ ownerId: id }).catch(() => 0),
+    ]);
 
     const reduced = unreadCount.reduce(
       (acc, { category, count }) => {
@@ -274,22 +282,18 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
     );
 
-    // Rides along here rather than getting its own query: this is the one
-    // request that already runs once per session for every signed-in user
-    // (`staleTime: Infinity`, see useQueryNotificationsCount), and the user menu
-    // badge needs a number on every page. A second per-page count would be a
-    // production cost for a creator-only chore.
+    // `pendingPlacements` rides along here rather than getting its own query:
+    // this is the one request that already runs once per session for every
+    // signed-in user (`staleTime: Infinity`, see useQueryNotificationsCount),
+    // and the user menu badge needs a number on every page. A second per-page
+    // count would be a production cost for a creator-only chore.
     //
     // Deliberately NOT folded into `all`: that number is the notification bell's
     // badge, and a pending placement is not an unread notification. Adding it
     // there would inflate the bell by rows the drawer cannot show and cannot
-    // clear.
-    //
-    // Degrades to 0 rather than failing the request, matching
-    // getUserNotificationCount: an under-reported badge for one session beats
-    // taking the bell down with it.
-    const pendingPlacements = await getPendingStickerPlacementCount({ ownerId: id }).catch(() => 0);
-
+    // clear. It is also excluded by name from the client's mark-all-read wipe —
+    // see NON_CATEGORY_COUNT_KEYS in notifications.utils.ts, which is where the
+    // invariant for adding another non-category key to this payload lives.
     return { ...reduced, pendingPlacements };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

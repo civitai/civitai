@@ -99,6 +99,12 @@ describe('the free notification reaches the creator, about the right image', () 
     async (type) => {
       const sql = await query(type);
 
+      // The URL no longer reads `imageId` — it is the static queue link — so
+      // this pins the PAYLOAD rather than the destination. Kept deliberately:
+      // the queue row needs the image to render, a revert to a per-image link
+      // needs it to be correct, and a details payload carrying the placement id
+      // under an `imageId` key would build a plausible dead URL the day either
+      // happens.
       expect(sql).toMatch(/'imageId',\s*p\."targetId"/);
       expect(sql).not.toMatch(/'imageId',\s*p\.id/);
     }
