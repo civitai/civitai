@@ -152,6 +152,11 @@ const MAX_FILES_ALLOWED = 1000;
 
 const limit = pLimit(10);
 
+// A load failure here is a browser-side event, not a property of the file - the same
+// bytes load fine on their own. Retry before skipping the file. See e6c9f52251, which
+// made decode() failures non-fatal for the same reason.
+const IMAGE_LOAD_RETRIES = 2;
+
 // TODO [bw] is this enough? do we want jfif?
 const imageExts: { [key: string]: string } = {
   png: MIME_TYPES.png,
@@ -340,7 +345,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const showImgResizeDown = useRef<number>(0);
   const showImgResizeUp = useRef<number>(0);
   const showImgTooSmall = useRef<string[]>([]);
-  const showImgCorrupt = useRef<string[]>([]);
+  const showImgLoadFailed = useRef<string[]>([]);
 
   const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
@@ -385,7 +390,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     type: string,
     fileName?: string
   ): Promise<string> => {
-    const blob = new Blob([data], { type: type });
+    // `data` is already a Blob, and `new Blob([data])` duplicates its bytes. Slicing
+    // re-labels the same bytes instead, which halves peak memory over a 1000-image zip.
+    const blob = data.type === type ? data : data.slice(0, data.size, type);
     const imgUrl = URL.createObjectURL(blob);
 
     // Skip validation for non-image types (e.g., videos)
@@ -393,7 +400,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     let img: HTMLImageElement;
     try {
-      img = await createImageElement(imgUrl);
+      img = await createImageElement(imgUrl, { loadRetries: IMAGE_LOAD_RETRIES });
     } catch (loadError) {
       const name = fileName ?? 'image';
       console.error(`[ImageValidation] createImageElement failed for "${name}"`, {
@@ -402,8 +409,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         type,
       });
       URL.revokeObjectURL(imgUrl);
-      showImgCorrupt.current.push(name);
-      throw new Error(`Image "${name}" failed to load and may be corrupt.`);
+      showImgLoadFailed.current.push(name);
+      throw new Error(`Image "${name}" could not be loaded by this browser.`);
     }
 
     let { width, height } = img;
@@ -526,18 +533,24 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       });
       showImgTooSmall.current = [];
     }
-    if (showImgCorrupt.current.length) {
-      const count = showImgCorrupt.current.length;
+    if (showImgLoadFailed.current.length) {
+      const count = showImgLoadFailed.current.length;
       const fileNames =
         count <= 3
-          ? showImgCorrupt.current.join(', ')
-          : `${showImgCorrupt.current.slice(0, 3).join(', ')} and ${count - 3} more`;
+          ? showImgLoadFailed.current.join(', ')
+          : `${showImgLoadFailed.current.slice(0, 3).join(', ')} and ${count - 3} more`;
       showErrorNotification({
-        title: `${count} file${count === 1 ? '' : 's'} rejected - corrupt`,
-        error: new Error(`These images appear to be corrupt and were skipped: ${fileNames}`),
+        title: `${count} file${count === 1 ? '' : 's'} skipped - could not be read`,
+        error: new Error(
+          `Your browser could not load ${count === 1 ? 'this file' : 'these files'}, so ${
+            count === 1 ? 'it was' : 'they were'
+          } skipped: ${fileNames}. ` +
+            `This usually means the browser ran out of memory rather than that the files are damaged - ` +
+            `try adding them again, in smaller batches.`
+        ),
         autoClose: false,
       });
-      showImgCorrupt.current = [];
+      showImgLoadFailed.current = [];
     }
   };
 
