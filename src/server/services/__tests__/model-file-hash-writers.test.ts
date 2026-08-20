@@ -66,6 +66,25 @@ const WRITE_PATTERNS: Array<[kind: string, re: RegExp]> = [
   ],
 ];
 
+/**
+ * A commented-out statement is not a writer.
+ *
+ * `--` and block comments make "the token is present" and "the clause is LIVE" different facts,
+ * and this ledger only cares about the second. Migration
+ * `20260819000000_model_file_hash_sha256_12` documents its backfill as commented SQL — its only
+ * live statement is an `ALTER TYPE` — and matching that text put a sixth "writer" in the
+ * enumeration that writes nothing. It made trunk red for every PR until someone either declared a
+ * non-writer in the ledger or deleted the documentation, and both would have been wrong.
+ *
+ * Scoped to `.sql` deliberately. The same argument applies to a commented-out `.ts` writer, but
+ * stripping there could only ever SHRINK the enumeration, which is the direction this ledger is
+ * also meant to catch — so that half needs its own evidence, not a drive-by.
+ */
+export function stripSqlComments(source: string, ext: string): string {
+  if (ext !== '.sql') return source;
+  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
+}
+
 const isTestFile = (relPath: string) =>
   relPath.includes('__tests__') || /\.(test|spec)\.[cm]?[jt]sx?$/.test(relPath);
 
@@ -97,7 +116,7 @@ function enumerateWriters(): string[] {
   for (const file of files) {
     const rel = path.relative(REPO_ROOT, file);
     if (isTestFile(rel)) continue;
-    const source = fs.readFileSync(file, 'utf8');
+    const source = stripSqlComments(fs.readFileSync(file, 'utf8'), path.extname(file));
     if (!source.includes('odelFileHash')) continue; // cheap prefilter, case-insensitive on the M
     for (const [, re] of WRITE_PATTERNS) {
       re.lastIndex = 0;
