@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
 /**
  * `listMyAppListings` — the MEDIA widening, and the ownership∪seat set it must not disturb.
  *
@@ -20,30 +22,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * listing and did not submit it", which is exactly the shape `submittedByUserId` cannot
  * see and `resolveAccessibleListingIds` resolves correctly. Both are fixtured.
  *
- * DB deps mocked with the sibling convention (a `vi.hoisted` fake handed to `dbRead`).
  */
 
-const { mockDb, mockWriteDb } = vi.hoisted(() => {
-  const make = () => ({
-    appBlock: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-    },
-    appListing: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-    },
-    appCollaborator: {
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-  });
-  return { mockDb: make(), mockWriteDb: make() };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockWriteDb }));
+/**
+ * 🔴 THE DB IS MOCKED THROUGH THE CANONICAL SHARED MOCK, not a per-file
+ * per-file mock of the db-client specifier. Under `isolate: false` a per-file mock freezes
+ * that one file's mock shape into every LATER file in the same worker — a file that mocks
+ * nothing at all then fails on a missing export. `src/__tests__/setup.ts` registers `dbMock` once
+ * for every file and resets it between them, and
+ * `src/server/services/__tests__/no-direct-shared-module-mock.test.ts` fails on any new
+ * direct mock of a guarded specifier — it caught this file. That guard is a TEXT scan, so
+ * the call it forbids cannot even be quoted in this comment.
+ */
+const mockDb = dbMock.dbRead;
+const mockWriteDb = dbMock.dbWrite;
+void mockWriteDb;
 
 const { listMyAppListings } = await import('~/server/services/blocks/app-access.service');
 

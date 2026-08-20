@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
 /**
  * `listListingHistory` — the LAZY, per-row read behind an expanded `/apps/mine` row.
  *
@@ -21,38 +23,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * A version bump and a listing edit are DIFFERENT EVENTS on the same app. Deduplicating
  * them would delete real history; ignoring one table would hide half of it.
  *
- * DB deps mocked with the sibling convention. `resolveListingAccess` is deliberately NOT
- * stubbed — it runs for real against the fake `appListing.findUnique`, so the authorization
- * assertions below are about the real gate rather than about a stub.
+ * `resolveListingAccess` is deliberately NOT stubbed — it runs for real against the fake
+ * `appListing.findUnique`, so the authorization assertions below are about the real gate
+ * rather than about a stub.
  */
 
-const { mockDb, mockWriteDb } = vi.hoisted(() => {
-  const make = () => ({
-    appBlock: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-    },
-    appListing: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-    },
-    appCollaborator: {
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-    appListingPublishRequest: {
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-    appBlockPublishRequest: {
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-  });
-  return { mockDb: make(), mockWriteDb: make() };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockWriteDb }));
+/**
+ * 🔴 THE DB IS MOCKED THROUGH THE CANONICAL SHARED MOCK, not a per-file
+ * per-file mock of the db-client specifier. Under `isolate: false` a per-file mock freezes
+ * that one file's mock shape into every LATER file in the same worker — a file that mocks
+ * nothing at all then fails on a missing export. `src/__tests__/setup.ts` registers `dbMock` once
+ * for every file and resets it between them, and
+ * `src/server/services/__tests__/no-direct-shared-module-mock.test.ts` fails on any new
+ * direct mock of a guarded specifier — it caught this file. That guard is a TEXT scan, so
+ * the call it forbids cannot even be quoted in this comment.
+ */
+const mockDb = dbMock.dbRead;
+const mockWriteDb = dbMock.dbWrite;
+void mockWriteDb;
 
 const { listListingHistory, LISTING_HISTORY_LIMIT } = await import(
   '~/server/services/blocks/app-listing-history.service'
