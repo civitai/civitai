@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import dayjs from '~/shared/utils/dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -52,6 +53,67 @@ export async function getStickerCosmetics({ ids }: GetStickerCosmeticsInput) {
       return { id, name, slug, url, animated };
     })
     .filter((sticker) => !!sticker.slug && !!sticker.url);
+}
+
+/**
+ * Who made a sticker, and where to buy it.
+ *
+ * Separate from `getStickerCosmetics` because the shared `cosmeticCache` does not
+ * hold a creator — it selects id/name/type/data/source, and widening a cache
+ * every avatar and badge lookup goes through, to serve a hover, is the wrong
+ * trade. This is asked for one sticker at a time, when someone hovers it.
+ *
+ * Emits the href rather than the username, matching the placement card: a
+ * template literal accepts null silently, which is how `/user/null/shop` once
+ * shipped past a typecheck. No consumer can build the wrong link if none of them
+ * builds one.
+ */
+export async function getStickerAttribution({ ids }: GetStickerCosmeticsInput) {
+  const cosmetics = await dbRead.cosmetic.findMany({
+    where: {
+      id: { in: ids },
+      type: CosmeticType.Sticker,
+      // Not yet released, or no longer available, is not a thing to attribute.
+      // The procedure is public and takes an id array, so without this a staged
+      // sticker is readable before its launch.
+      OR: [{ availableStart: null }, { availableStart: { lte: new Date() } }],
+      AND: [{ OR: [{ availableEnd: null }, { availableEnd: { gte: new Date() } }] }],
+    },
+    select: {
+      id: true,
+      name: true,
+      createdById: true,
+      creator: {
+        select: { username: true, deletedAt: true, bannedAt: true, settings: true },
+      },
+    },
+  });
+
+  return cosmetics.map((cosmetic) => {
+    const creator = cosmetic.creator;
+    // Only link to a shop someone can actually buy from. A disabled shop is a
+    // 404 to visitors, and a comment can name any sticker — including a
+    // staff-authored cosmetic whose creator never opened one — so unlike the
+    // placement card, a link here is not implied by someone having bought it.
+    // Same predicate the shop listings filter on.
+    const settings = (creator?.settings ?? {}) as UserSettingsSchema;
+    const shopEnabled = settings.creatorShop?.enabled === true;
+    // A deleted or banned creator keeps the sticker drawable and its name worth
+    // showing; it just has nowhere to send anyone. `deletedAt` alone would be a
+    // narrower rule than the rest of the codebase applies to attributing someone.
+    const withheld = !!creator?.deletedAt || !!creator?.bannedAt;
+    const username = withheld ? null : creator?.username ?? null;
+    return {
+      id: cosmetic.id,
+      name: cosmetic.name,
+      // The viewer's side needs an id to check a block against, and every other
+      // creator card on the page keys its lookup on id rather than username —
+      // two keys for one creator otherwise misses both caches.
+      creatorId: withheld ? null : cosmetic.createdById,
+      creatorName: username,
+      shopHref: username && shopEnabled ? `/user/${username}/shop` : null,
+    };
+  });
 }
 
 export async function getOwnedStickerCosmetics(userId: number) {

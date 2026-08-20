@@ -17,6 +17,8 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
@@ -1107,6 +1109,18 @@ export const saveItemInCollections = async ({
     }
   }
 
+  // The feed index carries collection membership for hubs, and nothing about a
+  // CollectionItem write reaches it on its own. Covers both directions: the
+  // collections written to, and the ones the item was removed from, which are
+  // only knowable from what was read before the write.
+  if (input.imageId)
+    await queueCollectionMembershipUpdate({
+      collectionIds: [
+        ...new Set([...collections.map((c) => c.id), ...existingItems.map((i) => i.collectionId)]),
+      ],
+      imageIds: [input.imageId],
+    });
+
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
     await bustFeaturedModelsCache();
@@ -2098,6 +2112,14 @@ export const deleteCollectionById = async ({
   }
 
   const res = await dbWrite.collection.delete({ where: { id } });
+
+  // UserHubSource.targetId is polymorphic, so there is no foreign key to cascade
+  // through — a hub would keep pointing at a collection that no longer exists and
+  // go on filtering the feed by its id. Removing the sources here is what makes
+  // the now-unreachable membership left in the search index harmless.
+  await dbWrite.userHubSource.deleteMany({
+    where: { type: UserHubSourceType.Collection, targetId: id },
+  });
 
   await collectionsSearchIndex.queueUpdate([
     {

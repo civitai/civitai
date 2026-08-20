@@ -1,0 +1,33 @@
+import { getByIdSchema } from '~/server/schema/base.schema';
+import { setUserHubOrderSchema, upsertUserHubSchema } from '~/server/schema/user-hub.schema';
+import {
+  deleteUserHub,
+  getUserHubById,
+  getUserHubs,
+  setUserHubOrder,
+  upsertUserHub,
+} from '~/server/services/user-hub.service';
+import { router, userHubProcedure } from '~/server/trpc';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+export const userHubRouter = router({
+  getAll: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .query(({ ctx }) => getUserHubs({ userId: ctx.user.id })),
+  getById: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getByIdSchema)
+    .query(({ input, ctx }) => getUserHubById({ id: input.id, userId: ctx.user.id })),
+  upsert: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(upsertUserHubSchema)
+    .mutation(({ input, ctx }) => upsertUserHub({ ...input, userId: ctx.user.id })),
+  delete: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) => deleteUserHub({ id: input.id, userId: ctx.user.id })),
+  setOrder: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(setUserHubOrderSchema)
+    .mutation(({ input, ctx }) => setUserHubOrder({ ...input, userId: ctx.user.id })),
+});

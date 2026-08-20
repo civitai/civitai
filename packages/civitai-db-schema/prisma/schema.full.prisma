@@ -499,6 +499,7 @@ model User {
   receivedReports            UserReport[]
   engagedImages              ImageEngagement[]
   collections                Collection[]
+  hubs                       UserHub[]
   collectionItems            CollectionItem[]
   reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
   contributingCollections    CollectionContributor[]
@@ -8071,4 +8072,49 @@ model PlacementSuspension {
   createdById Int?
 
   @@index([createdAt])
+}
+
+enum UserHubSourceType {
+  User
+  Model
+  ModelVersion
+  Collection
+}
+
+/// A user-composed image feed: a named set of creators, models, versions and
+/// collections merged into one stream. The source list is resolved server-side
+/// from the hub id — a client-supplied id list would be an unbounded-cost query
+/// anyone could post, which is why `image.getInfinite` takes `hubId` and not the
+/// ids themselves.
+model UserHub {
+  id        Int             @id @default(autoincrement())
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  index     Int             @default(0)
+  sort      String          @default("Newest")
+  period    MetricTimeframe @default(AllTime)
+  mediaTypes MediaType[]
+  metadata  Json            @default("{}")
+
+  sources   UserHubSource[]
+
+  @@index([userId])
+}
+
+model UserHubSource {
+  id       Int               @id @default(autoincrement())
+  hubId    Int
+  hub      UserHub           @relation(fields: [hubId], references: [id], onDelete: Cascade)
+  type     UserHubSourceType
+  targetId Int
+  alias    String?
+  enabled  Boolean           @default(true)
+  index    Int               @default(0)
+
+  @@unique([hubId, type, targetId])
+  @@index([hubId])
+  @@index([type, targetId])
 }

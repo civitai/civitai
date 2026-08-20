@@ -1538,6 +1538,13 @@ export const getAllImages = async (
     userId?: number;
   }
 ) => {
+  // Fail loud rather than serve unfiltered. This path has no way to express a
+  // hub — collection membership lives on the search index, not in a column here —
+  // so a hubId arriving means the dispatcher routed wrongly. Returning results
+  // would hand the caller the global feed labelled as their hub.
+  if (input.hubId)
+    throw new Error('getAllImages cannot serve a hub; hub queries must use the index path');
+
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
     username: input.user?.username,
@@ -2906,6 +2913,10 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   // When provided, getImagesFromSearch skips its own Flipt evaluation.
   bitdexMode?: string | null;
   actor?: string;
+  // Per-request memo of `resolveHubSources`, set by `resolvedHubSources` below.
+  // `undefined` means "not resolved yet"; `null` is a resolved answer meaning the
+  // hub is not the viewer's, which callers must serve as nothing.
+  resolvedHub?: ResolvedHubSources | null;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3421,9 +3432,9 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // the hoist and that non-null assertion becomes `getUserFollows(undefined)`.
   const skipOwnExcludedCheaply = !input.currentUserId || !!bitdexCursor;
 
-  // 🔴 The three scopes here must stay 1:1 with the creator-scoping filters
-  // `getImagesFromBitdexPreFilter` applies — `followed`, `newCreators` and
-  // `userId`. That coupling IS the correctness argument: the guard has to read
+  // 🔴 The four scopes here must stay 1:1 with the creator-scoping filters
+  // `getImagesFromBitdexPreFilter` applies — `followed`, `newCreators`, `userId`
+  // and a creator-only hub. That coupling IS the correctness argument: the guard has to read
   // the same creator scope the feed is filtered by, or it decides from a
   // different set than the one that shaped the results. The ARGUMENTS matter as
   // much as the calls — `entity` and `domain` select which board
@@ -3436,6 +3447,13 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
         input.userId ? [input.userId] : null,
         input.followed ? getUserFollows(input.currentUserId!) : null,
         input.newCreators ? getNewCreatorUserIds({ entity: 'images', domain: input.domain }) : null,
+        // A hub is a creator scope ONLY when every arm of it is one. The arms are
+        // ORed, so a hub carrying a model source can match an image whose author
+        // is outside `userIds`, and treating that as a creator scope would skip
+        // the own-excluded pass for a feed the caller does legitimately appear in.
+        // Resolution is memoized on `input`, so this costs no extra query — the
+        // filter build below reads the same answer.
+        hubCreatorScope(await resolvedHubSources(input)),
       ]);
   // `some`, not `every`: the pre-filter ANDs these scopes, so exclusion by ANY
   // one of them excludes the caller from the feed.
@@ -3625,6 +3643,16 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
 
     // Content-scope filtering — narrow unscoped results to the current view
     //
+    // A hub is not expressible here: this pass fetches the viewer's own excluded
+    // content unscoped, and the narrowing below enumerates scalar inputs only, so
+    // a hub's source set has nothing to match against. Dropping the pass entirely
+    // is the fail-closed choice — the alternative is the viewer's own private,
+    // blocked and unscanned images from anywhere in their account appearing in a
+    // hub they may have composed entirely from other creators. It also keeps the
+    // two backends agreeing: Meili carries these carve-outs inside clauses ANDed
+    // with the hub group, so they stay hub-scoped there.
+    if (input.hubId) ownDocs = [];
+
     // Creator scope first, because it is the one the rest of this list was
     // missing. The second pass asks BitDex for `userId = currentUserId` and
     // nothing else, so on a view pinned to a single creator these documents
@@ -3942,6 +3970,16 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
+  // The fifth filter builder, and the one with no hub clause. Unreachable today
+  // only because the REST zod for /api/v1/images does not declare `hubId` and
+  // strips unknown keys — the same accident the hideChallenges comment above
+  // describes. Adding the key to that schema without a clause here would serve an
+  // unfiltered feed from one of three branches, so fail loudly instead.
+  if (input.hubId)
+    throw new Error(
+      'getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path'
+    );
+
   try {
     const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
       id: input.currentUserId,
@@ -4152,6 +4190,81 @@ export async function getImagesFromFeedSearch(
   }
 }
 
+import type { ResolvedHubSources } from '~/server/services/user-hub.service';
+import { resolveHubSources } from '~/server/services/user-hub.service';
+import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
+
+// The OR-group a hub's sources become. Mirrors the single-`modelVersionId`
+// branch below, including its two gates: a hub must honour hideAutoResources /
+// hideManualResources or it silently ignores two filters the user set.
+//
+// Returns null when the hub resolved to nothing. Callers must return an empty
+// page for null — never fall through unfiltered, which would serve the global
+// feed to someone who asked for their hub.
+// The creator scope a hub represents, or null when it is not purely one. Null means
+// "not a creator scope", which leaves the own-excluded pass alone — never "empty
+// scope", which would exclude the caller from their own feed.
+function hubCreatorScope(sources: ResolvedHubSources | null) {
+  if (!sources || !sources.userIds.length) return null;
+  if (sources.modelVersionIds.length || sources.collectionIds.length) return null;
+  return sources.userIds;
+}
+
+// One resolution per request, memoized on the input object itself. A hub feed page
+// runs the BitDex pass loop up to 8 times and can then fall through to Meili, and
+// each of those rebuilt the whole filter — 8-9 resolutions of the same hub, at 3 SQL
+// statements each. The memo is per-request state, not a cache: nothing outlives the
+// object, so there is no TTL, no invalidation, and no way to serve one viewer's hub
+// resolution to another.
+async function resolvedHubSources(input: ImageSearchInput) {
+  if (!input.hubId) return null;
+  if (input.resolvedHub !== undefined) return input.resolvedHub;
+  const sources = await resolveHubSources({ hubId: input.hubId, userId: input.currentUserId });
+  input.resolvedHub = sources;
+  return sources;
+}
+
+type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
+
+// The single enumeration of the arms a hub ORs together. Both backends build their
+// own clause syntax from this, so an arm added here cannot reach one of them only —
+// which is how the BitDex copy drifted into a third builder.
+// Returns null for "no arm", which callers must treat as "serve nothing"; treating
+// it as "no filter" hands the caller the global feed as their hub.
+function hubFilterArms(
+  sources: ResolvedHubSources,
+  {
+    hideAutoResources,
+    hideManualResources,
+  }: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
+): HubFilterArm[] | null {
+  const arms: HubFilterArm[] = [];
+  if (sources.userIds.length) arms.push({ field: 'userId', ids: sources.userIds });
+  if (sources.modelVersionIds.length) {
+    arms.push({ field: 'postedToId', ids: sources.modelVersionIds });
+    if (!hideAutoResources) arms.push({ field: 'modelVersionIds', ids: sources.modelVersionIds });
+    if (!hideManualResources)
+      arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
+  }
+  // Guarded, not merely unused: filtering on an attribute the index has not been
+  // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
+  if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
+    arms.push({ field: 'collectionIds', ids: sources.collectionIds });
+
+  return arms.length ? arms : null;
+}
+
+function buildHubFilter(
+  sources: ResolvedHubSources,
+  input: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
+): string | null {
+  const arms = hubFilterArms(sources, input);
+  if (!arms) return null;
+  return `(${arms
+    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
+    .join(' OR ')})`;
+}
+
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
@@ -4198,6 +4311,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     newCreators,
+    hubId,
     domain,
     // TODO check the unused stuff in here
   } = input;
@@ -4295,6 +4409,13 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
+  }
+
+  if (hubId) {
+    const sources = await resolvedHubSources(input);
+    const hubFilter = sources && buildHubFilter(sources, input);
+    if (!hubFilter) return { data: [], nextCursor: undefined };
+    filters.push(hubFilter);
   }
 
   // nb: commenting this out while we try checking existence in the db
@@ -4946,6 +5067,25 @@ export async function getImagesFromBitdexPreFilter(
     filters.push(_in('userId', newCreatorIds.map(_int)));
   }
 
+  // Hubs are served here rather than declined, so they ride the BitDex migration
+  // instead of pinning themselves to Meili. Returning null anywhere below means
+  // "cannot serve this" and falls through to Meili — never "no filter", which
+  // would hand the caller the global feed as their hub.
+  if (input.hubId) {
+    const sources = await resolvedHubSources(input);
+    if (!sources) return null;
+
+    // Collection membership is not a BitDex field. While collection sources are
+    // switched off this cannot happen; once they are enabled, a hub containing one
+    // has to go to Meili, because filtering on a field BitDex does not know 400s
+    // the whole query rather than just that clause.
+    if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length) return null;
+
+    const arms = hubFilterArms(sources, { hideAutoResources, hideManualResources });
+    if (!arms) return null;
+    filters.push(_or(...arms.map((arm) => _in(arm.field, arm.ids.map(_int)))));
+  }
+
   // --- NSFW Browsing Level ---
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
   else browsingLevel = onlySelectableLevels(browsingLevel);
@@ -5118,6 +5258,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     blockedFor,
     // TODO check the unused stuff in here
     newCreators,
+    hubId,
     domain,
   } = input;
   let { browsingLevel, userId } = input;
@@ -5199,6 +5340,13 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
+  }
+
+  if (hubId) {
+    const sources = await resolvedHubSources(input);
+    const hubFilter = sources && buildHubFilter(sources, input);
+    if (!hubFilter) return { data: [], nextCursor: undefined };
+    filters.push(hubFilter);
   }
 
   // nb: commenting this out while we try checking existence in the db

@@ -130,6 +130,7 @@ import type {
   Model3DEngagementType,
   ShopifyMerchOrderStatus,
   OutboxEntity,
+  UserHubSourceType,
 } from './enums';
 
 export type Account = {
@@ -3988,6 +3989,27 @@ export type UserEngagement = {
   type: UserEngagementType;
   createdAt: Generated<Timestamp>;
 };
+export type UserHub = {
+  id: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  userId: number;
+  name: string;
+  index: Generated<number>;
+  sort: Generated<string>;
+  period: Generated<MetricTimeframe>;
+  mediaTypes: MediaType[];
+  metadata: Generated<unknown>;
+};
+export type UserHubSource = {
+  id: Generated<number>;
+  hubId: number;
+  type: UserHubSourceType;
+  targetId: number;
+  alias: string | null;
+  enabled: Generated<boolean>;
+  index: Generated<number>;
+};
 export type UserLink = {
   id: Generated<number>;
   userId: number;
@@ -4513,6 +4535,8 @@ export type DB = {
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
+  UserHub: UserHub;
+  UserHubSource: UserHubSource;
   UserLink: UserLink;
   UserMembershipOverride: UserMembershipOverride;
   UserMetric: UserMetric;
