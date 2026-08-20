@@ -101,6 +101,12 @@ describe('a run that exits without flushing still has all of its output', () => 
       const READ_WINDOW = 64 * 1024;
       // Pad so the 3-byte U+23AF begins one byte before the window ends, splitting it 1 + 2.
       const pad = Buffer.alloc(READ_WINDOW - 1, 0x61); // 'a'
+      // The control this test needs and its sibling already has: without a straddle the
+      // assertion below is satisfied by a character that never crossed a boundary, and passes
+      // with the StringDecoder removed entirely. Pin that the character STARTS inside the first
+      // read window and ENDS outside it.
+      expect(pad.length).toBeLessThan(READ_WINDOW);
+      expect(pad.length + Buffer.byteLength('⎯', 'utf8')).toBeGreaterThan(READ_WINDOW);
       writeSync(cap.writeFd, pad);
       writeSync(cap.writeFd, Buffer.from('⎯MARKER\n', 'utf8'));
 
@@ -151,6 +157,45 @@ describe('a line that straddles a read boundary survives whole', () => {
     } finally {
       cap.close();
     }
+  });
+
+  // A child killed mid-sequence leaves an incomplete character at EOF. Without `decoder.end()`
+  // those bytes are dropped silently; with it they surface as U+FFFD, which is a visible
+  // artefact rather than an absent one. That distinction is the whole point of the log contract.
+  it('surfaces an incomplete trailing character rather than dropping it', () => {
+    const lines: string[] = [];
+    const cap = createOutputCapture((line: string) => lines.push(line));
+    try {
+      // The first two bytes of a 3-byte U+23AF, and nothing more — a killed writer's tail.
+      writeSync(cap.writeFd, Buffer.from([0xe2, 0x8e]));
+
+      cap.drain(true);
+
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('\ufffd');
+    } finally {
+      cap.close();
+    }
+  });
+
+  /**
+   * A final drain that cannot read must SAY so. Stopping silently would hand back a clipped log
+   * with `logsDropped: 0` — a complete-looking record of an incomplete run, which is the one
+   * thing the queue's log contract promises cannot happen.
+   */
+  it('says so when the final drain cannot read, instead of returning a short log', () => {
+    const lines: string[] = [];
+    const cap = createOutputCapture((line: string) => lines.push(line));
+    writeSync(cap.writeFd, 'delivered\n');
+    cap.drain();
+    // Releasing the descriptors out from under the capture is the reachable way to make the
+    // final read fail; the queue's own dispose path closes them for real.
+    cap.close();
+
+    cap.drain(true);
+
+    expect(lines[0]).toBe('delivered');
+    expect(lines.some((l) => l.startsWith('[capture truncated:'))).toBe(true);
   });
 
   it('emits a final line that has no trailing newline, but only on the final drain', () => {
@@ -248,6 +293,38 @@ describe('the queue hands its child the capture file, not a pipe', () => {
     // And a late exit after disposal cannot re-enter finish().
     child.emit('exit', 0);
     expect(exits).toBe(0);
+  });
+
+  /**
+   * dispose() must READ before it releases, and release in the right order.
+   *
+   * Both halves were unpinned. `capture.drain(true)` after `capture.close()` emits nothing at all
+   * — everything the child wrote is silently lost — and this is the one path where the child is
+   * KNOWN to still be producing output, because force-release fires exactly when a kill did not
+   * take. The ordering is load-bearing rather than cosmetic: fd numbers are reused, so a tail
+   * interval surviving a close would read whatever file next claimed that descriptor and splice
+   * its bytes into this run's log.
+   */
+  it('drains before releasing, and stops the tail before closing the descriptors', () => {
+    const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
+    spawnMock.mockReturnValue(child);
+
+    const messages: string[] = [];
+    const handle = defaultStartRun({
+      worktree: repoRoot,
+      args: [],
+      onLog: (_level: string, message: string) => messages.push(message),
+      onExit: () => {},
+    });
+    const stdio = (spawnMock.mock.calls[0][2] as { stdio: number[] }).stdio;
+    writeSync(stdio[1], 'written but never drained\n');
+
+    handle.dispose();
+
+    // Drained, not lost — this fails outright if dispose closes before draining.
+    expect(messages).toContain('written but never drained');
+    // The descriptor is closed, so the tail cannot still be reading it.
+    expect(() => writeSync(stdio[1], 'x')).toThrow();
   });
 
   /**

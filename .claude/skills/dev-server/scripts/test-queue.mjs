@@ -99,7 +99,11 @@ export function createOutputCapture(onLine) {
       try {
         // Explicit position, so this never moves the shared write offset.
         read = readSync(readFd, buf, 0, buf.length, offset);
-      } catch {
+      } catch (err) {
+        // Same argument as the short-read break below: stopping here silently would report a
+        // clipped log with `logsDropped: 0`, which is the one thing the queue's log contract
+        // promises cannot happen. A read we cannot complete is said out loud instead.
+        if (final) onLine(`[capture truncated: ${err.code ?? err.message}]`);
         break;
       }
       if (read <= 0) break;
@@ -108,10 +112,14 @@ export function createOutputCapture(onLine) {
       const lines = carry.split('\n');
       carry = lines.pop() ?? '';
       for (const line of lines) if (line.trim()) onLine(line.trim());
-      // A short read means EOF on a regular file, so the incremental drain can stop there. The
-      // FINAL drain cannot afford that reasoning — truncating here would report `logsDropped: 0`
-      // over a clipped log, the exact thing warnIfLogsDropped exists to make impossible — so it
-      // keeps going until a read genuinely returns nothing.
+      // A short read means EOF on a regular file, so the incremental drain can stop there.
+      //
+      // This has effect on exactly ONE path, and the honest scope is worth stating: on the
+      // `finish()` path the writer is already dead, so a short read IS EOF and `!final` changes
+      // nothing. It matters on `dispose()`, where force-release fires precisely because the child
+      // did NOT die and may still be appending. There, stopping at the first short read would
+      // report a clipped log with `logsDropped: 0`. Bounded: against a maximally fast live writer
+      // this returned in 89.5 ms having read 2,082,688 lines.
       if (read < buf.length && !final) break;
     }
     // Anything the decoder is still holding is an incomplete sequence at EOF; flush it so the
@@ -419,9 +427,30 @@ export class TestQueue {
       run.cancelReason = 'daemon-shutdown';
       run.killRequestedAt = this.now();
       run.handle?.kill(true);
-      // The daemon exits immediately after this, so the child's 'exit' will not be observed —
-      // without this the capture file survives the daemon that created it, every time.
+
+      // Dispose, then settle HERE — the two go together, and the first version shipped only the
+      // first half.
+      //
+      // `dispose()` sets the same `finished` flag `finish()` guards on, so the SIGKILLed child's
+      // 'exit' arrives and returns early: `onExit` never fires. Without settling on this side,
+      // the run stays `running` and `running.size` never drops, so `pump()` can never start
+      // another run — the queue is wedged, which is the exact failure it exists to prevent.
+      // Measured: 300 ms after shutdown(), status `running` and running.size 1, against
+      // `cancelled` / 0 when the dispose is removed.
+      //
+      // Today every caller exits the process straight after, so nothing observes the wedge. That
+      // is not a reason to leave it: each one first awaits rgbProxy.stop(), authHub.stop() and
+      // stopSpokeApps(), and if any of those hangs the daemon stays up and serving with a queue
+      // that can never run anything again.
+      //
+      // (An earlier comment here claimed the capture file would otherwise "survive the daemon
+      // every time". That was wrong — measured in both arms, the file was unlinked either way,
+      // because the daemon does linger long enough for the child's exit. The dispose earns its
+      // place by releasing the interval and the descriptors deterministically, not by that.)
       run.handle?.dispose?.();
+      run.handle = null;
+      this.release(id);
+      this.settle(run, 'cancelled', null, 'daemon-shutdown');
     }
   }
 

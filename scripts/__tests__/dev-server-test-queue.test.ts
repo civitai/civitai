@@ -248,6 +248,48 @@ describe('dev-server test queue', () => {
     expect(disposals).toEqual(['forced', 'shutdown']);
   });
 
+  /**
+   * The regression the dispose itself introduced, and the reason a spy-only fake could not see it.
+   *
+   * `dispose()` and `finish()` share one `finished` flag, so disposing DISABLES the child's exit
+   * callback. `shutdown()` disposed and settled nothing, so the run stayed `running` forever and
+   * `running.size` never dropped — `pump()` could never start another run. That is the wedge this
+   * queue exists to prevent, reintroduced by the fix for a leak.
+   *
+   * The fake below carries the real interaction — a shared flag whose `dispose` suppresses the
+   * later exit — because a `vi.fn()` that only records the call cannot express it.
+   */
+  it('settles a run it shuts down, even though disposing suppresses the exit callback', () => {
+    const queue = build();
+    runner.startRun = ({ worktree, onExit }: RunnerArgs): FakeRun => {
+      const handle = new EventEmitter() as FakeRun & { dispose: () => void };
+      let done = false;
+      handle.kill = vi.fn();
+      // The shape of the real handle: dispose and exit share one latch.
+      handle.dispose = () => {
+        done = true;
+      };
+      handle.finish = (code: number) => {
+        if (done) return;
+        done = true;
+        onExit?.(code);
+      };
+      handle.worktree = worktree;
+      runner.started.push(handle);
+      return handle;
+    };
+
+    const run = queue.request({ worktree: '/wt/a' });
+    queue.shutdown();
+    // The SIGKILLed child's exit arrives after the dispose and is swallowed — as it is in reality.
+    runner.started[0].finish(-1);
+
+    expect(queue.get(run.id).status).toBe('cancelled');
+    expect(queue.get(run.id).error).toMatch(/daemon-shutdown/);
+    // The slot, which is the thing that actually wedges: it must be free.
+    expect(queue.running.size).toBe(0);
+  });
+
   // A runner that predates `dispose` must not crash the sweep — the queue calls it optionally.
   it('tolerates a handle with no dispose', () => {
     const queue = build({ killGraceMs: 5_000 });
