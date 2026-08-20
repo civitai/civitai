@@ -15,8 +15,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * a non-number, and a collect() body is ordinary application code reading live state. The sibling
  * suite metrics-endpoint-prisma-failure.test.ts covers the same shape one level down.
  *
- * A revert (dropping `collectRegistryMetrics` and awaiting `registry.metrics()` directly) makes
- * tests 1-3 reject with the thrown message. Nothing here loops or waits on a timer.
+ * A revert (dropping `collectRegistryMetrics` and awaiting `registry.metrics()` directly) fails
+ * exactly the three cases marked 🔴 — measured, 5 passed -> 3 failed | 2 passed. The positive
+ * control and the seeding case correctly stay green, since neither depends on the guard.
+ * Nothing here loops or waits on a timer.
  */
 
 // `endpoint-helpers` spreads `env.TRPC_ORIGINS` at module load; stub the wrapper so none of that
@@ -30,6 +32,20 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
 }));
+
+// Un-mocking prom/client above pulls in the REAL pg pool modules, which build `pg.Pool`s at module
+// scope — and one scrape fires a real fire-and-forget `pgDbRead.connect()` through the
+// ingestion-backlog gauge. It is swallowed by a `.catch()` so it cannot fail anything, but opening
+// sockets from a unit suite is exactly what the blanket mock in src/__tests__/setup.ts exists to
+// prevent. Counter-shaped stubs are all the gauges read. Listed as literal `name:` properties
+// because src/test-utils/__tests__/pgDbMock.parity.test.ts scans for that exact spelling.
+const poolStub = () => ({ totalCount: 0, idleCount: 0, waitingCount: 0 });
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: poolStub(),
+  pgDbWrite: poolStub(),
+  pgDbReadLong: poolStub(),
+}));
+vi.mock('~/server/db/datapacketDb', () => ({ datapacketDbRead: poolStub() }));
 
 type Handler = (req: unknown, res: NextApiResponse) => Promise<void> | void;
 const FAILURES = 'registry_scrape_failures_total';
@@ -102,10 +118,17 @@ describe('/api/metrics survives a throwing collect() in either registry', () => 
 
   // POSITIVE CONTROL. Without this, every assertion below is satisfied by a handler that always
   // returns an empty body — "it did not throw" is not the same as "it still served the metrics".
-  it('POSITIVE CONTROL: a healthy scrape serves both registries and the Prisma series', async () => {
+  it('POSITIVE CONTROL: a healthy scrape serves both registries, and seeds both labels at 0', async () => {
     const handler = await loadHandler();
     const { res, state } = fakeRes();
     await handler({}, res);
+
+    // Seeding is asserted HERE, in the first test, because the module is imported once per file and
+    // the counter is cumulative across it: by the time a trailing test runs, cases 2 and 3 have
+    // already incremented both labels, so it would pass on their residue with the seeding deleted.
+    // Measured: removing both `inc(…, 0)` calls SURVIVED the full-file run and failed only in
+    // isolation. A seeded-at-0 assertion is only meaningful before anything has incremented.
+    expect(await failureCounts()).toEqual({ default: 0, instrumentation: 0 });
 
     expect(state.headers['Content-type']).toBe(client.register.contentType);
     expect(state.body).toMatch(/process_cpu_user_seconds_total|nodejs_/);
@@ -162,11 +185,20 @@ describe('/api/metrics survives a throwing collect() in either registry', () => 
     expect(state.body).toMatch(new RegExp(`${FAILURES}\\{registry="default"\\} [1-9]`));
   });
 
-  it('seeds both label values so a healthy pod reads 0 rather than no-data', async () => {
-    await loadHandler();
-    const counts = await failureCounts();
+  // Complements the seeding assertion in the positive control rather than repeating it: that one
+  // proves both labels start at 0, this one proves BOTH label series are still RENDERED after one
+  // registry starts failing — a healthy registry must not drop out of the response just because
+  // its sibling is broken. It asserts presence rather than a value, because the counter is
+  // cumulative across this file and earlier cases have already incremented both labels; asserting
+  // `instrumentation} 0` here failed for exactly that reason.
+  it('still renders BOTH label series while one registry is failing', async () => {
+    disposers.push(await plantThrowingCollector('default', 'test_bad_default_collector_3'));
 
-    expect(counts).toHaveProperty('default');
-    expect(counts).toHaveProperty('instrumentation');
+    const handler = await loadHandler();
+    const { res, state } = fakeRes();
+    await handler({}, res);
+
+    expect(state.body).toMatch(new RegExp(`${FAILURES}\\{registry="instrumentation"\\} \\d`));
+    expect(state.body).toMatch(new RegExp(`${FAILURES}\\{registry="default"\\} [1-9]`));
   });
 });

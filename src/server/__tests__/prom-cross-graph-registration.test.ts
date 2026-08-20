@@ -40,52 +40,47 @@ vi.unmock('~/server/prom/client');
 // 🔴 EVERY ONE OF THESE TWELVE NUMBERS IS DISTINCT, AND THAT IS THE WHOLE POINT.
 // The nine pg gauges are nine near-identical `this.set(pgDbX.yCount)` statements, which is a pure
 // transposition hazard: reading `pgDbRead` where `pgDbWrite` was meant, or `.totalCount` where
-// `.idleCount` was meant, is a one-token slip no type checker can catch, because every one of
-// them is the same shape and the same type. A fixture of zeros — or of any value shared between two pools — makes all of those slips
-// render byte-identical output, so the tests pass and the gauges silently report another pool's
-// numbers. Measured: with an all-zero stub, five such mutants SURVIVED a fully green suite — and
-// later, with the value assertions briefly removed, an all-zero fixture survived again.
-// Pairwise-distinct values are what make a transposition observable at all.
+// `.idleCount` was meant, is a one-token slip no type checker can catch, because every one of them
+// is the same shape and the same type. A fixture of zeros — or of any value shared between two
+// pools — makes all of those slips render byte-identical output, so the tests pass and the gauges
+// silently report another pool's numbers. Measured: with an all-zero stub, five such mutants
+// SURVIVED a fully green suite; later, with the value assertions briefly removed, an all-zero
+// fixture survived again. Pairwise-distinct values are what make a transposition observable.
 // Keep them distinct if you touch this.
-const pools = {
-  read: { totalCount: 11, idleCount: 12, waitingCount: 13 },
-  write: { totalCount: 21, idleCount: 22, waitingCount: 23 },
-  readLong: { totalCount: 31, idleCount: 32, waitingCount: 33 },
-  datapacket: { totalCount: 41, idleCount: 42, waitingCount: 43 },
-} as Record<string, { totalCount: number; idleCount: number; waitingCount: number } | undefined>;
-
-// Exposed as GETTERS, not as captured values. Vite compiles `import { pgDbReadLong }` into a
-// namespace property access at each use site, so a getter is re-read every time the gauge's
-// collect() runs — which lets a test drop a pool to `undefined` and exercise the null-guard branch
-// against real code. Capturing the values here instead would bind whatever the mock factory saw on
-// its first run, and the absent-pool case would silently assert against a pool that is still
-// present (it did, before this was changed).
-vi.mock('~/server/db/pgDb', () => ({
-  get pgDbRead() {
-    return pools.read;
-  },
-  get pgDbWrite() {
-    return pools.write;
-  },
-  get pgDbReadLong() {
-    return pools.readLong;
-  },
-}));
-vi.mock('~/server/db/datapacketDb', () => ({
-  get datapacketDbRead() {
-    return pools.datapacket;
-  },
-}));
-
-const POOL_DEFAULTS = {
+//
+// ONE declaration, deliberately. An earlier version kept a second copy for `restorePools()` to
+// read, and since `beforeEach` overwrote `pools` from that copy, the values written here were
+// never read at all — zeroing all twelve SURVIVED while zeroing the copy was caught. A fixture
+// with a live half and a dead half puts the warning above on whichever half you happen to edit.
+const POOL_VALUES = {
   read: { totalCount: 11, idleCount: 12, waitingCount: 13 },
   write: { totalCount: 21, idleCount: 22, waitingCount: 23 },
   readLong: { totalCount: 31, idleCount: 32, waitingCount: 33 },
   datapacket: { totalCount: 41, idleCount: 42, waitingCount: 43 },
 };
+type PoolCounters = { totalCount: number; idleCount: number; waitingCount: number };
+const pools: Record<string, PoolCounters> = {
+  read: { ...POOL_VALUES.read },
+  write: { ...POOL_VALUES.write },
+  readLong: { ...POOL_VALUES.readLong },
+  datapacket: { ...POOL_VALUES.datapacket },
+};
+// Mutates in place rather than reassigning, so the object identities the mock factory captured on
+// its single run stay valid for the life of the file.
 const restorePools = () => {
-  for (const [k, v] of Object.entries(POOL_DEFAULTS)) pools[k] = { ...v };
+  for (const [name, values] of Object.entries(POOL_VALUES)) Object.assign(pools[name], values);
 };
+
+// Listed as literal `name:` properties, not getters. `src/test-utils/__tests__/pgDbMock.parity.test.ts`
+// scans these factories for the full export set by that exact spelling, and a getter — which does
+// supply the export — reads to it as "missing", reddening a repo-wide gate. The absent-pool case
+// below therefore uses `vi.doMock` with its own complete factory instead of mutating a getter.
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: pools.read,
+  pgDbWrite: pools.write,
+  pgDbReadLong: pools.readLong,
+}));
+vi.mock('~/server/db/datapacketDb', () => ({ datapacketDbRead: pools.datapacket }));
 
 type BulkheadGlobals = typeof globalThis & {
   __civitaiBulkheadState?: unknown;
@@ -266,11 +261,21 @@ describe('prom/client registers into the registry /api/metrics scrapes', () => {
   // is the only input that reaches the branch, and the contract is that it reports 0 rather than
   // throwing `Value is not a valid number` out of Gauge.set and rejecting the whole scrape.
   it('reports 0 for an absent pool instead of throwing out of collect()', async () => {
-    pools.readLong = undefined;
+    // A complete factory (all three exports, literal `name:`) so this stays honest to the parity
+    // gate even though `vi.doMock` is not one of the call sites it scans.
+    vi.doMock('~/server/db/pgDb', () => ({
+      pgDbRead: pools.read,
+      pgDbWrite: pools.write,
+      pgDbReadLong: undefined,
+    }));
+    vi.resetModules();
     await importAsBothGraphs();
 
     const scraped = await promClient.register.metrics();
+    // All THREE labelled gauges, not two: each carries its own `?? 0`, so covering only some of
+    // them leaves the others' guards unpinned (`?? 0` -> `?? -1` on the idle guard SURVIVED).
     expect(scraped).toContain('node_postgres_pool_total_count{pool="read_long"} 0');
+    expect(scraped).toContain('node_postgres_pool_idle_count{pool="read_long"} 0');
     expect(scraped).toContain('node_postgres_pool_waiting_count{pool="read_long"} 0');
     // The surviving pools must be untouched — a guard that swallows too much would zero them too.
     expect(scraped).toContain('node_postgres_pool_total_count{pool="write"} 21');
