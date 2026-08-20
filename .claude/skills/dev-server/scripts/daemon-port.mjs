@@ -11,9 +11,11 @@
  * disagree. An explicit `node daemon.mjs --port <port>` still beats the environment — and goes
  * through `parsePort` here too, so argv gets the same validation the environment gets.
  *
- * `9444` is spelled once, in this file. `dev-server-daemon-port.test.ts` scans the whole skill
- * for a second copy and fails if one appears anywhere, including in a file that does not exist
- * yet.
+ * `9444` is spelled once in the code that DECIDES it. `dev-server-daemon-port.test.ts` walks
+ * three roots — this skill, `scripts/`, `.claude/hooks` — over .mjs/.cjs/.js/.ts, and fails if a
+ * second copy appears in any of them, including in a file that does not exist yet. Deliberately
+ * NOT covered: prose (SKILL.md names the default, as documentation should) and test files, which
+ * must pin the expected value as a literal rather than derive it from this module.
  */
 
 export const DEFAULT_DAEMON_PORT = 9444;

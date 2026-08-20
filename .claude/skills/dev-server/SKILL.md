@@ -33,7 +33,7 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 
 ## Which node the daemon runs on — and why it is sticky
 
-The daemon is spawned with `process.execPath` (`cli.mjs:70`, `console.mjs:88`), i.e. **whatever node ran
+The daemon is spawned with `process.execPath` (`cli.mjs:70`, `console.mjs:89`), i.e. **whatever node ran
 the CLI verb that first started it**. It then passes its own environment down to every `next dev` it
 supervises. So the node you happened to have on `PATH` the first time you typed any command above is the
 node the whole tree runs on, until someone shuts the daemon down — and nothing records which one that was.

@@ -28,6 +28,9 @@ const QUEUE = resolve(repoRoot, '.claude/skills/dev-server/scripts/test-queue.mj
 // beside it. Imported on the queue path only, for the reason given above QUEUE.
 const PORT_MODULE = resolve(repoRoot, '.claude/skills/dev-server/scripts/daemon-port.mjs');
 let DAEMON = null;
+// Whether the queue has taken ownership of this run. Once it has, a later failure must NOT be
+// answered by starting a second, unqueued suite — see the note where this is set.
+let accepted = false;
 const POLL_MS = 2000;
 
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -128,6 +131,13 @@ async function runQueued(args) {
     }
   }
 
+  // From here the daemon has ACCEPTED the run, and that changes what a failure may do. Falling
+  // back to a direct run now would start a second, unqueued full suite beside one the queue is
+  // already holding a slot for — which is precisely the serialisation this script exists to
+  // provide. `:159` already decided this for the status-code form of the same condition; the
+  // network form gets the same answer.
+  accepted = true;
+
   if (run.status === 'queued') {
     console.error(
       run.paused
@@ -182,8 +192,24 @@ if (
   if (decision.queue && existsSync(CLI) && existsSync(QUEUE) && existsSync(PORT_MODULE)) {
     // Un-awaited at top level, so anything runQueued throws would otherwise be an unhandled
     // rejection that kills the process with no tests run. The same guarantee as :123.
+    // Un-awaited at top level, so anything runQueued throws would otherwise be an unhandled
+    // rejection that kills the process with no tests run.
+    //
+    // What it does about it depends on whether the queue took the run. Before acceptance,
+    // degrading to a direct run keeps the guarantee at :128. AFTER acceptance it would start a
+    // second, unqueued suite beside the one the queue is holding a slot for, so it exits 2 — the
+    // same verdict :159 already gives when the poll comes back with a bad status.
+    //
+    // `err?.message` rather than `err.message`: a non-Error throw would otherwise print
+    // `(undefined)`, and a null throw would raise inside the handler and land back at the
+    // unhandled rejection this exists to prevent.
     runQueued(args).catch((err) => {
-      console.error(`Test queue failed (${err.message}); running directly.`);
+      const detail = err?.message ?? String(err);
+      if (accepted) {
+        console.error(`Lost contact with the test queue (${detail}). The run may still be queued.`);
+        process.exit(2);
+      }
+      console.error(`Test queue failed (${detail}); running directly.`);
       runDirect(args);
     });
   } else runDirect(args);

@@ -100,6 +100,48 @@ describe('parsePort / resolveDaemonPort', () => {
     expect(() => resolveDaemonPort({ DEV_DAEMON_PORT: 'nope' })).toThrow(/DEV_DAEMON_PORT/);
     expect(() => parsePort('nope', '--port')).toThrow(/--port/);
   });
+
+  // ON the boundary, not near it. Fixtures of 0 and 70000 leave `65535` free to drift to 65536
+  // without any test noticing — measured: that mutant survived the whole suite.
+  it('accepts the highest legal port and rejects the first illegal one', () => {
+    expect(parsePort('65535', 'X')).toBe(65535);
+    expect(parsePort('1', 'X')).toBe(1);
+    expect(() => parsePort('65536', 'X')).toThrow(/out of the port range/);
+  });
+});
+
+/**
+ * The PreToolUse hook is a fifth consumer of the port, and until this round it had a sixth copy
+ * of the literal. It cannot import the module (it must resolve synchronously, before every Bash
+ * command), so it reads the declaration out of the module source — a dependency on that file's
+ * formatting, which nothing was testing. Loosening the regex is not a guarantee; this is.
+ */
+describe('the write-guard hook guards the ports the skill actually uses', () => {
+  it('guards the declared default', async () => {
+    const { unboundedDevRequest } = await import('../../.claude/hooks/check-writable.mjs');
+    expect(unboundedDevRequest(`curl http://localhost:${DEFAULT_DAEMON_PORT}/sessions`)).toHaveLength(1);
+    // The negative control: a port the skill does not use must stay silent, or "it guards
+    // everything" would read the same as "it guards the right thing".
+    expect(unboundedDevRequest('curl http://localhost:7777/sessions')).toHaveLength(0);
+  });
+
+  // The override ADDS a daemon beside the shared one; it does not move it. Replacing the default
+  // silently un-guarded 9444 for everyone who set the variable — the hook's own selftest went red
+  // under DEV_DAEMON_PORT=9555 and nothing in this suite noticed.
+  it('guards BOTH the default and an override, because both daemons are live', async () => {
+    const { daemonPortsGuarded } = await import('../../.claude/hooks/check-writable.mjs');
+    expect(daemonPortsGuarded({}).map(Number)).toEqual([DEFAULT_DAEMON_PORT]);
+    expect(daemonPortsGuarded({ DEV_DAEMON_PORT: '9555' }).map(Number).sort()).toEqual(
+      [DEFAULT_DAEMON_PORT, 9555].sort()
+    );
+    // A value that is not a port adds nothing rather than corrupting the pattern.
+    expect(daemonPortsGuarded({ DEV_DAEMON_PORT: 'nope' }).map(Number)).toEqual([
+      DEFAULT_DAEMON_PORT,
+    ]);
+    expect(daemonPortsGuarded({ DEV_DAEMON_PORT: '0' }).map(Number)).toEqual([
+      DEFAULT_DAEMON_PORT,
+    ]);
+  });
 });
 
 /**
@@ -208,6 +250,16 @@ describe('argv goes through the same validator as the environment', () => {
     expect(parseArgs(['--port', '9555']).port).toBe(9555);
   });
 
+  // "argv gets the same validation the environment gets" is a claim about ALL of argv. There are
+  // two port flags, and leaving the second on parseInt made that sentence false.
+  it('validates --base-dev-port too, not just --port', async () => {
+    const { parseArgs } = await import('../../.claude/skills/dev-server/scripts/daemon.mjs');
+    expect(() => parseArgs(['--base-dev-port', 'abc'])).toThrow(
+      /--base-dev-port is not a port number/
+    );
+    expect(parseArgs(['--base-dev-port', '3100']).baseDevPort).toBe(3100);
+  });
+
   // The daemon's own header says importing it must not start a daemon; resolving the port at
   // module load would have made a bad DEV_DAEMON_PORT throw on mere import, taking down the
   // suites that import DevSession and the port reservation without intending to run anything.
@@ -308,6 +360,53 @@ describe('nothing outside daemon-port.mjs decides the daemon port', () => {
       );
     }
   });
+});
+
+/**
+ * console.mjs, behaviourally — the residual of the "ledger is spelled, not structural" finding.
+ *
+ * Every structural assertion available is walkable by a mutant that resolves the URL correctly
+ * and then drifts it: `resolveDaemonUrl().replace(/\d+$/, n => Number(n) + 1)` passes the import
+ * check and the call check both. Only asking the socket which port it was actually asked for
+ * settles it, so this stands a stub daemon up and reads the request that arrives.
+ */
+describe('the console talks to the port it resolved', () => {
+  it('sends its first request to the port DEV_DAEMON_PORT names', async () => {
+    const consoleScript = resolve(skillDir, 'console.mjs');
+    const hits: string[] = [];
+
+    const server = createServer((req, res) => {
+      hits.push(req.url ?? '');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessions: [], runs: [] }));
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const { port } = server.address() as AddressInfo;
+
+    // `--tail`, because the dashboard refuses to start without a TTY ("Dashboard requires a TTY
+    // terminal") and exits 1 before it ever contacts the daemon. --tail is its own documented
+    // non-interactive mode and goes through the same resolved DAEMON_URL.
+    const child = spawn(process.execPath, [consoleScript, '--tail'], {
+      cwd: repoRoot,
+      env: { ...process.env, DEV_DAEMON_PORT: String(port) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout.resume();
+    child.stderr.resume();
+
+    try {
+      for (let i = 0; i < 100 && hits.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    } finally {
+      child.kill('SIGKILL');
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+
+    // A stub on a port nothing else knows about. A request arriving here at all is proof the
+    // console resolved THIS port — an off-by-one would have gone somewhere else and hit nothing.
+    expect(hits.length).toBeGreaterThan(0);
+  }, 60_000);
 });
 
 /**
@@ -424,6 +523,59 @@ describe('an unusable DEV_DAEMON_PORT still runs the tests', () => {
     expect(stderr).toMatch(/Test queue address unusable/);
     expect(stderr).toMatch(/running directly/i);
     expect(stderr).not.toMatch(/UnhandledPromiseRejection|ERR_UNHANDLED_REJECTION/);
+  }, 40_000);
+
+  /**
+   * The other half of that guarantee, and the direction it must NOT go.
+   *
+   * Once the daemon has accepted the run it owns a slot for it. Degrading to a direct run at that
+   * point starts a second, unqueued full suite beside the queued one — defeating the serialisation
+   * the script exists to provide. The fix round's first attempt wrapped the whole lifecycle in one
+   * catch and did exactly that: a socket dropped mid-poll printed "running directly" and started
+   * vitest.
+   */
+  it('does NOT start a second suite once the queue has accepted the run', async () => {
+    const script = resolve(repoRoot, 'scripts/test-unit-run.mjs');
+
+    // A daemon that accepts the run and then dies, which is the shape that used to double-run.
+    let sockets: import('net').Socket[] = [];
+    const server = createServer((req, res) => {
+      if (req.url === '/test-runs') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 'stub', status: 'queued', position: 1, queueLength: 1 }));
+        return;
+      }
+      // The poll: drop the connection rather than answer.
+      req.socket.destroy();
+    });
+    server.on('connection', (s) => sockets.push(s));
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const { port } = server.address() as AddressInfo;
+
+    const out = await new Promise<{ code: number | null; text: string }>((done) => {
+      const child = spawn(process.execPath, [script], {
+        cwd: repoRoot,
+        env: { ...process.env, CI: '', CIVITAI_TEST_QUEUE: '1', DEV_DAEMON_PORT: String(port) },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let text = '';
+      child.stdout.on('data', (d: Buffer) => (text += d.toString()));
+      child.stderr.on('data', (d: Buffer) => (text += d.toString()));
+      const bail = setTimeout(() => child.kill('SIGKILL'), 25_000);
+      child.on('exit', (code) => {
+        clearTimeout(bail);
+        done({ code, text });
+      });
+    });
+
+    sockets.forEach((s) => s.destroy());
+    await new Promise<void>((done) => server.close(() => done()));
+
+    expect(out.text).toMatch(/Queued at position/);
+    // The tell that the bug is back would be a vitest banner in this output.
+    expect(out.text).not.toMatch(/running directly/i);
+    expect(out.text).not.toMatch(/RUN\s+v\d/);
+    expect(out.code).toBe(2);
   }, 40_000);
 
   it('does not hold a stale port module reference', () => {

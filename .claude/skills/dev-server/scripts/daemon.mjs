@@ -203,7 +203,7 @@ function parseArgs(argv = process.argv.slice(2)) {
         config.port = parsePort(args[++i], '--port');
         break;
       case '--base-dev-port':
-        config.baseDevPort = parseInt(args[++i], 10);
+        config.baseDevPort = parsePort(args[++i], '--base-dev-port');
         break;
     }
   }

@@ -94,24 +94,37 @@ function isUnscoped(target) {
 // a missing skill directory or a malformed DEV_DAEMON_PORT must degrade, not propagate; and doing
 // it on first use rather than at import keeps this file free of top-level await.
 let devPortsRe = null;
-function devPorts() {
-  if (devPortsRe) return devPortsRe;
-  let daemon = '';
+export function daemonPortsGuarded(env = process.env) {
+  const ports = new Set();
   try {
     // Synchronous require-equivalent is unavailable in ESM, so the port is read from the module
-    // source. A regex over one `export const` line is deliberately duller than an import: it
-    // cannot execute skill code inside a hook that runs before every command.
+    // source. A regex over one declaration is deliberately duller than an import: it cannot
+    // execute skill code inside a hook that runs before every command. Loose about spacing and
+    // digit separators, because it is pinned only by that file's formatting — a reformat there
+    // must not silently drop the daemon out of this guard.
     const source = readFileSync(
       new URL('../skills/dev-server/scripts/daemon-port.mjs', import.meta.url),
       'utf8'
     );
-    const declared = /export const DEFAULT_DAEMON_PORT = (\d+)/.exec(source);
-    const override = process.env.DEV_DAEMON_PORT?.trim();
-    const port = /^\d+$/.test(override ?? '') ? override : declared?.[1];
-    if (port) daemon = `|${port}`;
+    const declared = /DEFAULT_DAEMON_PORT\s*=\s*([\d_]+)/.exec(source);
+    if (declared) ports.add(declared[1].replace(/_/g, ''));
   } catch {
     /* skill absent — the 30xx/516x-517x ranges still guard the dev servers themselves */
   }
+
+  // The override ADDS a port, it does not move one. `DEV_DAEMON_PORT` stands a second daemon
+  // BESIDE the shared one (SKILL.md), so both are live and both need guarding. Replacing the
+  // default here silently un-guarded the shared daemon for anyone who set the variable.
+  const override = env.DEV_DAEMON_PORT?.trim();
+  if (/^\d+$/.test(override ?? '') && Number(override) >= 1 && Number(override) <= 65535) {
+    ports.add(String(Number(override)));
+  }
+  return [...ports];
+}
+
+function devPorts() {
+  if (devPortsRe) return devPortsRe;
+  const daemon = daemonPortsGuarded().map((p) => `|${p}`).join('');
   devPortsRe = new RegExp(
     String.raw`(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?):(?:30\d\d|51[67]\d${daemon})\b`,
     'i'
