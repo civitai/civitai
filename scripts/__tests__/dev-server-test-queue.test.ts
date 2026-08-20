@@ -299,7 +299,7 @@ describe('dev-server test queue', () => {
    * remaining run unkilled.
    */
   it.each([
-    ['shutdown', (q: ReturnType<typeof build>) => q.shutdown()],
+    ['shutdown', (q: ReturnType<typeof build>) => q.shutdown(), 'cancelled'],
     [
       'the sweep force-release',
       (q: ReturnType<typeof build>) => {
@@ -308,8 +308,9 @@ describe('dev-server test queue', () => {
         now += 5_000;
         q.sweep();
       },
+      'timeout',
     ],
-  ])('frees the slot on %s even when dispose throws', (_name, act) => {
+  ])('frees the slot on %s even when dispose throws', (_name, act, expected) => {
     const queue = build({ killGraceMs: 5_000 });
     runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun & { dispose: () => void };
@@ -327,7 +328,10 @@ describe('dev-server test queue', () => {
     expect(() => act(queue)).not.toThrow();
 
     expect(queue.running.size).toBe(0);
-    expect(['cancelled', 'timeout']).toContain(queue.get(run.id).status);
+    // The exact status for THIS path, not either-of. `toContain` over both would pass with the
+    // wrong terminal status — a shutdown reported as a timeout, or the reverse — which is the
+    // shape of assertion that lets a real mix-up through.
+    expect(queue.get(run.id).status).toBe(expected);
   });
 
   // A runner that predates `dispose` must not crash the sweep — the queue calls it optionally.
