@@ -13,6 +13,10 @@
 
 import { EventEmitter } from 'events';
 import { spawn, execFileSync } from 'child_process';
+import { closeSync, openSync, readSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { randomUUID } from 'crypto';
 
 export const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_ABANDON_AFTER_MS = 10 * 60 * 1000;
@@ -42,6 +46,87 @@ export function exitCodeFor(run) {
   return Number.isInteger(run.exitCode) && run.exitCode > 0 ? run.exitCode : 1;
 }
 
+/**
+ * Where a run's output is captured while it runs.
+ *
+ * A FILE, not a pipe, and that is the whole fix for the drop. Node makes a child's stdout
+ * synchronous when it refers to a regular file and asynchronous when it refers to a pipe — so a
+ * child that calls `process.exit()` with data still queued on a pipe DISCARDS it, before the
+ * parent ever receives it. Measured on this box: 5,000 lines written, 172 recorded, 11,932 of
+ * 353,893 bytes delivered, every missing line a contiguous tail. The same child exiting naturally
+ * delivered all 353,893 bytes.
+ *
+ * That also rules out the fix that looks obvious from the daemon's side. The daemon cannot detect
+ * the loss by reading: it sees a clean EOF and there is no signal to compare against. And the
+ * child is vitest, so "flush before exit" is not ours to call. Handing it a file is the only one
+ * of the three that needs no cooperation from the thing losing the data.
+ *
+ * One file for both streams rather than two, so the interleaving a reader depends on is the real
+ * one. The cost is that stdout and stderr are no longer distinguishable, which is why lines are
+ * recorded as `output` rather than claiming to be one or the other — nothing renders the level for
+ * a test run (both consumers print `entry.message`), and a label we cannot support is worse than
+ * an honest one.
+ */
+export function createOutputCapture(onLine) {
+  const path = join(tmpdir(), `civitai-test-run-${process.pid}-${randomUUID()}.log`);
+  const writeFd = openSync(path, 'a');
+  let readFd;
+  try {
+    readFd = openSync(path, 'r');
+  } catch (err) {
+    closeSync(writeFd);
+    throw err;
+  }
+
+  let offset = 0;
+  // The tail of a read that stopped mid-line. Without it, a line straddling a read boundary is
+  // torn in two and BOTH halves are recorded as lines — which corrupted the log even when every
+  // byte arrived: 5,000 lines in, 4,998 recognised, 6 fragments invented, 353,893/353,893 bytes.
+  let carry = '';
+
+  const drain = (final = false) => {
+    const buf = Buffer.allocUnsafe(64 * 1024);
+    for (;;) {
+      let read = 0;
+      try {
+        // Explicit position, so this never moves the shared write offset.
+        read = readSync(readFd, buf, 0, buf.length, offset);
+      } catch {
+        break;
+      }
+      if (read <= 0) break;
+      offset += read;
+      carry += buf.toString('utf8', 0, read);
+      const lines = carry.split('\n');
+      carry = lines.pop() ?? '';
+      for (const line of lines) if (line.trim()) onLine(line.trim());
+      if (read < buf.length) break;
+    }
+    // A run whose last line has no trailing newline still emitted that line.
+    if (final && carry.trim()) {
+      onLine(carry.trim());
+      carry = '';
+    }
+  };
+
+  const close = () => {
+    for (const fd of [readFd, writeFd]) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* already closed */
+      }
+    }
+    try {
+      unlinkSync(path);
+    } catch {
+      /* already gone */
+    }
+  };
+
+  return { path, writeFd, drain, close };
+}
+
 export function defaultStartRun({ worktree, args, onLog, onExit }) {
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
@@ -49,6 +134,15 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
   const argv = ['run', 'test:unit:run', ...args];
 
   onLog('info', `> ${pnpm} ${argv.join(' ')}`);
+
+  let capture;
+  try {
+    capture = createOutputCapture((line) => onLog('output', line));
+  } catch (err) {
+    queueMicrotask(() => onExit(-1, `could not open a capture file: ${err.message}`));
+    emitter.kill = () => {};
+    return emitter;
+  }
 
   let child;
   try {
@@ -58,12 +152,10 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
       // enqueue a second run and wait for it, while this one holds the slot that run needs — a
       // deadlock on every full-suite run, not a race. Concurrency is not the fix: each logical run
       // would need two slots, so N agents starting together still fill them all with waiters.
-      // The command above is the script that routes to this queue. Inheriting the flag makes it
-      // enqueue a second run and wait for it, while this one holds the slot that run needs — a
-      // deadlock on every full-suite run, not a race. Concurrency is not the fix: each logical run
-      // would need two slots, so N agents starting together still fill them all with waiters.
       env: { ...process.env, CIVITAI_TEST_QUEUE: '0' },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // The same fd twice: one file description, one shared offset, so the two streams append in
+      // the order they were actually written. See createOutputCapture.
+      stdio: ['ignore', capture.writeFd, capture.writeFd],
       shell: isWindows,
       // Its own process group, so the kill below can take the whole vitest tree. Without this,
       // killing by negative pid names no group, fails with ESRCH, and leaves the run burning
@@ -71,22 +163,34 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
       detached: !isWindows,
     });
   } catch (err) {
+    capture.close();
     queueMicrotask(() => onExit(-1, err.message));
     emitter.kill = () => {};
     return emitter;
   }
 
-  const pipe = (stream, level) =>
-    stream.on('data', (d) => {
-      for (const line of d.toString().split('\n')) {
-        if (line.trim()) onLog(level, line.trim());
-      }
-    });
-  pipe(child.stdout, 'stdout');
-  pipe(child.stderr, 'stderr');
+  // Polled rather than watched: fs.watch's semantics differ per platform and it can miss an
+  // append entirely. The interval only decides how LIVE the log is — completeness comes from the
+  // final drain below, which runs after the writer is gone.
+  const tail = setInterval(() => capture.drain(), 100);
+  // So a forgotten run can never hold the daemon open.
+  tail.unref?.();
 
-  child.on('exit', (code) => onExit(code ?? -1));
-  child.on('error', (err) => onExit(-1, err.message));
+  let finished = false;
+  const finish = (code, error) => {
+    if (finished) return;
+    finished = true;
+    clearInterval(tail);
+    // Ordering is the point. Every remaining line is read BEFORE the run is reported terminal,
+    // so a waiter that wakes on the terminal status cannot observe a log that is still filling.
+    // The old pipe path could call onExit with lines still in flight.
+    capture.drain(true);
+    capture.close();
+    onExit(code, error);
+  };
+
+  child.on('exit', (code) => finish(code ?? -1));
+  child.on('error', (err) => finish(-1, err.message));
 
   emitter.pid = child.pid;
   // `sync` is for daemon shutdown, where an asynchronously spawned taskkill would never get to
