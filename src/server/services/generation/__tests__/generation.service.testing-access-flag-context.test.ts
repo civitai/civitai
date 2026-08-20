@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// Type-only, so it is erased and does NOT evaluate the module before the
+// hoisted `vi.mock` below registers its factory. Keep it `import type`.
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * THE SEAM: `resolveTestingAccess` decides who is in the `testers` tier of the
@@ -59,7 +62,7 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 
 const { mockIsFlipt } = vi.hoisted(() => ({ mockIsFlipt: vi.fn() }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: (...args: unknown[]) => mockIsFlipt(...args) };
 });
 
