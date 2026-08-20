@@ -478,3 +478,47 @@ describe('resolveSaleUndercut', () => {
     expect(r?.currentSalePrice).toBe(800);
   });
 });
+
+describe('the offered last day and the budget agree', () => {
+  // The picker offers `start + (daysLeft - 1)` as its max. If that is off by one against
+  // saleLengthInDays, the form hands the creator a date the save then refuses — worse than no bound,
+  // because the picker told them it was allowed.
+  const ctx = {
+    selectedCount: 1,
+    earlyAccessCount: 0,
+    minCoveredPrice: 500,
+    creatorScore: 25_000,
+    tier: 'bronze',
+    sales: [
+      {
+        id: 1,
+        discountType: 'Percent' as const,
+        discountAmount: 10,
+        startsAt: new Date('2026-03-02T00:00:00Z'),
+        endsAt: new Date('2026-03-07T00:00:00Z'),
+      },
+    ],
+    resolving: false,
+  };
+  const input = { type: 'Percent' as const, amount: 20, startDate: '2026-03-11', endDate: '' };
+
+  it('leaves exactly the days the picker would offer', () => {
+    // bronze 7, five spent by the fixture above.
+    expect(
+      resolveSaleDraft({ ...input, endDate: '2026-03-11' }, ctx, NOW).eligibility.daysLeft
+    ).toBe(2);
+  });
+
+  it('accepts a window ending on the offered maximum', () => {
+    // daysLeft 2 → offered max is start + 1 day.
+    const d = resolveSaleDraft({ ...input, endDate: '2026-03-12' }, ctx, NOW);
+    expect(d.draftDays).toBe(2);
+    expect(d.eligibility.canSchedule).toBe(true);
+  });
+
+  it('refuses the day after it, so the bound is not one short or one long', () => {
+    const d = resolveSaleDraft({ ...input, endDate: '2026-03-13' }, ctx, NOW);
+    expect(d.draftDays).toBe(3);
+    expect(d.eligibility.canSchedule).toBe(false);
+  });
+});

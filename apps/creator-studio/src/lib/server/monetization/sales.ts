@@ -464,6 +464,41 @@ export async function getSalesByVersion(
   return byVersion;
 }
 
+export type SaleVersion = { id: number; modelName: string; versionName: string };
+
+/**
+ * The versions each sale covers, keyed by sale id. Loaded with the sales rather than on demand: a creator
+ * opening a sale wants to see what is in it, and that is one join over a set already bounded by the
+ * creator's own live-or-upcoming sales.
+ */
+export async function getSaleVersionsBySale(
+  userId: number,
+  saleIds: number[]
+): Promise<Record<number, SaleVersion[]>> {
+  if (!saleIds.length) return {};
+  const rows = await dbRead
+    .selectFrom('ModelVersionSaleItem as i')
+    .innerJoin('ModelVersionSale as s', 's.id', 'i.saleId')
+    .innerJoin('ModelVersion as mv', 'mv.id', 'i.modelVersionId')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .select(['i.saleId', 'mv.id as versionId', 'mv.name as versionName', 'm.name as modelName'])
+    .where('i.saleId', 'in', saleIds)
+    // Scoped to the caller even though the ids came from their own sales: an id list is not authorisation.
+    .where('s.userId', '=', userId)
+    .orderBy('m.name')
+    .execute();
+
+  const bySale: Record<number, SaleVersion[]> = {};
+  for (const r of rows) {
+    (bySale[r.saleId] ??= []).push({
+      id: r.versionId,
+      modelName: r.modelName,
+      versionName: r.versionName,
+    });
+  }
+  return bySale;
+}
+
 /** Sales the creator can still act on, with how many versions each covers. */
 export async function getManageableSales(
   userId: number,

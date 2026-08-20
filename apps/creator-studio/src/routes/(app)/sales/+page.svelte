@@ -30,6 +30,8 @@
   let { data }: { data: PageData } = $props();
 
   let selectedId = $state<number | null>(null);
+  // The panel opens on the sale's detail; the controls that change it are a deliberate second step.
+  let editing = $state(false);
   // Re-resolved from data rather than held as its own copy, so an action's invalidateAll refreshes the
   // open panel instead of leaving it showing the sale as it was before the edit.
   const selected = $derived(
@@ -43,6 +45,10 @@
     const t = setInterval(() => (now = new Date()), 30_000);
     return () => clearInterval(t);
   });
+
+  const selectedVersions = $derived(
+    selectedId == null ? [] : (data.saleVersions[selectedId] ?? [])
+  );
 
   const daysLeft = $derived(
     remainingSaleDays(data.capTier, data.sales, budgetMonthOf(now), data.saleLimits)
@@ -95,6 +101,17 @@
     amount: undefined,
     startDate: '',
     endDate: '',
+  });
+
+  // Seeded when the panel opens, not in the initializer: `daysLeft` is derived, and reading it at
+  // construction would capture only its first value. Today, running as long as the budget still allows —
+  // the common case is "put this on sale now for as long as I can".
+  $effect(() => {
+    if (!creating || sale.startDate) return;
+    const start = new Date();
+    const span = Math.max(1, daysLeft);
+    sale.startDate = isoDay(start);
+    sale.endDate = isoDay(new Date(start.getTime() + (span - 1) * 86_400_000));
   });
 
   // What the form can't see about a selection this page never listed: how much of it is early access,
@@ -161,16 +178,20 @@
 </script>
 
 <div class="flex flex-col gap-4">
-  <div class="flex flex-wrap items-baseline justify-between gap-3">
+  <div class="flex flex-wrap items-start justify-between gap-3">
     <div class="flex flex-col gap-1">
       <h1 class="text-2xl font-bold text-white">Sales</h1>
       <p class="text-sm text-dark-2">
-        Temporary discounts across your paid versions. Start one from Models by selecting the
-        versions you want to discount.
+        Temporary discounts across your paid versions. Start one by selecting the versions you want
+        to discount.
       </p>
     </div>
-    <div class="flex items-center gap-3">
-      <span class="text-sm text-dark-2">{daysLeft} sale-days left this month</span>
+    <div class="flex items-center gap-2">
+      <span
+        class="rounded-full border border-dark-4 px-2.5 py-1 text-xs font-medium tabular-nums text-dark-1"
+      >
+        {daysLeft} sale-day{daysLeft === 1 ? '' : 's'} left
+      </span>
       {#if data.salesEnabled}
         <Button href="/models?for=sale" size="sm">
           <IconPlus class="size-4" />
@@ -200,7 +221,10 @@
           <button
             type="button"
             class="flex w-full items-center gap-3 rounded-lg border border-dark-4 p-3 text-left transition-colors hover:border-dark-3"
-            onclick={() => (selectedId = sale.id)}
+            onclick={() => {
+              selectedId = sale.id;
+              editing = false;
+            }}
           >
             <span
               class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide {live
@@ -283,81 +307,105 @@
       </SheetHeader>
 
       <div class="flex flex-col gap-6 p-5">
-        <!-- Only the directions the rules allow. Extending, softening and adding versions are refused by
+        <!-- What the sale is ON. A creator opening a sale is usually asking which versions it covers,
+             so that answer comes before any control that changes it. -->
+        <section class="flex flex-col gap-2">
+          <span class="text-sm font-medium text-white">
+            Versions on sale ({selectedVersions.length})
+          </span>
+          {#if selectedVersions.length === 0}
+            <p class="text-xs text-dark-2">No versions are attached to this sale.</p>
+          {:else}
+            <ul class="flex max-h-56 flex-col gap-1 overflow-y-auto">
+              {#each selectedVersions as v (v.id)}
+                <li class="truncate text-xs text-dark-1">
+                  {v.modelName} · <span class="text-dark-2">{v.versionName}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+
+        {#if !editing}
+          <Button variant="outline" onclick={() => (editing = true)}>Edit this sale</Button>
+        {:else}
+          <!-- Only the directions the rules allow. Extending, softening and adding versions are refused by
              the server, so they are not offered here rather than offered and rejected. -->
-        <section class="flex flex-col gap-2">
-          <span class="text-sm font-medium text-white">End earlier</span>
-          <form
-            method="POST"
-            action="?/shortenSale"
-            use:enhance={submit}
-            class="flex items-end gap-2"
-          >
-            <input type="hidden" name="saleId" value={selected.id} />
-            <div class="flex flex-col gap-1.5">
-              <Label for="sale-last-day">New last day</Label>
-              <Input
-                id="sale-last-day"
-                type="date"
-                name="lastDay"
-                class="w-40"
-                min={isoDay(new Date(Math.max(selected.startsAt.getTime(), now.getTime())))}
-                max={isoDay(lastDay(selected))}
-                required
-              />
-            </div>
-            <Button type="submit" variant="outline">Shorten</Button>
-          </form>
-          <p class="text-xs text-dark-2">
-            {live
-              ? 'The days you cut are returned to your monthly budget.'
-              : 'A shorter window costs fewer sale-days.'}
-          </p>
-        </section>
+          <section class="flex flex-col gap-2">
+            <span class="text-sm font-medium text-white">End earlier</span>
+            <form
+              method="POST"
+              action="?/shortenSale"
+              use:enhance={submit}
+              class="flex items-end gap-2"
+            >
+              <input type="hidden" name="saleId" value={selected.id} />
+              <div class="flex flex-col gap-1.5">
+                <Label for="sale-last-day">New last day</Label>
+                <Input
+                  id="sale-last-day"
+                  type="date"
+                  name="lastDay"
+                  class="w-40"
+                  min={isoDay(new Date(Math.max(selected.startsAt.getTime(), now.getTime())))}
+                  max={isoDay(lastDay(selected))}
+                  required
+                />
+              </div>
+              <Button type="submit" variant="outline">Shorten</Button>
+            </form>
+            <p class="text-xs text-dark-2">
+              {live
+                ? 'The days you cut are returned to your monthly budget.'
+                : 'A shorter window costs fewer sale-days.'}
+            </p>
+          </section>
 
-        <section class="flex flex-col gap-2">
-          <span class="text-sm font-medium text-white">Deepen the discount</span>
-          <form
-            method="POST"
-            action="?/deepenSale"
-            use:enhance={submit}
-            class="flex items-end gap-2"
-          >
-            <input type="hidden" name="saleId" value={selected.id} />
-            <div class="flex flex-col gap-1.5">
-              <Label for="sale-discount">
-                {selected.discountType === 'Percent' ? 'Percent off' : 'Buzz off'}
-              </Label>
-              <Input
-                id="sale-discount"
-                type="number"
-                name="discountAmount"
-                class="w-28"
-                min={selected.discountAmount + 1}
-                max={selected.discountType === 'Percent' ? 99 : undefined}
-                required
-              />
-            </div>
-            <Button type="submit" variant="outline">Deepen</Button>
-          </form>
-          <p class="text-xs text-dark-2">
-            A running sale's discount can only go deeper — buyers never pay more than it advertised.
-          </p>
-        </section>
+          <section class="flex flex-col gap-2">
+            <span class="text-sm font-medium text-white">Deepen the discount</span>
+            <form
+              method="POST"
+              action="?/deepenSale"
+              use:enhance={submit}
+              class="flex items-end gap-2"
+            >
+              <input type="hidden" name="saleId" value={selected.id} />
+              <div class="flex flex-col gap-1.5">
+                <Label for="sale-discount">
+                  {selected.discountType === 'Percent' ? 'Percent off' : 'Buzz off'}
+                </Label>
+                <Input
+                  id="sale-discount"
+                  type="number"
+                  name="discountAmount"
+                  class="w-28"
+                  min={selected.discountAmount + 1}
+                  max={selected.discountType === 'Percent' ? 99 : undefined}
+                  required
+                />
+              </div>
+              <Button type="submit" variant="outline">Deepen</Button>
+            </form>
+            <p class="text-xs text-dark-2">
+              A running sale's discount can only go deeper — buyers never pay more than it
+              advertised.
+            </p>
+          </section>
 
-        <section class="flex flex-col gap-2 border-t border-dark-4 pt-5">
-          <form method="POST" action="?/cancelSale" use:enhance={submit}>
-            <input type="hidden" name="saleId" value={selected.id} />
-            <Button type="submit" variant="destructive" class="w-full">
-              {live ? 'End this sale now' : 'Cancel this sale'}
-            </Button>
-          </form>
-          <p class="text-xs text-dark-2">
-            {live
-              ? 'Buyers keep what they already bought. The unused days return to your budget.'
-              : 'It never runs, and all of its days return to your budget.'}
-          </p>
-        </section>
+          <section class="flex flex-col gap-2 border-t border-dark-4 pt-5">
+            <form method="POST" action="?/cancelSale" use:enhance={submit}>
+              <input type="hidden" name="saleId" value={selected.id} />
+              <Button type="submit" variant="destructive" class="w-full">
+                {live ? 'End this sale now' : 'Cancel this sale'}
+              </Button>
+            </form>
+            <p class="text-xs text-dark-2">
+              {live
+                ? 'Buyers keep what they already bought. The unused days return to your budget.'
+                : 'It never runs, and all of its days return to your budget.'}
+            </p>
+          </section>
+        {/if}
       </div>
     {/if}
   </SheetContent>

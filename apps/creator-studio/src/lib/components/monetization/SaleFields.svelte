@@ -51,6 +51,18 @@
       .toISOString()
       .slice(0, 10)
   );
+
+  // The picker stops at the budget rather than letting a creator choose a window the save will refuse.
+  // The refusal stays — this bound is the same arithmetic offered earlier, not a replacement for it, and
+  // it can only be as right as the days-left figure, which moves with the month the sale starts in.
+  const latestLastDay = $derived.by(() => {
+    const start = sale.startDate ? new Date(`${sale.startDate}T00:00:00.000Z`) : null;
+    if (!start || Number.isNaN(start.getTime()) || draft.eligibility.daysLeft <= 0)
+      return undefined;
+    return new Date(start.getTime() + (draft.eligibility.daysLeft - 1) * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+  });
 </script>
 
 <!-- Resolved instants, not the raw day strings: the server must never have to guess a timezone. -->
@@ -141,6 +153,7 @@
           id="sale-end"
           type="date"
           min={sale.startDate || todayUtc}
+          max={latestLastDay}
           bind:value={sale.endDate}
         />
       </div>

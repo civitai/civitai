@@ -11,6 +11,7 @@ import {
   deepenSale,
   getCreatorSales,
   getManageableSales,
+  getSaleVersionsBySale,
   scheduleSale,
   shortenSale,
   versionIdsForSale,
@@ -86,10 +87,20 @@ export const load: PageServerLoad = async ({ locals, parent, cookies }) => {
       ])
     : [[], [], {}, 0];
 
+  // What each sale covers, so the detail panel can answer "which versions is this on?" without a
+  // second round trip when the creator opens one.
+  const saleVersions = salesEnabled
+    ? await getSaleVersionsBySale(
+        locals.user.id,
+        manageableSales.map((s) => s.id)
+      )
+    : {};
+
   return {
     salesEnabled,
     sales,
     manageableSales,
+    saleVersions,
     saleLimits,
     creatorScore,
     capTier: cappedTier(membership),
