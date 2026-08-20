@@ -181,7 +181,11 @@ describe('prom/client registers into the registry /api/metrics scrapes', () => {
     ).toBeTruthy();
   });
 
-  it('exposes the pg pool gauges too — same guard, same defect', async () => {
+  // 🔴 NO ASSERTION HERE THAT THE PG POOL GAUGES REACH THE SHARED REGISTRY — they deliberately do
+  // not, and a test demanding it would lock in a metric that reads the wrong pool. See the long
+  // note above the pg block in src/server/prom/client.ts. What IS pinned is that they stay off the
+  // shared registry, so a future well-meant move has to change this test and read that note.
+  it('leaves the pg pool gauges OFF the shared registry until their pools are process-wide', async () => {
     const { instrumentationRegistry } = await importAsBothGraphs();
 
     for (const name of [
@@ -189,57 +193,8 @@ describe('prom/client registers into the registry /api/metrics scrapes', () => {
       'node_postgres_write_waiting_count',
       'node_postgres_pool_idle_count',
     ]) {
-      expect(instrumentationRegistry.getSingleMetric(name), name).toBeTruthy();
+      expect(instrumentationRegistry.getSingleMetric(name), name).toBeUndefined();
     }
-  });
-
-  // Existence alone is a weak assertion for these nine: they are (name, help, reader) triples, so
-  // every wrong-pool / wrong-counter slip still produces a registered, non-empty gauge. Only the
-  // VALUE distinguishes `pgDbRead.idleCount` from `pgDbWrite.totalCount`. Each expected number
-  // below is unique across the fixture, so any transposition renders a number that appears nowhere
-  // in the expected set rather than coincidentally matching a sibling.
-  it('maps every pg gauge to the right pool and the right counter', async () => {
-    const { instrumentationRegistry } = await importAsBothGraphs();
-    const scraped = await instrumentationRegistry.metrics();
-
-    for (const line of [
-      'node_postgres_read_total_count 11',
-      'node_postgres_read_idle_count 12',
-      'node_postgres_read_waiting_count 13',
-      'node_postgres_write_total_count 21',
-      'node_postgres_write_idle_count 22',
-      'node_postgres_write_waiting_count 23',
-      'node_postgres_pool_total_count{pool="read"} 11',
-      'node_postgres_pool_total_count{pool="write"} 21',
-      'node_postgres_pool_total_count{pool="read_long"} 31',
-      'node_postgres_pool_total_count{pool="datapacket_read"} 41',
-      'node_postgres_pool_idle_count{pool="read"} 12',
-      'node_postgres_pool_idle_count{pool="write"} 22',
-      'node_postgres_pool_idle_count{pool="read_long"} 32',
-      'node_postgres_pool_idle_count{pool="datapacket_read"} 42',
-      'node_postgres_pool_waiting_count{pool="read"} 13',
-      'node_postgres_pool_waiting_count{pool="write"} 23',
-      'node_postgres_pool_waiting_count{pool="read_long"} 33',
-      'node_postgres_pool_waiting_count{pool="datapacket_read"} 43',
-    ]) {
-      expect(scraped, line).toContain(line);
-    }
-  });
-
-  // The null-guard on each labelled pool has no observable effect while every pool is present, so
-  // deleting it survives any all-pools-present fixture. A pool that is genuinely absent is the only
-  // input that reaches the branch — and the contract is that it reports 0 rather than throwing
-  // `Value is not a valid number` out of Gauge.set, which would reject the whole registry scrape.
-  it('reports 0 for an absent pool instead of throwing out of collect()', async () => {
-    pools.readLong = undefined;
-    const { instrumentationRegistry } = await importAsBothGraphs();
-
-    const scraped = await instrumentationRegistry.metrics();
-    expect(scraped).toContain('node_postgres_pool_total_count{pool="read_long"} 0');
-    expect(scraped).toContain('node_postgres_pool_idle_count{pool="read_long"} 0');
-    expect(scraped).toContain('node_postgres_pool_waiting_count{pool="read_long"} 0');
-    // The surviving pools must be untouched — a guard that swallows too much would zero them too.
-    expect(scraped).toContain('node_postgres_pool_total_count{pool="write"} 21');
   });
 
   it('does not register a gauge twice when both graphs evaluate the module', async () => {

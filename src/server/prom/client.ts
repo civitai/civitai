@@ -41,10 +41,18 @@ export * from '@civitai/telemetry/client';
 // a module-init cycle (this module imports pgDb → db-helpers, which would import the
 // histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
 
-// `pgGaugeInitialized` / `heavyBulkheadGaugeInitialized` were declared here and are gone: a
-// globalThis flag guarding a per-graph registry is the bug this file now documents at length
-// below, not a pattern to reach for. Deduplication comes from registerInstrumentationMetric,
-// which checks the same shared registry it writes to.
+// `heavyBulkheadGaugeInitialized` was declared here and is gone: a globalThis flag guarding a
+// per-graph registry is the bug this file documents at length below, not a pattern to reach for.
+// Deduplication for anything on the shared registry comes from registerInstrumentationMetric,
+// which checks the same registry it writes to, so the flag's one legitimate job is covered.
+//
+// `pgGaugeInitialized` SURVIVES, deliberately, and is the exception that proves the rule — see the
+// long note above the pg block near the bottom of this file. Those gauges cannot move to the
+// shared registry until the pools they read are themselves process-wide.
+declare global {
+  // eslint-disable-next-line no-var, vars-on-top
+  var pgGaugeInitialized: boolean;
+}
 
 // Image-ingestion working-state backlog + oldest-age gauges. These are DB-derived,
 // so they must NOT hit Postgres on every /metrics scrape (~15s). The query is served
@@ -219,93 +227,108 @@ registerInstrumentationMetric(
     })
 );
 
-// The pg pool gauges carried the identical defect via `global.pgGaugeInitialized` and were also
-// measured at 0 series in production. They are fixed in the same commit because they are the same
-// bug in the same file, not because the reported issue asked for them.
-const pgPoolGauge = (name: string, help: string, read: () => number) =>
-  registerInstrumentationMetric(
-    name,
-    () =>
-      new client.Gauge({
-        name,
-        help,
-        registers: [instrumentationRegistry],
-        collect() {
-          this.set(read());
-        },
-      })
-  );
+// 🔴 THE PG POOL GAUGES ARE DELIBERATELY LEFT ON THE UNSCRAPED REGISTRY. DO NOT "FIX" THEM
+// THE WAY THE BULKHEAD GAUGES WERE FIXED — IT WAS TRIED HERE AND IT MAKES THEM WORSE.
+//
+// They carry the same registration defect (a globalThis flag guarding a per-graph registry), so
+// moving them to `instrumentationRegistry` does make them appear in the scrape. But a
+// collect()-based metric needs BOTH halves shared: the registry it registers into AND the state
+// its closure reads. The bulkhead has both — `request-bulkhead.ts` pins its maps on globalThis.
+// These do not: `src/server/db/pgDb.ts` globalThis-pins the pools ONLY in the `!isProd` branch, so
+// in production every emitted copy of that module builds its OWN pg pools. The graph that wins
+// registration is the instrumentation graph, whose pools serve nothing but the ingestion-backlog
+// query in this file.
+//
+// Measured on a preview running exactly that change: `node_postgres_read_total_count` read 1 while
+// idle and still 1 under 30 concurrent `/api/v1/images` requests, with every write-pool gauge at 0
+// throughout. Frozen, plausible-looking, and wrong — which is strictly worse than the honest
+// absence they have today, and is the same false-all-clear class as the `or vector(0)` this PR
+// removes from the reject panel. An absent metric prompts a question; a confident 0 ends one.
+//
+// Making them real means pinning the pools in `pgDb.ts` for prod too. That changes production DB
+// connection topology (today: one pool set per emitted graph), so it is its own change with its
+// own blast radius, not a rider on a metrics fix.
+if (!global.pgGaugeInitialized) {
+  new client.Gauge({
+    name: 'node_postgres_read_total_count',
+    help: 'node postgres read total count',
+    collect() {
+      this.set(pgDbRead.totalCount);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_read_idle_count',
+    help: 'node postgres read idle count',
+    collect() {
+      this.set(pgDbRead.idleCount);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_read_waiting_count',
+    help: 'node postgres read waiting count',
+    collect() {
+      this.set(pgDbRead.waitingCount);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_write_total_count',
+    help: 'node postgres write total count',
+    collect() {
+      this.set(pgDbWrite.totalCount);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_write_idle_count',
+    help: 'node postgres write idle count',
+    collect() {
+      this.set(pgDbWrite.idleCount);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_write_waiting_count',
+    help: 'node postgres write waiting count',
+    collect() {
+      this.set(pgDbWrite.waitingCount);
+    },
+  });
 
-pgPoolGauge(
-  'node_postgres_read_total_count',
-  'node postgres read total count',
-  () => pgDbRead.totalCount
-);
-pgPoolGauge(
-  'node_postgres_read_idle_count',
-  'node postgres read idle count',
-  () => pgDbRead.idleCount
-);
-pgPoolGauge(
-  'node_postgres_read_waiting_count',
-  'node postgres read waiting count',
-  () => pgDbRead.waitingCount
-);
-pgPoolGauge(
-  'node_postgres_write_total_count',
-  'node postgres write total count',
-  () => pgDbWrite.totalCount
-);
-pgPoolGauge(
-  'node_postgres_write_idle_count',
-  'node postgres write idle count',
-  () => pgDbWrite.idleCount
-);
-pgPoolGauge(
-  'node_postgres_write_waiting_count',
-  'node postgres write waiting count',
-  () => pgDbWrite.waitingCount
-);
+  // Labeled pool metrics for all pools
+  new client.Gauge({
+    name: 'node_postgres_pool_total_count',
+    help: 'Total connections in pg pool',
+    labelNames: ['pool'],
+    collect() {
+      this.set({ pool: 'read' }, pgDbRead?.totalCount ?? 0);
+      this.set({ pool: 'write' }, pgDbWrite?.totalCount ?? 0);
+      this.set({ pool: 'read_long' }, pgDbReadLong?.totalCount ?? 0);
+      this.set({ pool: 'datapacket_read' }, datapacketDbRead?.totalCount ?? 0);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_pool_idle_count',
+    help: 'Idle connections in pg pool',
+    labelNames: ['pool'],
+    collect() {
+      this.set({ pool: 'read' }, pgDbRead?.idleCount ?? 0);
+      this.set({ pool: 'write' }, pgDbWrite?.idleCount ?? 0);
+      this.set({ pool: 'read_long' }, pgDbReadLong?.idleCount ?? 0);
+      this.set({ pool: 'datapacket_read' }, datapacketDbRead?.idleCount ?? 0);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_pool_waiting_count',
+    help: 'Waiting connections in pg pool',
+    labelNames: ['pool'],
+    collect() {
+      this.set({ pool: 'read' }, pgDbRead?.waitingCount ?? 0);
+      this.set({ pool: 'write' }, pgDbWrite?.waitingCount ?? 0);
+      this.set({ pool: 'read_long' }, pgDbReadLong?.waitingCount ?? 0);
+      this.set({ pool: 'datapacket_read' }, datapacketDbRead?.waitingCount ?? 0);
+    },
+  });
 
-// Labeled pool metrics for all pools
-const pgLabelledPoolGauge = (
-  name: string,
-  help: string,
-  read: (pool: { totalCount: number; idleCount: number; waitingCount: number }) => number
-) =>
-  registerInstrumentationMetric(
-    name,
-    () =>
-      new client.Gauge({
-        name,
-        help,
-        labelNames: ['pool'],
-        registers: [instrumentationRegistry],
-        collect() {
-          this.set({ pool: 'read' }, pgDbRead ? read(pgDbRead) : 0);
-          this.set({ pool: 'write' }, pgDbWrite ? read(pgDbWrite) : 0);
-          this.set({ pool: 'read_long' }, pgDbReadLong ? read(pgDbReadLong) : 0);
-          this.set({ pool: 'datapacket_read' }, datapacketDbRead ? read(datapacketDbRead) : 0);
-        },
-      })
-  );
-
-pgLabelledPoolGauge(
-  'node_postgres_pool_total_count',
-  'Total connections in pg pool',
-  (p) => p.totalCount
-);
-pgLabelledPoolGauge(
-  'node_postgres_pool_idle_count',
-  'Idle connections in pg pool',
-  (p) => p.idleCount
-);
-pgLabelledPoolGauge(
-  'node_postgres_pool_waiting_count',
-  'Waiting connections in pg pool',
-  (p) => p.waitingCount
-);
-
+  global.pgGaugeInitialized = true;
+}
 /**
  * Buzz still parked in escrow because a payout leg gave up.
  *
