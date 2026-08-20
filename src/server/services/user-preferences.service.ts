@@ -824,39 +824,42 @@ async function toggleBlockUser({
     where: { userId_targetUserId: { userId, targetUserId } },
     select: { type: true },
   });
-  const alreadyBlocked = engagement?.type === 'Block';
   // `setTo` carries the caller's INTENT. Without it this fell back to a blind
   // flip, so a client whose block list was stale sent "block" and got an
-  // unblock — with a success toast either way. Only fall back to flipping
-  // when no intent was supplied at all.
+  // unblock — with a success toast either way. Only fall back to flipping when
+  // no intent was supplied at all.
+  const alreadyBlocked = engagement?.type === 'Block';
   const blocking = setTo ?? !alreadyBlocked;
 
-  if (blocking && !engagement)
-    await dbWrite.userEngagement
-      .create({
-        data: { userId, targetUserId, type: 'Block' },
-      })
-      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
-      // already exists — idempotent, so fall through to the cache refreshes
-      // (which read DB truth) instead of bubbling a 500.
-      .catch((error) => {
-        if (!isPrismaUniqueViolation(error)) throw error;
-      });
-  else if (blocking && !alreadyBlocked)
-    await dbWrite.userEngagement.update({
+  // Both statements are idempotent and unconditional, which is what makes them
+  // safe against a concurrent write to the same PK. Branching on the row we
+  // read a moment ago is not: a block that read `Block` and then lost the row
+  // to a concurrent unblock would fall through every branch, write nothing,
+  // and still report success — silently leaving a safety control off. `upsert`
+  // re-establishes it instead (and needs no P2002 catch, since the conflict is
+  // resolved in the statement). `deleteMany` cannot raise P2025 on an
+  // already-removed row, and its `type` filter makes "never delete a Follow or
+  // a Hide" structural rather than a branch condition.
+  if (blocking)
+    await dbWrite.userEngagement.upsert({
       where: { userId_targetUserId: { userId, targetUserId } },
-      data: { type: 'Block' },
+      create: { userId, targetUserId, type: 'Block' },
+      update: { type: 'Block' },
     });
-  else if (!blocking && alreadyBlocked)
-    await dbWrite.userEngagement.delete({
-      where: { userId_targetUserId: { userId, targetUserId } },
+  else
+    await dbWrite.userEngagement.deleteMany({
+      where: { userId, targetUserId, type: UserEngagementType.Block },
     });
 
   await userFollowsCache.refresh(userId);
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
 
-  if (blocking && !alreadyBlocked) await cascadeBlockToPlacements({ userId, targetUserId });
+  // Every block cascades, not only a newly established one. `declinePlacementsOnBlock`
+  // touches only `pending` rows and caps at 200 per run, so a user with a larger
+  // backlog — or one whose first cascade hit a Buzz outage — drains the rest by
+  // blocking again. Gating on the transition would have removed that retry.
+  if (blocking) await cascadeBlockToPlacements({ userId, targetUserId });
 
   return {
     added: [],
