@@ -140,7 +140,7 @@ MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply'
 
 | flag | gates | off means |
 |---|---|---|
-| `…_XGUARD` | the submit in `upsertModel` | no scan is requested at all |
+| `…_XGUARD` | every submit path — `upsertModel` **and** the adapter's `submit` hook, which the retry cron drives | no scan is requested at all |
 | `…_XGUARD_APPLY` | the `nsfw` write in `applyResult` | scan runs, verdict is recorded to `EntityModeration` + the audit log, nothing is written to the model |
 
 **Both fail closed.** `isEnabled` returns `false` when the client is uninitialised, when
@@ -174,6 +174,15 @@ It also produces the per-label trigger rates that the "scan 15, act on 3" decisi
 on, on real model text rather than a hand-picked sample.
 
 Ramp order: `…_XGUARD` to 100% and hold → read the comparison → then ramp `…_XGUARD_APPLY`.
+
+One consequence of gating the adapter's `submit` hook: while `…_XGUARD` is off, the retry
+cron finds `Model` rows to retry, gets nothing back, and counts them in its `errors` metric
+without advancing their `retryCount`. They neither drain nor spend. This only arises after a
+rollback — before the flag's first activation there are no `Model` rows to retry at all.
+
+The backfill endpoint is deliberately exempt from both flags, so a backfill run performed
+during a rollback still submits; any of its rows that fail, however, will not be retried
+until the submit flag is back on.
 
 ⚠️ **Turning the apply flag on does not retroactively apply anything.** A model scanned while
 apply was off has already had its one callback; nothing re-delivers it. Models scanned during
