@@ -19,9 +19,10 @@ import { renderWithProviders } from '../../../test/component-setup';
  * nobody.
  */
 
-const { mutate, spaces } = vi.hoisted(() => ({
+const { mutate, spaces, sent } = vi.hoisted(() => ({
   mutate: vi.fn(),
   spaces: { value: [] as Record<string, unknown>[] },
+  sent: { value: [] as { status: string }[] },
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
@@ -41,6 +42,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         useQuery: () => ({ data: spaces.value, isPending: false, isError: false }),
       },
       getPending: { useQuery: () => ({ data: { items: [], nextCursor: null } }) },
+      // The queue in the OTHER direction — what this creator has placed on other
+      // people's images. This mock lists procedures by hand, so a component that
+      // starts calling one that isn't here reads `undefined.useQuery` and throws
+      // during render: every test in the file then fails as a 15s
+      // `getByText('Accept all')` timeout, which names the control rather than
+      // the missing procedure. Keep this list level with what the component
+      // calls. `getMyStickerPlacements` returns a bare array of rows, not a
+      // paged `{ items }` envelope — see `getMyStickerPlacements` in
+      // `sticker-placement.service.ts`.
+      getMyStickerPlacements: { useQuery: () => ({ data: sent.value }) },
       setSpace: { useMutation: () => ({ mutate, isPending: false }) },
     },
   },
@@ -60,6 +71,7 @@ const lastPayload = () => mutate.mock.calls[mutate.mock.calls.length - 1][0];
 beforeEach(() => {
   vi.clearAllMocks();
   spaces.value = [];
+  sent.value = [];
 });
 
 describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
@@ -111,5 +123,48 @@ describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
     // stores the old count. Fully determined: the space is unset, so the thumb
     // rests on the surface default of 1 and one ArrowRight makes it 2.
     expect(lastPayload().freeSlots).toBe(2);
+  });
+});
+
+/**
+ * The other half of the same mock, and the reason it is asserted here rather
+ * than left as scenery: `pendingCount` is covered in isolation by
+ * `queue-counts.test.ts`, and the button is covered nowhere. Neither test can
+ * see the join — that the count the filter computes is the number this badge
+ * shows — so the filter could be right and the badge still show `rows.length`.
+ */
+describe('PlacementSpaceSection — the count on the placed-stickers button', () => {
+  const placedButton = () => page.getByRole('link', { name: /stickers you.{0,3}ve placed/i });
+  const squashed = (el: Element) => el.textContent?.replace(/\s+/g, '');
+
+  test('badges what is still waiting on someone, not everything sent', async () => {
+    // Deliberately 2-of-3 rather than all-pending: `rows.length` is 3 here, so a
+    // badge that dropped the status filter shows a DIFFERENT number instead of
+    // coincidentally the right one. The list is also not empty, which the zero
+    // case below cannot distinguish on its own.
+    sent.value = [{ status: 'pending' }, { status: 'approved' }, { status: 'pending' }];
+    renderWithProviders(<PlacementSpaceSection />);
+
+    const link = placedButton();
+    await expect.element(link).toBeInTheDocument();
+    // The WHOLE string, not `toHaveTextContent('2')`: a substring check passes
+    // on "12" and on a stray digit anywhere else in the button. Whitespace is
+    // stripped rather than collapsed because the badge is a sibling element and
+    // whether Mantine puts a space before it is layout, not behaviour — the
+    // digit is what this test is about.
+    expect(squashed(link.element())).toBe("Stickersyou'veplaced2");
+  });
+
+  test('carries no badge when nothing is outstanding', async () => {
+    // Not the empty list — approved-only. The badge is hidden because the COUNT
+    // is zero, and only a non-empty list proves the filter is what zeroed it.
+    sent.value = [{ status: 'approved' }];
+    renderWithProviders(<PlacementSpaceSection />);
+
+    const link = placedButton();
+    await expect.element(link).toBeInTheDocument();
+    // A `0` badge is a to-do list with nothing on it; the button has to read as
+    // plain text. Exact string again, so a rendered "0" cannot hide in here.
+    expect(squashed(link.element())).toBe("Stickersyou'veplaced");
   });
 });
