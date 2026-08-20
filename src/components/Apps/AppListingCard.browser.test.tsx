@@ -210,14 +210,21 @@ describe('AppListingCard', () => {
         })}
       />
     );
-    // The kind signal ("Standalone") is no longer a badge — it's conveyed by the
-    // CTA below (an external "Visit" anchor vs. an internal Open/View details
-    // link) plus the off-site disclosure Alert on the detail page.
-    await expect.element(page.getByText('Standalone', { exact: true })).not.toBeInTheDocument();
     const visit = page.getByRole('link', { name: 'Visit' });
     await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
     await expect.element(visit).toHaveAttribute('target', '_blank');
     await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
+    // The kind signal ("Standalone") is no longer a badge — it's conveyed by the
+    // CTA above (an external "Visit" anchor vs. an internal Open/View details
+    // link) plus the off-site disclosure Alert on the detail page.
+    //
+    // 🔴 `expect(locator.query()).toBeNull()`, NOT `expect.element(...).not.toBeInTheDocument()`.
+    // The latter is REACHABLE BUT NON-ASSERTING: it passes for every string, including
+    // ones the card demonstrably renders. Controlled both ways — asserting absence of
+    // 'Visit' (rendered, per the three awaits above) goes RED in this form and PASSED in
+    // the old one. Ordering is load-bearing too: `.query()` is a point-in-time read, so
+    // it must follow an awaited positive assertion or it can pass on an unsettled render.
+    expect(page.getByText('Standalone', { exact: true }).query()).toBeNull();
   });
 
   test('off-site connect with NO external target → View details → unified detail', async () => {
