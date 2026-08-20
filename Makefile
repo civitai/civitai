@@ -60,6 +60,18 @@ copy-env:
 
 # `npm i` cannot work here: package.json's `preinstall` runs `npx only-allow pnpm`,
 # which exits 1 under npm. `make init` was dead on that line.
+#
+# This line previously carried `# TODO fix postinstall on git bash`. That note is
+# preserved rather than dropped, because nothing has verified it either way: the
+# target it sat on was DEAD for everyone (see above), so the `postinstall` hook it
+# warned about -- `pnpm run db:generate`, i.e. generate-slim-schema.js then
+# `prisma generate` -- has not been exercised here in a long time. Un-breaking the
+# target does not fix whatever that was; it just means the next Windows contributor
+# is the first to walk the path in a while.
+#
+# `.github/workflows/windows-dev-env.yml` now runs `pnpm install` on windows-latest
+# under BOTH pwsh and Git Bash to find out. It is non-blocking. When it has been
+# green for a while, delete this note; if it goes red under bash, this is the lead.
 .PHONY: install
 install:
 	pnpm install
