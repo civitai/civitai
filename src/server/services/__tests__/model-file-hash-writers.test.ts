@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 
@@ -47,8 +48,17 @@ const SKIP_DIRS = new Set([
   'coverage',
 ]);
 const SCAN_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.sql']);
-/** The scanned extensions that take JS comment syntax — i.e. everything but `.sql`. */
-const JS_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
+/**
+ * The scanned extensions that take JS comment syntax — DERIVED, not a second hand-written list.
+ * Two lists spelling one rule means adding an extension to SCAN_EXTENSIONS and forgetting this
+ * one, at which point that extension falls through unstripped and silently.
+ *
+ * Known adjacent gap, pre-dating this: `.mts` (12 files under the scan roots today) and `.cts`
+ * are in NEITHER set, so a writer in one is invisible to the ledger. Widening SCAN_EXTENSIONS
+ * would enlarge the enumeration and is its own change with its own evidence — recorded here
+ * rather than fixed in passing.
+ */
+const JS_EXTENSIONS = new Set([...SCAN_EXTENSIONS].filter((e) => e !== '.sql'));
 
 /**
  * Four spellings a write can take. A single Prisma-only pattern would miss a raw-SQL or Kysely
@@ -103,8 +113,10 @@ export function stripCommentsForExt(source: string, ext: string): string {
   return source;
 }
 
-/** Kept as the old name so any external caller keeps working; `.sql` behaviour is unchanged. */
-export const stripSqlComments = stripCommentsForExt;
+// (An earlier revision kept a `stripSqlComments` alias here "so any external caller keeps
+// working". There are none — the only other occurrences in the repo are a local function of the
+// same name in oauth-client-scope-grants.test.ts, which is unrelated. The alias was dead code
+// under a name that had stopped being true, since this strips JS comments too.)
 
 const isTestFile = (relPath: string) =>
   relPath.includes('__tests__') || /\.(test|spec)\.[cm]?[jt]sx?$/.test(relPath);
@@ -128,14 +140,26 @@ function collectFiles(dir: string, acc: string[]): string[] {
   return acc;
 }
 
-/** `<repo-relative path> :: <matched write expression>`, deduped and sorted. */
-function enumerateWriters(): string[] {
+/**
+ * `<repo-relative path> :: <matched write expression>`, deduped and sorted.
+ *
+ * `root` and `scanRoots` are parameters ONLY so a test can point this at a fixture directory.
+ * That is not a convenience: without it the comment strip could only be tested through
+ * `stripCommentsForExt` directly, and a mutant that reverts the CALL below — leaving the
+ * stripper perfectly correct while the enumerator reads raw source again — passes a suite that
+ * exercises the stripper alone. That mutant is exactly the defect this file was fixing, so it
+ * has to die here rather than be argued about.
+ */
+function enumerateWriters(
+  root: string = REPO_ROOT,
+  scanRoots: readonly string[] = SCAN_ROOTS
+): string[] {
   const files: string[] = [];
-  for (const root of SCAN_ROOTS) collectFiles(path.join(REPO_ROOT, root), files);
+  for (const r of scanRoots) collectFiles(path.join(root, r), files);
 
   const found = new Set<string>();
   for (const file of files) {
-    const rel = path.relative(REPO_ROOT, file);
+    const rel = path.relative(root, file);
     if (isTestFile(rel)) continue;
     const source = stripCommentsForExt(fs.readFileSync(file, 'utf8'), path.extname(file));
     if (!source.includes('odelFileHash')) continue; // cheap prefilter, case-insensitive on the M
@@ -178,19 +202,47 @@ const WRITER_LEDGER = [
 ] as const;
 
 /**
- * Comments removed, code kept. Block comments and JSDoc go first; then whole-line `//` comments;
- * then a trailing `//` comment, but only where the slashes are not part of a `://` scheme so a URL
- * in real code survives.
+ * Comments removed, code kept. Line comments go FIRST, then block comments; a trailing `//` is
+ * only cut where the slashes are not part of a `://` scheme, so a URL in real code survives.
+ *
+ * 🔴 THE ORDER IS LOAD-BEARING, and the obvious order is the wrong one.
+ *
+ * Running the block pass first lets a `/*` that appears INSIDE a `//` comment open a comment
+ * region that swallows live code up to the next `*` + `/`, however far away that is. The trigger
+ * is ordinary in this repo — a package glob. `@civitai/` + `*` contains one. This module:
+ *
+ *     // ported onto the shared @civitai/(star) clients.
+ *     export async function write(dbWrite) {
+ *       await dbWrite.modelFileHash.createMany({ data: rows });
+ *     }
+ *     /(star)(star) Re-exported for tests. (star)/
+ *
+ * strips to the EMPTY STRING with the block pass first: the glob opens a block, the trailing
+ * JSDoc closes it, and the writer in between is gone. Measured on this tree at the time of
+ * writing: 43 such sites across 40 files, hiding 1,591 source lines from the enumerator — worst
+ * case 294 lines, an entire module body. A writer that skips `normalizeScanHashes` could land
+ * inside one of those windows with the ledger still green, which is the silent direction this
+ * file calls the worse one.
+ *
+ * Cutting line comments first removes the stray `/(star)` along with its line, so the block pass
+ * only ever sees real block comments.
+ *
+ * ⚠️ This fixes the measured population, NOT the class. A `/(star)` inside a STRING literal in
+ * live code still opens a spurious block: `const a = '/(star)';`. A class fix needs a
+ * string/template/regex-aware lexer — there is one to borrow from in
+ * `src/server/services/oauth/__tests__/oauth-client-scope-grants.test.ts`, whose tests assert
+ * that `'-- not a comment'` inside a string survives. Worth doing if this ever bites; the
+ * enumerator-level test below is what would catch it.
  */
 function stripComments(source: string): string {
   return source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
     .map((line) => {
       if (/^\s*(\/\/|\*)/.test(line)) return '';
       return line.replace(/(^|[^:])\/\/.*$/, '$1');
     })
-    .join('\n');
+    .join('\n')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 const LEDGER_ENTRIES = WRITER_LEDGER.flatMap(({ file, writes }) =>
@@ -215,17 +267,90 @@ describe('ModelFileHash writer ledger', () => {
     expect(enumerateWriters().length).toBeGreaterThan(0);
   });
 
-  // ── the comment seam, pinned in BOTH directions ─────────────────────────────────────────
+  // ── the comment seam ────────────────────────────────────────────────────────────────────
   //
   // `stripComments` existed and was tested here long before anything called it: the enumerator
   // ran its patterns over the RAW source, so the stripper's own tests passed while the path that
-  // matters skipped it entirely. Both halves were covered; the seam between them was not. These
-  // two tests drive the enumerator's transform rather than the stripper alone, which is the only
-  // arrangement that could have caught it.
+  // matters skipped it entirely. Both halves covered, the seam between them owned by nobody.
   //
-  // They are a PAIR on purpose. Stripping can shrink the enumeration as well as correct it, and a
-  // ledger that silently stops seeing a real writer is worse than one that over-reports — so the
-  // second test exists to fail if the first is ever "fixed" by stripping too aggressively.
+  // 🔴 The first fix for that reproduced the same shape. It added tests that call
+  // `stripCommentsForExt` DIRECTLY, and a comment here claiming they "drive the enumerator's
+  // transform rather than the stripper alone". They did not, and an audit killed the claim with
+  // one mutant: leave the stripper perfectly correct and revert only the CALL in
+  // `enumerateWriters`, and the whole suite stayed green — i.e. the precise defect being fixed
+  // was not caught. The lesson is narrow and worth keeping: a test that exercises a helper is
+  // not a test that the helper is WIRED UP, and only the second kind closes a seam.
+  //
+  // So `drives the real enumerator over a fixture tree` below calls `enumerateWriters()` itself.
+  // That is the test that dies to the revert mutant. The direct-call tests are kept as cheap
+  // unit coverage of the stripper's shapes, not as the seam guard.
+  //
+  // Stripping can shrink the enumeration as well as correct it, and a ledger that silently stops
+  // seeing a real writer is worse than one that over-reports — so every case below asserts BOTH
+  // that a commented writer is ignored and that a live one is still found.
+
+  it('drives the real enumerator over a fixture tree, in both directions', () => {
+    // The seam guard. Fails if `enumerateWriters` ever stops calling the strip, and fails if the
+    // strip ever eats live code.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mfh-ledger-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+      const write = (name: string, body: string) =>
+        fs.writeFileSync(path.join(dir, 'src', name), body);
+
+      // (a) commented-out writer — must NOT be enumerated
+      write(
+        'commented.ts',
+        '// await dbWrite.modelFileHash.createMany({ data: rows });\nexport const a = 1;\n'
+      );
+
+      // (b) live writer whose file also carries a package glob in a line comment and a trailing
+      // JSDoc. With the block pass running first this module strips to the empty string and the
+      // writer vanishes — 43 real files on this tree had that shape. Must still be enumerated.
+      write(
+        'globbed.ts',
+        [
+          '// ported onto the shared @civitai/* clients.',
+          'export async function write(dbWrite: any) {',
+          '  await dbWrite.modelFileHash.createMany({ data: rows });',
+          '}',
+          '/** Re-exported for tests. */',
+          'export const b = 2;',
+        ].join('\n')
+      );
+
+      // (c) plain live writer — the floor
+      write(
+        'live.ts',
+        'export async function w(dbWrite: any) {\n  await dbWrite.modelFileHash.deleteMany({ where });\n}\n'
+      );
+
+      const found = enumerateWriters(dir, ['src']);
+      expect(found, 'a commented-out writer was enumerated as live').not.toContain(
+        'src/commented.ts :: modelFileHash.createMany'
+      );
+      expect(found, 'a live writer was hidden by the block-comment over-match').toContain(
+        'src/globbed.ts :: modelFileHash.createMany'
+      );
+      expect(found, 'the enumerator found no live writer at all').toContain(
+        'src/live.ts :: modelFileHash.deleteMany'
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not let a block comment opened inside a line comment swallow live code', () => {
+    // The shrink shape the first fix missed. `@civitai/` + `*` inside a `//` comment opened a
+    // region that ran to the next `*/`, however far away.
+    const src = [
+      '// ported onto the shared @civitai/* clients.',
+      'await dbWrite.modelFileHash.createMany({ data: rows });',
+      '/** Re-exported for tests. */',
+    ].join('\n');
+    const stripped = stripCommentsForExt(src, '.ts');
+    expect(stripped, 'the whole module was swallowed').toMatch(/modelFileHash\s*\.\s*createMany/);
+  });
 
   it('does not count a writer that is only mentioned in a comment', () => {
     const commented = [
