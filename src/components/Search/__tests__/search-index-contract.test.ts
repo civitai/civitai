@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { queryFilters } from '~/components/AutocompleteSearch/autocomplete-query';
 import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
 import { buildBrowsingLevelClause } from '~/components/Search/search-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
@@ -35,6 +36,26 @@ describe('BROWSING_LEVEL_ATTRIBUTE', () => {
   it('the images override attribute is filterable', () => {
     expect(filterableAttributesByIndex[IMAGES_SEARCH_INDEX]).toContain('combinedNsfwLevel');
   });
+});
+
+describe('queryFilters', () => {
+  const tokenAttributes = Object.entries(queryFilters).flatMap(([key, config]) =>
+    Object.keys(config?.filters ?? {}).map(
+      (attribute) => [key, attribute] as [SearchIndexKey, string]
+    )
+  );
+
+  it.each(tokenAttributes)(
+    '"%s" builds its %s token filter on an attribute its index actually declares',
+    (key, attribute) => {
+      const indexName = searchIndexMap[key];
+
+      expect(
+        filterableAttributesByIndex[indexName],
+        `"${key}" autocomplete turns a search token into \`${attribute} = ...\`, but ${indexName} does not declare ${attribute} filterable — Meilisearch answers 400 invalid_search_filter and the dropdown goes empty`
+      ).toContain(attribute);
+    }
+  );
 });
 
 describe('filterableAttributesByIndex', () => {
