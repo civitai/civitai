@@ -696,7 +696,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </Group>
                 </Stack>
               )}
-              <ModelVersionSaleBanner sale={saleForViewer} isOwner={isOwnerOrMod} />
+              <ModelVersionSaleBanner
+                sale={saleForViewer}
+                isOwner={isOwner}
+                isModerator={!!user?.isModerator}
+              />
               {downloadSection}
             </Stack>
           ) : (
@@ -969,7 +973,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </AlertWithIcon>
               )}
               {/* Download Section */}
-              <ModelVersionSaleBanner sale={saleForViewer} isOwner={isOwnerOrMod} />
+              <ModelVersionSaleBanner
+                sale={saleForViewer}
+                isOwner={isOwner}
+                isModerator={!!user?.isModerator}
+              />
               {downloadSection}
             </Stack>
           )}

@@ -1,9 +1,10 @@
-import { Card, Group, Text, Tooltip } from '@mantine/core';
+import { Anchor, Card, Group, Text, Tooltip } from '@mantine/core';
 import { IconTag } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ModelVersionTerms } from '@civitai/buzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { CREATOR_STUDIO_URL } from '~/shared/constants/creator-studio.constants';
 import { formatDate } from '~/utils/date-helpers';
 
 export type SaleDisplay = {
@@ -98,14 +99,20 @@ export function ModelVersionSaleBadge({
 export function ModelVersionSaleBanner({
   sale,
   isOwner,
+  isModerator,
 }: {
   sale: SaleDisplay | null | undefined;
+  /** True ownership only. A moderator is not the seller and must not be told "your sale". */
   isOwner?: boolean;
+  isModerator?: boolean;
 }) {
   if (!sale) return null;
 
   const listPrice = sale.listTerms.download?.price;
   const endsAt = new Date(sale.endsAt);
+  // Owner and moderator are both quoted the STORED price, so neither gets a strikethrough — striking
+  // through the same number the page already shows reads as a rendering fault, not a discount.
+  const quotedStoredPrice = isOwner || isModerator;
 
   return (
     <Card withBorder p="sm" className="border-green-6 bg-green-0 dark:bg-green-9/20">
@@ -114,16 +121,28 @@ export function ModelVersionSaleBanner({
           <IconTag size={20} className="text-green-7 dark:text-green-4" />
           <div>
             <Text size="sm" fw={700} className="text-green-7 dark:text-green-4">
-              {isOwner ? 'Your sale is running' : 'On sale'} —{' '}
+              {isOwner ? 'Your sale is running' : isModerator ? 'Sale running' : 'On sale'} —{' '}
               <SaleDiscountLabel sale={sale} size="sm" />
             </Text>
             <Text size="xs" c="dimmed">
-              {isOwner ? 'Ends ' : 'Ends '}
-              {formatDate(endsAt, 'MMM D, YYYY h:mm A')}
+              Ends {formatDate(endsAt, 'MMM D, YYYY h:mm A')}
+              {isOwner && (
+                <>
+                  {' · '}
+                  <Anchor
+                    href={`${CREATOR_STUDIO_URL}/sales`}
+                    target="_blank"
+                    rel="noreferrer"
+                    inherit
+                  >
+                    Manage in Creator Studio
+                  </Anchor>
+                </>
+              )}
             </Text>
           </div>
         </Group>
-        {!isOwner && listPrice != null && (
+        {!quotedStoredPrice && listPrice != null && (
           <Text size="sm" c="dimmed" td="line-through" className="whitespace-nowrap">
             {listPrice.toLocaleString()} Buzz
           </Text>
