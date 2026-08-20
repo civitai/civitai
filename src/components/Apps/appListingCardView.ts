@@ -52,19 +52,21 @@ export type ListingBadgeKind = 'onsite' | 'offsite';
 export type ListingBadge = { label: string; kind: ListingBadgeKind };
 
 /**
- * The kind badge: on-site apps read "App"; every off-site app reads "Off-site".
+ * The kind badge: on-site apps read "App"; every off-site app reads "Standalone".
  *
  * 🔴 Off-site used to fork into two BADGES — "Connect app" (a linked OAuth
  * client) vs "Off-site" (no client) — derived from `connectClientId`. That fork
- * is removed: `offsite` is one kind. The word here is the SAME word the store's
- * kind filter already uses (`KindFilterButtons`' "Off-site"), which is what
- * makes the parent label true of the whole category again — under the fork it
- * was only true of one child, while the submit flow REQUIRES an OAuth client
- * and therefore minted nothing but the other one.
+ * is removed: `offsite` is one kind. (Those two names are the HISTORICAL labels;
+ * the surviving one has since been renamed "Standalone" as user-facing copy.)
+ * The word here is the SAME word the store's kind filter already uses
+ * (`KindFilterButtons`' "Standalone"), which is what makes the parent label true
+ * of the whole category again — under the fork it was only true of one child,
+ * while the submit flow REQUIRES an OAuth client and therefore minted nothing
+ * but the other one.
  */
 export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): ListingBadge {
   if (card.kindData.kind === 'onsite') return { label: 'App', kind: 'onsite' };
-  return { label: 'Off-site', kind: 'offsite' };
+  return { label: 'Standalone', kind: 'offsite' };
 }
 
 /**

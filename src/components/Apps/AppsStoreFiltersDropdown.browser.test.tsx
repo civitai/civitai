@@ -99,7 +99,7 @@ describe('AppsStoreFiltersDropdown — the panel', () => {
     setup({ kind: 'offsite', category: 'games' });
     await userEvent.click(trigger());
     await expect
-      .element(page.getByRole('button', { name: 'Off-site' }))
+      .element(page.getByRole('button', { name: 'Standalone' }))
       .toHaveAttribute('aria-pressed', 'true');
     await expect
       .element(page.getByRole('button', { name: 'Games' }))

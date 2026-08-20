@@ -101,19 +101,19 @@ export function assertNoOnPlatformSurface(manifest: ExternalAppManifestInput): E
   if (page && typeof page === 'object') {
     return {
       ok: false,
-      error: 'an external-link app must not declare a page surface (it links off-site)',
+      error: 'an external-link app must not declare a page surface (it is a standalone app)',
     };
   }
   if (Array.isArray(manifest.targets) && manifest.targets.length > 0) {
     return {
       ok: false,
-      error: 'an external-link app must not declare target slots (it links off-site)',
+      error: 'an external-link app must not declare target slots (it is a standalone app)',
     };
   }
   if (manifest.iframe && typeof manifest.iframe === 'object') {
     return {
       ok: false,
-      error: 'an external-link app must not declare an iframe surface (it links off-site)',
+      error: 'an external-link app must not declare an iframe surface (it is a standalone app)',
     };
   }
   return { ok: true };

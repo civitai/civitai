@@ -224,7 +224,7 @@ export function AppBlockCard({
                 size="sm"
                 leftSection={<IconExternalLink size={12} />}
               >
-                Off-site
+                Standalone
               </Badge>
             )}
             {/* Mod-assigned marketplace category (+ its icon). NULL until a mod

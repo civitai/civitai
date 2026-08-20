@@ -481,7 +481,7 @@ export default function AppDetailPage() {
                   <Stack gap="xs">
                     <Title order={4}>External site</Title>
                     <Text size="sm" c="dimmed">
-                      This app opens an external, off-site link in a new tab:{' '}
+                      This app opens an external, standalone link in a new tab:{' '}
                       <Anchor href={externalUrl!} target="_blank" rel="noopener noreferrer">
                         {externalUrl!.replace(/^https?:\/\//, '')}
                       </Anchor>

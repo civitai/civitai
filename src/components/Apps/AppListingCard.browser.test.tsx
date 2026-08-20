@@ -210,10 +210,10 @@ describe('AppListingCard', () => {
         })}
       />
     );
-    // The kind signal ("Off-site") is no longer a badge — it's conveyed by the
+    // The kind signal ("Standalone") is no longer a badge — it's conveyed by the
     // CTA below (an external "Visit" anchor vs. an internal Open/View details
     // link) plus the off-site disclosure Alert on the detail page.
-    await expect.element(page.getByText('Off-site', { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByText('Standalone', { exact: true })).not.toBeInTheDocument();
     const visit = page.getByRole('link', { name: 'Visit' });
     await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
     await expect.element(visit).toHaveAttribute('target', '_blank');

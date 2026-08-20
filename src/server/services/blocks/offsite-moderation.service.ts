@@ -294,7 +294,7 @@ async function classifyOffsiteListing(
     select: { id: true, kind: true, status: true, slug: true },
   });
   if (!listing || listing.kind !== 'offsite') {
-    throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+    throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
   }
   return { id: listing.id, status: listing.status, slug: listing.slug };
 }
@@ -681,7 +681,7 @@ export async function claimListing(opts: {
       select: { userId: true, status: true, slug: true, kind: true },
     });
     if (!current || current.kind !== 'offsite') {
-      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+      throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
     // Status guard: claim is allowed only on an approved OR removed listing (a
     // mod-verified owner may reclaim a live OR a delisted listing). draft/pending/
@@ -842,7 +842,7 @@ export async function purgeListing(opts: {
       select: { status: true, slug: true, kind: true },
     });
     if (!current || current.kind !== 'offsite') {
-      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+      throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
     // Event FIRST (so the slug/state snapshot is captured before the row is gone).
     await tx.appListingModerationEvent.create({
@@ -866,7 +866,7 @@ export async function purgeListing(opts: {
     });
     if (deleted.count === 0) {
       // Raced (concurrently purged between the snapshot and here) → roll the event back.
-      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+      throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
   });
 
@@ -1076,7 +1076,7 @@ export async function resetListingToPending(opts: {
       select: { userId: true, status: true, kind: true, slug: true, name: true },
     });
     if (!current || current.kind !== 'offsite') {
-      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+      throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
     ownerUserId = current.userId;
     slug = current.slug;
