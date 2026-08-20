@@ -1,20 +1,34 @@
 import { expect, test } from '@playwright/test';
 import { storageStatePath } from './preview-fixtures';
-import { trpcMutation, trpcQuery, uniqueToken } from './preview-trpc';
-import { retryFlaky } from './preview-retry';
+import { trpcMutation, uniqueToken } from './preview-trpc';
 
 /**
  * Moderation-surface tests for a deployed PR preview environment.
  *
  * Runs as the `mod` fixture — the ONLY role that both clears the preview gate and
- * carries user.isModerator, which the /moderator/* tRPC procedures
- * (moderatorProcedure) require. The mod fixture is also onboarding=15, so it
- * passes guardedProcedure and can self-seed a post + report.
+ * carries user.isModerator, which the moderator-gated pages
+ * (createServerSideProps({ requireModerator: true })) and the /moderator/* tRPC
+ * procedures require. The mod fixture is also onboarding=15, so it passes
+ * guardedProcedure and can self-seed a post + report.
  *
- * Two render tests (the reports + images queues render behind the gate) and one
- * end-to-end ACTION test (a mod self-seeds an isolated post -> reports it ->
- * actions the report), kept as separate test()s so a render-selector miss can't
- * mask the action coverage and vice-versa.
+ * 🔴 SCOPE MOVED (civitai#3573, tracked as civitai#4171). The reports + images
+ * QUEUES and their moderator tRPC procedures (report.getAll / report.setStatus)
+ * were migrated OUT of this app into the standalone moderator app
+ * (`apps/moderator`), and the main app now 302s those paths there
+ * (src/pages/moderator/[...slug].tsx + shared/constants/migrated-moderator-routes.ts).
+ * A preview cannot exercise the moderator app at all — MODERATOR_APP_URL defaults
+ * to PRODUCTION (server-schema.ts), so the hop leaves the preview origin. So this
+ * spec now covers the three things that DO still live here:
+ *
+ *   1. Two render tests on moderator surfaces that stayed in this app, proving the
+ *      requireModerator SSR gate admits a mod and the page renders. Kept as
+ *      separate test()s so a selector miss on one can't mask the other.
+ *   2. A migration test pinning that the two migrated paths still redirect to the
+ *      moderator app — asserted WITHOUT following the hop.
+ *   3. The report-CREATION leg of the old end-to-end action test. `report.create`
+ *      is still a main-app guardedProcedure; `report.getAll` / `report.setStatus`
+ *      are not (they were deleted in #3573), so the ACTIONING half of that
+ *      coverage now belongs to the moderator app's own suite, not here.
  *
  * Only runs under playwright.preview.config.ts (needs PREVIEW_URL + minted states).
  *
@@ -25,27 +39,64 @@ import { retryFlaky } from './preview-retry';
  *                       returns the created Post incl. `id`
  *                       (server/controllers/post.controller.ts createPostHandler `return post`).
  *  - report.create      guardedProcedure, input createReportInputSchema
- *                       (server/schema/report.schema.ts:104) — a discriminatedUnion
- *                       on `reason`. The `Spam` variant (reportSpamSchema, :92) is the
+ *                       (server/schema/report.schema.ts) — a discriminatedUnion
+ *                       on `reason`. The `Spam` variant (reportSpamSchema) is the
  *                       minimal shape: { type: ReportEntity, id: number,
  *                       reason: 'Spam', details: {} }. `type` is z.enum(ReportEntity)
  *                       and the Post entity string is 'post'
  *                       (shared/utils/report-helpers.ts:8 `Post = 'post'`).
- *                       Returns the created Report row incl. `id` + `status`
- *                       (server/services/report.service.ts createReport `return createdReport`).
- *  - report.getAll      moderatorProcedure, input getReportsSchema
- *                       (server/schema/report.schema.ts:128) = getAllQuerySchema
- *                       (page/limit) + { type: ReportEntity, filters?, sort? }.
- *                       Row shape selects post.post.id
- *                       (server/controllers/report.controller.ts:180) so a Post
- *                       report row is matched via row.post?.post?.id.
- *  - report.setStatus   moderatorProcedure, input setReportStatusSchema
- *                       (server/schema/report.schema.ts:116) = { id: number,
- *                       status: ReportStatus }. ReportStatus ∈
- *                       Pending|Processing|Actioned|Unactioned (prisma/schema.prisma:1114).
+ *                       Returns a Report row incl. `id` — either the freshly
+ *                       created one or, if one already existed for the entity, the
+ *                       existing one (server/services/report.service.ts createReport:
+ *                       `if (validReport) return validReport` / `return createdReport`).
+ *                       Self-reporting is only blocked for ReportEntity.User, so a
+ *                       mod may report their own post.
  */
 
 const ROLE = 'mod' as const;
+
+/**
+ * Moderator surfaces that are STILL SERVED BY THIS APP, with an anchor verified to
+ * render unconditionally (outside every loading / empty / feature branch).
+ *
+ * Screened on origin/main against the four ways a moderator page makes a bad probe:
+ * present under src/pages/moderator/, absent from MIGRATED_ROUTES, gated by
+ * `createServerSideProps({ requireModerator: true })`, and carrying NO `features.*`
+ * flag check (a flag-gated page renders <NotFound /> when the flag is off in
+ * preview, which would look exactly like a broken gate).
+ *
+ * `title` is what the page's <Meta title> emits — Meta renders `<title>{title}</title>`
+ * verbatim (components/Meta/Meta.tsx). Matched as a case-insensitive SUBSTRING, the
+ * same tolerance the pre-#3573 version of this spec used, so a layout that appends a
+ * site suffix doesn't turn a rendering page into a red gate.
+ * `heading` is an unconditional Mantine `<Title order={1}>` (an <h1>).
+ */
+const MODERATOR_SURFACES = [
+  {
+    // src/pages/moderator/rewards/index.tsx — Buzz purchasable-rewards admin.
+    path: '/moderator/rewards',
+    title: /Rewards/i,
+    heading: 'Purchasable Rewards',
+  },
+  {
+    // src/pages/moderator/suspicious-audit-matches.tsx — prompt-audit flag queue.
+    path: '/moderator/suspicious-audit-matches',
+    title: /Suspicious Audit Matches/i,
+    heading: 'Suspicious Audit Matches',
+  },
+] as const;
+
+/**
+ * Paths #3573 moved to the moderator app, and the PATH the mapping produces there.
+ * Literal expectations on purpose — derived from MIGRATED_ROUTES' declared values,
+ * not imported from it, so a wrong edit to that map fails this test instead of
+ * silently redefining what "correct" means. The HOST is deploy-dependent
+ * (MODERATOR_APP_URL), so only the path is pinned.
+ */
+const MIGRATED_PATHS = [
+  { path: '/moderator/reports', target: '/reports' },
+  { path: '/moderator/images', target: '/images' },
+] as const;
 
 // Mirror preview-smoke.spec.ts: assert we cleared the preview gate.
 function assertGatePassed(page: import('@playwright/test').Page, path: string) {
@@ -58,56 +109,56 @@ function assertGatePassed(page: import('@playwright/test').Page, path: string) {
 test.describe('moderation surface (mod)', () => {
   test.use({ storageState: storageStatePath(ROLE) });
 
-  test('/moderator/reports renders the report queue', async ({ page }) => {
-    const resp = await page.goto('/moderator/reports', { waitUntil: 'domcontentloaded' });
-    expect(resp?.status(), 'HTTP status for /moderator/reports').toBeLessThan(400);
-    assertGatePassed(page, '/moderator/reports');
+  for (const surface of MODERATOR_SURFACES) {
+    test(`${surface.path} renders behind the moderator gate`, async ({ page }) => {
+      const resp = await page.goto(surface.path, { waitUntil: 'domcontentloaded' });
+      expect(resp?.status(), `HTTP status for ${surface.path}`).toBeLessThan(400);
+      assertGatePassed(page, surface.path);
+      // Not bounced home by the requireModerator gate, and not swallowed by the
+      // migration catchall (which would leave this origin entirely).
+      await expect(page).toHaveURL(new RegExp(`${surface.path}/?$`));
 
-    // Page-loaded anchor: reports.tsx renders <Meta title="Reports" /> (line 219),
-    // so the document <title> is the most stable "the mod page rendered (not an
-    // error/redirect)" signal, independent of how many rows the prod-clone DB has.
-    await expect(page).toHaveTitle(/Reports/i, { timeout: 30_000 });
+      // Anchor 1: the document title. <Meta title> is rendered unconditionally at
+      // the top of the page component, so it is the "the mod page rendered, not an
+      // error/redirect" signal that is independent of how many rows the prod-clone
+      // DB has.
+      await expect(page).toHaveTitle(surface.title, { timeout: 30_000 });
 
-    // Structural presence of the queue UI. reports.tsx renders a MantineReactTable
-    // (import line 30, JSX line 231), which emits a <table> with role="table".
-    // Be tolerant of 0..N rows on the prod clone — assert the grid scaffold exists,
-    // not any specific row.
-    // NOTE: if MantineReactTable's role/markup changes, widen this — the intent is
-    // "a table/grid structure is on the page". A visible table OR a non-empty main
-    // region both satisfy "the queue rendered".
-    const table = page.getByRole('table').first();
-    await expect(table).toBeVisible({ timeout: 30_000 });
-  });
-
-  test('/moderator/images renders the image review queue', async ({ page }) => {
-    // /moderator/images is image-search-backed (getModeratorReviewQueue ->
-    // getAllImagesIndex -> the in-cluster feeds-proxy), which intermittently 5xx's
-    // under concurrent preview-build load. Retry the navigation with backoff to ride
-    // out a transient search spike — honest: the page must still render < 400, and a
-    // sustained outage still fails after the attempts are exhausted.
-    await retryFlaky('/moderator/images navigation', async () => {
-      const resp = await page.goto('/moderator/images', { waitUntil: 'domcontentloaded' });
-      expect(resp?.status(), 'HTTP status for /moderator/images').toBeLessThan(400);
+      // Anchor 2: the page's own <h1>. Also unconditional — it sits outside the
+      // isLoading / empty-state branches, so it holds on a full OR empty queue and
+      // even if the page's tRPC query errors. That is the point: a structural
+      // anchor inside a data branch would make this test a data test.
+      await expect(
+        page.getByRole('heading', { name: surface.heading, exact: true }).first()
+      ).toBeVisible({ timeout: 30_000 });
     });
-    assertGatePassed(page, '/moderator/images');
+  }
 
-    // images.tsx is an infinite list off trpc.image.getModeratorReviewQueue. It
-    // renders either image <Card>s (Mantine Card import line 5, usage line 366) OR,
-    // when the queue is empty, <NoContent message="There are no images that need
-    // review" /> (line 343). Tolerate BOTH branches: assert at least one of the
-    // known structural anchors is present so the test passes on a full or empty
-    // prod-clone queue.
-    // NOTE: broad OR over the empty-state copy and the card/list region. If a
-    // preview shows different empty copy, widen the regex — the structural intent
-    // is "the review queue surface rendered, not an error/redirect".
-    const queueRendered = page
-      .getByText(/no images that need review|need review|review queue/i)
-      .first()
-      .or(page.locator('.mantine-Card-root, [class*="Card-root"]').first());
-    await expect(queueRendered).toBeVisible({ timeout: 30_000 });
+  test('migrated /moderator paths redirect to the moderator app', async ({ page }) => {
+    for (const { path, target } of MIGRATED_PATHS) {
+      // Inspect the 3xx Location WITHOUT following it: the hop leaves this origin for
+      // the moderator app, which on a preview is PRODUCTION (MODERATOR_APP_URL's
+      // default) — following it would probe prod from CI and prove nothing about the
+      // preview. `page.request` carries the mod's cookies + the preview baseURL.
+      const res = await page.request.get(path, { maxRedirects: 0 });
+      expect(res.status(), `HTTP status for ${path}`).toBeGreaterThanOrEqual(300);
+      expect(res.status(), `HTTP status for ${path}`).toBeLessThan(400);
+
+      const location = res.headers()['location'] ?? '';
+      expect(location, `${path} should set a redirect Location`).not.toBe('');
+      // A mod must not be bounced by the _app guard instead — its two bounces are
+      // '/' and '/login?returnUrl=…'; distinguish them from the migration hop.
+      expect(location, `${path}: a mod must not be bounced home`).not.toBe('/');
+      expect(location, `${path}: a mod session should resolve, not bounce to login`).not.toContain(
+        '/login'
+      );
+      expect(location, `${path} should map to ${target} on the moderator app`).toMatch(
+        new RegExp(`${target}$`)
+      );
+    }
   });
 
-  test('mod can self-seed a post, report it, and action the report', async ({ page }) => {
+  test('mod can self-seed a post and report it', async ({ page }) => {
     const token = uniqueToken('mod');
 
     // Warm the context (cookies + an allowlisted Origin host) before hitting tRPC.
@@ -124,50 +175,27 @@ test.describe('moderation surface (mod)', () => {
 
     // 2) Report that post. Minimal valid variant of the createReportInputSchema
     //    discriminatedUnion is reason:'Spam' (reportSpamSchema → just baseDetailSchema).
-    //    type:'post' is ReportEntity.Post. createReport returns the row incl. id+status.
-    // NOTE: 'Spam' / type:'post' verified in report.schema.ts:92 + report-helpers.ts:8.
+    //    type:'post' is ReportEntity.Post. createReport returns the row incl. id.
+    // NOTE: 'Spam' / type:'post' verified in report.schema.ts + report-helpers.ts:8.
     // If the CSRF/origin gate (createContext.ts) rejects this direct tRPC POST with
     // 403 live, the UI-driven fallback would be: open the post page → use the report
-    // menu → then drive setStatus from /moderator/reports' row status Badge → Menu.
+    // menu.
     const report = await trpcMutation<{ id: number; status: string }>(
       page.request,
       'report.create',
       { type: 'post', id: post.id, reason: 'Spam', details: {} }
     );
+    // trpcMutation throws on any tRPC error envelope or non-2xx, so reaching here
+    // already means the mutation succeeded; the id assertion pins that the handler
+    // returned the row (createReportHandler `return result`) rather than undefined.
+    expect(report?.id, 'report.create should return a numeric report id').toEqual(
+      expect.any(Number)
+    );
 
-    // 3) Resolve the report id. Prefer it straight from report.create's return; fall
-    //    back to report.getAll (moderatorProcedure) matching on the seeded post id.
-    let reportId: number | undefined = report?.id;
-    if (typeof reportId !== 'number') {
-      // getReportsSchema = page/limit (getAllQuerySchema) + type (ReportEntity).
-      // Newest-first isn't guaranteed by default, so request a generous page and
-      // match on the post relation's id (handler selects post.post.id).
-      const all = await trpcQuery<{
-        items: Array<{ id: number; post?: { post?: { id?: number } | null } | null }>;
-      }>(page.request, 'report.getAll', { page: 1, limit: 100, type: 'post' });
-      const mine = all?.items?.find((r) => r.post?.post?.id === post.id);
-      reportId = mine?.id;
-    }
-    expect(reportId, 'should resolve the seeded report id').toEqual(expect.any(Number));
-
-    // 4) Action the report. setReportStatusSchema = { id, status } with status ∈
-    //    ReportStatus; 'Actioned' is a valid enum member.
-    // NOTE: setStatus's handler returns void (controller setReportStatusHandler), so
-    // we assert the mutation resolves without throwing — trpcMutation throws on any
-    // tRPC error envelope or non-2xx, so a clean resolve == success.
-    await expect(
-      trpcMutation(page.request, 'report.setStatus', { id: reportId, status: 'Actioned' })
-    ).resolves.toBeDefined();
-
-    // Best-effort confirmation: re-query and assert our row now reads 'Actioned'.
-    // Kept non-fatal-shaped (still an assertion, but only runs if getAll is reachable
-    // for a mod, which it is) — the setStatus resolve above is the primary signal.
-    const after = await trpcQuery<{
-      items: Array<{ id: number; status?: string; post?: { post?: { id?: number } | null } | null }>;
-    }>(page.request, 'report.getAll', { page: 1, limit: 100, type: 'post' });
-    const updated = after?.items?.find((r) => r.id === reportId);
-    if (updated) {
-      expect(updated.status, 'seeded report should now be Actioned').toBe('Actioned');
-    }
+    // 🔴 The ACTIONING legs (report.getAll → report.setStatus → re-read as
+    // 'Actioned') used to live here. #3573 deleted both procedures from this app's
+    // report.router.ts — that queue is the moderator app's now, and asserting it
+    // from a preview of THIS app is not possible. Do not "restore" them here; the
+    // coverage belongs to apps/moderator's own suite.
   });
 });
