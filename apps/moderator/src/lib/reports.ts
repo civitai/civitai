@@ -1,5 +1,5 @@
 import { ReportReason, ReportStatus } from '@civitai/db-schema/enums';
-import { entityUrl } from './entity-url';
+import { chatAuditChatUrl, entityUrl } from './entity-url';
 
 export { ReportReason, ReportStatus };
 
@@ -181,7 +181,7 @@ export const getReportItemUrl = (
 ) =>
   type === 'chat'
     ? entityId
-      ? `/retool/chat-audit/chats?chat=${entityId}`
+      ? chatAuditChatUrl(entityId)
       : null
     : contextUrl
     ? `${base}${contextUrl}`

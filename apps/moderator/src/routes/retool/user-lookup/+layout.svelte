@@ -7,7 +7,7 @@
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { userUrl } from '$lib/entity-url';
+  import { chatAuditChatUrl, userUrl } from '$lib/entity-url';
   import type { LayoutData } from './$types';
   import { ADMIN_SECTIONS, DEFAULT_SECTION, SECTIONS, SECTION_LINKS } from './sections';
   import {
@@ -163,7 +163,7 @@
     {@const contact = { ...data.result.modContact, chats: data.result.modContact.chats ?? 0 }}
     <ul class="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-sm">
       {#each contact.chatIds as id (id)}
-        <li><a href="/retool/chat-audit/chats?chat={id}" class={LINK_CLASS}>chat {id}</a></li>
+        <li><a href={chatAuditChatUrl(id)} class={LINK_CLASS}>chat {id}</a></li>
       {/each}
       {#if contact.chats > contact.chatIds.length}
         <li class="text-xs text-dark-2">
