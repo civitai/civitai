@@ -89,6 +89,9 @@ async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
     }).catch(() => undefined);
   }
 
+  // The absent-row fallback deliberately carries NO `id`: `getClientBenignLists` reads that as
+  // "no moderator row yet, use the bundled list". The moderator spoke writes the same shape into
+  // the same Redis key, so this sentinel is a cross-app contract, not a local detail.
   return rows[0] ?? { type, data: [] };
 }
 

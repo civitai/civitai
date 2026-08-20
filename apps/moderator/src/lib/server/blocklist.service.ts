@@ -48,7 +48,8 @@ async function readBlocklistRow(type: string): Promise<BlocklistDTO> {
     void logToAxiom({
       name: 'blocklist-duplicate-rows',
       type: 'error',
-      message: 'More than one Blocklist row for a type; entries on the ignored rows are not enforced',
+      message:
+        'More than one Blocklist row for a type; entries on the ignored rows are not enforced',
       details: {
         app: 'moderator',
         blocklistType: type,
@@ -59,6 +60,11 @@ async function readBlocklistRow(type: string): Promise<BlocklistDTO> {
     });
   }
 
+  // 🔴 The absent-row fallback carries NO `id`, and that is load-bearing across two apps: the
+  // main app's `getClientBenignLists` reads `row.id == null` as "no moderator row yet, fall back
+  // to the list shipped in the bundle". This value reaches it through the shared Redis key, so
+  // adding an `id` here — or caching a synthesised row — would silently flip every browser from
+  // the moderator's list to the bundled one, with nothing failing.
   return rows[0] ?? { type, data: [] };
 }
 
