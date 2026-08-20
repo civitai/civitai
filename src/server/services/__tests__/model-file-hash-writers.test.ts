@@ -125,7 +125,7 @@ function enumerateWriters(): string[] {
 
   const found = new Set<string>();
   for (const file of files) {
-    const rel = path.relative(REPO_ROOT, file);
+    const rel = path.relative(REPO_ROOT, file).split(path.sep).join('/');
     if (isTestFile(rel)) continue;
     const raw = fs.readFileSync(file, 'utf8');
     if (!raw.includes('odelFileHash')) continue; // cheap prefilter, case-insensitive on the M

@@ -2,8 +2,8 @@ import { spawn } from 'child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import type { AddressInfo } from 'net';
-import { dirname, relative, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { dirname, relative, resolve, sep } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -267,7 +267,11 @@ describe('argv goes through the same validator as the environment', () => {
     const code = await new Promise<number | null>((done) => {
       const child = spawn(
         process.execPath,
-        ['--input-type=module', '-e', `await import(${JSON.stringify(daemonScript)});`],
+        [
+          '--input-type=module',
+          '-e',
+          `await import(${JSON.stringify(pathToFileURL(daemonScript).href)});`,
+        ],
         { cwd: repoRoot, env: { ...process.env, DEV_DAEMON_PORT: 'nope' }, stdio: 'ignore' }
       );
       child.on('exit', done);
@@ -320,7 +324,7 @@ describe('nothing outside daemon-port.mjs decides the daemon port', () => {
   it('finds the files it claims to scan', () => {
     // The positive control. Without it a typo in `roots` yields an empty set, every assertion
     // below passes vacuously, and "no second copy anywhere" would be a fact about the walk.
-    const files = sourceFiles().map((f) => relative(repoRoot, f));
+    const files = sourceFiles().map((f) => relative(repoRoot, f).split(sep).join('/'));
     expect(files.length).toBeGreaterThan(10);
     expect(files).toContain('.claude/skills/dev-server/cli.mjs');
     expect(files).toContain('.claude/skills/dev-server/console.mjs');

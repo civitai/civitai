@@ -95,6 +95,22 @@ export function runTypecheckApps({ repoRoot = defaultRepoRoot, excluded = EXCLUD
 
   const targets = all.filter((a) => !(a.dir in excluded));
 
+  // A name reaches a child argv, and on Windows through cmd.exe (see the spawn below). An `&` in it
+  // ENDS the command there, so cmd returns the trailing command's exit code and a genuinely-red
+  // typecheck reports 0 — measured, and precisely the reports-success class this script exists to
+  // close. Refuse rather than sanitise: nothing upstream validates a private workspace member's name.
+  const unsafe = targets.filter(
+    (a) => typeof a.name !== 'string' || !/^@?[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)?$/.test(a.name)
+  );
+  if (unsafe.length) {
+    console.error(
+      `These apps/* package names will not be passed to a shell: ` +
+        `${unsafe.map((a) => `${a.dir} (${JSON.stringify(a.name)})`).join(', ')}.\n` +
+        `Use a plain npm-style package name.`
+    );
+    return 2;
+  }
+
   // Discovering nothing must never read as success — that is the whole failure class above.
   if (targets.length === 0) {
     console.error('No apps/* with a typecheck script were discovered. Refusing to report success.');
@@ -113,6 +129,11 @@ export function runTypecheckApps({ repoRoot = defaultRepoRoot, excluded = EXCLUD
     const run = spawnSync('pnpm', ['--filter', app.name, 'run', 'typecheck'], {
       cwd: repoRoot,
       encoding: 'utf8',
+      // Windows needs the shell: `spawnSync` skips PATHEXT so a bare 'pnpm' is ENOENT, and naming
+      // `pnpm.cmd` is EINVAL — node refuses to spawn a .cmd without one (the CVE-2024-27980 fix).
+      // It applies NO per-argument quoting, so argv fidelity rests on the name check above and the
+      // argv assertion in the test beside this file. CI is ubuntu and takes the false branch.
+      shell: process.platform === 'win32',
       // Inherit stderr so tsc/svelte-check diagnostics land in the log as they happen;
       // capture stdout so the no-match sentinel below can be read.
       stdio: ['ignore', 'pipe', 'inherit'],
