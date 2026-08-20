@@ -449,7 +449,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     setQuery(cleanedSearch);
     setQueryFilters(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query]);
+  }, [debouncedSearch, query, indexName]);
 
   // Clear selected item after search changes
   useEffect(() => {

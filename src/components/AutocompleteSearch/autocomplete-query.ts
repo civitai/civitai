@@ -118,5 +118,5 @@ export function buildSearchPageUrl(index: SearchIndexKey, search: string) {
     ...QS.parse(searchPageQuery),
   });
 
-  return `/search/${index}?${queryString}`;
+  return queryString ? `/search/${index}?${queryString}` : `/search/${index}`;
 }
