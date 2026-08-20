@@ -401,3 +401,26 @@ jobs:
       - name: Assert every app suite actually ran
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
+
+      # ── App typechecks ──────────────────────────────────────────────────
+      # Typecheck is per-app, not covered by the root tsconfig.json include
+      # (which lists `src`, `packages/*/src`, `scripts/local-dev/*.ts` and
+      # `.next/types/**/*.ts` — no `apps/*`). Each app defines its own script.
+      #
+      # apps/auth is NOT wired up here — it has 2 pre-existing type errors:
+      #   src/lib/server/auth/providers.ts:165 — implicit `any` param
+      #   src/lib/server/auth/__tests__/establish-session.test.ts:100 —
+      #     `_store` on `never`
+      # Tracked as a separate issue.
+      - name: Typecheck event-engine
+        run: pnpm --filter @civitai/event-engine run typecheck
+      - name: Typecheck notifications
+        run: pnpm --filter @civitai/notifications-app run typecheck
+      - name: Typecheck orchestrator-gateway
+        run: pnpm --filter @civitai/orchestrator-gateway run typecheck
+      - name: Typecheck storage
+        run: pnpm --filter @civitai/storage-app run typecheck
+      - name: Typecheck creator-studio
+        run: pnpm --filter @civitai/creator-studio-app run typecheck
+      - name: Typecheck moderator
+        run: pnpm --filter @civitai/moderator-app run typecheck
