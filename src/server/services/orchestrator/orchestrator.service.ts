@@ -21,7 +21,7 @@ import { hashContent } from '~/server/services/entity-moderation.service';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
-import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { isDefiniteNotFound, resolveDownloadUrl } from '~/utils/delivery-worker';
 
 // Per-attempt backstop for the image-ingestion orchestrator SUBMIT (enqueue only —
 // this returns a workflow id immediately, it does NOT wait for the scan to finish).
@@ -587,11 +587,15 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
 /**
  * Thrown by createModelFileScanRequest when submission can't proceed. The
  * `code` lets callers branch their recovery:
- *   - 'not-found': pre-flight download-URL resolution failed twice (storage
- *     resolver + delivery worker both can't locate the file). Caller should
- *     mark ModelFile.exists=false to exit the scan retry loop.
- *   - 'transient': submitWorkflow itself failed (5xx, network, auth, etc.).
- *     Caller should leave `exists` alone and rely on retry.
+ *   - 'not-found': pre-flight download-URL resolution failed twice AND the retry
+ *     failed with a 404 — i.e. the resolver positively reported the object is not
+ *     there. Caller may mark ModelFile.exists=false to exit the scan retry loop.
+ *     🔴 That tombstone is PERMANENT and also permanently exempts the file from
+ *     scanning, so this code must mean "absence was proven", never "we could not
+ *     ask". It is emitted only via `isDefiniteNotFound`.
+ *   - 'transient': submitWorkflow itself failed (5xx, network, auth, etc.), OR
+ *     pre-flight failed in any way that does not prove absence. Caller should
+ *     leave `exists` alone and rely on retry.
  *
  * Why pre-flight (not orchestrator response): submitWorkflow only enqueues —
  * orchestrator validates the AIR-fetchable file later, asynchronously, in
@@ -668,10 +672,17 @@ export async function createModelFileScanRequest({
   //   1) try storage-resolver / delivery-worker (resolveDownloadUrl)
   //   2) on failure, wait 60s and retry once (covers registration sync lag
   //      for recently-uploaded files)
-  //   3) on second failure, throw 'not-found' so the caller can tombstone
+  //   3) on second failure, classify: only a 404 proves the file is gone
+  //      ('not-found', caller tombstones). Everything else — 5xx, auth, rate
+  //      limit, timeout, transport reject — is 'transient' and gets retried.
   //
-  // This is the file-gone signal we used in the legacy scanner; orchestrator
-  // submitWorkflow doesn't surface one synchronously.
+  // 🔴 Step 3 used to treat EVERY second failure as 'not-found'. That is how a
+  // resolver outage became a permanent `ModelFile.exists=false` tombstone, which
+  // `scanFilesFallbackJob` then excludes from its retry query forever — leaving a
+  // Published, Public file downloadable and permanently unscanned. Measured
+  // 2026-08-20: 41 of 41 readable tombstoned files were still fully downloadable
+  // (across 51 uploaders), and the tombstones arrived in bursts (top 5 hours held
+  // 52% of them) rather than spread out as independent file losses would be.
   if (preflight) {
     try {
       await resolveDownloadUrl(fileId, url);
@@ -680,19 +691,25 @@ export async function createModelFileScanRequest({
       try {
         await resolveDownloadUrl(fileId, url);
       } catch (retryError) {
+        // Classify on the RETRY's failure: it is the most recent evidence, and
+        // the first failure may have been the transient one that the retry
+        // exists to absorb.
+        const code = isDefiniteNotFound(retryError) ? 'not-found' : 'transient';
         logToAxiom({
           type: 'error',
           name: 'model-file-scan',
           message: `Pre-flight download URL resolution failed for file ${fileId}`,
           fileId,
           modelVersionId,
-          submissionErrorCode: 'not-found',
+          submissionErrorCode: code,
           firstError: firstError instanceof Error ? firstError.message : String(firstError),
           retryError: retryError instanceof Error ? retryError.message : String(retryError),
         });
         throw new ModelFileScanSubmissionError(
-          `Pre-flight resolution failed for file ${fileId}; treating as not-found`,
-          'not-found'
+          code === 'not-found'
+            ? `Pre-flight resolution returned 404 for file ${fileId}; the file is not there`
+            : `Pre-flight resolution failed for file ${fileId} without proving absence; treating as transient`,
+          code
         );
       }
     }

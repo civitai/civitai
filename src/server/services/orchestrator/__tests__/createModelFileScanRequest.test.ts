@@ -38,9 +38,18 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 vi.mock('~/shared/utils/air', () => ({ stringifyAIR: mockStringifyAIR }));
 
-vi.mock('~/utils/delivery-worker', () => ({
-  resolveDownloadUrl: mockResolveDownloadUrl,
-}));
+// Spread the REAL module and override only `resolveDownloadUrl`. A wholesale
+// one-key mock would (a) go stale the moment the module gains an export — it
+// already did, when `isDefiniteNotFound` was added — and (b) make the not-found
+// vs transient classification a property of the fake instead of the code under
+// test. The error classes and the classifier here are the real ones.
+vi.mock('~/utils/delivery-worker', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/utils/delivery-worker')>();
+  return {
+    ...actual,
+    resolveDownloadUrl: mockResolveDownloadUrl,
+  };
+});
 
 // Use a getter so tests can flip isProd between cases.
 vi.mock('~/env/other', () => ({
@@ -54,6 +63,17 @@ vi.mock('~/env/server', () => ({
     ORCHESTRATOR_ACCESS_TOKEN: 'token',
     NEXTAUTH_URL: 'https://civitai.test',
     WEBHOOK_TOKEN: 'wh-token',
+    // Required because the delivery-worker mock above spreads the REAL module,
+    // which transitively imports s3-utils — and s3-utils does `new URL(...)` on
+    // these at module load. Without them the whole suite fails to IMPORT, which
+    // vitest reports as "0 test" rather than as a failure.
+    S3_UPLOAD_ENDPOINT: 'https://abcd1234.r2.cloudflarestorage.com',
+    S3_UPLOAD_B2_ENDPOINT: 'https://s3.us-west-004.backblazeb2.com',
+    DELIVERY_WORKER_ENDPOINT: 'https://delivery.example.com/',
+    DELIVERY_WORKER_TOKEN: 'tok',
+    STORAGE_RESOLVER_ENDPOINT: '',
+    STORAGE_RESOLVER_AUTH: '',
+    LOGGING: [],
   },
 }));
 
@@ -67,6 +87,7 @@ import {
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
 } from '~/server/services/orchestrator/orchestrator.service';
+import { DeliveryWorkerError, StorageResolverError } from '~/utils/delivery-worker';
 
 const baseInput = {
   fileId: 1,
@@ -377,10 +398,10 @@ describe('createModelFileScanRequest', () => {
       expect(mockSubmitWorkflow).toHaveBeenCalled();
     });
 
-    it('throws code=not-found when both pre-flight attempts fail', async () => {
+    it('throws code=not-found when the retry fails with a 404 (absence PROVEN)', async () => {
       mockResolveDownloadUrl
-        .mockRejectedValueOnce(new Error('first miss'))
-        .mockRejectedValueOnce(new Error('still missing'));
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'))
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'));
 
       const promise = createModelFileScanRequest(baseInput).catch((e) => e);
       await vi.advanceTimersByTimeAsync(60_000);
@@ -399,6 +420,66 @@ describe('createModelFileScanRequest', () => {
           fileId: 1,
         })
       );
+    });
+
+    // 🔴 REGRESSION GUARD. Before this was fixed, EVERY second pre-flight failure
+    // produced code=not-found, and the caller writes a PERMANENT
+    // ModelFile.exists=false tombstone on that code — which also permanently
+    // excludes the file from the scan retry job. A resolver outage therefore left
+    // Published, Public files downloadable and unscannable forever. Measured
+    // 2026-08-20: 41 of 41 readable tombstoned files were still fully
+    // downloadable, i.e. the tombstones recorded outages, not missing objects.
+    // These cases MUST be transient. This test fails on the pre-fix code.
+    it.each([
+      ['resolver 503', () => new StorageResolverError(503, 'Service Unavailable')],
+      ['resolver 500', () => new StorageResolverError(500, 'Internal Server Error')],
+      ['resolver 401 (auth)', () => new StorageResolverError(401, 'Unauthorized')],
+      ['delivery worker 429 (rate limit)', () => new DeliveryWorkerError(429, 'Too Many Requests')],
+      ['delivery worker 503', () => new DeliveryWorkerError(503, 'Service Unavailable')],
+      ['a status-less transport error', () => new Error('ECONNRESET')],
+      ['a non-Error rejection', () => 'boom' as unknown as Error],
+    ])('throws code=transient (never not-found) for %s — no tombstone', async (_label, makeErr) => {
+      mockResolveDownloadUrl.mockRejectedValueOnce(makeErr()).mockRejectedValueOnce(makeErr());
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
+      expect(err.code).toBe('transient');
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'model-file-scan',
+          submissionErrorCode: 'transient',
+          fileId: 1,
+        })
+      );
+    });
+
+    it('classifies on the RETRY, so a transient first failure followed by a 404 is not-found', async () => {
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(new StorageResolverError(503, 'Service Unavailable'))
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'));
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err.code).toBe('not-found');
+    });
+
+    it('and the mirror: a 404 first, then a 5xx, is transient — absence was not re-proven', async () => {
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(new DeliveryWorkerError(404, 'Not Found'))
+        .mockRejectedValueOnce(new StorageResolverError(503, 'Service Unavailable'));
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err.code).toBe('transient');
     });
 
     it('skips pre-flight entirely when preflight=false (inline upload path)', async () => {

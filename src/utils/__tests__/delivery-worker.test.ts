@@ -28,7 +28,9 @@ vi.mock('~/env/server', () => ({
 
 import {
   DeliveryWorkerError,
+  StorageResolverError,
   getDownloadUrl,
+  isDefiniteNotFound,
   resolveDownloadUrl,
   safeDecodeURIComponent,
 } from '../delivery-worker';
@@ -168,5 +170,51 @@ describe('resolveDownloadUrl — falls back to delivery worker when resolver dis
       'weird%name%.safetensors'
     );
     expect(result.url).toBe('https://cdn.example.com/ok');
+  });
+});
+
+describe('isDefiniteNotFound — only a 404 proves the object is absent', () => {
+  // Callers act on `true` by writing a PERMANENT tombstone that also permanently
+  // exempts the file from virus/pickle scanning, so a wrongly-true answer is far
+  // more expensive than a wrongly-false one (which costs a single retry).
+  it.each([
+    ['DeliveryWorkerError 404', new DeliveryWorkerError(404, 'Not Found')],
+    ['StorageResolverError 404', new StorageResolverError(404, 'not found')],
+  ])('is true for %s', (_label, err) => {
+    expect(isDefiniteNotFound(err)).toBe(true);
+  });
+
+  it.each([
+    ['DeliveryWorkerError 500', new DeliveryWorkerError(500, 'Internal Server Error')],
+    ['DeliveryWorkerError 502', new DeliveryWorkerError(502, 'Bad Gateway')],
+    ['DeliveryWorkerError 503', new DeliveryWorkerError(503, 'Service Unavailable')],
+    ['DeliveryWorkerError 429', new DeliveryWorkerError(429, 'Too Many Requests')],
+    ['DeliveryWorkerError 401', new DeliveryWorkerError(401, 'Unauthorized')],
+    ['DeliveryWorkerError 403', new DeliveryWorkerError(403, 'Forbidden')],
+    // 400 is deliberately NOT treated as proof of absence: a malformed key is
+    // real, but 400 is also what a transiently-misbehaving upstream returns.
+    ['DeliveryWorkerError 400', new DeliveryWorkerError(400, 'Bad Request')],
+    ['StorageResolverError 503', new StorageResolverError(503, 'Service Unavailable')],
+    ['StorageResolverError 500', new StorageResolverError(500, 'boom')],
+    ['a bare Error (no status at all)', new Error('ECONNRESET')],
+    ['a config Error', new Error('STORAGE_RESOLVER_ENDPOINT is not configured')],
+    ['a TypeError from fetch', new TypeError('fetch failed')],
+  ])('is false for %s', (_label, err) => {
+    expect(isDefiniteNotFound(err)).toBe(false);
+  });
+
+  it.each([
+    ['a string', 'not found'],
+    ['null', null],
+    ['undefined', undefined],
+    // Shape-alike: carries statusCode 404 but is not one of our error types.
+    ['a plain object with statusCode 404', { statusCode: 404 }],
+  ])('is false for a non-Error rejection: %s', (_label, value) => {
+    expect(isDefiniteNotFound(value)).toBe(false);
+  });
+
+  it('keeps the historical message prefixes so existing log-matchers still fire', () => {
+    expect(new StorageResolverError(503, 'boom').message).toBe('Storage resolver error: boom');
+    expect(new DeliveryWorkerError(503, 'boom').message).toBe('Delivery worker error: boom');
   });
 });

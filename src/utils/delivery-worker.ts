@@ -36,6 +36,31 @@ export class DeliveryWorkerError extends Error {
 }
 
 /**
+ * Thrown by `getDownloadUrlByFileId` when the storage resolver responds non-OK.
+ * Carries the resolver's HTTP `statusCode` for the same reason
+ * `DeliveryWorkerError` does: a caller must be able to tell "this file is not
+ * there" (404) from "the resolver could not answer" (5xx, auth, rate limit).
+ *
+ * This previously threw a bare `Error`, which discarded the status — so every
+ * failure mode looked identical downstream. `createModelFileScanRequest` then
+ * treated all of them as `not-found` and wrote a PERMANENT `ModelFile.exists=false`
+ * tombstone, which also permanently excludes the file from ever being scanned
+ * (see `scanFilesFallbackJob`'s `exists` filter). Measured 2026-08-20: 41 of 41
+ * readable tombstoned files were still fully downloadable, so the tombstones were
+ * recording resolver outages, not missing objects.
+ */
+export class StorageResolverError extends Error {
+  readonly statusCode: number;
+  constructor(statusCode: number, errorText: string) {
+    // Keep the historical "Storage resolver error: …" message so existing
+    // callers/log-matchers that key off it are unaffected.
+    super(`Storage resolver error: ${errorText}`);
+    this.name = 'StorageResolverError';
+    this.statusCode = statusCode;
+  }
+}
+
+/**
  * `decodeURIComponent` throws `URIError: URI malformed` on a value with a
  * broken/truncated percent-sequence (e.g. a lone `%`, `%E0%A4%A`). Some stored
  * `file.url` / filename values are already-encoded or contain raw `%` literals,
@@ -92,7 +117,7 @@ export async function getDownloadUrlByFileId(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => response.statusText);
-    throw new Error(`Storage resolver error: ${errorText}`);
+    throw new StorageResolverError(response.status, errorText);
   }
 
   const result = await response.json();
@@ -100,6 +125,29 @@ export async function getDownloadUrlByFileId(
     url: result.url,
     urlExpiryDate: new Date(result.urlExpiryDate),
   };
+}
+
+/**
+ * Did this resolution failure prove the file is not there, as opposed to proving
+ * only that we could not ask?
+ *
+ * Deliberately narrow: ONLY a 404 counts. A caller acting on `true` here writes a
+ * permanent tombstone that also permanently exempts the file from virus/pickle
+ * scanning, so the asymmetry matters — a wrongly-`true` answer silently leaves a
+ * public file unscanned forever, while a wrongly-`false` answer costs one retry
+ * on the next tick.
+ *
+ * 400 (malformed key) is NOT included even though such keys are genuinely
+ * unresolvable: 400 is also what a transiently-misbehaving upstream returns, and
+ * the malformed-key population is separately identifiable from the stored `url`
+ * itself. Anything without a status (transport reject, config error, timeout) is
+ * likewise not proof of absence.
+ */
+export function isDefiniteNotFound(err: unknown): boolean {
+  if (err instanceof DeliveryWorkerError || err instanceof StorageResolverError) {
+    return err.statusCode === 404;
+  }
+  return false;
 }
 
 /**
