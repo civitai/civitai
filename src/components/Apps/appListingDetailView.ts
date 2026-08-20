@@ -230,3 +230,30 @@ export function getDetailPrimaryAction(
     note: 'Connecting this app will be available soon.',
   };
 }
+
+/**
+ * Does the detail page show the "runs entirely off-platform — no Civitai
+ * install, account access, or permissions" disclosure?
+ *
+ * 🔴 EXTRACTED FROM THE JSX ON PURPOSE. This predicate makes a SECURITY CLAIM to
+ * the viewer, and it is FALSE of a listing with an OAuth app connected — that
+ * app can be granted account access, which is the whole point of connecting it.
+ * Inline in `AppListingDetailBody` it was unreachable by the blocking node
+ * `unit` project, and the report-only browser suite asserted it nowhere at all,
+ * so deleting the condition — printing "no account access" over every off-site
+ * listing — was a change no test could catch. Here it is a pure function with
+ * its own truth-table tests.
+ *
+ * Three conjuncts, each load-bearing:
+ *   - `offsite` — an on-site app runs ON platform, so the sentence is simply
+ *     wrong about it;
+ *   - no `connectClientId` — the capability check; see above;
+ *   - a non-null `externalUrl` — there is no "runs off-platform" claim to make
+ *     about a listing with nowhere to run.
+ *
+ * Truthiness on `connectClientId`, matching the projection's `|| null` and the
+ * no-destination fallback above, so all three read the capability the same way.
+ */
+export function shouldShowOffsiteDisclosure(kindData: ListingDetail['kindData']): boolean {
+  return kindData.kind === 'offsite' && !kindData.connectClientId && !!kindData.externalUrl;
+}

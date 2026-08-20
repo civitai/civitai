@@ -6,6 +6,7 @@ import {
   getDetailPrimaryAction,
   getOwnerEditHref,
   isEditableListingStatus,
+  shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -466,6 +467,100 @@ describe('getDetailPrimaryAction — off-site', () => {
     // matrix also crossed a sub-kind that no longer exists; the DROP is the
     // point — the removed dimension was never independent of `connectClientId`.)
     expect(navigable).toBe(2);
+  });
+});
+
+/**
+ * 🔴 THE OFF-SITE ACCOUNT-ACCESS DISCLOSURE.
+ *
+ * "This app runs entirely off-platform — no Civitai install, account access, or
+ * permissions." That is a SECURITY CLAIM, and it is FALSE of a listing with an
+ * OAuth app connected. Until this PR the condition lived inline in
+ * `AppListingDetailBody`'s JSX, where the blocking `unit` project could not see
+ * it and the report-only browser suite asserted it NOWHERE — so removing the
+ * condition, and printing "no account access" over every off-site listing
+ * including the OAuth-connected ones, was a change no test could catch.
+ *
+ * It was gated on `subKind === 'external-link'`. Since the sub-kind was
+ * `connectClientId ? … : …` and nothing else, collapsing the taxonomy would have
+ * silently deleted this gate if it were treated as "just another sub-kind
+ * branch" — hence the extraction, and hence a full 2×3 truth table rather than
+ * one happy case.
+ */
+describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => {
+  /** The three off-site destination shapes × the two OAuth capability states. */
+  const URLS = ['https://ext.app', 'https://other.example/path', null] as const;
+
+  it('🔴 GRANDFATHERED (no OAuth client) + a destination → SHOWN', () => {
+    // Production's one approved `connect_client_id IS NULL` off-site listing.
+    // Two distinct URLs so a mutant hardcoding either literal still moves one.
+    for (const externalUrl of ['https://ext.app', 'https://other.example/path']) {
+      expect(
+        shouldShowOffsiteDisclosure({ kind: 'offsite', externalUrl, connectClientId: null }),
+        externalUrl
+      ).toBe(true);
+    }
+  });
+
+  it('🔴 an OAuth-connected listing → NOT shown (the sentence would be a lie)', () => {
+    for (const externalUrl of URLS) {
+      expect(
+        shouldShowOffsiteDisclosure({
+          kind: 'offsite',
+          externalUrl,
+          connectClientId: 'oauth_abc',
+        }),
+        String(externalUrl)
+      ).toBe(false);
+    }
+  });
+
+  it('an off-site listing with no destination → NOT shown (nothing runs off-platform)', () => {
+    expect(
+      shouldShowOffsiteDisclosure({ kind: 'offsite', externalUrl: null, connectClientId: null })
+    ).toBe(false);
+  });
+
+  it('🔴 an ON-SITE listing → NOT shown (it runs ON platform)', () => {
+    expect(
+      shouldShowOffsiteDisclosure({
+        kind: 'onsite',
+        appBlockId: 'blk-1',
+        hasPage: true,
+        liveUrl: 'https://blk-1.civit.ai',
+      })
+    ).toBe(false);
+  });
+
+  it('an empty-string connectClientId does NOT suppress it (truthiness, not nullish)', () => {
+    // Matches the projection's `|| null` and `getDetailPrimaryAction`'s test, so
+    // all three read the capability the same way.
+    expect(
+      shouldShowOffsiteDisclosure({
+        kind: 'offsite',
+        externalUrl: 'https://ext.app',
+        connectClientId: '',
+      })
+    ).toBe(true);
+  });
+
+  /**
+   * The RENDERER must not re-implement the predicate. A structural check on the
+   * source, because the JSX itself is invisible to this project — the same
+   * technique the iframe gate below uses, with its positive control.
+   */
+  it('🔴 AppListingDetailBody calls this predicate and does not re-derive it', () => {
+    // 🔴 `__dirname`, never `process.cwd()`. The runner's cwd is whatever
+    // directory `vitest` was invoked from, so a cwd-relative read passes in CI
+    // (where it is the repo root) and ENOENTs locally — a test whose verdict is
+    // about the caller's shell. Same idiom as the iframe gate below.
+    const body = fs.readFileSync(
+      path.resolve(__dirname, '../AppListingDetailBody.tsx'),
+      'utf8'
+    );
+    // POSITIVE CONTROL first: the read really returned this component's source.
+    expect(body).toMatch(/This app runs entirely off-platform/);
+    expect(body).toMatch(/shouldShowOffsiteDisclosure\(detail\.kindData\)/);
   });
 });
 

@@ -44,6 +44,7 @@ import {
   type DetailActionMode,
   getDetailPrimaryAction,
   getOwnerEditHref,
+  shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
@@ -951,21 +952,20 @@ export function AppListingDetailBody({
             )}
 
             {/* Off-site external destination disclosure (mirrors the live detail).
-                🔴 Gated on `connectClientId == null` — a CAPABILITY check, not a
-                kind. The sentence claims "no account access, or permissions",
-                which is FALSE of a listing with an OAuth app connected, so this
-                cannot become unconditional now that off-site is one kind. The
-                test previously read `subKind === 'external-link'`, which was
-                derived from exactly this field by a truthiness test — same
+                🔴 The condition lives in `shouldShowOffsiteDisclosure`, NOT here —
+                it makes a security claim ("no account access, or permissions")
+                that is FALSE of a listing with an OAuth app connected, and inline
+                it was covered by nothing. Read that function's docstring before
+                changing what the sentence says or when it appears. It replaces a
+                `subKind === 'external-link'` test, which was derived from
+                `connectClientId` by a truthiness test and nothing else — same
                 predicate, no derived taxonomy, identical rendering. */}
-            {detail.kindData.kind === 'offsite' &&
-              !detail.kindData.connectClientId &&
-              detail.kindData.externalUrl && (
-                <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />}>
-                  This app runs entirely off-platform — no Civitai install, account access, or
-                  permissions.
-                </Alert>
-              )}
+            {shouldShowOffsiteDisclosure(detail.kindData) && (
+              <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />}>
+                This app runs entirely off-platform — no Civitai install, account access, or
+                permissions.
+              </Alert>
+            )}
           </Stack>
         </ContainerGrid2.Col>
       </ContainerGrid2>
