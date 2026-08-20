@@ -68,6 +68,20 @@ export function buildModelModerationText(model: {
  * and `text-output-moderation.ts`'s `decideTextOutputVerdict`); union rather than pick one, so
  * a level label that only shows up in one view still counts as triggered.
  */
+function isResultTriggered(r: XGuardModerationOutput['results'][number]): boolean {
+  return r.triggered === true || (typeof r.score === 'number' && r.score >= r.threshold);
+}
+
+/** Every label this scan counts as triggered, unioned across both views. */
+function triggeredLabelSet({
+  results,
+  triggeredLabels,
+}: Pick<XGuardModerationOutput, 'results' | 'triggeredLabels'>): Set<string> {
+  const set = new Set((triggeredLabels ?? []).map((l) => l.toLowerCase()));
+  for (const r of results ?? []) if (isResultTriggered(r)) set.add(r.label.toLowerCase());
+  return set;
+}
+
 export function isModelTextNsfw({
   triggeredLabels,
   results,
@@ -75,13 +89,12 @@ export function isModelTextNsfw({
   triggeredLabels?: string[];
   results?: XGuardModerationOutput['results'];
 }): boolean {
-  if ((triggeredLabels ?? []).some((label) => LEVEL_LABEL_SET.has(label.toLowerCase()))) {
-    return true;
-  }
-  return (results ?? []).some((r) => {
-    if (!LEVEL_LABEL_SET.has(r.label.toLowerCase())) return false;
-    return r.triggered === true || (typeof r.score === 'number' && r.score >= r.threshold);
-  });
+  for (const label of triggeredLabelSet({
+    results: results ?? [],
+    triggeredLabels: triggeredLabels ?? [],
+  }))
+    if (LEVEL_LABEL_SET.has(label)) return true;
+  return false;
 }
 
 /**
@@ -96,17 +109,19 @@ function missingScanLabels(results: XGuardModerationOutput['results'] | undefine
 }
 
 /**
- * Union of `matchedTerms.text` across the labels that actually triggered. The webhook passes the
- * raw `XGuardModerationOutput`, whose `results` cover all 15 submitted labels — not just the ones
- * that fired — so the `triggered` filter below is load-bearing, not defensive.
+ * Union of `matchedTerms.text` across the labels that triggered. The webhook passes the raw
+ * `XGuardModerationOutput`, whose `results` cover all 15 submitted labels — not just the ones
+ * that fired — so the filter below is load-bearing, not defensive.
+ *
+ * Shares `triggeredLabelSet` with the verdict deliberately. Filtering on `triggeredLabels`
+ * alone would blank this field in exactly the case the union exists to catch: a label that
+ * fired in `results[]` but is missing from `triggeredLabels` flips the model while leaving
+ * no forensics behind it.
  */
-function collectMatchedTerms({
-  results,
-  triggeredLabels,
-}: Pick<XGuardModerationOutput, 'results' | 'triggeredLabels'>): string[] {
-  const triggered = new Set((triggeredLabels ?? []).map((l) => l.toLowerCase()));
+function collectMatchedTerms(output: Pick<XGuardModerationOutput, 'results' | 'triggeredLabels'>) {
+  const triggered = triggeredLabelSet(output);
   return uniq(
-    (results ?? [])
+    (output.results ?? [])
       .filter((r) => triggered.has(r.label.toLowerCase()))
       .flatMap((r) => r.matchedTerms?.text ?? [])
   );
@@ -193,7 +208,10 @@ export const modelModerationAdapter: ModerationAdapter = {
       where: { id: entityId },
       data: {
         nsfw: true,
-        lockedProperties: uniq([...stored, 'nsfw']),
+        // Append in the database, not from the array we read above. A moderator locking some
+        // OTHER property between that read and this write would be silently dropped by
+        // writing a whole array back.
+        lockedProperties: { push: 'nsfw' },
         meta: nextMeta,
       },
     });

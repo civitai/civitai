@@ -29,13 +29,16 @@ wildcard categories, and App Block text output.
 
 ## What this replaces
 
-- **Removed**: the profanity-filter branch in `upsertModel`. `bounty.service.ts` keeps its
-  own copy — out of scope here.
-- **Removed**: `Model` from the `queues` map and from `allowedNSFWTypes` in
-  `jobs/entity-moderation.ts`, after the XGuard path is verified in production.
-- **Added**: a `Model` entry in the moderation-adapter registry.
+- **Added now**: a `Model` entry in the moderation-adapter registry, plus the submit from
+  `upsertModel`.
+- **Removed once the flag ramp completes**: the profanity-filter branch in `upsertModel`.
+  `bounty.service.ts` keeps its own copy — out of scope here.
+- **Removed once the flag ramp completes**: `Model` from `allowedNSFWTypes` in
+  `jobs/entity-moderation.ts`. Its `queues` entry **stays** — step 7 of the rollout says why.
 
-Net: one pipeline, one source of truth (`EntityModeration`), one audit trail.
+Until those land, all three mechanisms run in parallel by design and the flags are the
+rollback. Net once they do: one pipeline, one source of truth (`EntityModeration`), one
+audit trail.
 
 ---
 
@@ -75,8 +78,9 @@ Lives in `src/server/services/model-moderation.adapter.ts`, registered in
 > dedup can never hit and the retry cron re-audits already-scanned models. Same constraint
 > the Article adapter documents.
 
-**`submit`** — submits the full label set, matching the App Block text-output scan
-(`TEXT_OUTPUT_SCAN_LABELS`). Scanning labels we do not act on is deliberate: the per-label
+**`submit`** — submits the full label set, declared in this adapter rather than imported from
+the App Block text-output scan (per-consumer label selection is the pattern, and the two sets
+are allowed to diverge). Scanning labels we do not act on is deliberate: the per-label
 trigger rates on real model text are the input to deciding what a v2 acts on, and there is
 no way to collect them without scanning.
 
@@ -84,8 +88,12 @@ no way to collect them without scanning.
 or `nsfw` sets:
 
 ```ts
-{ nsfw: true, lockedProperties: uniq([...stored, 'nsfw']) }
+{ nsfw: true, lockedProperties: { push: 'nsfw' } }
 ```
+
+The lock is appended **in the database**, not by writing back the array that was read a
+moment earlier — otherwise a moderator locking some other property in that window is
+silently dropped.
 
 then calls `updateModelNsfwLevels([id])`. Every other triggered label is recorded on
 `EntityModeration.triggeredLabels` + the audit log and takes no action.

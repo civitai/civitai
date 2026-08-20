@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
 vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/flipt/client')>()),
+  ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
 // Task 4 adapter module imports nsfwLevels.service, which pulls modelsSearchIndex ->

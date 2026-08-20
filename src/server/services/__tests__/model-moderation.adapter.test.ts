@@ -6,18 +6,20 @@ import {
   isModelTextNsfw,
   MODEL_MODERATION_SCAN_LABELS,
 } from '~/server/services/model-moderation.adapter';
+import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
+import type * as FliptClient from '~/server/flipt/client';
 
 vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/flipt/client')>()),
+  ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
 // Read path only. `env.REPLICATION_LAG_DELAY` is undefined (not 0) under the env mock, so the
 // real function's `<= 0` short-circuit does not fire — override it directly rather than rely
 // on that, matching article-locked-properties.service.test.ts's pattern for the same helper.
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/db/db-lag-helpers')>()),
+  ...(await importOriginal<typeof DbLagHelpers>()),
   getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
 }));
 
@@ -68,7 +70,7 @@ describe('modelModerationAdapter.applyResult', () => {
     expect(dbMock.dbWrite.model.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 1 },
-        data: expect.objectContaining({ nsfw: true, lockedProperties: ['nsfw'] }),
+        data: expect.objectContaining({ nsfw: true, lockedProperties: { push: 'nsfw' } }),
       })
     );
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
@@ -121,9 +123,11 @@ describe('modelModerationAdapter.applyResult', () => {
     }
   });
 
-  // FINDING 2 — every other fixture uses lockedProperties: [], which cannot distinguish
-  // `uniq([...stored, 'nsfw'])` from a flat `['nsfw']` that would silently wipe an existing lock.
-  it('preserves an existing non-nsfw lock entry when adding the nsfw lock', async () => {
+  // Appending in the database rather than writing back the array we read is what keeps a lock a
+  // moderator adds between the read and the write from being silently dropped. Asserting the
+  // `push` shape (not a resulting array) is the only way to tell the two apart from here: a
+  // revert to `uniq([...stored, 'nsfw'])` produces `['poi', 'nsfw']` and fails this.
+  it('appends the nsfw lock atomically instead of rewriting the array', async () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({
       id: 1,
       nsfw: false,
@@ -136,7 +140,7 @@ describe('modelModerationAdapter.applyResult', () => {
 
     expect(dbMock.dbWrite.model.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ lockedProperties: ['poi', 'nsfw'] }),
+        data: expect.objectContaining({ lockedProperties: { push: 'nsfw' } }),
       })
     );
   });
@@ -167,7 +171,13 @@ describe('modelModerationAdapter.applyResult', () => {
   it('is idempotent across a replayed callback', async () => {
     dbMock.dbRead.model.findUnique
       .mockResolvedValueOnce({ id: 1, nsfw: false, lockedProperties: [], meta: {}, userId: 99 })
-      .mockResolvedValueOnce({ id: 1, nsfw: true, lockedProperties: ['nsfw'], meta: {}, userId: 99 });
+      .mockResolvedValueOnce({
+        id: 1,
+        nsfw: true,
+        lockedProperties: ['nsfw'],
+        meta: {},
+        userId: 99,
+      });
 
     await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
     await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
@@ -233,6 +243,38 @@ describe('modelModerationAdapter.applyResult', () => {
     ]);
   });
 
+  // The verdict unions `triggeredLabels` with `results[].triggered`/`score >= threshold`. If the
+  // forensics filtered on `triggeredLabels` alone, this exact payload — the one the union exists
+  // to catch — would flip the model while recording NO matched terms, blanking the field
+  // precisely when a moderator most needs to know why.
+  it('collects matchedTerms for a label that fired only in results[], not in triggeredLabels', async () => {
+    const output = {
+      blocked: false,
+      triggeredLabels: [],
+      results: [
+        {
+          label: 'Explicit',
+          score: 0.9,
+          threshold: 0.5,
+          triggered: true,
+          matchedTerms: { text: ['results-only term'], positivePrompt: [], negativePrompt: [] },
+        },
+      ],
+    } as never;
+
+    await modelModerationAdapter.applyResult?.({
+      entityId: 1,
+      workflowId: 'wf-1',
+      blocked: false,
+      triggeredLabels: [],
+      output,
+    });
+
+    const data = dbMock.dbWrite.model.update.mock.calls[0][0].data;
+    expect(data.nsfw).toBe(true);
+    expect(data.meta.textModeration.matchedTerms).toEqual(['results-only term']);
+  });
+
   // IMPORTANT 3(b) — a label the scanner never answers must not read as a clean 0% rate.
   // Logged unconditionally, ahead of the nsfw-verdict early return: the shadow phase needs
   // this signal on every callback, not only the ones that also happened to trigger.
@@ -269,7 +311,10 @@ describe('modelModerationAdapter.applyResult', () => {
     });
 
     expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'model-text-moderation', message: expect.stringContaining('missing') })
+      expect.objectContaining({
+        name: 'model-text-moderation',
+        message: expect.stringContaining('missing'),
+      })
     );
   });
 });
@@ -371,9 +416,7 @@ describe('isModelTextNsfw', () => {
     expect(
       isModelTextNsfw({
         triggeredLabels: [],
-        results: [
-          { label: 'Explicit', score: 0.9, threshold: 0.5, triggered: true } as never,
-        ],
+        results: [{ label: 'Explicit', score: 0.9, threshold: 0.5, triggered: true } as never],
       })
     ).toBe(true);
   });
