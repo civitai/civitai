@@ -401,3 +401,75 @@ jobs:
       - name: Assert every app suite actually ran
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
+
+  app-typecheck:
+    name: App typecheck (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    # NOT ONE of the seven apps/ members was typechecked by anything until this job.
+    #
+    # The root `pnpm run typecheck` — the script BOTH the `typecheck` job above and the
+    # in-cluster `tekton / typecheck` status run — is bounded by the root tsconfig's
+    # `include`, which lists `scripts/local-dev/*.ts`, `src`, `packages/*/src`, `tests`,
+    # `test` and `.next/types`. There is no `apps/` entry, so every app is outside the
+    # only typecheck this repo had. Both tiers run the same script, so this was not a lag
+    # window to wait out: it could not close on its own.
+    #
+    # Proven with a planted error rather than inferred from the config, on 2026-08-19:
+    # a deliberate `const zz: number = "..."` under each app reported exactly one
+    # `error TS2322`, while the same invocation on the unmodified tree reported zero.
+    # A zero from an instrument nobody has watched go red is not a measurement.
+    #
+    # `apps/auth` is DELIBERATELY ABSENT — it is the one app that does not pass today.
+    # Two errors, reproduced independently here and by the original report:
+    #   src/lib/server/auth/providers.ts:165          Parameter 'p' implicitly has an 'any' type
+    #   src/lib/server/auth/__tests__/establish-session.test.ts:100
+    #                                                 Property '_store' does not exist on type 'never'
+    # Adding it before those are fixed would ship a permanently-red gate, which trains
+    # people to click through every other app's result too. It needs its own ticket and
+    # then a one-line addition to the matrix below.
+    #
+    # `fail-fast: false` on purpose: one app's break must not hide the other five.
+    #
+    # Svelte apps run `check`, not `typecheck`. Their `typecheck` script is a bare
+    # `svelte-check`, but `.svelte-kit/tsconfig.json` does not exist in a fresh checkout —
+    # `check` is `svelte-kit sync && svelte-check`, and the sync is what generates it.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: event-engine
+            pkg: "@civitai/event-engine"
+            script: typecheck
+          - app: notifications
+            pkg: "@civitai/notifications-app"
+            script: typecheck
+          - app: orchestrator-gateway
+            pkg: "@civitai/orchestrator-gateway"
+            script: typecheck
+          - app: storage
+            pkg: "@civitai/storage-app"
+            script: typecheck
+          - app: creator-studio
+            pkg: "@civitai/creator-studio-app"
+            script: check
+          - app: moderator
+            pkg: "@civitai/moderator-app"
+            script: check
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck ${{ matrix.app }}
+        run: pnpm --filter ${{ matrix.pkg }} run ${{ matrix.script }}
