@@ -70,6 +70,32 @@ const WRITE_PATTERNS: Array<[kind: string, re: RegExp]> = [
   ],
 ];
 
+/**
+ * A commented-out statement is not a writer.
+ *
+ * `--` and block comments make "the token is present" and "the clause is LIVE" different facts,
+ * and this ledger only cares about the second. Migration
+ * `20260819000000_model_file_hash_sha256_12` documents its backfill as commented SQL — its only
+ * live statement is an `ALTER TYPE` — and matching that text put a sixth "writer" in the
+ * enumeration that writes nothing. It made trunk red for every PR until someone either declared a
+ * non-writer in the ledger or deleted the documentation, and both would have been wrong.
+ *
+ * 🔴 THE `.ts` HALF NOW HAS ITS EVIDENCE, which is why stripping is no longer scoped to `.sql`.
+ * The earlier fix deliberately stopped at SQL, on the reasoning that stripping `.ts` "could only
+ * ever SHRINK the enumeration, which is the direction this ledger is also meant to catch — so
+ * that half needs its own evidence, not a drive-by." That is the right worry: a stripper that
+ * eats LIVE code makes the ledger under-report, and under-reporting is the dangerous direction.
+ * The evidence is the paired positive controls below — every live spelling of a write (SQL
+ * `INSERT`/`UPDATE`/`DELETE`, and the Prisma `dbWrite.modelFileHash.*` forms) is asserted to
+ * SURVIVE stripping, alongside its commented twin asserted not to. Shrinkage is therefore
+ * observed, not assumed absent.
+ *
+ * Both strippers are QUOTE-AWARE for the same reason. Postgres spells the table
+ * `"ModelFileHash"`, and a `--` inside a string literal must not swallow a real statement that
+ * follows it on the same line — a naive line-comment regex that ignores quote state does exactly
+ * that. See `stripCommentsForFile` and the two strippers it dispatches to.
+ */
+
 const isTestFile = (relPath: string) =>
   relPath.includes('__tests__') || /\.(test|spec)\.[cm]?[jt]sx?$/.test(relPath);
 
