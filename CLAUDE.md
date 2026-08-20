@@ -435,23 +435,35 @@ path from Defender real-time scanning, and a tree outside it silently runs slow.
 
 ```bash
 git fetch origin main
-git worktree add <repos-root>/worktrees/<name> -b <branch> origin/main   # both args required — see below
+git worktree add <repos-root>/worktrees/<name> -b <branch> --no-track origin/main   # all three — see below
 git -C <repos-root>/<primary-checkout> submodule sync --recursive
 git -C <repos-root>/worktrees/<name> submodule update --init event-engine-common
 printf 'use flake\n' > <repos-root>/worktrees/<name>/.envrc && direnv allow   # from inside the worktree
 pnpm install
 ```
 
-**Always `-b <branch> origin/main`. Never the shorthand.** Both halves of that argument are
-load-bearing and neither is optional:
+**Always `-b <branch> --no-track origin/main`. Never the shorthand.** All three parts are
+load-bearing and none is optional:
 
 - **`-b <branch>`** creates a new branch and **refuses if the name already exists**, which is the
   property that makes this safe to run without checking first. Without `-b`,
   `git worktree add <path> <existing-branch>` checks out a branch someone else may be building on.
 - **`origin/main`** is the base. Without it the new branch forks from *this* worktree's `HEAD` — the
   local `main` you last pulled, not the real one.
+- **`--no-track`** stops that base from also becoming the branch's *upstream*. `branch.autoSetupMerge`
+  defaults to `true`, so `-b <branch> origin/main` sets `branch.<branch>.merge = refs/heads/main`
+  behind your back — a base and an upstream are different things and git conflates them here.
 
-🔴 **`git worktree add <path>` with neither is the trap**, because it looks like it worked: git
+🔴 **Without `--no-track` your feature branch tracks `main` forever.** `git status` then reports it as
+"diverged from 'origin/main' … ahead N, behind M" and offers to reconcile — which is confusing but
+harmless — while `git pull` on the branch is the actual hazard: it **merges `origin/main` into your
+feature branch**, and since this repo squash-merges PRs, that merge commit is pure noise in the diff.
+Tell with `git status -sb`: a healthy feature branch prints `## <branch>` alone, or `## <branch>...origin/<branch>`
+once pushed. `## <branch>...origin/main` is the broken state. Fix an existing one with
+`git branch --unset-upstream`, then `git push -u origin <branch>` when you first push, which sets the
+upstream that should have been there.
+
+🔴 **`git worktree add <path>` with no branch and no base is the other trap**, because it looks like it worked: git
 silently invents a branch named after the directory's basename and forks it from local `HEAD`. You
 get a new branch, so nothing errors, and the staleness only surfaces later as conflicts against a
 `main` that moved. Tell from the outside: **branch name identical to the directory name** is the
