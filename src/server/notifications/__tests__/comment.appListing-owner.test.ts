@@ -107,8 +107,18 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
   });
 
   it('shares the destination constant with the other owner-facing listing notifications', () => {
-    // A RELATIONSHIP, not a second literal: a route rename must move all five together. Compared
-    // against a sibling processor's rendered url rather than against the string '/apps/mine'.
+    // A RELATIONSHIP: a route rename must move all five together, so this compares against a
+    // sibling processor's RENDERED url rather than against the string '/apps/mine'.
+    //
+    // 🔴 ON ITS OWN THIS ASSERTION IS TAUTOLOGICAL, and saying so is the point. Both sides read
+    // the same `OWNER_SUBMISSIONS_URL`, so changing that constant to '/apps/other' drifts them
+    // together and this test still passes (verified). What it proves is only "these two agree" —
+    // never "they agree on the RIGHT value".
+    //
+    // The three literal `toBe('/apps/mine')` assertions above are what pin the value; this pins
+    // that the sharing is real and not a coincidence of two matching literals. The PAIR is the
+    // guard. Do not "simplify" either half away: drop the literals and a wrong route passes; drop
+    // this and a duplicated literal drifts silently.
     const sibling = (appListingNotifications as unknown as Record<string, Def>)[
       'app-listing-approved'
     ].prepareMessage({
@@ -116,6 +126,8 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
       details: { slug: SLUG, name: LISTING_NAME },
     });
     expect(message()?.url).toBe(sibling?.url);
+    // Anchors the shared value, so this test cannot pass while both sides drift.
+    expect(sibling?.url).toBe('/apps/mine');
   });
 
   it('the url is independent of the slug entirely (no slug-shaped failure modes left)', () => {
@@ -172,12 +184,29 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
     expect(normalizeSql(sql())).toContain(`${APP_LISTING_OWNER_SQL} > 0`);
   });
 
-  it('fires on TOP-LEVEL comments only, so it cannot double up with the reply processors', () => {
-    // A reply's thread is keyed by its parent COMMENT and carries no appListingId. Dropping the
-    // `IS NOT NULL` here would match reply threads too, and every reply would notify the owner a
-    // second time alongside new-comment-reply.
+  it('keeps the top-level predicate, which is REDUNDANT defence-in-depth rather than the guard', () => {
+    // 🔴 CLAIM CORRECTED. This test used to say that dropping the `IS NOT NULL` "would match reply
+    // threads too, and every reply would notify the owner a second time". That is FALSE, and
+    // asserting it made the test name overclaim what the predicate does.
+    //
+    // What actually excludes replies is the INNER `JOIN "app_listings" al ON al."serial_id" =
+    // t."appListingId"` — NULL never equals anything, so a reply thread is dropped by the join
+    // whether or not this predicate exists. Deleting it yields BYTE-IDENTICAL rows.
+    //
+    // So the deletion mutant SURVIVES as UNREACHABLE, not as unasserted — no input can make it
+    // change the answer, and the two diagnoses have opposite remedies (an unasserted mutant wants
+    // an assertion; an unreachable one wants none, because any test for it is vacuous by
+    // construction). This assertion therefore pins the predicate's PRESENCE as intent that must
+    // survive a refactor making the join LEFT or reordering it — not its behaviour.
+    //
+    // Provenance: the byte-identical result was measured by the #4184 audit against a real
+    // Postgres 16 fixture built from the repo's DDL. Recorded rather than re-derived.
     expect(normalizeSql(sql())).toContain(
       'JOIN "Thread" t ON t.id = c."threadId" AND t."appListingId" IS NOT NULL'
+    );
+    // The clause that does the real work, pinned beside it so the pair cannot drift apart.
+    expect(normalizeSql(sql())).toContain(
+      'JOIN "app_listings" al ON al."serial_id" = t."appListingId"'
     );
   });
 

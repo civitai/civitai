@@ -754,9 +754,14 @@ export const commentNotifications = createNotificationProcessor({
       // first app-listing notification pushed to an owner UNCONDITIONALLY, so it cannot borrow
       // that assumption.
       //
-      // `/apps/mine` gates on `appBlocksAuthor` — the developer cohort a listing owner is in by
-      // construction — and is where every other owner-facing app-listing notification already
-      // points. Shared constant rather than a second literal, so a route rename moves both.
+      // `/apps/mine` gates on `isAppDeveloper` = `isModerator || opts.appBlocksAuthor`
+      // (`app-blocks-access.ts:52`). 🔴 That is a FLIPT COHORT FLAG, not a structural property of
+      // owning a listing: an owner outside the cohort gets `notFound` here too. This is therefore
+      // the BETTER destination, not a guaranteed one — it is where all four existing owner-facing
+      // app-listing notifications already point, so this type is not inventing a reachability
+      // assumption of its own, and the cohort it needs is the developer one rather than the
+      // narrower store-access one. Shared constant rather than a second literal, so a route
+      // rename moves all five.
       url: OWNER_SUBMISSIONS_URL,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -772,10 +777,22 @@ export const commentNotifications = createNotificationProcessor({
           ) "details"
         FROM "CommentV2" c
         JOIN "User" u ON c."userId" = u.id
-        -- TOP-LEVEL comments only. A reply's own thread is keyed by its parent COMMENT, so it
-        -- carries no "appListingId" and never matches here — replies are already covered by
-        -- new-comment-reply / new-thread-response, which is precisely the overlap that would
-        -- otherwise double-notify.
+        -- TOP-LEVEL comments only. A reply's own thread is keyed by its parent COMMENT and carries
+        -- no "appListingId", so it never matches — replies stay with new-comment-reply /
+        -- new-thread-response.
+        --
+        -- 🔴 THIS PREDICATE IS BEHAVIOURALLY REDUNDANT, AND THAT IS DELIBERATE. The
+        -- app_listings join below is an INNER join on al."serial_id" = t."appListingId", and NULL
+        -- never equals anything, so a NULL "appListingId" is already excluded by the join itself:
+        -- removing this line produces BYTE-IDENTICAL result rows — executed against a real
+        -- Postgres 16 fixture by the #4184 audit, not reasoned about here.
+        --
+        -- So a mutant that deletes it SURVIVES because it is UNREACHABLE — no input can make the
+        -- guard change the answer — NOT because a test forgot to assert it. The distinction has
+        -- opposite remedies: an unasserted mutant wants a new assertion, an unreachable one wants
+        -- nothing (adding a test for it would be vacuous by construction). Kept as
+        -- defence-in-depth so the intent survives a future refactor that makes the join LEFT or
+        -- reorders it — at which point the redundancy ends and this becomes load-bearing.
         JOIN "Thread" t ON t.id = c."threadId" AND t."appListingId" IS NOT NULL
         JOIN "app_listings" al ON al."serial_id" = t."appListingId"
         -- Ownership chain for the onsite kind — see APP_LISTING_OWNER_SQL. LEFT, because an
