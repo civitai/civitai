@@ -114,7 +114,8 @@ function enumerateWriters(): string[] {
 
   const found = new Set<string>();
   for (const file of files) {
-    const rel = path.relative(REPO_ROOT, file);
+    // POSIX separators — the ledger is written with '/', and `path.relative` yields '\' on Windows.
+    const rel = path.relative(REPO_ROOT, file).split(path.sep).join('/');
     if (isTestFile(rel)) continue;
     const source = stripSqlComments(fs.readFileSync(file, 'utf8'), path.extname(file));
     if (!source.includes('odelFileHash')) continue; // cheap prefilter, case-insensitive on the M

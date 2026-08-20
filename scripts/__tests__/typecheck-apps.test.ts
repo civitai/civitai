@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, cpSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,7 +77,7 @@ function spawnIn(dir: string, args: string[]) {
   const r = spawnSync(process.execPath, args, {
     cwd: dir,
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${join(dir, 'bin')}:${process.env.PATH}` },
+    env: { ...process.env, PATH: `${join(dir, 'bin')}${delimiter}${process.env.PATH}` },
   });
   return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
@@ -99,7 +100,17 @@ function runShipped(dir: string) {
   return spawnIn(dir, ['scripts/ci/typecheck-apps.mjs']);
 }
 
-describe('typecheck-apps', () => {
+/**
+ * POSIX only. The fixtures put a fake `pnpm` on PATH as a `#!/usr/bin/env bash` script made executable
+ * with `chmod 0755` — neither the shebang nor the mode bit means anything on Windows, where a spawned
+ * `pnpm` resolves through PATHEXT and would need a `.cmd`. Porting the fixtures would mean maintaining
+ * two dialects of every stub for a script that only ever runs on Linux CI, and a stub that drifts from
+ * the one CI uses is worse than no local run.
+ *
+ * Skipped, not deleted: it reports as skipped rather than vanishing, so the gap is visible. The script
+ * itself is covered on CI, which is the platform it runs on.
+ */
+describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
   it('passes when every discovered app typechecks clean', () => {
     const { code, out } = run(makeRepo({ alpha: true, beta: true }, 'exit 0'));
     expect(out).toContain('All 2 app(s) passed typecheck');

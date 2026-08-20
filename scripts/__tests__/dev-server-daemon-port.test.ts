@@ -2,7 +2,9 @@ import { spawn } from 'child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import type { AddressInfo } from 'net';
-import { dirname, relative, resolve } from 'path';
+import { dirname, relative, resolve, sep } from 'path';
+import { pathToFileURL } from 'node:url';
+import type { Socket } from 'node:net';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
 
@@ -267,7 +269,14 @@ describe('argv goes through the same validator as the environment', () => {
     const code = await new Promise<number | null>((done) => {
       const child = spawn(
         process.execPath,
-        ['--input-type=module', '-e', `await import(${JSON.stringify(daemonScript)});`],
+        // A file:// URL, not a path: on Windows an absolute path's drive letter parses as a URL
+        // scheme and ESM rejects it with ERR_UNSUPPORTED_ESM_URL_SCHEME — so the child exits 1 and the
+        // test reads as "importing the daemon throws", which is the thing it exists to disprove.
+        [
+          '--input-type=module',
+          '-e',
+          `await import(${JSON.stringify(pathToFileURL(daemonScript).href)});`,
+        ],
         { cwd: repoRoot, env: { ...process.env, DEV_DAEMON_PORT: 'nope' }, stdio: 'ignore' }
       );
       child.on('exit', done);
@@ -320,7 +329,9 @@ describe('nothing outside daemon-port.mjs decides the daemon port', () => {
   it('finds the files it claims to scan', () => {
     // The positive control. Without it a typo in `roots` yields an empty set, every assertion
     // below passes vacuously, and "no second copy anywhere" would be a fact about the walk.
-    const files = sourceFiles().map((f) => relative(repoRoot, f));
+    // POSIX separators: the expectations below are written with '/', and `relative` yields '\' on
+    // Windows, so an unnormalised list matches none of them and the positive control fails.
+    const files = sourceFiles().map((f) => relative(repoRoot, f).split(sep).join('/'));
     expect(files.length).toBeGreaterThan(10);
     expect(files).toContain('.claude/skills/dev-server/cli.mjs');
     expect(files).toContain('.claude/skills/dev-server/console.mjs');
@@ -545,7 +556,7 @@ describe('an unusable DEV_DAEMON_PORT still runs the tests', () => {
     const script = resolve(repoRoot, 'scripts/test-unit-run.mjs');
 
     // A daemon that accepts the run and then dies, which is the shape that used to double-run.
-    let sockets: import('net').Socket[] = [];
+    const sockets: Socket[] = [];
     const server = createServer((req, res) => {
       if (req.url === '/test-runs') {
         res.writeHead(200, { 'Content-Type': 'application/json' });

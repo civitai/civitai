@@ -521,7 +521,28 @@ describe('source files contain no literal NUL bytes', () => {
     }
   });
 
-  it('CONTROL: directory symlinks are followed, and a cycle terminates', () => {
+  /**
+   * Creating a DIRECTORY symlink needs elevation or Developer Mode on Windows and fails EPERM
+   * otherwise. Gated on the capability rather than on `process.platform`, so these controls still run
+   * on Linux CI and on an elevated Windows shell — a platform guard would switch them off for a whole
+   * OS that is usually able to run them.
+   *
+   * Probed once: the three controls below are the only tests that need it, and the main NUL-byte
+   * assertion is unaffected and keeps running everywhere.
+   */
+  const canSymlink = (() => {
+    const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'nul-guard-probe-'));
+    try {
+      fs.symlinkSync(probe, path.join(probe, 'link'), 'dir');
+      return true;
+    } catch {
+      return false;
+    } finally {
+      fs.rmSync(probe, { recursive: true, force: true });
+    }
+  })();
+
+  it.skipIf(!canSymlink)('CONTROL: directory symlinks are followed, and a cycle terminates', () => {
     // `fs.readdirSync` reports a symlinked directory as neither file nor
     // directory, so without the explicit stat below a monorepo whose `src` is a
     // symlink into a shared package has its entire source tree skipped —
@@ -550,7 +571,7 @@ describe('source files contain no literal NUL bytes', () => {
     }
   });
 
-  it('CONTROL: an unresolvable symlink is UNOBSERVABLE, not clean', () => {
+  it.skipIf(!canSymlink)('CONTROL: an unresolvable symlink is UNOBSERVABLE, not clean', () => {
     // Same three-valued discipline as the read path: a link the walk cannot
     // resolve is a gap in the evidence, and must not leave through the same
     // door as a directory that was genuinely empty.
@@ -589,25 +610,28 @@ describe('source files contain no literal NUL bytes', () => {
     }
   });
 
-  it('CONTROL: the end-to-end audit merges WALK gaps and SCAN gaps into one verdict', () => {
-    // Drives `auditTree`, the function the verdict actually calls. Each half is
-    // pinned above in isolation; this pins the SEAM. Dropping the walk's
-    // unobservable list from the merge leaves both halves green and the pair
-    // reporting a complete scan of an incomplete enumeration.
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nul-guard-'));
-    try {
-      fs.writeFileSync(path.join(dir, 'clean.ts'), 'const a = `x\\0y`;\n');
-      fs.writeFileSync(path.join(dir, 'dirty.ts'), Buffer.from('const a = `x\0y`;\n', 'utf8'));
-      fs.symlinkSync(path.join(dir, 'nowhere'), path.join(dir, 'dangling'), 'dir');
+  it.skipIf(!canSymlink)(
+    'CONTROL: the end-to-end audit merges WALK gaps and SCAN gaps into one verdict',
+    () => {
+      // Drives `auditTree`, the function the verdict actually calls. Each half is
+      // pinned above in isolation; this pins the SEAM. Dropping the walk's
+      // unobservable list from the merge leaves both halves green and the pair
+      // reporting a complete scan of an incomplete enumeration.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nul-guard-'));
+      try {
+        fs.writeFileSync(path.join(dir, 'clean.ts'), 'const a = `x\\0y`;\n');
+        fs.writeFileSync(path.join(dir, 'dirty.ts'), Buffer.from('const a = `x\0y`;\n', 'utf8'));
+        fs.symlinkSync(path.join(dir, 'nowhere'), path.join(dir, 'dangling'), 'dir');
 
-      const res = auditTree(dir);
-      expect(res.files.sort()).toEqual(['clean.ts', 'dirty.ts']);
-      expect(res.offenders).toEqual(['dirty.ts']);
-      expect(res.unreadable.map((u) => u.rel)).toEqual(['dangling']);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+        const res = auditTree(dir);
+        expect(res.files.sort()).toEqual(['clean.ts', 'dirty.ts']);
+        expect(res.offenders).toEqual(['dirty.ts']);
+        expect(res.unreadable.map((u) => u.rel)).toEqual(['dangling']);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
   it('CONTROL: the extension filter is case-insensitive', () => {
     // No file in the tree currently has an uppercase extension, so the

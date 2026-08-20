@@ -293,7 +293,12 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
           continue;
         }
         if (!/\.tsx?$/.test(entry.name)) continue;
-        out.push({ rel: path.relative(SRC, full), text: fs.readFileSync(full, 'utf8') });
+        // POSIX separators: the ledger below is written with '/', and `path.relative` yields '\' on
+        // Windows, so an unnormalised walk matches nothing and the ledger reads as "no consumers".
+        out.push({
+          rel: path.relative(SRC, full).split(path.sep).join('/'),
+          text: fs.readFileSync(full, 'utf8'),
+        });
       }
     };
     walk(SRC);
