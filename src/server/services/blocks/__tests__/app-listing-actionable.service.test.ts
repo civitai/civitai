@@ -44,7 +44,7 @@ describe('checkOffsiteListingActionable — the verdict', () => {
   });
 
   for (const { name, url } of NO_DESTINATION) {
-    it(`BLOCKS an off-site external-link listing whose externalUrl is ${name}`, () => {
+    it(`BLOCKS an off-site listing with NO OAuth client whose externalUrl is ${name}`, () => {
       const result = checkOffsiteListingActionable(offsite({ externalUrl: url }));
       expect(result.ok).toBe(false);
       expect(result.action?.href).toBeUndefined();
@@ -52,8 +52,8 @@ describe('checkOffsiteListingActionable — the verdict', () => {
   }
 
   for (const { name, url } of NO_DESTINATION) {
-    it(`BLOCKS an off-site CONNECT listing whose externalUrl is ${name}`, () => {
-      // client_id present → `resolveOffsiteSubKind` routes this to the connect arm.
+    it(`BLOCKS an OAuth-connected off-site listing whose externalUrl is ${name}`, () => {
+      // client_id present → the no-destination fallback takes the Connect-stub arm.
       const result = checkOffsiteListingActionable(
         offsite({ externalUrl: url, connectClientId: 'client-123' })
       );
@@ -232,12 +232,14 @@ describe('buildActionabilityError', () => {
  * shares the code under test cannot discriminate.
  */
 function expectedKindData(listing: ListingActionabilitySource) {
-  const subKind = listing.connectClientId ? ('connect' as const) : ('external-link' as const);
   return {
     kind: 'offsite' as const,
-    subKind,
     externalUrl:
       listing.externalUrl && /^https:\/\//i.test(listing.externalUrl) ? listing.externalUrl : null,
-    connectClientId: subKind === 'connect' ? listing.connectClientId ?? null : null,
+    // 🔴 TRUTHINESS, not nullish — an empty-string client id projects as null.
+    // This oracle mirrors the projection deliberately by hand; the removed
+    // `subKind` used the same truthiness test, which is why dropping it changes
+    // nothing here.
+    connectClientId: listing.connectClientId || null,
   };
 }

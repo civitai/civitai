@@ -44,6 +44,7 @@ import {
   type DetailActionMode,
   getDetailPrimaryAction,
   getOwnerEditHref,
+  shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
@@ -950,15 +951,27 @@ export function AppListingDetailBody({
               </Stack>
             )}
 
-            {/* Off-site external destination disclosure (mirrors the live detail). */}
-            {detail.kindData.kind === 'offsite' &&
-              detail.kindData.subKind === 'external-link' &&
-              detail.kindData.externalUrl && (
-                <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />}>
-                  This app runs entirely off-platform — no Civitai install, account access, or
-                  permissions.
-                </Alert>
-              )}
+            {/* Off-site external destination disclosure (mirrors the live detail).
+                🔴 The condition lives in `shouldShowOffsiteDisclosure`, NOT here —
+                it makes a security claim ("no account access, or permissions")
+                that is FALSE of a listing with an OAuth app connected, and inline
+                it was covered by nothing. Read that function's docstring before
+                changing what the sentence says or when it appears. It replaces a
+                `subKind === 'external-link'` test: identical rendering for every
+                input produced by `app-listing.service` (truthiness on both
+                sides), and for the mod-review preview builder identical except
+                at `connectClientId === ''`, where the disclosure now SHOWS —
+                see `shouldShowOffsiteDisclosure`'s docstring for why that is the
+                safer answer. 🔴 This component is also rendered with a detail
+                built by `buildListingDetailPreview` (`OffsiteReviewQueue`'s
+                fallback), which is why that builder's `connectClientId`
+                passthrough carries its own test. */}
+            {shouldShowOffsiteDisclosure(detail.kindData) && (
+              <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />}>
+                This app runs entirely off-platform — no Civitai install, account access, or
+                permissions.
+              </Alert>
+            )}
           </Stack>
         </ContainerGrid2.Col>
       </ContainerGrid2>

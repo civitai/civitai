@@ -6,6 +6,7 @@ import {
   getDetailPrimaryAction,
   getOwnerEditHref,
   isEditableListingStatus,
+  shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -14,7 +15,7 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  * project — the fast, deterministic suite; CI runs it `continue-on-error`, and
  * the browser component suites are not run by CI at all, so this is where the
  * correctness coverage belongs even though nothing here BLOCKS a merge).
- * Pin the kind × hasPage × subKind primary-action matrix incl.
+ * Pin the kind × hasPage × destination primary-action matrix incl.
  * the appBlocksPages gate, https guard, connect stub, and slug encoding, so a
  * regression in the detail action routing FAILS here.
  */
@@ -44,8 +45,14 @@ function onsiteDetail(
   };
 }
 
+/**
+ * 🔴 The `subKind` positional argument is GONE. It used to be passed
+ * INDEPENDENTLY of `connectClientId`, so a fixture could declare
+ * `('external-link', { connectClientId: 'c1' })` — a shape the real projection
+ * can never produce, since the sub-kind was derived from that very field. One
+ * input now, so a fixture cannot describe an impossible listing.
+ */
 function offsiteDetail(
-  subKind: 'connect' | 'external-link',
   over: { externalUrl?: string | null; connectClientId?: string | null; slug?: string } = {}
 ): ListingDetail {
   const { externalUrl = null, connectClientId = null, slug = 'ext-app' } = over;
@@ -65,7 +72,7 @@ function offsiteDetail(
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     screenshots: [],
-    kindData: { kind: 'offsite', subKind, externalUrl, connectClientId },
+    kindData: { kind: 'offsite', externalUrl, connectClientId },
   };
 }
 
@@ -277,16 +284,24 @@ describe('getDetailPrimaryAction — on-site', () => {
 });
 
 describe('getDetailPrimaryAction — off-site', () => {
-  it('external-link https → Visit ↗ (external)', () => {
+  /**
+   * 🔴 THE GRANDFATHERED LISTING drives this whole block. Production carries
+   * exactly one approved off-site row with `connect_client_id IS NULL`
+   * (measured 2026-08-19); `ExternalSubmitForm` requires a client on create, so
+   * nothing new can be minted into that shape. Every `connectClientId: null`
+   * fixture below IS that listing.
+   */
+  it('🔴 GRANDFATHERED (no OAuth client) + https → Visit ↗ (external)', () => {
     expect(
-      getDetailPrimaryAction(offsiteDetail('external-link', { externalUrl: 'https://foo.app' }), {
-        canOpenPage: true,
-      })
+      getDetailPrimaryAction(
+        offsiteDetail({ externalUrl: 'https://foo.app', connectClientId: null }),
+        { canOpenPage: true }
+      )
     ).toEqual({ label: 'Visit', mode: 'visit', href: 'https://foo.app', external: true });
   });
-  it('external-link non-https → info Unavailable (guard drops it, no target)', () => {
+  it('🔴 GRANDFATHERED + non-https → info Unavailable (guard drops it, no target)', () => {
     const action = getDetailPrimaryAction(
-      offsiteDetail('external-link', { externalUrl: 'http://foo.app' }),
+      offsiteDetail({ externalUrl: 'http://foo.app', connectClientId: null }),
       { canOpenPage: true }
     );
     expect(action).toEqual({
@@ -296,10 +311,13 @@ describe('getDetailPrimaryAction — off-site', () => {
       note: 'This app has no valid external link.',
     });
   });
-  it('external-link null url → info Unavailable', () => {
-    expect(getDetailPrimaryAction(offsiteDetail('external-link', { externalUrl: null }), { canOpenPage: true }).mode).toBe(
-      'info'
+  it('🔴 GRANDFATHERED + null url → info Unavailable (never a dead Connect stub)', () => {
+    const action = getDetailPrimaryAction(
+      offsiteDetail({ externalUrl: null, connectClientId: null }),
+      { canOpenPage: true }
     );
+    expect(action.mode).toBe('info');
+    expect(action.label).toBe('Unavailable');
   });
   /**
    * COVERAGE ADDED, NOTHING REVERSED — and the distinction matters, because an
@@ -312,15 +330,15 @@ describe('getDetailPrimaryAction — off-site', () => {
    * That behaviour is UNCHANGED — every one of its assertions still holds, and
    * they are re-pinned below over four absence shapes instead of one.
    *
-   * What this case adds is the shape nothing covered: connect WITH a valid
-   * https address. `resolveOffsiteSubKind` flips the sub-kind on
+   * What this case adds is the shape nothing covered: an OAuth-connected
+   * listing WITH a valid https address. The removed sub-kind flipped on
    * `connectClientId != null` alone, so linking an OAuth client was the sole
    * cause of the dead CTA on three approved, live listings. The destination
-   * decides now — the sub-kind does not.
+   * decides now.
    */
-  it('🔴 connect + https externalUrl → Visit ↗ (a client_id no longer kills the CTA)', () => {
+  it('🔴 OAuth client + https externalUrl → Visit ↗ (a client_id no longer kills the CTA)', () => {
     const action = getDetailPrimaryAction(
-      offsiteDetail('connect', {
+      offsiteDetail({
         connectClientId: 'client-123',
         externalUrl: 'https://connect.app',
       }),
@@ -336,36 +354,47 @@ describe('getDetailPrimaryAction — off-site', () => {
     });
   });
 
-  it('🔴 connect and external-link with the SAME url produce the SAME action', () => {
+  it('🔴 an OAuth-connected and a grandfathered listing with the SAME url produce the SAME action', () => {
     // Structural restatement of the rule, independent of the literals above: if
-    // a future change re-branches on sub-kind before the href guard, these two
-    // diverge and this fails — even if it picks copy that satisfies the pins.
+    // a future change re-branches on the OAuth capability before the href guard,
+    // these two diverge and this fails — even if it picks copy that satisfies
+    // the pins. This is the assertion a revert of the collapse must survive.
     const url = 'https://same-target.app';
     expect(
-      getDetailPrimaryAction(
-        offsiteDetail('connect', { connectClientId: 'c1', externalUrl: url }),
-        {
-          canOpenPage: true,
-        }
-      )
+      getDetailPrimaryAction(offsiteDetail({ connectClientId: 'c1', externalUrl: url }), {
+        canOpenPage: true,
+      })
     ).toEqual(
-      getDetailPrimaryAction(offsiteDetail('external-link', { externalUrl: url }), {
+      getDetailPrimaryAction(offsiteDetail({ connectClientId: null, externalUrl: url }), {
         canOpenPage: true,
       })
     );
   });
 
-  it('🔴 connect with NO usable destination → the stub still fails safe', () => {
+  /**
+   * 🔴 SURFACED, NOT DECIDED — the one place off-site listings still diverge.
+   *
+   * With no usable destination there is nothing to navigate to, and the two
+   * fallbacks say different things: an app with no OAuth client is simply
+   * "Unavailable", while an OAuth-connected one keeps the "Connect" stub for a
+   * route that does not exist yet. That is a CAPABILITY difference (does this
+   * app connect to your Civitai account?), not a kind difference, and the
+   * predicate is now read straight off `connectClientId` — byte-identical to
+   * what the deleted sub-kind computed from the same field.
+   *
+   * Whether the stub should survive at all is a product question this change
+   * does not answer; it is pinned here so a future answer has to be deliberate.
+   */
+  it('🔴 OAuth-connected with NO usable destination → the stub still fails safe', () => {
     // The stub must stay REACHABLE and must stay hrefless. Enumerated over every
-    // way a destination can be absent, with the client_id present in each — so
-    // this cannot pass by accident of the sub-kind being mis-resolved.
+    // way a destination can be absent, with the client_id present in each.
     // (`undefined` is deliberately absent: the DTO types `externalUrl` as
     // `string | null`, and the fixture's destructuring default would silently
     // rewrite it to `null` anyway — a row whose label lied about its input.)
     for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
       const key = `externalUrl=${String(externalUrl)}`;
       const action = getDetailPrimaryAction(
-        offsiteDetail('connect', { connectClientId: 'client-123', externalUrl }),
+        offsiteDetail({ connectClientId: 'client-123', externalUrl }),
         { canOpenPage: true }
       );
       expect(action.mode, key).toBe('connect');
@@ -376,6 +405,45 @@ describe('getDetailPrimaryAction — off-site', () => {
     }
   });
 
+  it('🔴 GRANDFATHERED with NO usable destination → Unavailable, NOT the Connect stub', () => {
+    // The negative arm of the case above, over the same four absence shapes.
+    // Without it the capability test could be inverted (or deleted, defaulting
+    // everything to the stub) and the suite would stay green.
+    for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
+      const key = `externalUrl=${String(externalUrl)}`;
+      const action = getDetailPrimaryAction(offsiteDetail({ connectClientId: null, externalUrl }), {
+        canOpenPage: true,
+      });
+      expect(action.mode, key).toBe('info');
+      expect(action.label, key).toBe('Unavailable');
+      expect(action.note, key).toBe('This app has no valid external link.');
+      expect(action.href, key).toBeUndefined();
+    }
+  });
+
+  /**
+   * An empty-string client id is FALSY, which is what the deleted
+   * `resolveOffsiteSubKind` tested — so it took the no-client arm.
+   * `app-listing.service.detailKindData`'s `|| null` guarantees this never
+   * reaches the wire by THAT path, but `app-listing-actionable.service` calls
+   * this view-model directly with a listing row, so pin the truthiness here
+   * rather than relying on a caller. (`MySubmissionsList` also calls it
+   * directly, but hardcodes `kind: 'onsite'` and never reaches this branch —
+   * it is NOT an off-site caller; an earlier version of this note implied it
+   * was.) The mod-review preview builder reaches it too, via
+   * `buildListingDetailPreview` → `AppListingDetailBody`, and it uses
+   * `?? null` — see `shouldShowOffsiteDisclosure`'s docstring.
+   */
+  it('an empty-string connectClientId takes the no-client arm (truthiness, not nullish)', () => {
+    const action = getDetailPrimaryAction(
+      offsiteDetail({ connectClientId: '', externalUrl: null }),
+      {
+        canOpenPage: true,
+      }
+    );
+    expect(action.label).toBe('Unavailable');
+  });
+
   it('🔴 no off-site listing with an https target is ever left un-navigable', () => {
     // The off-site analogue of the on-site "no state strands the viewer" matrix.
     // Anti-vacuity is explicit: count the rows that MUST be navigable and assert
@@ -383,30 +451,156 @@ describe('getDetailPrimaryAction — off-site', () => {
     // this green by having nothing to check.
     const stranded: string[] = [];
     let navigable = 0;
-    for (const subKind of ['connect', 'external-link'] as const) {
-      for (const externalUrl of ['https://ok.app', 'http://insecure.app', null]) {
-        for (const connectClientId of ['client-123', null]) {
-          const key = `subKind=${subKind} url=${String(externalUrl)} client=${
-            connectClientId ?? 'null'
-          }`;
-          const action = getDetailPrimaryAction(
-            offsiteDetail(subKind, { externalUrl, connectClientId }),
-            { canOpenPage: true }
-          );
-          // `visit` is the only external mode and may only carry an https target.
-          expect(action.external, key).toBe(action.mode === 'visit');
-          if (action.mode === 'visit') {
-            expect(action.href, key).toMatch(/^https:\/\//);
-            navigable++;
-          } else if (externalUrl?.startsWith('https://')) {
-            stranded.push(key);
-          }
+    for (const externalUrl of ['https://ok.app', 'http://insecure.app', null]) {
+      for (const connectClientId of ['client-123', null]) {
+        const key = `url=${String(externalUrl)} client=${connectClientId ?? 'null'}`;
+        const action = getDetailPrimaryAction(offsiteDetail({ externalUrl, connectClientId }), {
+          canOpenPage: true,
+        });
+        // `visit` is the only external mode and may only carry an https target.
+        expect(action.external, key).toBe(action.mode === 'visit');
+        if (action.mode === 'visit') {
+          expect(action.href, key).toMatch(/^https:\/\//);
+          navigable++;
+        } else if (externalUrl?.startsWith('https://')) {
+          stranded.push(key);
         }
       }
     }
     expect(stranded).toEqual([]);
-    // 2 sub-kinds × 2 client values, all with the https url → 4 navigable rows.
-    expect(navigable).toBe(4);
+    // 2 client values with the https url → 2 navigable rows. (Was 4 while the
+    // matrix also crossed a sub-kind that no longer exists; the DROP is the
+    // point — the removed dimension was never independent of `connectClientId`.)
+    expect(navigable).toBe(2);
+  });
+});
+
+/**
+ * 🔴 THE OFF-SITE ACCOUNT-ACCESS DISCLOSURE.
+ *
+ * "This app runs entirely off-platform — no Civitai install, account access, or
+ * permissions." That is a SECURITY CLAIM, and it is FALSE of a listing with an
+ * OAuth app connected. Until this PR the condition lived inline in
+ * `AppListingDetailBody`'s JSX, where the blocking `unit` project could not see
+ * it and the report-only browser suite asserted it NOWHERE — so removing the
+ * condition, and printing "no account access" over every off-site listing
+ * including the OAuth-connected ones, was a change no test could catch.
+ *
+ * It was gated on `subKind === 'external-link'`. Since the sub-kind was
+ * `connectClientId ? … : …` and nothing else, collapsing the taxonomy would have
+ * silently deleted this gate if it were treated as "just another sub-kind
+ * branch" — hence the extraction, and hence a full 2×3 truth table rather than
+ * one happy case.
+ */
+describe('shouldShowOffsiteDisclosure — the "no account access" claim', () => {
+  /** The three off-site destination shapes × the two OAuth capability states. */
+  const URLS = ['https://ext.app', 'https://other.example/path', null] as const;
+
+  it('🔴 GRANDFATHERED (no OAuth client) + a destination → SHOWN', () => {
+    // Production's one approved `connect_client_id IS NULL` off-site listing.
+    // Two distinct URLs so a mutant hardcoding either literal still moves one.
+    for (const externalUrl of ['https://ext.app', 'https://other.example/path']) {
+      expect(
+        shouldShowOffsiteDisclosure({ kind: 'offsite', externalUrl, connectClientId: null }),
+        externalUrl
+      ).toBe(true);
+    }
+  });
+
+  it('🔴 an OAuth-connected listing → NOT shown (the sentence would be a lie)', () => {
+    for (const externalUrl of URLS) {
+      expect(
+        shouldShowOffsiteDisclosure({
+          kind: 'offsite',
+          externalUrl,
+          connectClientId: 'oauth_abc',
+        }),
+        String(externalUrl)
+      ).toBe(false);
+    }
+  });
+
+  it('an off-site listing with no destination → NOT shown (nothing runs off-platform)', () => {
+    expect(
+      shouldShowOffsiteDisclosure({ kind: 'offsite', externalUrl: null, connectClientId: null })
+    ).toBe(false);
+  });
+
+  it('🔴 an ON-SITE listing → NOT shown (it runs ON platform)', () => {
+    expect(
+      shouldShowOffsiteDisclosure({
+        kind: 'onsite',
+        appBlockId: 'blk-1',
+        hasPage: true,
+        liveUrl: 'https://blk-1.civit.ai',
+      })
+    ).toBe(false);
+  });
+
+  it('an empty-string connectClientId does NOT suppress it (truthiness, not nullish)', () => {
+    // Matches the projection's `|| null` and `getDetailPrimaryAction`'s test, so
+    // all three read the capability the same way.
+    expect(
+      shouldShowOffsiteDisclosure({
+        kind: 'offsite',
+        externalUrl: 'https://ext.app',
+        connectClientId: '',
+      })
+    ).toBe(true);
+  });
+
+  /**
+   * 🔴 THE `kind === 'offsite'` CONJUNCT IS A RUNTIME GUARD, NOT TYPE NOISE —
+   * and this fixture exists because the ordinary on-site case CANNOT SEE IT.
+   *
+   * Measured: deleting that conjunct leaves the whole suite GREEN. The on-site
+   * case above still returns `false`, but for the WRONG reason — an on-site
+   * `kindData` has no `externalUrl` at all, so the third conjunct carries the
+   * verdict and the deleted one is never the deciding term. The mutant RAN; the
+   * assertion just could not observe it. (Reachable-but-unasserted and
+   * never-executed are different findings; this was the former.)
+   *
+   * The shape that discriminates is a CAST producer handing over an object with
+   * BOTH `kind: 'onsite'` and an `externalUrl` — impossible per the DTO union,
+   * routine at runtime. `appListingDetailRows` already carries a 🔴 note about
+   * exactly this: the moderator combined-review surface builds
+   * `ListingDetail`-shaped objects through a cast, and a required field being
+   * absent there once blanked the whole review modal. An on-site listing must
+   * never claim it "runs entirely off-platform" no matter what a producer
+   * attaches to it.
+   */
+  it('🔴 an ON-SITE kindData carrying an externalUrl (cast producer) → still NOT shown', () => {
+    const cast = {
+      kind: 'onsite',
+      appBlockId: 'blk-1',
+      hasPage: true,
+      liveUrl: 'https://blk-1.civit.ai',
+      externalUrl: 'https://smuggled.example/app',
+      connectClientId: null,
+    } as unknown as ListingDetail['kindData'];
+    // POSITIVE CONTROL: the same object with `kind: 'offsite'` IS shown, so the
+    // `false` below is about the kind term and not about an inert function.
+    expect(shouldShowOffsiteDisclosure({ ...cast, kind: 'offsite' })).toBe(true);
+    expect(shouldShowOffsiteDisclosure(cast)).toBe(false);
+  });
+
+  /**
+   * The RENDERER must not re-implement the predicate. A structural check on the
+   * source, because the JSX itself is invisible to this project — the same
+   * technique the iframe gate below uses, with its positive control.
+   */
+  it('🔴 AppListingDetailBody calls this predicate and does not re-derive it', () => {
+    // 🔴 `__dirname`, never `process.cwd()`. The runner's cwd is whatever
+    // directory `vitest` was invoked from, so a cwd-relative read passes in CI
+    // (where it is the repo root) and ENOENTs locally — a test whose verdict is
+    // about the caller's shell. Same idiom as the iframe gate below.
+    const body = fs.readFileSync(
+      path.resolve(__dirname, '../AppListingDetailBody.tsx'),
+      'utf8'
+    );
+    // POSITIVE CONTROL first: the read really returned this component's source.
+    expect(body).toMatch(/This app runs entirely off-platform/);
+    expect(body).toMatch(/shouldShowOffsiteDisclosure\(detail\.kindData\)/);
   });
 });
 
@@ -603,10 +797,12 @@ describe('owner Edit deep-link + gating (on the detail view-model)', () => {
     expect(getOwnerEditHref(onsiteDetail({ hasPage: false, appBlockId: null }).kindData, 'l1')).toBeNull();
   });
   it('off-site detail kindData → the submit editor keyed on the listing id', () => {
-    expect(getOwnerEditHref(offsiteDetail('external-link', { externalUrl: 'https://x' }).kindData, 'l2')).toBe(
+    expect(getOwnerEditHref(offsiteDetail({ externalUrl: 'https://x' }).kindData, 'l2')).toBe(
       '/apps/submit?edit=l2'
     );
-    expect(getOwnerEditHref(offsiteDetail('connect').kindData, 'l2')).toBe('/apps/submit?edit=l2');
+    expect(getOwnerEditHref(offsiteDetail({ connectClientId: 'c1' }).kindData, 'l2')).toBe(
+      '/apps/submit?edit=l2'
+    );
   });
 
   it('owner + editable → show; non-owner → hide; mod-removed → hide', () => {
