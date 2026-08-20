@@ -9,9 +9,20 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
  * resolves it is the 48-hour expiry — which reads to both sides as the feature
  * being broken rather than as nobody having looked.
  *
- * The link goes to the **image**, not to the queue. Answering means seeing the
- * sticker on the work it was placed on; a list can tell you something is waiting
- * but not whether you want it there.
+ * The two sticker notifications link to the **queue**, not to the image.
+ *
+ * They used to link to the image, on the reasoning that answering means seeing
+ * the sticker on the work it was placed on. That reasoning is still true and it
+ * still lost: measured on prod 2026-08-20, 96 placements sat `pending` against
+ * 251 approved while the feature took 306,819 Buzz across 461 purchases. People
+ * were not refusing to answer — they were answering one placement, landing on an
+ * image, and never learning that a queue existed. The queue page carries the
+ * artwork per row and links each one to its image, so the in-situ view is one
+ * click away rather than absent, and the owner sees the other fifteen.
+ *
+ * `remix-gallery-pending` deliberately still links to its image: it has the same
+ * shape and was not part of what this change was scoped to. If the same fix is
+ * wanted there it should be its own decision, not a side effect of this one.
  */
 export const placementNotifications = createNotificationProcessor({
   'sticker-placement-pending': {
@@ -19,7 +30,10 @@ export const placementNotifications = createNotificationProcessor({
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
       message: `${details.placerUsername} wants to place a sticker on your image for ${details.amount} Buzz`,
-      url: `/images/${details.imageId}`,
+      // The queue, not `/images/${details.imageId}` — see the note at the top of
+      // this file. Static, because the whole point is the rows this owner has
+      // not seen; a per-placement URL would land them back on one image.
+      url: `/user/sticker-placements?tab=received`,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
@@ -96,7 +110,10 @@ export const placementNotifications = createNotificationProcessor({
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
       message: `${details.placerUsername} wants to place a free sticker on your image`,
-      url: `/images/${details.imageId}`,
+      // Same queue as the paid one: a free placement holds a slot and expires
+      // the same way, and splitting the two destinations would teach an owner
+      // two different routes for one job.
+      url: `/user/sticker-placements?tab=received`,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (

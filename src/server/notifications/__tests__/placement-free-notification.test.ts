@@ -45,9 +45,8 @@ describe('the free sticker notification is its own type', () => {
     expect(message.message).toBe('somebody wants to place a free sticker on your image');
     // "0 Buzz" reads as a bug rather than as the offer.
     expect(message.message).not.toMatch(/buzz|\b0\b/i);
-    // The image, not the queue: answering means seeing the sticker on the work
-    // it was placed on.
-    expect(message.url).toBe('/images/74');
+    // Destination is asserted once, for both types, in the URL block below —
+    // this test is about the amount.
   });
 });
 
@@ -105,14 +104,38 @@ describe('the free notification reaches the creator, about the right image', () 
     }
   );
 
-  it('sends the creator to the image, which is where the sticker is', () => {
-    const message = defs['sticker-placement-free-pending'].prepareMessage({
-      type: 'sticker-placement-free-pending',
-      details: { imageId: 74, placerId: 52, placerUsername: 'somebody' },
+  /**
+   * Both sticker notifications send the creator to their queue, not to the one
+   * image. Measured 2026-08-20: 96 placements pending against 251 approved,
+   * because an owner who answered one placement on its image never learned the
+   * rest existed. The queue row still links to the image.
+   *
+   * `remix-gallery-pending` is deliberately excluded — same shape, separate
+   * decision, and asserting it here would quietly widen this change.
+   */
+  it.each(['sticker-placement-pending', 'sticker-placement-free-pending'])(
+    '%s sends the creator to the queue, not to the single image',
+    (type) => {
+      const message = defs[type].prepareMessage({
+        type,
+        details: { imageId: 74, placerId: 52, placerUsername: 'somebody', amount: 100 },
+      } as Parameters<Def['prepareMessage']>[0])!;
+
+      expect(message.url).toBe('/user/sticker-placements?tab=received');
+      // Named explicitly: the failure this guards is a revert to the old
+      // per-image link, which would still be a valid-looking URL.
+      expect(message.url).not.toContain('/images/');
+    }
+  );
+
+  it('the placer still hears about their own sticker on the image it went on', () => {
+    const message = defs['sticker-placement-resolved'].prepareMessage({
+      type: 'sticker-placement-resolved',
+      details: { imageId: 74, ownerUsername: 'somebody' },
     } as Parameters<Def['prepareMessage']>[0])!;
 
-    // Off `imageId`, so a details payload carrying the placement id cannot
-    // produce a URL that looks right and resolves to nothing.
+    // The queue is the OWNER's surface. Sending the placer there would show them
+    // a list of other people's placements waiting on their own images.
     expect(message.url).toBe('/images/74');
   });
 });

@@ -249,6 +249,22 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
               <item.icon stroke={1.5} color={item.color} />
               <span className="text-sm leading-none">{item.label}</span>
               {item.currency && <CurrencyIcon currency={Currency.BUZZ} size={16} />}
+              {!!item.badge && (
+                // Falsy-guarded rather than `!== undefined`: a zero queue must
+                // draw nothing at all. `circle` is dropped past 99 because the
+                // fixed one- or two-character disc clips the "+" off "99+" —
+                // same trick the placement queue's own tab badge uses.
+                <Badge
+                  color="yellow"
+                  variant="filled"
+                  size="sm"
+                  ml={4}
+                  circle={item.badge <= 99}
+                  px={item.badge > 99 ? 6 : undefined}
+                >
+                  {item.badge > 99 ? '99+' : item.badge}
+                </Badge>
+              )}
               {!!item.newUntil && Date.now() < item.newUntil.getTime() && (
                 <Badge color="green.8" variant="filled" size="sm" ml={4}>
                   NEW

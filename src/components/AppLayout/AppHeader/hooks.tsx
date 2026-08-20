@@ -23,6 +23,7 @@ import {
   IconProgressBolt,
   IconSword,
   IconShoppingBag,
+  IconSticker,
   IconThumbUp,
   IconTrophy,
   IconUpload,
@@ -37,6 +38,7 @@ import { useRouter } from 'next/router';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
@@ -57,6 +59,16 @@ export type UserMenuItem = {
   currency?: boolean;
   redirectReason?: LoginRedirectReason;
   newUntil?: Date;
+  /**
+   * A count rendered as a filled badge after the label. Zero and undefined both
+   * render nothing — a badge that says "0" reads as a broken badge, not as an
+   * empty queue.
+   *
+   * Anything supplying this must come from a query the header already makes.
+   * The menu mounts on every page for every signed-in user, so a number here
+   * that costs a request is a request on every page.
+   */
+  badge?: number;
 };
 
 type UserMenuItemGroup = {
@@ -86,6 +98,10 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
   // helper (unit-tested in appsNavVisibility.test.ts) is the source of truth.
   const appsNav = appsNavVisibility(features);
 
+  // Already in flight for the notification bell — one request per session,
+  // `staleTime: Infinity`. Reading it here adds no round trip.
+  const { pendingPlacements } = useQueryNotificationsCount();
+
   return [
     {
       visible: !!currentUser,
@@ -105,6 +121,25 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconShoppingBag,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Shop',
+        },
+        {
+          // The owner's own review queue. Its only other routes are four levels
+          // deep in account settings and the approve/decline drawn on a single
+          // image, so a creator with placements waiting had nowhere to go and
+          // find them — which is most of why 96 sat pending against 251
+          // approved while the feature was selling.
+          href: '/user/sticker-placements?tab=received',
+          // `stickerPlacement` gates PLACING a sticker, not receiving one, and
+          // the page itself asks only for a signed-in unbanned user. Gating the
+          // entry on the flag alone would hide it from exactly the owners
+          // holding a queue — someone with the flag placed on their image, they
+          // never had it. So: the flag, or a queue that is actually waiting.
+          visible: !!currentUser && (features.stickerPlacement || pendingPlacements > 0),
+          icon: IconSticker,
+          color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Sticker Placements',
+          badge: pendingPlacements,
+          newUntil: new Date('2026-09-20'),
         },
         {
           href: `/user/${currentUser?.username as string}/models?section=training`,

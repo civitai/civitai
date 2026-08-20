@@ -57,6 +57,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { getPendingStickerPlacementCount } from '~/server/services/sticker-placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
 import {
@@ -272,7 +273,24 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       },
       { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
     );
-    return reduced;
+
+    // Rides along here rather than getting its own query: this is the one
+    // request that already runs once per session for every signed-in user
+    // (`staleTime: Infinity`, see useQueryNotificationsCount), and the user menu
+    // badge needs a number on every page. A second per-page count would be a
+    // production cost for a creator-only chore.
+    //
+    // Deliberately NOT folded into `all`: that number is the notification bell's
+    // badge, and a pending placement is not an unread notification. Adding it
+    // there would inflate the bell by rows the drawer cannot show and cannot
+    // clear.
+    //
+    // Degrades to 0 rather than failing the request, matching
+    // getUserNotificationCount: an under-reported badge for one session beats
+    // taking the bell down with it.
+    const pendingPlacements = await getPendingStickerPlacementCount({ ownerId: id }).catch(() => 0);
+
+    return { ...reduced, pendingPlacements };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

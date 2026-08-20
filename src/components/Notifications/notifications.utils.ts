@@ -1,6 +1,6 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { InfiniteData } from '@tanstack/react-query';
-import { useQueryClient , keepPreviousData} from '@tanstack/react-query';
+import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useMemo } from 'react';
@@ -30,7 +30,11 @@ export const useQueryNotifications = (
 ) => {
   const { data, ...rest } = trpc.notification.getAllByUser.useInfiniteQuery(
     { limit: 100, ...filters },
-    { getNextPageParam: (lastPage) => lastPage.nextCursor, placeholderData: keepPreviousData, ...withPlaceholderData(options) }
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      placeholderData: keepPreviousData,
+      ...withPlaceholderData(options),
+    }
   );
   const notifications = useMemo(
     () => data?.pages.flatMap((page) => page.items) ?? [],
@@ -94,6 +98,10 @@ export const useQueryNotificationsCount = () => {
         system: 0,
         buzz: 0,
         announcements: 0,
+        // Placements waiting on this user, for the user menu badge. Carried on
+        // this query rather than its own, and kept out of `all` — `all` is the
+        // bell, and a pending placement is not an unread notification.
+        pendingPlacements: 0,
       }
     : { ...data, all: data.all + announcements.length, announcements: announcements.length };
 };
@@ -109,7 +117,13 @@ export const useMarkReadNotification = () => {
 
       await queryUtils.user.checkNotifications.cancel();
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
-        const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
+        // Intersected with an index signature rather than typed as one: these
+        // updaters index by a category name computed at runtime, but the query's
+        // data is now a fixed shape (it carries `pendingPlacements` alongside
+        // the category counts), and a bare Record<string, number> is no longer
+        // assignable back to it.
+        const newCounts = { ...old, all: old?.all ?? 0 } as NonNullable<typeof old> &
+          Record<string, number>;
 
         if (id) {
           // if we have an id, set that category-- and all-- and that's it
@@ -208,7 +222,13 @@ export const useNotificationSignal = () => {
       );
 
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
-        const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
+        // Intersected with an index signature rather than typed as one: these
+        // updaters index by a category name computed at runtime, but the query's
+        // data is now a fixed shape (it carries `pendingPlacements` alongside
+        // the category counts), and a bare Record<string, number> is no longer
+        // assignable back to it.
+        const newCounts = { ...old, all: old?.all ?? 0 } as NonNullable<typeof old> &
+          Record<string, number>;
         newCounts[updated.category.toLowerCase()] =
           (newCounts[updated.category.toLowerCase()] ?? 0) + 1;
         newCounts['all']++;
