@@ -12,7 +12,7 @@
     SheetTitle,
     SheetDescription,
   } from '@civitai/ui/components/ui/sheet/index.js';
-  import { IconTag, IconChevronRight, IconPlus } from '@tabler/icons-svelte';
+  import { IconTag, IconChevronRight, IconPlus, IconArrowRight } from '@tabler/icons-svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { deserialize } from '$app/forms';
@@ -179,13 +179,15 @@
 
 <div class="flex flex-col gap-4">
   <div class="flex flex-wrap items-start justify-between gap-3">
-    <div class="flex flex-col gap-1">
-      <h1 class="text-2xl font-bold text-white">Sales</h1>
-      <p class="text-sm text-dark-2">
+    <!-- The shared .page-header rules, so title and subtext match Models. mb-0: the flex row owns
+         the spacing here. -->
+    <header class="page-header mb-0">
+      <h1>Sales</h1>
+      <p>
         Temporary discounts across your paid versions. Start one by selecting the versions you want
         to discount.
       </p>
-    </div>
+    </header>
     <div class="flex items-center gap-2">
       <span
         class="rounded-full border border-dark-4 px-2.5 py-1 text-xs font-medium tabular-nums text-dark-1"
@@ -362,7 +364,7 @@
           </section>
 
           <section class="flex flex-col gap-2">
-            <span class="text-sm font-medium text-white">Deepen the discount</span>
+            <span class="text-sm font-medium text-white">Discount</span>
             <form
               method="POST"
               action="?/deepenSale"
@@ -370,9 +372,14 @@
               class="flex items-end gap-2"
             >
               <input type="hidden" name="saleId" value={selected.id} />
+              <!-- Current → new, because "deepen" alone says nothing about what it is deepened FROM.
+                   The field starts one step past the current value, which is also the smallest change
+                   the server will accept. -->
+              <span class="pb-2 text-sm tabular-nums text-dark-1">{discountLabel(selected)}</span>
+              <IconArrowRight class="mb-2.5 size-4 shrink-0 text-dark-2" />
               <div class="flex flex-col gap-1.5">
                 <Label for="sale-discount">
-                  {selected.discountType === 'Percent' ? 'Percent off' : 'Buzz off'}
+                  {selected.discountType === 'Percent' ? 'New percent off' : 'New Buzz off'}
                 </Label>
                 <Input
                   id="sale-discount"
@@ -381,14 +388,16 @@
                   class="w-28"
                   min={selected.discountAmount + 1}
                   max={selected.discountType === 'Percent' ? 99 : undefined}
+                  placeholder={String(selected.discountAmount + 1)}
                   required
                 />
               </div>
-              <Button type="submit" variant="outline">Deepen</Button>
+              <Button type="submit" variant="outline">Apply</Button>
             </form>
             <p class="text-xs text-dark-2">
-              A running sale's discount can only go deeper — buyers never pay more than it
-              advertised.
+              A running sale can only get cheaper for buyers, so a new discount has to be bigger
+              than
+              {discountLabel(selected)}. To charge more again, end this sale and schedule another.
             </p>
           </section>
 
