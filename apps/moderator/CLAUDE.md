@@ -75,20 +75,15 @@ provenance is the only reason it differs from the standard at all.
   [`moderator-page-migration`](../../.claude/skills/moderator-page-migration/SKILL.md) (from
   `src/pages/moderator/**` — which also deletes the legacy page and trims what it orphans).
 
-- 🔴 **This app has NO tests, and `typecheck` is the whole verification.** It is the only app in the
-  monorepo without a suite — `auth` has 37 files, `creator-studio` 10, `notifications` 10, and every
-  other app at least one; `apps/moderator/package.json` declares no `test` script at all, so it is
-  absent from `pnpm run test:apps:run` (`--project 'app:*'`) and nothing here runs in CI.
+- ⚠️ **The suite is narrow — it covers reports and nothing else.** Four files, 76 tests, all on the
+  report queue and its actions. So for work anywhere else in this app a green `pnpm test` says only
+  that reports still pass, and `typecheck` remains the whole of what was verified. Say which of the two
+  you mean when reporting: a typecheck cannot see a wrong predicate, a mis-attributed row or a mute
+  that never lifts, all of which have shipped here and been found later by reading the code.
 
-  Say so when you report on work in this app. "Typecheck clean" is a complete statement of what was
-  verified, not a summary of it — and a typecheck cannot see a wrong predicate, a mis-attributed row or
-  a mute that never lifts, all of which have shipped here and been found later by reading the code.
-
-  **What is worth testing when someone wires it up** (`app:auth` is the template — a `test` script plus
-  a project entry): the pure decision functions where a wrong answer is silent and consequential —
-  `chatReportSubject`, `resolveImageId`/`resolveArticleId`, `getTimedMute`'s `source`,
-  `parseIdListStrict`, the flag and browsing-level helpers. Not the Kysely services: those need a
-  database and the value drops sharply.
+  **Worth covering next**, in the same style: the pure decision functions where a wrong answer is silent
+  and consequential — `chatReportSubject`, `resolveImageId`/`resolveArticleId`, `getTimedMute`'s
+  `source`, `parseIdListStrict`, and the flag and browsing-level helpers.
 
 ## Non-negotiables
 
