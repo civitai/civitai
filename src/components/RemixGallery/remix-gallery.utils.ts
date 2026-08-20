@@ -1,7 +1,6 @@
-import { SHARED_ALLOWANCE_NOTE } from '~/components/Sticker/free-offer';
 import type { ImageGetInfinite } from '~/types/router';
 import { ImageSort } from '~/server/common/enums';
-import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import { PLACEMENT_SURFACES, SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
 import { REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
 
 /**

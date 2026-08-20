@@ -47,10 +47,12 @@ const queryState = {
    * then adding "free" a beat later on every card in a feed.
    */
   allowanceRemaining: undefined as number | undefined,
+  /** Whether a viewer is signed in at all — the other half of the query guard. */
+  signedIn: true,
 };
 
-/** Whether the bar asked for the allowance at all — see the cost test. */
-const allowanceEnabled: boolean[] = [];
+/** What the bar passed as `enabled`, verbatim — see the cost test. */
+const allowanceEnabled: (boolean | undefined)[] = [];
 
 // Spread the real module: a hand-listed mock couples this test to the whole
 // transitive import graph of the bar, and nothing warns when that graph grows.
@@ -68,7 +70,11 @@ vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
       isLoading: queryState.placementsLoading,
     };
   },
-  useFreePlacementAllowance: (enabled = true) => {
+  // 🔴 No default value for `enabled`, deliberately. With `(enabled = true)` a
+  // mutation dropping BOTH guards at the callsite still pushes `true`, and the
+  // control below stays green while a protected query fires for signed-out
+  // viewers — a 401 per page. Undefined must arrive as undefined.
+  useFreePlacementAllowance: (enabled?: boolean) => {
     allowanceEnabled.push(enabled);
     return {
       allowance:
@@ -114,7 +120,9 @@ vi.mock('~/components/Sticker/StickerHistoryPanel', () => ({
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => (queryState.signedIn ? { id: 7 } : null),
+}));
 
 const renderBar = async () => {
   renderWithProviders(<StickerPlacementBar imageId={IMAGE_ID} />);
@@ -224,6 +232,11 @@ describe('StickerPlacementBar — free slots', () => {
     countsError: false,
     placementsLoading: false,
     pending: [],
+    // Both halves of the free question are reset here, so a test that forgets to
+    // set one fails loudly instead of borrowing the previous test's value — the
+    // "passes for the wrong reason" class this suite was rewritten to remove.
+    allowanceRemaining: undefined as number | undefined,
+    signedIn: true,
   };
 
   const placeButton = () => page.getByRole('button', { name: /^Place a sticker/ });
@@ -274,7 +287,7 @@ describe('StickerPlacementBar — free slots', () => {
 
     // The exact state from the meeting: the creator has slots going spare and
     // the reader still may not have one.
-    expect(page.getByText(/free$/).elements()).toHaveLength(0);
+    expect(page.getByText(/free/i).elements()).toHaveLength(0);
     // `exact`, because the default is a substring match — without it the bare
     // name also matches a button labelled "… · 1 free" and the assertion
     // survives the mutation it exists to catch.
@@ -291,7 +304,7 @@ describe('StickerPlacementBar — free slots', () => {
     });
     await renderBar();
 
-    expect(page.getByText(/free$/).elements()).toHaveLength(0);
+    expect(page.getByText(/free/i).elements()).toHaveLength(0);
     expect(
       page.getByRole('button', { name: 'Place a sticker', exact: true }).elements()
     ).toHaveLength(1);
@@ -308,7 +321,7 @@ describe('StickerPlacementBar — free slots', () => {
     // Not "1 free", and not a promise it would have to take back: an absent
     // label becomes one, whereas a price becoming "free" is the flash this
     // ordering exists to prevent.
-    expect(page.getByText(/free$/).elements()).toHaveLength(0);
+    expect(page.getByText(/free/i).elements()).toHaveLength(0);
   });
 
   /**
@@ -392,7 +405,7 @@ describe('StickerPlacementBar — free slots', () => {
 
     await placeButton().hover();
     await expect.element(page.getByText('Place a sticker · 100 Buzz')).toBeInTheDocument();
-    expect(page.getByText(/free,/).elements()).toHaveLength(0);
+    expect(page.getByText(/\bfree\b/i).elements()).toHaveLength(0);
   });
 
   /**
@@ -404,7 +417,7 @@ describe('StickerPlacementBar — free slots', () => {
    * flag is actually passed, and passed true where it should be, so the negative
    * is not a test that cannot fail.
    */
-  test('asks for the allowance where the viewer can place', async () => {
+  test('asks for the allowance exactly once where the viewer can place', async () => {
     allowanceEnabled.length = 0;
     Object.assign(queryState, settled, {
       counts: { [IMAGE_ID]: 3 },
@@ -414,6 +427,37 @@ describe('StickerPlacementBar — free slots', () => {
     });
     await renderBar();
 
-    expect(allowanceEnabled).toContain(true);
+    // `toEqual`, not `toContain`: the exact argument, once. `toContain` passes
+    // on an array that also holds a stray `false` or `undefined`, which is the
+    // shape a broken guard produces.
+    expect(allowanceEnabled).toEqual([true]);
+  });
+
+  /**
+   * 🔴 The half that makes the control above falsifiable.
+   *
+   * `getFreeAllowance` is a protectedProcedure, so asking it for a signed-out
+   * viewer is a 401 — once per page it renders on. Every other test in this file
+   * is signed in, so without this one the guard is never observed being false
+   * and dropping it ships green.
+   *
+   * Signed-out is the state driven here because it is the cheapest way to make
+   * `canPlace` false; the property under test is "a bar that cannot place does
+   * not ask", not anything specific to sessions.
+   */
+  test('does not ask a signed-out viewer for an allowance they cannot have', async () => {
+    allowanceEnabled.length = 0;
+    Object.assign(queryState, settled, {
+      counts: { [IMAGE_ID]: 3 },
+      freeSlots: 4,
+      freeSlotsRemaining: 2,
+      allowanceRemaining: 1,
+      signedIn: false,
+    });
+    await renderBar();
+
+    expect(allowanceEnabled).toEqual([false]);
+    // And nothing offers them a free placement they could not claim.
+    expect(page.getByText(/free/i).elements()).toHaveLength(0);
   });
 });

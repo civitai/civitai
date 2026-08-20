@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { FREE_PLACEMENTS_PER_DAY, PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import {
+  FREE_PLACEMENTS_PER_DAY,
+  FREE_SLOT_TAKEN_NOTE,
+  PLACEMENT_SURFACES,
+  SHARED_ALLOWANCE_NOTE,
+} from '~/shared/utils/placement';
 import {
   barFreeLabel,
   barTooltip,
@@ -10,7 +15,6 @@ import {
   freeRefusalOutcome,
   isPlacingFree,
   preCommitFreeReason,
-  SHARED_ALLOWANCE_NOTE,
   trayPriceLine,
   trayReviewLine,
 } from '~/components/Sticker/free-offer';
@@ -501,6 +505,18 @@ describe('the bar tooltip names the price, and the reason when there is one', ()
 
     expect(tip).toBe('Place a sticker · 100 Buzz');
   });
+
+  /**
+   * The space query is in flight too, and the bar passes `space ?? undefined`
+   * while it is. Its own case rather than folded into the one above: dropping
+   * the `!space ||` guard is a TypeError on `space.freeSlots`, not a copy bug,
+   * and nothing else in this file would catch it.
+   */
+  it('survives having no space at all', () => {
+    expect(barTooltip({ price: 100, space: undefined, allowanceRemaining: 1 })).toBe(
+      'Place a sticker · 100 Buzz'
+    );
+  });
 });
 
 /**
@@ -545,6 +561,43 @@ describe('the tray says why free is unavailable before anything is committed', (
     expect(preCommitFreeReason(false, undefined, HAS_SLOT)).toBeNull();
     expect(preCommitFreeReason(false, SPENT, undefined)).toBeNull();
   });
+
+  /**
+   * 🔴 The rung that had to be worded twice.
+   *
+   * `freeRefusalMessage`'s version is "Someone took the last free slot on this
+   * image FIRST" — written for a placer who pressed and lost a race. Before the
+   * press the reader has pressed nothing, so "first" is false, and the bar's own
+   * tooltip says something different for the identical state. Both now take
+   * `FREE_SLOT_TAKEN_NOTE`, and this pins that the pre-commit path does not fall
+   * through to the post-race wording.
+   */
+  it('does not tell someone who has pressed nothing that they lost a race', () => {
+    const held = { freeSlots: 4, freeSlotsRemaining: 0 };
+    const reason = preCommitFreeReason(false, READY, held);
+
+    expect(reason).toBe(FREE_SLOT_TAKEN_NOTE);
+    expect(reason).not.toMatch(/first/i);
+    // And the bar says the same sentence for the same state, which is the point
+    // of it being a constant rather than two hand-written lines.
+    expect(barTooltip({ price: 100, space: held, allowanceRemaining: 1 })).toContain(
+      FREE_SLOT_TAKEN_NOTE
+    );
+  });
+
+  /**
+   * The ordering the substitution must not disturb: a permanent refusal still
+   * outranks the transient one. Both conditions are true here, and the answer
+   * has to be the one that does not lift by itself.
+   */
+  it('still prefers the permanent refusal when both are true', () => {
+    expect(preCommitFreeReason(false, USED_HERE, { freeSlots: 4, freeSlotsRemaining: 0 })).toMatch(
+      /already used a free sticker/
+    );
+    expect(preCommitFreeReason(false, SPENT, { freeSlots: 4, freeSlotsRemaining: 0 })).toMatch(
+      /used today's free placement/
+    );
+  });
 });
 
 /**
@@ -552,6 +605,22 @@ describe('the tray says why free is unavailable before anything is committed', (
  * does not own.
  */
 describe('the shared-allowance note tracks the rules it describes', () => {
+  /**
+   * 🔴 The derivation is PARTIAL, and this is the tripwire for the half it does
+   * not reach.
+   *
+   * The note says "one a day" from the constant, but the sentences around it are
+   * singular and hand-written — "You have used today's free placement", "Your
+   * free one is…", and `barFreeLabel`'s `Math.min`, which caps a label at the
+   * allowance. Move the constant to 2 and the note updates while those keep
+   * asserting one. So the note's own derivation is not enough on its own: this
+   * asserts the value the rest of the copy is written for, and goes red if it
+   * moves, pointing at the sentences that need rewriting.
+   */
+  it('fails if the daily count moves away from what the copy assumes', () => {
+    expect(FREE_PLACEMENTS_PER_DAY).toBe(1);
+  });
+
   it('reads its count from the rule rather than spelling one out', () => {
     // Goes red if `FREE_PLACEMENTS_PER_DAY` moves and the copy does not, which
     // is the whole reason the number is derived. "one" is the English for 1; any

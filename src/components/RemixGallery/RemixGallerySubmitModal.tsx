@@ -15,7 +15,7 @@ import clsx from 'clsx';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
-import { SHARED_ALLOWANCE_NOTE } from '~/components/Sticker/free-offer';
+import { SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { remixSubmitPickerFilters } from '~/components/RemixGallery/remix-gallery.utils';

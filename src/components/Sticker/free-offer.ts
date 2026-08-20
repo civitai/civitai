@@ -1,4 +1,4 @@
-import { FREE_PLACEMENTS_PER_DAY } from '~/shared/utils/placement';
+import { FREE_SLOT_TAKEN_NOTE, SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
 
 /**
  * Whether the free offer is on the table, and what it says.
@@ -7,7 +7,9 @@ import { FREE_PLACEMENTS_PER_DAY } from '~/shared/utils/placement';
  * has none: these are the branches most worth testing and the least worth
  * dragging Mantine, tRPC and the edge image loader into a unit run to reach.
  * `~/shared/utils/placement` pulls in none of that. It is the rules themselves,
- * which is what the copy here has to stay true to.
+ * and the clauses that describe them live beside them there, so the remix
+ * gallery does not have to import a sticker module for a fact neither surface
+ * owns.
  *
  * The predicate lives here rather than at each of the three places that need it
  * — the button's tray, the draft layer, and the draft itself — because three
@@ -105,6 +107,18 @@ export const FREE_REVIEW_CAVEAT =
  * conditions of an adjacent pair, so a swap fails rather than passing on
  * fixtures that only ever trip one rung.
  */
+/**
+ * The spent-allowance sentence, which three surfaces say.
+ *
+ * The bar said "Yours is back", the refusal ladder said "It comes back", and
+ * both name the shared budget — two wordings of the one fact this change exists
+ * to stop drifting. One function, so a reword lands everywhere or nowhere.
+ */
+export const spentAllowanceNote = (resetsAt?: Date | string) =>
+  `You have used today's free placement — ${SHARED_ALLOWANCE_NOTE}. It comes back ${allowanceResetLabel(
+    resetsAt
+  )}.`;
+
 export function freeRefusalMessage(standing?: FreeStanding, space?: FreeCapacity) {
   // Permanent for this image, and true of everybody — so it outranks the two
   // below it, which are about this placer and about right now.
@@ -114,11 +128,13 @@ export function freeRefusalMessage(standing?: FreeStanding, space?: FreeCapacity
   if (standing?.usedHere) return 'You have already used a free sticker on this image.';
   // Transient, and it says when it lifts — derived from the reset the server
   // computed rather than restating the boundary here.
-  if (standing && standing.remaining <= 0)
-    return `You have used today's free placement — ${SHARED_ALLOWANCE_NOTE}. It comes back ${allowanceResetLabel(
-      standing.resetsAt
-    )}.`;
+  if (standing && standing.remaining <= 0) return spentAllowanceNote(standing.resetsAt);
   // The most transient of all — a declined placement releases its slot at once.
+  //
+  // ⚠️ Two readers, two truths, so the wording is chosen by the caller. Someone
+  // who pressed and lost the race is told they lost it; someone still deciding
+  // has pressed nothing, and "first" would be false. `preCommitFreeReason`
+  // substitutes `FREE_SLOT_TAKEN_NOTE` for exactly this rung.
   if (space && space.freeSlotsRemaining <= 0)
     return 'Someone took the last free slot on this image first.';
   return null;
@@ -159,6 +175,14 @@ export function preCommitFreeReason(
   if (freeAvailable) return null;
   if (!space || !standing) return null;
   if (space.freeSlots <= 0) return null;
+
+  // 🔴 The one rung whose wording depends on who is reading it. The ladder's
+  // version — "someone took the last free slot FIRST" — was written for a
+  // placer who pressed and lost a race. Said before the press it is false about
+  // the reader and contradicts what the bar's own tooltip says for the same
+  // state, so both take the shared clause instead.
+  if (!standing.usedHere && standing.remaining > 0 && space.freeSlotsRemaining <= 0)
+    return FREE_SLOT_TAKEN_NOTE;
 
   return freeRefusalMessage(standing, space);
 }
@@ -210,31 +234,6 @@ function allowanceResetLabel(resetsAt?: Date | string) {
 }
 
 /**
- * What the daily allowance is shared with, in one clause.
- *
- * 🔴 **One constant, because the sharing is the fact people get wrong.** Every
- * string that mentions the daily free is on one of two surfaces, and each used
- * to say "today's allowance" as though it were its own — so somebody who spent
- * it submitting a remix met a sticker surface that had no explanation for why
- * free was gone, and read a limit as a bug. Said once here, both surfaces cannot
- * drift into describing two different budgets.
- *
- * Written as a clause rather than a sentence, with **no terminating full stop**,
- * so it can be appended to whatever came before it and still have a clause
- * appended to it in turn — which the tray does, with a ` · ` separator.
- *
- * The count is read from `FREE_PLACEMENTS_PER_DAY` rather than written out, for
- * the same reason `allowanceResetLabel` reads `resetsAt` instead of restating
- * midnight: a number spelled into copy is a second copy of a rule, and the two
- * are free to disagree the day the rule moves. The SURFACE list stays literal —
- * there is no derivation of it that reads as English — so a guard test fails if
- * a third surface is ever added to `PLACEMENT_SURFACES`.
- */
-export const SHARED_ALLOWANCE_NOTE = `${
-  FREE_PLACEMENTS_PER_DAY === 1 ? 'one' : FREE_PLACEMENTS_PER_DAY
-} a day, shared between stickers and remix galleries`;
-
-/**
  * The free label on the reaction bar, or `null` for no label at all.
  *
  * 🔴 **This is the fix for the whole ticket.** The bar used to print the
@@ -279,10 +278,18 @@ export function barFreeLabel(
  *
  * Ordered like `freeRefusalMessage` and for the same reason: a refusal that is
  * permanent for this image outranks one that lifts by itself, so nobody is
- * promised a midnight reset that will not change what this creator offers. The
- * two ladders stay separate because they answer different questions — this one
- * before the press, from a bar that cannot see `usedHere`; that one after a
- * refusal, from a surface that can.
+ * promised a midnight reset that will not change what this creator offers.
+ *
+ * It is a separate ladder because it answers a different question — this one
+ * from a bar that cannot see `usedHere`, that one from a surface that can — but
+ * every SENTENCE the two share now comes from one place (`spentAllowanceNote`,
+ * `FREE_SLOT_TAKEN_NOTE`). What differs is which rungs exist and in what order,
+ * not how any of them is worded.
+
+ * ⚠️ An ERRORED allowance query is `undefined` too, and renders exactly like a
+ * loading one: the bare price, no free label anywhere on the page. Deliberate
+ * and fail-closed — nobody is promised something they cannot have — but it does
+ * mean a 401 makes the free tier invisible rather than noisy.
  */
 export function barTooltip({
   price,
@@ -303,13 +310,9 @@ export function barTooltip({
   // Still loading. Say the price and claim nothing about the offer.
   if (allowanceRemaining == null) return base;
 
-  if (allowanceRemaining <= 0)
-    return `${base}. You have used today's free placement — ${SHARED_ALLOWANCE_NOTE}. Yours is back ${allowanceResetLabel(
-      resetsAt
-    )}.`;
+  if (allowanceRemaining <= 0) return `${base}. ${spentAllowanceNote(resetsAt)}`;
 
-  if (space.freeSlotsRemaining <= 0)
-    return `${base}. The free slot on this image is taken — it comes back if the creator declines.`;
+  if (space.freeSlotsRemaining <= 0) return `${base}. ${FREE_SLOT_TAKEN_NOTE}`;
 
   return `Place a sticker · free, or ${price} Buzz. Your free one is ${SHARED_ALLOWANCE_NOTE}.`;
 }

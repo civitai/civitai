@@ -79,15 +79,24 @@ export function StickerPlacementBar({
    * The viewer's own half of the answer.
    *
    * One query for the whole page rather than one per card: the allowance belongs
-   * to the person, so every bar in a feed shares its cache key. That is what
-   * makes it affordable to check, and checking is the point — the label below
-   * used to be the creator's capacity alone, which promised free placements to
-   * people who had already spent theirs.
+   * to the person, so every bar on a page shares one cache key and one request.
+   * That is what makes it affordable to check, and checking is the point — the
+   * label below used to be the creator's capacity alone, which promised free
+   * placements to people who had already spent theirs.
    *
-   * Not asked of a signed-out viewer, who has no allowance and would get a 401
-   * per page from a protected procedure.
+   * ⚠️ Today this bar has ONE callsite, the image detail view; feed cards mount
+   * `StickerPlacementCardBadge`, which cannot place. So the present cost is one
+   * request per detail view. The per-card reasoning is for the future this
+   * component was written toward, and it is what keeps that future cheap — but
+   * do not read "per feed card" here as a description of what ships now.
+   *
+   * Gated on `canPlace`, which already requires a signed-in viewer — the
+   * procedure is protected, so asking without one is a 401 per page it renders
+   * on. One condition rather than two so the guard is testable: `!!currentUser`
+   * alongside it can never be the reason this is false, so a test claiming to
+   * pin it would be asserting something it cannot fail on.
    */
-  const { allowance } = useFreePlacementAllowance(!!currentUser && canPlace);
+  const { allowance } = useFreePlacementAllowance(canPlace);
 
   // `null` until BOTH facts are known, and absent rather than paid while the
   // allowance is loading — a label that appears a beat late is quieter than a
@@ -131,7 +140,16 @@ export function StickerPlacementBar({
           <StickerCountChip
             count={0}
             revealed={revealed}
-            tooltip={`Place a sticker · ${space?.price} Buzz`}
+            // The same sentence the plus beside it gets. They open the same
+            // tray with the same action, so a hand-written price line here
+            // would let the two disagree the moment the plus started saying
+            // "free, or N Buzz" — which is exactly what this change made it do.
+            tooltip={barTooltip({
+              price: space?.price ?? 0,
+              space: space ?? undefined,
+              allowanceRemaining: allowance?.remaining,
+              resetsAt: allowance?.resetsAt,
+            })}
             // Distinct from the plus beside it, which is also "Place a sticker".
             // They share a Button.Group and an action, so identical names read
             // to a screen reader as the same control announced twice.
@@ -169,8 +187,10 @@ export function StickerPlacementBar({
              * decline gives one back. `barTooltip` branches on both.
              *
              * The one rule left un-checked here is "already free-placed on THIS
-             * image", which needs a per-image query and would cost one request
-             * per feed card. The tray checks it before anything is committed.
+             * image", which needs a per-image query — affordable on the detail
+             * view where this bar lives today, not on the feed it is written
+             * toward. The tray checks it before anything is committed, so the
+             * residual is an over-offer the tray corrects, never a wrong charge.
              */
             label={barTooltip({
               price: space?.price ?? 0,
