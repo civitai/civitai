@@ -12,7 +12,7 @@ import {
 import {
   IconAlertTriangleFilled,
   IconDropletHalf2,
-  IconFlipHorizontal,
+  IconFlipVertical,
   IconMessage,
   IconTrash,
 } from '@tabler/icons-react';
@@ -535,7 +535,11 @@ export function DraftSticker({
         aria-label={draft.flip ? 'Unflip this sticker' : 'Flip this sticker'}
         onClick={() => move(draft.id, { flip: !draft.flip })}
       >
-        <IconFlipHorizontal size={14} />
+        {/* Tabler names these for the MIRROR AXIS, not the motion: this control
+            mirrors left-to-right (`scaleX(-1)`, see `placement-appearance`), and
+            the glyph that draws a vertical mirror line is `IconFlipVertical`.
+            The same crossed pairing is in the drawing editor's flip controls. */}
+        <IconFlipVertical size={14} />
       </ActionIcon>
     </Tooltip>
   );

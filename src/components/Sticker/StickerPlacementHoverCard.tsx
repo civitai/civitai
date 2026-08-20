@@ -5,6 +5,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
+import { HOVER_DELAY_MS } from '~/components/UserAvatar/UserHoverCard';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -115,7 +116,11 @@ export function StickerPlacementHoverCard({
       shadow="sm"
       withArrow
       withinPortal
-      openDelay={300}
+      // The same delays every other hover card in the app uses. A placed sticker
+      // is a small target inside a feed people swipe through, so the pointer
+      // crosses several without stopping on any of them; 300ms was short enough
+      // that a pass over the artwork opened the card.
+      openDelay={HOVER_DELAY_MS}
       position="bottom"
       // Closer than the default, so the card reads as belonging to the sticker
       // rather than floating near it.
