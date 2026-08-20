@@ -10,6 +10,7 @@ import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import type { PostEditQuerySchema } from '~/server/schema/post.schema';
 import type { PostDetailEditable, PostEditImageDetail } from '~/server/services/post.service';
+import type { Debouncer } from '~/utils/debouncer';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -155,6 +156,20 @@ export function usePostEditStore<T>(selector: (state: State) => T) {
   const store = useContext(StoreContext);
   if (!store) throw new Error('missing PostEditProvider');
   return useStore(store, selector, shallow);
+}
+// #endregion
+
+/**
+ * Lets an intentional exit flush this debouncer before it navigates. An effect is the right
+ * shape here and not an incidental one: the registry lives outside React, so registering is a
+ * subscription, and the unregister has to run on unmount or a stale row's flush outlives it.
+ */
+export function usePendingSave(key: string, debouncer: Debouncer) {
+  const registerPendingSave = usePostEditStore((state) => state.registerPendingSave);
+  useEffect(
+    () => registerPendingSave(key, debouncer.flush),
+    [registerPendingSave, key, debouncer]
+  );
 }
 // #endregion
 

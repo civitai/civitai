@@ -1,10 +1,10 @@
 import { ActionIcon, Collapse, Text, Textarea } from '@mantine/core';
 import { IconMessagePlus, IconTrash } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { usePendingSave, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
@@ -22,7 +22,6 @@ export function PostImageTool({
   const [opened, setOpened] = useState(!!tool.notes?.length);
   const [notes, setNotes] = useState(tool.notes ?? '');
   const updateImage = usePostEditStore((state) => state.updateImage);
-  const registerPendingSave = usePostEditStore((state) => state.registerPendingSave);
   const removeToolMutation = trpc.image.removeTools.useMutation({
     onSuccess: (response, { data }) => {
       for (const { imageId, toolId } of data) {
@@ -57,14 +56,30 @@ export function PostImageTool({
     // onMutate, not onSuccess: the provider snapshots the store into the `post.getEdit`
     // cache on `routeChangeStart`, so a note flushed on the way out has not landed yet.
     onMutate: ({ data }) => {
+      const previous: Record<number, string | null> = {};
       for (const { imageId, toolId, notes } of data) {
         updateImage(imageId, (image) => {
           const tool = image.tools.find((x) => x.id === toolId);
-          if (tool) tool.notes = notes?.length ? notes : null;
+          if (!tool) return;
+          previous[toolId] = tool.notes ?? null;
+          tool.notes = notes?.length ? notes : null;
         });
       }
+      return previous;
     },
-    onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
+    // Roll back, or the note reads as saved — `dirty` below compares against this value, so an
+    // optimistic write that the server rejected also clears the unsaved marker. Restored only
+    // where the store still holds what THIS request set.
+    onError: (error: any, { data }, previous) => {
+      for (const { imageId, toolId, notes } of data) {
+        updateImage(imageId, (image) => {
+          const tool = image.tools.find((x) => x.id === toolId);
+          if (!tool || !previous || !(toolId in previous)) return;
+          if (tool.notes === (notes?.length ? notes : null)) tool.notes = previous[toolId];
+        });
+      }
+      showErrorNotification({ error: new Error(error.message) });
+    },
   });
   const handleUpdateTool = (notes: string) => {
     debouncer(() => {
@@ -72,10 +87,7 @@ export function PostImageTool({
     });
   };
 
-  useEffect(
-    () => registerPendingSave(`tool:${image.id}:${tool.id}`, debouncer.flush),
-    [registerPendingSave, debouncer, image.id, tool.id]
-  );
+  usePendingSave(`tool:${image.id}:${tool.id}`, debouncer);
 
   const dirty = notes.length && notes !== tool.notes;
   const saving = updateToolMutation.isPending;
