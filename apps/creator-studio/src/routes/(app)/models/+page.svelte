@@ -41,7 +41,6 @@
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
   import BulkBar from '$lib/components/BulkBar.svelte';
-  import SalesPanel from '$lib/components/monetization/SalesPanel.svelte';
   import BulkActionDialog from '$lib/components/BulkActionDialog.svelte';
   import type { BulkAction } from '$lib/monetization/bulk-actions';
   import { maxPaidAccessPrice } from '$lib/monetization/paid-access';
@@ -385,7 +384,7 @@
 </script>
 
 <header class="page-header">
-  <h1>Licensing</h1>
+  <h1>Models</h1>
   <p>Set licensing fees, manage early/paid access, and sell access indefinitely — per version.</p>
 </header>
 
@@ -634,17 +633,6 @@
     {#if overCapVersions.length > 10}
       <p class="mt-1 text-xs text-dark-2">…and {overCapVersions.length - 10} more.</p>
     {/if}
-  </div>
-{/if}
-
-{#if data.salesEnabled}
-  <div class="mb-3">
-    <SalesPanel
-      sales={data.manageableSales}
-      allSales={data.sales}
-      capTier={tier}
-      overrides={data.saleLimits}
-    />
   </div>
 {/if}
 

@@ -51,7 +51,6 @@ import {
   countEarlyAccessVersions,
   deepenSale,
   getCreatorSales,
-  getManageableSales,
   getSalesByVersion,
   scheduleSale,
   shortenSale,
@@ -191,17 +190,16 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
   // Sales are read ONLY when the feature is on. Migrations here are applied by hand, so on any
   // environment where the sale tables have not been created yet an unconditional read makes /models
   // throw for every creator — flag on or off. The flag has to gate the reads, not just the UI.
-  const [sales, manageableSales, salesByVersion, saleLimits] = salesEnabled
+  const [sales, salesByVersion, saleLimits] = salesEnabled
     ? await Promise.all([
         getCreatorSales(locals.user.id),
-        getManageableSales(locals.user.id),
         getSalesByVersion(
           locals.user.id,
           result.models.flatMap((m) => m.versions.map((v) => v.id))
         ),
         getSaleLimitOverrides(),
       ])
-    : [[], [], {}, {}];
+    : [[], {}, {}];
   const permanentCap = maxPermanentAccessModels(cappedTier(membership));
   return {
     ...result,
@@ -211,7 +209,6 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     // The creator's own recent sale windows. The form computes the budget from these with the same
     // @civitai/buzz helper the write refuses on, so the number shown and the number enforced are one.
     sales,
-    manageableSales,
     salesByVersion,
     saleLimits,
     pageSizeOptions: PAGE_SIZE_OPTIONS,
