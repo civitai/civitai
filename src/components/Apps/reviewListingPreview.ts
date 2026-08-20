@@ -85,7 +85,6 @@ function cardKindData(row: OffsitePendingRow): ListingCardKindData {
   }
   return {
     kind: 'offsite',
-    subKind: row.appListing?.connectClientId != null ? 'connect' : 'external-link',
     externalUrl: row.appListing?.externalUrl ?? null,
   };
 }
@@ -96,7 +95,6 @@ function detailKindData(row: OffsitePendingRow): ListingDetailKindData {
   }
   return {
     kind: 'offsite',
-    subKind: row.appListing?.connectClientId != null ? 'connect' : 'external-link',
     externalUrl: row.appListing?.externalUrl ?? null,
     connectClientId: row.appListing?.connectClientId ?? null,
   };

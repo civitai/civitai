@@ -54,7 +54,6 @@ import {
   projectListingCard,
   projectListingDetail,
   recommendRollup,
-  resolveOffsiteSubKind,
 } from '../app-listing.service';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -145,13 +144,13 @@ describe('recommendRollup', () => {
   });
 });
 
-describe('resolveOffsiteSubKind', () => {
-  it('connect when a connect client is set, external-link otherwise', () => {
-    expect(resolveOffsiteSubKind('oauth_123')).toBe('connect');
-    expect(resolveOffsiteSubKind(null)).toBe('external-link');
-    expect(resolveOffsiteSubKind(undefined)).toBe('external-link');
-  });
-});
+/**
+ * 🔴 `resolveOffsiteSubKind` is DELETED. It returned `connectClientId ? 'connect'
+ * : 'external-link'`, and that derived value was the whole off-site display
+ * taxonomy. Its coverage moves to the two projections below, which now assert
+ * the ABSENCE of a `subKind` key rather than its value (the "key set is exactly
+ * …" cases), plus the truthiness case its deletion could have silently changed.
+ */
 
 describe('cursor encode/decode', () => {
   it('round-trips a 2-field cursor (non-top-rated sorts)', () => {
@@ -312,7 +311,7 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     expect(card.reviewCount).toBe(0);
   });
 
-  it('offsite connect card: subKind=connect + externalUrl passthrough', () => {
+  it('offsite card with an OAuth client and no URL: NO subKind, externalUrl passthrough', () => {
     const row = hydratedRow({
       kind: 'offsite',
       appBlockId: null,
@@ -322,41 +321,84 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     });
     const card = projectListingCard(row as never);
     expect(card.kind).toBe('offsite');
-    expect(card.kindData).toEqual({ kind: 'offsite', subKind: 'connect', externalUrl: null });
+    expect(card.kindData).toEqual({ kind: 'offsite', externalUrl: null });
   });
 
-  it('offsite external-link card (LEGACY URL-only, connectClientId null): subKind=external-link + externalUrl, grandfathered', () => {
+  /**
+   * 🔴 THE GRANDFATHERED LISTING — the load-bearing case for this change.
+   *
+   * Measured in production 2026-08-19: of five off-site listings, exactly ONE
+   * approved row has `connect_client_id IS NULL`. Every listing minted since
+   * then goes through `ExternalSubmitForm`, whose create flow REQUIRES a
+   * `connectClientId` — so this row is the only live inhabitant of what used to
+   * be the `external-link` sub-kind, and it is the shape most at risk of
+   * rendering blank / "unknown" / falling through a deleted branch.
+   *
+   * It must project to the SAME `kindData` shape as an OAuth-connected row: one
+   * kind, no sub-kind key, its URL intact.
+   */
+  it('🔴 GRANDFATHERED offsite card (connectClientId null): same shape, no subKind, URL intact', () => {
     const row = hydratedRow({
       kind: 'offsite',
       appBlockId: null,
       appBlock: null,
       connectClientId: null,
-      externalUrl: 'https://ext.example/app',
+      externalUrl: 'https://grandfathered.example/app',
     });
     const card = projectListingCard(row as never);
     expect(card.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'external-link',
-      externalUrl: 'https://ext.example/app',
+      externalUrl: 'https://grandfathered.example/app',
     });
   });
 
-  it('MERGED offsite card (connect client + a homepage URL): subKind=connect AND the Visit URL both surface', () => {
-    // The merged model — a new external listing links an OAuth client AND may carry an
-    // optional homepage link. Both must be present on the card DTO.
-    const row = hydratedRow({
-      kind: 'offsite',
+  /**
+   * 🔴 The collapse, stated as an EQUALITY rather than as two labels. Two rows
+   * differing ONLY in `connectClientId` — the exact field the deleted sub-kind
+   * was derived from — must produce byte-identical card kindData. A revert
+   * reintroducing `subKind` fails HERE, on this assertion, because the two
+   * objects would then differ by `'connect'` vs `'external-link'`.
+   *
+   * The URL is deliberately shared and non-default so the equality cannot be
+   * satisfied by two empty objects.
+   */
+  it('🔴 the grandfathered row and an OAuth-connected row produce IDENTICAL card kindData', () => {
+    const shared = {
+      kind: 'offsite' as const,
       appBlockId: null,
       appBlock: null,
-      connectClientId: 'oauth_abc',
-      externalUrl: 'https://ext.example/app',
-    });
-    const card = projectListingCard(row as never);
-    expect(card.kindData).toEqual({
+      externalUrl: 'https://same-target.example/app',
+    };
+    const connected = projectListingCard(
+      hydratedRow({ ...shared, connectClientId: 'oauth_abc' }) as never
+    );
+    const grandfathered = projectListingCard(
+      hydratedRow({ ...shared, connectClientId: null }) as never
+    );
+    expect(connected.kindData).toEqual(grandfathered.kindData);
+    // …and it is the collapsed shape, not merely "equal to each other".
+    expect(connected.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'connect',
-      externalUrl: 'https://ext.example/app',
+      externalUrl: 'https://same-target.example/app',
     });
+  });
+
+  it('🔴 the offsite card kindData has NO subKind key at all (not merely a falsy one)', () => {
+    for (const connectClientId of ['oauth_abc', null]) {
+      const card = projectListingCard(
+        hydratedRow({
+          kind: 'offsite',
+          appBlockId: null,
+          appBlock: null,
+          connectClientId,
+          externalUrl: 'https://keys.example/app',
+        }) as never
+      );
+      expect(Object.keys(card.kindData).sort(), String(connectClientId)).toEqual([
+        'externalUrl',
+        'kind',
+      ]);
+    }
   });
 
   it('a vanished owner yields a null creator chip (no crash)', () => {
@@ -437,7 +479,7 @@ describe('projectListingDetail — public allowlist + gallery', () => {
     });
   });
 
-  it('offsite connect detail exposes the PUBLIC connectClientId (never a secret)', () => {
+  it('offsite detail exposes the PUBLIC connectClientId (never a secret), and NO subKind', () => {
     const row = hydratedRow({
       kind: 'offsite',
       appBlockId: null,
@@ -448,24 +490,73 @@ describe('projectListingDetail — public allowlist + gallery', () => {
     const detail = projectListingDetail(row as never);
     expect(detail.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'connect',
       externalUrl: null,
       connectClientId: 'oauth_abc',
     });
   });
 
-  it('offsite external-link detail has a null connectClientId', () => {
+  /**
+   * 🔴 The grandfathered listing at the DETAIL projection. `connectClientId`
+   * stays on the wire as a CAPABILITY (two surfaces still read it — the
+   * account-access disclosure and the no-destination CTA fallback); what is gone
+   * is the derived `subKind`.
+   */
+  it('🔴 GRANDFATHERED offsite detail (connectClientId null): null client, URL intact, no subKind', () => {
     const row = hydratedRow({
       kind: 'offsite',
       appBlockId: null,
       appBlock: null,
       connectClientId: null,
-      externalUrl: 'https://ext.example/app',
+      externalUrl: 'https://grandfathered.example/app',
     });
     const detail = projectListingDetail(row as never);
-    expect(detail.kindData).toMatchObject({
+    expect(detail.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'external-link',
+      externalUrl: 'https://grandfathered.example/app',
+      connectClientId: null,
+    });
+  });
+
+  it('🔴 the offsite detail kindData key set is exactly kind/externalUrl/connectClientId', () => {
+    for (const connectClientId of ['oauth_abc', null]) {
+      const detail = projectListingDetail(
+        hydratedRow({
+          kind: 'offsite',
+          appBlockId: null,
+          appBlock: null,
+          connectClientId,
+          externalUrl: 'https://keys.example/app',
+        }) as never
+      );
+      expect(Object.keys(detail.kindData).sort(), String(connectClientId)).toEqual([
+        'connectClientId',
+        'externalUrl',
+        'kind',
+      ]);
+    }
+  });
+
+  /**
+   * 🔴 `|| null`, NOT `?? null`. The deleted `resolveOffsiteSubKind` used a
+   * TRUTHINESS test, and the old projection wrote
+   * `subKind === 'connect' ? connectClientId ?? null : null` — so an
+   * empty-string client id reached the wire as `null`. Preserving that is what
+   * makes this collapse behaviour-neutral rather than merely type-clean; `??`
+   * would newly emit `''`, and every consumer of this field is a
+   * "does this app connect to your account?" truthiness check.
+   */
+  it('🔴 an empty-string connectClientId still projects as null (truthiness, not nullish)', () => {
+    const row = hydratedRow({
+      kind: 'offsite',
+      appBlockId: null,
+      appBlock: null,
+      connectClientId: '',
+      externalUrl: 'https://empty-client.example/app',
+    });
+    const detail = projectListingDetail(row as never);
+    expect(detail.kindData).toEqual({
+      kind: 'offsite',
+      externalUrl: 'https://empty-client.example/app',
       connectClientId: null,
     });
   });

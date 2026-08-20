@@ -54,10 +54,15 @@ export type ListingDetailRow = {
   color?: string;
 };
 
-/** Human label for the store kind + sub-kind. Mirrors `getListingBadge`'s wording. */
+/**
+ * Human label for the store kind. Mirrors `getListingBadge`'s wording — and now
+ * actually does: off-site used to fork here into "Connect app" / "Off-site link"
+ * while the badge said "Connect app" / "Off-site", so the two surfaces disagreed
+ * about the SAME listing. One kind, one word, the same word the store's kind
+ * filter uses.
+ */
 function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
-  if (detail.kindData.kind === 'onsite') return 'On-site app';
-  return detail.kindData.subKind === 'connect' ? 'Connect app' : 'Off-site link';
+  return detail.kindData.kind === 'onsite' ? 'On-site app' : 'Off-site';
 }
 
 /**

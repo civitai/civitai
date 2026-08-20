@@ -58,7 +58,7 @@ describe('buildListingCardPreview', () => {
     });
   });
 
-  it('an external (offsite) row → offsite kindData with the external url + sub-kind', () => {
+  it('an external (offsite) row → offsite kindData with the external url, no sub-kind', () => {
     const card = buildListingCardPreview(
       row({
         id: 'r2',
@@ -73,26 +73,48 @@ describe('buildListingCardPreview', () => {
     expect(card.kind).toBe('offsite');
     expect(card.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'external-link',
       externalUrl: 'https://ext.app',
     });
   });
 
-  it('a connect (offsite) row → connect sub-kind', () => {
-    const card = buildListingCardPreview(
+  /**
+   * 🔴 The moderator preview is a SECOND producer of `ListingCardKindData` — it
+   * builds the DTO by hand from a review row rather than through
+   * `projectListingCard`, and it carried its OWN copy of the sub-kind
+   * derivation. Both copies are gone, so the preview must now agree with the
+   * store for a row that differs only by `connectClientId`.
+   *
+   * The two rows carry deliberately distinct names and ids so an equality that
+   * passes cannot be two default objects.
+   */
+  it('🔴 a linked OAuth client no longer changes the preview card kindData', () => {
+    const connected = buildListingCardPreview(
       row({
         id: 'r3',
         appListing: {
           name: 'Conn',
-          externalUrl: null,
+          externalUrl: 'https://ext.app',
           category: null,
           contentRating: null,
           connectClientId: 'cc_1',
         },
       })
     );
-    expect(card.kind).toBe('offsite');
-    expect(card.kindData.kind === 'offsite' && card.kindData.subKind).toBe('connect');
+    const grandfathered = buildListingCardPreview(
+      row({
+        id: 'r3b',
+        appListing: {
+          name: 'Legacy',
+          externalUrl: 'https://ext.app',
+          category: null,
+          contentRating: null,
+          connectClientId: null,
+        },
+      })
+    );
+    expect(connected.kind).toBe('offsite');
+    expect(connected.kindData).toEqual(grandfathered.kindData);
+    expect(connected.kindData).toEqual({ kind: 'offsite', externalUrl: 'https://ext.app' });
   });
 
   it('falls back to the slug when the listing (or its name) is absent', () => {
@@ -144,7 +166,6 @@ describe('buildListingDetailPreview', () => {
     );
     expect(detail.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'external-link',
       externalUrl: 'https://ext.app',
       connectClientId: null,
     });

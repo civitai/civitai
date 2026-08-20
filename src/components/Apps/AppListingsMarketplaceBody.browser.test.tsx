@@ -30,7 +30,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     kindData:
       kind === 'onsite'
         ? { kind: 'onsite', appBlockId: `blk-${id}`, hasPage: false, liveUrl: `https://slug-${id}.civit.ai` }
-        : { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://x.app' },
+        : { kind: 'offsite', externalUrl: 'https://x.app' },
   };
 }
 

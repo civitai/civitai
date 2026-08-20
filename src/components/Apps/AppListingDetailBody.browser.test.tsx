@@ -339,7 +339,6 @@ describe('AppListingDetailBody', () => {
           kind: 'offsite',
           kindData: {
             kind: 'offsite',
-            subKind: 'external-link',
             externalUrl: 'https://ext.app',
             connectClientId: null,
           },
@@ -951,13 +950,12 @@ describe('AppListingDetailBody', () => {
     return modifier.replace('tabler-icon-', '');
   }
 
-  /** The off-site (external-link) variant of `base()`. */
+  /** The off-site variant of `base()` — no OAuth client (the grandfathered shape). */
   const offsite = () =>
     base({
       kind: 'offsite',
       kindData: {
         kind: 'offsite',
-        subKind: 'external-link',
         externalUrl: 'https://ext.app',
         connectClientId: null,
       },
@@ -1054,7 +1052,6 @@ describe('AppListingDetailBody', () => {
           kind: 'offsite',
           kindData: {
             kind: 'offsite',
-            subKind: 'connect',
             externalUrl: 'https://connect.app',
             connectClientId: 'oauth-client-1',
           },
@@ -1078,7 +1075,6 @@ describe('AppListingDetailBody', () => {
           kind: 'offsite',
           kindData: {
             kind: 'offsite',
-            subKind: 'connect',
             externalUrl: null,
             connectClientId: 'oauth-client-1',
           },

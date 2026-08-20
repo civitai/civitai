@@ -21,7 +21,6 @@ import type {
   ListingKind,
   ListingRecommendRollup,
   ListingSort,
-  OffsiteSubKind,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import { queryCache } from '~/server/utils/cache-helpers';
@@ -150,11 +149,6 @@ export function recommendRollup(
   };
 }
 
-/** Off-site sub-kind: OAuth-connect when a connect client is set, else external-link. */
-export function resolveOffsiteSubKind(connectClientId: string | null | undefined): OffsiteSubKind {
-  return connectClientId ? 'connect' : 'external-link';
-}
-
 /**
  * Re-assert (defense-in-depth) that an off-site `externalUrl` is an https URL
  * before it reaches the wire — so a bad row can never surface a `javascript:` /
@@ -258,7 +252,6 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
   if (row.kind === 'offsite') {
     return {
       kind: 'offsite',
-      subKind: resolveOffsiteSubKind(row.connectClientId),
       externalUrl: safeExternalUrl(row.externalUrl),
     };
   }
@@ -307,8 +300,8 @@ export type DetailKindDataSource = {
   kind: string;
   slug: string;
   // `| undefined` so a Prisma *create input* (whose nullable columns are optional)
-  // satisfies this as-is. Both consumers below (`safeExternalUrl`,
-  // `resolveOffsiteSubKind`) already accept `undefined` identically to `null`.
+  // satisfies this as-is. Both consumers below (`safeExternalUrl` and the
+  // `|| null` on `connectClientId`) treat `undefined` identically to `null`.
   externalUrl?: string | null;
   connectClientId?: string | null;
   appBlockId?: string | null;
@@ -317,14 +310,19 @@ export type DetailKindDataSource = {
 
 export function detailKindData(row: DetailKindDataSource): ListingDetailKindData {
   if (row.kind === 'offsite') {
-    const subKind = resolveOffsiteSubKind(row.connectClientId);
     return {
       kind: 'offsite',
-      subKind,
       externalUrl: safeExternalUrl(row.externalUrl),
       // The OAuth client_id is public (it's sent in the connect URL); the secret
-      // is never selected here. Null for an external-link listing.
-      connectClientId: subKind === 'connect' ? row.connectClientId ?? null : null,
+      // is never selected here. Null when no OAuth app is connected.
+      //
+      // 🔴 `|| null`, NOT `?? null`, and that is deliberate: this used to read
+      // `subKind === 'connect' ? row.connectClientId ?? null : null`, and the
+      // removed sub-kind was `connectClientId ? 'connect' : 'external-link'` —
+      // a TRUTHINESS test. So an EMPTY-STRING client id projected as `null`
+      // before, and `?? null` would newly project it as `''`. `|| null` keeps
+      // the wire value byte-identical for every input.
+      connectClientId: row.connectClientId || null,
     };
   }
   return {

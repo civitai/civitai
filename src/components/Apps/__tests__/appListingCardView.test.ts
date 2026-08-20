@@ -48,10 +48,13 @@ function onsiteCard(over: Partial<ListingCard> & { hasPage: boolean; appBlockId?
   };
 }
 
-function offsiteCard(
-  subKind: 'connect' | 'external-link',
-  externalUrl: string | null
-): ListingCard {
+/**
+ * 🔴 The `subKind` parameter is GONE. Off-site listings used to fork for display
+ * into `connect` / `external-link`, derived from `connectClientId`; the card DTO
+ * no longer carries either the sub-kind or the client id, so a card cannot
+ * express the distinction at all. `externalUrl` is the only off-site input left.
+ */
+function offsiteCard(externalUrl: string | null): ListingCard {
   return {
     id: 'l2',
     slug: 'ext-app',
@@ -65,7 +68,7 @@ function offsiteCard(
     creator: null,
     recommend: roll(0, 0, null),
     reviewCount: 0,
-    kindData: { kind: 'offsite', subKind, externalUrl },
+    kindData: { kind: 'offsite', externalUrl },
   };
 }
 
@@ -73,17 +76,29 @@ describe('getListingBadge', () => {
   it('on-site → "App"', () => {
     expect(getListingBadge(onsiteCard({ hasPage: true }))).toEqual({ label: 'App', kind: 'onsite' });
   });
-  it('off-site connect → "Connect app"', () => {
-    expect(getListingBadge(offsiteCard('connect', null))).toEqual({
-      label: 'Connect app',
-      kind: 'connect',
-    });
+  /**
+   * 🔴 NEW BEHAVIOUR (not regression coverage): off-site used to badge as
+   * "Connect app" when a client was linked and "Off-site" when not. There is one
+   * badge now. This pins the collapsed pair — the "Connect app" case above is
+   * what a revert would put back, and it is what this assertion refuses.
+   */
+  it('🔴 off-site → "Off-site", with or without a usable destination', () => {
+    for (const externalUrl of [null, 'https://x.com', 'http://insecure.example']) {
+      expect(getListingBadge(offsiteCard(externalUrl)), String(externalUrl)).toEqual({
+        label: 'Off-site',
+        kind: 'offsite',
+      });
+    }
   });
-  it('off-site external-link → "Off-site"', () => {
-    expect(getListingBadge(offsiteCard('external-link', 'https://x.com'))).toEqual({
-      label: 'Off-site',
-      kind: 'external-link',
-    });
+  /**
+   * The word is load-bearing: it must be the SAME word the store's kind filter
+   * puts on the whole category (`KindFilterButtons`' "Off-site"). Under the fork
+   * the parent label was true of only one child while the submit flow minted
+   * nothing but the other one. Pinned as a literal so a reword has to be
+   * deliberate — PR #4187 renames it, and this is the assertion it must update.
+   */
+  it('🔴 the off-site badge label is exactly the store kind-filter word', () => {
+    expect(getListingBadge(offsiteCard('https://x.com')).label).toBe('Off-site');
   });
 });
 
@@ -165,59 +180,34 @@ describe('getListingCta — on-site (P2c: View details → unified detail)', () 
 });
 
 describe('getListingCta — off-site (P2c: View details → unified detail)', () => {
-  it('external-link https → Visit ↗ (direct external primary)', () => {
-    expect(getListingCta(offsiteCard('external-link', 'https://foo.app'), { canOpenPage: true })).toEqual({
+  it('https externalUrl → Visit ↗ (direct external primary)', () => {
+    expect(getListingCta(offsiteCard('https://foo.app'), { canOpenPage: true })).toEqual({
       label: 'Visit',
       action: 'visit',
       href: 'https://foo.app',
       external: true,
     });
   });
-  it('external-link non-https → View details → unified detail (guard drops the href)', () => {
-    expect(getListingCta(offsiteCard('external-link', 'http://foo.app'), { canOpenPage: true })).toEqual({
+  it('non-https → View details → unified detail (guard drops the href)', () => {
+    expect(getListingCta(offsiteCard('http://foo.app'), { canOpenPage: true })).toEqual({
       label: 'View details',
       action: 'detail',
       href: '/apps/store-preview/ext-app',
       external: false,
     });
   });
-  it('external-link null url → View details → unified detail', () => {
-    expect(getListingCta(offsiteCard('external-link', null), { canOpenPage: true })).toEqual({
+  it('null url → View details → unified detail', () => {
+    expect(getListingCta(offsiteCard(null), { canOpenPage: true })).toEqual({
       label: 'View details',
       action: 'detail',
       href: '/apps/store-preview/ext-app',
       external: false,
     });
   });
-  /**
-   * 🔴 INTENT CHANGED alongside the detail view-model. Connect used to route to
-   * "View details" unconditionally, on the premise that the Connect affordance
-   * lived on the detail page — but that affordance was a dead stub, so the card
-   * sent the viewer to a page with no way to open the app. The detail now
-   * renders a real `Visit ↗` whenever an off-site listing carries an https
-   * `externalUrl`; the card matches, so the two cannot disagree about whether an
-   * app is reachable.
-   */
-  it('🔴 connect + https externalUrl → Visit ↗ (matches the detail, was View details)', () => {
-    expect(
-      getListingCta(offsiteCard('connect', 'https://connect.app'), { canOpenPage: true })
-    ).toEqual({
-      label: 'Visit',
-      action: 'visit',
-      href: 'https://connect.app',
-      external: true,
-    });
-  });
-  it('🔴 connect and external-link with the SAME url produce the SAME CTA', () => {
-    const url = 'https://same-target.app';
-    expect(getListingCta(offsiteCard('connect', url), { canOpenPage: true })).toEqual(
-      getListingCta(offsiteCard('external-link', url), { canOpenPage: true })
-    );
-  });
-  it('connect with no usable target → View details → unified detail (fails safe)', () => {
+  it('no usable target → View details → unified detail (fails safe)', () => {
     for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
       expect(
-        getListingCta(offsiteCard('connect', externalUrl), { canOpenPage: true }),
+        getListingCta(offsiteCard(externalUrl), { canOpenPage: true }),
         String(externalUrl)
       ).toEqual({
         label: 'View details',

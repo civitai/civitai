@@ -38,11 +38,11 @@
  *      confirmation in `OAuthAppsCard` itself describes as revoking every token and
  *      disconnecting every user. Copy that names it as the prerequisite for a listing
  *      transfer makes an irreversible act on a LIVE integration read as routine paperwork.
- *   2. ITS EFFECT ON THE LISTING IS SILENT AND UNWANTED. `SetNull` demotes the listing out
- *      of the `connect` sub-kind (`resolveOffsiteSubKind` routes on
- *      `connectClientId != null`), stranding the `connectRequestedScopes` /
- *      `connectScopeJustifications` a moderator approved — and on a connect listing with
- *      no `externalUrl` it leaves an approved listing whose primary CTA has no `href`,
+ *   2. ITS EFFECT ON THE LISTING IS SILENT AND UNWANTED. `SetNull` nulls the listing's
+ *      `connectClientId`, stranding the `connectRequestedScopes` /
+ *      `connectScopeJustifications` a moderator approved — and on an OAuth-connected
+ *      listing with no `externalUrl` it leaves an approved listing whose primary CTA has
+ *      no `href`,
  *      i.e. exactly the state `assertOffsiteListingActionable` exists to refuse at
  *      go-live. The "remedy" would walk the owner into a shape the go-live gate rejects.
  *   3. IT IS NOT RELIABLY AVAILABLE TO WHOEVER READS THE STRING.

@@ -14,7 +14,7 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  * project — the fast, deterministic suite; CI runs it `continue-on-error`, and
  * the browser component suites are not run by CI at all, so this is where the
  * correctness coverage belongs even though nothing here BLOCKS a merge).
- * Pin the kind × hasPage × subKind primary-action matrix incl.
+ * Pin the kind × hasPage × destination primary-action matrix incl.
  * the appBlocksPages gate, https guard, connect stub, and slug encoding, so a
  * regression in the detail action routing FAILS here.
  */
@@ -44,8 +44,14 @@ function onsiteDetail(
   };
 }
 
+/**
+ * 🔴 The `subKind` positional argument is GONE. It used to be passed
+ * INDEPENDENTLY of `connectClientId`, so a fixture could declare
+ * `('external-link', { connectClientId: 'c1' })` — a shape the real projection
+ * can never produce, since the sub-kind was derived from that very field. One
+ * input now, so a fixture cannot describe an impossible listing.
+ */
 function offsiteDetail(
-  subKind: 'connect' | 'external-link',
   over: { externalUrl?: string | null; connectClientId?: string | null; slug?: string } = {}
 ): ListingDetail {
   const { externalUrl = null, connectClientId = null, slug = 'ext-app' } = over;
@@ -65,7 +71,7 @@ function offsiteDetail(
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     screenshots: [],
-    kindData: { kind: 'offsite', subKind, externalUrl, connectClientId },
+    kindData: { kind: 'offsite', externalUrl, connectClientId },
   };
 }
 
@@ -277,16 +283,24 @@ describe('getDetailPrimaryAction — on-site', () => {
 });
 
 describe('getDetailPrimaryAction — off-site', () => {
-  it('external-link https → Visit ↗ (external)', () => {
+  /**
+   * 🔴 THE GRANDFATHERED LISTING drives this whole block. Production carries
+   * exactly one approved off-site row with `connect_client_id IS NULL`
+   * (measured 2026-08-19); `ExternalSubmitForm` requires a client on create, so
+   * nothing new can be minted into that shape. Every `connectClientId: null`
+   * fixture below IS that listing.
+   */
+  it('🔴 GRANDFATHERED (no OAuth client) + https → Visit ↗ (external)', () => {
     expect(
-      getDetailPrimaryAction(offsiteDetail('external-link', { externalUrl: 'https://foo.app' }), {
-        canOpenPage: true,
-      })
+      getDetailPrimaryAction(
+        offsiteDetail({ externalUrl: 'https://foo.app', connectClientId: null }),
+        { canOpenPage: true }
+      )
     ).toEqual({ label: 'Visit', mode: 'visit', href: 'https://foo.app', external: true });
   });
-  it('external-link non-https → info Unavailable (guard drops it, no target)', () => {
+  it('🔴 GRANDFATHERED + non-https → info Unavailable (guard drops it, no target)', () => {
     const action = getDetailPrimaryAction(
-      offsiteDetail('external-link', { externalUrl: 'http://foo.app' }),
+      offsiteDetail({ externalUrl: 'http://foo.app', connectClientId: null }),
       { canOpenPage: true }
     );
     expect(action).toEqual({
@@ -296,10 +310,13 @@ describe('getDetailPrimaryAction — off-site', () => {
       note: 'This app has no valid external link.',
     });
   });
-  it('external-link null url → info Unavailable', () => {
-    expect(getDetailPrimaryAction(offsiteDetail('external-link', { externalUrl: null }), { canOpenPage: true }).mode).toBe(
-      'info'
+  it('🔴 GRANDFATHERED + null url → info Unavailable (never a dead Connect stub)', () => {
+    const action = getDetailPrimaryAction(
+      offsiteDetail({ externalUrl: null, connectClientId: null }),
+      { canOpenPage: true }
     );
+    expect(action.mode).toBe('info');
+    expect(action.label).toBe('Unavailable');
   });
   /**
    * COVERAGE ADDED, NOTHING REVERSED — and the distinction matters, because an
@@ -312,15 +329,15 @@ describe('getDetailPrimaryAction — off-site', () => {
    * That behaviour is UNCHANGED — every one of its assertions still holds, and
    * they are re-pinned below over four absence shapes instead of one.
    *
-   * What this case adds is the shape nothing covered: connect WITH a valid
-   * https address. `resolveOffsiteSubKind` flips the sub-kind on
+   * What this case adds is the shape nothing covered: an OAuth-connected
+   * listing WITH a valid https address. The removed sub-kind flipped on
    * `connectClientId != null` alone, so linking an OAuth client was the sole
    * cause of the dead CTA on three approved, live listings. The destination
-   * decides now — the sub-kind does not.
+   * decides now.
    */
-  it('🔴 connect + https externalUrl → Visit ↗ (a client_id no longer kills the CTA)', () => {
+  it('🔴 OAuth client + https externalUrl → Visit ↗ (a client_id no longer kills the CTA)', () => {
     const action = getDetailPrimaryAction(
-      offsiteDetail('connect', {
+      offsiteDetail({
         connectClientId: 'client-123',
         externalUrl: 'https://connect.app',
       }),
@@ -336,36 +353,47 @@ describe('getDetailPrimaryAction — off-site', () => {
     });
   });
 
-  it('🔴 connect and external-link with the SAME url produce the SAME action', () => {
+  it('🔴 an OAuth-connected and a grandfathered listing with the SAME url produce the SAME action', () => {
     // Structural restatement of the rule, independent of the literals above: if
-    // a future change re-branches on sub-kind before the href guard, these two
-    // diverge and this fails — even if it picks copy that satisfies the pins.
+    // a future change re-branches on the OAuth capability before the href guard,
+    // these two diverge and this fails — even if it picks copy that satisfies
+    // the pins. This is the assertion a revert of the collapse must survive.
     const url = 'https://same-target.app';
     expect(
-      getDetailPrimaryAction(
-        offsiteDetail('connect', { connectClientId: 'c1', externalUrl: url }),
-        {
-          canOpenPage: true,
-        }
-      )
+      getDetailPrimaryAction(offsiteDetail({ connectClientId: 'c1', externalUrl: url }), {
+        canOpenPage: true,
+      })
     ).toEqual(
-      getDetailPrimaryAction(offsiteDetail('external-link', { externalUrl: url }), {
+      getDetailPrimaryAction(offsiteDetail({ connectClientId: null, externalUrl: url }), {
         canOpenPage: true,
       })
     );
   });
 
-  it('🔴 connect with NO usable destination → the stub still fails safe', () => {
+  /**
+   * 🔴 SURFACED, NOT DECIDED — the one place off-site listings still diverge.
+   *
+   * With no usable destination there is nothing to navigate to, and the two
+   * fallbacks say different things: an app with no OAuth client is simply
+   * "Unavailable", while an OAuth-connected one keeps the "Connect" stub for a
+   * route that does not exist yet. That is a CAPABILITY difference (does this
+   * app connect to your Civitai account?), not a kind difference, and the
+   * predicate is now read straight off `connectClientId` — byte-identical to
+   * what the deleted sub-kind computed from the same field.
+   *
+   * Whether the stub should survive at all is a product question this change
+   * does not answer; it is pinned here so a future answer has to be deliberate.
+   */
+  it('🔴 OAuth-connected with NO usable destination → the stub still fails safe', () => {
     // The stub must stay REACHABLE and must stay hrefless. Enumerated over every
-    // way a destination can be absent, with the client_id present in each — so
-    // this cannot pass by accident of the sub-kind being mis-resolved.
+    // way a destination can be absent, with the client_id present in each.
     // (`undefined` is deliberately absent: the DTO types `externalUrl` as
     // `string | null`, and the fixture's destructuring default would silently
     // rewrite it to `null` anyway — a row whose label lied about its input.)
     for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
       const key = `externalUrl=${String(externalUrl)}`;
       const action = getDetailPrimaryAction(
-        offsiteDetail('connect', { connectClientId: 'client-123', externalUrl }),
+        offsiteDetail({ connectClientId: 'client-123', externalUrl }),
         { canOpenPage: true }
       );
       expect(action.mode, key).toBe('connect');
@@ -376,6 +404,40 @@ describe('getDetailPrimaryAction — off-site', () => {
     }
   });
 
+  it('🔴 GRANDFATHERED with NO usable destination → Unavailable, NOT the Connect stub', () => {
+    // The negative arm of the case above, over the same four absence shapes.
+    // Without it the capability test could be inverted (or deleted, defaulting
+    // everything to the stub) and the suite would stay green.
+    for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
+      const key = `externalUrl=${String(externalUrl)}`;
+      const action = getDetailPrimaryAction(offsiteDetail({ connectClientId: null, externalUrl }), {
+        canOpenPage: true,
+      });
+      expect(action.mode, key).toBe('info');
+      expect(action.label, key).toBe('Unavailable');
+      expect(action.note, key).toBe('This app has no valid external link.');
+      expect(action.href, key).toBeUndefined();
+    }
+  });
+
+  /**
+   * An empty-string client id is FALSY, which is what the deleted
+   * `resolveOffsiteSubKind` tested — so it took the no-client arm. The
+   * projection now guarantees this never reaches the wire (`|| null` in
+   * `detailKindData`), but this view-model is called directly by
+   * `app-listing-actionable.service` and by `MySubmissionsList`, so pin the
+   * truthiness here too rather than relying on a caller.
+   */
+  it('an empty-string connectClientId takes the no-client arm (truthiness, not nullish)', () => {
+    const action = getDetailPrimaryAction(
+      offsiteDetail({ connectClientId: '', externalUrl: null }),
+      {
+        canOpenPage: true,
+      }
+    );
+    expect(action.label).toBe('Unavailable');
+  });
+
   it('🔴 no off-site listing with an https target is ever left un-navigable', () => {
     // The off-site analogue of the on-site "no state strands the viewer" matrix.
     // Anti-vacuity is explicit: count the rows that MUST be navigable and assert
@@ -383,30 +445,27 @@ describe('getDetailPrimaryAction — off-site', () => {
     // this green by having nothing to check.
     const stranded: string[] = [];
     let navigable = 0;
-    for (const subKind of ['connect', 'external-link'] as const) {
-      for (const externalUrl of ['https://ok.app', 'http://insecure.app', null]) {
-        for (const connectClientId of ['client-123', null]) {
-          const key = `subKind=${subKind} url=${String(externalUrl)} client=${
-            connectClientId ?? 'null'
-          }`;
-          const action = getDetailPrimaryAction(
-            offsiteDetail(subKind, { externalUrl, connectClientId }),
-            { canOpenPage: true }
-          );
-          // `visit` is the only external mode and may only carry an https target.
-          expect(action.external, key).toBe(action.mode === 'visit');
-          if (action.mode === 'visit') {
-            expect(action.href, key).toMatch(/^https:\/\//);
-            navigable++;
-          } else if (externalUrl?.startsWith('https://')) {
-            stranded.push(key);
-          }
+    for (const externalUrl of ['https://ok.app', 'http://insecure.app', null]) {
+      for (const connectClientId of ['client-123', null]) {
+        const key = `url=${String(externalUrl)} client=${connectClientId ?? 'null'}`;
+        const action = getDetailPrimaryAction(offsiteDetail({ externalUrl, connectClientId }), {
+          canOpenPage: true,
+        });
+        // `visit` is the only external mode and may only carry an https target.
+        expect(action.external, key).toBe(action.mode === 'visit');
+        if (action.mode === 'visit') {
+          expect(action.href, key).toMatch(/^https:\/\//);
+          navigable++;
+        } else if (externalUrl?.startsWith('https://')) {
+          stranded.push(key);
         }
       }
     }
     expect(stranded).toEqual([]);
-    // 2 sub-kinds × 2 client values, all with the https url → 4 navigable rows.
-    expect(navigable).toBe(4);
+    // 2 client values with the https url → 2 navigable rows. (Was 4 while the
+    // matrix also crossed a sub-kind that no longer exists; the DROP is the
+    // point — the removed dimension was never independent of `connectClientId`.)
+    expect(navigable).toBe(2);
   });
 });
 
@@ -603,10 +662,12 @@ describe('owner Edit deep-link + gating (on the detail view-model)', () => {
     expect(getOwnerEditHref(onsiteDetail({ hasPage: false, appBlockId: null }).kindData, 'l1')).toBeNull();
   });
   it('off-site detail kindData → the submit editor keyed on the listing id', () => {
-    expect(getOwnerEditHref(offsiteDetail('external-link', { externalUrl: 'https://x' }).kindData, 'l2')).toBe(
+    expect(getOwnerEditHref(offsiteDetail({ externalUrl: 'https://x' }).kindData, 'l2')).toBe(
       '/apps/submit?edit=l2'
     );
-    expect(getOwnerEditHref(offsiteDetail('connect').kindData, 'l2')).toBe('/apps/submit?edit=l2');
+    expect(getOwnerEditHref(offsiteDetail({ connectClientId: 'c1' }).kindData, 'l2')).toBe(
+      '/apps/submit?edit=l2'
+    );
   });
 
   it('owner + editable → show; non-owner → hide; mod-removed → hide', () => {

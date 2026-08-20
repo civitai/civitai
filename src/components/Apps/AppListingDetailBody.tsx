@@ -950,9 +950,16 @@ export function AppListingDetailBody({
               </Stack>
             )}
 
-            {/* Off-site external destination disclosure (mirrors the live detail). */}
+            {/* Off-site external destination disclosure (mirrors the live detail).
+                🔴 Gated on `connectClientId == null` — a CAPABILITY check, not a
+                kind. The sentence claims "no account access, or permissions",
+                which is FALSE of a listing with an OAuth app connected, so this
+                cannot become unconditional now that off-site is one kind. The
+                test previously read `subKind === 'external-link'`, which was
+                derived from exactly this field by a truthiness test — same
+                predicate, no derived taxonomy, identical rendering. */}
             {detail.kindData.kind === 'offsite' &&
-              detail.kindData.subKind === 'external-link' &&
+              !detail.kindData.connectClientId &&
               detail.kindData.externalUrl && (
                 <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />}>
                   This app runs entirely off-platform — no Civitai install, account access, or

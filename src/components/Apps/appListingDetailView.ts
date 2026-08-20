@@ -23,7 +23,7 @@
  * which that URL resolves to something new: from the store detail it redirects
  * straight back to the page the viewer is already on.
  *
- * PRIMARY-ACTION policy (kind × hasPage × subKind), all with NO dead 404 nav:
+ * PRIMARY-ACTION policy (kind × hasPage × destination), all with NO dead 404 nav:
  *   - on-site + hasPage + canOpenPage → **Open** (`/apps/run/<slug>`, the LIVE
  *     W10 in-host page route; flag-gated on `appBlocksPages`). The raw-origin
  *     "Open live" action is HIDDEN here: the app opens properly in-page, so a
@@ -58,21 +58,23 @@
  *     explicitly in the "no on-site state strands the viewer" matrix test — but
  *     the branch is vacuous today: every approved on-site listing declares a
  *     page, so nothing takes it.
- *   - off-site, EITHER sub-kind, with an https `externalUrl` → **Visit ↗** →
- *     external anchor. 🔴 The sub-kind does NOT decide this; the presence of a
- *     destination does. See the connect note below.
- *   - off-site external-link with no usable target (missing / non-https) →
+ *   - off-site with an https `externalUrl` → **Visit ↗** → external anchor.
+ *     🔴 The presence of a destination decides this, and nothing else.
+ *   - off-site with NO usable target and no OAuth client connected →
  *     **informational** (guarded out; no target).
- *   - off-site connect (OAuth) with no usable target → **Connect** STUB with a
- *     note — the only remaining state with nowhere to send the viewer.
+ *   - off-site with NO usable target but an OAuth client connected → **Connect**
+ *     STUB with a note — the only remaining state with nowhere to send the
+ *     viewer. That last test is a CAPABILITY check on `connectClientId`, not a
+ *     kind: off-site is one kind (the `connect` / `external-link` display
+ *     sub-kind was removed).
  *
  * 🔴 THE CONNECT STUB USED TO BE UNCONDITIONAL, AND THAT WAS THE BUG. Every
  * off-site listing with a linked OAuth client rendered a dead
  * "Connecting this app will be available soon." affordance — no href, disabled
- * button — because `resolveOffsiteSubKind` routes on `connectClientId != null`
- * alone (`app-listing.service.ts`), so linking a client was the ONLY thing that
- * moved a listing off the working `Visit ↗` path. Three approved, live listings
- * were in that state; a fourth, with no client, worked.
+ * button — because the sub-kind routed on `connectClientId != null` alone, so
+ * linking a client was the ONLY thing that moved a listing off the working
+ * `Visit ↗` path. Three approved, live listings were in that state; a fourth,
+ * with no client, worked.
  *
  * The stub's stated premise — "a complete OAuth authorize URL is NOT derivable
  * from the public DTO" — is true and irrelevant. These are CONFIDENTIAL clients
@@ -191,17 +193,26 @@ export function getDetailPrimaryAction(
     };
   }
 
-  // Off-site — BOTH sub-kinds. An off-site app lives at its own address, and
-  // that address is the only thing this page can route to; a connect app then
-  // runs its own confidential-client OAuth flow from there. So the destination,
-  // not the sub-kind, decides the action: one https-guarded path
-  // (`safeExternalHref`), shared with the external-link case that has always
-  // worked. Do NOT reintroduce a sub-kind test above this line — that is
-  // precisely what made a linked OAuth client the sole cause of a dead CTA.
+  // Off-site — ONE kind. An off-site app lives at its own address, and that
+  // address is the only thing this page can route to; an OAuth-connected app
+  // then runs its own confidential-client OAuth flow from there. So the
+  // destination decides the action: one https-guarded path
+  // (`safeExternalHref`). Do NOT reintroduce a `connectClientId` test above this
+  // line — that is precisely what made a linked OAuth client the sole cause of a
+  // dead CTA.
   const href = safeExternalHref(kd.externalUrl);
   if (href) return { label: 'Visit', mode: 'visit', href, external: true };
 
-  if (kd.subKind === 'external-link') {
+  // NO usable destination. The two fallbacks below differ by a CAPABILITY, not
+  // by a kind: an app with no OAuth client connected has simply nowhere to send
+  // you ("Unavailable"), whereas an app that DOES connect to your Civitai
+  // account has a second, not-yet-built route ("Connect", stubbed). This test
+  // used to read `kd.subKind === 'external-link'`; `subKind` was derived from
+  // `connectClientId` by a truthiness test and nothing else, so reading the
+  // field directly is the SAME predicate with no derived taxonomy in between —
+  // behaviour is byte-identical for every input. Whether the stub should exist
+  // at all is a product question this change deliberately does not answer.
+  if (!kd.connectClientId) {
     return {
       label: 'Unavailable',
       mode: 'info',
@@ -210,8 +221,8 @@ export function getDetailPrimaryAction(
     };
   }
 
-  // Off-site connect with NO usable destination — the honest stub, now reached
-  // only in that genuinely-nowhere-to-go state. Fails safe: no dead nav.
+  // OAuth-connected, with NO usable destination — the honest stub, reached only
+  // in that genuinely-nowhere-to-go state. Fails safe: no dead nav.
   return {
     label: 'Connect',
     mode: 'connect',
