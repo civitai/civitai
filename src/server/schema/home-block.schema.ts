@@ -40,6 +40,12 @@ export const autoFeatureSchema = z.object({
   // be candidates, and tuning a cap through this config must not silently change what the job
   // considers recent. Defaults to 7, the value `windowDays` shipped with, so splitting them
   // changes nothing until someone deliberately moves one.
+  //
+  // Worth knowing before tuning either: while they were one value, widening the candidate pool
+  // also lengthened the cap window, so a bigger pool automatically tightened per-creator
+  // repeats. That accidental brake is gone. Raising `windowDays` alone now widens the pool and
+  // leaves the cap counting over 7 days, which permits more repeats per creator than the same
+  // edit used to.
   capWindowDays: z.number().int().min(1).max(365).default(7),
   recencyOffsetHours: z.number().min(0).max(720).default(12),
   decayExponent: z.number().min(0).max(3).default(0.8),
