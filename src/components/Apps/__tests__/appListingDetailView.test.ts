@@ -388,7 +388,8 @@ describe('getDetailPrimaryAction — off-site', () => {
    *
    * Measured against production before removal: ZERO listings sat in the state
    * (all five off-site rows, every status, carry an https destination), so no
-   * live listing changed. The state remains REACHABLE — `offsiteSubmitSchema`
+   * live listing changed. The state remains REACHABLE —
+   * `submitExternalListingSchema` (`src/server/schema/blocks/offsite-listing.schema.ts`)
    * requires `connectClientId` but leaves `externalUrl` optional — which is why
    * the fallthrough still has to be honest rather than absent.
    *
@@ -519,17 +520,56 @@ describe('getDetailPrimaryAction — off-site', () => {
 describe('🔴 the removed Connect CTA cannot silently return', () => {
   const body = fs.readFileSync(path.resolve(__dirname, '../AppListingDetailBody.tsx'), 'utf8');
 
-  it('the renderer no longer carries the stub copy or a connect branch', () => {
+  /**
+   * 🔴 ASSERT THE STATE, NOT THE WORDING.
+   *
+   * An earlier version of this gate checked three strings. Two of them —
+   * `action.mode === 'connect'` and `glyphFor('connect')` — were VACUOUS BY
+   * CONSTRUCTION: with `'connect'` removed from `DetailActionMode`, writing
+   * either is a `TS2367`/`TS2345`, so no compiling tree can contain them and
+   * neither assertion could ever fire. The third was a SPELLED guard, walkable
+   * by rewording the sentence.
+   *
+   * Measured: a stub restored under a DIFFERENT mode with REWORDED copy —
+   *
+   *   if (action.mode === 'info' && detail.kindData.kind === 'offsite' &&
+   *       detail.kindData.connectClientId) { …disabled "Connect" button… }
+   *
+   * — typechecked with 0 errors and SURVIVED the whole blocking suite.
+   *
+   * So gate the STATE the mutant cannot avoid needing: the CTA renderer routes
+   * on the view-model's `action` ONLY. It must not read listing kind data at
+   * all, because re-deriving the OAuth capability there is exactly how the dead
+   * button comes back — under any mode name, behind any wording.
+   */
+  it('🔴 the CTA renderer never re-derives the capability (state, not wording)', () => {
+    const start = body.indexOf('function PrimaryAction(');
+    expect(start, 'PrimaryAction not found — did the component get renamed?').toBeGreaterThan(-1);
+    const end = body.indexOf('\n}\n', start);
+    expect(end, 'PrimaryAction end not found').toBeGreaterThan(start);
+    const cta = body.slice(start, end);
+
+    // POSITIVE CONTROLS — prove we sliced the real function BODY, not an empty
+    // string or just its signature. Without these the absences below would pass
+    // against a mis-slice, which is the failure mode of every region gate.
+    expect(cta).toMatch(/getDetailPrimaryAction\(detail/);
+    expect(cta).toMatch(/action\.mode === 'visit'/);
+    expect(cta.length).toBeGreaterThan(500);
+
+    // 🔴 THE GATE. The CTA branches on `action` and nothing else.
+    expect(cta, 'the CTA must not read the OAuth capability').not.toMatch(/connectClientId/);
+    expect(cta, 'the CTA must not branch on listing kind data').not.toMatch(/kindData/);
+  });
+
+  it('the renderer no longer carries the stub copy', () => {
     // POSITIVE CONTROL first: prove the read returned this component's source,
-    // so the absences below are about the file and not about an empty string.
+    // so the absence below is about the file and not about an empty string.
     expect(body).toMatch(/shouldShowOffsiteDisclosure\(detail\.kindData\)/);
 
-    // The exact promise the CTA made.
+    // The exact promise the CTA made. Kept as a cheap catch for a VERBATIM
+    // restore — but it is a spelled guard, so the state gate above is the one
+    // doing the real work.
     expect(body).not.toMatch(/Connecting this app will be available soon/);
-    // The branch itself, in either quote style.
-    expect(body).not.toMatch(/action\.mode\s*===\s*['"]connect['"]/);
-    // A re-hand-rolled glyph lookup for the removed mode.
-    expect(body).not.toMatch(/glyphFor\(\s*['"]connect['"]\s*\)/);
   });
 
   it('the view-model no longer emits the mode or its copy', () => {

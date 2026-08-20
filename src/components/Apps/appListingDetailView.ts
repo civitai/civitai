@@ -82,7 +82,8 @@
  * off-site rows, every status, carry an https destination), so nothing regressed
  * for a live listing.
  *
- * 🔴 The state is still REACHABLE — `offsiteSubmitSchema` requires
+ * 🔴 The state is still REACHABLE — `submitExternalListingSchema`
+ * (`src/server/schema/blocks/offsite-listing.schema.ts`) requires
  * `connectClientId` but leaves `externalUrl` OPTIONAL, so a submission with no
  * URL lands here. Closing that is an API-contract change, deliberately NOT made
  * a rider on this one. So this branch must keep failing safe; it now does so by
@@ -262,9 +263,14 @@ export function getDetailPrimaryAction(
  *   - a non-null `externalUrl` — there is no "runs off-platform" claim to make
  *     about a listing with nowhere to run.
  *
- * Truthiness on `connectClientId`, matching `app-listing.service`'s `|| null`
- * and the no-destination fallback above, so all three read the capability the
- * same way.
+ * Truthiness on `connectClientId`, matching `app-listing.service`'s `|| null`,
+ * so both read the capability the same way.
+ *
+ * 🔴 This used to say "and the no-destination fallback above, so all THREE read
+ * the capability the same way". #4208 deleted that fallback's `connectClientId`
+ * test outright — the primary action no longer reads the capability at all — so
+ * there are two readers here, not three. This predicate is now the ONLY place in
+ * this module that branches on it.
  *
  * 🔴 TWO PRODUCERS FEED THIS, and only one is the store read path.
  * `OffsiteReviewQueue`'s `ListingPreviewSection` renders `AppListingDetailBody`
