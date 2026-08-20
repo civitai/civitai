@@ -290,7 +290,9 @@ export function RenderHtml({
       {/* Behind the same opt-in as drawing the sticker at all, so a surface that
           stores unsanitized HTML cannot acquire a shop link by acquiring a
           sticker. */}
-      {allowStickers && <StickerAttributionHoverCard containerRef={contentRef} />}
+      {allowStickers && stickerIds.length > 0 && (
+        <StickerAttributionHoverCard containerRef={contentRef} />
+      )}
     </TypographyStylesWrapper>
   );
 }

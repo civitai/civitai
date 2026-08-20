@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import dayjs from '~/shared/utils/dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -69,19 +70,48 @@ export async function getStickerCosmetics({ ids }: GetStickerCosmeticsInput) {
  */
 export async function getStickerAttribution({ ids }: GetStickerCosmeticsInput) {
   const cosmetics = await dbRead.cosmetic.findMany({
-    where: { id: { in: ids }, type: CosmeticType.Sticker },
-    select: { id: true, name: true, creator: { select: { username: true, deletedAt: true } } },
+    where: {
+      id: { in: ids },
+      type: CosmeticType.Sticker,
+      // Not yet released, or no longer available, is not a thing to attribute.
+      // The procedure is public and takes an id array, so without this a staged
+      // sticker is readable before its launch.
+      OR: [{ availableStart: null }, { availableStart: { lte: new Date() } }],
+      AND: [{ OR: [{ availableEnd: null }, { availableEnd: { gte: new Date() } }] }],
+    },
+    select: {
+      id: true,
+      name: true,
+      createdById: true,
+      creator: {
+        select: { username: true, deletedAt: true, bannedAt: true, settings: true },
+      },
+    },
   });
 
   return cosmetics.map((cosmetic) => {
-    // A deleted creator keeps the sticker drawable and its name worth showing;
-    // it just has nowhere to send anyone.
-    const username = cosmetic.creator?.deletedAt ? null : cosmetic.creator?.username ?? null;
+    const creator = cosmetic.creator;
+    // Only link to a shop someone can actually buy from. A disabled shop is a
+    // 404 to visitors, and a comment can name any sticker — including a
+    // staff-authored cosmetic whose creator never opened one — so unlike the
+    // placement card, a link here is not implied by someone having bought it.
+    // Same predicate the shop listings filter on.
+    const settings = (creator?.settings ?? {}) as UserSettingsSchema;
+    const shopEnabled = settings.creatorShop?.enabled === true;
+    // A deleted or banned creator keeps the sticker drawable and its name worth
+    // showing; it just has nowhere to send anyone. `deletedAt` alone would be a
+    // narrower rule than the rest of the codebase applies to attributing someone.
+    const withheld = !!creator?.deletedAt || !!creator?.bannedAt;
+    const username = withheld ? null : creator?.username ?? null;
     return {
       id: cosmetic.id,
       name: cosmetic.name,
+      // The viewer's side needs an id to check a block against, and every other
+      // creator card on the page keys its lookup on id rather than username —
+      // two keys for one creator otherwise misses both caches.
+      creatorId: withheld ? null : cosmetic.createdById,
       creatorName: username,
-      shopHref: username ? `/user/${username}/shop` : null,
+      shopHref: username && shopEnabled ? `/user/${username}/shop` : null,
     };
   });
 }

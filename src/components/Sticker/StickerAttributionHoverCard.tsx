@@ -14,6 +14,7 @@ import {
   useHoverCapable,
   useNestedHoverCard,
 } from '~/components/UserAvatar/UserHoverCard';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { trpc } from '~/utils/trpc';
 
 type Hovered = { cosmeticId: number; rect: DOMRect };
@@ -67,6 +68,12 @@ export function StickerAttributionHoverCard({
       cancelClose();
       cancelOpen();
 
+      // The span must carry the image RenderHtml injects. An id that did not
+      // resolve leaves the span in place with the author's own text inside it —
+      // attaching a card to that would put site chrome on words someone chose,
+      // and "has a card" must never be broader than "drew a sticker".
+      if (!el.querySelector('img')) return;
+
       const raw = el.getAttribute('data-id') ?? '';
       if (!/^\d+$/.test(raw)) return;
       const cosmeticId = Number(raw);
@@ -108,6 +115,11 @@ export function StickerAttributionHoverCard({
         return;
       setHovered(null);
     };
+    // No Escape handler, deliberately — the same reason as `MentionHoverCard`:
+    // a modal binds Escape as a capturing window listener, so a card opened
+    // inside one (a comment thread modal, which is one of the four surfaces
+    // this renders on) would take the modal down with it. Mouseleave, scroll
+    // and outside-click already dismiss it.
     window.addEventListener('scroll', onScroll, true);
     return () => window.removeEventListener('scroll', onScroll, true);
   }, [hovered]);
@@ -141,7 +153,17 @@ function StickerAttributionCard({
     { ids: [cosmeticId] },
     { staleTime: 5 * 60_000 }
   );
-  const sticker = data?.[0];
+  const raw = data?.[0];
+
+  // A block hides that creator's shop entries already — `getBlockedPairIds` is
+  // applied to creator-made cosmetics in the shop for exactly this. The sticker's
+  // creator is not the comment's author, so comment-level filtering never sees
+  // them: without this, blocking someone still leaves their storefront one hover
+  // away on any comment using their art. The name stays; the route and the
+  // creator card do not.
+  const hiddenUsers = useHiddenPreferencesData().hiddenUsers;
+  const blocked = !!raw?.creatorId && hiddenUsers.some((user) => user.id === raw.creatorId);
+  const sticker = raw && blocked ? { ...raw, shopHref: null, creatorId: null } : raw;
 
   return (
     <Popover
@@ -194,7 +216,9 @@ function StickerAttributionCard({
             </Text>
           )}
         </Group>
-        {sticker?.creatorName && <HoverCreatorCard userId={null} username={sticker.creatorName} />}
+        {sticker?.creatorName && !blocked && (
+          <HoverCreatorCard userId={sticker.creatorId} username={sticker.creatorName} />
+        )}
       </CreatorHoverDropdown>
     </Popover>
   );
