@@ -46,6 +46,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ArticleCoverStickers } from '~/components/Article/ArticleCoverStickers';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -472,43 +473,55 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <AspectRatio
                   ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
                 >
-                  <RoutedDialogLink
-                    name="imageDetail"
-                    state={{ imageId: image.id, withoutPost: true }}
-                    className="block size-full cursor-pointer"
-                  >
-                    <Center className="size-full">
-                      <div className="relative size-full">
-                        <ImageGuard2 image={image} connectType="article" connectId={article.id}>
-                          {(safe) => (
-                            <>
-                              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                              <ImageContextMenu
-                                image={image}
-                                noDelete={true}
-                                className="absolute right-2 top-2 z-10"
-                              />
-                              {!safe ? (
-                                <div className="relative h-full overflow-hidden rounded-lg object-cover">
-                                  <MediaHash {...image} />
-                                </div>
-                              ) : (
-                                <EdgeMedia
-                                  src={image.url}
-                                  className="h-full rounded-lg object-cover"
-                                  name={image.name}
-                                  alt={article.title}
-                                  type={image.type}
-                                  width={MAX_WIDTH}
-                                  anim={safe}
+                  {/*
+                    AspectRatio sizes every direct child, and ImageGuard2 renders
+                    the blur explainer as a sibling of its content — so the guard
+                    goes inside this div rather than around it, or the explainer
+                    becomes a second sized child positioned against the page
+                    instead of the cover. It is also the box the sticker overlay
+                    measures the media against, which needs one shared offset
+                    parent.
+                  */}
+                  <div className="relative size-full">
+                    <ImageGuard2 image={image} connectType="article" connectId={article.id}>
+                      {(safe) => (
+                        <>
+                          <RoutedDialogLink
+                            name="imageDetail"
+                            state={{ imageId: image.id, withoutPost: true }}
+                            className="block size-full cursor-pointer"
+                          >
+                            <Center className="size-full">
+                              <div className="relative size-full">
+                                <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                                <ImageContextMenu
+                                  image={image}
+                                  noDelete={true}
+                                  className="absolute right-2 top-2 z-10"
                                 />
-                              )}
-                            </>
-                          )}
-                        </ImageGuard2>
-                      </div>
-                    </Center>
-                  </RoutedDialogLink>
+                                {!safe ? (
+                                  <div className="relative h-full overflow-hidden rounded-lg object-cover">
+                                    <MediaHash {...image} />
+                                  </div>
+                                ) : (
+                                  <EdgeMedia
+                                    src={image.url}
+                                    className="h-full rounded-lg object-cover"
+                                    name={image.name}
+                                    alt={article.title}
+                                    type={image.type}
+                                    width={MAX_WIDTH}
+                                    anim={safe}
+                                  />
+                                )}
+                              </div>
+                            </Center>
+                          </RoutedDialogLink>
+                          <ArticleCoverStickers imageId={image.id} safe={safe} />
+                        </>
+                      )}
+                    </ImageGuard2>
+                  </div>
                 </AspectRatio>
               )}
 
