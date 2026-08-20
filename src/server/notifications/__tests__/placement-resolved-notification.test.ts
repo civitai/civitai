@@ -146,6 +146,13 @@ describe('the remix type stops announcing declines', () => {
     // removal writes `removedBy = 'moderator'` and dropped out of this branch,
     // so the submitter stopped being told about a removal by the creator.
     expect(sql).toContain('p."takenDownById" = p."ownerId"');
+    // The role filter is GONE, deliberately, and this assertion is what says so.
+    // `removePlacementByModerator` and `removePlacementsByUser` are not
+    // surface-scoped, so a moderator removing from their OWN remix gallery
+    // through either writes `removedBy: 'moderator'` with `takenDownById =
+    // ownerId` — the one combination the old and new predicates disagree about.
+    // It now notifies, which is the intended reading of "the actor was the
+    // owner" rather than a side effect of the swap.
     expect(sql).not.toContain('p."removedBy" = \'owner\'');
     // Same two mutations the sticker type is guarded against, and they survive
     // every assertion above on this one too.
