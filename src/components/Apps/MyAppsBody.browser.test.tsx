@@ -1,0 +1,721 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
+
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import type * as MantineHooks from '@mantine/hooks';
+import type { MyAppRow } from '~/components/Apps/myAppsView';
+import type { MyAppHistoryEntry } from './MyAppsBody';
+import type * as TrpcModule from '~/utils/trpc';
+import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
+
+/**
+ * `/apps/mine` — the ONE merged author table.
+ *
+ * 🔴 SCOPE, STATED HONESTLY BECAUSE THE MOCKS ARE HEAVY. What these tests exercise for
+ * real: the active/inactive partition, the collapse's a11y state + count + pagination
+ * boundary, the placeholder-vs-image branch, the link-vs-no-link status gate, the per-row
+ * href derivation, and — in the container block at the bottom — whether the history query
+ * is issued at all. What is mock-shadowed: the data layer entirely, and every visual
+ * property (the `component` project loads NO CSS, so nothing here is a claim about
+ * layout). The mobile card layout is exercised by passing `compact`, which is the SAME
+ * boolean the container derives from `useMediaQuery` — the derivation itself is pinned in
+ * the container block, not inferred here.
+ *
+ * 🔴 RED-AT-MAIN HONESTY: this file cannot exist on `origin/main` at all, because the
+ * component it imports does not. So "red before, green after" is true but weak on its own —
+ * the substantive red→green for the collaborator/transfer population is the SERVER test
+ * (`app-access.my-app-listings-media.test.ts`), which fails on `origin/main` for a
+ * behavioural reason rather than a missing module.
+ */
+
+const mocks = vi.hoisted(() => ({
+  compact: false as boolean,
+  /** Rows the container's `listMine` query resolves to. */
+  rows: [] as unknown[],
+  /** Every `listingHistory.useQuery(input, opts)` call, in order. */
+  historyCalls: [] as Array<{ input: { appListingId: string }; enabled: boolean }>,
+}));
+
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
+  trpc: {
+    useUtils: () => ({
+      appListings: {
+        listingHistory: { invalidate: vi.fn() },
+        listMine: { invalidate: vi.fn() },
+      },
+    }),
+    appListings: {
+      listMine: {
+        useQuery: () => ({ data: mocks.rows, isLoading: false, error: null }),
+      },
+      listingHistory: {
+        useQuery: (input: { appListingId: string }, opts: { enabled: boolean }) => {
+          mocks.historyCalls.push({ input, enabled: opts.enabled });
+          return { data: [], isLoading: false, error: null };
+        },
+      },
+      withdrawExternalRequest: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+    },
+    blocks: {
+      withdrawPublishRequest: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+    },
+  },
+}));
+
+vi.mock('@mantine/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof MantineHooks>()),
+  // The real hook measures the real viewport, which is not deterministic under a test
+  // runner — force the branch per test instead.
+  useMediaQuery: () => mocks.compact,
+}));
+
+vi.mock('~/utils/notifications', () => ({
+  showErrorNotification: vi.fn(),
+  showSuccessNotification: vi.fn(),
+}));
+
+const { MyAppsBody, MyAppsBodyView, historyPanelId } = await import('./MyAppsBody');
+
+/**
+ * Fixtures are pairwise distinct on every dimension an assertion names — id, slug, status,
+ * kind, role, media presence — so a mutant that hardcodes any one literal cannot pass by
+ * coincidentally matching a fixture that could only ever have produced that value.
+ */
+function row(over: Partial<MyAppRow> & { appListingId: string }): MyAppRow {
+  const kind = over.kind ?? 'onsite';
+  return {
+    slug: `slug-${over.appListingId}`,
+    name: `Name ${over.appListingId}`,
+    status: 'approved',
+    kind,
+    appBlockId: kind === 'onsite' ? `ab-${over.appListingId}` : null,
+    role: 'owner',
+    capabilities: capabilitiesForKind(kind),
+    iconUrl: null,
+    coverUrl: null,
+    updatedAt: '2026-08-01T00:00:00Z',
+    ...over,
+    // `capabilities` must follow the FINAL kind, not the default one.
+    ...(over.capabilities ? {} : { capabilities: capabilitiesForKind(over.kind ?? kind) }),
+  };
+}
+
+function entry(over: Partial<MyAppHistoryEntry> & { id: string }): MyAppHistoryEntry {
+  return {
+    source: 'version',
+    status: 'approved',
+    version: '1.0.0',
+    submittedAt: '2026-07-01T00:00:00Z',
+    reviewedAt: null,
+    rejectionReason: null,
+    approvalNotes: null,
+    changelog: null,
+    deployState: null,
+    ...over,
+  };
+}
+
+beforeEach(() => {
+  mocks.compact = false;
+  mocks.rows = [];
+  mocks.historyCalls = [];
+});
+
+/* ------------------------------------------------------------------ *
+ * The three populations `/apps/mine` exists for
+ * ------------------------------------------------------------------ */
+
+describe('🔴 one table, all three populations `/apps/my-submissions` could not serve', () => {
+  /**
+   * The regression a naive merge reintroduces. `/apps/my-submissions` read publish
+   * requests scoped to `submittedByUserId`; a collaborator submitted nothing, and an owner
+   * who acquired a listing by TRANSFER or by moderator CLAIM did not submit it either. All
+   * three must be rows in the ONE table.
+   */
+  test('owner, accepted collaborator and a transferred/mod-claimed app all render', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({ appListingId: 'apl_owned', role: 'owner', status: 'approved' }),
+          row({
+            appListingId: 'apl_seat',
+            role: 'editor',
+            status: 'pending',
+            kind: 'offsite',
+          }),
+          // Acquired by transfer / mod claim: indistinguishable at this seam by
+          // construction — both are "owner who never submitted".
+          row({ appListingId: 'apl_transferred', role: 'owner', status: 'draft' }),
+        ]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-row-apl_owned')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mine-row-apl_seat')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mine-row-apl_transferred')).toBeInTheDocument();
+    // The seat row is labelled as a seat, not silently shown as ownership.
+    await expect
+      .element(page.getByTestId('apps-mine-role-apl_seat'))
+      .toHaveTextContent(/collaborator/i);
+    await expect.element(page.getByTestId('apps-mine-role-apl_owned')).toHaveTextContent(/owner/i);
+  });
+
+  test('ON-SITE and OFF-SITE render in the SAME table, each labelled by kind', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({ appListingId: 'apl_on', kind: 'onsite', status: 'approved' }),
+          row({ appListingId: 'apl_off', kind: 'offsite', status: 'pending' }),
+        ]}
+      />
+    );
+    const table = page.getByTestId('apps-mine-table');
+    await expect.element(table).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mine-kind-apl_on')).toHaveTextContent(/on-site/i);
+    await expect.element(page.getByTestId('apps-mine-kind-apl_off')).toHaveTextContent(/external/i);
+    // ONE table, not two sections: both rows are inside it.
+    expect(table.element().querySelectorAll('[data-testid^="apps-mine-row-"]')).toHaveLength(2);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The active / inactive partition
+ * ------------------------------------------------------------------ */
+
+describe('🔴 the active/inactive partition is LISTING-level and terminal-only', () => {
+  test('draft, pending and approved are in the MAIN table', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({ appListingId: 'apl_d', status: 'draft' }),
+          row({ appListingId: 'apl_p', status: 'pending', kind: 'offsite' }),
+          row({ appListingId: 'apl_a', status: 'approved' }),
+        ]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-row-apl_d')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mine-row-apl_p')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mine-row-apl_a')).toBeInTheDocument();
+    // …and there is no collapse at all, because nothing is inactive.
+    expect(page.getByTestId('apps-mine-inactive-toggle').elements()).toHaveLength(0);
+  });
+
+  test('a DRAFT is never filed under Inactive', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({ appListingId: 'apl_draft', status: 'draft' }),
+          row({ appListingId: 'apl_removed', status: 'removed', kind: 'offsite' }),
+        ]}
+      />
+    );
+    // Present as an ACTIVE row…
+    await expect.element(page.getByTestId('apps-mine-row-apl_draft')).toBeInTheDocument();
+    // …and absent from the inactive group, whose testid namespace is separate.
+    expect(page.getByTestId('apps-mine-inactive-row-apl_draft').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-mine-inactive-row-apl_removed').elements()).toHaveLength(1);
+  });
+
+  test('rejected and removed go to the collapse', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({ appListingId: 'apl_rej', status: 'rejected' }),
+          row({ appListingId: 'apl_rem', status: 'removed', kind: 'offsite' }),
+          row({ appListingId: 'apl_ok', status: 'approved' }),
+        ]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-row-apl_ok')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-row-apl_rej').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-mine-inactive-row-apl_rej').elements()).toHaveLength(1);
+    expect(page.getByTestId('apps-mine-inactive-row-apl_rem').elements()).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 DECISION #2's core invariant, at the UI. A WITHDRAWN submission is an event on an
+   * app; it is not a listing state and must not move the app anywhere. The app stays in the
+   * main table AND the withdrawn request is visible in its nested history.
+   */
+  test('🔴 a WITHDRAWN submission on an APPROVED app keeps the app ACTIVE, with the request in its history', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_live', status: 'approved', kind: 'offsite' })]}
+        expandedId="apl_live"
+        history={[
+          entry({ id: 'req_wd', source: 'listing', status: 'withdrawn', version: null }),
+          entry({ id: 'req_ok', source: 'version', status: 'approved', version: '2.1.0' }),
+        ]}
+      />
+    );
+    // ACTIVE — in the main table, and NOT in the inactive namespace.
+    await expect.element(page.getByTestId('apps-mine-row-apl_live')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-inactive-row-apl_live').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-mine-inactive-toggle').elements()).toHaveLength(0);
+    // …and the withdrawn request is still visible, as history.
+    await expect
+      .element(page.getByTestId('apps-mine-history-status-req_wd'))
+      .toHaveTextContent(/withdrawn/i);
+    await expect.element(page.getByTestId('apps-mine-history-entry-req_ok')).toBeInTheDocument();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Media
+ * ------------------------------------------------------------------ */
+
+describe('icon + cover, and the placeholder path', () => {
+  test('renders both images with FIXED dimensions and lazy loading', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({
+            appListingId: 'apl_media',
+            status: 'approved',
+            // 🔴 A data: URI, not an http(s) URL. Nothing serves an http source to the
+            // test browser, so the <img> fires a real `error` event ~11 ms after mount and
+            // any "the image exists" assertion races that window — green locally, flaky on
+            // a loaded CI box (local-rules/no-unloadable-image-fixture).
+            iconUrl: LOADABLE_IMAGE_DATA_URI,
+            coverUrl: LOADABLE_IMAGE_DATA_URI,
+          }),
+        ]}
+      />
+    );
+    const icon = page.getByTestId('apps-mine-icon-apl_media');
+    await expect.element(icon).toBeInTheDocument();
+    const iconEl = icon.element() as HTMLImageElement;
+    // 🔴 Attributes, not computed style. The harness loads no CSS, so a `getComputedStyle`
+    // assertion here would be vacuous; the width/height ATTRIBUTES are what actually
+    // reserve the box before the bytes arrive, which is the CLS property being pinned.
+    expect(iconEl.getAttribute('width')).toBeTruthy();
+    expect(iconEl.getAttribute('height')).toBeTruthy();
+    expect(iconEl.getAttribute('loading')).toBe('lazy');
+
+    const coverEl = page.getByTestId('apps-mine-cover-apl_media').element() as HTMLImageElement;
+    expect(coverEl.getAttribute('width')).toBeTruthy();
+    expect(coverEl.getAttribute('height')).toBeTruthy();
+    expect(coverEl.getAttribute('loading')).toBe('lazy');
+  });
+
+  /**
+   * 🔴 THE PLACEHOLDER IS THE MAIN RENDER PATH FOR THE INACTIVE TABLE, not an edge case:
+   * measured on production 2026-08-19, all 11 `removed` listings have `cover_id IS NULL`
+   * and 10 of the 11 have an icon. So the exact shape fixtured here — icon present, cover
+   * absent, status `removed` — is what the collapse actually renders today.
+   */
+  test('🔴 a removed listing with an icon and NO cover renders the cover placeholder', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({
+            appListingId: 'apl_gone',
+            status: 'removed',
+            iconUrl: LOADABLE_IMAGE_DATA_URI,
+            coverUrl: null,
+          }),
+        ]}
+      />
+    );
+    // 🔴 AWAIT THE ELEMENT BEFORE CLICKING. `renderWithProviders` commits
+    // asynchronously in browser mode, so a synchronous `.element()` here races the
+    // mount and reports "Cannot find element" against an empty <body>.
+    await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
+    await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
+    await expect
+      .element(page.getByTestId('apps-mine-cover-placeholder-apl_gone'))
+      .toBeInTheDocument();
+    // The icon is a real image; only the cover falls back.
+    await expect.element(page.getByTestId('apps-mine-icon-apl_gone')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-cover-apl_gone').elements()).toHaveLength(0);
+  });
+
+  test('a listing with NO icon renders the icon placeholder', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_bare', status: 'pending', iconUrl: null })]}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-mine-icon-placeholder-apl_bare'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-icon-apl_bare').elements()).toHaveLength(0);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Per-row capability / href gating
+ * ------------------------------------------------------------------ */
+
+describe('🔴 per-row gating survives the merge', () => {
+  /**
+   * The edit affordance is the NAME LINK, and it is withheld exactly when
+   * `getAppListingAuthoringContext` would throw FORBIDDEN — a `removed` or `rejected`
+   * listing. Flattening every row to an unconditional `/edit` link would offer a
+   * guaranteed 403, and on a removed listing that page used to open with a fully live
+   * Collaborators tab.
+   */
+  test('a REMOVED row has no edit link, only dimmed text', async () => {
+    renderWithProviders(
+      <MyAppsBodyView rows={[row({ appListingId: 'apl_rm', status: 'removed' })]} />
+    );
+    // 🔴 AWAIT THE ELEMENT BEFORE CLICKING. `renderWithProviders` commits
+    // asynchronously in browser mode, so a synchronous `.element()` here races the
+    // mount and reports "Cannot find element" against an empty <body>.
+    await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
+    await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
+    await expect.element(page.getByTestId('apps-mine-unlinked-apl_rm')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-link-apl_rm').elements()).toHaveLength(0);
+  });
+
+  test('a REJECTED row has no edit link either', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_rj', status: 'rejected', kind: 'offsite' })]}
+      />
+    );
+    // 🔴 AWAIT THE ELEMENT BEFORE CLICKING. `renderWithProviders` commits
+    // asynchronously in browser mode, so a synchronous `.element()` here races the
+    // mount and reports "Cannot find element" against an empty <body>.
+    await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
+    await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
+    await expect.element(page.getByTestId('apps-mine-unlinked-apl_rj')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-link-apl_rj').elements()).toHaveLength(0);
+  });
+
+  test('an APPROVED row does link, and the href is derived PER ROW', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({ appListingId: 'apl_one', status: 'approved', kind: 'onsite' }),
+          row({ appListingId: 'apl_two', status: 'draft', kind: 'offsite' }),
+        ]}
+      />
+    );
+    const a = page.getByTestId('apps-mine-link-apl_one');
+    await expect.element(a).toBeInTheDocument();
+    // Listing-keyed and per-row — NOT one shared href, and never block-keyed (an off-site
+    // listing has no block id to build such a URL with).
+    expect(a.element().getAttribute('href')).toBe('/apps/listing/apl_one/edit?tab=details');
+    expect(page.getByTestId('apps-mine-link-apl_two').element().getAttribute('href')).toBe(
+      '/apps/listing/apl_two/edit?tab=details'
+    );
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The Inactive collapse
+ * ------------------------------------------------------------------ */
+
+describe('the Inactive collapse', () => {
+  const inactiveRows = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      row({
+        appListingId: `apl_x${String(i).padStart(2, '0')}`,
+        status: i % 2 === 0 ? 'removed' : 'rejected',
+        kind: i % 3 === 0 ? 'offsite' : 'onsite',
+        updatedAt: `2026-0${(i % 9) + 1}-01T00:00:00Z`,
+      })
+    );
+
+  test('is COLLAPSED by default and reports its count in the header', async () => {
+    renderWithProviders(
+      <MyAppsBodyView rows={[row({ appListingId: 'apl_live' }), ...inactiveRows(3)]} />
+    );
+    const toggle = page.getByTestId('apps-mine-inactive-toggle');
+    await expect.element(toggle).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mine-inactive-count')).toHaveTextContent('3');
+    // 🔴 The a11y STATE, not merely the attribute's presence.
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  test('🔴 aria-expanded FLIPS on click and aria-controls names a real element', async () => {
+    renderWithProviders(<MyAppsBodyView rows={inactiveRows(2)} />);
+    const toggle = page.getByTestId('apps-mine-inactive-toggle');
+    await expect.element(toggle).toBeInTheDocument();
+    const controls = toggle.element().getAttribute('aria-controls');
+    expect(controls).toBe('apps-mine-inactive-panel');
+    // The id it points at must EXIST — an `aria-controls` naming nothing is worse than none.
+    expect(document.getElementById(controls as string)).not.toBeNull();
+
+    await userEvent.click(toggle.element());
+    await expect
+      .element(page.getByTestId('apps-mine-inactive-toggle'))
+      .toHaveAttribute('aria-expanded', 'true');
+    // 🔴 AWAIT THE ELEMENT BEFORE CLICKING. `renderWithProviders` commits
+    // asynchronously in browser mode, so a synchronous `.element()` here races the
+    // mount and reports "Cannot find element" against an empty <body>.
+    await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
+    await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
+    await expect
+      .element(page.getByTestId('apps-mine-inactive-toggle'))
+      .toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('paginates past the page size, and the LAST page holds the remainder', async () => {
+    // 23 inactive rows over a page size of 10 → 3 pages, the last holding 3.
+    renderWithProviders(<MyAppsBodyView rows={inactiveRows(23)} />);
+    // 🔴 AWAIT THE ELEMENT BEFORE CLICKING. `renderWithProviders` commits
+    // asynchronously in browser mode, so a synchronous `.element()` here races the
+    // mount and reports "Cannot find element" against an empty <body>.
+    await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
+    await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
+    const panel = page.getByTestId('apps-mine-inactive-panel');
+    await expect.element(panel).toBeInTheDocument();
+    const count = () =>
+      panel.element().querySelectorAll('[data-testid^="apps-mine-inactive-row-"]').length;
+    expect(count()).toBe(10);
+    await expect.element(page.getByTestId('apps-mine-inactive-pagination')).toBeInTheDocument();
+
+    // 🔴 THE BOUNDARY: page 3 is the short one. A `Math.floor` page count would render 2
+    // pages and silently drop the last 3 apps out of the only surface that lists them.
+    //
+    // Scoped to the pagination container: a document-wide `getByRole('button', {name:'3'})`
+    // ALSO matches the Inactive toggle, whose accessible name carries the count badge
+    // ("Inactive 23") — a strict-mode violation, and a reminder that the count really is
+    // part of the control's name.
+    const pageThree = page
+      .getByTestId('apps-mine-inactive-pagination')
+      .getByRole('button', { name: '3' });
+    await expect.element(pageThree).toBeInTheDocument();
+    await userEvent.click(pageThree.element());
+    await expect.element(page.getByTestId('apps-mine-inactive-panel')).toBeInTheDocument();
+    expect(count()).toBe(3);
+  });
+
+  test('no pagination control when everything fits on one page', async () => {
+    renderWithProviders(<MyAppsBodyView rows={inactiveRows(4)} />);
+    // 🔴 AWAIT THE ELEMENT BEFORE CLICKING. `renderWithProviders` commits
+    // asynchronously in browser mode, so a synchronous `.element()` here races the
+    // mount and reports "Cannot find element" against an empty <body>.
+    await expect.element(page.getByTestId('apps-mine-inactive-toggle')).toBeInTheDocument();
+    await userEvent.click(page.getByTestId('apps-mine-inactive-toggle').element());
+    await expect.element(page.getByTestId('apps-mine-inactive-panel')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-inactive-pagination').elements()).toHaveLength(0);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Empty / error / loading, and the mobile layout
+ * ------------------------------------------------------------------ */
+
+describe('empty, error and the card layout', () => {
+  test('an empty account says so — not a blank page', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[]} />);
+    await expect.element(page.getByTestId('apps-mine-empty')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-table').elements()).toHaveLength(0);
+  });
+
+  test('a failed read shows the error, never an empty state', async () => {
+    renderWithProviders(<MyAppsBodyView rows={[]} errorMessage="Apps authoring is not enabled" />);
+    await expect.element(page.getByTestId('apps-mine-error')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-empty').elements()).toHaveLength(0);
+  });
+
+  test('an account whose apps are ALL inactive gets its own empty state, not a bare page', async () => {
+    renderWithProviders(
+      <MyAppsBodyView rows={[row({ appListingId: 'apl_only', status: 'removed' })]} />
+    );
+    await expect.element(page.getByTestId('apps-mine-active-empty')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mine-inactive-count')).toHaveTextContent('1');
+  });
+
+  /**
+   * 🔴 EXACTLY ONE LAYOUT IS RENDERED. If both were emitted and hidden with CSS, every
+   * document-scoped query would resolve to two elements — and the harness loads no CSS, so
+   * "hidden" would not even be true here.
+   */
+  test('compact renders CARDS, not a scrolling table — and only one copy of each row', async () => {
+    mocks.compact = true;
+    renderWithProviders(
+      <MyAppsBodyView
+        compact
+        rows={[row({ appListingId: 'apl_m1' }), row({ appListingId: 'apl_m2', kind: 'offsite' })]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-row-apl_m1')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-row-apl_m1').elements()).toHaveLength(1);
+    // No `<table>` in the card layout at all.
+    expect(document.querySelectorAll('table')).toHaveLength(0);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The nested history panel
+ * ------------------------------------------------------------------ */
+
+describe('nested history', () => {
+  test('the toggle reports its own row state, and the panel id is row-scoped', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_h1' }), row({ appListingId: 'apl_h2', kind: 'offsite' })]}
+        expandedId="apl_h1"
+        history={[entry({ id: 'req_1', version: '3.0.0' })]}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-mine-expand-apl_h1'))
+      .toHaveAttribute('aria-expanded', 'true');
+    await expect
+      .element(page.getByTestId('apps-mine-expand-apl_h2'))
+      .toHaveAttribute('aria-expanded', 'false');
+    expect(
+      page.getByTestId('apps-mine-expand-apl_h1').element().getAttribute('aria-controls')
+    ).toBe(historyPanelId('apl_h1'));
+    // The OPEN row shows its entries; the closed one shows none.
+    await expect.element(page.getByTestId('apps-mine-history-entry-req_1')).toBeInTheDocument();
+    expect(
+      page
+        .getByTestId(historyPanelId('apl_h2'))
+        .element()
+        .querySelectorAll('[data-testid^="apps-mine-history-entry-"]')
+    ).toHaveLength(0);
+  });
+
+  test('BOTH publish-request streams appear, tagged by source, without duplication', async () => {
+    // The two tables are disjoint event streams over one app — see
+    // `app-listing-history.service`'s header. A version bump and a listing edit are
+    // different events and must BOTH show.
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_hist' })]}
+        expandedId="apl_hist"
+        history={[
+          entry({ id: 'blk_1', source: 'version', status: 'approved', version: '4.2.0' }),
+          entry({ id: 'lst_1', source: 'listing', status: 'pending', version: null }),
+        ]}
+      />
+    );
+    const blk = page.getByTestId('apps-mine-history-entry-blk_1');
+    await expect.element(blk).toBeInTheDocument();
+    expect(blk.element().getAttribute('data-history-source')).toBe('version');
+    await expect.element(blk).toHaveTextContent('4.2.0');
+    const lst = page.getByTestId('apps-mine-history-entry-lst_1');
+    expect(lst.element().getAttribute('data-history-source')).toBe('listing');
+    await expect.element(lst).toHaveTextContent(/listing edit/i);
+    // One element each — a merged read that failed to distinguish the streams would
+    // render the same event twice.
+    expect(blk.elements()).toHaveLength(1);
+    expect(lst.elements()).toHaveLength(1);
+  });
+
+  test('an app with no history says so rather than rendering an empty box', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_none' })]}
+        expandedId="apl_none"
+        history={[]}
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-history-empty-apl_none')).toBeInTheDocument();
+  });
+
+  test('a failed history read shows an error scoped to that row', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_err' })]}
+        expandedId="apl_err"
+        historyError="nope"
+      />
+    );
+    await expect.element(page.getByTestId('apps-mine-history-error-apl_err')).toBeInTheDocument();
+  });
+
+  test('Withdraw is offered only on a PENDING entry', async () => {
+    const withdrawn: MyAppHistoryEntry[] = [
+      entry({ id: 'pend_1', status: 'pending' }),
+      entry({ id: 'appr_1', status: 'approved' }),
+    ];
+    const seen: string[] = [];
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_w' })]}
+        expandedId="apl_w"
+        history={withdrawn}
+        onWithdraw={(e) => seen.push(e.id)}
+      />
+    );
+    const btn = page.getByTestId('apps-mine-history-withdraw-pend_1');
+    await expect.element(btn).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-history-withdraw-appr_1').elements()).toHaveLength(0);
+    await userEvent.click(btn.element());
+    expect(seen).toEqual(['pend_1']);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The container — the LAZY history query
+ * ------------------------------------------------------------------ */
+
+describe('MyAppsBody (container) — history is fetched on EXPAND, not up front', () => {
+  /**
+   * 🔴 THE COST THE MERGE WAS SUPPOSED TO REMOVE. `/apps/my-submissions` issued TWO
+   * unbounded per-user reads on mount — `blocks.listMyPublishRequests` (which itself fans
+   * out to four more queries) and `appListings.listMySubmissions` — to render history
+   * nobody had asked to see. The merged page renders from `listMine` alone.
+   *
+   * 🔴 GATE CAVEAT, stated because it is the honest limit of this technique: the stub
+   * returns data regardless of `enabled`, so the laziness is pinned by reading the
+   * `enabled` ARGUMENT off the recorded calls, not by observing that no fetch happened.
+   * A behavioural version would need a real query client and a real transport.
+   */
+  test('🔴 on first render the history query is DISABLED — nothing is fetched', async () => {
+    mocks.rows = [row({ appListingId: 'apl_lazy1' }), row({ appListingId: 'apl_lazy2' })];
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-row-apl_lazy1')).toBeInTheDocument();
+
+    // Read `.mock`-style state only AFTER an awaited element — render is async-committed.
+    expect(mocks.historyCalls.length).toBeGreaterThan(0); // positive control: the hook ran
+    expect(mocks.historyCalls.every((c) => c.enabled === false)).toBe(true);
+    // …and ONE hook for the whole table, not one per row — the fan-out this replaces.
+    expect(new Set(mocks.historyCalls.map((c) => c.input.appListingId))).toEqual(new Set(['']));
+  });
+
+  test('🔴 expanding a row enables the query FOR THAT ROW', async () => {
+    mocks.rows = [row({ appListingId: 'apl_lazy1' }), row({ appListingId: 'apl_lazy2' })];
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-expand-apl_lazy2')).toBeInTheDocument();
+    const before = mocks.historyCalls.length;
+
+    await userEvent.click(page.getByTestId('apps-mine-expand-apl_lazy2').element());
+    await expect
+      .element(page.getByTestId('apps-mine-expand-apl_lazy2'))
+      .toHaveAttribute('aria-expanded', 'true');
+
+    const after = mocks.historyCalls.slice(before);
+    expect(after.length).toBeGreaterThan(0);
+    const enabled = after.filter((c) => c.enabled);
+    expect(enabled.length).toBeGreaterThan(0);
+    // The id is the row that was opened — not the first row, and not the other one.
+    expect(new Set(enabled.map((c) => c.input.appListingId))).toEqual(new Set(['apl_lazy2']));
+  });
+
+  test('collapsing the row disables it again', async () => {
+    mocks.rows = [row({ appListingId: 'apl_lazy1' })];
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-expand-apl_lazy1')).toBeInTheDocument();
+    await userEvent.click(page.getByTestId('apps-mine-expand-apl_lazy1').element());
+    await expect
+      .element(page.getByTestId('apps-mine-expand-apl_lazy1'))
+      .toHaveAttribute('aria-expanded', 'true');
+    await userEvent.click(page.getByTestId('apps-mine-expand-apl_lazy1').element());
+    await expect
+      .element(page.getByTestId('apps-mine-expand-apl_lazy1'))
+      .toHaveAttribute('aria-expanded', 'false');
+    expect(mocks.historyCalls.at(-1)?.enabled).toBe(false);
+  });
+
+  /**
+   * 🔴 THE ROW SOURCE IS `appListings.listMine`. This is the single most load-bearing
+   * property of the consolidation: the trpc mock supplies ONLY `listMine` as a row source,
+   * so a container re-derived from `listMySubmissions` / `listMyPublishRequests` would
+   * render the empty state here rather than the rows.
+   */
+  test('🔴 rows come from listMine — the ownership∪seat read', async () => {
+    mocks.rows = [row({ appListingId: 'apl_from_listmine', role: 'editor', kind: 'offsite' })];
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-row-apl_from_listmine')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-empty').elements()).toHaveLength(0);
+  });
+});

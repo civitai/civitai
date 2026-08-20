@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
+import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type {
   AppRole,
   ListingCapability,
@@ -787,6 +788,35 @@ export type MyAppListing = {
    * rendering a guaranteed 403.
    */
   capabilities: Readonly<Record<ListingCapability, boolean>>;
+  /**
+   * The listing's ICON as a CDN URL, or `null` when it has none.
+   *
+   * 🔴 CARRIED BECAUSE THE CONSUMER IS THE ROW ITSELF, which is the bar the
+   * `connectClientId` note below sets. `/apps/mine` is now the one author-facing table for
+   * every listing, on-site and off-site, and a table of apps that cannot show the apps is
+   * not the surface. It is a MEDIA URL derived from `Image.url` — the same string the
+   * PUBLIC store card already serves for an approved listing — so it discloses nothing to
+   * a seated editor that the store does not, and for a `draft` it discloses that editor's
+   * own collaborators' work, which the seat is exactly consent for.
+   *
+   * `null` is a REAL STATE, not an error: measured on production 2026-08-19, all 11
+   * `removed` listings have `cover_id IS NULL`, so the placeholder path is the main render
+   * path for the Inactive table rather than an edge case.
+   */
+  iconUrl: string | null;
+  /**
+   * The listing's COVER as a CDN URL, or `null`.
+   *
+   * 🔴 NO SCREENSHOT FALLBACK HERE, unlike the public store card — see
+   * {@link listingCoverUrl}. A missing cover is the fact its author needs to see.
+   */
+  coverUrl: string | null;
+  /**
+   * Last write to the listing row. Drives the table's default "recently updated first"
+   * order, computed client-side so the server's `serialId` keyset (which is what makes
+   * `take: limit` deterministic) is untouched.
+   */
+  updatedAt: Date;
 };
 
 /**
@@ -803,9 +833,21 @@ export type MyAppListing = {
  * and bought nothing, which is precisely why it should not be paid.
  *
  * So the field is carried ONLY on the read that has a consumer. If a list surface ever
- * needs it, widen `MyAppListing` then — with the consumer, and a test that pins it.
+ * needs it, widen `MyAppListing` then — with the consumer, and a test that pins it. (That
+ * is precisely what happened for `iconUrl`/`coverUrl`/`updatedAt`: the merged `/apps/mine`
+ * table is the consumer, and `app-access.my-app-listings-media.test.ts` pins them.)
+ *
+ * 🔴 AND THE SAME RULE RUNS THE OTHER WAY, which is why this is an `Omit` and not a bare
+ * `&`. The authoring page reads `kind`/`appBlockId`/`role`/`capabilities`/`name` and
+ * nothing else; it has no consumer for the three LIST-only fields, and inheriting them
+ * would oblige `getAppListingAuthoringContext` to join `Image` twice per page load to
+ * populate columns nobody renders. Narrowing here keeps each read carrying exactly what
+ * its own surface uses.
  */
-export type AppListingAuthoringContext = MyAppListing & {
+export type AppListingAuthoringContext = Omit<
+  MyAppListing,
+  'iconUrl' | 'coverUrl' | 'updatedAt'
+> & {
   /**
    * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
    * column the public listing-detail read already exposes (`ListingDetailKindData`).
@@ -832,7 +874,22 @@ async function hydrateMyAppListings(
     // 🔴 NO `connectClientId` HERE, deliberately — see {@link AppListingAuthoringContext}.
     // This is a LIST read reachable by an accepted editor; only the single-listing
     // authoring read has a consumer for that column.
-    select: { id: true, slug: true, name: true, status: true, kind: true, appBlockId: true },
+    //
+    // 🔴 `icon`/`cover` ARE NESTED RELATION SELECTS ON THE SAME `findMany`, not a second
+    // query. `app_listings.icon_id`/`cover_id` are integer FKs to `Image`, so the URL is
+    // one join away; doing it here keeps this read at ONE hydrate query, which
+    // `app-access.accessible-listings.test.ts` pins by call count.
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      status: true,
+      kind: true,
+      appBlockId: true,
+      updatedAt: true,
+      icon: { select: { url: true } },
+      cover: { select: { url: true } },
+    },
     orderBy: { serialId: 'desc' },
     take: limit,
   });
@@ -845,6 +902,9 @@ async function hydrateMyAppListings(
       status: string;
       kind: string;
       appBlockId: string | null;
+      updatedAt?: Date | null;
+      icon?: { url: string | null } | null;
+      cover?: { url: string | null } | null;
     }) => {
       const kind = r.kind as ListingKind;
       return {
@@ -856,6 +916,14 @@ async function hydrateMyAppListings(
         appBlockId: r.appBlockId,
         role: (ownedSet.has(r.id) ? 'owner' : 'editor') as AppRole,
         capabilities: capabilitiesForKind(kind),
+        iconUrl: listingIconUrl(r.icon),
+        // 🔴 `null`, NOT a screenshot — see {@link listingCoverUrl}. The author must be
+        // able to see that their own cover is missing.
+        coverUrl: listingCoverUrl(r.cover, null),
+        // A narrow test fake that ignores `select` yields `undefined` here; the epoch
+        // keeps the row sortable rather than producing an `Invalid Date` that poisons
+        // every comparison it takes part in.
+        updatedAt: r.updatedAt ?? new Date(0),
       };
     }
   );

@@ -371,10 +371,10 @@ export function AppBlockChrome({
             </Menu.Item>
             <Menu.Item
               component={Link}
-              href="/apps/my-submissions"
+              href="/apps/mine"
               leftSection={<IconUpload size={14} stroke={1.5} />}
             >
-              My submissions
+              My apps
             </Menu.Item>
             {isModerator && (
               <Menu.Item

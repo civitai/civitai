@@ -1,0 +1,301 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * `listMyAppListings` — the MEDIA widening, and the ownership∪seat set it must not disturb.
+ *
+ * 🔴 WHY THIS FILE EXISTS AT ALL. The merged `/apps/mine` table shows an icon and a cover
+ * per row, and `app_listings.icon_id` / `cover_id` are integer FKs to `Image` — not URLs.
+ * So "show the images" is a SERVER change: the select has to reach `Image.url` and the row
+ * has to carry a CDN URL. That widening touches the one read that answers "which apps may
+ * I act on", which is the single most load-bearing property of the consolidation, so the
+ * three populations that read depends on are re-asserted here ALONGSIDE the new fields
+ * rather than in a separate file where they could drift apart.
+ *
+ * 🔴 THE THREE POPULATIONS ARE THE POINT. `/apps/my-submissions` was scoped to a publish
+ * request's `submittedByUserId`, and a naive merge onto that read silently loses:
+ *   (1) the accepted COLLABORATOR — submitted nothing, so every row is someone else's;
+ *   (2) the TRANSFER recipient — the request keeps the original submitter's id forever;
+ *   (3) the MODERATOR-CLAIMED owner — same mechanism as (2).
+ * (2) and (3) are indistinguishable at this seam by construction: both are "I own the
+ * listing and did not submit it", which is exactly the shape `submittedByUserId` cannot
+ * see and `resolveAccessibleListingIds` resolves correctly. Both are fixtured.
+ *
+ * DB deps mocked with the sibling convention (a `vi.hoisted` fake handed to `dbRead`).
+ */
+
+const { mockDb, mockWriteDb } = vi.hoisted(() => {
+  const make = () => ({
+    appBlock: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
+    appListing: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
+    appCollaborator: {
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
+  });
+  return { mockDb: make(), mockWriteDb: make() };
+});
+
+vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockWriteDb }));
+
+const { listMyAppListings } = await import('~/server/services/blocks/app-access.service');
+
+/** Distinct ids so no assertion's expected value can be produced by the wrong branch. */
+const OWNER = 11;
+const SEAT_HOLDER = 22;
+
+type Stored = {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  kind: string;
+  appBlockId: string | null;
+  updatedAt: Date;
+  icon: { url: string | null } | null;
+  cover: { url: string | null } | null;
+  /** `OauthClient.userId` reached via the block. `null` = no block. */
+  blockOwnerUserId: number | null;
+  /** The denormalized column. */
+  columnUserId: number;
+};
+
+function stored(over: Partial<Stored> & { id: string }): Stored {
+  return {
+    slug: `slug-${over.id}`,
+    name: `Name ${over.id}`,
+    status: 'approved',
+    kind: 'onsite',
+    appBlockId: null,
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
+    icon: null,
+    cover: null,
+    blockOwnerUserId: null,
+    columnUserId: OWNER,
+    ...over,
+  };
+}
+
+/**
+ * A fake `appListing.findMany` that HONOURS `select`.
+ *
+ * 🔴 That is the whole instrument. A fake that returns canned columns regardless of the
+ * query cannot distinguish "the select asks for the icon relation" from "it does not", so
+ * a mutant deleting `icon: { select: { url: true } }` from the real select would survive a
+ * fully green run. Here, projecting only what was asked for means the assertion on
+ * `iconUrl` is genuinely an assertion about the SELECT.
+ */
+function findManyFake(table: Stored[]) {
+  return async (...a: unknown[]): Promise<unknown[]> => {
+    const args = (a[0] ?? {}) as {
+      where?: { revisionOfId?: null; OR?: Array<Record<string, unknown>>; id?: { in: string[] } };
+      take?: number;
+      select?: Record<string, unknown>;
+    };
+    const where = args.where ?? {};
+    let rows = table;
+    if (where.id?.in) rows = rows.filter((r) => where.id!.in.includes(r.id));
+    if (where.OR) {
+      // The ownership probe. Kind-aware, written from the spec rather than copied from the
+      // implementation: onsite ⇒ the block's OauthClient owner (falling back to the column
+      // when there is no block); anything else ⇒ the column.
+      const userId = ((): number | undefined => {
+        for (const branch of where.OR) {
+          const block = branch.appBlock as { app?: { userId?: number } } | null | undefined;
+          if (block?.app?.userId != null) return block.app.userId;
+          if (typeof branch.userId === 'number') return branch.userId;
+        }
+        return undefined;
+      })();
+      rows = rows.filter((r) =>
+        r.kind === 'onsite' && r.blockOwnerUserId != null
+          ? r.blockOwnerUserId === userId
+          : r.columnUserId === userId
+      );
+    }
+    const select = args.select;
+    return rows.slice(0, args.take ?? rows.length).map((r) => {
+      if (!select) return { ...r };
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(select)) {
+        if (select[key]) out[key] = (r as unknown as Record<string, unknown>)[key];
+      }
+      return out;
+    });
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockDb.appListing.findMany.mockImplementation(async () => []);
+  mockDb.appCollaborator.findMany.mockImplementation(async () => []);
+});
+
+describe('listMyAppListings — media on the wire', () => {
+  it('🔴 projects icon_id/cover_id through to CDN URLs, not raw ids', async () => {
+    const table = [
+      stored({
+        id: 'apl_media',
+        kind: 'offsite',
+        status: 'draft',
+        columnUserId: OWNER,
+        icon: { url: 'icon-uuid-1' },
+        cover: { url: 'cover-uuid-1' },
+      }),
+    ];
+    mockDb.appListing.findMany.mockImplementation(findManyFake(table));
+
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows).toHaveLength(1);
+    // The exact CDN shape belongs to `getEdgeUrl`; what this pins is that the URL is
+    // DERIVED from the Image row rather than the FK being echoed back or dropped.
+    expect(rows[0].iconUrl).toEqual(expect.stringContaining('icon-uuid-1'));
+    expect(rows[0].coverUrl).toEqual(expect.stringContaining('cover-uuid-1'));
+    expect(rows[0].iconUrl).not.toBe('icon-uuid-1');
+  });
+
+  /**
+   * 🔴 THE PLACEHOLDER PATH IS THE MAIN PATH FOR THE INACTIVE TABLE. Measured on
+   * production 2026-08-19: all 11 `removed` listings have `cover_id IS NULL` (10 of 11 do
+   * have an icon). So `coverUrl === null` on a removed row is the ordinary case, and the
+   * server must say `null` — not omit the key, and not substitute something.
+   */
+  it('🔴 a removed listing with an icon but NO cover reports coverUrl null', async () => {
+    const table = [
+      stored({
+        id: 'apl_removed',
+        status: 'removed',
+        columnUserId: OWNER,
+        icon: { url: 'icon-uuid-2' },
+        cover: null,
+      }),
+    ];
+    mockDb.appListing.findMany.mockImplementation(findManyFake(table));
+
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows[0].iconUrl).toEqual(expect.stringContaining('icon-uuid-2'));
+    expect(rows[0].coverUrl).toBeNull();
+    expect('coverUrl' in rows[0]).toBe(true);
+  });
+
+  /**
+   * 🔴 NO SCREENSHOT FALLBACK ON THIS READ, unlike the public store card. A missing cover
+   * is the fact its author needs to see, and the advisory "no cover" warning already tells
+   * them so — a silent screenshot substitution here would make the table contradict the
+   * warning. Pinned by asserting the read never even asks for screenshots.
+   */
+  it('🔴 does not join screenshots — the author sees the real gap', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_x', columnUserId: OWNER })])
+    );
+    await listMyAppListings({ userId: OWNER });
+    const hydrateCall = mockDb.appListing.findMany.mock.calls.at(-1)?.[0] as {
+      select?: Record<string, unknown>;
+    };
+    expect(hydrateCall.select).toBeDefined();
+    expect(hydrateCall.select).toHaveProperty('icon');
+    expect(hydrateCall.select).toHaveProperty('cover');
+    expect(hydrateCall.select).not.toHaveProperty('screenshots');
+  });
+
+  it('carries updatedAt so the table can order by "recently updated"', async () => {
+    const when = new Date('2026-06-15T08:30:00Z');
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_when', columnUserId: OWNER, updatedAt: when })])
+    );
+    const rows = await listMyAppListings({ userId: OWNER });
+    expect(rows[0].updatedAt).toEqual(when);
+  });
+});
+
+describe('🔴 listMyAppListings — the ownership∪seat set is UNCHANGED by the widening', () => {
+  /**
+   * All three populations in ONE call, because the failure mode is a set, not a row: a
+   * merge onto the submissions read returns a STRICT SUBSET, and only comparing the whole
+   * set to the expectation can see that.
+   */
+  it('returns the owned, the seated, the transferred and the mod-claimed app together', async () => {
+    const table = [
+      // (1) plain ownership, on-site, via the block's OauthClient.
+      stored({
+        id: 'apl_owned',
+        kind: 'onsite',
+        status: 'approved',
+        appBlockId: 'ab_owned',
+        blockOwnerUserId: SEAT_HOLDER,
+        columnUserId: SEAT_HOLDER,
+        icon: { url: 'icon-owned' },
+      }),
+      // (2) an ACCEPTED SEAT on someone else's app — the caller submitted nothing here.
+      stored({
+        id: 'apl_seated',
+        kind: 'offsite',
+        status: 'pending',
+        columnUserId: OWNER,
+        cover: { url: 'cover-seated' },
+      }),
+      // (3) acquired by TRANSFER: the column names the caller, the app's whole publish
+      // history names someone else.
+      stored({
+        id: 'apl_transferred',
+        kind: 'offsite',
+        status: 'draft',
+        columnUserId: SEAT_HOLDER,
+      }),
+      // (4) acquired by moderator CLAIM: same seam, on-site, the block's owner moved.
+      stored({
+        id: 'apl_claimed',
+        kind: 'onsite',
+        status: 'removed',
+        appBlockId: 'ab_claimed',
+        blockOwnerUserId: SEAT_HOLDER,
+        columnUserId: OWNER,
+      }),
+      // A control the caller must NOT see: owned by someone else, no seat.
+      stored({ id: 'apl_stranger', kind: 'offsite', status: 'rejected', columnUserId: OWNER }),
+    ];
+    mockDb.appListing.findMany.mockImplementation(findManyFake(table));
+    mockDb.appCollaborator.findMany.mockImplementation(async () => [
+      { appListingId: 'apl_seated' },
+    ]);
+
+    const rows = await listMyAppListings({ userId: SEAT_HOLDER });
+    expect(rows.map((r) => r.appListingId).sort()).toEqual([
+      'apl_claimed',
+      'apl_owned',
+      'apl_seated',
+      'apl_transferred',
+    ]);
+    // The seat row is tagged `editor`; everything resolved by ownership is `owner`.
+    const roleById = Object.fromEntries(rows.map((r) => [r.appListingId, r.role]));
+    expect(roleById).toEqual({
+      apl_owned: 'owner',
+      apl_transferred: 'owner',
+      apl_claimed: 'owner',
+      apl_seated: 'editor',
+    });
+    // …and the media widening reaches EVERY population, not just the owned one.
+    for (const r of rows) {
+      expect(r).toHaveProperty('iconUrl');
+      expect(r).toHaveProperty('coverUrl');
+    }
+    expect(roleById.apl_seated).toBe('editor');
+    expect(rows.find((r) => r.appListingId === 'apl_seated')?.coverUrl).toEqual(
+      expect.stringContaining('cover-seated')
+    );
+  });
+
+  it('a caller with neither ownership nor a seat still gets nothing', async () => {
+    mockDb.appListing.findMany.mockImplementation(
+      findManyFake([stored({ id: 'apl_other', columnUserId: OWNER })])
+    );
+    expect(await listMyAppListings({ userId: 999 })).toEqual([]);
+  });
+});

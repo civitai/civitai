@@ -185,6 +185,15 @@ const GATE_LEDGER: Record<string, string> = {
   'src/server/services/blocks/app-listing-backfill.service.ts':
     'Same as the mapper: a mod-only backfill STAMPING the denormalized owner. Not a ' +
     'caller-identity gate.',
+  'src/server/services/blocks/app-listing-history.service.ts':
+    'A REAL caller-identity gate, and it goes through resolveListingAccess precisely so ' +
+    'it admits an accepted EDITOR as well as the owner. `listListingHistory` backs the ' +
+    'expandable rows on the merged /apps/mine table, and the surface it replaced ' +
+    '(/apps/my-submissions) scoped history to a publish request’s submittedByUserId — ' +
+    'which returns EMPTY for a collaborator (submitted nothing), for a transfer ' +
+    'recipient and for a moderator-claimed owner, on an app they can plainly edit. ' +
+    'Refuses FORBIDDEN rather than returning [], because an empty list reads to the UI ' +
+    'as "this app has no history", which is a lie a stranger should not be told either.',
   'src/pages/api/v1/blocks/dev-token.ts':
     'NOT widened, deliberately. This is a THIRD gate shape the ledger surfaced: a ' +
     'positive-match BRANCH CONDITION (`block.app.userId === user.id`) rather than a ' +
