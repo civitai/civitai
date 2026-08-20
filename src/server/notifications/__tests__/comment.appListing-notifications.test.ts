@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { commentNotifications, threadUrlMap } from '~/server/notifications/comment.notifications';
+import {
+  commentNotifications,
+  threadTypeLabel,
+  threadUrlMap,
+  withIndefiniteArticle,
+} from '~/server/notifications/comment.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 
 /**
@@ -268,9 +273,14 @@ describe('thread naming is one rule shared by all three consumers', () => {
    * fallback. `question`/`answer` are filtered out of the thread-response and mention queries
    * but survive in new-comment-reply's CASE, so they are reachable and belong here.
    *
-   * The expected noun is the entity key VERBATIM except `appListing` — the map is deliberately
-   * narrow, so this table doubles as the negative control on it. (`bountyEntry` and `model3d`
-   * still print as raw camelCase keys; pre-existing, and out of scope here — see the PR body.)
+   * The expected noun is the entity key VERBATIM except the three the map translates, so this
+   * table doubles as the negative control on the map: nine of the twelve must come back
+   * untouched, which is what stops "translate `appListing`" turning into "translate everything".
+   *
+   * 🔴 `model3d → "3D model"` is a REORDERING, and it is the one label starting with a DIGIT.
+   * The article is picked from the noun, and `'3'` is not in the vowel set, so `a 3D model` is
+   * the correct output — asserted here rather than assumed, because "not a vowel" and "therefore
+   * `a`" is exactly the kind of step that reads as obvious and is worth one line to pin.
    */
   const NOUNS: Record<string, string> = {
     image: 'an image',
@@ -281,11 +291,40 @@ describe('thread naming is one rule shared by all three consumers', () => {
     review: 'a review',
     article: 'an article',
     bounty: 'a bounty',
-    bountyEntry: 'a bountyEntry',
+    bountyEntry: 'a bounty entry',
     challenge: 'a challenge',
-    model3d: 'a model3d',
+    model3d: 'a 3D model',
     appListing: 'an app listing',
   };
+
+  it('threadTypeLabel translates exactly three keys and passes everything else through', () => {
+    expect(threadTypeLabel('appListing')).toBe('app listing');
+    expect(threadTypeLabel('bountyEntry')).toBe('bounty entry');
+    expect(threadTypeLabel('model3d')).toBe('3D model');
+
+    // NEGATIVE control: it is a translation table, not a formatter. Anything it does not
+    // declare comes back byte-identical.
+    for (const key of ['model', 'image', 'post', 'article', 'comment', 'clubPost']) {
+      expect(threadTypeLabel(key)).toBe(key);
+    }
+
+    // 🔴 And it must not answer for keys it never declared. An object-literal lookup returns a
+    // truthy Function for these, which `??` does not catch — that is how a prototype key ends
+    // up rendered into a user-facing sentence. `Map.get` returns undefined, so they pass through.
+    for (const key of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
+      expect(threadTypeLabel(key)).toBe(key);
+    }
+  });
+
+  it('withIndefiniteArticle picks the article from the noun, digits included', () => {
+    expect(withIndefiniteArticle('app listing')).toBe('an app listing');
+    expect(withIndefiniteArticle('image')).toBe('an image');
+    // A DIGIT-initial noun is not a vowel, so it takes "a" — the `model3d → "3D model"`
+    // reordering depends on this and it is asserted, not assumed.
+    expect(withIndefiniteArticle('3D model')).toBe('a 3D model');
+    expect(withIndefiniteArticle('model')).toBe('a model');
+    expect(withIndefiniteArticle('bounty entry')).toBe('a bounty entry');
+  });
 
   const forType = (threadType: string) =>
     threadType === 'appListing'

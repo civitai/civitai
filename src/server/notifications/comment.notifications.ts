@@ -41,16 +41,35 @@ export const appListingSlugResolved = (expr: string) => `(${expr} IS NULL OR al.
 /**
  * Human-readable noun for a thread type in notification copy.
  *
- * `threadType` is an entity KEY, and most of them happen to read as English. `appListing` does
- * not — untranslated it prints "an appListing" — so it gets a label.
+ * `threadType` is an entity KEY. Most read as English by accident of naming; the three that do
+ * not are listed here, because a user should never be shown an identifier.
+ *
+ * `model3d` is a REORDERING, not just a spacing fix — "3D model", matching what the owner-facing
+ * `new-3d-model-comment` copy already calls it, so the same thing has one name across the whole
+ * notification family. It is also the one label whose first character is a DIGIT; the article is
+ * chosen from the noun by `withIndefiniteArticle`, so "a 3D model" falls out rather than being
+ * special-cased, and the test table pins it.
  *
  * ONE map, read by every consumer that names a thread in a sentence (`new-mention`,
  * `new-comment-reply`, `new-thread-response`), so the same thread is called the same thing
  * wherever the user meets it. It used to live at one call site only, which is exactly how two
  * of the three shipped the raw key.
+ *
+ * 🔴 A `Map`, not an object literal, and that is a correctness choice rather than a style one.
+ * An object-literal lookup answers for keys it never declared — `labels['toString']` is a
+ * truthy Function, which `??` does not catch — so a `threadType` of `toString`/`constructor`
+ * would put a function body in a user-facing sentence. `Map.get` only ever returns what was
+ * `set`. (`threadUrlMap` below has the same object-literal shape and the same latent hazard;
+ * pre-existing and out of scope here, but do not copy it.)
  */
+const THREAD_TYPE_LABELS = new Map<string, string>([
+  ['appListing', 'app listing'],
+  ['bountyEntry', 'bounty entry'],
+  ['model3d', '3D model'],
+]);
+
 export const threadTypeLabel = (threadType: string): string =>
-  threadType === 'appListing' ? 'app listing' : threadType;
+  THREAD_TYPE_LABELS.get(threadType) ?? threadType;
 
 /**
  * `"an app listing"` / `"a model"` — a noun with its indefinite article.
