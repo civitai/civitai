@@ -711,10 +711,16 @@ export const takedownCosmeticShopItemSchema = z.object({
   reason: z.string().min(1).max(1000),
 });
 
+export const reviewQueueSortValues = ['oldest', 'newest'] as const;
+export type ReviewQueueSort = (typeof reviewQueueSortValues)[number];
+
 export type GetReviewQueueInput = z.infer<typeof getReviewQueueSchema>;
 export const getReviewQueueSchema = z.object({
   limit: z.number().min(1).max(100).default(20),
-  cursor: z.number().optional(),
+  page: z.number().min(1).optional(),
+  // Oldest-first is the triage order the queue has always used, so it stays the
+  // default; a moderator scanning an already-processed status wants newest.
+  sort: z.enum(reviewQueueSortValues).default('oldest'),
   // Defaults to PendingReview in the service; moderators can also review
   // Published / Rejected / Archived, and filter to a single creator (by
   // username or id) and/or cosmetic types.

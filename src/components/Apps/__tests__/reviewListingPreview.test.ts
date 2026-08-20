@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import { shouldShowOffsiteDisclosure } from '~/components/Apps/appListingDetailView';
 import {
   buildListingCardPreview,
   buildListingDetailPreview,
@@ -58,7 +59,7 @@ describe('buildListingCardPreview', () => {
     });
   });
 
-  it('an external (offsite) row → offsite kindData with the external url + sub-kind', () => {
+  it('an external (offsite) row → offsite kindData with the external url, no sub-kind', () => {
     const card = buildListingCardPreview(
       row({
         id: 'r2',
@@ -73,26 +74,48 @@ describe('buildListingCardPreview', () => {
     expect(card.kind).toBe('offsite');
     expect(card.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'external-link',
       externalUrl: 'https://ext.app',
     });
   });
 
-  it('a connect (offsite) row → connect sub-kind', () => {
-    const card = buildListingCardPreview(
+  /**
+   * 🔴 The moderator preview is a SECOND producer of `ListingCardKindData` — it
+   * builds the DTO by hand from a review row rather than through
+   * `projectListingCard`, and it carried its OWN copy of the sub-kind
+   * derivation. Both copies are gone, so the preview must now agree with the
+   * store for a row that differs only by `connectClientId`.
+   *
+   * The two rows carry deliberately distinct names and ids so an equality that
+   * passes cannot be two default objects.
+   */
+  it('🔴 a linked OAuth client no longer changes the preview card kindData', () => {
+    const connected = buildListingCardPreview(
       row({
         id: 'r3',
         appListing: {
           name: 'Conn',
-          externalUrl: null,
+          externalUrl: 'https://ext.app',
           category: null,
           contentRating: null,
           connectClientId: 'cc_1',
         },
       })
     );
-    expect(card.kind).toBe('offsite');
-    expect(card.kindData.kind === 'offsite' && card.kindData.subKind).toBe('connect');
+    const grandfathered = buildListingCardPreview(
+      row({
+        id: 'r3b',
+        appListing: {
+          name: 'Legacy',
+          externalUrl: 'https://ext.app',
+          category: null,
+          contentRating: null,
+          connectClientId: null,
+        },
+      })
+    );
+    expect(connected.kind).toBe('offsite');
+    expect(connected.kindData).toEqual(grandfathered.kindData);
+    expect(connected.kindData).toEqual({ kind: 'offsite', externalUrl: 'https://ext.app' });
   });
 
   it('falls back to the slug when the listing (or its name) is absent', () => {
@@ -131,6 +154,11 @@ describe('buildListingDetailPreview', () => {
   });
 
   it('an external row carries the connectClientId (null) + externalUrl on kindData', () => {
+    // 🔴 VACUOUS ON ITS OWN — kept for the null shape, but read the next test.
+    // The fixture supplies NO `connectClientId` and the assertion expects
+    // `null`, so the fixture constant EQUALS the assertion constant: this case
+    // passes identically against a passthrough and against a hardcoded
+    // `connectClientId: null`. The discriminating value is a TRUTHY one.
     const detail = buildListingDetailPreview(
       row({
         id: 'r2',
@@ -144,10 +172,78 @@ describe('buildListingDetailPreview', () => {
     );
     expect(detail.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'external-link',
       externalUrl: 'https://ext.app',
       connectClientId: null,
     });
+  });
+
+  /**
+   * 🔴 THE PREVIEW IS A SECOND PRODUCER OF THE OAUTH CAPABILITY, AND SINCE THE
+   * SUB-KIND COLLAPSE IT IS THE SOLE CARRIER ON THIS PATH.
+   *
+   * `ListingPreviewSection` (`OffsiteReviewQueue.tsx`) falls back to
+   * `buildListingDetailPreview(request)` whenever the mod-only projection query
+   * is loading, errors, or the row has no `appListingId`, and feeds the result
+   * straight into `<AppListingDetailBody detail={detail} preview />` — which
+   * renders the off-platform disclosure through `shouldShowOffsiteDisclosure`.
+   *
+   * So if this builder drops `connectClientId`, a moderator previewing an
+   * OAuth-CONNECTED listing is told "no Civitai install, account access, or
+   * permissions" — the exact false claim `shouldShowOffsiteDisclosure` exists to
+   * prevent, arriving by the builder instead of the JSX.
+   *
+   * 🔴 This exposure is CREATED by the sub-kind collapse. Before it, the
+   * preview's own `subKind` (`connectClientId != null`) carried the capability
+   * and the disclosure keyed on that, so nulling `connectClientId` alone changed
+   * nothing on screen. Now nothing else carries it.
+   *
+   * The value is TRUTHY and distinct from every other literal in the fixture, so
+   * a hardcoded `null` — or any constant — fails here.
+   */
+  it('🔴 an OAuth-connected row PASSES THE CLIENT ID THROUGH (not a hardcoded null)', () => {
+    const detail = buildListingDetailPreview(
+      row({
+        id: 'r2b',
+        appListing: {
+          name: 'Connected',
+          externalUrl: 'https://connected.example/app',
+          category: null,
+          contentRating: null,
+          connectClientId: 'cc_1',
+        },
+      })
+    );
+    expect(detail.kindData).toEqual({
+      kind: 'offsite',
+      externalUrl: 'https://connected.example/app',
+      connectClientId: 'cc_1',
+    });
+    // …and the consequence that actually matters, asserted through the SAME
+    // predicate the renderer calls rather than restated as a boolean here.
+    expect(shouldShowOffsiteDisclosure(detail.kindData)).toBe(false);
+  });
+
+  /**
+   * The other half of the seam, so the pair pins a RELATIONSHIP rather than one
+   * value: the grandfathered row (no OAuth client) must still get the
+   * disclosure. Without this, inverting the predicate would leave the case above
+   * green.
+   */
+  it('🔴 a grandfathered row (no OAuth client) DOES get the disclosure', () => {
+    const detail = buildListingDetailPreview(
+      row({
+        id: 'r2c',
+        appListing: {
+          name: 'Legacy',
+          externalUrl: 'https://grandfathered.example/app',
+          category: null,
+          contentRating: null,
+          connectClientId: null,
+        },
+      })
+    );
+    expect(detail.kindData.kind === 'offsite' && detail.kindData.connectClientId).toBeNull();
+    expect(shouldShowOffsiteDisclosure(detail.kindData)).toBe(true);
   });
 
   it('passes resolved screenshots + cover through when provided', () => {

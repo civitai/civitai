@@ -41,11 +41,17 @@ export * from '@civitai/telemetry/client';
 // a module-init cycle (this module imports pgDb → db-helpers, which would import the
 // histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
 
+// `heavyBulkheadGaugeInitialized` was declared here and is gone: a globalThis flag guarding a
+// per-graph registry is the bug this file documents at length below, not a pattern to reach for.
+// Deduplication for anything on the shared registry comes from registerInstrumentationMetric,
+// which checks the same registry it writes to, so the flag's one legitimate job is covered.
+//
+// `pgGaugeInitialized` SURVIVES, deliberately, and is the exception that proves the rule — see the
+// long note above the pg block near the bottom of this file. Those gauges cannot move to the
+// shared registry until the pools they read are themselves process-wide.
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var pgGaugeInitialized: boolean;
-  // eslint-disable-next-line no-var
-  var heavyBulkheadGaugeInitialized: boolean;
 }
 
 // Image-ingestion working-state backlog + oldest-age gauges. These are DB-derived,
@@ -158,29 +164,94 @@ registerInstrumentationMetric(
     })
 );
 
-// Heavy-route bulkhead observability (per pod). collect()-based so it reflects the
-// live in-process state on each scrape with no per-request work. This is the signal
-// for tuning HEAVY_REQUEST_CONCURRENCY: rejects climbing means the pod is shedding.
-if (!global.heavyBulkheadGaugeInitialized) {
-  new client.Gauge({
-    name: PROM_PREFIX + 'heavy_bulkhead_active',
-    help: 'In-flight heavy-route bulkhead slots per key (per pod)',
-    labelNames: ['key'],
-    collect() {
-      for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
-    },
-  });
-  new client.Gauge({
-    name: PROM_PREFIX + 'heavy_bulkhead_rejects',
-    help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
-    labelNames: ['key'],
-    collect() {
-      for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
-    },
-  });
-  global.heavyBulkheadGaugeInitialized = true;
-}
+// 🔴 WHY THE BULKHEAD GAUGES USE registerInstrumentationMetric, AND WHY A globalThis
+// "initialized" FLAG IS THE WRONG TOOL FOR THEM.
+//
+// Not every gauge below: the nine pg pool gauges further down deliberately KEEP
+// `if (!global.pgGaugeInitialized)` and stay off the shared registry. The note at that block
+// explains why moving them was tried, measured, and reverted.
+//
+// This module is evaluated in BOTH webpack graphs: the instrumentation graph reaches it at pod
+// start (instrumentation.node.ts -> ~/server/eventloop-longtask -> here), and the pages/API graph
+// reaches it later, on the first request that loads a route importing it — including /api/metrics
+// itself. prom-client is not in serverExternalPackages, so each graph gets its own module instance
+// and therefore its own default `client.register`. /api/metrics scrapes the PAGES graph's default
+// registry plus the globalThis-pinned `instrumentationRegistry`; the instrumentation graph's
+// default registry is scraped by nobody.
+//
+// The bulkhead block below used to be wrapped in `if (!global.heavyBulkheadGaugeInitialized)`,
+// exactly as the pg block still is. That pairs a PROCESS-scoped flag with a GRAPH-scoped
+// registry, and the mismatch is fatal in one direction only: the instrumentation graph gets here
+// first, registers every gauge into its own unscraped registry, and sets the flag — so when the
+// pages graph evaluates this module it takes the early-out and registers NOTHING into the registry
+// that is actually served. The metrics look registered in code, in a deployed image, on a hot
+// route, and emit no series ever.
+//
+// Measured on production before the fix: civitai_app_heavy_bulkhead_{active,rejects} and all nine
+// node_postgres_* gauges = 0 series, while `civitai_app_image_ingestion_backlog` (same file, but
+// registered via registerInstrumentationMetric) = 640 series and `images_search_*` (default
+// registry, pages graph, NO globalThis flag) = 181 series. Those three groups isolate the flag as
+// the variable: same file and same registry choice differ only by the guard.
+//
+// registerInstrumentationMetric is the correct idempotence primitive because it dedupes against
+// the SHARED registry it registers into, so the two scopes agree: whichever graph arrives first
+// creates the gauge, the second finds it and reuses it, and either way it is scraped.
+//
+// The gauges are collect()-based, so it also matters WHICH graph's closure wins — the state they
+// read must be shared too. request-bulkhead.ts pins its slot/reject maps on globalThis for exactly
+// this reason; fixing this file alone would have left both gauges registered, scraped, and still
+// emitting nothing.
+registerInstrumentationMetric(
+  PROM_PREFIX + 'heavy_bulkhead_active',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'heavy_bulkhead_active',
+      help: 'In-flight heavy-route bulkhead slots per key (per pod)',
+      labelNames: ['key'],
+      registers: [instrumentationRegistry],
+      collect() {
+        for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
+      },
+    })
+);
+// Deliberately NOT this.reset()-ed: the value is cumulative per key for the life of the pod, which
+// is what makes rate() meaningful. A reset would still be atomic within collect(), but stating the
+// intent here keeps a later "tidy-up" from turning a counter-shaped gauge into a sawtooth.
+registerInstrumentationMetric(
+  PROM_PREFIX + 'heavy_bulkhead_rejects',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'heavy_bulkhead_rejects',
+      help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
+      labelNames: ['key'],
+      registers: [instrumentationRegistry],
+      collect() {
+        for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
+      },
+    })
+);
 
+// 🔴 THE PG POOL GAUGES ARE DELIBERATELY LEFT ON THE UNSCRAPED REGISTRY. DO NOT "FIX" THEM
+// THE WAY THE BULKHEAD GAUGES WERE FIXED — IT WAS TRIED HERE AND IT MAKES THEM WORSE.
+//
+// They carry the same registration defect (a globalThis flag guarding a per-graph registry), so
+// moving them to `instrumentationRegistry` does make them appear in the scrape. But a
+// collect()-based metric needs BOTH halves shared: the registry it registers into AND the state
+// its closure reads. The bulkhead has both — `request-bulkhead.ts` pins its maps on globalThis.
+// These do not: `src/server/db/pgDb.ts` globalThis-pins the pools ONLY in the `!isProd` branch, so
+// in production every emitted copy of that module builds its OWN pg pools. The graph that wins
+// registration is the instrumentation graph, whose pools serve nothing but the ingestion-backlog
+// query in this file.
+//
+// Measured on a preview running exactly that change: `node_postgres_read_total_count` read 1 while
+// idle and still 1 under 30 concurrent `/api/v1/images` requests, with every write-pool gauge at 0
+// throughout. Frozen, plausible-looking, and wrong — which is strictly worse than the honest
+// absence they have today. It is the same false-all-clear class as an `or vector(0)` on a panel
+// whose metric does not exist: an absent metric prompts a question, a confident 0 ends one.
+//
+// Making them real means pinning the pools in `pgDb.ts` for prod too. That changes production DB
+// connection topology (today: one pool set per emitted graph), so it is its own change with its
+// own blast radius, not a rider on a metrics fix.
 if (!global.pgGaugeInitialized) {
   new client.Gauge({
     name: 'node_postgres_read_total_count',

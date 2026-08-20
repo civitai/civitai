@@ -103,6 +103,7 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -141,7 +142,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
-import { stripMinorHashMeta } from '~/server/utils/minor-flag-meta';
+import { stripMinorHashMeta, stripModerationOwnedMeta } from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
@@ -2324,7 +2325,10 @@ export const upsertModel = async (
     tracker,
     ...data
   } = input;
-  let { meta } = input;
+  // `modelUpsertSchema.meta` is a looseObject and the client's copy wins the merge
+  // below, so moderation-owned keys have to be dropped before anything reads them.
+  // Runs ahead of the profanity branch, which adds its own keys to this same object.
+  let meta = stripModerationOwnedMeta(input.meta, isModerator);
 
   const beforeUpdate =
     id && !templateId
@@ -2460,6 +2464,16 @@ export const upsertModel = async (
       // dashboard refresh right after create reads from primary.
       await preventReplicationLag('userTrainingModels', userId);
     }
+
+    // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
+    // moderation outage can never fail a model save.
+    submitModelTextModeration({
+      id: result.id,
+      name: data.name,
+      description: data.description,
+      isModerator,
+    }).catch(() => null);
+
     return { ...result, meta: stripMinorHashMeta(modelMeta) };
   } else {
     if (!beforeUpdate) return null;
@@ -2601,6 +2615,21 @@ export const upsertModel = async (
     // read against the replication window. Fail-open (the helper swallows Redis
     // errors); the only post-commit write left in this branch.
     await bustPublicModelResponseCache(result.id);
+
+    // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
+    // moderation outage can never fail a model save. `result` carries the post-update
+    // name/description, not the pre-update values in `beforeUpdate`.
+    //
+    // Skipped when neither field moved. contentHash dedup would drop it anyway, but only
+    // after a round trip and an EntityModeration upsert on every unrelated model edit.
+    if (result.name !== beforeUpdate.name || result.description !== beforeUpdate.description) {
+      submitModelTextModeration({
+        id: result.id,
+        name: result.name,
+        description: result.description,
+        isModerator,
+      }).catch(() => null);
+    }
 
     return withoutMinorHashMeta(result);
   }
@@ -4283,6 +4312,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
           metrics: meta.profanityEvaluation?.metrics ?? null,
         }
       : null,
+    textModeration: meta.textModeration ?? null,
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,

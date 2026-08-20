@@ -405,10 +405,10 @@ function ExternalCreateForm() {
         title="List an external app"
       >
         <Text size="sm">
-          List an app hosted off-site by linking your registered OAuth app so users can grant it
-          access. Start with your app’s URL — we’ll pull in a name, description and images you can
-          tweak. A moderator reviews it before it appears. This does not change what your app can
-          do: your OAuth client’s allowed scopes stay the limit.
+          List a standalone app hosted elsewhere by linking your registered OAuth app so users can
+          grant it access. Start with your app’s URL — we’ll pull in a name, description and images
+          you can tweak. A moderator reviews it before it appears. This does not change what your
+          app can do: your OAuth client’s allowed scopes stay the limit.
         </Text>
       </Alert>
 
@@ -788,9 +788,9 @@ function ExternalCreateForm() {
                     title="Draft created"
                   >
                     <Text size="sm">
-                      <Code>{submitted.slug}</Code> is a pending off-site submission. Attach an icon
-                      and a cover below to be approved — screenshots are recommended but optional and
-                      can be added later. Content rating:{' '}
+                      <Code>{submitted.slug}</Code> is a pending standalone submission. Attach an
+                      icon and a cover below to be approved — screenshots are recommended but
+                      optional and can be added later. Content rating:{' '}
                       <Badge size="xs">{values.contentRating}</Badge>
                     </Text>
                   </Alert>

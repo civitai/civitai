@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { getListingBadge } from '~/components/Apps/appListingCardView';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -68,27 +69,62 @@ describe('buildListingDetailRows — order', () => {
     expect(by.updated).toMatchObject({ label: 'Updated', value: `formatted:${FIXED_DATE}` });
   });
 
-  it('the kind row names the sub-kind for both off-site shapes', () => {
-    const connect = buildListingDetailRows(
+  /**
+   * 🔴 NEW BEHAVIOUR (not regression coverage). The kind row used to read
+   * "Connect app" or "Off-site link" depending on `connectClientId`; off-site is
+   * one kind now, so it reads one word — and that word is the store kind
+   * filter's own "Standalone" (`KindFilterButtons`; renamed from "Off-site" by
+   * PR #4187), which the "Connect app" branch was contradicting on the majority
+   * of listings.
+   *
+   * Both fixtures set a DIFFERENT `connectClientId` and a DIFFERENT
+   * `externalUrl` — the two inputs the deleted fork could have keyed on — so a
+   * mutant that re-derives a label from either one moves at least one of these
+   * assertions.
+   */
+  it('🔴 the kind row reads one word for BOTH off-site shapes', () => {
+    const connected = buildListingDetailRows(
       detail({
-        kindData: { kind: 'offsite', subKind: 'connect', externalUrl: null, connectClientId: 'c1' },
+        kindData: { kind: 'offsite', externalUrl: null, connectClientId: 'c1' },
       }),
       { formatDate: fmt }
     );
-    expect(connect.find((r) => r.key === 'kind')?.value).toBe('Connect app');
+    expect(connected.find((r) => r.key === 'kind')?.value).toBe('Standalone');
 
-    const link = buildListingDetailRows(
+    // 🔴 The grandfathered production listing: an approved off-site row with NO
+    // OAuth client. It must render the same single label, not a blank / dash /
+    // "unknown" left behind by the deleted branch.
+    const grandfathered = buildListingDetailRows(
       detail({
         kindData: {
           kind: 'offsite',
-          subKind: 'external-link',
-          externalUrl: 'https://x.example',
+          externalUrl: 'https://grandfathered.example',
           connectClientId: null,
         },
       }),
       { formatDate: fmt }
     );
-    expect(link.find((r) => r.key === 'kind')?.value).toBe('Off-site link');
+    expect(grandfathered.find((r) => r.key === 'kind')?.value).toBe('Standalone');
+  });
+
+  /**
+   * The rail row and the card badge are two surfaces that MUST agree — the
+   * `kindLabel` docstring claimed they mirrored each other while they said
+   * "Off-site link" and "Off-site" respectively. Pinned as a relationship, so it
+   * fails if either side is reworded alone. (PR #4187 then reworded BOTH sides
+   * to "Standalone" together, which is exactly the case this is meant to allow.)
+   */
+  it('🔴 the off-site kind row is byte-identical to the card badge label', () => {
+    const rows = buildListingDetailRows(
+      detail({ kindData: { kind: 'offsite', externalUrl: null, connectClientId: null } }),
+      { formatDate: fmt }
+    );
+    expect(rows.find((r) => r.key === 'kind')?.value).toBe(
+      getListingBadge({
+        kind: 'offsite',
+        kindData: { kind: 'offsite', externalUrl: null },
+      }).label
+    );
   });
 });
 

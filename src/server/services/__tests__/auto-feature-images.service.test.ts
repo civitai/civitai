@@ -11,6 +11,7 @@ const config = (overrides: Partial<AutoFeatureSchema> = {}): AutoFeatureSchema =
   perRun: 5,
   intervalHours: 6,
   windowDays: 7,
+  capWindowDays: 7,
   recencyOffsetHours: 12,
   decayExponent: 0.8,
   maxPerCreatorPerRun: 1,

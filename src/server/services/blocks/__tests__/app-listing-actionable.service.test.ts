@@ -44,7 +44,7 @@ describe('checkOffsiteListingActionable — the verdict', () => {
   });
 
   for (const { name, url } of NO_DESTINATION) {
-    it(`BLOCKS an off-site external-link listing whose externalUrl is ${name}`, () => {
+    it(`BLOCKS an off-site listing with NO OAuth client whose externalUrl is ${name}`, () => {
       const result = checkOffsiteListingActionable(offsite({ externalUrl: url }));
       expect(result.ok).toBe(false);
       expect(result.action?.href).toBeUndefined();
@@ -52,8 +52,10 @@ describe('checkOffsiteListingActionable — the verdict', () => {
   }
 
   for (const { name, url } of NO_DESTINATION) {
-    it(`BLOCKS an off-site CONNECT listing whose externalUrl is ${name}`, () => {
-      // client_id present → `resolveOffsiteSubKind` routes this to the connect arm.
+    it(`BLOCKS an OAuth-connected off-site listing whose externalUrl is ${name}`, () => {
+      // client_id present → the no-destination fallback. Since #4208 that is the
+      // same informational arm a grandfathered listing takes; either way it
+      // yields no href, which is the only thing this gate reads.
       const result = checkOffsiteListingActionable(
         offsite({ externalUrl: url, connectClientId: 'client-123' })
       );
@@ -198,12 +200,18 @@ describe('assertOffsiteListingActionable — fails CLOSED with mod-actionable co
     // Names the listing…
     expect(trpc.message).toContain('demo-app');
     // …quotes what the moderator would have seen on the button…
-    expect(trpc.message).toContain('Connecting this app will be available soon.');
+    //
+    // 🔴 #4208: this used to quote the dead Connect stub's copy. That CTA is
+    // deleted, so an OAuth listing with no destination now renders the SAME
+    // informational affordance as any other — the gate still fails closed, and
+    // the message now quotes the honest sentence instead of the promise.
+    expect(trpc.message).toContain('This app has no valid external link.');
+    expect(trpc.message).not.toContain('Connecting this app will be available soon.');
     // …and states the remedy.
     expect(trpc.message).toContain('https external URL');
   });
 
-  it('quotes the OTHER non-actionable shape too (no valid link), not just the connect stub', () => {
+  it('quotes the same copy for the OTHER non-actionable shape (non-https link)', () => {
     let message = '';
     try {
       assertOffsiteListingActionable(offsite({ externalUrl: 'http://insecure.app' }));
@@ -232,12 +240,14 @@ describe('buildActionabilityError', () => {
  * shares the code under test cannot discriminate.
  */
 function expectedKindData(listing: ListingActionabilitySource) {
-  const subKind = listing.connectClientId ? ('connect' as const) : ('external-link' as const);
   return {
     kind: 'offsite' as const,
-    subKind,
     externalUrl:
       listing.externalUrl && /^https:\/\//i.test(listing.externalUrl) ? listing.externalUrl : null,
-    connectClientId: subKind === 'connect' ? listing.connectClientId ?? null : null,
+    // 🔴 TRUTHINESS, not nullish — an empty-string client id projects as null.
+    // This oracle mirrors the projection deliberately by hand; the removed
+    // `subKind` used the same truthiness test, which is why dropping it changes
+    // nothing here.
+    connectClientId: listing.connectClientId || null,
   };
 }

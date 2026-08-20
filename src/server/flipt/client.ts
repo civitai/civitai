@@ -76,6 +76,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
   // rollback stays usable after the switch is thrown.
   MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
+  // Gates SUBMISSION of model name+description to XGuard from upsertModel. Keyed on
+  // modelId so a percentage rollout picks a deterministic, sticky subset of content.
+  // DEFAULT-OFF — isFlipt returns false for an unknown flag or an unreachable Flipt.
+  MODEL_TEXT_MODERATION_XGUARD = 'model-text-moderation-xguard',
+  // Gates APPLYING the verdict (the `nsfw` write). Separate from the submit flag so the
+  // scan can run in shadow — verdicts recorded to EntityModeration and the audit log while
+  // the profanity filter stays solely in charge of the column. For a path that
+  // auto-restricts other people's models, not flagging is the safe failure.
+  MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
   // Arms the reaction reconciliation audit's repair path to WRITE compensating
   // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
   // or an unreachable Flipt, and for a path that mutates production metrics that
@@ -159,6 +168,20 @@ const flipt = createFliptClient({
   },
 });
 
+// 🔴 THE ENTITY-ID TRAP. All four evaluators below take `(flag, entityId?,
+// context?)`, and the two arguments are NOT interchangeable. A Flipt segment
+// constraint reads one of two inputs depending on its TYPE:
+// `ENTITY_ID_COMPARISON_TYPE` matches the `entityId` argument, while
+// `STRING_COMPARISON_TYPE` matches a named property of the `context`. Of the 15
+// segments in flipt-state today, 12 are the latter — including every identity,
+// tier and cohort segment we have (`moderators`, `testers`, `early-adopters`,
+// `members`, `app-dev-testers`, `CreatorProgram`, …).
+//
+// So `isFlipt(FLAG, String(user.id))` cannot match any of those, for anybody.
+// It returns the flag's base `enabled` value instead, which is indistinguishable
+// from an honest "this user is not in the segment" — no error, no log line. Pass
+// `buildFliptContext(user)`, or at minimum the properties you actually know.
+// Enforced by `src/server/flipt/__tests__/flipt-eval-context.test.ts`.
 export const isFlipt = flipt.isEnabled;
 export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;

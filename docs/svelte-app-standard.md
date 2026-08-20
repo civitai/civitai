@@ -201,6 +201,29 @@ That asymmetry is the reason to run `build` **once** before handing work over, e
 part of the edit→verify loop. Once — not as a diagnostic loop. It took two of these to reach production
 unnoticed because the loop that would have caught them is the one we tell you not to run.
 
+### Tests
+
+Each app owns a `vitest.config.ts` declaring `name: 'app:<slug>'`, and the root config globs those
+**config files** — so an app without one is silently not selected. Run one app with
+`pnpm --filter @civitai/<app> test`, or every app with `pnpm run test:apps:run` (CI's `App unit tests`
+job). The `app:` prefix is load-bearing: every app is also published as `@civitai/*`, so dropping the
+`name` moves the suite into the packages job instead.
+
+These are **node-env tests over plain modules** — no SvelteKit pipeline, so `$lib` and the `$env`
+virtual modules are aliased in each app's config, and a module reaching an unaliased `$app/*` cannot be
+imported at all. Route logic is reachable: import `load`/`actions` from a `+page.server.ts` and call
+them with the slice of the event they read. Component behaviour is **not** — no SvelteKit app has a
+browser-test project, so anything that depends on `use:enhance`, bindings or lifecycle is verified by
+review and by opening the page, not by a test.
+
+🔴 **A suite must not open a connection to whatever `DATABASE_URL` points at.** Mock the app's db
+module. Where a suite genuinely needs the real schema, plan the statement rather than run it — compile
+through Kysely's `DummyDriver` and send `EXPLAIN` *without* `ANALYZE`, which validates columns, joins
+and types without executing, safely for writes as well as reads. Gate it on `describe.skipIf(!hasDb)` so
+a checkout with no database still runs the rest. Worked example:
+[`apps/moderator/src/test/explain-harness.ts`](../apps/moderator/src/test/explain-harness.ts); the
+original is `packages/civitai-db-queries`. Never write fixtures to a URL you did not create.
+
 ## Reviews: run these before calling a segment done
 
 Three agents, on the diff for the segment:

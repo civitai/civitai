@@ -3,7 +3,6 @@ import { describe, it, expect, vi } from 'vitest';
 // is a ~4800-line module whose cold transform would otherwise be charged to the first
 // test's timeout budget rather than to collection.
 import { getModelsRaw, getPermanentPaidAccessModelIds } from '~/server/services/model.service';
-import { getAllModelsSchema } from '~/server/schema/model.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -105,16 +104,7 @@ describe('getPermanentPaidAccessModelIds', () => {
   });
 });
 
-describe('getAllModelsSchema — paidAccess over raw query strings', () => {
-  // The REST endpoint parses req.query, where z.coerce.boolean() turns the STRING
-  // 'false' into true and silently switches the filter on.
-  it('parses `?paidAccess=false` as false, not true', () => {
-    const parsed = getAllModelsSchema.parse({ paidAccess: 'false' });
-    expect(parsed.paidAccess).toBe(false);
-  });
-
-  it('still parses `?paidAccess=true` and a real boolean as true', () => {
-    expect(getAllModelsSchema.parse({ paidAccess: 'true' }).paidAccess).toBe(true);
-    expect(getAllModelsSchema.parse({ paidAccess: true }).paidAccess).toBe(true);
-  });
-});
+// The `?paidAccess=false` parse assertions that used to live here moved to
+// src/server/schema/__tests__/get-all-models.boolean-params.schema.test.ts, which derives
+// its field list from the schema instead of naming paidAccess. Same invariant, and it
+// also covers the next field someone declares on z.coerce.boolean().

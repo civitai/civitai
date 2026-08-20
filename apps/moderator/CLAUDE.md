@@ -59,6 +59,12 @@ provenance is the only reason it differs from the standard at all.
 - **Two databases.** `$lib/server/db.ts` is the main app's Postgres; `getModeratorDb()` is moderation
   data that never lived there (notes, strikes, help requests), typed by hand in
   `moderator-db-types.ts` because those tables are not in the Prisma schema.
+- **The test suite has a DB-backed tier, and `vitest.config.ts` feeds it the root `.env`.** See the
+  Tests section of the standard for the shape. Two things specific to this app: `DATABASE_REPLICA_URL`
+  is deliberately **not** surfaced, so a suite that forgets to mock `$lib/server/db` throws on import
+  instead of connecting to whatever that URL is (do not "fix" such a failure by adding the variable);
+  and the report queries are the reason the tier exists — most of `reports.service.ts` is raw `sql`
+  assembled from `REPORT_ENTITIES`, where not one identifier is typechecked.
 - **When porting, classify every source query before writing code**, and add the fourth
   export-vs-build review the standard describes. Three code reviews pass cleanly over a faithful
   implementation of the wrong thing — that is how four capabilities were missed on one page after

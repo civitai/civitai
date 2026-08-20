@@ -77,7 +77,7 @@ export const actions: Actions = {
     const data = await request.formData();
     const id = Number(data.get('id'));
     const status = String(data.get('status'));
-    if (!id || !isStatus(status)) return fail(400, { message: 'Invalid input' });
+    if (!id || !isStatus(status)) return fail(400, { error: 'Invalid input' });
 
     // `setReportStatus` RETURNS its outcome; discarding it reported success for a report another
     // moderator had already actioned or deleted. Same defect the batch sweep had — and this is the
@@ -88,9 +88,11 @@ export const actions: Actions = {
       userId: locals.user.id,
       ip: getClientAddress(),
     });
-    if (!result.ok) return fail(400, { message: result.error });
+    // `gone` rather than a bare message: the page reloads the queue on it, so the row the moderator
+    // is looking at leaves the screen instead of sitting there accepting further clicks.
+    if (!result.ok) return fail(410, { error: result.error, gone: true });
     if (!result.changed)
-      return fail(409, { message: 'Someone else already set that status. Reload.' });
+      return fail(409, { error: 'Someone else already set that status. Reload.' });
     return { success: true };
   },
   /**
@@ -103,7 +105,7 @@ export const actions: Actions = {
   actionResolvedPosts: async ({ locals, getClientAddress }) => {
     const ids = await getResolvedPostReportIds();
     if (!ids.length)
-      return fail(400, { message: 'No post reports are already resolved by content.' });
+      return fail(400, { error: 'No post reports are already resolved by content.' });
 
     // `setReportStatus` RETURNS its outcome rather than throwing: `ok:false` when the report is gone,
     // and `ok:true, changed:false` when someone else already put it in this status. Counting the loop
@@ -131,25 +133,29 @@ export const actions: Actions = {
    */
   removePlacement: async ({ request, locals }) => {
     // Acting on reported content, not merely reading the queue — gated on its own path.
-    if (!canAccess(locals.user, '/reports')) return fail(403, { message: 'Not permitted.' });
+    if (!canAccess(locals.user, '/reports')) return fail(403, { error: 'Not permitted.' });
 
     const data = await request.formData();
     const placementId = Number(data.get('placementId'));
     if (!Number.isInteger(placementId) || placementId <= 0)
-      return fail(400, { message: 'Invalid placement.' });
+      return fail(400, { error: 'Invalid placement.' });
 
     const result = await removePlacement({ placementId, moderatorId: locals.user.id });
-    if (!result.ok) return fail(400, { message: result.error });
+    if (!result.ok) return fail(400, { error: result.error });
     return { success: true, placementRemoved: placementId };
   },
 
   saveNotes: async ({ request }) => {
     const data = await request.formData();
     const id = Number(data.get('id'));
-    if (!id) return fail(400, { message: 'Invalid input' });
+    if (!id) return fail(400, { error: 'Invalid input' });
 
     const internalNotes = String(data.get('internalNotes') ?? '').trim() || null;
-    await updateReportNotes({ id, internalNotes });
+    // Discarding the outcome reports success for notes that were never stored, because the report
+    // was deleted while they were being typed.
+    const result = await updateReportNotes({ id, internalNotes });
+    if (!result.ok)
+      return fail(410, { error: 'That report was deleted while you were editing.', gone: true });
     return { success: true };
   },
 };

@@ -21,6 +21,14 @@ export const PROM_PREFIX = 'civitai_app_';
 // globalThis (the real V8 global, shared across all webpack bundles in one Node process — the same
 // mechanism the pgGaugeInitialized guards rely on). Any metric created in either graph registers
 // here, and /metrics merges it into the scrape. (See the eventloop-longtask metrics bug, PR #2451.)
+//
+// An earlier version of this comment cited "the pgGaugeInitialized guards" as the precedent for
+// pinning on globalThis. Those guards did pin a FLAG on globalThis — but the registry they guarded
+// was still per-graph, so the flag let the first graph claim the registration and silently deny it
+// to the graph that is actually scraped. Every metric behind them emitted 0 series in production
+// for months. A globalThis flag is only safe when what it guards is ALSO globalThis-shared;
+// registerInstrumentationMetric below is safe because it dedupes against the shared registry
+// itself, rather than against a flag standing in for it.
 declare global {
   // eslint-disable-next-line no-var
   var __civitaiInstrumentationRegistry: Registry | undefined;

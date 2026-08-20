@@ -125,9 +125,6 @@ export type GetAppListingDetailInput = z.infer<typeof getAppListingDetailSchema>
 
 export type ListingKind = 'onsite' | 'offsite';
 
-/** Off-site apps come in two shapes (locked decision §6.4). */
-export type OffsiteSubKind = 'connect' | 'external-link';
-
 /**
  * Public creator chip — id/username/image ONLY (the standard public-user
  * projection subset). No email/PII. `null` only if the owner row vanished.
@@ -169,8 +166,12 @@ export type ListingCardKindData =
     }
   | {
       kind: 'offsite';
-      subKind: OffsiteSubKind;
-      /** External-link target (Visit CTA). Null for a connect-only listing. */
+      /**
+       * External destination (Visit CTA), https-guarded; null when the listing
+       * has none. 🔴 This is the ONLY off-site field on a card — the card DTO
+       * deliberately carries no `connectClientId`, so nothing downstream of it
+       * can re-derive a sub-kind.
+       */
       externalUrl: string | null;
     };
 
@@ -209,9 +210,20 @@ export type ListingDetailKindData =
     }
   | {
       kind: 'offsite';
-      subKind: OffsiteSubKind;
       externalUrl: string | null;
-      /** Public OAuth client_id for a connect-kind listing (NOT a secret); null otherwise. */
+      /**
+       * Public OAuth client_id (NOT a secret) when this listing has an OAuth app
+       * connected; null otherwise.
+       *
+       * 🔴 This is a CAPABILITY flag, not a kind discriminator. Off-site listings
+       * used to fork into a `connect` / `external-link` sub-kind derived from
+       * exactly this field, and the store rendered two different KIND labels off
+       * it. That fork is gone — every off-site listing is one thing. What survives
+       * is the capability question "does this app connect to your Civitai
+       * account?", which two surfaces legitimately still ask (the account-access
+       * disclosure in `AppListingDetailBody` and the no-destination fallback in
+       * `getDetailPrimaryAction`). Read it for THAT; never to re-derive a kind.
+       */
       connectClientId: string | null;
     };
 

@@ -271,7 +271,7 @@ describe('toRecentAppFromListing', () => {
       card({
         kind: 'offsite',
         iconUrl: null,
-        kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.app' },
+        kindData: { kind: 'offsite', externalUrl: 'https://ext.app' },
       })
     );
     expect(entry).toEqual({
@@ -288,7 +288,7 @@ describe('toRecentAppFromListing', () => {
     const entry = toRecentAppFromListing(
       card({
         kind: 'offsite',
-        kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'http://ext.app' },
+        kindData: { kind: 'offsite', externalUrl: 'http://ext.app' },
       })
     );
     expect(entry.externalUrl).toBeUndefined();
@@ -919,7 +919,7 @@ describe('reconcileRecentApps', () => {
       slug: 'ext-app',
       kind: 'offsite',
       name: 'Ext App',
-      kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.example/a' },
+      kindData: { kind: 'offsite', externalUrl: 'https://ext.example/a' },
     });
     const [out] = reconcileRecentApps([{ id: 'lst_ext', blockId: 'stale-block' }], [card]);
     expect(out.blockId).toBeUndefined();

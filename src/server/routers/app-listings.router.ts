@@ -991,7 +991,9 @@ export const appListingsRouter = router({
     .input(approveExternalRequestSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Approving off-site listings is restricted to civitai team');
+        throw throwAuthorizationError(
+          'Approving standalone listings is restricted to civitai team'
+        );
       }
       const { approveExternalRequest } = await import(
         '~/server/services/blocks/offsite-listing.service'
@@ -1021,7 +1023,9 @@ export const appListingsRouter = router({
     .input(rejectExternalRequestSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Rejecting off-site listings is restricted to civitai team');
+        throw throwAuthorizationError(
+          'Rejecting standalone listings is restricted to civitai team'
+        );
       }
       const { rejectExternalRequest } = await import(
         '~/server/services/blocks/offsite-listing.service'
@@ -1115,7 +1119,7 @@ export const appListingsRouter = router({
    */
   delistListing: moderatorProcedure.input(delistListingSchema).mutation(async ({ ctx, input }) => {
     if (!ctx.user?.isModerator) {
-      throw throwAuthorizationError('Delisting off-site listings is restricted to civitai team');
+      throw throwAuthorizationError('Delisting standalone listings is restricted to civitai team');
     }
     const { delistListing } = await import('~/server/services/blocks/offsite-moderation.service');
     try {
@@ -1128,7 +1132,7 @@ export const appListingsRouter = router({
   /** MOD relist a removed off-site listing (removed → approved). Reversibility. */
   relistListing: moderatorProcedure.input(relistListingSchema).mutation(async ({ ctx, input }) => {
     if (!ctx.user?.isModerator) {
-      throw throwAuthorizationError('Relisting off-site listings is restricted to civitai team');
+      throw throwAuthorizationError('Relisting standalone listings is restricted to civitai team');
     }
     const { relistListing } = await import('~/server/services/blocks/offsite-moderation.service');
     try {
@@ -1150,7 +1154,9 @@ export const appListingsRouter = router({
    */
   claimListing: moderatorProcedure.input(claimListingSchema).mutation(async ({ ctx, input }) => {
     if (!ctx.user?.isModerator) {
-      throw throwAuthorizationError('Reassigning off-site listings is restricted to civitai team');
+      throw throwAuthorizationError(
+        'Reassigning standalone listings is restricted to civitai team'
+      );
     }
     const { claimListing } = await import('~/server/services/blocks/offsite-moderation.service');
     try {
@@ -1171,7 +1177,7 @@ export const appListingsRouter = router({
    */
   purgeListing: moderatorProcedure.input(purgeListingSchema).mutation(async ({ ctx, input }) => {
     if (!ctx.user?.isModerator) {
-      throw throwAuthorizationError('Purging off-site listings is restricted to civitai team');
+      throw throwAuthorizationError('Purging standalone listings is restricted to civitai team');
     }
     const { purgeListing } = await import('~/server/services/blocks/offsite-moderation.service');
     try {
@@ -1241,7 +1247,9 @@ export const appListingsRouter = router({
     .input(resetListingToPendingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Resetting off-site listings is restricted to civitai team');
+        throw throwAuthorizationError(
+          'Resetting standalone listings is restricted to civitai team'
+        );
       }
       const { resetListingToPending } = await import(
         '~/server/services/blocks/offsite-moderation.service'

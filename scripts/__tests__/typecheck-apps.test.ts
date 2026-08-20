@@ -17,9 +17,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, cpSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { EXCLUDED } from '../ci/typecheck-apps.mjs';
@@ -48,8 +47,14 @@ afterAll(() => {
 
 let seq = 0;
 
+/**
+ * What the fake `pnpm` does. Data rather than a shell snippet, because the fake is a NODE script:
+ * an extensionless `#!/usr/bin/env bash` file is not executable on Windows.
+ */
+type FakePnpm = { code: number; stdout?: string };
+
 /** A throwaway repo root: the real script, a stub apps/ tree, and a fake pnpm on PATH. */
-function makeRepo(apps: Record<string, boolean>, pnpmBody: string) {
+function makeRepo(apps: Record<string, boolean>, pnpm: FakePnpm) {
   const dir = join(root, `case-${seq++}`);
   mkdirSync(join(dir, 'scripts', 'ci'), { recursive: true });
   mkdirSync(join(dir, 'bin'), { recursive: true });
@@ -68,8 +73,19 @@ function makeRepo(apps: Record<string, boolean>, pnpmBody: string) {
   }
 
   const fake = join(dir, 'bin', 'pnpm');
-  writeFileSync(fake, `#!/usr/bin/env bash\n${pnpmBody}\n`);
+  writeFileSync(
+    fake,
+    // Echo argv: answering by exit code alone leaves every case blind to WHAT the script asks pnpm
+    // to run, so a wrong `--filter` or a wrong script name keeps the whole suite green.
+    `#!/usr/bin/env node\n` +
+      `process.stdout.write('ARGV ' + process.argv.slice(2).join(' ') + '\\n');\n` +
+      `${pnpm.stdout ? `process.stdout.write(${JSON.stringify(pnpm.stdout + '\n')});\n` : ''}` +
+      `process.exit(${pnpm.code});\n`
+  );
   chmodSync(fake, 0o755);
+  // Windows resolves a bare `pnpm` through PATHEXT, so the file above is invisible to it. The shim
+  // re-enters that same file through node, so both platforms run identical logic.
+  writeFileSync(join(dir, 'bin', 'pnpm.cmd'), `@node "%~dp0pnpm" %*\r\n`);
   return dir;
 }
 
@@ -77,6 +93,7 @@ function spawnIn(dir: string, args: string[]) {
   const r = spawnSync(process.execPath, args, {
     cwd: dir,
     encoding: 'utf8',
+    // `path.delimiter`, not ':' — on Windows a ':'-joined PATH is one nonexistent directory.
     env: { ...process.env, PATH: `${join(dir, 'bin')}${delimiter}${process.env.PATH}` },
   });
   return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
@@ -100,21 +117,31 @@ function runShipped(dir: string) {
   return spawnIn(dir, ['scripts/ci/typecheck-apps.mjs']);
 }
 
-/**
- * POSIX only. The fixtures put a fake `pnpm` on PATH as a `#!/usr/bin/env bash` script made executable
- * with `chmod 0755` — neither the shebang nor the mode bit means anything on Windows, where a spawned
- * `pnpm` resolves through PATHEXT and would need a `.cmd`. Porting the fixtures would mean maintaining
- * two dialects of every stub for a script that only ever runs on Linux CI, and a stub that drifts from
- * the one CI uses is worse than no local run.
- *
- * Skipped, not deleted: it reports as skipped rather than vanishing, so the gap is visible. The script
- * itself is covered on CI, which is the platform it runs on.
- */
-describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
+describe('typecheck-apps', () => {
   it('passes when every discovered app typechecks clean', () => {
-    const { code, out } = run(makeRepo({ alpha: true, beta: true }, 'exit 0'));
+    const { code, out } = run(makeRepo({ alpha: true, beta: true }, { code: 0 }));
     expect(out).toContain('All 2 app(s) passed typecheck');
     expect(code).toBe(0);
+  });
+
+  it('asks pnpm to run the TYPECHECK script, filtered to each discovered app', () => {
+    // On Windows this doubles as the proof that argv survives cmd.exe, which applies no quoting.
+    const { out } = run(makeRepo({ alpha: true, beta: true }, { code: 0 }));
+    expect(out).toContain('ARGV --filter @civitai/alpha run typecheck');
+    expect(out).toContain('ARGV --filter @civitai/beta run typecheck');
+  });
+
+  it('refuses a package name it would have to pass through a shell', () => {
+    // `&` ends the command under cmd.exe, so the child's failure is replaced by the trailing
+    // command's exit code — a red typecheck reporting 0, on the one platform that uses the shell.
+    const dir = makeRepo({ alpha: true }, { code: 1 });
+    writeFileSync(
+      join(dir, 'apps', 'alpha', 'package.json'),
+      JSON.stringify({ name: '@civitai/alpha&rem', scripts: { typecheck: 'true' } })
+    );
+    const { code, out } = run(dir);
+    expect(out).toContain('will not be passed to a shell');
+    expect(code).toBe(2);
   });
 
   it('fails a stale pnpm filter, which exits 0 while checking nothing', () => {
@@ -123,7 +150,7 @@ describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
     // plain workflow step, a renamed package silently stops being typechecked.
     const dir = makeRepo(
       { alpha: true },
-      'echo "No projects matched the filters in \\"/repo\\""; exit 0'
+      { code: 0, stdout: `No projects matched the filters in "/repo"` }
     );
     const { code, out } = run(dir);
     expect(out).toContain('matched NO package');
@@ -131,7 +158,7 @@ describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
   });
 
   it('fails when an app’s typecheck fails', () => {
-    const { code, out } = run(makeRepo({ alpha: true }, 'exit 1'));
+    const { code, out } = run(makeRepo({ alpha: true }, { code: 1 }));
     expect(out).toContain('alpha: typecheck failed');
     expect(code).toBe(1);
   });
@@ -139,7 +166,7 @@ describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
   it('collects every failure instead of stopping at the first app', () => {
     // Sequential workflow steps abort the job at the first red app, so a shared type change
     // that breaks four of them reports one. This is the difference.
-    const { code, out } = run(makeRepo({ alpha: true, beta: true }, 'exit 1'));
+    const { code, out } = run(makeRepo({ alpha: true, beta: true }, { code: 1 }));
     expect(out).toContain('2 of 2 app(s) failed typecheck');
     expect(out).toContain('alpha:');
     expect(out).toContain('beta:');
@@ -149,7 +176,7 @@ describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
   it('refuses to report success when it discovers no apps', () => {
     // A zero that reads as a pass is the whole failure class. Nothing here has a typecheck
     // script, so discovery comes back empty.
-    const { code, out } = run(makeRepo({ alpha: false }, 'exit 0'));
+    const { code, out } = run(makeRepo({ alpha: false }, { code: 0 }));
     expect(out).toContain('Refusing to report success');
     expect(code).toBe(2);
   });
@@ -157,7 +184,7 @@ describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
   it('picks up a newly added app with no edit to the workflow', () => {
     // The hole reopens the moment someone adds an app to a hardcoded list they did not know
     // about. The ledger is read from disk, so it cannot go stale that way.
-    const { code, out } = run(makeRepo({ alpha: true, brandnew: true }, 'exit 0'));
+    const { code, out } = run(makeRepo({ alpha: true, brandnew: true }, { code: 0 }));
     expect(out).toContain('Typechecking 2 app(s): alpha, brandnew');
     expect(code).toBe(0);
   });
@@ -168,14 +195,14 @@ describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
     // If an excluded app is fixed or removed but its EXCLUDED entry survives, that entry is
     // a lie. Failing loudly is what stops an app quietly leaving the gate. `ghost` exists in
     // the exclusion map but not on disk.
-    const { code, out } = run(makeRepo({ alpha: true }, 'exit 0'), { ghost: 'no longer real' });
+    const { code, out } = run(makeRepo({ alpha: true }, { code: 0 }), { ghost: 'no longer real' });
     expect(out).toContain('no longer has a typecheck script');
     expect(out).toContain('ghost');
     expect(code).toBe(2);
   });
 
   it('skips an excluded app while still checking everything else', () => {
-    const dir = makeRepo({ alpha: true, legacy: true }, 'exit 0');
+    const dir = makeRepo({ alpha: true, legacy: true }, { code: 0 });
     const { code, out } = run(dir, { legacy: 'known broken, tracked in ISSUE-1' });
     expect(out).toContain('Typechecking 1 app(s): alpha');
     expect(out).toContain('Skipping legacy');
@@ -186,7 +213,7 @@ describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
   it('refuses to report success when every discovered app is excluded', () => {
     // The other route to an empty target set: discovery finds apps, but the exclusion map
     // eats all of them. That must not read as a pass either.
-    const { code, out } = run(makeRepo({ legacy: true }, 'exit 0'), { legacy: 'known broken' });
+    const { code, out } = run(makeRepo({ legacy: true }, { code: 0 }), { legacy: 'known broken' });
     expect(out).toContain('Refusing to report success');
     expect(code).toBe(2);
   });
@@ -206,7 +233,7 @@ describe.skipIf(process.platform === 'win32')('typecheck-apps', () => {
     const fixture: Record<string, boolean> = { alpha: true, auth: true };
     for (const excludedDir of Object.keys(EXCLUDED)) fixture[excludedDir] = true;
 
-    const { code, out } = runShipped(makeRepo(fixture, 'exit 0'));
+    const { code, out } = runShipped(makeRepo(fixture, { code: 0 }));
     const ledger = /Typechecking \d+ app\(s\): (.*)/.exec(out)?.[1] ?? '';
     expect(ledger.split(', ')).toContain('auth');
     expect(out).not.toContain('Skipping auth');

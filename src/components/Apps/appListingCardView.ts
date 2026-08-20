@@ -21,22 +21,21 @@
  *     there when the viewer can actually open it) — the direct primary action.
  *   - on-site otherwise (no page, or page but no `appBlocksPages`) → **View
  *     details** → `/apps/store-preview/<slug>` (the unified P2c detail).
- *   - off-site, EITHER sub-kind, with an https `externalUrl` → **Visit ↗** →
- *     external anchor (direct primary action). 🔴 The sub-kind does NOT decide
- *     this; the presence of a destination does — see below.
- *   - off-site with no usable target (missing / non-https url, either sub-kind)
- *     → **View details** → the unified detail (the DTO already null-guards
- *     non-https — we re-guard; the detail page shows the informational state).
+ *   - off-site with an https `externalUrl` → **Visit ↗** → external anchor
+ *     (direct primary action). 🔴 The presence of a destination decides this.
+ *   - off-site with no usable target (missing / non-https url) → **View
+ *     details** → the unified detail (the DTO already null-guards non-https —
+ *     we re-guard; the detail page shows the informational state).
  *
- * 🔴 Connect used to route to "View details" UNCONDITIONALLY, on the premise
- * that "the Connect affordance lives on the detail page". That affordance was a
- * dead stub, so the card handed the viewer a detail page with nothing on it —
- * the card half of the same defect. The detail now renders a real `Visit ↗` for
- * any off-site listing carrying an https `externalUrl` (see
- * `appListingDetailView`), so the card matches it: a connect listing with a
- * destination gets the direct Visit, and only a listing with NO destination
- * falls back to the detail. Card and detail must not disagree about whether an
- * app is reachable.
+ * 🔴 A listing with a linked OAuth client used to route to "View details"
+ * UNCONDITIONALLY, on the premise that "the Connect affordance lives on the
+ * detail page". That affordance was a dead stub, so the card handed the viewer a
+ * detail page with nothing on it — the card half of the same defect. The detail
+ * now renders a real `Visit ↗` for any off-site listing carrying an https
+ * `externalUrl` (see `appListingDetailView`), so the card matches it: an
+ * OAuth-connected listing with a destination gets the direct Visit, and only a
+ * listing with NO destination falls back to the detail. Card and detail must not
+ * disagree about whether an app is reachable.
  * Every CTA now has a working `href` (never actionless). The card ALSO links its
  * title to the detail (via `getListingDetailHref`) so the detail is reachable
  * even when the primary CTA is a direct Open / Visit.
@@ -49,18 +48,25 @@ import type {
 import type { AppListingStatus } from '~/server/services/blocks/app-listing-status.constants';
 
 /** Kind badge shown on the card face. */
-export type ListingBadgeKind = 'onsite' | 'connect' | 'external-link';
+export type ListingBadgeKind = 'onsite' | 'offsite';
 export type ListingBadge = { label: string; kind: ListingBadgeKind };
 
 /**
- * The kind badge: on-site apps read "App"; off-site splits into the two
- * sub-kinds — an OAuth "Connect app" vs a plain "Off-site" external link.
+ * The kind badge: on-site apps read "App"; every off-site app reads "Standalone".
+ *
+ * 🔴 Off-site used to fork into two BADGES — "Connect app" (a linked OAuth
+ * client) vs "Off-site" (no client) — derived from `connectClientId`. That fork
+ * is removed: `offsite` is one kind. (Those two names are the HISTORICAL labels;
+ * the surviving one has since been renamed "Standalone" as user-facing copy.)
+ * The word here is the SAME word the store's kind filter already uses
+ * (`KindFilterButtons`' "Standalone"), which is what makes the parent label true
+ * of the whole category again — under the fork it was only true of one child,
+ * while the submit flow REQUIRES an OAuth client and therefore minted nothing
+ * but the other one.
  */
 export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): ListingBadge {
   if (card.kindData.kind === 'onsite') return { label: 'App', kind: 'onsite' };
-  return card.kindData.subKind === 'connect'
-    ? { label: 'Connect app', kind: 'connect' }
-    : { label: 'Off-site', kind: 'external-link' };
+  return { label: 'Standalone', kind: 'offsite' };
 }
 
 /**
@@ -137,17 +143,17 @@ export function getListingCta(
     return { label: 'View details', action: 'detail', href: detailHref, external: false };
   }
 
-  // Off-site — BOTH sub-kinds. The destination decides, not the sub-kind: a
-  // connect app is reached at its own address exactly like a plain external
-  // link (it starts its own OAuth flow from there). Mirrors
-  // `getDetailPrimaryAction`; do NOT reintroduce a sub-kind test above this
-  // line, or the card and the detail disagree again.
+  // Off-site — ONE kind. The destination decides: an OAuth-connected app is
+  // reached at its own address exactly like a plain external link (it starts its
+  // own OAuth flow from there). Mirrors `getDetailPrimaryAction`; do NOT
+  // reintroduce a `connectClientId` test above this line, or the card and the
+  // detail disagree again. (The card DTO does not even carry that field.)
   const href = safeExternalHref(card.kindData.externalUrl);
   if (href) {
     return { label: 'Visit', action: 'visit', href, external: true };
   }
-  // No usable external target (missing / non-https, either sub-kind) → the
-  // unified detail, which shows the informational / connect-stub state.
+  // No usable external target (missing / non-https) → the unified detail, which
+  // shows the informational / connect-stub state.
   return { label: 'View details', action: 'detail', href: detailHref, external: false };
 }
 

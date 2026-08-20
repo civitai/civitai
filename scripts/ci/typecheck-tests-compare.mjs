@@ -302,7 +302,9 @@ export function checkPlausibility({ currentTotal, baselineTotal, allowEmpty = fa
       kind: 'collapse',
       reason:
         `this run parsed ${currentTotal} error(s) against a baseline of ${baselineTotal} — a ${pct}% ` +
-        `drop, below the ${COLLAPSE_RATIO * 100}% plausibility floor. Either a great deal was genuinely ` +
+        `drop, below the ${
+          COLLAPSE_RATIO * 100
+        }% plausibility floor. Either a great deal was genuinely ` +
         `fixed, or the instrument measured a smaller program than the baseline was taken over ` +
         `(a changed -p, a widened exclude, a partially-parsed output). Those two produce the same ` +
         `number and only one of them is common.`,
@@ -342,7 +344,23 @@ export const ALLOW_EMPTY_ENV = 'TYPECHECK_TESTS_ALLOW_EMPTY';
 const BARE_TOKENS = new Set(['1', '0', 'true', 'false', 'yes', 'no', 'on', 'off', 'y', 'n']);
 export const MIN_REASON_CHARS = 12;
 
-export function classifyEmptyAllowance({ raw, writeBaseline }) {
+/**
+ * `envName` and `gateScript` are parameters purely so a SECOND gate built on this
+ * module reports its OWN variable and its OWN regeneration command. They default
+ * to this gate's, so every existing caller is unchanged.
+ *
+ * They are parameters rather than a copy of this function living next to the
+ * other gate: the policy encoded here (scope to --write-baseline, refuse rather
+ * than ignore, demand a written reason) is the thing that must not drift between
+ * two gates, and a duplicated predicate is wrong at one of its copies eventually.
+ * The only per-gate facts are the two strings a human is told to act on.
+ */
+export function classifyEmptyAllowance({
+  raw,
+  writeBaseline,
+  envName = ALLOW_EMPTY_ENV,
+  gateScript = 'scripts/ci/typecheck-tests-gate.mjs',
+}) {
   const value = typeof raw === 'string' ? raw.trim() : '';
   if (!value) return { allowed: false, refuse: null, reason: null };
 
@@ -351,24 +369,28 @@ export function classifyEmptyAllowance({ raw, writeBaseline }) {
       allowed: false,
       reason: null,
       refuse:
-        `${ALLOW_EMPTY_ENV} is set on a VERDICT run. It is honoured on --write-baseline only, and ` +
+        `${envName} is set on a VERDICT run. It is honoured on --write-baseline only, and ` +
         `is refused here rather than ignored — a run whose plausibility control has been switched ` +
-        `off must never be able to report PASS. If the test tree is genuinely clean, regenerate ` +
-        `the baseline (node scripts/ci/typecheck-tests-gate.mjs --write-baseline) in the same ` +
+        `off must never be able to report PASS. If the measured tree is genuinely clean, regenerate ` +
+        `the baseline (node ${gateScript} --write-baseline) in the same ` +
         `change; the regenerated baseline makes this control a no-op honestly. If you are seeing ` +
-        `this in CI, some job definition is exporting ${ALLOW_EMPTY_ENV} — remove it.`,
+        `this in CI, some job definition is exporting ${envName} — remove it.`,
     };
   }
 
-  if (BARE_TOKENS.has(value.toLowerCase()) || value.length < MIN_REASON_CHARS || !/\s/.test(value)) {
+  if (
+    BARE_TOKENS.has(value.toLowerCase()) ||
+    value.length < MIN_REASON_CHARS ||
+    !/\s/.test(value)
+  ) {
     return {
       allowed: false,
       reason: null,
       refuse:
-        `${ALLOW_EMPTY_ENV}=${JSON.stringify(value)} is not a reason. Disabling the plausibility ` +
+        `${envName}=${JSON.stringify(value)} is not a reason. Disabling the plausibility ` +
         `control requires a written justification of at least ${MIN_REASON_CHARS} characters and ` +
         `more than one word, which is echoed into this run's output — e.g. ` +
-        `${ALLOW_EMPTY_ENV}="test tree genuinely clean after PR #1234, regenerating". A control ` +
+        `${envName}="test tree genuinely clean after PR #1234, regenerating". A control ` +
         `that can be switched off by typing "1" is one nobody has to justify switching off.`,
     };
   }
@@ -429,7 +451,9 @@ export function testFileFloor(baselineTestFiles) {
       floor: null,
       derived: false,
       reason:
-        `the baseline records testFilesInProgram = ${JSON.stringify(baselineTestFiles)}, which is ` +
+        `the baseline records testFilesInProgram = ${JSON.stringify(
+          baselineTestFiles
+        )}, which is ` +
         `not an integer. This value is the positive control's floor; a baseline that cannot say ` +
         `how many files it was measured over cannot validate anything. Regenerate it with ` +
         `--write-baseline rather than editing it by hand.`,
@@ -479,7 +503,11 @@ export function validateBaseline(baseline, expectedConfig) {
   if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) {
     return ['baseline is not a JSON object'];
   }
-  if (typeof baseline.files !== 'object' || baseline.files === null || Array.isArray(baseline.files)) {
+  if (
+    typeof baseline.files !== 'object' ||
+    baseline.files === null ||
+    Array.isArray(baseline.files)
+  ) {
     problems.push('baseline is missing a `files` object');
   } else {
     let sum = 0;
@@ -502,7 +530,9 @@ export function validateBaseline(baseline, expectedConfig) {
     if (summable && baseline.totalErrors !== undefined) {
       if (!Number.isInteger(baseline.totalErrors) || baseline.totalErrors < 0) {
         problems.push(
-          `baseline totalErrors is ${JSON.stringify(baseline.totalErrors)}, not a non-negative integer`
+          `baseline totalErrors is ${JSON.stringify(
+            baseline.totalErrors
+          )}, not a non-negative integer`
         );
       } else if (baseline.totalErrors !== sum) {
         problems.push(
@@ -621,22 +651,43 @@ export function stripJsonComments(text) {
     const c = text[i];
     const n = text[i + 1];
     if (inLine) {
-      if (c === '\n') { inLine = false; out += c; }
+      if (c === '\n') {
+        inLine = false;
+        out += c;
+      }
       continue;
     }
     if (inBlock) {
-      if (c === '*' && n === '/') { inBlock = false; i++; }
+      if (c === '*' && n === '/') {
+        inBlock = false;
+        i++;
+      }
       continue;
     }
     if (inString) {
       out += c;
-      if (c === '\\') { out += text[++i] ?? ''; continue; }
+      if (c === '\\') {
+        out += text[++i] ?? '';
+        continue;
+      }
       if (c === '"') inString = false;
       continue;
     }
-    if (c === '"') { inString = true; out += c; continue; }
-    if (c === '/' && n === '/') { inLine = true; i++; continue; }
-    if (c === '/' && n === '*') { inBlock = true; i++; continue; }
+    if (c === '"') {
+      inString = true;
+      out += c;
+      continue;
+    }
+    if (c === '/' && n === '/') {
+      inLine = true;
+      i++;
+      continue;
+    }
+    if (c === '/' && n === '*') {
+      inBlock = true;
+      i++;
+      continue;
+    }
     out += c;
   }
   return out.replace(/,(\s*[}\]])/g, '$1');

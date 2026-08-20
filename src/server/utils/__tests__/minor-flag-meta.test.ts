@@ -5,6 +5,7 @@ import {
   resolveMinorAppeal,
   resolveMinorFlagged,
   stripMinorHashMeta,
+  stripModerationOwnedMeta,
 } from '~/server/utils/minor-flag-meta';
 import type { MinorFlagSnapshot, ModelMeta } from '~/server/schema/model.schema';
 
@@ -178,5 +179,72 @@ describe('stripMinorHashMeta — accepted stamp', () => {
 
     expect(result).not.toHaveProperty('minorHashAccepted');
     expect(result).toHaveProperty('description', 'kept');
+  });
+});
+
+describe('textModeration redaction', () => {
+  const meta = {
+    textModeration: {
+      matchedTerms: ['some matched phrase'],
+      triggeredLabels: ['Suggestive'],
+      scannedAt: '2026-08-19T00:00:00.000Z',
+    },
+    profanityMatches: ['badword'],
+  } as ModelMeta;
+
+  // Model.meta reaches clients by TWO paths: filterModelMetaForClient (moderator-aware) and
+  // stripMinorHashMeta called directly (model.service.ts:1651,2433 — NOT moderator-aware).
+  // The strip has to live in the function both paths share, or the second one leaks.
+  it('strips textModeration in stripMinorHashMeta itself', () => {
+    expect(stripMinorHashMeta(meta).textModeration).toBeUndefined();
+  });
+
+  it('strips it for moderators too — the moderator surface is getModelModerationDetail, which does not use this path', () => {
+    expect(filterModelMetaForClient(meta, true).textModeration).toBeUndefined();
+    expect(filterModelMetaForClient(meta, false).textModeration).toBeUndefined();
+  });
+
+  it('leaves unrelated keys intact', () => {
+    const result = stripMinorHashMeta({ ...meta, showcaseCollectionId: 7 } as ModelMeta);
+    expect(result.showcaseCollectionId).toBe(7);
+  });
+});
+
+// A key that is never safe to hand out is never safe to accept either. `modelUpsertSchema.meta`
+// is a looseObject, so without this an owner's save can write these directly.
+describe('stripModerationOwnedMeta', () => {
+  const meta = {
+    textModeration: { matchedTerms: ['t'], triggeredLabels: ['NSFW'], scannedAt: 'x' },
+    minorFlagSnapshot: { source: 'auto', at: 'x' },
+    profanityMatches: ['p'],
+    commentsLocked: true,
+  } as unknown as ModelMeta;
+
+  it('drops every moderation-owned key for a non-moderator', () => {
+    const result = stripModerationOwnedMeta(meta);
+    expect(result?.textModeration).toBeUndefined();
+    expect(result?.minorFlagSnapshot).toBeUndefined();
+    expect(result?.profanityMatches).toBeUndefined();
+  });
+
+  it('leaves unrelated keys intact', () => {
+    expect(stripModerationOwnedMeta(meta)?.commentsLocked).toBe(true);
+  });
+
+  it('passes a moderator through untouched', () => {
+    expect(stripModerationOwnedMeta(meta, true)).toBe(meta);
+  });
+
+  it('covers exactly what stripMinorHashMeta hides, so the two directions cannot drift', () => {
+    const outbound = stripMinorHashMeta(meta);
+    for (const key of Object.keys(meta)) {
+      if ((outbound as Record<string, unknown>)[key] !== undefined) continue;
+      expect((stripModerationOwnedMeta(meta) as Record<string, unknown>)[key]).toBeUndefined();
+    }
+  });
+
+  it('handles null and undefined', () => {
+    expect(stripModerationOwnedMeta(null)).toBeNull();
+    expect(stripModerationOwnedMeta(undefined)).toBeUndefined();
   });
 });

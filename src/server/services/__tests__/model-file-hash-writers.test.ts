@@ -16,7 +16,11 @@ import { describe, it, expect } from 'vitest';
  *   1. The ledger below is compared against a fresh enumeration of the source tree. It fails when
  *      the writer set GROWS (a new writer must declare whether it normalizes) or SHRINKS (a
  *      writer was removed and the ledger — and the doc comment on normalizeScanHashes — is now
- *      lying about the surface).
+ *      lying about the surface). The enumeration runs over COMMENT-STRIPPED source, because a
+ *      writer is something that executes: migration 20260819000000 documents the SHA256_12
+ *      backfill for other environments as a commented-out `INSERT INTO "ModelFileHash"`, and
+ *      matching that would force a maintainer to register prose as a writer — which then hides a
+ *      real INSERT later added to that same file behind an entry the ledger already holds.
  *   2. `describe('behaviour')` drives the two normalizing writers for real and asserts the exact
  *      rows they hand the database, against literal expected values. A structural ledger
  *      type-checks past a writer that calls the helper and then ignores its return value.
@@ -76,14 +80,21 @@ const WRITE_PATTERNS: Array<[kind: string, re: RegExp]> = [
  * enumeration that writes nothing. It made trunk red for every PR until someone either declared a
  * non-writer in the ledger or deleted the documentation, and both would have been wrong.
  *
- * Scoped to `.sql` deliberately. The same argument applies to a commented-out `.ts` writer, but
- * stripping there could only ever SHRINK the enumeration, which is the direction this ledger is
- * also meant to catch — so that half needs its own evidence, not a drive-by.
+ * 🔴 THE `.ts` HALF NOW HAS ITS EVIDENCE, which is why stripping is no longer scoped to `.sql`.
+ * The earlier fix deliberately stopped at SQL, on the reasoning that stripping `.ts` "could only
+ * ever SHRINK the enumeration, which is the direction this ledger is also meant to catch — so
+ * that half needs its own evidence, not a drive-by." That is the right worry: a stripper that
+ * eats LIVE code makes the ledger under-report, and under-reporting is the dangerous direction.
+ * The evidence is the paired positive controls below — every live spelling of a write (SQL
+ * `INSERT`/`UPDATE`/`DELETE`, and the Prisma `dbWrite.modelFileHash.*` forms) is asserted to
+ * SURVIVE stripping, alongside its commented twin asserted not to. Shrinkage is therefore
+ * observed, not assumed absent.
+ *
+ * Both strippers are QUOTE-AWARE for the same reason. Postgres spells the table
+ * `"ModelFileHash"`, and a `--` inside a string literal must not swallow a real statement that
+ * follows it on the same line — a naive line-comment regex that ignores quote state does exactly
+ * that. See `stripCommentsForFile` and the two strippers it dispatches to.
  */
-export function stripSqlComments(source: string, ext: string): string {
-  if (ext !== '.sql') return source;
-  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
-}
 
 const isTestFile = (relPath: string) =>
   relPath.includes('__tests__') || /\.(test|spec)\.[cm]?[jt]sx?$/.test(relPath);
@@ -114,11 +125,11 @@ function enumerateWriters(): string[] {
 
   const found = new Set<string>();
   for (const file of files) {
-    // POSIX separators — the ledger is written with '/', and `path.relative` yields '\' on Windows.
     const rel = path.relative(REPO_ROOT, file).split(path.sep).join('/');
     if (isTestFile(rel)) continue;
-    const source = stripSqlComments(fs.readFileSync(file, 'utf8'), path.extname(file));
-    if (!source.includes('odelFileHash')) continue; // cheap prefilter, case-insensitive on the M
+    const raw = fs.readFileSync(file, 'utf8');
+    if (!raw.includes('odelFileHash')) continue; // cheap prefilter, case-insensitive on the M
+    const source = stripCommentsForFile(rel, raw);
     for (const [, re] of WRITE_PATTERNS) {
       re.lastIndex = 0;
       let match: RegExpExecArray | null;
@@ -173,6 +184,51 @@ function stripComments(source: string): string {
     .join('\n');
 }
 
+/**
+ * SQL comments removed, statements kept. `--` to end of line and `/* … *\/` blocks, but only
+ * outside a quoted literal or identifier — Postgres spells the table `"ModelFileHash"`, and a
+ * string containing `--` must not swallow a real statement that follows it on the same line.
+ *
+ * A `'` inside a comment cannot open a literal, because the comment is consumed before the quote
+ * state is ever touched; `''` (an escaped quote inside a literal) closes and reopens, which nets
+ * out correctly.
+ */
+function stripSqlComments(source: string): string {
+  let out = '';
+  let inSingle = false;
+  let inDouble = false;
+  let i = 0;
+  while (i < source.length) {
+    if (!inSingle && !inDouble && source.startsWith('--', i)) {
+      const nl = source.indexOf('\n', i);
+      if (nl === -1) break;
+      i = nl; // keep the newline so line structure survives
+      continue;
+    }
+    if (!inSingle && !inDouble && source.startsWith('/*', i)) {
+      const end = source.indexOf('*/', i + 2);
+      out += ' '; // a block comment separates tokens; it must not join them
+      i = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    const ch = source[i];
+    if (ch === "'" && !inDouble) inSingle = !inSingle;
+    else if (ch === '"' && !inSingle) inDouble = !inDouble;
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * The enumeration matches on code, so it must strip whatever the file's language calls a comment.
+ * `--` is a comment in SQL and a decrement in TS; `//` is a comment in TS and nothing in SQL.
+ * Using one stripper for both would either miss the prose or eat the code.
+ */
+function stripCommentsForFile(relPath: string, source: string): string {
+  return path.extname(relPath) === '.sql' ? stripSqlComments(source) : stripComments(source);
+}
+
 const LEDGER_ENTRIES = WRITER_LEDGER.flatMap(({ file, writes }) =>
   writes.map((w) => `${file} :: ${w}`)
 ).sort();
@@ -216,6 +272,83 @@ describe('ModelFileHash writer ledger', () => {
       });
       expect(matched, `${label} writer went undetected: ${snippet}`).toBe(true);
     }
+  });
+
+  it('enumerates statements, not a commented-out INSERT in a migration', () => {
+    // The case that made this necessary. Migration 20260819000000 adds the SHA256_12 enum value
+    // and nothing else; the `INSERT INTO "ModelFileHash"` in it is a `--` comment documenting the
+    // backfill for environments that still need it. Registering it would put a non-writer in the
+    // ledger AND make a real INSERT later added to that file invisible, since the entry key is
+    // `<path> :: INSERT INTO "ModelFileHash"` either way.
+    const rel =
+      'packages/civitai-db-schema/prisma/migrations/20260819000000_model_file_hash_sha256_12/migration.sql';
+    const abs = path.join(REPO_ROOT, rel);
+
+    // Three separate claims, because "the test is green" has three very different causes here.
+    // (1) the walk reaches the file at all — otherwise the strip is not what produced the green.
+    const files: string[] = [];
+    for (const root of SCAN_ROOTS) collectFiles(path.join(REPO_ROOT, root), files);
+    expect(files, 'the migration is outside the scanned roots').toContain(abs);
+
+    // (2) the raw file really does carry text the raw-sql matcher fires on…
+    const raw = fs.readFileSync(abs, 'utf8');
+    const rawSql = WRITE_PATTERNS.find(([kind]) => kind === 'raw-sql')![1];
+    rawSql.lastIndex = 0;
+    expect(rawSql.test(raw), 'fixture drift: the migration no longer contains the text').toBe(true);
+
+    // (3) …and stripping comments is what removes it.
+    rawSql.lastIndex = 0;
+    expect(rawSql.test(stripCommentsForFile(rel, raw))).toBe(false);
+    expect(enumerateWriters().filter((e) => e.startsWith(rel))).toEqual([]);
+  });
+
+  it('still sees a real SQL write after stripping (positive control for the strip)', () => {
+    // The dangerous direction: a stripper that eats statements reports a clean ledger while a raw
+    // SQL writer bypasses normalizeScanHashes. Every fixture below is a REAL write that must
+    // survive, paired with the commented form that must not.
+    const rawSql = WRITE_PATTERNS.find(([kind]) => kind === 'raw-sql')![1];
+    const survives = (sql: string) => {
+      rawSql.lastIndex = 0;
+      return rawSql.test(stripSqlComments(sql));
+    };
+
+    expect(survives('INSERT INTO "ModelFileHash" ("fileId", type) VALUES (1, \'SHA256\');')).toBe(
+      true
+    );
+    expect(survives('UPDATE "ModelFileHash" SET hash = \'x\' WHERE "fileId" = 1;')).toBe(true);
+    expect(survives('DELETE FROM "ModelFileHash" WHERE "fileId" = 1;')).toBe(true);
+    // A `--` inside a string literal is not a comment. Without quote tracking this line would be
+    // truncated at the dashes and the write after it would vanish.
+    expect(
+      survives(
+        'SELECT \'a--b\'; INSERT INTO "ModelFileHash" ("fileId", type) VALUES (1, \'SHA256\');'
+      )
+    ).toBe(true);
+    // A block comment SEPARATES tokens, so a write interrupted by one is still a write — the
+    // stripper leaves a space rather than splicing `INSERT` onto `INTO`.
+    expect(survives('INSERT /* note */ INTO "ModelFileHash" ("fileId") VALUES (1);')).toBe(true);
+    expect(survives('/* INSERT INTO "ModelFileHash" ("fileId") VALUES (1); */ SELECT 1;')).toBe(
+      false
+    );
+    expect(survives('--   INSERT INTO "ModelFileHash" ("fileId") VALUES (1);\nSELECT 1;')).toBe(
+      false
+    );
+  });
+
+  it('still sees a real Prisma write after stripping (positive control for the strip)', () => {
+    // Same control on the TS side: `stripCommentsForFile` routes .ts through the JS stripper, so a
+    // commented-out write stops being a phantom ledger entry — without hiding the live call.
+    const prisma = WRITE_PATTERNS.find(([kind]) => kind === 'prisma')![1];
+    const survives = (ts: string) => {
+      prisma.lastIndex = 0;
+      return prisma.test(stripCommentsForFile('x.ts', ts));
+    };
+
+    expect(survives('await dbWrite.modelFileHash.createMany({ data: rows });')).toBe(true);
+    expect(survives('// await dbWrite.modelFileHash.createMany({ data: rows });')).toBe(false);
+    expect(survives('/* await dbWrite.modelFileHash.deleteMany({ where }); */')).toBe(false);
+    // A trailing comment must not take the statement in front of it with it.
+    expect(survives('await dbWrite.modelFileHash.upsert(args); // legacy')).toBe(true);
   });
 
   it('strips comments before looking for the call (control for the check below)', () => {

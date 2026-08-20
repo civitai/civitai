@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /**
@@ -109,9 +109,9 @@ describe('scripts/ci/assert-standalone-boot-graph.mjs', () => {
     // The specific failure, not merely "something failed": a different defect passing this
     // assertion would make the red arm meaningless.
     expect(`${res.stdout}${res.stderr}`).toContain('MODULE_NOT_FOUND');
-    // Node prints the unresolved specifier as a NATIVE path, so the separator is a backslash on
-    // Windows and the POSIX form below would never match there.
-    expect(`${res.stdout}${res.stderr}`.split(sep).join('/')).toContain('esm/index.js');
+    // Separator-agnostic: node renders the unresolvable path with the platform separator, so a
+    // literal `esm/index.js` matches on Linux and never on Windows.
+    expect(`${res.stdout}${res.stderr}`).toMatch(/esm[\\/]index\.js/);
     expect(res.stderr).toContain('does not load from');
   });
 

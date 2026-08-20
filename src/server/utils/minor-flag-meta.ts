@@ -35,7 +35,8 @@ export function resolveMinorAppeal<T>({
 }
 
 // Written by the minor-hash service and never safe to expose: the snapshot carries
-// prevMinorImageIds, and the dismissal/clear stamps describe moderator decisions.
+// prevMinorImageIds, the dismissal/clear stamps describe moderator decisions, and
+// textModeration forensics are for moderator review only.
 // The single definition of which meta keys are secret — everything that hands a
 // Model.meta back to a client must go through this.
 export function stripMinorHashMeta(meta: ModelMeta): ModelMeta;
@@ -48,10 +49,52 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     minorHashDismissed: _dismissed,
     minorHashCleared: _cleared,
     minorHashAccepted: _accepted,
+    textModeration: _textModeration,
     ...rest
   } = meta;
 
   return rest;
+}
+
+/**
+ * Meta keys only a server-side moderation path may write. `modelUpsertSchema.meta`
+ * is a `looseObject`, so unknown keys survive parsing and are merged into
+ * `Model.meta` with the client's copy winning — without this, a creator can author
+ * their own `textModeration` forensics for a moderator to read, or mint the
+ * `minorFlagSnapshot` that the appeal flow treats as proof of an automated flag.
+ *
+ * Deliberately the same list as `stripMinorHashMeta` plus the profanity pair: a key
+ * that is never safe to hand out is never safe to accept either, and keeping one
+ * list means the two directions cannot drift apart.
+ */
+const MODERATION_OWNED_META_KEYS = [
+  'minorFlagSnapshot',
+  'minorHashDismissed',
+  'minorHashCleared',
+  'minorHashAccepted',
+  'textModeration',
+  'profanityMatches',
+  'profanityEvaluation',
+] as const satisfies readonly (keyof ModelMeta)[];
+
+/**
+ * Drops moderation-owned keys from CLIENT-supplied meta on the way in. Moderators
+ * pass through untouched — they reach the same field through moderator-only routers
+ * and stripping there would break those flows.
+ *
+ * Must run before any server-side path adds its own keys to the same object, or it
+ * strips the values that path just wrote.
+ */
+export function stripModerationOwnedMeta<T extends ModelMeta | null | undefined>(
+  meta: T,
+  isModerator?: boolean
+): T {
+  if (!meta || isModerator) return meta;
+
+  const rest = { ...meta } as ModelMeta;
+  for (const key of MODERATION_OWNED_META_KEYS) delete rest[key];
+
+  return rest as T;
 }
 
 export function filterModelMetaForClient(meta: ModelMeta, isModerator?: boolean): ModelMeta {

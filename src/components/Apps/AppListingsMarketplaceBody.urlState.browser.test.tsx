@@ -57,7 +57,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
             hasPage: false,
             liveUrl: `https://slug-${id}.civit.ai`,
           }
-        : { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://x.app' },
+        : { kind: 'offsite', externalUrl: 'https://x.app' },
   };
 }
 
@@ -195,7 +195,7 @@ describe('the harness itself round-trips (guard on the guard)', () => {
     // router would make the racing test pass for the wrong reason.
     renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Off-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
     await vi.waitFor(() => expect(currentQuery()).toMatchObject({ kind: 'offsite' }));
     // …and the component re-renders FROM the URL.
     await vi.waitFor(() => expect(mocks.lastArgs).toMatchObject({ kind: 'offsite' }));
@@ -272,7 +272,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
   test('a sort change racing a kind change keeps both', async () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Off-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
     // Close the panel and change sort immediately.
     await userEvent.click(page.getByLabelText('Sort').first());
     await userEvent.click(page.getByRole('option', { name: 'Newest' }));
