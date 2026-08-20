@@ -64,6 +64,11 @@ provenance is the only reason it differs from the standard at all.
   implementation of the wrong thing — that is how four capabilities were missed on one page after
   passing every review.
 
+  There is a skill per inbound path, and each carries its own traps and cutover:
+  [`retool-migration`](../../.claude/skills/retool-migration/SKILL.md) (from a Retool export) and
+  [`moderator-page-migration`](../../.claude/skills/moderator-page-migration/SKILL.md) (from
+  `src/pages/moderator/**` — which also deletes the legacy page and trims what it orphans).
+
 ## Non-negotiables
 
 Duplicated verbatim in every SvelteKit app's `CLAUDE.md` because **this file always loads and the

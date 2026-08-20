@@ -8,6 +8,12 @@ description: Port a Retool app's functionality into a page in apps/moderator. Us
 Ports what a Retool app **does** into `apps/moderator`. Retool's layout, styling and component
 tree are **not** ported — the JSON is a spec for behaviour, not a design.
 
+Sibling skill: [`moderator-page-migration`](../moderator-page-migration/SKILL.md), for the *other* inbound
+path — pages coming from the main Next.js app's `src/pages/moderator/**`. Same app, same conventions, same
+reviews; different source, and a cutover step this path does not have (deleting the legacy page and
+trimming what it orphans). If the thing you are porting is a `/moderator/*` page rather than a Retool
+export, use that one.
+
 ## Setup (once per checkout)
 
 ```bash
