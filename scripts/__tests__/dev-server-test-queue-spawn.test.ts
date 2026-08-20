@@ -35,12 +35,16 @@ describe('the queued run does not re-enter the queue', () => {
    * agents it takes, because each logical run then occupies two slots.
    */
   it('disables the queue flag for the process it spawns', () => {
-    defaultStartRun({
+    // Disposed, because a run now owns a capture file, two descriptors and a tail interval, and
+    // the fake child below never emits 'exit'. Without this, every `pnpm test:unit` left two
+    // files in /tmp forever — measured at 15 stale files before it was noticed.
+    const handle = defaultStartRun({
       worktree: '/repo',
       args: [],
       onLog: () => undefined,
       onExit: () => undefined,
     });
+    handle.dispose();
 
     const env = (spawn.mock.calls[0][2] as { env: Record<string, string> }).env;
     expect(env.CIVITAI_TEST_QUEUE).toBe('0');
@@ -51,12 +55,13 @@ describe('the queued run does not re-enter the queue', () => {
   it('passes the rest of the environment through', () => {
     process.env.CIVITAI_TEST_QUEUE_PROBE = 'kept';
 
-    defaultStartRun({
+    const handle = defaultStartRun({
       worktree: '/repo',
       args: [],
       onLog: () => undefined,
       onExit: () => undefined,
     });
+    handle.dispose();
 
     const env = (spawn.mock.calls[0][2] as { env: Record<string, string> }).env;
     expect(env.CIVITAI_TEST_QUEUE_PROBE).toBe('kept');

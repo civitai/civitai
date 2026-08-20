@@ -17,6 +17,7 @@ import { closeSync, openSync, readSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
+import { StringDecoder } from 'string_decoder';
 
 export const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_ABANDON_AFTER_MS = 10 * 60 * 1000;
@@ -83,9 +84,16 @@ export function createOutputCapture(onLine) {
   // torn in two and BOTH halves are recorded as lines — which corrupted the log even when every
   // byte arrived: 5,000 lines in, 4,998 recognised, 6 fragments invented, 353,893/353,893 bytes.
   let carry = '';
+  // A carry buffer fixes a torn LINE and does nothing for a torn CHARACTER. Decoding each read
+  // independently turned a 3-byte `⎯` starting at byte 65535 into THREE U+FFFD — and vitest's
+  // failure output is built from `⎯`/`✓`/`×`/`❯`, one boundary per 64 KiB. The decoder holds an
+  // incomplete sequence back until the bytes that finish it arrive.
+  const decoder = new StringDecoder('utf8');
+
+  // Hoisted: the tail runs 10x a second per run, and this was a fresh 64 KiB allocation each time.
+  const buf = Buffer.allocUnsafe(64 * 1024);
 
   const drain = (final = false) => {
-    const buf = Buffer.allocUnsafe(64 * 1024);
     for (;;) {
       let read = 0;
       try {
@@ -96,12 +104,19 @@ export function createOutputCapture(onLine) {
       }
       if (read <= 0) break;
       offset += read;
-      carry += buf.toString('utf8', 0, read);
+      carry += decoder.write(buf.subarray(0, read));
       const lines = carry.split('\n');
       carry = lines.pop() ?? '';
       for (const line of lines) if (line.trim()) onLine(line.trim());
-      if (read < buf.length) break;
+      // A short read means EOF on a regular file, so the incremental drain can stop there. The
+      // FINAL drain cannot afford that reasoning — truncating here would report `logsDropped: 0`
+      // over a clipped log, the exact thing warnIfLogsDropped exists to make impossible — so it
+      // keeps going until a read genuinely returns nothing.
+      if (read < buf.length && !final) break;
     }
+    // Anything the decoder is still holding is an incomplete sequence at EOF; flush it so the
+    // bytes are visible as replacement chars rather than silently dropped.
+    if (final) carry += decoder.end();
     // A run whose last line has no trailing newline still emitted that line.
     if (final && carry.trim()) {
       onLine(carry.trim());
@@ -141,6 +156,7 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
   } catch (err) {
     queueMicrotask(() => onExit(-1, `could not open a capture file: ${err.message}`));
     emitter.kill = () => {};
+    emitter.dispose = () => {};
     return emitter;
   }
 
@@ -166,6 +182,7 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
     capture.close();
     queueMicrotask(() => onExit(-1, err.message));
     emitter.kill = () => {};
+    emitter.dispose = () => {};
     return emitter;
   }
 
@@ -191,6 +208,26 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
 
   child.on('exit', (code) => finish(code ?? -1));
   child.on('error', (err) => finish(-1, err.message));
+
+  /**
+   * Release the capture without an exit.
+   *
+   * `finish` is bound to the child's own 'exit', and there are two live paths where that event
+   * never comes: the sweep's force-release past the kill grace — the wedge this queue exists to
+   * prevent — and daemon shutdown. Both used to drop the queue's last reference to the handle
+   * while the interval, both descriptors and an unbounded /tmp file stayed alive inside the
+   * closure. Measured on a forced run: 2 fds still open, the log still growing 2s after the run
+   * was reported terminal (logIndex 75 -> 471), file 102,465 bytes and climbing, never unlinked.
+   *
+   * Idempotent, and it deliberately does NOT call onExit: the caller has already settled the run.
+   */
+  emitter.dispose = () => {
+    if (finished) return;
+    finished = true;
+    clearInterval(tail);
+    capture.drain(true);
+    capture.close();
+  };
 
   emitter.pid = child.pid;
   // `sync` is for daemon shutdown, where an asynchronously spawned taskkill would never get to
@@ -349,6 +386,9 @@ export class TestQueue {
       // exists to prevent. Past the grace, detach the handle (so a late exit cannot double-settle)
       // and free the slot on our own authority.
       if (run.killRequestedAt !== null && at - run.killRequestedAt >= this.killGraceMs) {
+        // Before dropping the reference: the handle owns a capture file, two descriptors and a
+        // tail interval, and none of them are released by anything else on this path.
+        run.handle?.dispose?.();
         run.handle = null;
         this.release(id);
         this.settle(
@@ -379,6 +419,9 @@ export class TestQueue {
       run.cancelReason = 'daemon-shutdown';
       run.killRequestedAt = this.now();
       run.handle?.kill(true);
+      // The daemon exits immediately after this, so the child's 'exit' will not be observed —
+      // without this the capture file survives the daemon that created it, every time.
+      run.handle?.dispose?.();
     }
   }
 

@@ -87,6 +87,35 @@ describe('a run that exits without flushing still has all of its output', () => 
     const { path } = await capture(10);
     expect(existsSync(path)).toBe(false);
   }, 30_000);
+
+  /**
+   * A carry buffer fixes a torn LINE and does nothing for a torn CHARACTER. Decoding each read
+   * independently turned a 3-byte `⎯` starting at byte 65535 into THREE U+FFFD, with the original
+   * gone — and vitest builds its failure output from `⎯`/`✓`/`×`/`❯`, with one boundary every
+   * 64 KiB. The straddle case below is ASCII and structurally cannot see this.
+   */
+  it('does not corrupt a multi-byte character split across the read window', () => {
+    const lines: string[] = [];
+    const cap = createOutputCapture((line: string) => lines.push(line));
+    try {
+      const READ_WINDOW = 64 * 1024;
+      // Pad so the 3-byte U+23AF begins one byte before the window ends, splitting it 1 + 2.
+      const pad = Buffer.alloc(READ_WINDOW - 1, 0x61); // 'a'
+      writeSync(cap.writeFd, pad);
+      writeSync(cap.writeFd, Buffer.from('⎯MARKER\n', 'utf8'));
+
+      cap.drain(true);
+
+      const marked = lines.filter((l) => l.includes('MARKER'));
+      expect(marked).toHaveLength(1);
+      expect(marked[0].endsWith('⎯MARKER')).toBe(true);
+      // The control: no replacement character anywhere. Without the decoder this line carries
+      // three of them in place of the `⎯`.
+      expect(marked[0]).not.toContain('�');
+    } finally {
+      cap.close();
+    }
+  });
 });
 
 /**
@@ -114,8 +143,10 @@ describe('a line that straddles a read boundary survives whole', () => {
       const found = lines.filter((l) => l.includes('STRADDLE'));
       expect(found).toHaveLength(1);
       expect(found[0]).toBe(straddler);
-      // The positive control: the write really did cross the window, so the assertion above was
-      // exercised rather than passing because everything fit in one read.
+      // The positive control, pinned from both sides. `> READ_WINDOW` alone is also satisfied if
+      // the padding ALREADY exceeded the window, which would put the line wholly inside the
+      // second read and never exercise the hazard.
+      expect(padding.length).toBeLessThan(READ_WINDOW);
       expect(padding.length + straddler.length).toBeGreaterThan(READ_WINDOW);
     } finally {
       cap.close();
@@ -163,6 +194,60 @@ describe('the queue hands its child the capture file, not a pipe', () => {
     expect(stdio[2]).toBe(stdio[1]);
 
     child.emit('exit', 0);
+  });
+
+  it('records lines at the level the trade-off claims, not a stream it cannot know', () => {
+    const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
+    spawnMock.mockReturnValue(child);
+
+    const levels: string[] = [];
+    const handle = defaultStartRun({
+      worktree: repoRoot,
+      args: [],
+      onLog: (level: string) => levels.push(level),
+      onExit: () => {},
+    });
+    const stdio = (spawnMock.mock.calls[0][2] as { stdio: number[] }).stdio;
+    writeSync(stdio[1], 'a line\n');
+    child.emit('exit', 0);
+    handle.dispose();
+
+    // One file cannot tell stdout from stderr, so claiming either would be a false label in
+    // stored data. `info` is the queue's own preamble line; captured output is `output`.
+    expect(levels.filter((l) => l !== 'info')).toEqual(['output']);
+  });
+
+  /**
+   * The capture has to be releasable WITHOUT an exit, because two live paths never produce one:
+   * the sweep's force-release past the kill grace — the wedge this queue exists to prevent — and
+   * daemon shutdown. Both dropped the queue's last reference while the interval, both descriptors
+   * and an unbounded /tmp file stayed alive in the closure.
+   */
+  it('releases the capture when the child never exits', () => {
+    const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
+    spawnMock.mockReturnValue(child);
+
+    let exits = 0;
+    const handle = defaultStartRun({
+      worktree: repoRoot,
+      args: [],
+      onLog: () => {},
+      onExit: () => (exits += 1),
+    });
+    const stdio = (spawnMock.mock.calls[0][2] as { stdio: number[] }).stdio;
+
+    handle.dispose();
+
+    // The descriptor is closed, so a write to it now throws — that is the observable proof the
+    // fds were released, rather than a claim that dispose() was called.
+    expect(() => writeSync(stdio[1], 'x')).toThrow();
+    // The caller has already settled the run; disposing must not settle it a second time.
+    expect(exits).toBe(0);
+    // Idempotent — shutdown may dispose a handle the sweep already did.
+    expect(() => handle.dispose()).not.toThrow();
+    // And a late exit after disposal cannot re-enter finish().
+    child.emit('exit', 0);
+    expect(exits).toBe(0);
   });
 
   /**

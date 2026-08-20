@@ -207,6 +207,66 @@ describe('dev-server test queue', () => {
     expect(queue.get(next.id).status).toBe('running');
   });
 
+  /**
+   * The two paths where a run's own 'exit' never arrives are exactly the two that must still
+   * release what the run owns. A real handle owns a capture file, two descriptors and a tail
+   * interval, and `finish` is bound to that 'exit' — so dropping `run.handle` here without a
+   * dispose left all three alive forever. Measured before the fix, on a forced run: 2 fds still
+   * open and the log still growing 2s after the run was reported terminal (logIndex 75 -> 471),
+   * the file at 102,465 bytes and never unlinked.
+   *
+   * Asserted on the QUEUE rather than on the handle: a `dispose()` that exists and is never
+   * called is exactly the shape this missed the first time.
+   */
+  it('disposes a handle whose process never exits, on both release paths', () => {
+    const disposals: string[] = [];
+    const stubborn = (tag: string) => (): FakeRun => {
+      const handle = new EventEmitter() as FakeRun & { dispose: () => void };
+      handle.kill = vi.fn();
+      handle.finish = () => {};
+      handle.worktree = '/wt';
+      handle.dispose = vi.fn(() => disposals.push(tag));
+      runner.started.push(handle);
+      return handle;
+    };
+
+    // Path 1 — the sweep's force-release past the kill grace.
+    const queue = build({ killGraceMs: 5_000 });
+    runner.startRun = stubborn('forced');
+    const stuck = queue.request({ worktree: '/wt/a' });
+    now += 60_001;
+    queue.sweep();
+    now += 5_000;
+    expect(queue.sweep().forced).toEqual([stuck.id]);
+    expect(disposals).toEqual(['forced']);
+
+    // Path 2 — daemon shutdown, which exits the process immediately afterwards.
+    const queue2 = build();
+    runner.startRun = stubborn('shutdown');
+    queue2.request({ worktree: '/wt/b' });
+    queue2.shutdown();
+    expect(disposals).toEqual(['forced', 'shutdown']);
+  });
+
+  // A runner that predates `dispose` must not crash the sweep — the queue calls it optionally.
+  it('tolerates a handle with no dispose', () => {
+    const queue = build({ killGraceMs: 5_000 });
+    runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
+      const handle = new EventEmitter() as FakeRun;
+      handle.kill = vi.fn();
+      handle.finish = () => {};
+      handle.worktree = worktree;
+      runner.started.push(handle);
+      return handle;
+    };
+    const stuck = queue.request({ worktree: '/wt/a' });
+    now += 60_001;
+    queue.sweep();
+    now += 5_000;
+    expect(() => queue.sweep()).not.toThrow();
+    expect(queue.get(stuck.id).status).toBe('timeout');
+  });
+
   it('does not settle a forced run twice when its exit finally arrives', () => {
     const queue = build({ killGraceMs: 5_000 });
     const stuck = queue.request({ worktree: '/wt/a' });
