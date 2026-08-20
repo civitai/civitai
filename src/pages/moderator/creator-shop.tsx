@@ -29,6 +29,7 @@ import {
   IconCopyright,
   IconEyeOff,
   IconFilter,
+  IconHexagonOff,
   IconPhotoOff,
   IconRepeat,
   IconScan,
@@ -41,6 +42,7 @@ import {
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
+import type { Icon as TablerIcon } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import type { ComponentProps, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -118,10 +120,19 @@ function statusMeta(status: CosmeticShopItemStatus): { label: string; color: str
   }
 }
 
-// Quick-insert reasons a moderator can append to their note.
-const flagConcerns = [
-  { label: 'Copyright / IP', icon: IconCopyright },
-  { label: 'Pricing', icon: IconTag },
+// Quick-insert reasons a moderator can append to their note. A concern with a
+// stock wording inserts that; the rest insert their bare label.
+const flagConcerns: { label: string; icon: TablerIcon; note?: string }[] = [
+  {
+    label: 'Copyright / IP',
+    icon: IconCopyright,
+    note: 'Copyright / IP - We explicitly state "All cosmetics must ... not use copyrighted or trademarked material you don\'t own."',
+  },
+  {
+    label: 'Hexagonal',
+    icon: IconHexagonOff,
+    note: 'Not hexagonal - please review the standards. If you fail to abide by them, I will reject this.',
+  },
   { label: 'Visual quality', icon: IconPhotoOff },
   { label: 'NSFW', icon: IconEyeOff },
 ];
@@ -319,22 +330,24 @@ function CreatorShopReviewPage() {
 
   if (currentUser && !currentUser.isModerator) return <NotFound />;
 
-  // Flags toggle their label in/out of the note and light up while active, so a
+  // Flags toggle their text in/out of the note and light up while active, so a
   // moderator can't add the same concern twice.
-  const toggleFlag = (label: string) =>
+  const toggleFlag = (concern: (typeof flagConcerns)[number]) =>
     setActiveFlags((prev) => {
+      const { label } = concern;
+      const text = concern.note ?? label;
       const next = new Set(prev);
       if (next.has(label)) {
         next.delete(label);
         setReason((r) =>
           r
-            .replace(label, '')
+            .replace(text, '')
             .replace(/\s{2,}/g, ' ')
             .trim()
         );
       } else {
         next.add(label);
-        setReason((r) => (r.trim() ? `${r.trim()} ${label}` : label));
+        setReason((r) => (r.trim() ? `${r.trim()} ${text}` : text));
       }
       return next;
     });
@@ -961,7 +974,8 @@ function CreatorShopReviewPage() {
                         Flag concerns
                       </Text>
                       <Group gap={8}>
-                        {flagConcerns.map(({ label, icon: Icon }) => {
+                        {flagConcerns.map((concern) => {
+                          const { label, icon: Icon } = concern;
                           const active = activeFlags.has(label);
                           return (
                             <Button
@@ -971,7 +985,7 @@ function CreatorShopReviewPage() {
                               size="xs"
                               radius="xl"
                               leftSection={active ? <IconCheck size={14} /> : <Icon size={14} />}
-                              onClick={() => toggleFlag(label)}
+                              onClick={() => toggleFlag(concern)}
                             >
                               {label}
                             </Button>
