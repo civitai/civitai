@@ -250,6 +250,8 @@ export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
 
+export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection";
+
 export interface Account {
   id: number;
   userId: number;
@@ -566,6 +568,7 @@ export interface User {
   receivedReports?: UserReport[];
   engagedImages?: ImageEngagement[];
   collections?: Collection[];
+  hubs?: UserHub[];
   collectionItems?: CollectionItem[];
   reviewedCollectionItems?: CollectionItem[];
   contributingCollections?: CollectionContributor[];
@@ -5358,6 +5361,32 @@ export interface PlacementSuspension {
   reason: string | null;
   createdAt: Date;
   createdById: number | null;
+}
+
+export interface UserHub {
+  id: number;
+  createdAt: Date;
+  updatedAt: Date;
+  userId: number;
+  user?: User;
+  name: string;
+  index: number;
+  sort: string;
+  period: MetricTimeframe;
+  mediaTypes: MediaType[];
+  metadata: JsonValue;
+  sources?: UserHubSource[];
+}
+
+export interface UserHubSource {
+  id: number;
+  hubId: number;
+  hub?: UserHub;
+  type: UserHubSourceType;
+  targetId: number;
+  alias: string | null;
+  enabled: boolean;
+  index: number;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

@@ -67,9 +67,24 @@ import {
  *     credential says another — which is the state that produces "why can't I rotate my
  *     own app's secret?" months later.
  * So the transfer is refused with an error that names the reason. Enforced at INITIATE
- * (fail fast) AND re-asserted in-tx at ACCEPT — an offer stays open for
- * `transferExpiryDays`, and a revision approve can LINK a client in that window, so an
- * initiate-time check alone would be false for the whole window.
+ * (fail fast) AND re-asserted in-tx at ACCEPT, because an offer stays open for
+ * `transferExpiryDays` and an initiate-time check says nothing about the listing at the
+ * instant of accept.
+ *
+ * 🔴 THE JUSTIFICATION THAT USED TO STAND HERE — "a revision approve can LINK a client in
+ * that window" — IS FALSE, and #4126 removed it from all seven places it had been copied
+ * to. No writer can move `AppListing.connectClientId` from null to non-null on an EXISTING
+ * row: the only non-null write is `submitExternalListing`'s `create` of a brand-new row,
+ * `beginListingRevision` copies `parent.connectClientId` onto the shadow and the approve
+ * merge copies `shadow.connectClientId` back, and in between `buildListingPatchData` never
+ * assigns the column and `updateListingPatchSchema` has no such key. A listing is BORN
+ * connect-linked or never becomes one. The honest reachability answer, including the
+ * schema-level `onDelete: SetNull` writer that a call-site enumeration cannot see, is in
+ * the `acceptBlockedReason` docstring below — read it there rather than re-deriving.
+ *
+ * The accept-time re-assert is kept anyway, as correct defence-in-depth against a future
+ * link flow, a migration or a direct DB write. It is GAP-CLOSURE AHEAD OF TRAFFIC, not a
+ * guard against a mutation today's product can perform.
  *
  * ## What deliberately does NOT move
  *
@@ -244,9 +259,10 @@ export async function initiateTransfer(opts: {
   const now = opts.now ?? new Date();
   const listing = await loadOwnedListing(opts.appListingId, opts.actorUserId);
 
-  // 🔴 FAIL FAST on a connect-linked off-site listing — see the module header. The
-  // same predicate is re-asserted in-tx at accept, because a revision approve can link
-  // a client while the offer sits open.
+  // 🔴 FAIL FAST on a connect-linked off-site listing — see the module header. The same
+  // predicate is re-asserted in-tx at accept because an offer outlives this read, NOT
+  // because a revision approve can link a client in the window: that claim was false and
+  // #4126 removed it. See the module header and `acceptBlockedReason`.
   if (refusesTransferForConnectClient(listing)) {
     throw new AppCollaboratorError('INVALID_TARGET', CONNECT_CLIENT_TRANSFER_REFUSAL);
   }
@@ -350,9 +366,13 @@ export async function initiateTransfer(opts: {
  *      is simply false anywhere inside that window. `respondToInvite` re-reads the user
  *      row for exactly this reason; this one goes further and reads in-transaction on
  *      the primary, because unlike a seat an ownership move is not cheap to unwind;
- *   1c. 🔴 re-assert the CONNECT-CLIENT refusal against the listing AS IT IS NOW. A
- *      revision approve can link an OAuth client after the offer was made, so the
- *      initiate-time check says nothing about this instant;
+ *   1c. 🔴 re-assert the CONNECT-CLIENT refusal against the listing AS IT IS NOW — the
+ *      initiate-time check ran against a row read `transferExpiryDays` ago and says
+ *      nothing about this instant. (It is NOT justified by "a revision approve can link
+ *      an OAuth client after the offer was made"; that claim was false and #4126 removed
+ *      it. Nothing in today's product can link a client to an existing row — see the
+ *      module header and `acceptBlockedReason`. This is defence-in-depth, deliberately
+ *      kept.);
  *   2. ONSITE ONLY — re-assert `OauthClient.userId` STILL equals the transfer's
  *      `fromUserId` via a status-guarded `updateMany` whose 0-count means the owner
  *      changed since the offer, rolling everything back;
@@ -451,9 +471,14 @@ export async function acceptTransfer(opts: {
     }
 
     // (1c) 🔴 RE-ASSERT the connect-client refusal on the CURRENT listing row. Same
-    // reasoning as (1b): a revision approve can link an OAuth client while the offer is
-    // open, and moving a listing out from under live credentials is the outcome this
-    // whole decision exists to prevent.
+    // SHAPE as (1b) — an offer outlives the initiate-time read, so re-read on the
+    // primary in-tx — but NOT the same reachability. (1b)'s window is real: a ban can
+    // land at any time. This one's is not: no writer can link a client to an existing
+    // row, so the claim this comment used to carry ("a revision approve can link an
+    // OAuth client while the offer is open") was false and #4126 removed it. Kept as
+    // defence-in-depth, because moving a listing out from under live credentials is the
+    // outcome the whole decision exists to prevent and a future link flow, a migration
+    // or a direct DB write would reopen it. See `acceptBlockedReason`.
     if (refusesTransferForConnectClient(transfer.appListing)) {
       throw new AppCollaboratorError('INVALID_TARGET', CONNECT_CLIENT_TRANSFER_REFUSAL);
     }
@@ -702,11 +727,12 @@ export type IncomingTransferView = {
    * and until this field existed the inbox could not know it: the recipient met the
    * refusal only by clicking Accept.
    *
-   * 🔴 HOW REACHABLE IS THAT, HONESTLY: NOT, THROUGH THE PRODUCT, TODAY. Several comments
-   * in this file and in `AppCollaboratorsPanelView` justify the accept-time re-assert by
-   * saying "a revision approve can LINK an OAuth client while the offer is open". That
-   * sentence was inherited rather than checked, and an enumeration of every writer of
-   * `AppListing.connectClientId` does not support it:
+   * 🔴 HOW REACHABLE IS THAT, HONESTLY: NOT, THROUGH THE PRODUCT, TODAY. Seven comments
+   * in this file, in `offsite-listing.service.ts` and in `AppCollaboratorsPanelView` used
+   * to justify the accept-time re-assert by saying "a revision approve can LINK an OAuth
+   * client while the offer is open". That sentence was inherited rather than checked;
+   * #4126 corrected all seven, and THIS docstring is the surviving canonical account. An
+   * enumeration of every writer of `AppListing.connectClientId` does not support it:
    *   - the ONLY non-null write is `submitExternalListing`'s `create` of a BRAND-NEW row.
    *     What makes it mandatory there is the ZOD INPUT (`submitExternalListingSchema`'s
    *     `connectClientId: z.string().min(1).max(64)`), NOT the database: the Prisma column
@@ -746,10 +772,13 @@ export type IncomingTransferView = {
    *
    * 🔴 WHICH IS A REASON TO SHIP THIS, NOT TO SKIP IT — but as GAP-CLOSURE AHEAD OF
    * TRAFFIC, not as a live bug fix, and it should not be described as one. The accept-time
-   * gate is correct defence-in-depth whether or not today's writers can reach it, and the
-   * two stale comments at :2273 and :2573 of `offsite-listing.service.ts` show a link flow
-   * is anticipated. When one lands, this field is already the channel that tells the
-   * recipient — rather than a second learn-it-by-clicking defect to find later.
+   * gate is correct defence-in-depth whether or not today's writers can reach it. (The two
+   * comments at :2273 and :2573 of `offsite-listing.service.ts` were once cited here as
+   * evidence that a link flow is anticipated. They are not evidence of anything: #4126
+   * established they were the same inherited false claim, and corrected them. Nothing in
+   * the tree today anticipates a link flow.) If one ever lands, this field is already the
+   * channel that tells the recipient — rather than a second learn-it-by-clicking defect
+   * to find later.
    *
    * 🔴 A DERIVED REASON, NOT THE RAW `connectClientId`, and the distinction is a
    * disclosure boundary rather than style. #3935 carried the raw column to the OWNER's

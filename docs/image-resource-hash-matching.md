@@ -351,12 +351,35 @@ requires re-running detection over affected images.
 
 ## Open / unresolved
 
-**The `0x`-prefix population is NOT explained, and stripping the prefix fixes nothing.** An earlier
-draft claimed these were `0x` + `AutoV2` and that stripping would let the existing join resolve
-them. Two independent checks refute it: across 174 distinct `0x` values, stripping the prefix
-matches **zero** rows in `ModelFileHash` — not `AutoV2`, and not `left(AutoV3,10)` either. Whatever
-produces those 10 hex characters is an algorithm we do not store. They cluster on Anima-family
-LoRAs. This needs its own investigation before any code is written.
+**The 0x-prefix population is EXPLAINED and fixable, but deliberately not fixed.** These are
+`sshs_model_hash` — the tensor hash sd-scripts writes into a LoRA's own safetensors header at
+training time — truncated to 12 characters. A1111/Forge read it out of the file rather than
+computing anything, which is why the value is identical across generators and constant per file.
+
+Two formats exist, and only one survives truncation:
+
+| `sshs_model_hash` in the file | tool writes | outcome |
+|---|---|---|
+| `6f9fdad2fc0a…` (64 hex, modern sd-scripts) | `6f9fdad2fc0a` | **already matches** — equals `AutoV3` on 2,954 of 2,966 sampled files |
+| `0xe89653fcf2…` (`0x` + 64 hex, older sd-scripts) | `0xe89653fcf2` | **fails** — the `0x` occupies 2 of the 12 characters |
+
+So it is the same quantity as `AutoV3`, written by an older toolchain with a prefix that survives
+truncation. Old-format files are ~1.1% of a 3,000-file sample, matching the ~1.2% of LoRA
+references that carry `0x`.
+
+Note `sshs_model_hash` and `AutoV3` are NOT equal for old-format files (`0xe89653fcf2652a81…` vs
+`7D4CEC3A2124` on file 3005864), so stripping the prefix and comparing against `left(AutoV3,10)`
+resolves nothing — measured 0 of 60. Deriving from the stored header is the only route:
+
+```sql
+left("headerData"->>'sshs_model_hash', 12)   -- covers both formats in one rule
+```
+
+**Why it is parked:** measured 31 of 60 distinct `0x` values recoverable that way. The rest are
+files whose header we do not hold or that lack the field (89% of *recent* Model files carry it;
+older ones are thinner). That recovers roughly half of a ~1.2% population — on the order of 0.5%
+of LoRA references — against the cost of another enum value, another backfill, and another type in
+the public API. SHA256_12 recovered ~7% for the same machinery.
 
 **The single-warning UI defect is in the SQL, not the component.** An earlier draft blamed
 `AddedImage.tsx:625` filtering on `r.unmatched && r.name`, reasoning that `hashes`-only metadata has

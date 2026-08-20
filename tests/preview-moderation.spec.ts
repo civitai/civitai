@@ -28,7 +28,9 @@ import { trpcMutation, uniqueToken } from './preview-trpc';
  *   3. The report-CREATION leg of the old end-to-end action test. `report.create`
  *      is still a main-app guardedProcedure; `report.getAll` / `report.setStatus`
  *      are not (they were deleted in #3573), so the ACTIONING half of that
- *      coverage now belongs to the moderator app's own suite, not here.
+ *      coverage cannot be asserted from here. 🔴 It is LOST, NOT RELOCATED —
+ *      `apps/moderator` has ZERO test files (measured; positive control: 81 under
+ *      `packages/`). Tracked as #4182.
  *
  * Only runs under playwright.preview.config.ts (needs PREVIEW_URL + minted states).
  *
@@ -195,7 +197,18 @@ test.describe('moderation surface (mod)', () => {
     // 🔴 The ACTIONING legs (report.getAll → report.setStatus → re-read as
     // 'Actioned') used to live here. #3573 deleted both procedures from this app's
     // report.router.ts — that queue is the moderator app's now, and asserting it
-    // from a preview of THIS app is not possible. Do not "restore" them here; the
-    // coverage belongs to apps/moderator's own suite.
+    // from a preview of THIS app is not possible. Do not "restore" them here: the
+    // procedures do not exist, so it cannot be made to work.
+    //
+    // 🔴 AND DO NOT READ THAT AS "the coverage moved". An earlier version of this
+    // comment said it "belongs to apps/moderator's own suite" — there is no such
+    // suite. `apps/moderator` has ZERO test files (measured; positive control: 81
+    // under `packages/`). This coverage is LOST, and the loss originates in #3573,
+    // not in the change that stopped asserting it. Tracked as #4182.
+    //
+    // The distinction matters here specifically: this is a do-not-restore
+    // instruction, so a maintainer who checks its stated reason, finds no suite and
+    // concludes the comment is stale could try to restore procedures that no longer
+    // exist. The reason above — they were deleted — is the one that holds.
   });
 });
