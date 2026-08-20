@@ -7,7 +7,12 @@ import React, { useMemo } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useNotificationThumbnails } from '~/components/Notifications/notification-thumbnails';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import {
+  notificationImageId,
+  useNotificationThumbnails,
+} from '~/components/Notifications/notification-thumbnails';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import type { NotificationGetAll } from '~/types/router';
@@ -93,7 +98,11 @@ export function NotificationList({
         const notificationDetails = notification.details;
         const details = notification.fullDetails;
 
-        const thumbnail = thumbnails.get(Number(notificationDetails?.imageId));
+        // Through the same normaliser the ids were collected with. Reading the
+        // id a second way here is how the map ends up keyed on one thing and
+        // looked up with another, silently, with no test red.
+        const imageId = notificationImageId(notificationDetails);
+        const thumbnail = imageId ? thumbnails.get(imageId) : undefined;
         const systemNotification = notification.type === 'system-announcement';
         const milestoneNotification = notification.type.includes('milestone');
 
@@ -174,14 +183,37 @@ export function NotificationList({
                 </Stack>
               </Group>
               {thumbnail && (
-                <EdgeMedia
-                  src={thumbnail.url}
-                  type={thumbnail.type}
-                  width={90}
-                  alt=""
-                  anim={false}
-                  className="size-12 shrink-0 rounded-md object-cover"
-                />
+                <div className="relative size-12 shrink-0 overflow-hidden rounded-md">
+                  {/*
+                   * Hidden preferences decide whether the viewer may see the image
+                   * at all; this decides whether they asked to see it uncovered.
+                   * The two are not the same set — with blur on, the mask covers
+                   * every mature level, including the ones inside the viewer's own
+                   * browsing level — so filtering alone would render plainly, in a
+                   * dropdown over whatever page they are on, what the rest of the
+                   * app blurs.
+                   *
+                   * `explain={false}`: the Show overlay is a button and a badge,
+                   * which do not fit 48px. The blurhash is the whole affordance
+                   * here, and the row already opens the image.
+                   */}
+                  <ImageGuard2 image={thumbnail} explain={false}>
+                    {(safe) =>
+                      safe ? (
+                        <EdgeMedia
+                          src={thumbnail.url}
+                          type={thumbnail.type}
+                          width={90}
+                          alt=""
+                          anim={false}
+                          className="size-full object-cover"
+                        />
+                      ) : (
+                        <MediaHash {...thumbnail} />
+                      )
+                    }
+                  </ImageGuard2>
+                </div>
               )}
             </Group>
           </Paper>

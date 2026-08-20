@@ -10,11 +10,17 @@ type WithDetails = { details?: Record<string, unknown> | null };
  * `imageId` is the key every processor that points at an image already writes,
  * so a notification type added later is covered without being listed here.
  */
+export function notificationImageId(details: WithDetails['details']) {
+  const id = Number(details?.imageId);
+
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 export function notificationImageIds(items: WithDetails[]) {
   const ids = new Set<number>();
   for (const { details } of items) {
-    const id = Number(details?.imageId);
-    if (Number.isInteger(id) && id > 0) ids.add(id);
+    const id = notificationImageId(details);
+    if (id) ids.add(id);
   }
 
   return [...ids];
@@ -31,7 +37,16 @@ export function notificationImageIds(items: WithDetails[]) {
  *
  * An image the viewer may not see is dropped by `useApplyHiddenPreferences`
  * rather than blurred, so the row falls back to its icon and nothing about the
- * image is disclosed by the shape of the fallback.
+ * image is disclosed by the shape of the fallback. Whether a visible image is
+ * shown uncovered is a separate question, answered by `ImageGuard2` at the
+ * render site.
+ *
+ * ⚠️ The ids are trusted because every processor writing `details.imageId`
+ * addresses the image's owner or a participant on a published image. A
+ * processor that names an image its recipient is not otherwise entitled to see
+ * — something in a draft post, a moderation queue, anything private — would be
+ * rendering it here with no gate beyond the viewer's own preferences, and
+ * nothing in this file would need to change for that to happen.
  */
 export function useNotificationThumbnails(items: WithDetails[]) {
   const imageIds = useMemo(() => notificationImageIds(items), [items]);
