@@ -379,6 +379,8 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 
 **Clean up as you go.** When you edit code that already has stale, redundant, or what-narrating comments, delete or fix them — don't preserve them just because they were there. The repo already has many such comments (a lot of them mine); treat touching nearby code as license to remove the noise, but keep edits scoped to what you're already working on rather than going on a separate comment-cleanup sweep.
 
+**Nothing in the toolchain checks any of this** — comments aren't type-checked, so typecheck, lint, prettier and every test suite pass over a comment that is actively false. The `comment-review` agent is the only gate: it applies the keep test above, flags comments whose claims no longer resolve, and calls out the ones whose real fix is a better name rather than a better comment.
+
 ## Environment Setup
 
 ### Required Environment Variables
@@ -606,6 +608,10 @@ A useful tell: if you are documenting **why** a guard exists and **what it stops
 4. Run the unit suite: `pnpm run test:unit:run`
 5. If you touched `schema.full.prisma`: `pnpm run db:check-generated`
 6. Test changes locally
+7. Run `comment-review` over the diff, and `docs-drift-review` over the commits — the two lanes with no
+   automated gate. Neither is optional on a change that moved a file, renamed a script or command,
+   retired an env var, or completed a tracked checklist item: those are what go stale silently, and a
+   `CLAUDE.md` that is wrong is an instruction that gets followed.
 
 ### Stacked PRs — don't
 - **NEVER use stacked PRs** — base every PR directly on the integration branch (`main`, or a feature integration branch like `feat/...`), never on another open PR's branch. Stacked PRs silently mis-merge: a squash-merged parent doesn't retarget the child, so the child lands on the orphaned parent branch instead of the real base and its changes go missing.
