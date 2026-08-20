@@ -407,10 +407,19 @@ describe('#4123 — a set-shaped creator scope is resolved before the own-exclud
     }
   });
 
-  // 🔴 AND THE UNSET SHAPE, WHICH IS THE PRODUCTION DEFAULT. Both cases above
-  // pass `domain` explicitly, so `domain: input.domain ?? 'red'` — a guard-side
-  // default that would desync from the pre-filter's board — survived them both.
-  // Only red domains set `domain` at all, so `undefined` is the common case.
+  // 🔴 AND THE UNSET SHAPE. The other two argument cases both pass `domain`
+  // explicitly, so `domain: input.domain ?? 'red'` — a guard-side default that
+  // would desync the guard's board from the pre-filter's — survived both of them.
+  //
+  // ⚠️ `undefined` is NOT the common production shape, and an earlier version of
+  // this comment claimed it was. `getRequestBoardDomainColor` stamps a colour on
+  // the image-feed path (`image.controller.ts:329,348`), returning 'green' for
+  // civitai.com and 'red' for civitai.red; it yields `undefined` only for an
+  // unknown or missing host, and for internal callers that omit `domain`. The
+  // point of this case is narrower and does not depend on how common it is: the
+  // guard must pass `domain` THROUGH unchanged, whatever it is, so that it reads
+  // the same board the pre-filter filters on. A default applied on one side only
+  // is a desync by construction.
   it('passes an unset domain THROUGH rather than defaulting it', async () => {
     serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
 
@@ -475,8 +484,9 @@ describe('#4123 — a set-shaped creator scope is resolved before the own-exclud
 
   // The cheap disjuncts must SHORT-CIRCUIT the scope resolution, not merely
   // out-vote it: without the hoist these shapes pay a lookup whose result is then
-  // discarded, and every behavioural test still passes — so these two assert the
-  // CALL, not the outcome.
+  // discarded, and every behavioural test still passes — so the cases below assert
+  // the CALL, not the outcome. (Three of them now; the non-bdx cursor case sits
+  // between the two this header's bullets describe and carries its own note.)
   //
   // 🔴 THE TWO CASES EXPECT DIFFERENT COUNTS, AND THE REASON IS NOT WHAT THREE
   // EARLIER REVISIONS OF THIS COMMENT SAID. It is not that one request reaches a

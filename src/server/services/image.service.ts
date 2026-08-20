@@ -3253,10 +3253,9 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   //   signed-in, newCreators-with-none       → 0 calls, nothing recorded  (#4123)
   //   signed-in, `hidden`-with-none, page 1  → 1 call,  `fallback_empty` recorded
   //   signed-in, unscoped, NON-`bdx:` cursor → 1 call,  `fallback_empty` recorded
-  // 🔴 THE TWO SHAPES NAMED ON ROWS 3 AND 4 ABOVE — followed-with-zero-follows and
-  // newCreators-with-none — USED TO READ `1 call, fallback_empty recorded`, AND
-  // #4123 CHANGED THEM. (Row numbers index THIS table, which #4123 also reordered;
-  // read the shapes, not the positions.) A set-shaped creator scope is now resolved before the decision,
+  // 🔴 THE TWO SHAPES followed-with-zero-follows AND newCreators-with-none USED TO
+  // READ `1 call, fallback_empty recorded`, AND #4123 CHANGED THEM. (Named by
+  // shape, not by row number: #4123 reordered this table.) A set-shaped creator scope is now resolved before the decision,
   // so those two doors stopped issuing the own pass and joined the other doors
   // instead of being the ones that leaked a call. That is a REDUCTION in what
   // `fallback_empty` counts — it shifts the served-ratio baseline, exactly as
