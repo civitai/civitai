@@ -195,6 +195,63 @@ const PAYOUT_KINDS = [
   'forfeit',
 ] as const;
 
+/**
+ * What a placement leg reads as in someone's Buzz history.
+ *
+ * Keyed by surface as well as leg because the two surfaces are different events
+ * to the person reading the row: a sticker is put on your image, a remix is
+ * added to your gallery. The internal leg name is unchanged and still identifies
+ * the leg everywhere it is used to find money — the `PlacementTransaction` row,
+ * the external transaction id, every recovery query.
+ */
+const LEDGER_TEXT: Record<PlacementSurface, Record<PlacementTransactionKind, string>> = {
+  sticker: {
+    holdFee: 'Sticker placement fee, held while the creator decides',
+    holdPrincipal: 'Sticker placement, held while the creator decides',
+    toOwner: 'Someone placed a sticker on your image',
+    feeToOwner: 'Fee for a sticker you declined',
+    toSeller: 'Someone used your sticker',
+    // Deliberately says nothing about why. One refund path serves a decline, an
+    // expiry, an owner removal and a cosmetic takedown, and a leg cannot tell
+    // them apart — so naming one of them here would be wrong on the other three.
+    principalToPlacer: 'Refund: your sticker placement',
+    feeToPlacer: 'Refund: sticker placement fee',
+    toPlatform: 'Platform share of a sticker placement',
+    forfeit: 'Forfeited sticker placement',
+  },
+  remixGallery: {
+    holdFee: 'Remix submission fee, held while the creator decides',
+    holdPrincipal: 'Remix submission, held while the creator decides',
+    toOwner: 'Someone added a remix to your gallery',
+    feeToOwner: 'Fee for a remix you declined',
+    toSeller: 'Share of a remix submission',
+    principalToPlacer: 'Refund: your remix submission',
+    feeToPlacer: 'Refund: remix submission fee',
+    toPlatform: 'Platform share of a remix submission',
+    forfeit: 'Forfeited remix submission',
+  },
+};
+
+/**
+ * `/user/transactions` renders a "View Image" link from `entityType`/`entityId`,
+ * so the row reaches the image the placement is on and the copy never has to
+ * name a raw id. Both columns are on the row every caller already holds, so this
+ * costs no lookup.
+ */
+const placementLedgerEntry = (
+  kind: PlacementTransactionKind,
+  target: { surface: string; targetType: string | null; targetId: number | null }
+) => ({
+  // A surface missing from the table cannot reach here — PLACEMENT_SURFACES
+  // denies one everywhere — but this is a money path, and a dull row beats a
+  // TypeError that strands the leg.
+  description: LEDGER_TEXT[target.surface as PlacementSurface]?.[kind] ?? 'Placement',
+  details:
+    target.targetType === 'image' && target.targetId
+      ? { entityType: 'Image', entityId: target.targetId }
+      : undefined,
+});
+
 type SettleAction =
   | 'approve'
   | 'decline'
@@ -434,7 +491,7 @@ export async function holdPlacementEscrow({
   // is how the free path silently acquires a second, half-built creation route.
   const row = await dbWrite.placement.findUnique({
     where: { id: placementId },
-    select: { free: true },
+    select: { free: true, targetType: true, targetId: true },
   });
   if (!row) throw new Error(`placement escrow: placement ${placementId} not found`);
   if (row.free)
@@ -519,7 +576,11 @@ export async function holdPlacementEscrow({
           // took yellow for a green placement.
           fromAccountTypes: [spendType],
           toAccountType: spendType,
-          description: `Placement escrow (${kind}) for placement ${placementId}`,
+          ...placementLedgerEntry(kind, {
+            surface,
+            targetType: row.targetType,
+            targetId: row.targetId,
+          }),
           externalTransactionIdPrefix,
         },
         BUZZ_CALL_OPTIONS
@@ -827,7 +888,7 @@ async function payOutPlacement(placement: PlacementRow) {
           toAccountId,
           toAccountType: spendType,
           type: TransactionType.Fee,
-          description: `Placement ${placement.id} (${kind})`,
+          ...placementLedgerEntry(kind, placement),
           externalTransactionId,
         },
         BUZZ_CALL_OPTIONS
@@ -847,7 +908,7 @@ async function payOutPlacement(placement: PlacementRow) {
             placement.id,
             holdKind as PlacementTransactionKind
           ),
-          description: `Placement ${placement.id} refund (${holdKind})`,
+          ...placementLedgerEntry(kind, placement),
         },
         BUZZ_CALL_OPTIONS
       );

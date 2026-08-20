@@ -2089,3 +2089,141 @@ describe('the accept reward', () => {
     );
   });
 });
+
+/**
+ * The strings here are the whole of what a user sees for a placement in their
+ * Buzz history, so the leg name and the placement id — both internal, both
+ * meaningless to the reader — must not survive into one.
+ *
+ * The sweep at the end is what guards a leg added later: a per-string assertion
+ * only covers the legs someone remembered to list.
+ */
+describe('what a placement says in the Buzz ledger', () => {
+  const hold = (surface: 'sticker' | 'remixGallery' = 'sticker') =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface,
+      amount: 1000,
+    });
+
+  const descriptionsWritten = () =>
+    [
+      ...createMultiAccountBuzzTransaction.mock.calls,
+      ...createBuzzTransaction.mock.calls,
+      ...refundMultiAccountTransaction.mock.calls,
+    ].map((call) => String(call[0].description));
+
+  it('names the two holds in words the placer can read', async () => {
+    givenPlacement();
+    await hold();
+
+    expect(descriptionsWritten()).toEqual([
+      'Sticker placement fee, held while the creator decides',
+      'Sticker placement, held while the creator decides',
+    ]);
+  });
+
+  it('tells the owner what landed on their image, and links the row to it', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toAccountId: OWNER,
+        description: 'Someone placed a sticker on your image',
+        // `/user/transactions` builds its "View Image" link from these two.
+        details: { entityType: 'Image', entityId: 99 },
+      }),
+      expect.anything()
+    );
+  });
+
+  it('describes a refund without claiming a reason it cannot know', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: 'placement-1-holdPrincipal',
+        description: 'Refund: your sticker placement',
+        details: { entityType: 'Image', entityId: 99 },
+      }),
+      expect.anything()
+    );
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toAccountId: OWNER,
+        description: 'Fee for a sticker you declined',
+      }),
+      expect.anything()
+    );
+  });
+
+  it('calls a remix a remix rather than a sticker', async () => {
+    givenPlacement({ surface: 'remixGallery' });
+    await hold('remixGallery');
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ description: 'Someone added a remix to your gallery' }),
+      expect.anything()
+    );
+    expect(descriptionsWritten().join(' ')).not.toContain('ticker');
+  });
+
+  // The link is built from the target, so a target that is not an image must
+  // produce no link at all rather than one pointing at /images/<some other id>.
+  it('omits the link when the placement is not on an image', async () => {
+    givenPlacement({ targetType: 'video' });
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+
+    for (const call of [
+      ...createMultiAccountBuzzTransaction.mock.calls,
+      ...createBuzzTransaction.mock.calls,
+    ])
+      expect(call[0].details).toBeUndefined();
+  });
+
+  it.each([
+    ['approve', OWNER],
+    ['decline', OWNER],
+    ['expire', undefined],
+  ] as const)('leaks no leg name or placement id through a %s', async (action, actorId) => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action, actorId });
+
+    const written = descriptionsWritten();
+    // Not a vacuous sweep: the settle paths above write these, and an empty list
+    // would pass every assertion below.
+    expect(written.length).toBeGreaterThan(1);
+
+    for (const description of written) {
+      for (const kind of [
+        'holdFee',
+        'holdPrincipal',
+        'toOwner',
+        'toSeller',
+        'toPlatform',
+        'feeToOwner',
+        'principalToPlacer',
+        'feeToPlacer',
+        'forfeit',
+      ])
+        expect(description).not.toContain(kind);
+
+      expect(description).not.toMatch(/placement \d/i);
+      expect(description.length).toBeLessThanOrEqual(100);
+    }
+  });
+});
