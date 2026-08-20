@@ -60,31 +60,44 @@
  *     page, so nothing takes it.
  *   - off-site with an https `externalUrl` → **Visit ↗** → external anchor.
  *     🔴 The presence of a destination decides this, and nothing else.
- *   - off-site with NO usable target and no OAuth client connected →
- *     **informational** (guarded out; no target).
- *   - off-site with NO usable target but an OAuth client connected → **Connect**
- *     STUB with a note — the only remaining state with nowhere to send the
- *     viewer. That last test is a CAPABILITY check on `connectClientId`, not a
- *     kind: off-site is one kind (the `connect` / `external-link` display
- *     sub-kind was removed).
+ *   - off-site with NO usable target → **informational** ("Unavailable"),
+ *     regardless of whether an OAuth client is connected. There is nowhere to
+ *     send the viewer, and the page says so.
  *
- * 🔴 THE CONNECT STUB USED TO BE UNCONDITIONAL, AND THAT WAS THE BUG. Every
- * off-site listing with a linked OAuth client rendered a dead
- * "Connecting this app will be available soon." affordance — no href, disabled
- * button — because the sub-kind routed on `connectClientId != null` alone, so
- * linking a client was the ONLY thing that moved a listing off the working
- * `Visit ↗` path. Three approved, live listings were in that state; a fourth,
- * with no client, worked.
+ * 🔴 THE "CONNECT" STUB IS DELETED (#4208) — DO NOT REINTRODUCE IT.
  *
- * The stub's stated premise — "a complete OAuth authorize URL is NOT derivable
- * from the public DTO" — is true and irrelevant. These are CONFIDENTIAL clients
- * that own their own `redirect_uri` / `state` / PKCE and start the flow from
- * their own site; the store never needed to build an authorize URL, only to get
- * the viewer to the app. That destination is already on the public DTO as
- * `externalUrl`, https-guarded, and the external-link branch has always
- * rendered it correctly. So connect now reuses that same proven path rather
- * than growing a second one, and the stub survives only for a connect listing
- * with genuinely no destination — where it still fails safe.
+ * History, because the shape recurs. The stub was once UNCONDITIONAL for the
+ * `connect` sub-kind: every off-site listing with a linked OAuth client rendered
+ * a dead affordance — no href, disabled button, and a note promising the flow
+ * was coming soon — because the sub-kind routed on `connectClientId != null`
+ * alone, so linking a client was the ONLY thing that moved a listing off the
+ * working `Visit ↗` path. Three approved, live listings were in that state.
+ * #4200 fixed that by routing on the destination, which left the stub reachable
+ * only for a connect listing with genuinely no destination.
+ *
+ * #4208 removes what was left. The stub promised an action and delivered
+ * nothing: there is no connect flow behind it, and a CTA that costs a click and
+ * returns nowhere reads as broken rather than incomplete. Measured against
+ * production before removing it — ZERO listings sat in that state (all five
+ * off-site rows, every status, carry an https destination), so nothing regressed
+ * for a live listing.
+ *
+ * 🔴 The state is still REACHABLE — `offsiteSubmitSchema` requires
+ * `connectClientId` but leaves `externalUrl` OPTIONAL, so a submission with no
+ * URL lands here. Closing that is an API-contract change, deliberately NOT made
+ * a rider on this one. So this branch must keep failing safe; it now does so by
+ * saying "Unavailable" instead of lying.
+ *
+ * 🔴 `'connect'` IS GONE FROM `DetailActionMode`. That is the guard: reintroducing
+ * the stub is a COMPILE ERROR, not a silent behaviour change a reviewer has to
+ * notice. Do not re-add the member to make a new branch type-check.
+ *
+ * (For the record, the stub's stated premise — "a complete OAuth authorize URL is
+ * NOT derivable from the public DTO" — was true and irrelevant. These are
+ * CONFIDENTIAL clients that own their own `redirect_uri` / `state` / PKCE and
+ * start the flow from their own site; the store never needed to build an
+ * authorize URL, only to get the viewer to the app, which `externalUrl` already
+ * does.)
  */
 
 import { safeExternalHref } from '~/components/Apps/appListingCardView';
@@ -105,24 +118,29 @@ export {
  * Primary-action mode:
  *   - `open`    → internal nav to the in-host page runner.
  *   - `visit`   → external new-tab anchor (Visit / Open live).
- *   - `connect` → the OAuth connect affordance (stubbed until cutover; `note` set).
  *   - `info`    → informational affordance. NO href is produced for this mode
  *                 today (the only "learn more" target was the retired
  *                 `/apps/[appBlockId]`); the field stays optional on the type
  *                 and both renderers keep their text-only fallback.
+ *
+ * 🔴 There is deliberately NO `'connect'` member (#4208). It described a CTA with
+ * no flow behind it. Its absence from this union is what makes the dead button
+ * un-reintroducible without a compile error — see the module docstring. If you
+ * are here to add it back because a new branch won't type-check, build the
+ * connect flow first.
  */
-export type DetailActionMode = 'open' | 'visit' | 'connect' | 'info';
+export type DetailActionMode = 'open' | 'visit' | 'info';
 
 export type DetailPrimaryAction = {
   /** Button / affordance copy. */
   label: string;
   mode: DetailActionMode;
   /** Nav target (internal for `open`, external for `visit`), or undefined. Never
-   *  set for `info`/`connect` — see the mode docs above. */
+   *  set for `info` — see the mode docs above. */
   href?: string;
   /** True → open in a new tab as an external anchor (rel=noopener noreferrer). */
   external: boolean;
-  /** Informational copy for the `info` / `connect`-stub modes. */
+  /** Informational copy for the `info` mode. */
   note?: string;
 };
 
@@ -203,45 +221,24 @@ export function getDetailPrimaryAction(
   const href = safeExternalHref(kd.externalUrl);
   if (href) return { label: 'Visit', mode: 'visit', href, external: true };
 
-  // NO usable destination. The two fallbacks below differ by a CAPABILITY, not
-  // by a kind: an app with no OAuth client connected has simply nowhere to send
-  // you ("Unavailable"), whereas an app that DOES connect to your Civitai
-  // account has a second, not-yet-built route ("Connect", stubbed). This test
-  // used to read `kd.subKind === 'external-link'`.
+  // NO usable destination → ONE informational fallback, whether or not an OAuth
+  // client is connected.
   //
-  // 🔴 EQUIVALENCE, STATED AT THE SCOPE IT ACTUALLY HOLDS — there are TWO
-  // producers of this DTO and they did not agree:
-  //   - `app-listing.service.detailKindData` derived the sub-kind by TRUTHINESS
-  //     (`connectClientId ? … : …`), so reading the field directly is the same
-  //     predicate and the behaviour is byte-identical for every input there.
-  //   - `reviewListingPreview.detailKindData` (the mod-review preview) used
-  //     `!= null` for the sub-kind while passing the field through with
-  //     `?? null`. At `connectClientId === ''` those disagree: the OLD preview
-  //     hid the disclosure and showed this Connect stub; the NEW one shows the
-  //     disclosure and "Unavailable". That is a real, if practically
-  //     unreachable, behaviour change (`connect_client_id` is an FK to
-  //     `OauthClient.id` and `offsite-listing.schema.ts` requires
-  //     `z.string().min(1)` on create), and the new answer is the safer of the
-  //     two — an empty string is not a connected OAuth app.
+  // 🔴 This used to fork on `kd.connectClientId`, giving the OAuth arm a
+  // "Connect" stub for a flow that does not exist. #4208 deleted that arm: the
+  // capability is real, but it is not a NAVIGATION target, and the store has
+  // nowhere to send this viewer either way. Do NOT reintroduce a
+  // `connectClientId` test here — the capability is communicated by the
+  // permission signal on the page body (`shouldShowOffsiteDisclosure` and its
+  // positive counterpart), not by a button that does nothing.
   //
-  // Whether the stub should exist at all is a product question this change
-  // deliberately does not answer.
-  if (!kd.connectClientId) {
-    return {
-      label: 'Unavailable',
-      mode: 'info',
-      external: false,
-      note: 'This app has no valid external link.',
-    };
-  }
-
-  // OAuth-connected, with NO usable destination — the honest stub, reached only
-  // in that genuinely-nowhere-to-go state. Fails safe: no dead nav.
+  // The note is accurate for both arms: a listing in this state has no valid
+  // external link, which is exactly why there is no action to offer.
   return {
-    label: 'Connect',
-    mode: 'connect',
+    label: 'Unavailable',
+    mode: 'info',
     external: false,
-    note: 'Connecting this app will be available soon.',
+    note: 'This app has no valid external link.',
   };
 }
 
