@@ -105,10 +105,10 @@ async function runQueued(args) {
   const { exitCodeFor } = await import(pathToFileURL(QUEUE).href);
 
   // Resolving the daemon's address can THROW — a malformed DEV_DAEMON_PORT is rejected rather
-  // than silently becoming NaN. That must not cost the caller their test run: the guarantee at
-  // :123 is that the queue being unusable degrades to a direct run, and an unusable ADDRESS is
-  // the queue being unusable. Before this catch existed the throw escaped an un-awaited
-  // `runQueued` as an unhandled rejection and no tests ran at all.
+  // than silently becoming NaN. That must not cost the caller their test run: the
+  // "Test queue unreachable" guarantee below is that an unusable queue degrades to a direct run,
+  // and an unusable ADDRESS is the queue being unusable. Before this catch existed the throw
+  // escaped an un-awaited `runQueued` as an unhandled rejection and no tests ran at all.
   try {
     const { resolveDaemonUrl } = await import(pathToFileURL(PORT_MODULE).href);
     DAEMON = resolveDaemonUrl();
@@ -134,8 +134,14 @@ async function runQueued(args) {
   // From here the daemon has ACCEPTED the run, and that changes what a failure may do. Falling
   // back to a direct run now would start a second, unqueued full suite beside one the queue is
   // already holding a slot for — which is precisely the serialisation this script exists to
-  // provide. `:159` already decided this for the status-code form of the same condition; the
-  // network form gets the same answer.
+  // provide. The "Lost contact with the test queue" branch below already decided this for the
+  // status-code form of the same condition; the network form gets the same answer.
+  //
+  // Not airtight, and the gap is worth naming rather than implying it away: the daemon enqueues
+  // INSIDE the response write, so the slot is taken before the client can observe it. Lose the
+  // response between those two points and this flag is still false while the run is queued —
+  // the one window where a duplicate can still happen. Closing it needs an idempotency key on
+  // the enqueue, not a flag here.
   accepted = true;
 
   if (run.status === 'queued') {
@@ -191,12 +197,11 @@ if (
   const decision = queueDecision(args, process.env);
   if (decision.queue && existsSync(CLI) && existsSync(QUEUE) && existsSync(PORT_MODULE)) {
     // Un-awaited at top level, so anything runQueued throws would otherwise be an unhandled
-    // rejection that kills the process with no tests run. The same guarantee as :123.
-    // Un-awaited at top level, so anything runQueued throws would otherwise be an unhandled
     // rejection that kills the process with no tests run.
     //
     // What it does about it depends on whether the queue took the run. Before acceptance,
-    // degrading to a direct run keeps the guarantee at :128. AFTER acceptance it would start a
+    // degrading to a direct run keeps the "Test queue unreachable" guarantee. AFTER acceptance
+    // it would start a
     // second, unqueued suite beside the one the queue is holding a slot for, so it exits 2 — the
     // same verdict :159 already gives when the poll comes back with a bad status.
     //

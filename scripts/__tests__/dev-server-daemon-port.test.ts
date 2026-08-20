@@ -383,25 +383,32 @@ describe('the console talks to the port it resolved', () => {
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
     const { port } = server.address() as AddressInfo;
 
-    // `--tail`, because the dashboard refuses to start without a TTY ("Dashboard requires a TTY
-    // terminal") and exits 1 before it ever contacts the daemon. --tail is its own documented
-    // non-interactive mode and goes through the same resolved DAEMON_URL.
-    const child = spawn(process.execPath, [consoleScript, '--tail'], {
-      cwd: repoRoot,
-      env: { ...process.env, DEV_DAEMON_PORT: String(port) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    child.stdout.resume();
-    child.stderr.resume();
+    // Wrapped, and specifically for the FAILING path. On a green run the stub answers `/` so the
+    // console never starts a daemon and never writes the pid file. Under the mutant this case
+    // exists to catch, the console cannot reach the stub, falls through to its own startDaemon,
+    // and overwrites the developer's daemon.pid with a dead pid — i.e. the test that proves the
+    // bug would also damage the thing the rest of this file is careful about.
+    await withPidFilePreserved(async () => {
+      // `--tail`, because the dashboard refuses to start without a TTY ("Dashboard requires a TTY
+      // terminal") and exits 1 before it ever contacts the daemon. --tail is its own documented
+      // non-interactive mode and goes through the same resolved DAEMON_URL.
+      const child = spawn(process.execPath, [consoleScript, '--tail'], {
+        cwd: repoRoot,
+        env: { ...process.env, DEV_DAEMON_PORT: String(port) },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout.resume();
+      child.stderr.resume();
 
-    try {
-      for (let i = 0; i < 100 && hits.length === 0; i++) {
-        await new Promise((r) => setTimeout(r, 50));
+      try {
+        for (let i = 0; i < 100 && hits.length === 0; i++) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      } finally {
+        child.kill('SIGKILL');
+        await new Promise<void>((done) => server.close(() => done()));
       }
-    } finally {
-      child.kill('SIGKILL');
-      await new Promise<void>((done) => server.close(() => done()));
-    }
+    });
 
     // A stub on a port nothing else knows about. A request arriving here at all is proof the
     // console resolved THIS port — an off-by-one would have gone somewhere else and hit nothing.

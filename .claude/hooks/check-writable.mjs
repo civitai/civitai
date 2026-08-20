@@ -86,27 +86,29 @@ function isUnscoped(target) {
 // those false positives and no override is one people route around, and the routes around it are
 // shorter than the compliant path. Asking keeps the nudge and costs a keystroke when it is wrong.
 //
-// The daemon's port comes from the dev-server skill rather than being baked in here: it is
-// overridable via DEV_DAEMON_PORT, and a hardcoded copy meant that setting it silently switched
-// this nudge off for the daemon — the one long-lived server the rule most exists for.
+// The daemon's port comes from the dev-server skill rather than being baked in here. A hardcoded
+// copy meant a second daemon was never guarded at all; replacing the default with the override
+// then meant the FIRST one stopped being guarded. Both are live, so the set is additive.
 //
-// Resolved lazily and defensively, and both matter. A hook that throws breaks EVERY Bash call, so
-// a missing skill directory or a malformed DEV_DAEMON_PORT must degrade, not propagate; and doing
-// it on first use rather than at import keeps this file free of top-level await.
+// Defensive on purpose: a hook that throws breaks EVERY Bash call, so a missing skill directory
+// or a malformed DEV_DAEMON_PORT must degrade, not propagate.
 let devPortsRe = null;
 export function daemonPortsGuarded(env = process.env) {
   const ports = new Set();
   try {
     // Synchronous require-equivalent is unavailable in ESM, so the port is read from the module
-    // source. A regex over one declaration is deliberately duller than an import: it cannot
-    // execute skill code inside a hook that runs before every command. Loose about spacing and
-    // digit separators, because it is pinned only by that file's formatting — a reformat there
-    // must not silently drop the daemon out of this guard.
+    // source. A regex over the declaration is deliberately duller than an import: it cannot
+    // execute skill code inside a hook that runs before every command.
+    //
+    // Anchored on `export const`, loose only about spacing and digit separators. An earlier
+    // version dropped the anchor to survive a reformat — which it never needed to, since a
+    // reformat does not rewrite `export const NAME =` — and that let the FIRST match anywhere in
+    // the file win, including one inside a comment.
     const source = readFileSync(
       new URL('../skills/dev-server/scripts/daemon-port.mjs', import.meta.url),
       'utf8'
     );
-    const declared = /DEFAULT_DAEMON_PORT\s*=\s*([\d_]+)/.exec(source);
+    const declared = /export\s+const\s+DEFAULT_DAEMON_PORT\s*=\s*([\d_]+)/.exec(source);
     if (declared) ports.add(declared[1].replace(/_/g, ''));
   } catch {
     /* skill absent — the 30xx/516x-517x ranges still guard the dev servers themselves */
@@ -122,6 +124,9 @@ export function daemonPortsGuarded(env = process.env) {
   return [...ports];
 }
 
+// The laziness lives here, not in daemonPortsGuarded: building the pattern on first use rather
+// than at import keeps this file free of top-level await. Per-process cache, and the process is
+// per-command, so it cannot go stale within a run.
 function devPorts() {
   if (devPortsRe) return devPortsRe;
   const daemon = daemonPortsGuarded().map((p) => `|${p}`).join('');
