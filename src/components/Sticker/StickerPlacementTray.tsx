@@ -3,7 +3,12 @@ import { IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import { freeOfferFor, trayPriceLine, trayReviewLine } from '~/components/Sticker/free-offer';
+import {
+  freeOfferFor,
+  preCommitFreeReason,
+  trayPriceLine,
+  trayReviewLine,
+} from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
@@ -145,6 +150,16 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // The same predicate the draft's own control uses, so the sentence here and
   // the button down there cannot disagree about what is on offer.
   const freeAvailable = !!freeOfferFor(space, standing);
+
+  /**
+   * Why free is off the table, said while the choice is still being made rather
+   * than after the server has refused it.
+   *
+   * Every branch of that decision is in `free-offer.ts`, where a test can put
+   * all four states to it — inline here, the guards that keep the sentence from
+   * appearing on ordinary paid images are two `&&`s nothing can observe.
+   */
+  const freeUnavailableReason = preCommitFreeReason(freeAvailable, standing, space);
   // Says the panel can be got out of the way, and that more than one is allowed,
   // only once there is something that would survive it. Before that both are
   // instructions about nothing.
@@ -178,6 +193,14 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 {space?.mode === 'review' &&
                   ' · this creator reviews placements, so only you will see it until they approve.'}
                 {space?.mode === 'review' && trayReviewLine(freeAvailable)}
+                {/* Before the press, not after it. Its own line rather than
+                    appended, because it is about the reader while everything
+                    above it is about the placement. */}
+                {freeUnavailableReason && (
+                  <Text component="span" size="xs" display="block" className="mt-1">
+                    {freeUnavailableReason}
+                  </Text>
+                )}
               </Text>
             </div>
             <CloseButton

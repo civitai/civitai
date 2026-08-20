@@ -111,13 +111,52 @@ export function freeRefusalMessage(standing?: FreeStanding, space?: FreeCapacity
   // Transient, and it says when it lifts — derived from the reset the server
   // computed rather than restating the boundary here.
   if (standing && standing.remaining <= 0)
-    return `You have used today's free placement. It comes back ${allowanceResetLabel(
+    return `You have used today's free placement — ${SHARED_ALLOWANCE_NOTE}. It comes back ${allowanceResetLabel(
       standing.resetsAt
     )}.`;
   // The most transient of all — a declined placement releases its slot at once.
   if (space && space.freeSlotsRemaining <= 0)
     return 'Someone took the last free slot on this image first.';
   return null;
+}
+
+/**
+ * The reason free is unavailable, said while the choice is still being made — or
+ * `null` when there is nothing worth saying.
+ *
+ * 🔴 **The reason existed and was only ever shown AFTER the server refused.**
+ * `freeRefusalMessage` had exactly one consumer, the post-refusal handler, so
+ * somebody who had spent their day or already free-placed here saw a plain paid
+ * button, pressed it, and paid. The remix modal has rendered its reason inline
+ * since it shipped; this is that pattern for the surface that lacked it.
+ *
+ * Two guards, and each one is a state where the sentence would be worse than
+ * silence:
+ *
+ * - **`freeAvailable`** — free is on the table, so there is no refusal to
+ *   explain. Without this the ladder's last rung would narrate a slot count at
+ *   somebody about to take one.
+ * - **`freeSlots <= 0`** — this creator takes no free placements at all, which
+ *   is the first rung and true of every ordinary paid image. Nobody is waiting
+ *   on an offer that was never made, so it would be noise on most of the site.
+ *
+ * Both inputs must have arrived. Asserted from defaulted zeroes this tells a
+ * fresh reader their allowance is spent for as long as the query takes.
+ *
+ * Separate from `freeRefusalMessage` rather than folded into it, because that
+ * one answers a refusal that already happened and may not be about the free tier
+ * at all — its `null` return is load-bearing there in a way it is not here.
+ */
+export function preCommitFreeReason(
+  freeAvailable: boolean,
+  standing?: FreeStanding,
+  space?: FreeCapacity
+) {
+  if (freeAvailable) return null;
+  if (!space || !standing) return null;
+  if (space.freeSlots <= 0) return null;
+
+  return freeRefusalMessage(standing, space);
 }
 
 /**
@@ -167,6 +206,101 @@ function allowanceResetLabel(resetsAt?: Date | string) {
 }
 
 /**
+ * What the daily allowance is shared with, in one clause.
+ *
+ * 🔴 **One constant, because the sharing is the fact people get wrong.** Every
+ * string that mentions the daily free is on one of two surfaces, and each used
+ * to say "today's allowance" as though it were its own — so somebody who spent
+ * it submitting a remix met a sticker surface that had no explanation for why
+ * free was gone, and read a limit as a bug. Said once here, both surfaces cannot
+ * drift into describing two different budgets.
+ *
+ * Written as a clause rather than a sentence so it can be appended to whatever
+ * came before it without a second full stop.
+ */
+export const SHARED_ALLOWANCE_NOTE = 'one a day, shared between stickers and remix galleries';
+
+/**
+ * The free label on the reaction bar, or `null` for no label at all.
+ *
+ * 🔴 **This is the fix for the whole ticket.** The bar used to print the
+ * creator's `N of M free` capacity, which is a fact about the IMAGE, in a place
+ * every reader takes as an offer to THEM — so a viewer who had spent their day
+ * saw "1 of 1 free" on every image in the feed, pressed it, and was charged.
+ * Justin hit it live in a meeting; a user hit it ninety minutes after launch.
+ *
+ * Both scarcities have to hold before the word "free" is allowed on screen: the
+ * creator must have an open slot AND the viewer must still have their placement
+ * for today. The number is the smaller of the two, because that is how many the
+ * reader can actually use.
+ *
+ * ⚠️ **`allowanceRemaining` is `undefined` while the query is in flight, and
+ * that is not zero.** Rendering the paid state on `undefined` would flash the
+ * price and then add a free label a beat later on every card in the feed; the
+ * label is simply absent until the answer lands, which is the same thing an
+ * image with no free capacity shows.
+ *
+ * The one rule the bar cannot see is "already used a free placement on THIS
+ * image" — that needs a per-image query, which is exactly the per-card cost this
+ * design avoids. The tray makes that check before anything is committed.
+ */
+export function barFreeLabel(
+  space: FreeCapacity | undefined,
+  allowanceRemaining: number | undefined
+) {
+  if (!space || allowanceRemaining == null) return null;
+  if (space.freeSlots <= 0 || space.freeSlotsRemaining <= 0) return null;
+  if (allowanceRemaining <= 0) return null;
+
+  return `${Math.min(space.freeSlotsRemaining, allowanceRemaining)} free`;
+}
+
+/**
+ * The bar's tooltip: the price always, and the reason free is off the table when
+ * it is.
+ *
+ * The price stays in every branch. That was already the rule — the tooltip is
+ * what stopped the old label being an outright lie about cost — and it survives
+ * because the reason is the addition, not the replacement.
+ *
+ * Ordered like `freeRefusalMessage` and for the same reason: a refusal that is
+ * permanent for this image outranks one that lifts by itself, so nobody is
+ * promised a midnight reset that will not change what this creator offers. The
+ * two ladders stay separate because they answer different questions — this one
+ * before the press, from a bar that cannot see `usedHere`; that one after a
+ * refusal, from a surface that can.
+ */
+export function barTooltip({
+  price,
+  space,
+  allowanceRemaining,
+  resetsAt,
+}: {
+  price: number;
+  space?: FreeCapacity;
+  allowanceRemaining?: number;
+  resetsAt?: Date | string;
+}) {
+  const base = `Place a sticker · ${price} Buzz`;
+
+  // Nothing free is on offer here for anyone, so there is nothing to explain.
+  if (!space || space.freeSlots <= 0) return base;
+
+  // Still loading. Say the price and claim nothing about the offer.
+  if (allowanceRemaining == null) return base;
+
+  if (allowanceRemaining <= 0)
+    return `${base}. You have used today's free placement — ${SHARED_ALLOWANCE_NOTE}. Yours is back ${allowanceResetLabel(
+      resetsAt
+    )}.`;
+
+  if (space.freeSlotsRemaining <= 0)
+    return `${base}. The free slot on this image is taken — it comes back if the creator declines.`;
+
+  return `Place a sticker · free, or ${price} Buzz. Your free one is ${SHARED_ALLOWANCE_NOTE}.`;
+}
+
+/**
  * The tray's price line, which has to name both offers when both are open.
  *
  * The use is the constant: a free placement is free of the creator's price and of
@@ -174,7 +308,9 @@ function allowanceResetLabel(resetsAt?: Date | string) {
  * disagreeing about what a sticker costs.
  */
 export const trayPriceLine = (freeAvailable: boolean, price: number) =>
-  freeAvailable ? `Free, or ${price} Buzz · one use either way` : `${price} Buzz + one use`;
+  freeAvailable
+    ? `Free, or ${price} Buzz · one use either way. Your free one is ${SHARED_ALLOWANCE_NOTE}.`
+    : `${price} Buzz + one use`;
 
 /**
  * What the tray says a decline costs on a review-mode space.

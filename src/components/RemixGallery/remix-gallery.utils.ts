@@ -1,3 +1,4 @@
+import { SHARED_ALLOWANCE_NOTE } from '~/components/Sticker/free-offer';
 import type { ImageGetInfinite } from '~/types/router';
 import { ImageSort } from '~/server/common/enums';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
@@ -177,10 +178,15 @@ export function freeSubmissionOffer({
   // a person sees, so a shared module would have to hold the ordering too.
   // Change this wording and change its twin. Its twin still spells out "midnight
   // UTC" rather than reading `resetsAt`; that is the same fix as this one.
+  //
+  // The one clause both twins now take from one place is what the allowance is
+  // SHARED with — `SHARED_ALLOWANCE_NOTE`. That is the fact people were getting
+  // wrong, so it is the one that cannot be allowed to drift between two
+  // surfaces; the orderings stay separate for the reason above.
   if (allowanceRemaining <= 0)
     return {
       available: false,
-      reason: `You've used today's free placement. It comes back at ${allowanceResetLabel(
+      reason: `You've used today's free placement — ${SHARED_ALLOWANCE_NOTE}. It comes back at ${allowanceResetLabel(
         resetsAt
       )}.`,
     };

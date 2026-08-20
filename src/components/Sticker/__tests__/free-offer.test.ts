@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  barFreeLabel,
+  barTooltip,
   FREE_REVIEW_CAVEAT,
   freeOfferFor,
   freeOptionLabel,
   freeRefusalMessage,
   freeRefusalOutcome,
   isPlacingFree,
+  preCommitFreeReason,
+  SHARED_ALLOWANCE_NOTE,
   trayPriceLine,
   trayReviewLine,
 } from '~/components/Sticker/free-offer';
@@ -375,5 +379,169 @@ describe('the reset the refusal names', () => {
     expect(freeRefusalMessage({ ...spent, resetsAt: 'not a date' }, open)).toMatch(
       /comes back at midnight UTC/
     );
+  });
+});
+
+/**
+ * The reaction bar, which is where this whole thing went wrong.
+ *
+ * The bar renders per feed card and used to print the creator's capacity —
+ * `N of M free` — in a place every reader takes as an offer to themselves. Two
+ * people reported the same thing within a day of launch: the label said free,
+ * the placement cost Buzz.
+ *
+ * These sit here rather than in the component for the reason the rest of this
+ * file does: the branches are the product decision, and a component test that
+ * renders one of them proves nothing about the other three.
+ */
+describe('the bar offers free only where the reader can take it', () => {
+  const SLOTS_OPEN = { freeSlots: 4, freeSlotsRemaining: 2 };
+  const SLOTS_HELD = { freeSlots: 4, freeSlotsRemaining: 0 };
+  const NO_FREE = { freeSlots: 0, freeSlotsRemaining: 0 };
+
+  it('labels the smaller of the two scarcities', () => {
+    // The creator has two going spare; the reader may take one. Quoting the
+    // creator's number here is the original defect.
+    expect(barFreeLabel(SLOTS_OPEN, 1)).toBe('1 free');
+    // And the other way round: a reader with allowance to spare is still bounded
+    // by the image.
+    expect(barFreeLabel({ freeSlots: 4, freeSlotsRemaining: 1 }, 3)).toBe('1 free');
+  });
+
+  it.each([
+    ['the viewer has spent their day', SLOTS_OPEN, 0],
+    ['the creator takes no free placements', NO_FREE, 1],
+    ['every slot on the image is held', SLOTS_HELD, 1],
+  ])('says nothing when %s', (_name, space, remaining) => {
+    expect(barFreeLabel(space, remaining)).toBeNull();
+  });
+
+  /**
+   * 🔴 `undefined` is not zero.
+   *
+   * In flight, the honest render is no label at all. Treating it as zero shows
+   * the paid state and then adds "free" a beat later on every card in the feed;
+   * treating it as one promises something that may not exist. Absent becomes
+   * present quietly, which is the only transition that costs the reader nothing.
+   */
+  it('claims nothing while the allowance is still loading', () => {
+    expect(barFreeLabel(SLOTS_OPEN, undefined)).toBeNull();
+    expect(barFreeLabel(undefined, 1)).toBeNull();
+  });
+});
+
+describe('the bar tooltip names the price, and the reason when there is one', () => {
+  const SLOTS_OPEN = { freeSlots: 4, freeSlotsRemaining: 2 };
+  const SLOTS_HELD = { freeSlots: 4, freeSlotsRemaining: 0 };
+  const NO_FREE = { freeSlots: 0, freeSlotsRemaining: 0 };
+  const RESETS = new Date('2026-08-21T00:00:00.000Z');
+
+  /**
+   * The price in every branch. That rule predates this change — it is what kept
+   * the old label from being an outright lie about cost — and the reason is an
+   * addition to it, never a replacement.
+   */
+  it.each([
+    ['free on offer', SLOTS_OPEN, 1],
+    ['a spent allowance', SLOTS_OPEN, 0],
+    ['slots all held', SLOTS_HELD, 1],
+    ['a creator who takes none', NO_FREE, 1],
+  ])('quotes the price with %s', (_name, space, remaining) => {
+    expect(
+      barTooltip({ price: 100, space, allowanceRemaining: remaining, resetsAt: RESETS })
+    ).toMatch(/100 Buzz/);
+  });
+
+  it('explains a spent allowance and names what it is shared with', () => {
+    const tip = barTooltip({
+      price: 100,
+      space: SLOTS_OPEN,
+      allowanceRemaining: 0,
+      resetsAt: RESETS,
+    });
+
+    expect(tip).toMatch(/used today's free placement/);
+    // The second ticket, in the sentence that needs it most: this reader's
+    // allowance may well have gone on a remix gallery, and without this the
+    // sticker surface has no explanation for where it went.
+    expect(tip).toMatch(new RegExp(SHARED_ALLOWANCE_NOTE));
+    // Read off the server's own reset rather than restating the boundary.
+    expect(tip).toMatch(/00:00 UTC/);
+  });
+
+  /**
+   * The two zeroes that look alike. `freeSlotsRemaining === 0` is both "takes no
+   * free placements" and "all currently held", and only `freeSlots` separates
+   * them — the first has nothing to say, the second says something worth acting
+   * on, because a decline returns the slot.
+   */
+  it('tells a held slot apart from a creator who takes none', () => {
+    const held = barTooltip({ price: 100, space: SLOTS_HELD, allowanceRemaining: 1 });
+    const none = barTooltip({ price: 100, space: NO_FREE, allowanceRemaining: 1 });
+
+    expect(held).toMatch(/comes back if the creator declines/);
+    expect(none).toBe('Place a sticker · 100 Buzz');
+  });
+
+  it('offers both prices when free is genuinely available', () => {
+    const tip = barTooltip({ price: 100, space: SLOTS_OPEN, allowanceRemaining: 1 });
+
+    expect(tip).toMatch(/free, or 100 Buzz/);
+    expect(tip).toMatch(new RegExp(SHARED_ALLOWANCE_NOTE));
+  });
+
+  /**
+   * Loading is not "spent". A tooltip asserting a reset time from a defaulted
+   * zero tells a reader with a free placement in hand that they have none — for
+   * as long as the query takes, on every card.
+   */
+  it('promises and refuses nothing while the allowance is unknown', () => {
+    const tip = barTooltip({ price: 100, space: SLOTS_OPEN, allowanceRemaining: undefined });
+
+    expect(tip).toBe('Place a sticker · 100 Buzz');
+  });
+});
+
+/**
+ * The tray's pre-commit reason.
+ *
+ * The strings were always there; what was missing was a caller that ran BEFORE
+ * the placement. This gate is the caller, and its two silences are as much the
+ * product decision as the sentences are.
+ */
+describe('the tray says why free is unavailable before anything is committed', () => {
+  const HAS_SLOT = { freeSlots: 4, freeSlotsRemaining: 2 };
+  const NO_FREE = { freeSlots: 0, freeSlotsRemaining: 0 };
+  const SPENT = { remaining: 0, usedHere: false };
+  const READY = { remaining: 1, usedHere: false };
+  const USED_HERE = { remaining: 1, usedHere: true };
+
+  it('explains a spent allowance while both offers are still on screen', () => {
+    expect(preCommitFreeReason(false, SPENT, HAS_SLOT)).toMatch(/used today's free placement/);
+  });
+
+  it('explains a free placement already used on this image', () => {
+    // Once ever, not once per day — so this one does not lift at midnight, and
+    // saying it does would send someone back tomorrow to the same refusal.
+    expect(preCommitFreeReason(false, USED_HERE, HAS_SLOT)).toMatch(/already used a free sticker/);
+  });
+
+  /**
+   * 🔴 Silence is the correct output here, and it is the half a test is most
+   * likely to skip.
+   */
+  it('says nothing when free is on offer', () => {
+    expect(preCommitFreeReason(true, READY, HAS_SLOT)).toBeNull();
+  });
+
+  it('says nothing on an image whose creator never offered free', () => {
+    // True of most of the site. Narrating it on every ordinary paid image turns
+    // a limit nobody was promised into a notice everybody reads.
+    expect(preCommitFreeReason(false, SPENT, NO_FREE)).toBeNull();
+  });
+
+  it('says nothing until both facts have arrived', () => {
+    expect(preCommitFreeReason(false, undefined, HAS_SLOT)).toBeNull();
+    expect(preCommitFreeReason(false, SPENT, undefined)).toBeNull();
   });
 });

@@ -208,6 +208,30 @@ export function useFreePlacementStanding(imageId?: number) {
   return { standing: data, isLoading };
 }
 
+/**
+ * The viewer's daily free allowance, with no image in the question.
+ *
+ * **One query for a whole feed.** `useFreePlacementStanding` takes an image, so
+ * a reaction bar using it would fire once per card; the allowance is a property
+ * of the person, so this has a single cache key and every bar on the page reads
+ * the same in-flight request. That is what makes it affordable for the bar to
+ * stop advertising a free placement the viewer does not have.
+ *
+ * `enabled` is the caller's, because a signed-out viewer has no allowance to
+ * read and the procedure is protected — asking would be a 401 per page.
+ *
+ * **A listing**, like everything else on the free path: stale on return, and
+ * `createFreePlacement` re-decides under a lock. It picks what to SHOW.
+ */
+export function useFreePlacementAllowance(enabled = true) {
+  const { data, isLoading } = trpc.placement.getFreeAllowance.useQuery(undefined, {
+    enabled,
+    staleTime: 60_000,
+  });
+
+  return { allowance: data, isLoading };
+}
+
 export function useImagePlacementSpace(imageId?: number) {
   const { data, isLoading } = trpc.placement.getSpace.useQuery(
     { surface: 'sticker', targetType: 'image', targetId: imageId as number },

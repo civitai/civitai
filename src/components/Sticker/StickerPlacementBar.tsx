@@ -5,7 +5,9 @@ import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettin
 import { StickerCountChip, useStickerInviteStyle } from '~/components/Sticker/StickerCountChip';
 import { StickerHistoryButton } from '~/components/Sticker/StickerHistoryPanel';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
+import { barFreeLabel, barTooltip } from '~/components/Sticker/free-offer';
 import {
+  useFreePlacementAllowance,
   useImagePlacementSpace,
   useStickerPlacementCounts,
   useStickerPlacements,
@@ -74,22 +76,23 @@ export function StickerPlacementBar({
   const total = count + pending;
 
   /**
-   * How much of this creator's free capacity is still open.
+   * The viewer's own half of the answer.
    *
-   * ⚠️ `freeSlotsRemaining === 0` covers two different facts and only
-   * `freeSlots` tells them apart: the resolver short-circuits the reservation
-   * count when there is no capacity, so zero is both "this creator takes no free
-   * placements" and "their slots are all currently held". The first has nothing
-   * to say and the second does, because a slot comes back on a decline.
+   * One query for the whole page rather than one per card: the allowance belongs
+   * to the person, so every bar in a feed shares its cache key. That is what
+   * makes it affordable to check, and checking is the point — the label below
+   * used to be the creator's capacity alone, which promised free placements to
+   * people who had already spent theirs.
    *
-   * Both numbers ride on the space query this bar already makes, so the count
-   * costs nothing extra. It is a display number and stale by construction — the
-   * claim re-counts under a lock — which is why the button offers rather than
-   * promises.
+   * Not asked of a signed-out viewer, who has no allowance and would get a 401
+   * per page from a protected procedure.
    */
-  const freeSlots = space?.freeSlots ?? 0;
-  const freeRemaining = space?.freeSlotsRemaining ?? 0;
-  const showsFree = canPlace && freeSlots > 0;
+  const { allowance } = useFreePlacementAllowance(!!currentUser && canPlace);
+
+  // `null` until BOTH facts are known, and absent rather than paid while the
+  // allowance is loading — a label that appears a beat late is quieter than a
+  // price that turns into "free" on every card in the feed.
+  const freeLabel = canPlace ? barFreeLabel(space ?? undefined, allowance?.remaining) : null;
 
   // The invitation needs a zero that is KNOWN to be zero. `total` is fed by two
   // separate queries and a failure of either reads as empty, so an image with
@@ -148,21 +151,36 @@ export function StickerPlacementBar({
         {canPlace && (
           <Tooltip
             /**
-             * 🔴 The price, always — never "free".
+             * 🔴 The price, always — plus the reason free is unavailable, when
+             * it is.
              *
-             * `freeRemaining` is the CREATOR's capacity and says nothing about
-             * this viewer: somebody who has spent today's allowance, or already
-             * free-placed on this image, would be promised free and then pay a
-             * number they were never shown. Only the standing query answers that,
-             * and this bar deliberately does not make it — it renders per feed
-             * card, so it would be one request per card.
+             * `freeSlotsRemaining` alone is the CREATOR's capacity and says
+             * nothing about this viewer, which is how the old label promised
+             * free to somebody who had spent their day and then charged them a
+             * number they were never shown. Both facts are now in hand, so the
+             * tooltip can say which of the two ran out instead of leaving the
+             * reader to find out by pressing.
              *
-             * So the bar states the fact it has (the count beside this, which is
-             * about the creator) and makes no claim about the offer. The offer is
-             * made in the tray, where the standing is known.
+             * ⚠️ `freeSlotsRemaining === 0` covers two different facts and only
+             * `freeSlots` tells them apart: the resolver short-circuits the
+             * reservation count when there is no capacity, so zero is both "this
+             * creator takes no free placements" — nothing to say — and "their
+             * slots are all currently held", which is worth saying because a
+             * decline gives one back. `barTooltip` branches on both.
+             *
+             * The one rule left un-checked here is "already free-placed on THIS
+             * image", which needs a per-image query and would cost one request
+             * per feed card. The tray checks it before anything is committed.
              */
-            label={`Place a sticker · ${space?.price} Buzz`}
+            label={barTooltip({
+              price: space?.price ?? 0,
+              space: space ?? undefined,
+              allowanceRemaining: allowance?.remaining,
+              resetsAt: allowance?.resetsAt,
+            })}
             withArrow
+            multiline
+            w={260}
           >
             <Button
               size="compact-sm"
@@ -170,11 +188,7 @@ export function StickerPlacementBar({
               variant="light"
               color="yellow"
               onClick={() => openTray(imageId)}
-              aria-label={
-                showsFree
-                  ? `Place a sticker · ${freeRemaining} of ${freeSlots} free`
-                  : 'Place a sticker'
-              }
+              aria-label={freeLabel ? `Place a sticker · ${freeLabel}` : 'Place a sticker'}
               // A plus rather than a second sticker glyph: beside a count of
               // stickers it reads as "add one" without a word, which is what
               // keeps the fused control narrow enough to belong in this row.
@@ -189,17 +203,19 @@ export function StickerPlacementBar({
               // states compete rather than agree.
               style={{
                 ...buttonStyling?.('BuzzTip')?.style,
-                ...(inviting || freeRemaining > 0 ? inviteStyle : null),
+                ...(inviting || freeLabel ? inviteStyle : null),
               }}
             >
               <IconPlus size={16} stroke={2.5} />
-              {/* One number. Rendered even at zero remaining, because a full
-                  space is a thing worth knowing — a slot comes back on a
-                  decline — while a creator who takes no free placements has
-                  nothing to say and gets no label at all. */}
-              {showsFree && (
+              {/* Only where the viewer can actually take it. The old label
+                  counted the creator's slots and said nothing about the reader,
+                  so a spent allowance still read as "1 of 1 free" on every image
+                  in the feed. A state worth knowing but not offering — a full
+                  space, a spent day — is now said in the tooltip instead, where
+                  it can give the reason and the price together. */}
+              {freeLabel && (
                 <Text size="xs" fw={600} className="ml-1">
-                  {freeRemaining} of {freeSlots} free
+                  {freeLabel}
                 </Text>
               )}
             </Button>
