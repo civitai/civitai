@@ -17,6 +17,7 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { remixSubmitPickerFilters } from '~/components/RemixGallery/remix-gallery.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import {
@@ -73,7 +74,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
   );
 
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    { userId: currentUser?.id, period: 'AllTime', limit: 50 },
+    remixSubmitPickerFilters(currentUser?.id),
     { enabled: !!currentUser }
   );
 

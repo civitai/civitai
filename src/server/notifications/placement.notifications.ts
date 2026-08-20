@@ -318,6 +318,17 @@ export const placementNotifications = createNotificationProcessor({
             )
             OR (
               p.status = 'removed'
+              -- removedBy is the MODE the remover acted in, not their role:
+              -- 'owner' for a creator and for a moderator in manage-as-creator
+              -- mode, 'moderator' for moderate mode or someone else's gallery.
+              -- So this reads "not acting as a moderator", which is the rule.
+              --
+              -- Read as a role it looks wrong once a moderator can act as one on
+              -- their own gallery, and keying on the actor instead
+              -- (takenDownById = ownerId) looks like the fix. It is not: that
+              -- announces a moderator-mode removal as a creator's, and does the
+              -- same to every moderation-tool removal on the actor's own
+              -- gallery. Tried in #4148 and reverted.
               AND p."removedBy" = 'owner'
               AND p."takenDownAt" IS NOT NULL
               AND p."takenDownAt" > '${lastSent}'

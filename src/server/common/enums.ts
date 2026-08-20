@@ -141,6 +141,8 @@ export enum SignalMessages {
   ChatNewMessage = 'chat:new-message',
   ChatNewRoom = 'chat:new-room',
   ChatTypingStatus = 'chat:typing-status',
+  ChatMessageDeleted = 'chat:message-deleted',
+  ChatMessageUpdated = 'chat:message-updated',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
@@ -433,17 +435,6 @@ export enum ExternalModerationType {
   Clavata = 'Clavata',
 }
 
-export enum ModReviewType {
-  Minor = 'minor',
-  POI = 'poi',
-  Reported = 'reported',
-  CSAM = 'csam',
-  BlockedTags = 'tag',
-  NewUsers = 'newUser',
-  Appeals = 'appeal',
-  RuleViolations = 'modRule',
-  RemixSource = 'remixSource',
-}
 
 export enum MarketplacePaymentMethod {
   CashApp = 'CashApp',

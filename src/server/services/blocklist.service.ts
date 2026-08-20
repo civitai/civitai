@@ -3,11 +3,8 @@ import { BlocklistType } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import type {
-  RemoveBlocklistItemSchema,
-  UpsertBlocklistSchema,
-} from '~/server/schema/blocklist.schema';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import type { UpsertBlocklistSchema } from '~/server/schema/blocklist.schema';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLruCache } from '~/server/utils/lru-cache';
 
 export type BlocklistDTO = {
@@ -67,25 +64,6 @@ export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
 
 export async function getBlocklistData(type: BlocklistType) {
   return await getBlocklistDTO({ type }).then((blocklist) => blocklist.data);
-}
-
-export async function removeBlocklistItems({ id, items }: RemoveBlocklistItemSchema) {
-  const result = await dbWrite.blocklist.findUnique({
-    where: { id },
-    select: { type: true, data: true },
-  });
-  if (!result) throw throwNotFoundError();
-  const lowerCaseItems = items.map((x) => x.toLowerCase());
-
-  const blocklist = result.data.filter((item) => !lowerCaseItems.includes(item));
-
-  const updateResult = await dbWrite.blocklist.update({
-    where: { id },
-    data: { data: blocklist },
-    select: { id: true, type: true, data: true },
-  });
-
-  await setCache({ type: updateResult.type, data: updateResult });
 }
 
 // #region [blocked links]

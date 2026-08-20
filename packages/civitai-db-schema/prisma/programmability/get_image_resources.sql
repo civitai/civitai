@@ -112,7 +112,11 @@ BEGIN
       irh.strength,
       irh.detected,
       row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY IIF(irh.detected,0,1), IIF(irh.strength IS NOT NULL,0,1), IIF(version_published,0,1), version_date, file_id) AS row_number,
-      row_number() OVER (PARTITION BY irh.id, irh."modelVersionId" ORDER BY IIF(irh.detected,0,1), IIF(irh.strength IS NOT NULL,0,1), IIF(version_published,0,1), version_date, file_id) AS row_number_version
+      -- PARTITION BY groups NULLs, so without this every unmatched row on an image dedupes
+      -- against every other and only one survives. They still dedupe by hash via row_number.
+      CASE WHEN irh."modelVersionId" IS NULL THEN 1 ELSE
+        row_number() OVER (PARTITION BY irh.id, irh."modelVersionId" ORDER BY IIF(irh.detected,0,1), IIF(irh.strength IS NOT NULL,0,1), IIF(version_published,0,1), version_date, file_id)
+      END AS row_number_version
     FROM image_resource_merge irh
   )
   SELECT

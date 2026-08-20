@@ -28,6 +28,8 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import type { ChatAuditRow } from '~/server/common/chat-audit.constants';
+import { CHAT_AUDIT_FLAG } from '~/server/common/chat-audit.constants';
 import type { EntityChangeRow } from '~/server/common/entity-change.constants';
 import { ENTITY_CHANGE_TRACKING_FLAG } from '~/server/common/entity-change.constants';
 import { isFlipt } from '~/server/flipt/client';
@@ -767,18 +769,6 @@ export class Tracker {
     return this.track('articleRatingReviews', values);
   }
 
-  public articleRatingReviewResolved(values: {
-    reviewId: number;
-    articleId: number;
-    status: 'Actioned' | 'Unactioned';
-    // `null` (not 0) when no level was applied — 0 is a valid bitwise
-    // nsfwLevel slot and would skew approval metrics.
-    appliedLevel: number | null;
-    moderatorId: number;
-  }) {
-    return this.track('articleRatingReviewsResolved', values);
-  }
-
   public tagEngagement(values: { type: TagEngagementType; tagId: number }) {
     return this.track('tagEngagements', values);
   }
@@ -884,6 +874,19 @@ export class Tracker {
       'entityChangeEvents',
       rows.map((row) => ({ ...row, via: this.provenance.via }))
     );
+  }
+
+  // Chat moderation audit (docs/features/chat-dm-redesign.md). Deleting a message
+  // or clearing a conversation removes it from the product but not from the
+  // record, so a report filed afterwards is still reviewable. Flag-gated so the
+  // app can deploy before the table exists.
+  public async chatAudit(row: ChatAuditRow) {
+    if (!(await isFlipt(CHAT_AUDIT_FLAG))) return;
+    // trackMany, not track: it inserts into ClickHouse directly, where `track`
+    // POSTs to a tracker-service route that would have to be registered
+    // separately. Same choice `entityChanges` makes, so DDL is the only
+    // dependency.
+    return this.trackMany('chatAuditEvents', [row], { skipActorMeta: true });
   }
 
   // One row per sticker PLACEMENT, matching the consumption rule — a comment

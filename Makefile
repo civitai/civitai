@@ -1,17 +1,25 @@
+# Compose derives its project name from the directory it runs in, so each git
+# worktree would otherwise get its own stack -- and the second one to start dies
+# on the port binds ("Bind for :::15434 failed: port is already allocated").
+# Pinning it means every worktree shares the one local stack and the one local
+# database, which is what the primary clone's directory name already produced.
+# Override it if you genuinely want a second, isolated stack.
+export COMPOSE_PROJECT_NAME ?= civitai
+
 # Start the containers in the background
 .PHONY: start
 start:
-	docker-compose up -d
+	docker compose up -d
 
 # Stop all containers
 .PHONY: stop
 stop:
-	docker-compose stop
+	docker compose stop
 
 # Remove containers
 .PHONY: down
 down:
-	docker-compose down
+	docker compose down
 
 # Restart containers
 .PHONY: restart
@@ -20,14 +28,14 @@ restart: stop start
 # Rebuild the containers
 .PHONY: rebuild
 rebuild:
-	docker-compose down \
-		&& docker-compose up --build -d
+	docker compose down \
+		&& docker compose up --build -d
 
 # Stop and remove all containers, networks, images, and volumes
 .PHONY: burn
 burn:
-	docker-compose down \
-		&& docker-compose down --volumes
+	docker compose down \
+		&& docker compose down --volumes
 
 ROWS ?= 1000
 TRUNC_QUEUE ?= true
@@ -50,18 +58,31 @@ bootstrap-metrics:
 copy-env:
 	cp -u ./.env-example ./.env.development
 
-.PHONY: npm-install
-npm-install:
-	# TODO fix postinstall on git bash
-	npm i
+# `npm i` cannot work here: package.json's `preinstall` runs `npx only-allow pnpm`,
+# which exits 1 under npm. `make init` was dead on that line.
+.PHONY: install
+install:
+	pnpm install
 
+# Kept so `make npm-install` still does the right thing for anyone with it in
+# their fingers. It installs with pnpm, because npm is refused.
+.PHONY: npm-install
+npm-install: install
+
+# Must go through `db:generate`, not a bare `prisma generate`: the generate step
+# reads packages/civitai-db-schema/prisma/schema.prisma, which is gitignored and
+# produced by scripts/generate-slim-schema.js. On a fresh clone that file does
+# not exist yet, so `prisma generate` alone has nothing to read. Going through
+# pnpm also puts node_modules/.bin on PATH, which a bare `prisma` needs.
 .PHONY: gen-prisma
 gen-prisma:
-	prisma generate --no-hints
+	pnpm run db:generate
 
+# Through `pnpm exec` so cross-env and next resolve from node_modules/.bin
+# without the caller having to add it to PATH by hand.
 .PHONY: dev
 dev:
-	cross-env NODE_OPTIONS=\"--disable-warning=ExperimentalWarning\" next dev
+	pnpm exec cross-env NODE_OPTIONS=--disable-warning=ExperimentalWarning next dev
 
 .PHONY: run
 run: gen-prisma dev
@@ -70,13 +91,13 @@ run: gen-prisma dev
 reseed: bootstrap-db bootstrap-metrics
 
 .PHONY: init
-init: copy-env npm-install start run-migrations reseed run
+init: copy-env install start run-migrations reseed run
 
 .PHONY: rerun
 rerun: start reseed dev
 
 .PHONY: init-devcontainer
-init-devcontainer: copy-env npm-install run-migrations reseed
+init-devcontainer: copy-env install run-migrations reseed
 
 .PHONY: default
 default: start

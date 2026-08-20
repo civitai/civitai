@@ -502,15 +502,6 @@ export const publishPrivateModelSchema = z.object({
   publishVersions: z.boolean(),
 });
 
-export type GetTrainingModerationFeedSchema = z.infer<typeof getTrainingModerationFeedSchema>;
-export const getTrainingModerationFeedSchema = infiniteQuerySchema.extend({
-  username: z.string().optional(),
-  dateFrom: z.date().optional(),
-  dateTo: z.date().optional(),
-  cannotPublish: z.boolean().optional(),
-  workflowId: z.string().optional(),
-});
-
 // Training models list schema with filtering and sorting
 export const trainingModelsSortOptions = [
   'startDesc',

@@ -162,3 +162,22 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 }
+
+/* Tailwind v4's preflight sets `cursor: default` on buttons, so every control in every app loses the
+ * pointer unless it opts back in. Restoring it here rather than per-component covers the shadcn
+ * primitives, the raw `<button>`s used as inline affordances, and anything an app adds later.
+ * `:not(:disabled)` keeps a disabled control from advertising itself as clickable. */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  label:has(> input[type='checkbox']:not(:disabled)),
+  label:has(> input[type='radio']:not(:disabled)),
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role='button'][aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+}

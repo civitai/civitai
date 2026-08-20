@@ -16,6 +16,11 @@ migrating a page is not just porting a React component; it means recreating the 
 
 Each page is a checkbox. Sub-bullets list the procedures, services, schemas, and infra to recreate.
 
+**How the page is built is standardised** — Svelte 5 idiom, shadcn primitives, styling tokens, component
+placement: [`apps/moderator/CLAUDE.md`](../../apps/moderator/CLAUDE.md). Before ticking a page, run the
+[`svelte-review`](../../.claude/skills/svelte-review/SKILL.md) skill over it. Both apply equally to
+Retool migrations, so the two migration paths converge on the same result.
+
 ---
 
 ## Priority tiers
@@ -48,35 +53,40 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Infra: **Postgres** (heavy raw SQL aggregations) + notification service + email + session refresh; ClickHouse for user scores
   - Notes: optional entity linking, expiration, rate-limit (`shouldRateLimitStrike`), integrates with muting + session invalidation
 
-- [ ] **`/moderator/reports`** — `src/pages/moderator/reports.tsx` — flag: none
+- [x] **`/moderator/reports`** — `src/pages/moderator/reports.tsx` — flag: none — **Migrated.**
   - Procedures: `report.getAll` (query); `report.setStatus`, `report.update` (mutations)
   - Services (`src/server/services/report.service.ts`): `getReports`, `updateReportById`, `bulkSetReportStatus`
   - Schemas: `report.schema.ts` (report-reason schemas, `getReportsSchema`, `setReportStatusSchema`, `updateReportSchema`) + status/reason color constants
   - Infra: **Postgres** + moderator activity/IP tracking
   - Notes: heavy entity polymorphism (Model/Image/Comment/Article/Post/User/Collection/Bounty/CommentV2/ComicProject/Model3D/Chat). Shared `report.service` also powers image appeals — port once.
 
-- [ ] **`/moderator/blocklists`** — `src/pages/moderator/blocklists.tsx` — flag: `blocklists`
+- [x] **`/moderator/blocklists`** — `src/pages/moderator/blocklists.tsx` — flag: `blocklists` — **Migrated** (first Redis page; spoke writes the same `system:blocklist:${type}` cache the main-app validators + cron read — no callback)
   - Procedures: `blocklist.getBlocklist` (query); `blocklist.upsertBlocklist`, `blocklist.removeItems` (mutations)
   - Services (`src/server/services/blocklist.service.ts`): `getBlocklistDTO`, `getBlocklistData`, `upsertBlocklist`, `removeBlocklistItems` (+ utilities `throwOnBlockedLinkDomain`, `throwOnBlockedMessagePattern`, `getBlockedEmailDomains`)
   - Schemas: `blocklist.schema.ts` + `BlocklistType` enum (`server/common/enums.ts`)
   - Infra: **Postgres + Redis** (1-month TTL, fail-open reads, key `SYSTEM.BLOCKLIST:${type}`)
   - Notes: types = LinkDomain / MessagePattern / EmailDomain; case-insensitive; no cross-pod bust (TTL + lazy refresh)
 
-- [ ] **`/moderator/auditor`** — `src/pages/moderator/auditor.tsx` — flag: none
-  - Procedures: **none** — purely client-side (`useCheckProfanity` + `~/utils/metadata/audit`)
-  - Infra: none. Port the audit utilities client-side; no backend slice. Trivial / low-value but in active nav.
+- [x] **`/moderator/auditor`** — `src/pages/moderator/auditor.tsx` — flag: none — **Migrated.** The prompt tester
+  runs the audit **server-side** (a form `action` calling `@civitai/mod-utils/prompt-audit`
+  `getPromptHighlightSegments` — the word lists are server-only, so it can't be the legacy's client-only
+  page) and renders pass/flagged with full-category highlighting. Deferred (not in mod-utils): the
+  `cleanPrompt`/`getTagsFromPrompt` views and the profanity tester (`useCheckProfanity` stays in the main
+  app — still used by search/UI). Legacy page deleted; `/moderator/auditor` redirects (catchall) to
+  **`/audit/prompt-tester`** (label "Prompt Tester"), one of the three tools under the spoke's **Audit** nav
+  group (`/audit` → prohibited-prompts · prompt-tester · scanner-audit).
 
-- [ ] **`/moderator/scanner-audit`** (index) — `src/pages/moderator/scanner-audit/index.tsx` — flag: none
-  - Procedures: none — server redirect to `/moderator/scanner-audit/text`. Trivial.
+- [x] **`/moderator/scanner-audit`** (index) — `src/pages/moderator/scanner-audit/index.tsx` — flag: none
+  - Procedures: none — server redirect to `/moderator/scanner-audit/text`. Trivial. **Migrated.**
 
-- [ ] **`/moderator/scanner-audit/[mode]`** — `src/pages/moderator/scanner-audit/[mode]/index.tsx` — flag: none
+- [x] **`/moderator/scanner-audit/[mode]`** — `src/pages/moderator/scanner-audit/[mode]/index.tsx` — flag: none — **Migrated.**
   - Procedures: `scannerReview.list`, `scannerReview.reviewStats`, `scannerReview.exportRows` (queries)
   - Services (`src/server/services/scanner-review.service.ts`): `listScans`, `getLabelReviewStats`
   - Schemas: `scanner-review.schema.ts` (`listScansSchema`, `labelReviewStatsSchema`, `queueViewSchema`)
   - Infra: **ClickHouse** (`scanner_label_results` AggregatingMergeTree, partition pruning, GROUP BY dedup) + **Postgres** (`ScannerLabelReview` verdicts)
   - Notes: 3 scanners (xguard_text/xguard_prompt/image_ingestion), 2 queue views (triggered/near-miss), CSV export up to 50k rows
 
-- [ ] **`/moderator/scanner-audit/[mode]/[label]`** — `src/pages/moderator/scanner-audit/[mode]/[label].tsx` — flag: none
+- [x] **`/moderator/scanner-audit/[mode]/[label]`** — `src/pages/moderator/scanner-audit/[mode]/[label].tsx` — flag: none — **Migrated** (policy sidebar + highlight terms now in `@civitai/mod-utils`).
   - Procedures: `scannerReview.focusedRun`, `scannerReview.focusedItemContent`, `scannerReview.getWorkflowRaw` (queries); `scannerReview.upsertVerdict` (mutation)
   - Services: `scanner-review.service.ts` (`focusedRun`, `focusedItemContent`, `upsertLabelVerdict`, `deleteLabelVerdict`); `scanner-content.service.ts` (`getWorkflowRaw`, `getScanContents`, `snapshotScanContent`)
   - Schemas: `scanner-review.schema.ts` (`focusedRunSchema`, `focusedItemContentSchema`, `upsertLabelVerdictSchema`) + `ReviewVerdict` enum
@@ -94,48 +104,49 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 > Most of this cluster funnels through **`image.service.ts`** (~7.9K lines) and **`report.service.ts`** — port those shared services once (see [Shared backend services](#shared-backend-services)).
 
-- [ ] **`/moderator/images`** — `src/pages/moderator/images.tsx` — flags: `csamReports` (CSAM view), `appealReports` (Appeals view)
-  - Procedures: `image.getModeratorReviewQueue`, `image.getModeratorReviewQueueCounts`, `image.getModeratorPOITags` (queries); `image.moderate`, `report.bulkUpdateStatus`, `report.resolveAppeal` (mutations)
-  - Services: `image.service.ts` (`getImageModerationReviewQueue`, `getImageModerationCounts`, `moderateImages` → `handleBlockImages`/`handleUnblockImages`, `getModeratorPOITags`); `report.service.ts` (`bulkSetReportStatus`, `resolveEntityAppeal`)
-  - Schemas: `image.schema.ts` (`imageReviewQueueInputSchema`, `imageModerationSchema`), `report.schema.ts` (`bulkUpdateReportStatusSchema`, `resolveAppealSchema`)
-  - Infra: **Postgres + Meilisearch + Redis + S3 (pHash blocks) + Cloudflare (cache purge) + email + comic-project re-queue**
-  - Notes: **heaviest page.** `moderateImages` has complex transaction logic (tagging, NSFW level, search-index queue, pHash block); comics re-queue on state change; appeals auto-resolve when appeal images approved.
+- [x] **`/moderator/images`** — **Migrated.** All 9 views (minor/poi/tag/newUser/modRule/remixSource/csam/reported/appeals) live under the spoke's `/images/[slug]` (kind-discriminated payload; per-card immediate actions with optimistic dimming). Main-app page deleted; `/moderator/images` + subtree redirect via the catchall (`MIGRATED_PREFIXES` includes `images`). Access gated per-slug in the spoke's `hooks.server.ts` (pathname).
+  - Spoke queries: `image-review.service.ts` (`getImageReviewQueue`, `getReportedImageQueue`, `getAppealImageQueue`, `getImageReviewCounts`, `getModerationRuleDefinitions`) — all Kysely.
+  - Spoke mutations: `image-moderation.service.ts` (`acceptImage`=unblock, `blockImage`=TOS, `resolveImageAppeal`) + `reports.service.ts` `setReportStatus`. Spoke owns writes; only main-app call is the Meilisearch enqueue.
+  - **Main-app trim:** deleted `images.tsx`; removed orphaned `report.bulkUpdateStatus` (+ handler + `bulkUpdateReportStatusSchema`), `report.resolveAppeal` procedure (+ handler; **kept** `resolveAppealSchema`/`resolveEntityAppeal` service — still used by `handleUnblockImages`), and `image.getModeratorPOITags` (+ service + `POITag` type). **Kept** `image.moderate` (shared with NeedsReviewBadge/UnblockImage/comics) and the review-queue procedures (`getModeratorReviewQueue`/`Counts` — their output type is still referenced by `src/types/router.ts`; trim in a follow-up).
+  - **Deferred infra (TODO moderator-migration):** pHash blocklist add on block, tos-violation + appeal notifications/emails, buzz (report reward, appeal refund), the DeleteTOS ClickHouse event (feeds appeal `tosReason` — becomes load-bearing once the spoke is the primary block path), Redis post-cache busts, comics re-queue, and Delete's violationType/violationDetails.
 
-- [ ] **`/moderator/images/to-ingest`** — `src/pages/moderator/images/to-ingest.tsx` — flag: none
+- [x] **`/moderator/images/to-ingest`** — `src/pages/moderator/images/to-ingest.tsx` — flag: none — **Migrated** (commit e087b20f7, ingestion pages cutover).
   - Procedures: `image.getAllImagesPendingIngestion` (query)
   - Services: `image.service.ts` → `getImagesPendingIngestion`
   - Infra: **Postgres only.** Simplest of the image pages.
 
-- [ ] **`/moderator/image-tags`** — `src/pages/moderator/image-tags.tsx` — flag: none
-  - Procedures: `image.getModeratorReviewQueue` (with `tagReview: true`); `tag.moderateTags` (mutation)
-  - Services: `image.service.ts` → `getImageModerationReviewQueue` (reused); `tag.service.ts` → `moderateTags`
-  - Schemas: `image.schema.ts` (`imageReviewQueueInputSchema`), `tag.schema.ts` (`moderateTagsSchema`)
-  - Infra: **Postgres** + tracking
+- [x] **`/moderator/image-tags`** — `src/pages/moderator/image-tags.tsx` — flag: none — **Migrated.** tagReview queue ported to Kysely (match the `TagsOnImageNew` partial-index predicate EXACTLY incl. the `::integer` cast — a mismatched form seq-scans the table; no Tag join in the CTE); tags read from `TagsOnImageDetails` + a `TagsOnImageVote` hash-index vote count, NOT the expensive `ImageTag` view. Moderator decisions are authoritative → direct `upsert_tag_on_image` (disabled/keep) via the ported `upsertTagsOnImageNew` helper, NOT the weighted-vote system. Per-tag + per-card Remove/Keep instead of multi-select bulk. Trimmed orphaned `tag.moderateTags`. New shared spoke helpers: `tags-on-image.service.ts` (Kysely `upsertTagsOnImageNew` + `applyTagRules`), `cache.ts` (`bustCachedObject`/`bustImageTagCaches`).
+  - Procedures: `image.getModeratorReviewQueue` (with `tagReview: true`); `tag.moderateTags` (mutation) — **STAYS in main:** `getImageModerationReviewQueue` is shared with `images.tsx`; the vote plumbing (`getVotableTags`/`addTagVotes`/`removeTagVotes`) is app-wide.
+  - Infra: **Postgres** (TagsOnImageNew/Details/Vote) + Redis (imageTags/tagIds/thumbnail cache busts, shared `system:tag-rules`) + search-index enqueue
 
-- [ ] **`/moderator/image-rating-review`** — `src/pages/moderator/image-rating-review.tsx` — flag: none
+- [x] **`/moderator/image-rating-review`** — `src/pages/moderator/image-rating-review.tsx` — flag: none — **Migrated.** Deferred: VotableTags (needs the tag-voting slice, shared with image-tags), `imageMetadataCache.refresh` (Wave 3 Redis). Model3D nsfwLevel sync is no longer a deferral — the main app now derives it from the thumbnail via the connected-entity cascade (`docs/model3d-thumbnail-nsfw-propagation.md` in the main repo), so the spoke's direct `nsfwLevel` write drives it automatically. Main-app `getImageRatingRequests`/`updateImageNsfwLevel` left in place (image.service migrates with the image cluster; `updateImageNsfwLevel` still backs downleveled-review + user voting).
   - Procedures: `image.getImageRatingRequests` (query); `image.updateImageNsfwLevel` (mutation)
   - Services: `image.service.ts` → `getImageRatingRequests`, `updateImageNsfwLevel`, `updatePendingImageRatings`
   - Schemas: `image.schema.ts` (`imageRatingReviewInput`, `updateImageNsfwLevelSchema`)
   - Infra: **Postgres + Redis (thumbnail cache) + Knights of New Order** queue
   - Notes: `updateImageNsfwLevel` calls raw SQL `update_nsfw_levels_new` and updates KoNO pending votes — shared with downleveled-review
 
-- [ ] **`/moderator/downleveled-review`** — `src/pages/moderator/downleveled-review.tsx` — flag: none
+- [x] **`/moderator/downleveled-review`** — `src/pages/moderator/downleveled-review.tsx` — flag: none — **Migrated.** ClickHouse `knights_new_order_downleveled` queue + Kysely image enrichment; shares `updateImageNsfwLevel` (now `$lib/server/image-nsfw-level.ts`) with image-rating-review. Same card/grid styling; markers = set (teal) + original (rose).
   - Procedures: `image.getDownleveledImages` (query); `image.updateImageNsfwLevel` (mutation, reused)
   - Services: `image.service.ts` → `getDownleveledImages` (+ `updateImageNsfwLevel`)
   - Schemas: `image.schema.ts` (`downleveledReviewInput`, `updateImageNsfwLevelSchema`)
   - Infra: **Postgres + Redis + Knights of New Order**
 
-- [ ] **`/moderator/ingestion-error-review`** — `src/pages/moderator/ingestion-error-review.tsx` — flag: none
+- [x] **`/moderator/ingestion-error-review`** — `src/pages/moderator/ingestion-error-review.tsx` — flag: none — **Migrated** (commit e087b20f7, ingestion pages cutover).
   - Procedures: `image.getIngestionErrorImages` (query); `image.resolveIngestionError` (mutation)
   - Services: `image.service.ts` → `getIngestionErrorImages`, `resolveIngestionError`
   - Schemas: `image.schema.ts` (`ingestionErrorReviewInput`, `resolveIngestionErrorInput`)
   - Infra: **Postgres only**
 
-- [ ] **`/moderator/comics-review`** — `src/pages/moderator/comics-review.tsx` — flag: none (nav-gated on `comicCreator`)
-  - Procedures: `comics.getModReviewQueue` (**inline query in router**, schema inline); `image.moderate` (mutation, reused)
-  - Services: extract inline comics query into a service fn; `moderateImages` (reused from images.tsx)
-  - Infra: **Postgres + Meilisearch + Redis + S3 + Cloudflare + email** (via `image.moderate`)
-  - Notes: approving via `image.moderate` lifts comic visibility automatically
+- [x] **`/moderator/comics-review`** — `src/pages/moderator/comics-review.tsx` — flag: none — **Migrated.**
+  Queue ported to Kysely (`comic-review.service.ts` → `getComicReviewQueue`: ComicPanel ⋈ Image ⋈
+  ComicProject ⋈ ComicChapter-on-`(projectId, chapterPosition)` ⋈ User, OR-filtered on
+  needsReview/ingestion/tosViolation, keyset on `p.id`). Approve/Block reuse the ported
+  `acceptImage`/`blockImage`; each also enqueues the parent comic (`syncSearchIndex` `entityType: 'comic'`
+  = project id) so the listing refreshes — the one sanctioned main-app call, replacing the legacy
+  moderateImages re-queue. Per-card optimistic actions + reason/limit filters + cursor paging. **Main-app
+  cleanup:** removed the orphaned inline `comics.getModReviewQueue` procedure (only this page used it);
+  `image.moderate`/`moderateImages` kept (shared).
 
 - [ ] **`/moderator/tags`** — `src/pages/moderator/tags.tsx` — flag: `moderateTags`
   - Procedures: `tag.getManagableTags` (query, **raw SQL in controller**); `tag.addTags`, `tag.disableTags`, `tag.deleteTags` (mutations)
@@ -165,13 +176,13 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `base.schema.ts` (`getByIdSchema`) + `csam.schema.ts`
   - Infra: page itself **Postgres only**, but `csam.createReport` pulls the full CSAM chain (S3/NCMEC/ClickHouse/orchestrator)
 
-- [ ] **`/moderator/articles`** — `src/pages/moderator/articles.tsx` — flag: none (`isModerator` check)
+- [x] **`/moderator/articles`** — `src/pages/moderator/articles.tsx` — flag: none (`isModerator` check) — **Migrated** (commit 22fb33e6d; restore/delete owned by spoke).
   - Procedures: `moderator.articles.query` (query)
   - Services: `article.service.ts` → `getModeratorArticles`
   - Schemas: `article.schema.ts` (`getModeratorArticlesSchema` extends `infiniteQuerySchema`)
   - Infra: **Postgres only.** `ArticleContextMenu` may issue extra mutations — verify.
 
-- [ ] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute`
+- [x] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute` — **Migrated** (commit 1603e46e0; spoke owns mutations, optimistic resolve).
   - Procedures: `article.getRatingReviews`, `article.getRatingReviewCounts` (queries)
   - Services: `article.service.ts` → `getArticleRatingReviews`, `getArticleRatingReviewCounts`
   - Schemas: `article.schema.ts` (`getArticleRatingReviewsSchema`) + `ReportStatus` enum
@@ -183,12 +194,21 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `model.schema.ts` (`getAllModelsSchema`, `declineReviewSchema`)
   - Infra: **Postgres + Meilisearch (index updates) + Redis (caching middleware)**
 
-- [ ] **`/moderator/training-models`** — `src/pages/moderator/training-models.tsx` — flag: `trainingModelsModeration`
-  - Procedures: `moderator.models.queryTraining`, `training.getAnnouncement` (queries); `model.toggleCannotPublish`, `training.setAnnouncement` (mutations)
-  - Services: `model.service.ts` → `getTrainingModelsForModerators`, `toggleCannotPublish`; Redis KV get/set for `training-announcement`
-  - Schemas: `model.schema.ts` (`getTrainingModerationFeedSchema`), `base.schema.ts` (`getByIdSchema`), training-announcement zod object
-  - Infra: **Postgres + Meilisearch + Redis (dbKV)**
-  - Notes: also downloads training data via `/api/download/training-data/{versionId}` (separate API, not tRPC)
+- [x] **`/moderator/training-models`** — **Migrated** to the spoke at **`/audit/training-models`**.
+  - Spoke: `training-moderation.service.ts` (`getTrainingModelsFeed`, `toggleCannotPublish`,
+    `getTrainingAnnouncement`/`setTrainingAnnouncement`) — all Kysely; the announcement is the same
+    `KeyValue` row `training.getAnnouncement` still reads, and `cannotPublish` is a jsonb `||` merge on
+    `Model.meta` plus the Meilisearch enqueue. Ban reuses `setBanned`.
+  - Training-data zip: the spoke's `/api/training-data/[versionId]` PROXIES the main app's
+    `/api/download/models/{id}?type=Training%20Data` with the moderator's own cookie, and JSZip unpacks it
+    client-side. Deliberately not a presign — resolving `ModelFile.url` goes through the storage resolver
+    with a delivery-worker fallback, which the spoke would have to re-derive.
+  - Filters: username is an EXACT match (as in the main app), plus workflow id, created-date range and
+    publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
+  - **Main-app trim:** deleted the page + its SCSS; removed `moderator.models.queryTraining`,
+    `model.toggleCannotPublish`, `training.setAnnouncement` and their services/schemas
+    (`getTrainingModelsForModerators`, `toggleCannotPublish`, `getTrainingModerationFeedSchema`).
+    **Kept** `training.getAnnouncement` — the training form renders it.
 
 ## 4. Generation & training
 
@@ -200,26 +220,81 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Services: `generation/generation.service.ts` (`getGateRules`, `setGateRules`)
   - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
   - Infra: **Redis (sysRedis `SYSTEM.FEATURES`) + Flipt** (`GENERATION_TESTING`)
-- [ ] **`/moderator/generation-restrictions`** — `generation-restrictions.tsx` — flag: none (nav-gated on `csamReports`)
-  - Procedures: `userRestriction.getAll` (query); `userRestriction.resolve`, `userRestriction.saveSuspiciousMatches` (mutations) — **logic inline in router**
-  - Services: extract inline logic; `user.service.ts` (`updateUserById`), `orchestrator/promptAuditing.ts` (`resetProhibitedRequestCount`, `bustPromptAllowlistCache`), `notification.service.ts` (`createNotification`), `auth/session-invalidation.ts` (`refreshSession`)
-  - Schemas: `user-restriction.schema.ts` (`getGenerationRestrictionsSchema`, `resolveRestrictionSchema`, `saveSuspiciousMatchSchema`)
-  - Infra: **Postgres + Redis (sysRedis) + Axiom + email + notifications + session mgmt**
-- [ ] **`/moderator/review/training-data`** (index) — `review/training-data/index.tsx` — flag: `reviewTrainingData`
-  - Procedures: `moderator.modelVersions.query` (infinite, `trainingStatus: 'Paused'`); `modelVersion.recheckTrainingStatus` (mutation)
-  - Services: `model-version.service.ts` (`queryModelVersions`, `getVersionById`, `getWorkflowIdFromModelVersion`); `orchestrator/workflows.ts` (`getWorkflow`)
-  - Schemas: `model-version.schema.ts` (`queryModelVersionsSchema`), `base.schema.ts` (`getByIdSchema`)
-  - Infra: **Postgres + Orchestrator** (needs `ORCHESTRATOR_ACCESS_TOKEN`)
-- [ ] **`/moderator/review/training-data/[versionId]`** — `review/training-data/[versionId].tsx` — flag: `reviewTrainingData`
-  - Procedures: `modelVersion.getTrainingDetails` (query); `moderator.trainingData.approve`, `moderator.trainingData.deny` (mutations)
-  - Services: `model-version.service.ts` (`getVersionById`); `training.controller.ts` (`getJobIdFromVersion`, `moderateTrainingData`); `orchestrator/workflows.ts` (`getWorkflow`)
-  - Schemas: `base.schema.ts` (`getByIdSchema`)
-  - Infra: **Postgres + Orchestrator (workflow `gateInstructions` mutation) + Axiom + S3** (training-data zip via `/api/download/training-data/{versionId}`)
-- [ ] **`/moderator/prompt-audit-test`** — `prompt-audit-test.tsx` — flag: none (nav-gated on `csamReports`)
-  - Procedures: `userRestriction.getTodaysAuditResults`, `userRestriction.getTodaysUserCounts` (queries); `userRestriction.saveSuspiciousMatches` (mutation) — **logic inline in router**
-  - Services: extract inline logic; `utils/metadata/audit.ts` (`debugAuditPrompt`)
-  - Schemas: `user-restriction.schema.ts` (`saveSuspiciousMatchSchema`)
-  - Infra: **ClickHouse (`prohibitedRequests`) + Redis (suspicious matches)**
+- [x] **`/moderator/generation-restrictions`** — **Migrated** to the spoke at
+  **`/audit/generator-restrictions`** (label "Generator Restrictions").
+  - Spoke: `user-restriction.service.ts` reads the queue with Kysely and writes suspicious matches to the
+    SAME `system:suspicious-audit-matches` list (shared Redis, 1000-entry trim) that
+    `userRestriction.getSuspiciousMatches` still serves `/moderator/suspicious-audit-matches` from.
+  - Rulings go through the EXISTING `resolveRestriction` (`/api/mod/restriction/resolve`) — main owns the
+    mute clear, the subscription, the notification and the session refresh in one write. Ban reuses
+    `setBanned` and then upholds, as the main app did.
+  - Trigger prompts are highlighted by `@civitai/mod-utils/prompt-audit` server-side rather than by
+    re-running each row's stored `matchedRegex` in the browser; the recorded match and regex still render
+    beside the prompt.
+  - **Not ported:** the "View Generations" drawer — it is built on
+    `orchestrator.queryUserGeneratedImages` + `WorkflowData`, a port of its own. The user link goes to
+    User Lookup instead.
+  - **Main-app trim:** deleted the page; removed `userRestriction.getAll`, `.resolve` and
+    `.saveSuspiciousMatches` with their schemas, and `UserGenerationsDrawer`. **Kept**
+    `getSuspiciousMatches`/`clearSuspiciousMatches` (suspicious-audit-matches page) and
+    `resolveUserRestriction` (the mod endpoint).
+- [x] **`/moderator/review/training-data`** (index + `[versionId]`) — **Migrated** to the spoke at
+  **`/audit/training-data`** and **`/audit/training-data/[versionId]`**.
+  - Spoke: `training-moderation.service.ts` (`getPausedTrainingVersions`, `getTrainingVersionDetail`,
+    `moderateTrainingData`). The detail read goes through the WRITE connection — `ModelFile.metadata` is
+    TOASTed jsonb the logical subscriber drops on UPDATE, so on the replica `trainingResults` is empty.
+  - Approve/deny releases the orchestrator's ambient gate job (the SECOND job of the first step) and then
+    POSTs the `resource-training-v2` webhook, because the orchestrator does not reliably fire it —
+    without that an approved run stays Paused in our database.
+  - **CSAM report ported**, but through a NEW main-app endpoint `/api/mod/csam/training-data-report`
+    (`fileCsamReport`, split out of `createCsamReportHandler`): filing it also denies the run and
+    soft-deletes the account, one transaction the spoke would have to re-derive.
+  - **Not ported:** the index page's "Recheck Training Status" button — in the main app its click handler
+    only invalidated the query and never called `modelVersion.recheckTrainingStatus`, so porting it would
+    have ported a dead control. That procedure is untouched and still serves model owners.
+  - **Main-app trim:** deleted both pages; removed `moderator.modelVersions.query`,
+    `moderator.trainingData.approve`/`.deny`, `modelVersion.getTrainingDetails` and their handlers/
+    schemas (`queryModelVersions`, `queryModelVersionsSchema`,
+    `queryModelVersionsForModeratorHandler`, `getModelVersionForTrainingReviewHandler`,
+    `handleApproveTrainingData`). **Kept** `handleDenyTrainingData` — the CSAM path calls it.
+#### Audit-section follow-ups (from the five-agent review, 2026-08-18)
+
+Deliberately deferred; none blocks the three pages above.
+
+- **Two new permissions need granting on `/admin`:** `audit.ban.execute` and `csam.report.file`. Until
+  someone ticks them, only `moderator:admin` can ban from an audit queue or file a CSAM report — the
+  pages themselves are separately unreachable until their `NAVIGATION` paths are granted.
+- **Prompt text renders verbatim.** An earlier revision ran it through `getPromptHighlightSegments` for
+  category colouring, which normalises — decoding HTML entities and stripping combining marks — and so
+  folded away the evasion being reviewed. Reverted: the trigger card now renders the stored string
+  unchanged and highlights the recorded `matchedWord` by literal search (`HighlightedText.svelte`). The
+  stored `matchedRegex` is still never executed; it is attacker-influenced text.
+- **"Allowed to publish" widened.** The main app's Prisma `not: { path, equals: true }` compiled to SQL
+  that excluded rows whose `meta` (or whose `cannotPublish` key) was null; the spoke's
+  `IS DISTINCT FROM 'true'` includes them. The spoke's reading is almost certainly the intended one,
+  but the two apps disagree while both exist.
+- **Checkbox parsing is settled.** `checkboxField` in `$lib/server/query.ts` is the one parser, used by
+  all three ban actions. `z.coerce.boolean()` is banned for checkboxes — it maps `"off"`/`"false"`/`"0"`
+  to `true`, which on a ban means purging media the operator explicitly unticked.
+- **`BanConfirmForm` now serves all three ban sites**, including `user-lookup`'s. Unban and purge kept
+  their own blocks there — they have no fields and a different confirmation shape, and folding them in
+  would mean a `mode` prop switching off two-thirds of the body.
+- **Shared shapes extracted:** `TrainingAssetViewer` (fetch + progress + abort + revoke, used by both
+  training pages), `Pager` (offset) and `CursorPager` (keyset, one visual language),
+  `HighlightedText`, and a single `ActionResult`. `TrainingDataSheet` moved page-local.
+- **Both feature flags are retired.** `trainingModelsModeration` and `reviewTrainingData` had no reader
+  left but a nav `hidden:` clause pointing at a redirect; removed from `feature-flags.service.ts` and
+  from `ModerationNav`. Access is the spoke's role grants.
+- **`handleDenyTrainingData` survives on one non-obvious caller** — the CSAM path in
+  `csam.controller.ts`, no tRPC route. Do not sweep it as dead.
+
+- [x] **`/moderator/prompt-audit-test`** — `prompt-audit-test.tsx` — **Migrated** to the spoke at
+  **`/audit/prohibited-prompts`** (under the Audit nav group), **without** the "flag as suspicious" feature.
+  The spoke reads ClickHouse directly (`prohibited-prompts.service.ts` → today's `prohibitedRequests` + per-user
+  counts) and highlights each prompt via `getPromptHighlightSegments` server-side. Legacy page deleted;
+  `/moderator/prompt-audit-test` redirects via the catchall. **Main-app cleanup:** removed the two orphaned
+  `userRestriction` procedures (`getTodaysAuditResults`, `getTodaysUserCounts`); **kept** `saveSuspiciousMatches`
+  (still used by generation-restrictions), `debugAudit`/`debugAuditPrompt`, and the ClickHouse client.
 - [ ] **`/moderator/testing/model3d-seed`** — `testing/model3d-seed.tsx` — flag: none
   - Procedures: **none** — direct HTTP POST to `/api/testing/model3d-seed`
   - Services: recreate the `/api/testing/model3d-seed` handler → `upsertModel3DFromWorkflow`
@@ -230,7 +305,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 > Only **grant** is Tier 1. The cosmetic *store-management* pages are [Tier 2](#cosmetic-store).
 
-- [ ] **`/moderator/cosmetics/grant`** — `cosmetics/grant.tsx` — flag: none
+- [x] **`/moderator/cosmetics/grant`** — `cosmetics/grant.tsx` — flag: none — **Migrated** (commit ef3023543, full cutover to spoke).
   - Procedures: `cosmetic.getPaged`, `user.getAll` (queries); `cosmetic.grantToUsers` (mutation)
   - Services: `cosmetic.service.ts` (`getPaginatedCosmetics`, `grantCosmeticsToUsers`, `grantCosmetics`); `user.controller.ts` user search
   - Schemas: `cosmetic.schema.ts` (`getPaginatedCosmeticsSchema`, `grantCosmeticsToUsersSchema`), `user.schema.ts` (`getAllUsersInput`)

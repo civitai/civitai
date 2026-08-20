@@ -24,6 +24,7 @@ export function ChatUserButton({
     useChatStore.setState((state) => ({
       open: !state.open,
       isCreating: true,
+      isSettingsOpen: false,
       existingChatId: undefined,
       selectedUsers: [user],
     }));

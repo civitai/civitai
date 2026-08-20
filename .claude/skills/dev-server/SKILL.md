@@ -31,6 +31,44 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 
 **Checking if server is ready:** After starting, poll the session status to check `ready: true`. The daemon marks sessions ready either via configured health check endpoint or by detecting "Ready" patterns in logs.
 
+## Which node the daemon runs on — and why it is sticky
+
+The daemon is spawned with `process.execPath` (`cli.mjs:66`, `console.mjs:87`), i.e. **whatever node ran
+the CLI verb that first started it**. It then passes its own environment down to every `next dev` it
+supervises. So the node you happened to have on `PATH` the first time you typed any command above is the
+node the whole tree runs on, until someone shuts the daemon down — and nothing records which one that was.
+
+That is not academic. Measured on a dev box: the daemon was running on ambient node **26.7.0**, while
+`.nvmrc` pins **24.19.0**, `package.json` declares `engines.node: ">=24.0.0 <25"`, and production is built
+on `node:24.19.0-alpine3.24`. It had been started from a shell outside the dev shell, and that shell also
+had no `pnpm` at all — which silently disables the daemon's own auto-install path (it shells out to
+`pnpm install` / `pnpm run db:generate` when it sees the lockfile or the schema move).
+
+**The fix, whatever your setup: start it from a shell whose `node --version` matches `.nvmrc` and which
+has `pnpm` on `PATH`.** `nvm use` at the repo root gives you both.
+
+**On NixOS (optional)** the flake wrapper does that for you — it pins node to the same version `.nvmrc`
+names, puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
+
+```bash
+nix run .#dev-server -- status
+nix run .#dev-server -- start
+nix run .#dev-server -- logs <session-id>
+```
+
+Every `node .claude/skills/dev-server/cli.mjs …` invocation elsewhere in this document takes the same
+subcommands — the wrapper only decides which node runs them, so nothing here depends on having Nix.
+
+Either way, **check what you have got** before trusting a session:
+
+```bash
+# the daemon's real interpreter, not the one you assume
+readlink -f /proc/$(cat .claude/skills/dev-server/daemon.pid)/exe
+```
+
+Changing node means restarting the daemon — `cli.mjs shutdown`, then start it again from the right shell.
+A running daemon will not pick up a new `PATH`.
+
 ## Never curl a dev port — `probe` instead
 
 ```bash
@@ -314,7 +352,7 @@ Log levels: `stdout`, `stderr`, `error`, `warn`, `info`
 
 ## Dashboard TUI
 
-Run `node .claude/skills/dev-server/console.mjs` (or `npm run dev:daemon`) for a live terminal dashboard.
+Run `node .claude/skills/dev-server/console.mjs` (or `pnpm run dev:daemon`) for a live terminal dashboard.
 
 | Key | Action |
 |-----|--------|
