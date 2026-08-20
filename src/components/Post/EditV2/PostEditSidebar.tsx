@@ -28,7 +28,7 @@ import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-// import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import type { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
@@ -65,21 +65,30 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const params = usePostEditParams();
-  // const currentUser = useCurrentUser();
+  const currentUser = useCurrentUser();
   const { runTour } = useTourContext();
   const features = useFeatureFlags();
 
   const [deleted, setDeleted] = useState(false);
-  const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId, images] =
-    usePostEditStore((state) => [
-      state.updatePost,
-      state.isReordering,
-      state.images.filter((x) => x.type === 'added').length > 0,
-      state.images.length > 1,
-      state.collectionId,
-      state.collectionTagId,
-      state.images,
-    ]);
+  const [
+    updatePost,
+    isReordering,
+    hasImages,
+    showReorder,
+    collectionId,
+    collectionTagId,
+    images,
+    flushPendingSave,
+  ] = usePostEditStore((state) => [
+    state.updatePost,
+    state.isReordering,
+    state.images.filter((x) => x.type === 'added').length > 0,
+    state.images.length > 1,
+    state.collectionId,
+    state.collectionTagId,
+    state.images,
+    state.flushPendingSave,
+  ]);
   const todayRef = useRef(new Date());
 
   const addedImages = useMemo(
@@ -163,7 +172,6 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           else {
             if (returnUrl) router.push(returnUrl);
             else router.push({ pathname: `/posts/${post.id}`, query: removeEmpty({ returnUrl }) });
-            // else router.push(`/user/${currentUser?.username}/posts`);
           }
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
         },
@@ -228,12 +236,26 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     });
   };
 
+  const savingDraftRef = useRef(false);
+
+  const handleSaveAsDraft = () => {
+    flushPendingSave();
+    savingDraftRef.current = true;
+    // `section=draft` because the posts tab defaults to Published, where the post
+    // just saved is by definition absent.
+    router.push(
+      returnUrl ??
+        (currentUser ? `/user/${currentUser.username}/posts?section=draft` : `/posts/${post.id}`)
+    );
+  };
+
   useCatchNavigation({
     // When the post is unpublished because the parent model/version is
     // unpublished, the user can't republish from this page anyway —
     // showing the "you haven't published this post" warning is misleading.
     unsavedChanges: !post.publishedAt && !deleted && !isUnpublishedByParent,
     message: `You haven't published this post, all images will stay hidden. Do you wish to continue?`,
+    bypassRef: savingDraftRef,
   });
   // #endregion
 
@@ -407,6 +429,12 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             </Tooltip>
           )}
         </Button.Group>
+      )}
+
+      {!post.publishedAt && !isUnpublishedByParent && (
+        <Button variant="default" onClick={handleSaveAsDraft}>
+          Save as Draft
+        </Button>
       )}
 
       {showReorder && <ReorderImagesButton />}

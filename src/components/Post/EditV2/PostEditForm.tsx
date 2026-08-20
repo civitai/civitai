@@ -17,6 +17,7 @@ const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nu
 
 export function PostEditForm() {
   const post = usePostEditStore((state) => state.post);
+  const setPendingSave = usePostEditStore((state) => state.setPendingSave);
   const { postTitle, collectionId } = usePostEditParams();
   const form = useForm({
     schema: formSchema,
@@ -37,15 +38,24 @@ export function PostEditForm() {
     const subscription = form.watch(({ title, detail }, { name }) => {
       if (!post) return;
       const state = name ? form.getFieldState(name) : ({} as ReturnType<typeof form.getFieldState>);
-      if (state.isDirty || state.isTouched)
-        debounce(() =>
+      if (state.isDirty || state.isTouched) {
+        // Single-shot: a flush can't cancel the debounce timer, so whichever fires
+        // first has to make the other a no-op or the same edit is saved twice.
+        let saved = false;
+        const save = () => {
+          if (saved) return;
+          saved = true;
+          setPendingSave(null);
           mutate({
             id: post.id,
             title:
               title && title.length > titleCharLimit ? title.substring(0, titleCharLimit) : title,
             detail,
-          })
-        );
+          });
+        };
+        setPendingSave(save);
+        debounce(save);
+      }
     });
     return () => {
       subscription.unsubscribe();

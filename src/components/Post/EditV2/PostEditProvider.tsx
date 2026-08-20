@@ -57,6 +57,7 @@ type State = {
   post?: PostDetailEditable;
   images: ControlledImage[];
   isReordering: boolean;
+  pendingSave: (() => void) | null;
   collectionId?: number | null;
   collectionTagId: number | null;
   collectionItemExists?: boolean;
@@ -65,6 +66,8 @@ type State = {
   setImages: (cb: (images: ControlledImage[]) => ControlledImage[]) => void;
   updateImage: (id: number, cb: (image: PostEditImageDetail) => void) => void;
   toggleReordering: () => void;
+  setPendingSave: (fn: (() => void) | null) => void;
+  flushPendingSave: () => void;
   updateCollection: (
     collectionId: number | null,
     tagId?: number | null,
@@ -78,7 +81,7 @@ type Store = ReturnType<typeof createContextStore>;
 const createContextStore = (post?: PostDetailEditable) =>
   createStore<State>()(
     devtools(
-      immer((set) => ({
+      immer((set, get) => ({
         post,
         images:
           post?.images.map((data, index) => ({
@@ -86,6 +89,7 @@ const createContextStore = (post?: PostDetailEditable) =>
             data: { ...data, index },
           })) ?? [],
         isReordering: false,
+        pendingSave: null,
         collectionId: post?.collectionId,
         collectionTagId: post?.collectionTagId ?? null,
         collectionItemExists: post?.collectionItemExists,
@@ -111,6 +115,16 @@ const createContextStore = (post?: PostDetailEditable) =>
           set((state) => {
             state.isReordering = !state.isReordering;
           }),
+        setPendingSave: (fn) => set({ pendingSave: fn }),
+        // The form autosaves on a debounce whose timer is cleared on unmount, so an
+        // edit made within that window is dropped by any navigation. Anything that
+        // navigates deliberately must flush first or it silently discards that edit.
+        flushPendingSave: () => {
+          const { pendingSave } = get();
+          if (!pendingSave) return;
+          set({ pendingSave: null });
+          pendingSave();
+        },
         updateCollection: (collectionId, tagId, collectionItemExists) =>
           set({
             collectionId,
