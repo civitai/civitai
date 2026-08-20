@@ -595,6 +595,25 @@ A useful tell: if you are documenting **why** a guard exists and **what it stops
 - If a change depends on an unmerged PR, **wait for that PR to merge, then branch off the updated base** — or fold both changes into a single PR.
 - (Bit us 2026-06-13: PR #2520's App Blocks W11 F5 was stacked on #2518 (F6) → #2520 squash-merged into the #2518 branch instead of `feat/app-blocks-main-v1`; corrected via #2525.)
 
+### Filing follow-up work: two lists, and the line between them
+
+Work you generate about your own work — the deferred half of a review, a duplicate you noticed, a missing
+index, a test you did not write — goes in the **`Agent Follow-ups`** list, not the team list. Resolve the
+id with `find-list "Agent Follow-ups"`.
+
+**`Synced Team`** stays what a human would recognise as the team's work: anything a person asked for out
+loud, and anything security-shaped or user-facing-broken, filed at its real priority. Those never go in
+the follow-ups list — the line exists so the new list does not become where real bugs go to be quiet.
+
+Two rules for anything you file:
+
+- **File as the human whose session you are running in**, not as the meta agent. Their name on it is what
+  makes it findable by the person who has to decide it.
+- **Name the PR or commit it fell out of.** A follow-up without that is a sentence nobody can act on six
+  weeks later.
+
+The follow-ups list is a queue to be worked down, not an archive.
+
 ## Common Patterns
 
 ### Infinite Scroll
