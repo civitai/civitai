@@ -3,12 +3,23 @@
  *
  * POST /api/admin/temp/model-text-moderation-backfill?token=$WEBHOOK_TOKEN
  * Body:
- *   terms?: string[]   // case-insensitive substring match on name + description.
- *                      // Default ['hentai']. The term SELECTS candidates; XGuard
- *                      // renders every verdict. No verdict is inferred from the term.
- *   cursor?: number    // resume from this model id (exclusive). Omit to start.
- *   limit?: number     // models per call, 1-1000, default 200.
- *   dryRun?: boolean   // count candidates without submitting. Default true.
+ *   terms: string[]     // REQUIRED, 1-3 entries. Case-insensitive substring match on
+ *                       // name + description. The term SELECTS candidates; XGuard
+ *                       // renders every verdict. No verdict is inferred from the term.
+ *   cursor?: number     // resume from this model id (exclusive). Omit to start.
+ *   window?: number     // ids scanned per call, 1k-100k, default 50k.
+ *   limit?: number      // max submissions per call, 1-250, default 200.
+ *   dryRun?: boolean    // count candidates without submitting. Default true.
+ *
+ * Paging walks a fixed WINDOW OF IDS per call, not "scan until `limit` matches". The
+ * term match cannot use an index — `Model` has no trigram index and a leading wildcard
+ * makes the btree unusable — so match-count paging degenerates into a full-table scan
+ * whenever the terms are selective, and gets worse the further the cursor advances.
+ * Measured on prod before this bound: a single non-matching term cost 3.9s / 8.7GB of
+ * buffer traffic, three of them well over 20s, on the replica that serves the site, with
+ * no statement timeout to stop it. A fixed id window makes every call cost the same and
+ * makes progress deterministic. `terms` is capped for the same reason — each one adds two
+ * ILIKE evaluations per row scanned.
  *
  * Deliberately NOT gated on either feature flag: this is the tool for re-running the
  * set after the apply flag goes up, and for re-running after a rollback. Gating it
@@ -26,19 +37,18 @@ import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
-  buildModelModerationText,
-  MODEL_MODERATION_ENTITY_TYPE,
-  MODEL_MODERATION_SCAN_LABELS,
+  resolveBackfillCursor,
+  submitModelTextModerationBackfill,
 } from '~/server/services/model-moderation.adapter';
-import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 const schema = z.object({
-  terms: z.array(z.string().min(2)).min(1).default(['hentai']),
-  cursor: z.number().int().positive().optional(),
-  limit: z.number().int().min(1).max(1000).default(200),
+  terms: z.array(z.string().min(2)).min(1).max(3),
+  cursor: z.number().int().nonnegative().optional(),
+  window: z.number().int().min(1_000).max(100_000).default(50_000),
+  limit: z.number().int().min(1).max(250).default(200),
   dryRun: z.boolean().default(true),
 });
 
@@ -48,18 +58,22 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const parsed = schema.safeParse(req.body ?? {});
   if (!parsed.success)
     return res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
-  const { terms, cursor, limit, dryRun } = parsed.data;
+  const { terms, cursor, window: windowSize, limit, dryRun } = parsed.data;
+
+  const from = cursor ?? 0;
+  const to = from + windowSize;
+  const maxId = (await dbRead.model.aggregate({ _max: { id: true } }))._max.id ?? 0;
 
   const candidates = await dbRead.model.findMany({
     where: {
       status: ModelStatus.Published,
-      ...(cursor ? { id: { gt: cursor } } : {}),
+      id: { gt: from, lte: to },
       OR: terms.flatMap((term) => [
         { name: { contains: term, mode: 'insensitive' as const } },
         { description: { contains: term, mode: 'insensitive' as const } },
       ]),
     },
-    select: { id: true, name: true, description: true, nsfw: true, lockedProperties: true },
+    select: { id: true, name: true, description: true, lockedProperties: true },
     orderBy: { id: 'asc' },
     take: limit,
   });
@@ -67,38 +81,38 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   // A stored nsfw lock is a moderator's call; leave those rows alone, exactly as
   // applyResult would.
   const eligible = candidates.filter((m) => !(m.lockedProperties ?? []).includes('nsfw'));
-  const nextCursor = candidates.length === limit ? candidates[candidates.length - 1].id : null;
+  const windowTruncated = candidates.length === limit;
+  const nextCursor = resolveBackfillCursor({
+    windowEnd: to,
+    maxId,
+    lastCandidateId: candidates[candidates.length - 1]?.id,
+    truncated: windowTruncated,
+  });
 
   if (dryRun) {
     return res.status(200).json({
       dryRun: true,
+      scanned: { from, to, maxId },
       selected: candidates.length,
       eligible: eligible.length,
       skippedLocked: candidates.length - eligible.length,
+      windowTruncated,
       nextCursor,
     });
   }
 
   let submitted = 0;
   let failed = 0;
+  let empty = 0;
   await limitConcurrency(
     eligible.map((model) => async () => {
-      const content = buildModelModerationText(model);
-      if (!content) return;
       try {
         // No throw on a failed submit — createXGuardModerationRequest normalizes both
         // controlled (4xx/5xx) and uncontrolled (network/DNS) failures into a logged,
         // EM-recorded return with no `id`. Count from the return value, not the catch.
-        const result = await submitTextModeration({
-          entityType: MODEL_MODERATION_ENTITY_TYPE,
-          entityId: model.id,
-          content,
-          labels: [...MODEL_MODERATION_SCAN_LABELS],
-          priority: 'low',
-          recordForReview: true,
-          forceRescan: true,
-        });
-        if (result?.id) submitted++;
+        const result = await submitModelTextModerationBackfill(model);
+        if (result === null) empty++;
+        else if (result?.id) submitted++;
         else failed++;
       } catch {
         failed++;
@@ -108,11 +122,14 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   );
 
   const counts = {
+    scanned: { from, to, maxId },
     selected: candidates.length,
     eligible: eligible.length,
     skippedLocked: candidates.length - eligible.length,
     submitted,
     failed,
+    empty,
+    windowTruncated,
     nextCursor,
   };
 

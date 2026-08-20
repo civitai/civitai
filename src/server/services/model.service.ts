@@ -142,7 +142,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
-import { stripMinorHashMeta } from '~/server/utils/minor-flag-meta';
+import { stripMinorHashMeta, stripModerationOwnedMeta } from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
@@ -2325,7 +2325,10 @@ export const upsertModel = async (
     tracker,
     ...data
   } = input;
-  let { meta } = input;
+  // `modelUpsertSchema.meta` is a looseObject and the client's copy wins the merge
+  // below, so moderation-owned keys have to be dropped before anything reads them.
+  // Runs ahead of the profanity branch, which adds its own keys to this same object.
+  let meta = stripModerationOwnedMeta(input.meta, isModerator);
 
   const beforeUpdate =
     id && !templateId
@@ -2616,12 +2619,17 @@ export const upsertModel = async (
     // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
     // moderation outage can never fail a model save. `result` carries the post-update
     // name/description, not the pre-update values in `beforeUpdate`.
-    submitModelTextModeration({
-      id: result.id,
-      name: result.name,
-      description: result.description,
-      isModerator,
-    }).catch(() => null);
+    //
+    // Skipped when neither field moved. contentHash dedup would drop it anyway, but only
+    // after a round trip and an EntityModeration upsert on every unrelated model edit.
+    if (result.name !== beforeUpdate.name || result.description !== beforeUpdate.description) {
+      submitModelTextModeration({
+        id: result.id,
+        name: result.name,
+        description: result.description,
+        isModerator,
+      }).catch(() => null);
+    }
 
     return withoutMinorHashMeta(result);
   }

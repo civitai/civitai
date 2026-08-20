@@ -228,6 +228,18 @@ export type ModerationAdapter = {
   }) => Promise<{ id?: string | null } | null | undefined>;
 
   /**
+   * Optional: is moderation currently active for this entity? Adapters behind a
+   * feature flag answer `false` while dark.
+   *
+   * The retry job asks BEFORE it spends anything. A declined `submit` is
+   * indistinguishable from a failed one — both return no workflow — so without this
+   * a dark adapter's rows burn their whole `retryCount` budget against a feature
+   * that never ran, and are then permanently excluded from the retry selection even
+   * after the flag comes back on.
+   */
+  isEnabled?: (args: { entityId: number }) => Promise<boolean>;
+
+  /**
    * Optional: business logic to apply after a successful moderation
    * callback has been recorded onto EM (e.g. publish/unpublish, notify,
    * recompute downstream aggregates).

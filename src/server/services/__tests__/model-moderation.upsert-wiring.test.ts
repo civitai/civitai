@@ -152,6 +152,33 @@ beforeEach(() => {
   mockDbWrite.$queryRaw.mockResolvedValue([]);
 });
 
+// The update branch must submit what was PERSISTED, not what the caller sent. `description` is
+// nullish on the upsert schema, so a save that omits it leaves `data.description` undefined
+// while the row keeps its text — submitting the input there would scan name-only content,
+// produce a different contentHash, and silently defeat the dedup.
+// Persisted values are spread AFTER `...data` for exactly that reason: if they came before,
+// `result.*` and `data.*` would be equal by construction and this could not tell them apart.
+function mockUpdateReturning(name: string, description: string) {
+  mockDbWrite.model.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+    Promise.resolve({
+      id: MODEL_ID,
+      nsfwLevel: 1,
+      poi: false,
+      minor: false,
+      sfwOnly: false,
+      nsfw: false,
+      gallerySettings: { level: 1, users: [], tags: [] },
+      status: ModelStatus.Draft,
+      meta: null,
+      availability: 'Public',
+      ...data,
+      name,
+      description,
+      modelVersions: [],
+    })
+  );
+}
+
 describe('upsertModel — wires into submitModelTextModeration', () => {
   it('create branch: submits the persisted id with the create input name/description', async () => {
     mockDbWrite.model.create.mockResolvedValue({
@@ -168,28 +195,35 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
       id: 555,
       name: 'New Model',
       description: 'A fresh description',
+      isModerator: undefined,
     });
   });
 
-  it('update branch: submits the POST-update name/description, not the stored pre-update ones', async () => {
-    mockDbWrite.model.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-      Promise.resolve({
-        id: MODEL_ID,
-        name: 'New Name',
-        description: 'New description',
-        nsfwLevel: 1,
-        poi: false,
-        minor: false,
-        sfwOnly: false,
-        nsfw: false,
-        gallerySettings: { level: 1, users: [], tags: [] },
-        status: ModelStatus.Draft,
-        meta: null,
-        availability: 'Public',
-        ...data,
-        modelVersions: [],
-      })
+  // `toHaveBeenCalledWith` ignores undefined properties, so the create assertion above passes
+  // whether or not `isModerator` is threaded through. A moderator-authored create that loses it
+  // gets scanned, and the scan can then re-flip the decision the moderator just made.
+  it('create branch: threads isModerator through to submitModelTextModeration', async () => {
+    mockDbWrite.model.create.mockResolvedValue({
+      id: 555,
+      nsfwLevel: 1,
+      meta: null,
+      availability: 'Public',
+    });
+
+    await upsert({
+      userId: OWNER_ID,
+      isModerator: true,
+      name: 'New Model',
+      description: 'A fresh description',
+    });
+
+    expect(submitModelTextModeration).toHaveBeenCalledWith(
+      expect.objectContaining({ isModerator: true })
     );
+  });
+
+  it('update branch: submits the POST-update name/description, not the stored pre-update ones', async () => {
+    mockUpdateReturning('PERSISTED Name', 'PERSISTED description');
 
     await upsert({
       id: MODEL_ID,
@@ -201,36 +235,45 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
     expect(submitModelTextModeration).toHaveBeenCalledTimes(1);
     expect(submitModelTextModeration).toHaveBeenCalledWith({
       id: MODEL_ID,
-      name: 'New Name',
-      description: 'New description',
+      name: 'PERSISTED Name',
+      description: 'PERSISTED description',
+      isModerator: undefined,
     });
-    expect(submitModelTextModeration).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Old Name' })
-    );
   });
 
-  // IMPORTANT 1 — upsertModel already destructures `isModerator` out of `input` for
-  // enforceLockedProperties and the profanity branch; this proves it also reaches the
-  // submit call rather than staying only on those two older paths.
+  // Every unrelated model edit would otherwise pay a round trip and an EntityModeration upsert
+  // to be told the text has not changed.
+  it('update branch: does not submit when neither name nor description moved', async () => {
+    mockUpdateReturning(storedModel.name, storedModel.description);
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      name: storedModel.name,
+      description: storedModel.description,
+    });
+
+    expect(submitModelTextModeration).not.toHaveBeenCalled();
+  });
+
+  it('update branch: submits when only the description moved', async () => {
+    mockUpdateReturning(storedModel.name, 'A different description');
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      name: storedModel.name,
+      description: 'A different description',
+    });
+
+    expect(submitModelTextModeration).toHaveBeenCalledTimes(1);
+  });
+
+  // upsertModel already destructures `isModerator` out of `input` for enforceLockedProperties
+  // and the profanity branch; this proves it also reaches the submit call rather than staying
+  // only on those two older paths.
   it('update branch: threads isModerator through to submitModelTextModeration', async () => {
-    mockDbWrite.model.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-      Promise.resolve({
-        id: MODEL_ID,
-        name: 'New Name',
-        description: 'New description',
-        nsfwLevel: 1,
-        poi: false,
-        minor: false,
-        sfwOnly: false,
-        nsfw: false,
-        gallerySettings: { level: 1, users: [], tags: [] },
-        status: ModelStatus.Draft,
-        meta: null,
-        availability: 'Public',
-        ...data,
-        modelVersions: [],
-      })
-    );
+    mockUpdateReturning('PERSISTED Name', 'PERSISTED description');
 
     await upsert({
       id: MODEL_ID,
@@ -243,5 +286,50 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
     expect(submitModelTextModeration).toHaveBeenCalledWith(
       expect.objectContaining({ isModerator: true })
     );
+  });
+});
+
+// `modelUpsertSchema.meta` is a zod `looseObject`, so unknown keys survive parsing, and the
+// update branch merges the client's copy LAST. Without the inbound strip a creator can author
+// their own `textModeration` block for a moderator to read as scan forensics, or mint the
+// `minorFlagSnapshot` the appeal flow treats as proof of an automated flag.
+describe('upsertModel — moderation-owned meta keys are not writable by the owner', () => {
+  const clientMeta = {
+    textModeration: { matchedTerms: ['fabricated'], triggeredLabels: ['NSFW'], scannedAt: 'x' },
+    minorFlagSnapshot: { source: 'auto', at: 'x' },
+    profanityMatches: ['fabricated'],
+    commentsLocked: true,
+  } as unknown as ModelUpsertInput['meta'];
+
+  const writtenMeta = () =>
+    (mockDbWrite.model.update.mock.calls[0][0] as { data: { meta: Record<string, unknown> } }).data
+      .meta;
+
+  it('drops them from an owner save while keeping the rest', async () => {
+    mockUpdateReturning('PERSISTED Name', 'PERSISTED description');
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'New Name', meta: clientMeta });
+
+    const meta = writtenMeta();
+    expect(meta.textModeration).toBeUndefined();
+    expect(meta.minorFlagSnapshot).toBeUndefined();
+    expect(meta.profanityMatches).toBeUndefined();
+    expect(meta.commentsLocked).toBe(true);
+  });
+
+  // Moderators reach the same field through moderator-only routers; stripping there would
+  // break those flows.
+  it('leaves them alone for a moderator save', async () => {
+    mockUpdateReturning('PERSISTED Name', 'PERSISTED description');
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      isModerator: true,
+      name: 'New Name',
+      meta: clientMeta,
+    });
+
+    expect(writtenMeta().textModeration).toBeDefined();
   });
 });
