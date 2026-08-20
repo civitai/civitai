@@ -415,10 +415,11 @@ browser as user 1290051, not by reading the code.
       measure.** Nothing computes this signal today, and Retool's own definition is not in the export, so
       building one would be inventing a moderation heuristic rather than porting it. Needs a rule from
       the mod team (rate? duplicate text? ratio to other activity?) before it means anything.
-- [ ] **Timed mutes: Mute Start / Notify User** — **parked 2026-08-12**: `TimedMutes` is **0 rows in
-      both databases**, so the feature was most likely never used. The underlying expiry bug is fixed
-      regardless (see the 🔴 item above) — this is only about the two extra controls, which are not worth
-      building onto a table nobody writes until someone confirms the feature is wanted.
+- [ ] **Timed mutes: Mute Start / Notify User** — **still parked, new reasoning 2026-08-20.** The
+      `TimedMutes` table is gone; a timed mute is `User.muteExpiresAt`, and expiry works
+      (`processTimedUnmutesJob`, hourly). Mute *start* needs a `muteStartsAt` column plus a second job —
+      a schema change, not a control. Notify User is a wiring job now that `issueStrike`/`notify` exist.
+      Neither is worth doing until someone confirms the feature is wanted.
 - [x] **Banned for CSAM** (2026-08-11). The ban badge now carries its reason code, and a separate
       **CSAM ban** chip appears for the `SexualMinor*` codes — a Nudify ban and a SexualMinor ban are
       not the same next conversation, and the reason was a section away under Admin. Verified against

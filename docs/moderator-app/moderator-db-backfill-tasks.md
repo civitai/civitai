@@ -40,7 +40,7 @@ Attribution columns — all `text`, all holding two schemes:
 | `Mods_TaskTimers` | `lastUpdateBy` | 18,656 | 18 |
 | `UserStrikes` | `createdBy` | 12,902 | 17 |
 | `ModerationImageHelp` | `createdBy` / `handledBy` | 37 | 11 |
-| `TimedMutes` | `createdBy` | 0 | — |
+| `TimedMutes` | `createdBy` | 0 | — (table dropped, §C) |
 
 Subject columns — the account the row is *about*:
 
@@ -69,9 +69,10 @@ literal sentinel `splitQueue` there. Any name→id backfill must skip it — see
 
 ### B. Add id columns beside the name columns
 
-- [ ] **Add a nullable `<column>UserId integer` next to each of the nine**, backfill from the map, and
-      leave the text column in place. Do **not** replace the text: for the ~half that never map, the
-      name is the only record of who acted.
+- [ ] **Add a nullable `<column>UserId integer` next to each of the eight that survive** — all but
+      `TimedMutes.createdBy`, whose table §C drops — backfill from the map, and leave the text column in
+      place. Do **not** replace the text: for the ~half that never map, the name is the only record of
+      who acted.
 - [ ] **Repoint the spoke's writes** to populate both. Today `moderation-memory.service.ts` and
       `front-page-timers.ts` write the username only.
 - [ ] **Then, and only then, join on the id.** Until the backfill lands, reads must keep matching on

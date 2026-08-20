@@ -73,13 +73,11 @@ findings are done — see the parity checklist.
       refuses to lift OR shorten a mute carrying it, and the two strike unmute paths clear it, so it
       cannot go stale and mislabel the next automatic mute. Two tests cover the guard and both fail on
       a revert.
-- [ ] **Strikes write a second, disconnected ledger.** `addUserStrike` inserts into the moderator DB's
-      legacy `UserStrikes`; the main app owns `UserStrike` via `retool/strike → create`. Missing
-      locally: escalation (≥2 points auto-mutes 3 days, ≥3 indefinite + session invalidation),
-      `points`/`expiresAt`, the `StrikeReason` enum, `reportId` attachment, the typed `strike-issued`
-      notification and its email, the auto-strike rate limit, and any way to void. The panel is also
-      blind to every strike the automated pipeline issued. **Retool never called that endpoint either,
-      so this is a deliberate widening, not parity** — it needs a decision before it is work.
+- [x] ~~**Strikes write a second, disconnected ledger.**~~ **Closed** — `issueStrike` writes the main
+      app's `UserStrike` through `retool/strike → create`, so escalation, points, expiry, the
+      `StrikeReason` enum, `reportId`, the typed notification and its email, and the void path all come
+      with it. Legacy `UserStrikes` rows are still read alongside so history is not lost. Same item as
+      the ticked one in `retool-parity-checklist.md`.
 - [ ] **Nobody has looked at the page.** `apps/moderator/CLAUDE.md` is explicit that a segment which
       only typechecks is not done. Every component here has been compiled through Vite, but no
       moderator-app page in this slice has been rendered in a browser — and the two worst bugs found
@@ -93,7 +91,8 @@ findings are done — see the parity checklist.
 
 ## User Lookup
 
-- [ ] **Editable socials & bio** — 🎥 *"Force logout, you know, edit their socials."* Read-only today.
+- [x] **Editable socials & bio** — 🎥 *"Force logout, you know, edit their socials."* `addSocial`,
+      `removeSocial` and `clearProfileText`, wired behind grants on `SocialsPanel`.
 - [x] **Editable email / username / display name**, behind the sub-permission above — now
       `identity.edit`, seeded to senior. The form itself already existed; what it lacked was the gate.
 - [ ] **Display name from the user table** (distinct from username).
@@ -101,8 +100,8 @@ findings are done — see the parity checklist.
 - [ ] **LoRA training metadata**, plus a clickthrough to the orchestrator dashboard
       (`orchestration-dashboard.civitai.com/job-search?workflow=…`).
 - [ ] **Blocked prompts** alongside the prompt list. 🎥 *"You can check their blocked prompts."*
-- [ ] **Grant cosmetic items** from the shop panel. 🎥 *"Check their cosmetic shop, potentially grant
-      them items."*
+- [x] **Grant cosmetic items** from the shop panel — `grantCosmetic`, behind `user.cosmetics.grant`.
+      🎥 *"Check their cosmetic shop, potentially grant them items."*
 - [ ] **Multi-select comments to ToS/delete them.** The ask is a selection UI; the bulk endpoints exist.
 - [ ] **More than 50 buzz entries.** *"Only showing 50 buzz entries will be too few for support to
       troubleshoot issues."* (The Payments/Receipts split and filters are parity; raising the cap is not.)

@@ -487,7 +487,9 @@ acted on; two did not survive that check and are corrected rather than fixed.
       answerable for the Retool era and not for ours.
 - [ ] **`numberOfImages` on `FrontPageTimers`.** **Confirmed to exist** (integer) 2026-08-20, so
       `markSweepChecked` can write it and `moderator-db-types.ts` should carry it. Not blocked.
-- [ ] **Scheduled mute start.** See the note at the top; blocked on the same missing cron as expiry.
+- [ ] **Scheduled mute start.** Not blocked on a cron — expiry runs hourly (`processTimedUnmutesJob`).
+      There is no `muteStartsAt` column, so this is a schema change plus a second job. Confirm anyone
+      wants it before building.
 
 ## Review pass on the fixes (2026-08-20)
 

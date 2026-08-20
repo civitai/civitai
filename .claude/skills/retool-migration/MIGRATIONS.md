@@ -157,7 +157,8 @@ Listed so they are not rediscovered as oversights. None is "next up".
       - **Search index**: `syncSearchIndex` already calls `/api/internal/search-index-update`.
       The bulk prerequisite is **done** (2026-08-20): `syncSearchIndexBulk` posts a whole id array in
       one round trip, deduped and chunked at the endpoint's 1,000-id cap, and the endpoint accepts
-      `entityIds` beside `entityId`. What remains is porting the actions as direct Kysely mutations.
+      `entityIds` beside `entityId`. The actions themselves are built too (see the User Lookup section);
+      this row is closed.
 - [x] ~~**Timed-mute expiry** — needs a cron job.~~ **NOT BLOCKED — the cron already existed, corrected
       2026-08-20.** The main app drains `User.muteExpiresAt` hourly via `processTimedUnmutesJob`
       (`0 * * * *`), re-evaluating strike escalation before lifting so an account still carrying points
@@ -190,7 +191,7 @@ Listed so they are not rediscovered as oversights. None is "next up".
       is blocked on this search and a FULL index would cover 457MB of text for a query on no hot path.
       Build it if a moderator complains.
 
-⚠️ **Two entries below are stale and are corrected here.** User Lookup lists "issuing a strike" and
+⚠️ **Four entries below were stale; each now carries its own correction inline.** User Lookup lists "issuing a strike" and
 "notifying a user" as blocked on the notification system. Both are now **built** — User Reports issues
 main-app strikes through `issueStrike` (`createStrike` sends the typed notification and its email in the
 same call) and has a `notify` action. What remains on User Lookup is wiring its own panel to them.
@@ -383,13 +384,16 @@ more porting — none of it is "next up":
 
 - ~~**Editing bio and socials**, **`ToggleMod`**, **`UpdateUserDeets`**~~ — **BUILT.** They call
   `/api/mod/*` as the acting moderator (`auth: 'session'`); the "needs a user API key" premise was wrong.
-- **Bulk delete / ToS of comments**, **purge all content**, **image removal** — destructive, with
-  search-index and cache side effects the spoke does not own. Same decision as account actions.
+- ~~**Bulk delete / ToS of comments**, **purge all content**, **image removal**, **cosmetics removal**~~
+  — **BUILT.** `bulkCommentAction`, `purgeAllContent`, `removeImages`/`restoreImages`, `grantCosmetic`/
+  `removeCosmetic`, all wired as form actions. The "side effects the spoke does not own" premise was
+  wrong — see §D.
 - ~~**Issuing a strike**, **notifying a user** — need the notification system.~~ **UNBLOCKED** — both are
   built on User Reports (`issueStrike`, and a `notify` action over `@civitai/notifications`). What is left
   on *this* page is wiring its own panel to them: porting work, not a blocker.
 - ~~**Add / subtract Buzz**, **rewards eligibility**~~ — **BUILT.** `sendBuzz` behind `user.buzz.send`, and `setRewardsEligibility`.
-- **Notification history** — needs a Notifications DB connection the spoke does not have.
+- ~~**Notification history**~~ — **BUILT.** `queryNotifications` is a method on the `@civitai/notifications`
+  client the app already had; `getUserNotifications` + `NotificationsPanel`, 25/50/100/200 depth picker.
 
 ### Asked for in the ticket
 
