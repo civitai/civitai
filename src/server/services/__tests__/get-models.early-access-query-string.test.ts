@@ -68,12 +68,19 @@ describe('?earlyAccess=false reaches the raw SQL consumer as OFF', () => {
 
 describe('?earlyAccess=false reaches the Prisma consumer as OFF', () => {
   async function whereFor(earlyAccess: string) {
+    // `resetSharedMocks()` runs per FILE, not per test, so without this the assertions
+    // below can read the previous test's call and pass on stale state.
+    dbMock.dbRead.model.findMany.mockClear();
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ modelId: 123 }]);
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
     await getModels({
       input: { ...fromQueryString(earlyAccess), take: 10 } as never,
       select: { id: true },
     });
+    // Pin the call itself. Without this, an early return inside getModels leaves `where`
+    // undefined, the stringified `[]` contains no '123', and the negative test passes for
+    // entirely the wrong reason.
+    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledTimes(1);
     const call = dbMock.dbRead.model.findMany.mock.calls.at(-1);
     return (call?.[0] as { where?: { AND?: unknown[] } } | undefined)?.where;
   }

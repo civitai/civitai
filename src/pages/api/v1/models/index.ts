@@ -37,7 +37,7 @@ export const config = {
 
 const authedOnlyOptions: Array<keyof GetAllModelsInput> = ['favorites', 'hidden'];
 
-const modelsEndpointSchema = getAllModelsSchema.extend({
+export const modelsEndpointSchema = getAllModelsSchema.extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
   nsfw: booleanString().optional(),
   primaryFileOnly: booleanString().optional(),
