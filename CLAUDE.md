@@ -389,9 +389,42 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 - Search service endpoints
 
 ### Local Development
+
+**Toolchain: node `24.19.0` and pnpm 10.x.** `.nvmrc` is the authority (CI reads it
+via `node-version-file:`, and the Dockerfile base image tracks it); `package.json`
+declares `engines.node: ">=24.0.0 <25"`. On NixOS the flake owns both — it derives
+its node major from `.nvmrc` instead of naming one, and `nix flake check` fails if
+they disagree.
+
+From nothing to a running app (the default path — no Nix):
+
+```bash
+nvm use                                        # .nvmrc -> 24.19.0
+corepack enable
+git submodule update --init event-engine-common
+cp .env-example .env.development
+docker compose -f docker-compose.base.yml up -d
+pnpm install && pnpm dev
+```
+
+**Optional, NixOS only** — the flake does the same in one command. Nothing requires
+it, and it is used by one maintainer; do not assume a contributor has it:
+
+```bash
+nix run .#dev          # docker preflight, submodule, .env.development, compose up,
+                       # wait for postgres, pnpm install, next dev on :3000
+nix run .#dev -- --no-start   # bootstrap only
+nix run .#doctor              # are the flake's pins still in step with the repo?
+```
+
+In an existing checkout that already works:
 1. Install dependencies: `pnpm install`
 2. Generate Prisma client: `pnpm run db:generate`
-3. Start dev server: Use `/dev-server` skill
+3. Start the services if they are down: `make start`
+4. Start dev server: use the `/dev-server` skill. The daemon is spawned with
+   `process.execPath`, so whichever node first ran a CLI verb is the node it keeps
+   until it is shut down — run it under the node from `.nvmrc`. (On NixOS,
+   `nix run .#dev-server` does that for you.)
 
 ### Git Worktrees
 
@@ -444,10 +477,14 @@ that file collected a nonzero count** — it was 308 tests on one base. If it re
 about your change, whatever the summary says.
 
 **A fresh worktree also has no `.envrc`.** It's gitignored, so it never comes with the checkout, and you silently
-get system Node instead of the flake's pinned version. Measured: system Node **26.5.0** against the flake's
-**22.22.2** produced 7 spurious `window.localStorage is undefined` failures under happy-dom plus 8 Prisma
-`linux-nixos` engine errors — every one a false red that got attributed to the code under test. Create a minimal
-`.envrc` containing `use flake` and `direnv allow` it. **Then confirm your cwd is actually the worktree**: one run
+get system Node instead of the flake's pinned version. Measured (when the flake still shipped node 22): system
+Node **26.5.0** against the flake's **22.22.2** produced 7 spurious `window.localStorage is undefined` failures
+under happy-dom plus 8 Prisma `linux-nixos` engine errors — every one a false red that got attributed to the code
+under test. The flake now ships **24.19.0**, matching `.nvmrc`, so the version gap is smaller — but the *Prisma*
+half is unchanged and does not care about the gap: without the flake's env there are no `PRISMA_*_ENGINE_*` paths
+at all, and prisma goes looking for a `linux-nixos` engine that has never been published.
+`cp .envrc.example <worktree>/.envrc && direnv allow`, or run commands through `nix develop`.
+**Then confirm your cwd is actually the worktree**: one run
 whose cwd was set to a different repo lost two suites to collection failures and **77 tests silently never ran**
 (10849 → 10772) while the output otherwise looked entirely normal.
 
