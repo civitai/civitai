@@ -21,15 +21,23 @@ export function CategoryTags({
 
   const { data: categories } = useCategoryTags({ entityType: TagTarget.Model });
 
-  if (!categories.length) return null;
+  // Reserve the row height while the client-side `useCategoryTags` query and the hidden
+  // preferences resolve. Returning null lets the 26px chip row pop in and shove the feed
+  // down — the shift `docs/cls-remediation-plan.md` measured at 0.65 on /images. That fix
+  // landed in TagScroller, which these surfaces never used.
+  if (!categories.length) return <div className="min-h-[26px]" />;
 
   const handleSetTag = (tag: string | undefined) => set({ tag });
 
-  const _tag = selected ?? tagQuery;
+  // Controlled and uncontrolled are either/or, not a fallback chain: the generation
+  // resource-select modal opens over /models, so `selected ?? tagQuery` would let the
+  // page's `?tag=` light up a chip the modal has not actually filtered on.
+  const controlled = !!setSelected;
+  const _tag = controlled ? selected : tagQuery;
   const _setTag = setSelected ?? handleSetTag;
 
   return (
-    <TwScrollX className="flex gap-1">
+    <TwScrollX className="flex min-h-[26px] gap-1">
       {includeAll && (
         <Button
           className="overflow-visible uppercase"

@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import fs from 'fs';
+import path from 'path';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +10,7 @@ import type * as TagUtils from '~/components/Tags/tag.utils';
 const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
   query: {} as Record<string, unknown>,
+  categories: [] as { id: number; name: string }[],
 }));
 
 vi.mock('next/router', () => ({
@@ -16,25 +19,25 @@ vi.mock('next/router', () => ({
 
 vi.mock('~/components/Tags/tag.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TagUtils>()),
-  useCategoryTags: () => ({
-    data: [
-      { id: 1, name: 'character' },
-      { id: 2, name: 'style' },
-    ],
-    isLoading: false,
-  }),
+  useCategoryTags: () => ({ data: mocks.categories, isLoading: false }),
 }));
 
 import { MantineProvider } from '@mantine/core';
 
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
 function render(props?: Parameters<typeof CategoryTags>[0]) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   act(() => {
     createRoot(container).render(
-      createElement(MantineProvider, null, createElement(CategoryTags, props))
+      createElement(
+        MantineProvider,
+        { forceColorScheme: 'light' },
+        createElement(CategoryTags, props)
+      )
     );
   });
   return container;
@@ -42,6 +45,14 @@ function render(props?: Parameters<typeof CategoryTags>[0]) {
 
 function buttonLabels(container: HTMLElement) {
   return Array.from(container.querySelectorAll('button')).map((b) => b.textContent?.trim());
+}
+
+function variantOf(container: HTMLElement, label: string) {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    (b) => b.textContent?.trim() === label
+  );
+  if (!button) throw new Error(`no button labelled ${label}; found ${buttonLabels(container)}`);
+  return button.dataset.variant;
 }
 
 function clickButton(container: HTMLElement, label: string) {
@@ -63,6 +74,10 @@ describe('CategoryTags', () => {
   beforeEach(() => {
     mocks.replace.mockClear();
     mocks.query = {};
+    mocks.categories = [
+      { id: 1, name: 'character' },
+      { id: 2, name: 'style' },
+    ];
   });
 
   it('renders the All chip plus every category by default', () => {
@@ -107,13 +122,94 @@ describe('CategoryTags', () => {
     expect(target.query).not.toHaveProperty('tag');
   });
 
-  it('defers to setSelected when controlled, leaving the URL alone', () => {
+  // Asserted before any click: the router is mocked, so `mocks.query` never moves in
+  // response to `replace` and a post-click read would report the pre-click state.
+  it('marks the active chip, and only it, as filled', () => {
+    mocks.query = { tag: 'style' };
+    const container = render();
+
+    expect(variantOf(container, 'style')).toBe('filled');
+    expect(variantOf(container, 'character')).toBe('light');
+    expect(variantOf(container, 'All')).toBe('light');
+  });
+
+  it('fills the All chip when no category is active', () => {
+    const container = render();
+
+    expect(variantOf(container, 'All')).toBe('filled');
+    expect(variantOf(container, 'style')).toBe('light');
+  });
+
+  it('prefers selected over ?tag= when controlled, and leaves the URL alone', () => {
     const setSelected = vi.fn();
-    const container = render({ selected: undefined, setSelected });
+    mocks.query = { tag: 'character' };
+    const container = render({ selected: 'style', setSelected });
 
+    // Active per `selected`, so this toggles off.
     clickButton(container, 'style');
+    expect(setSelected).toHaveBeenCalledTimes(1);
+    expect(setSelected).toHaveBeenCalledWith(undefined);
 
-    expect(setSelected).toHaveBeenCalledWith('style');
+    // Negative control: `?tag=character` must not select anything in a controlled bar.
+    clickButton(container, 'character');
+    expect(setSelected).toHaveBeenLastCalledWith('character');
+
     expect(mocks.replace).not.toHaveBeenCalled();
   });
+
+  // The generation resource-select modal opens over /models with `selected` undefined
+  // until the user picks. A `selected ?? tagQuery` fallback would light up the page's
+  // category behind the modal and swallow the first click as a toggle-off.
+  it('ignores ?tag= entirely when controlled with no selection', () => {
+    const setSelected = vi.fn();
+    mocks.query = { tag: 'character' };
+    const container = render({ selected: undefined, setSelected, includeAll: false });
+
+    expect(variantOf(container, 'character')).toBe('light');
+
+    clickButton(container, 'character');
+    expect(setSelected).toHaveBeenCalledWith('character');
+  });
+
+  // The chip row resolves client-side. Rendering nothing until it does lets it pop in
+  // above the feed and shove it down — 0.65 CLS on /images when this last shipped.
+  it('reserves the row height before the categories resolve', () => {
+    mocks.categories = [];
+    const container = render();
+
+    expect(container.querySelector('button')).toBeNull();
+    const reserved = Array.from(container.querySelectorAll('div')).filter((el) =>
+      el.className.includes('min-h-[26px]')
+    );
+    expect(reserved).toHaveLength(1);
+  });
+
+  it('applies the filter prop, dropping excluded categories', () => {
+    const container = render({
+      includeAll: false,
+      setSelected: vi.fn(),
+      filter: (tag) => tag !== 'style',
+    });
+
+    expect(buttonLabels(container)).toEqual(['character']);
+  });
+});
+
+/**
+ * The component tests all render CategoryTags directly, so deleting the JSX from the
+ * pages leaves every one of them green — which is how #4141 shipped ActiveTagFilter
+ * with a passing suite and no mount point anywhere. This is the only assertion that
+ * the bar is on the pages at all.
+ */
+describe('models surfaces mount the category bar', () => {
+  it.each([['src/pages/models/index.tsx'], ['src/pages/user/[username]/models.tsx']])(
+    '%s renders <CategoryTags />',
+    (relative) => {
+      // readFileSync throws on a moved or renamed page rather than silently passing.
+      const source = fs.readFileSync(path.join(process.cwd(), ...relative.split('/')), 'utf-8');
+
+      expect(source).toContain("from '~/components/CategoryTags/CategoryTags'");
+      expect(source).toContain('<CategoryTags');
+    }
+  );
 });
