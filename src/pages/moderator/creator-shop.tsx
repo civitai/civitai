@@ -856,48 +856,6 @@ function CreatorShopReviewPage() {
                       )}
                     </SimpleGrid>
 
-                    {/* A pack supplies no artwork to scan, so an empty checks
-                        card reads as an anomaly rather than "not applicable". */}
-                    {!isPack && (
-                      <ChecksCard
-                        icon={<IconScan size={15} color="var(--mantine-color-dimmed)" />}
-                        title="Automated checks"
-                      >
-                        {checks.length ? (
-                          checks.map((c, i) => (
-                            <CheckRow
-                              key={c.key}
-                              state={c.passed ? 'pass' : 'fail'}
-                              label={c.label}
-                              detail={c.detail}
-                              withBorder={i < checks.length - 1}
-                            />
-                          ))
-                        ) : (
-                          <Group gap={9} px="md" py={9} align="center">
-                            <IconAlertTriangle size={16} color="var(--mantine-color-yellow-5)" />
-                            <Text size="sm" c="dimmed">
-                              {isPack
-                                ? 'Packs have no artwork to scan — each member was checked when it was submitted.'
-                                : 'No automated checks were recorded for this submission.'}
-                            </Text>
-                          </Group>
-                        )}
-                      </ChecksCard>
-                    )}
-
-                    {/* Only when the flag is on: the query is disabled otherwise,
-                        so an empty-state card would claim a comparison nobody ran. */}
-                    {!isPack && features.cosmeticSimilarity && (
-                      <SimilarArtworkCard
-                        result={similarQuery.data}
-                        isLoading={similarQuery.isLoading}
-                        isError={similarQuery.isError}
-                      />
-                    )}
-
-                    <HistoryCard history={selectedMeta.history} creator={submitter} />
-
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>
                         Details
@@ -1079,6 +1037,53 @@ function CreatorShopReviewPage() {
                     </Group>
                   </Stack>
                 )}
+
+                {/* Supporting evidence, below the decision controls: it is only
+                    occasionally relevant, and above them it pushed the verdict
+                    off-screen behind a long scroll. */}
+                <Stack gap="md" pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>
+                  <HistoryCard history={selectedMeta.history} creator={submitter} />
+
+                  {/* Only when the flag is on: the query is disabled otherwise,
+                      so an empty-state card would claim a comparison nobody ran. */}
+                  {!isPack && features.cosmeticSimilarity && (
+                    <SimilarArtworkCard
+                      result={similarQuery.data}
+                      isLoading={similarQuery.isLoading}
+                      isError={similarQuery.isError}
+                    />
+                  )}
+
+                  {/* A pack supplies no artwork to scan, so an empty checks
+                      card reads as an anomaly rather than "not applicable". */}
+                  {!isPack && (
+                    <ChecksCard
+                      icon={<IconScan size={15} color="var(--mantine-color-dimmed)" />}
+                      title="Automated checks"
+                    >
+                      {checks.length ? (
+                        checks.map((c, i) => (
+                          <CheckRow
+                            key={c.key}
+                            state={c.passed ? 'pass' : 'fail'}
+                            label={c.label}
+                            detail={c.detail}
+                            withBorder={i < checks.length - 1}
+                          />
+                        ))
+                      ) : (
+                        <Group gap={9} px="md" py={9} align="center">
+                          <IconAlertTriangle size={16} color="var(--mantine-color-yellow-5)" />
+                          <Text size="sm" c="dimmed">
+                            {isPack
+                              ? 'Packs have no artwork to scan — each member was checked when it was submitted.'
+                              : 'No automated checks were recorded for this submission.'}
+                          </Text>
+                        </Group>
+                      )}
+                    </ChecksCard>
+                  )}
+                </Stack>
               </Stack>
             ) : (
               <Center h="100%" py={80}>
