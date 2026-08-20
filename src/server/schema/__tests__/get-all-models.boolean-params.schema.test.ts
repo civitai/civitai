@@ -18,7 +18,9 @@ import { getAllModelsSchema } from '~/server/schema/model.schema';
 function parseOne(key: string, value: unknown) {
   try {
     const result = getAllModelsSchema.safeParse({ [key]: value });
-    return result.success ? { ok: true as const, value: (result.data as Record<string, unknown>)[key] } : null;
+    return result.success
+      ? { ok: true as const, value: (result.data as Record<string, unknown>)[key] }
+      : null;
   } catch {
     return null;
   }
