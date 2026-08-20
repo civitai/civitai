@@ -427,9 +427,9 @@ acted on; two did not survive that check and are corrected rather than fixed.
 - **"Timed mutes lost arbitrary durations" — half true.** Presets-only was a deliberate, commented
   choice ("a free-text hours box invites 240 where someone meant 24"), not an oversight. The *gap* was
   real, so it is fixed below — but as a date picker, which was Retool's `muteEnd` and does not
-  reintroduce the hazard the presets exist to avoid. **Scheduled START (`muteStart`) is still not
-  ported**, and should not be until something expires mutes: nothing does, so a mute that begins later
-  would be bookkeeping that never fires. Same cron as the expiry gap.
+  reintroduce the hazard the presets exist to avoid. **Scheduled START (`muteStart`) is still not ported.** Not for the reason
+  given here — expiry works (`processTimedUnmutesJob`, hourly, since 2026-08-12) — but because there is
+  no `muteStartsAt` column to write, so a scheduled start is a schema change plus a second job.
 
 ## Fixed
 

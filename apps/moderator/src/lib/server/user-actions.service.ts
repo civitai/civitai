@@ -339,23 +339,29 @@ export async function setMuted(input: {
   muted: boolean;
   moderatorId: number;
   activity?: string;
-  /** Set for a TIMED mute. Without it a timed mute never lifts: `processTimedUnmutes` selects on
-   *  `muteExpiresAt`, so a 24-hour mute that only wrote the moderator-DB row was permanent while this
-   *  panel rendered it as expiring. */
+  /** Set for a TIMED mute. Without it nothing lifts it: `processTimedUnmutes` selects on
+   *  `muteExpiresAt`. */
   until?: Date | null;
+  /** Why. Stored on `User.meta` beside the mute it describes rather than in `ModActivity`, whose only
+   *  free-text column is `activity` — putting prose there is what made `getRetoolActivity` parse
+   *  sentences to find an account. */
+  reason?: string | null;
 }): Promise<ActionResult> {
   const now = new Date();
-  // `meta.manualMute` separates "a moderator set this expiry" from "strikes set it". The main app's
-  // strike de-escalation clears any mute with a non-null muteExpiresAt, so without this flag a
-  // moderator's 72-hour mute is lifted early the moment the account's strike points decay.
-  const manualMute = input.muted && !!input.until;
+  // `mutedAt` is what marks this as a moderator's decision rather than an automatic one, and strike
+  // escalation will neither lift nor shorten a mute carrying it. Nothing extra is needed on `meta` for
+  // that — a `manualMute` flag lived here and was read by nobody.
+  const metaPatch = {
+    muteReason: input.muted ? input.reason ?? null : null,
+    mutedBy: input.muted ? input.moderatorId : null,
+  };
   const result = await dbWrite
     .updateTable('User')
     .set({
       muted: input.muted,
       mutedAt: input.muted ? now : null,
       muteExpiresAt: input.muted ? input.until ?? null : null,
-      meta: sql`COALESCE("meta", '{}'::jsonb) || ${JSON.stringify({ manualMute })}::jsonb`,
+      meta: sql`COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(metaPatch)}::jsonb`,
     })
     .where('id', '=', input.userId)
     .executeTakeFirst();
@@ -370,27 +376,6 @@ export async function setMuted(input: {
     input.moderatorId
   );
   await recordUserActivity(input.muted ? 'Muted' : 'Unmuted', input.userId, input.moderatorId);
-  return { ok: true };
-}
-
-/** Unmute AND retire every open timed mute, so the account state and the schedule cannot disagree. */
-export async function unmuteAndClearTimed(input: {
-  userId: number;
-  moderatorId: number;
-}): Promise<ActionResult> {
-  const result = await setMuted({
-    userId: input.userId,
-    muted: false,
-    moderatorId: input.moderatorId,
-  });
-  if (!result.ok) return result;
-
-  await getModeratorDb()
-    .updateTable('TimedMutes')
-    .set({ isMuted: false, muteEnd: new Date() })
-    .where('userId', '=', String(input.userId))
-    .where('isMuted', 'is not', false)
-    .execute();
   return { ok: true };
 }
 
@@ -1193,111 +1178,75 @@ export async function setModerationFlag(input: {
   return { ok: true };
 }
 
-// TIMED MUTES — moderator database. Retool's ActivateSystemMute / RevokeTimedMutes / ViewMutes.
-// The table is empty as of 2026-08-06, so this is built to the schema rather than to observed usage.
-//
-// RETOOL AND THIS APP DISAGREE ABOUT WHAT AN ACTIVE MUTE IS, and both are live. Retool's model is "row
-// exists = mute exists": `ViewMutes` never selects `isMuted`, and `RevokeTimedMutes` DELETEs the row.
-// `isMuted` defaults to FALSE, so a mute created through Retool's GUI write lands with `isMuted = false`.
-// Reading `isMuted` alone would therefore render a live Retool mute as "ended".
-//
-// So active is derived from BOTH: the row has not been explicitly revoked AND its end is in the future.
-// That reads a Retool-created row correctly and a spoke-created one correctly, and it finally uses
-// `muteEnd`, which is the whole point of a timed mute and which nothing previously consulted.
+// TIMED MUTES. A timed mute is `User.muteExpiresAt`, drained hourly by the main app's
+// `processTimedUnmutesJob` — not a side table. See moderator-db-types.ts for why one is not coming back.
 export type TimedMute = {
-  id: number;
-  muteStart: Date | null;
-  muteEnd: Date | null;
-  createdBy: string | null;
-  muteReason: string | null;
-  active: boolean;
+  muteExpiresAt: Date;
+  /** Who set it. `strikes` means the escalation engine, and carries no reason or moderator. */
+  source: 'moderator' | 'strikes';
+  mutedAt: Date | null;
+  reason: string | null;
+  mutedBy: number | null;
 };
 
-const isActive = (row: { muteEnd: Date | null; isMuted: boolean | null }, now: Date) =>
-  row.isMuted !== false && (row.muteEnd === null || row.muteEnd > now);
+/** The account's current timed mute, or null. Permanent mutes (no expiry) are not timed mutes and are
+ *  rendered by the account panel, not this one. */
+export async function getTimedMute(userId: number): Promise<TimedMute | null> {
+  const row = await dbRead
+    .selectFrom('User')
+    .select(['mutedAt', 'muteExpiresAt', 'meta'])
+    .where('id', '=', userId)
+    .where('muted', '=', true)
+    .where('muteExpiresAt', 'is not', null)
+    .executeTakeFirst();
+  if (!row?.muteExpiresAt) return null;
 
-export async function getTimedMutes(userId: number): Promise<TimedMute[]> {
-  const rows = await getModeratorDb()
-    .selectFrom('TimedMutes')
-    .select(['id', 'muteStart', 'muteEnd', 'createdBy', 'muteReason', 'isMuted'])
-    // `userId` is TEXT in this table while every sibling uses integer — see moderator-db-types.
-    .where('userId', '=', String(userId))
-    .orderBy('muteStart', 'desc')
-    .execute();
-
-  const now = new Date();
-  return rows.map(({ isMuted, ...row }) => ({
-    ...row,
-    active: isActive({ ...row, isMuted }, now),
-  }));
-}
-
-/** Does the user still have any timed mute in force? Used to decide whether lifting one should lift the
- *  account mute — revoking one row must not unmute someone who is under a second mute, or who was
- *  permanently muted before a timed one was layered on top. */
-async function hasOtherActiveTimedMute(userId: number, excludeId: number): Promise<boolean> {
-  const rows = await getModeratorDb()
-    .selectFrom('TimedMutes')
-    .select(['muteEnd', 'isMuted'])
-    .where('userId', '=', String(userId))
-    .where('id', '!=', excludeId)
-    .execute();
-  const now = new Date();
-  return rows.some((r) => isActive(r, now));
+  // Read straight through: every unmute path clears `mutedAt` and the two meta keys together
+  // (`clearedMuteFields` in the main app's user.service), so what is here describes the mute in force
+  // and nothing older. `mutedAt` still decides `source`, because a strike-set mute has no reason or
+  // moderator to show and should say so rather than render two blanks.
+  const meta = (row.meta ?? {}) as Record<string, unknown>;
+  return {
+    muteExpiresAt: row.muteExpiresAt as Date,
+    source: row.mutedAt !== null ? 'moderator' : 'strikes',
+    mutedAt: (row.mutedAt as Date | null) ?? null,
+    reason: typeof meta.muteReason === 'string' ? meta.muteReason : null,
+    mutedBy: typeof meta.mutedBy === 'number' ? meta.mutedBy : null,
+  };
 }
 
 export async function addTimedMute(input: {
   userId: number;
   until: Date;
   reason: string;
-  author: string;
   moderatorId: number;
 }): Promise<ActionResult> {
-  const now = new Date();
-  await getModeratorDb()
-    .insertInto('TimedMutes')
-    .values({
-      userId: String(input.userId),
-      muteStart: now,
-      muteEnd: input.until,
-      createdBy: input.author,
-      createdAt: now,
-      muteReason: input.reason,
-      isMuted: true,
-    })
-    .execute();
-
-  // The timed row is the schedule; the mute itself still has to be applied to the account — WITH the
-  // expiry, or nothing ever lifts it.
   return setMuted({
     userId: input.userId,
     muted: true,
     moderatorId: input.moderatorId,
     activity: 'timedMute',
     until: input.until,
+    reason: input.reason,
   });
 }
 
-// Scoped to BOTH id and userId, and acts only if a row actually changed. Filtering on `id` alone would
-// let an id/userId mismatch — forged or merely stale — revoke one account's mute while unmuting another,
-// revoking their sessions and logging it against them.
+/**
+ * Lift the timed mute in force now.
+ *
+ * 🔴 Refuses when there is no TIMED mute, rather than unmuting whatever is there. The panel is fetched
+ * once and not revalidated, so its row can be stale: if the mute expired and the strike engine has since
+ * escalated to an indefinite, flagged-for-review mute, a plain `setMuted(false)` would lift THAT and
+ * report success — the operator believes they cancelled a 24-hour mute and has actually released a
+ * review hold. The old side-table version got this for free from its 0-rows check.
+ */
 export async function revokeTimedMute(input: {
-  id: number;
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
-  const result = await getModeratorDb()
-    .updateTable('TimedMutes')
-    .set({ isMuted: false, muteEnd: new Date() })
-    .where('id', '=', input.id)
-    .where('userId', '=', String(input.userId))
-    .executeTakeFirst();
-
-  if (Number(result.numUpdatedRows ?? 0) === 0)
-    return { ok: false, error: 'That timed mute does not belong to this user.' };
-
-  // Lifting the account mute is only correct when nothing else is holding it down.
-  if (await hasOtherActiveTimedMute(input.userId, input.id)) return { ok: true };
+  const current = await getTimedMute(input.userId);
+  if (!current)
+    return { ok: false, error: 'No timed mute is in force on this account — reload the page.' };
 
   return setMuted({
     userId: input.userId,

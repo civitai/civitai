@@ -8,10 +8,14 @@ import type { ColumnType } from 'kysely';
 // database the definitions here are what the migration targets — see
 // docs/moderator-app/retool-exports/retool-db-tables.md.
 //
-// Two quirks are preserved deliberately rather than corrected, so the types do not lie about what is in
+// One quirk is preserved deliberately rather than corrected, so the types do not lie about what is in
 // the database right now:
 //   - moderators are recorded by NAME (`createdBy`, `lastUpdateBy`, `handledBy`), not by user id
-//   - `TimedMutes.userId` is text while the other tables use integer
+//
+// `TimedMutes` is deliberately ABSENT. Timed mutes are `User.muteExpiresAt` in the main database, which
+// `processTimedUnmutesJob` drains hourly; the side table duplicated that with no consumer, so a mute
+// recorded only there never lifted. Nothing reads or writes it and it can be dropped at cutover — see
+// docs/moderator-app/moderator-db-backfill-tasks.md. Do not re-add it here without a consumer.
 
 // Same definitions prisma-kysely generates for the main schema. `Generated` must unwrap an existing
 // ColumnType rather than nest one, or a `Generated<Timestamp>` column selects as ColumnType, not Date.
@@ -40,19 +44,6 @@ export type UserStrikes = {
   /** Moderator NAME, not an id. */
   createdBy: string | null;
   reason: string | null;
-};
-
-/** Scheduled mutes with an expiry. Empty as of 2026-08-06 — confirm it is still in use. */
-export type TimedMutes = {
-  id: Generated<number>;
-  /** TEXT here, integer in UserNotes/UserStrikes. Cast on migration. */
-  userId: string | null;
-  muteStart: Timestamp | null;
-  muteEnd: Timestamp | null;
-  createdBy: string | null;
-  createdAt: Generated<Timestamp>;
-  muteReason: string | null;
-  isMuted: boolean | null;
 };
 
 /** Queue for asking another moderator to second-opinion a set of images. */
@@ -120,7 +111,6 @@ export type ReToolActions = {
 export type ModeratorDB = {
   UserNotes: UserNotes;
   UserStrikes: UserStrikes;
-  TimedMutes: TimedMutes;
   ModerationImageHelp: ModerationImageHelp;
   Mods_TaskTimers: Mods_TaskTimers;
   FrontPageTimers: FrontPageTimers;

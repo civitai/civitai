@@ -62,13 +62,17 @@ improvement gets moved down here rather than copied.
 These are the only items the slice review could not close in the spoke. The rest of that review's
 findings are done — see the parity checklist.
 
-- [ ] 🔴 **Timed mutes never expire.** `addTimedMute` writes the moderator-DB row and sets
-      `muted`/`mutedAt`, but not `User.muteExpiresAt` — and that column is the only thing the main
-      app's `processTimedUnmutes` selects on. A 24-hour mute is therefore permanent while the panel
-      renders it as expiring. **Cannot be fixed here**: the main app uses `muteExpiresAt !== null` to
-      mean "this mute came from strikes", so a spoke-set value would let a strike expiry silently clear
-      a moderator's timed mute. Needs an `expiresAt`/`muteHours` parameter on `retool/user → mute`,
-      handled in `setUserMuted` with a distinguishable provenance marker.
+- [x] ~~🔴 **Timed mutes never expire / provenance is not enforced.**~~ **Both halves closed 2026-08-20.**
+
+      Expiry: the spoke writes `User.muteExpiresAt`, drained hourly by `processTimedUnmutesJob`.
+
+      Provenance: **`mutedAt` is the marker, and `meta.manualMute` is gone.** The flag was written by
+      two apps and read by none, while `mutedAt` already carried exactly this meaning for
+      `confirm-mutes`, `entity-moderation`, `prepare-leaderboard` and the generation notice — every
+      automatic mute path leaves it null, every moderator path sets it. `evaluateStrikeEscalation` now
+      refuses to lift OR shorten a mute carrying it, and the two strike unmute paths clear it, so it
+      cannot go stale and mislabel the next automatic mute. Two tests cover the guard and both fail on
+      a revert.
 - [ ] **Strikes write a second, disconnected ledger.** `addUserStrike` inserts into the moderator DB's
       legacy `UserStrikes`; the main app owns `UserStrike` via `retool/strike → create`. Missing
       locally: escalation (≥2 points auto-mutes 3 days, ≥3 indefinite + session invalidation),

@@ -48,7 +48,7 @@ Subject columns — the account the row is *about*:
 | --- | --- | --- | --- |
 | `UserNotes` | `userId` | `integer` | ✅ joins to `User.id` |
 | `UserStrikes` | `userId` | `integer` | ✅ joins to `User.id` |
-| `TimedMutes` | `userId` | **`text`** | ⚠️ type mismatch — the spoke casts on every read and write |
+| `TimedMutes` | `userId` | **`text`** | ✅ **moot — drop the table.** Nothing reads or writes it since 2026-08-20; timed mutes are `User.muteExpiresAt`, drained hourly by `processTimedUnmutesJob`. 0 rows, so nothing to migrate. |
 | `ReToolActions` | — | — | 🔴 **no subject column at all**; the account is embedded in `ActionType` prose |
 
 `FrontPageTimers.username` is a third case: it is usually an operator, but the Split control writes the
@@ -79,9 +79,13 @@ literal sentinel `splitQueue` there. Any name→id backfill must skip it — see
 
 ### C. Fix the subject columns
 
-- [ ] **`TimedMutes.userId` is `text`.** Migrate to `integer`. The table is **empty** (0 rows), so this
-      is free right now and gets more expensive with every mute issued. The cast in
-      `user-actions.service.ts` goes away with it.
+- [x] ~~**`TimedMutes.userId` is `text`.** Migrate to `integer`.~~ **Superseded — drop the table
+      instead.** It duplicated `User.muteExpiresAt`, which the main app already drains hourly via
+      `processTimedUnmutesJob` and which is strike-aware; the side table had no consumer, so a mute
+      recorded only there never lifted. As of 2026-08-20 nothing in the spoke reads or writes it and it
+      is gone from `moderator-db-types.ts`. It held 0 rows.
+- [ ] **Drop `TimedMutes` at cutover**, once Retool is switched off. Left in place only because Retool
+      can still write it while it is live.
 - [ ] **`ReToolActions` has no subject column.** `getRetoolActivity` recovers the account by regex over
       `ActionType`, which is why that function needs a subject-label anchor — a bare number match
       attributed image counts and strike numbers to whichever account shared the value (id 1 matched
@@ -111,7 +115,7 @@ literal sentinel `splitQueue` there. Any name→id backfill must skip it — see
 
 ## Ordering
 
-§C's `TimedMutes` migration is free today and should not wait. §A blocks §B, and §B is only worth its
-cost once §D is decided — an id column that will become a foreign key is a different piece of work from
-one that stays advisory. §C's `ReToolActions` backfill is independent of all of it and is the one that
-removes a live regex workaround.
+§A blocks §B, and §B is only worth its cost once §D is decided — an id column that will become a foreign
+key is a different piece of work from one that stays advisory. §C's `ReToolActions` backfill is
+independent of all of it and is the one that removes a live regex workaround, so it is the piece with the
+clearest payoff today.

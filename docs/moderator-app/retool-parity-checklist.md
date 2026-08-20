@@ -111,13 +111,15 @@ Open, with the evidence each audit produced:
       `User.muteExpiresAt` — the only column `processTimedUnmutes` selects on — so a 24-hour mute was
       permanent while the panel rendered it as expiring.
       The blocker was that `muteExpiresAt !== null` carried **two** meanings: "has an expiry" and "came
-      from strikes". `meta.manualMute` now separates them: `evaluateStrikeEscalation`'s de-escalation
-      branch skips a manual mute, so decaying strike points no longer lift a mute a moderator set to run
-      for another two days, while `processTimedUnmutes` still lifts it on time and clears the flag.
+      from strikes". **Superseded 2026-08-20:** the separator is `mutedAt`, not the `meta.manualMute`
+      flag this entry originally described — that flag was written by two apps and read by none, while
+      `mutedAt` already meant "a moderator decided this" for `confirm-mutes`, `entity-moderation` and
+      `prepare-leaderboard`. `evaluateStrikeEscalation` now skips **and does not shorten** a mute
+      carrying it, and both strike unmute paths clear it so it cannot go stale.
       `retool/user → mute` takes an optional `expiresAt` (omitted = today's indefinite mute).
-      Verified end to end on 1290051: a 24h mute wrote `muteExpiresAt` exactly 24.0h out with
-      `manualMute: true`; revoke cleared mute, expiry and flag. 55 strike-service tests pass, both apps
-      typecheck.
+      Verified end to end on 1290051: a 24h mute wrote `muteExpiresAt` exactly 24.0h out; revoke
+      cleared mute and expiry. (The `manualMute: true` this originally recorded no longer exists — see
+      above.) 58 strike-service tests pass, both apps typecheck.
 - [x] **Strikes write a second, disconnected ledger** (2026-08-12 — decision: the main app owns strikes,
       Retool only ever gave mods manual give/revoke on top of it). `addUserStrike` inserted into the
       moderator database's legacy `UserStrikes`, which gets none of what a strike does. Issuing now calls
@@ -1089,7 +1091,8 @@ that reporter to that build.
       panel selected and dropped.
       Verified end to end on 1290051: applying a 24h mute renders it active with the reason and the
       moderator, Admin shows the cross-link, revoke flips it to ended, and the `User` row comes back to
-      `muted=false, muteExpiresAt=null, manualMute=false`.
+      `muted=false, muteExpiresAt=null` (and `mutedAt=null` since 2026-08-20; the `manualMute=false`
+      originally recorded here no longer exists).
       **This unblocks §12i** — a gate on the `admin` slug now actually gates that surface.
 - [x] **Notes and strikes belong on Basic User Information** (2026-08-13 — `ModerationMemoryPanel`
       renders there too; the Notes & Strikes section stays, since it is also where the write forms live).

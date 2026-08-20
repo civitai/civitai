@@ -491,9 +491,7 @@ describe('strike.service', () => {
     });
 
     it('uses INNER JOIN by default (only users with strike history)', async () => {
-      mockDbRead.$queryRaw
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([{ count: BigInt(0) }]);
+      mockDbRead.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ count: BigInt(0) }]);
 
       await getUserStandings({ limit: 10, page: 1, sort: 'points', sortOrder: 'desc' });
 
@@ -502,9 +500,7 @@ describe('strike.service', () => {
     });
 
     it('falls back to points sort for unknown sort value', async () => {
-      mockDbRead.$queryRaw
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([{ count: BigInt(0) }]);
+      mockDbRead.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ count: BigInt(0) }]);
 
       // Even with valid schema, test the internal fallback
       await getUserStandings({ limit: 10, page: 1, sort: 'points', sortOrder: 'asc' });
@@ -683,6 +679,81 @@ describe('strike.service', () => {
             muteExpiresAt: null,
             meta: expect.objectContaining({ strikeFlaggedForReview: false }),
           }),
+        })
+      );
+    });
+
+    // A moderator's TIMED mute looks exactly like a strike mute on `muteExpiresAt` alone. `mutedAt` is
+    // what separates them, and without these two a revert reads as "de-escalation works" while silently
+    // releasing accounts a person muted on purpose.
+    it('<2 points, moderator TIMED mute (mutedAt set): does NOT unmute', async () => {
+      const { userUpdate } = mockTransactionForEscalation(1, {
+        muted: true,
+        mutedAt: new Date('2026-01-01'),
+        muteExpiresAt: new Date('2099-01-01'),
+        meta: {},
+      });
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 1, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+    });
+
+    // The guard's only outward sign is a log line: keeping a mute looks identical to doing nothing, so
+    // without this the observability could rot and nobody would find out until they went looking for
+    // events that were never emitted.
+    it('records that it kept the moderator mute, so the non-event is observable', async () => {
+      mockLogToAxiom.mockClear();
+      mockTransactionForEscalation(1, {
+        muted: true,
+        mutedAt: new Date('2026-01-01'),
+        muteExpiresAt: new Date('2099-01-01'),
+        meta: {},
+      });
+
+      await evaluateStrikeEscalation(1);
+
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'strike-de-escalation-skipped', userId: 1 })
+      );
+    });
+
+    // The provenance keys and `mutedAt` have to die together. Left behind they describe a mute that is
+    // over: the account stays off every leaderboard, and the next AUTOMATIC mute inherits a stranger's
+    // reason and moderator on the screen a ban is decided on.
+    it('lifting a strike mute clears mutedAt AND the provenance keys together', async () => {
+      const { userUpdate } = mockTransactionForEscalation(1, {
+        muted: true,
+        muteExpiresAt: new Date('2099-01-01'),
+        meta: { muteReason: 'older moderator mute', mutedBy: 55, keepMe: true },
+      });
+
+      await evaluateStrikeEscalation(1);
+
+      const data = userUpdate.mock.calls[0][0].data;
+      expect(data).toMatchObject({ muted: false, mutedAt: null, muteExpiresAt: null });
+      expect(data.meta).not.toHaveProperty('muteReason');
+      expect(data.meta).not.toHaveProperty('mutedBy');
+      // Unrelated meta must survive — this clears a mute, not the account's whole record.
+      expect(data.meta).toMatchObject({ keepMe: true });
+    });
+
+    it('escalating to a timed mute does not SHORTEN a longer moderator mute', async () => {
+      const moderatorExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const { userUpdate } = mockTransactionForEscalation(2, {
+        muted: true,
+        mutedAt: new Date('2026-01-01'),
+        muteExpiresAt: moderatorExpiry,
+        meta: {},
+      });
+
+      await evaluateStrikeEscalation(1);
+
+      expect(userUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ muted: true, muteExpiresAt: moderatorExpiry }),
         })
       );
     });

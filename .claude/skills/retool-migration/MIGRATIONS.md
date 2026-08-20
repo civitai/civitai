@@ -122,10 +122,11 @@ export-vs-build pass. Two findings worth knowing here because they change other 
   old version also counted `Automated` reports the rows list hides, over-counting 11,056 accounts.
 
 - [x] ~~Front Page Audit has no section~~ — covered by the 2026-08-20 pass.
-- [ ] **The 6 open findings from the first pass**, most severe first:
-  - **`UserRestriction` is read nowhere** (User Lookup) — a system auto-mute leaves `mutedAt` NULL, so it
-    renders as a muted account with no reason and no activity; unmuting from here skips the Overturn path,
-    leaving the restriction `Pending`, the subscription not reinstated and the user never told.
+- [x] ~~**`UserRestriction` is read nowhere** (User Lookup)~~ — **fixed in `e40e93106e`**, before this
+  section was written. `user-lookup.service.ts` reads status/type/id, and `resolveRestriction` runs the
+  Overturn path (restriction resolved, subscription reinstated, user told) as a form action on
+  `AccountActionsPanel`.
+- [ ] **The 5 open findings from the first pass**, most severe first:
   - **Two `tabbedContainer14` panes WRITE** and were deliberately not built pending a decision.
   - Image-only account nuke absent; counts report rows *found*, not rows *changed*; remove+strike not
     ported (Bulk Image Manager).
@@ -142,33 +143,52 @@ found things before.
 
 Listed so they are not rediscovered as oversights. None is "next up".
 
-- [ ] **`/api/mod/retool/user` capabilities** — editing bio/socials, `ToggleMod`, `UpdateUserDeets`.
-      Needs a user API key the spoke should not hold. **A decision, not a build.**
+- [x] ~~**`/api/mod/retool/user` capabilities** — editing bio/socials, `ToggleMod`, `UpdateUserDeets`.~~
+      **BUILT, corrected 2026-08-20.** The premise was wrong: `callModEndpoint` uses `auth: 'session'`,
+      forwarding the acting moderator's own session, so no user API key was ever required.
+      `updateUserIdentity` and `toggleModerator` delegate through it (gated at the endpoint on
+      `retoolUpdateIdentity` / `retoolToggleModerator`), while `addSocial`, `removeSocial` and
+      `clearProfileText` are direct Kysely writes. All five are wired as form actions behind grants.
 - [ ] **Destructive content actions from User Lookup** — bulk delete / ToS of comments, purge all
       content, cosmetics removal. **Not blocked on ownership — corrected 2026-08-20.** Both side effects
       that were cited as "the spoke does not own them" are already solved here:
       - **Cache busting**: `cache.ts` writes the same Redis keys the main app reads
         (`bustCachedObject`, `bustCacheTag`, and the per-domain helpers).
       - **Search index**: `syncSearchIndex` already calls `/api/internal/search-index-update`.
-      What is missing is **bulk**. The endpoint's zod schema takes one `entityId`, while the
-      `queueUpdate` beneath it already accepts an array — so batching is a schema change on
-      `src/pages/api/internal/search-index-update.ts` plus a batching `syncSearchIndex`, not new
-      plumbing. Do that first, then port the actions as direct Kysely mutations.
-- [ ] **Timed-mute expiry** — nothing expires a timed mute automatically. Retool had no scheduler either.
-      Needs a cron job, or the feature is bookkeeping only.
+      The bulk prerequisite is **done** (2026-08-20): `syncSearchIndexBulk` posts a whole id array in
+      one round trip, deduped and chunked at the endpoint's 1,000-id cap, and the endpoint accepts
+      `entityIds` beside `entityId`. What remains is porting the actions as direct Kysely mutations.
+- [x] ~~**Timed-mute expiry** — needs a cron job.~~ **NOT BLOCKED — the cron already existed, corrected
+      2026-08-20.** The main app drains `User.muteExpiresAt` hourly via `processTimedUnmutesJob`
+      (`0 * * * *`), re-evaluating strike escalation before lifting so an account still carrying points
+      stays muted. The spoke now writes only that column: the moderator DB's `TimedMutes` duplicated the
+      capability with **no consumer**, so a mute recorded there alone never lifted. Nothing reads or
+      writes that table any more and it can be dropped at cutover (it held 0 rows).
+      Still unbuilt: scheduled mute **start** — there is no `muteStartsAt`, so it is a schema change plus
+      a second job, not a missing cron. Worth confirming anyone wants it.
 - [x] ~~**Add / subtract Buzz, rewards eligibility**~~ — **BUILT, corrected 2026-08-20.** `sendBuzz`
       (behind the `user.buzz.send` grant) and `setRewardsEligibility` are in `user-actions.service.ts`,
       wired as form actions and rendered by `BuzzTransactionPanel` and `AccountActionsPanel`. The
       "maybe a separate app" ticket aside was recorded here as a blocker and outlived the work that
       closed it — the second time this row has misled, and the reason Rule 7 exists.
-- [ ] **Notification history** (`GetNotifications` / `ViewNotifications`) — a seventh datasource. The app now
-      has `@civitai/notifications` wired for *sending*; **reading history is a different connection.**
+- [x] ~~**Notification history** (`GetNotifications` / `ViewNotifications`) — a seventh datasource.~~
+      **BUILT, corrected 2026-08-20.** The premise was wrong: `queryNotifications` is a method on the
+      same `@civitai/notifications` client that sends, not a separate connection. `getUserNotifications`
+      calls it and `NotificationsPanel` renders it, with a 25/50/100/200 depth picker.
 - [ ] **Attribution backfill and ID consolidation** — nine free-text attribution columns across eight
-      tables, plus a `TimedMutes.userId` that is `text` and a `ReToolActions` with no subject column at
-      all. Tracked separately, with the inventory and ordering:
+      tables, plus a `ReToolActions` with no subject column at all. (`TimedMutes.userId` was a third
+      case; that table is dead as of 2026-08-20 and gets dropped rather than cast.) Tracked separately,
+      with the inventory and ordering:
       [`moderator-db-backfill-tasks.md`](../../../docs/moderator-app/moderator-db-backfill-tasks.md).
-- [ ] **Chat message-text search performance** — ~3s over 4.2M unindexed rows. A `pg_trgm` GIN index would
-      fix it; that is an infra decision.
+- [~] **Chat message-text search performance** — **mitigated 2026-08-20; the index is deferred, not
+      blocked.** `pg_trgm` is **already installed in production**, so there was never an extension to
+      request. Measured: 1.4s for a common term and **2.6s for a miss** — proving a negative reads the
+      whole table, which is exactly what probing an unknown spam string does. The search is now bounded
+      to 90 days (1.25s worst case) and says so on the page, matching what `SPAMDetect` already does.
+      The real fix is a **partial** GIN trigram index on the same window: 90 days is 258k rows and 26MB
+      of text, so ~50-90MB against the 208MB already on `ChatMessage`. Deferred on judgement — nothing
+      is blocked on this search and a FULL index would cover 457MB of text for a query on no hot path.
+      Build it if a moderator complains.
 
 ⚠️ **Two entries below are stale and are corrected here.** User Lookup lists "issuing a strike" and
 "notifying a user" as blocked on the notification system. Both are now **built** — User Reports issues
@@ -326,15 +346,18 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
       `bannedAt` and refuses a request that already matches; and it answers 200 before doing the work,
       so the UI re-reads instead of trusting the response. It attributes internally to `userId: -1`, so
       every action here also writes ModActivity with the real moderator.
-      Not ported: `ToggleMod` and `UpdateUserDeets` (privileged, and `/api/mod/retool/user` requires a
-      user API key the spoke should not hold).
-- [x] **Mutes** — `ActivateSystemMute`, `RevokeTimedMutes`, `ViewMutes`. Timed mutes read/created/revoked
-      against `TimedMutes` in the moderator database, each also applying or lifting the account mute so
-      the schedule and the account cannot disagree.
-      Built to the schema, not to observed usage: **the table is empty**, so nothing here has run against
-      real rows. `userId` is cast to text, matching the column.
-      Not ported: expiry. Nothing expires a timed mute automatically — Retool had no scheduler either
-      (`CurrentUTCTime` was compared client-side). Needs a cron job to be more than bookkeeping.
+      `ToggleMod` and `UpdateUserDeets` are built — `toggleModerator` / `updateUserIdentity`, delegating
+      through `callModEndpoint` (`auth: 'session'`, the acting moderator's own). No API key was needed.
+- [x] **Mutes** — `ActivateSystemMute`, `RevokeTimedMutes`, `ViewMutes`. **Rebuilt onto the account,
+      2026-08-20.** A timed mute is `User.muteExpiresAt` plus `meta.{muteReason, mutedBy}`, with `mutedAt`
+      marking it as a moderator's rather than the strike engine's;
+      the moderator DB's `TimedMutes` is read and written by nothing here and is gone from
+      `moderator-db-types.ts`. `getTimedMute` returns one nullable mute — a single column cannot hold
+      two, which is why `hasOtherActiveTimedMute` no longer exists. Expiry is not missing:
+      `processTimedUnmutesJob` (`0 * * * *`) drains `muteExpiresAt` hourly, and strike escalation will
+      neither lift nor shorten a mute whose `mutedAt` is set — that column, not a `meta` flag, is what
+      marks a mute as a person's decision. Not ported: scheduled **start** — there is no `muteStartsAt`,
+      so that is a schema change plus a second job.
 - [x] **Subscription + Buzz** — `UserSubscriptionStatus` (Postgres, in the page load) plus the Buzz
       balance from `GetAccountBuzz`, served via `/api/user-account/[userId]` since it is an external
       HTTP call. Buzz failures degrade to "Balance unavailable" rather than blanking the panel.
@@ -358,8 +381,8 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
 Everything unblocked on this page is now built. The remainder needs a decision or infrastructure, not
 more porting — none of it is "next up":
 
-- **Editing bio and socials**, **`ToggleMod`**, **`UpdateUserDeets`** — all go through
-  `/api/mod/retool/user`, which needs a user API key the spoke should not hold.
+- ~~**Editing bio and socials**, **`ToggleMod`**, **`UpdateUserDeets`**~~ — **BUILT.** They call
+  `/api/mod/*` as the acting moderator (`auth: 'session'`); the "needs a user API key" premise was wrong.
 - **Bulk delete / ToS of comments**, **purge all content**, **image removal** — destructive, with
   search-index and cache side effects the spoke does not own. Same decision as account actions.
 - ~~**Issuing a strike**, **notifying a user** — need the notification system.~~ **UNBLOCKED** — both are
@@ -534,9 +557,10 @@ Not ported: `BANAPI`, `SetNote`, `LogBan`. Every username links to User Lookup, 
 with confirmation and an audit trail — duplicating a ban button here means two gates and two places to
 get it wrong.
 
-Deferred: message-text search is ~3s over 4.2M unindexed rows. A pg_trgm GIN index on
-`ChatMessage.content` would fix it, but that is a large index and an extension — an infra decision, not
-a migration one.
+Bounded, not unbounded: message-text search covers the last **90 days** as of 2026-08-20 (1.25s worst
+case, and the page says so), down from a full scan at 1.4s for a hit and 2.6s for a miss. The real fix is
+a **partial** `pg_trgm` GIN index over the same window — `pg_trgm` is already installed in production, so
+it is deferred on judgement, not blocked on infra. Rationale and sizing: §D.
 
 ## User Reports
 
