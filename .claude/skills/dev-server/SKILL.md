@@ -33,7 +33,7 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 
 ## Which node the daemon runs on — and why it is sticky
 
-The daemon is spawned with `process.execPath` (`cli.mjs:66`, `console.mjs:87`), i.e. **whatever node ran
+The daemon is spawned with `process.execPath` (`cli.mjs:69`, `console.mjs:88`), i.e. **whatever node ran
 the CLI verb that first started it**. It then passes its own environment down to every `next dev` it
 supervises. So the node you happened to have on `PATH` the first time you typed any command above is the
 node the whole tree runs on, until someone shuts the daemon down — and nothing records which one that was.
@@ -68,6 +68,22 @@ readlink -f /proc/$(cat .claude/skills/dev-server/daemon.pid)/exe
 
 Changing node means restarting the daemon — `cli.mjs shutdown`, then start it again from the right shell.
 A running daemon will not pick up a new `PATH`.
+
+### A second daemon: `DEV_DAEMON_PORT`
+
+The daemon lives on `127.0.0.1:9444`. Set `DEV_DAEMON_PORT` to stand another one beside it:
+
+```bash
+DEV_DAEMON_PORT=9555 node .claude/skills/dev-server/cli.mjs status
+```
+
+The CLI, the console, `scripts/test-unit-run.mjs` and the daemon itself all resolve the port through
+`scripts/daemon-port.mjs`, and a daemon a client spawns inherits that client's environment — so no two
+of them can disagree about where it is. Until 2026-08-19 the daemon did not read the variable at all,
+and setting it pointed the client at a port nothing was serving.
+
+The variable is only a default for the daemon; an explicit `node scripts/daemon.mjs --port <port>` still
+wins. Each daemon owns the shared `daemon.pid`, so the last one started is the one that file names.
 
 ## Never curl a dev port — `probe` instead
 

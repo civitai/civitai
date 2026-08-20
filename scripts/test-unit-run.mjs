@@ -22,9 +22,12 @@ const CLI = resolve(repoRoot, '.claude/skills/dev-server/cli.mjs');
 // rather than at the top of the file because it lives under `.claude/`, which the direct path
 // must keep working without: a static import would fail the whole script when the skill is absent.
 const QUEUE = resolve(repoRoot, '.claude/skills/dev-server/scripts/test-queue.mjs');
-// Same override the CLI honours. Without it this file can only ever talk to the shared daemon,
-// which is why the verdict below had no test: there was no way to stand a fake one up beside it.
-const DAEMON = `http://127.0.0.1:${parseInt(process.env.DEV_DAEMON_PORT || '9444', 10)}`;
+// Same override the CLI and the daemon honour, and from the same module, so no two of the three
+// can disagree about where the daemon is. Without it this file could only ever talk to the shared
+// daemon, which is why the verdict below had no test: there was no way to stand a fake one up
+// beside it. Imported on the queue path only, for the reason given above QUEUE.
+const PORT_MODULE = resolve(repoRoot, '.claude/skills/dev-server/scripts/daemon-port.mjs');
+let DAEMON = null;
 const POLL_MS = 2000;
 
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -97,6 +100,8 @@ async function runQueued(args) {
   // Resolved once, up front: this is the module that decides pass from fail, and a waiter that
   // discovers it cannot load that rule at the moment it must apply it has no verdict to give.
   const { exitCodeFor } = await import(pathToFileURL(QUEUE).href);
+  const { resolveDaemonPort } = await import(pathToFileURL(PORT_MODULE).href);
+  DAEMON = `http://127.0.0.1:${resolveDaemonPort()}`;
 
   let run;
   try {
@@ -163,6 +168,7 @@ if (
 ) {
   const args = process.argv.slice(2);
   const decision = queueDecision(args, process.env);
-  if (decision.queue && existsSync(CLI) && existsSync(QUEUE)) runQueued(args);
+  if (decision.queue && existsSync(CLI) && existsSync(QUEUE) && existsSync(PORT_MODULE))
+    runQueued(args);
   else runDirect(args);
 }

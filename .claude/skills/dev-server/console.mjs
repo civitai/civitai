@@ -12,6 +12,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import readline from 'readline';
+import { resolveDaemonPort } from './scripts/daemon-port.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,7 +29,7 @@ const projectRoot = findProjectRoot(__dirname);
 const pidFile = resolve(__dirname, 'daemon.pid');
 const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
 
-const DAEMON_PORT = 9444;
+const DAEMON_PORT = resolveDaemonPort();
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 
 // ── ANSI ──────────────────────────────────────────────────────────────────────

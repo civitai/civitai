@@ -8,6 +8,10 @@
  * Usage:
  *   node daemon.mjs [--port <port>] [--base-dev-port <port>]
  *
+ * --port beats DEV_DAEMON_PORT, which beats the default in scripts/daemon-port.mjs. A daemon a
+ * client spawns inherits that client's environment and resolves the port through the same
+ * module, so the two cannot end up on different ports.
+ *
  * Security: Binds to 127.0.0.1 only (localhost)
  */
 
@@ -19,6 +23,7 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
+import { resolveDaemonPort } from './daemon-port.mjs';
 import { TestQueue } from './test-queue.mjs';
 import {
   loadModeDefinitions,
@@ -35,7 +40,8 @@ const projectRoot = resolve(skillDir, '../../..');
 const pidFile = resolve(skillDir, 'daemon.pid');
 
 // Configuration
-const DEFAULT_DAEMON_PORT = 9444;
+// Read at module load so a hand-started daemon honours DEV_DAEMON_PORT; `--port` still wins.
+const DEFAULT_DAEMON_PORT = resolveDaemonPort();
 const DEFAULT_BASE_DEV_PORT = 3000;
 const MAX_LOG_LINES = 2000;
 

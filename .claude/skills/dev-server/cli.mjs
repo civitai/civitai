@@ -9,6 +9,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { exitCodeFor, isTerminal as isTerminalStatus } from './scripts/test-queue.mjs';
+import { resolveDaemonPort } from './scripts/daemon-port.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,8 +29,9 @@ const projectRoot = findProjectRoot(__dirname);
 const pidFile = resolve(__dirname, 'daemon.pid');
 const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
 
-// Overridable so a second daemon can be exercised without touching the shared one on 9444.
-const DAEMON_PORT = parseInt(process.env.DEV_DAEMON_PORT || '9444', 10);
+// Overridable via DEV_DAEMON_PORT, so a second daemon can be exercised without touching the
+// shared one. The daemon resolves it through the same module — see scripts/daemon-port.mjs.
+const DAEMON_PORT = resolveDaemonPort();
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 
 async function daemonRequest(path, options = {}) {
@@ -62,7 +64,9 @@ async function startDaemon() {
     shell: true,
   };
 
-  // Use quoted command string for shell: true on Windows
+  // Use quoted command string for shell: true on Windows. No --port: the daemon resolves
+  // DEV_DAEMON_PORT through the same function this file does, off the environment it inherits
+  // here, so the two cannot disagree about where it lives.
   const command = `"${process.execPath}" "${serverScript}"`;
   const child = spawn(command, [], spawnOptions);
   child.unref();
