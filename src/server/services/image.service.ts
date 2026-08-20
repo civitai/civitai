@@ -3236,22 +3236,35 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   //   1. `!input.currentUserId`                                  — anonymous caller
   //   2. `bitdexCursor`                — a `bdx:` cursor, i.e. a BitDex-paginated
   //                                      request (NOT any paginated request)
-  //   3. `input.userId && input.userId !== input.currentUserId`
-  //                                    — signed-in, viewing another user's profile
+  //   3. `creatorScopeExcludesCaller`  — the request is scoped to a set of
+  //                                      creators that does not contain the
+  //                                      caller (#4123). Reference it BY SYMBOL:
+  //                                      it is computed from three scopes and a
+  //                                      gloss of it drifts, which is what
+  //                                      happened to the `input.userId` version
+  //                                      this replaced.
   // If none holds, the own-content pass is issued regardless of what the feed
   // query did, a call goes out, and the request IS counted.
   //
   // Measured, driving the real path (each row is a request that walks a door):
   //   signed-in, other user's profile        → 0 calls, nothing recorded
   //   signed-in, `bdx:` cursor               → 0 calls, nothing recorded
-  //   signed-in, NON-`bdx:` cursor           → 1 call,  `fallback_empty` recorded
-  //   signed-in, first page                  → 1 call,  `fallback_empty` recorded
-  // The third row is why "any paginated request" was wrong, and it is the NORMAL
+  //   signed-in, followed-with-zero-follows  → 0 calls, nothing recorded  (#4123)
+  //   signed-in, newCreators-with-none       → 0 calls, nothing recorded  (#4123)
+  //   signed-in, `hidden`-with-none, page 1  → 1 call,  `fallback_empty` recorded
+  //   signed-in, unscoped, NON-`bdx:` cursor → 1 call,  `fallback_empty` recorded
+  // 🔴 ROWS 3 AND 4 USED TO READ `1 call, fallback_empty recorded`, AND #4123
+  // CHANGED THEM. A set-shaped creator scope is now resolved before the decision,
+  // so those two doors stopped issuing the own pass and joined the other doors
+  // instead of being the ones that leaked a call. That is a REDUCTION in what
+  // `fallback_empty` counts — it shifts the served-ratio baseline, exactly as
+  // #4122 did. Do not compare that ratio across #4123.
+  // The last row is why "any paginated request" was wrong, and it is the NORMAL
   // shape: a request that walks a door falls back to Meili, so its next page
   // carries a MEILI cursor, which the `bdx:` decode above does not accept.
   //
-  // Counting those requests is correct under the stated denominator — a call did
-  // go out — and is deliberately left as is. Both shapes are pinned in
+  // Counting the remaining two is correct under the stated denominator — a call
+  // did go out — and is deliberately left as is. Every shape above is pinned in
   // bitdex-feed-source.test.ts.
   //
   // The two observations that mean "a call was made": the client reported a
@@ -3354,32 +3367,67 @@ async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boo
   // `src/server/services/__tests__/bitdex-followed-own-excluded-scope.test.ts`; a
   // blanket "never run the second pass on a scoped feed" fails them.
   //
-  // COST: both helpers are cached (`getUserFollows` via `userFollowsCache`,
-  // `getNewCreatorUserIds` via `fetchThroughCache`) and are the same helpers the
-  // Meili leg already calls for these two scopes, so a scoped request adds a cache
-  // read rather than a query. In practice the await is free where it matters: an
-  // unscoped feed and an own-profile feed resolve to literals with nothing to
-  // await, and the two scopes that DO await are the ones this guard then skips.
+  // COST: both helpers are cached — `getNewCreatorUserIds` via `fetchThroughCache`
+  // (genuinely shared: the pre-filter calls the very same helper), and
+  // `getUserFollows` via `userFollowsCache`. ⚠️ `getUserFollows` is NOT already on
+  // this path: the search legs read follows with a raw
+  // `dbRead.userEngagement.findMany` (`getImagesFromSearchPreFilter`,
+  // `getImagesFromBitdexPreFilter`, `getImagesFromSearchPostFilter`), and the only
+  // other `getUserFollows` call in this file is in `getAllImages`, the legacy SQL
+  // feed. So this introduces a NEW `userFollowsCache` dependency into the
+  // image-search hot path rather than reusing one. Steady-state cost is still
+  // small — `cacheNotFound` defaults to true, so a zero-follow caller is
+  // negatively cached instead of falling through to the DB every request — but
+  // the basis is "a new, cheap cache read", not "a read we already do".
   //
-  // ⚠️ `getUserFollows` is the CACHED set, while `getImagesFromBitdexPreFilter`
-  // reads `userEngagement` directly, so the two can disagree while the cache is
-  // stale. `toggleFollowUser` refreshes that cache on both follow and unfollow, so
-  // the window is write-propagation, not the entry's TTL. Both directions are
-  // benign and self-healing: a stale "caller is in the set" re-admits the old
-  // behaviour for that window; a stale "caller is not in the set" withholds the
-  // caller's own excluded content from their own feed. Deliberately NOT unified
-  // here — repointing the pre-filter at the cache would change what the FEED
-  // CONTAINS, which is a different change from what this decision READS.
-  const creatorScopes = await Promise.all([
-    input.userId ? [input.userId] : null,
-    input.currentUserId && input.followed ? getUserFollows(input.currentUserId) : null,
-    input.newCreators ? getNewCreatorUserIds({ entity: 'images', domain: input.domain }) : null,
-  ]);
+  // The cheap disjuncts are evaluated FIRST and short-circuit the awaits entirely,
+  // so an anonymous request and any `bdx:`-paginated page (i.e. every page ≥2 of a
+  // BitDex-served Following feed) pay nothing here.
+  //
+  // ⚠️ THE STALENESS WINDOW IS REPLICA LAG, NOT CACHE TTL — and the cache is the
+  // FRESHER of the two. `userFollowsCache.refresh()` re-reads through `lookupFn(…,
+  // true)`, i.e. dbWrite, and `toggleFollowUser` calls it on both follow and
+  // unfollow; the pre-filter reads the REPLICA. So the reachable disagreement is a
+  // caller who has just self-followed: for the replica-lag window this guard says
+  // "in scope" and runs the own pass while the replica-derived filter still
+  // excludes them. It needs a self-follow to reach at all, is self-healing, and
+  // the other direction merely withholds the caller's own excluded content from
+  // their own feed. Deliberately NOT unified here — repointing the pre-filter at
+  // the cache would change what the FEED CONTAINS, which is a different change
+  // from what this decision READS.
+  // The two cheap disjuncts are evaluated FIRST and short-circuit the scope
+  // resolution entirely. Without this the `Promise.all` below runs on every
+  // request including ones already destined to skip — notably every page >= 2 of a
+  // BitDex-served Following feed (`bitdexCursor` set) and an anonymous
+  // `newCreators` request, both of which would pay a cache read whose result is
+  // then discarded. Cheap-first is also the order the old single-expression guard
+  // had by virtue of `||` short-circuiting, so this preserves it rather than
+  // introducing it.
+  const skipOwnExcludedCheaply = !input.currentUserId || !!bitdexCursor;
+
+  // 🔴 The three scopes here must stay 1:1 with the creator-scoping filters
+  // `getImagesFromBitdexPreFilter` applies — `followed`, `newCreators` and
+  // `userId`. That coupling IS the correctness argument: the guard has to read
+  // the same creator scope the feed is filtered by, or it decides from a
+  // different set than the one that shaped the results. The ARGUMENTS matter as
+  // much as the calls — `entity` and `domain` select which board
+  // `getNewCreatorUserIds` reads, and passing a different `domain` here would
+  // silently consult the SFW board while the feed filters on the red one. Pinned
+  // by argument assertions in bitdex-followed-own-excluded-scope.test.ts.
+  const creatorScopes = skipOwnExcludedCheaply
+    ? []
+    : await Promise.all([
+        input.userId ? [input.userId] : null,
+        input.followed ? getUserFollows(input.currentUserId!) : null,
+        input.newCreators ? getNewCreatorUserIds({ entity: 'images', domain: input.domain }) : null,
+      ]);
+  // `some`, not `every`: the pre-filter ANDs these scopes, so exclusion by ANY
+  // one of them excludes the caller from the feed.
   const creatorScopeExcludesCaller = creatorScopes.some(
     (scope) => scope !== null && !scope.includes(input.currentUserId!)
   );
 
-  const skipOwnExcluded = !input.currentUserId || bitdexCursor || creatorScopeExcludesCaller;
+  const skipOwnExcluded = skipOwnExcludedCheaply || creatorScopeExcludesCaller;
 
   let ownExcludedPromise: ReturnType<typeof queryBitdex> | null = null;
   if (!skipOwnExcluded) {

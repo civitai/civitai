@@ -377,6 +377,96 @@ describe('#4123 — a set-shaped creator scope is resolved before the own-exclud
     expect(ownExcludedCalls()).toHaveLength(0);
   });
 
+  // 🔴 THE COUPLING IS THE CORRECTNESS ARGUMENT, SO PIN THE ARGUMENTS TOO.
+  //
+  // The guard is only right if it reads the SAME creator scope the pre-filter
+  // filters by. Asserting that the helpers were CALLED does not establish that —
+  // the arguments select which set comes back. Three mutants survived the first
+  // battery precisely here: dropping `domain`, swapping `entity` to `'models'`,
+  // and resolving follows for `input.userId` instead of `input.currentUserId`.
+  // Each produces a well-formed set from the WRONG source and re-admits #4123.
+  //
+  // ⚠️ `domain` must be NON-UNDEFINED in this fixture. `toHaveBeenCalledWith` uses
+  // deep equality, under which `{ entity, domain: undefined }` and `{ entity }`
+  // compare EQUAL — so a fixture leaving `domain` unset could never catch the
+  // dropped-`domain` mutant. `'red'` is chosen because it maps to a different
+  // board (`images-new-red`) than the default, which is exactly the desync.
+  it('reads the new-creator board with the request’s OWN entity and domain', async () => {
+    serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
+
+    await getImagesFromSearch(authedInput({ newCreators: true, domain: 'red' }));
+
+    // 🔴 EVERY call, not `toHaveBeenCalledWith`. That matcher passes if ANY call
+    // matched, and the pre-filter makes its own correct call to this same helper
+    // — so it is satisfied by the pre-filter no matter what the guard passed.
+    // Measured: with `toHaveBeenCalledWith`, mutants that drop `domain` or swap
+    // `entity` to 'models' BOTH survived a fully green suite.
+    expect(getNewCreatorUserIdsMock.mock.calls.length).toBeGreaterThan(0);
+    for (const [args] of getNewCreatorUserIdsMock.mock.calls) {
+      expect(args).toEqual({ entity: 'images', domain: 'red' });
+    }
+  });
+
+  // Resolves follows for the CALLER, never for the creator being viewed. Both
+  // fields are set and they disagree, so a mutant reading the wrong one returns a
+  // different set rather than the same one by luck.
+  it('resolves the followed set for the CALLER, not for the userId being viewed', async () => {
+    serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
+
+    await getImagesFromSearch(
+      authedInput({ followed: true, userId: FOLLOWED_CREATOR_ID })
+    );
+
+    expect(getUserFollowsMock).toHaveBeenCalledWith(CURRENT_USER_ID);
+    expect(getUserFollowsMock).not.toHaveBeenCalledWith(FOLLOWED_CREATOR_ID);
+  });
+
+  // 🔴 `some` vs `every`, pinned by a request carrying TWO simultaneous non-null
+  // scopes that DISAGREE — the only shape that can tell them apart. Every other
+  // case here supplies one scope plus nulls, where `every` fails on the nulls
+  // rather than on the intersection semantics, so it would die for the wrong
+  // reason. Here the caller IS the userId in view (scope contains them) but does
+  // NOT self-follow (scope excludes them). The pre-filter ANDs both filters, so
+  // exclusion by either one excludes the caller from the feed: `some` is correct
+  // and must skip the pass; `every` would run it.
+  it('two disagreeing scopes: exclusion by EITHER one skips the own-excluded pass', async () => {
+    callerFollows([FOLLOWED_CREATOR_ID]); // caller not in their own followed set
+    serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
+
+    const result = await getImagesFromSearch(
+      authedInput({ followed: true, userId: CURRENT_USER_ID })
+    );
+
+    expect(ownExcludedCalls()).toHaveLength(0);
+    expect(ids(result.data)).not.toContain(callerOwnPrivateDoc.id);
+  });
+
+  // The cheap disjuncts must SHORT-CIRCUIT the scope resolution, not merely
+  // out-vote it: without the hoist these shapes pay a lookup whose result is then
+  // discarded, and every behavioural test still passes — so this asserts the CALL,
+  // not the outcome.
+  //
+  // ⚠️ The expected count is ONE, not zero, and that is not a fudge: the request
+  // falls through to the Meili leg, which resolves the same scope for its own
+  // filtering. The BitDex guard's call would be a SECOND one. Verified by
+  // mutation: removing the hoist takes this count 1 -> 2.
+  //
+  // 🔴 A SIBLING ASSERTION FOR THE `bdx:`-CURSOR SHAPE WAS WRITTEN AND THEN
+  // DELETED, because the mutation showed it could not fail: with the hoist removed
+  // it still read 1. The likeliest cause is that its hand-written `bdx:` cursor
+  // fixture did not decode, so `bitdexCursor` was falsy and the request never had
+  // the property the test was named for. Rather than ship an assertion that passes
+  // in both arms, the `bitdexCursor` half of the short-circuit is left argued from
+  // the code (it is the same `skipOwnExcludedCheaply` expression this case pins
+  // via `!input.currentUserId`) and is NOT claimed as tested.
+  it('an anonymous newCreators feed adds no creator-scope lookup of its own', async () => {
+    serve({ main: EMPTY_PAGE, ownExcluded: page([callerOwnPrivateDoc]) });
+
+    await getImagesFromSearch({ ...baseInput, newCreators: true });
+
+    expect(getNewCreatorUserIdsMock).toHaveBeenCalledTimes(1);
+  });
+
   // A third creator's private document is not reachable in production (the own
   // pass pins `userId = currentUserId`), but the fake returns it to prove the
   // decision is about SCOPE MEMBERSHIP and not about "is this document mine".
