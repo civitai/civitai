@@ -20,7 +20,7 @@ import { storageStatePath } from './preview-fixtures';
 // for the guard: the guard runs in _app.getInitialProps, ahead of the catchall's getServerSideProps, so a
 // non-mod is bounced before the migration redirect can matter (which is why the two bounce tests below are
 // unaffected by the migration), and for a mod the Location tells us WHICH hop happened.
-const MODERATOR_PATH = '/moderator/reports';
+const MODERATOR_PATH = '/moderator/reports'; // @migrated-route-probe — asserting the hop IS the point
 
 // tester (Flipt allowlist) + gold (allowlist + tier) both CLEAR the preview gate but lack isModerator, so the
 // _app guard must bounce them from /moderator specifically.

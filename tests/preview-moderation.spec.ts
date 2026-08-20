@@ -28,9 +28,8 @@ import { trpcMutation, uniqueToken } from './preview-trpc';
  *   3. The report-CREATION leg of the old end-to-end action test. `report.create`
  *      is still a main-app guardedProcedure; `report.getAll` / `report.setStatus`
  *      are not (they were deleted in #3573), so the ACTIONING half of that
- *      coverage cannot be asserted from here. 🔴 It is LOST, NOT RELOCATED —
- *      `apps/moderator` has ZERO test files (measured; positive control: 81 under
- *      `packages/`). Tracked as #4182.
+ *      coverage cannot be asserted from here. It now lives in `apps/moderator`'s
+ *      own suite (`app:moderator`) — see the note at the end of this file.
  *
  * Only runs under playwright.preview.config.ts (needs PREVIEW_URL + minted states).
  *
@@ -96,8 +95,8 @@ const MODERATOR_SURFACES = [
  * (MODERATOR_APP_URL), so only the path is pinned.
  */
 const MIGRATED_PATHS = [
-  { path: '/moderator/reports', target: '/reports' },
-  { path: '/moderator/images', target: '/images' },
+  { path: '/moderator/reports', target: '/reports' }, // @migrated-route-probe
+  { path: '/moderator/images', target: '/images' }, // @migrated-route-probe
 ] as const;
 
 // Mirror preview-smoke.spec.ts: assert we cleared the preview gate.
@@ -200,15 +199,18 @@ test.describe('moderation surface (mod)', () => {
     // from a preview of THIS app is not possible. Do not "restore" them here: the
     // procedures do not exist, so it cannot be made to work.
     //
-    // 🔴 AND DO NOT READ THAT AS "the coverage moved". An earlier version of this
-    // comment said it "belongs to apps/moderator's own suite" — there is no such
-    // suite. `apps/moderator` has ZERO test files (measured; positive control: 81
-    // under `packages/`). This coverage is LOST, and the loss originates in #3573,
-    // not in the change that stopped asserting it. Tracked as #4182.
+    // The coverage itself was rebuilt where the code now lives, against the spoke's
+    // `setReportStatus` and the form actions over it:
+    //   apps/moderator/src/lib/server/__tests__/reports-actioning.test.ts
+    //   apps/moderator/src/routes/reports/[slug]/__tests__/report-{actions,queue}.test.ts
+    // Unit-level rather than end-to-end, so it is not the same coverage — it does not
+    // exercise a real report through a real database. What it does buy is a tier that
+    // renders RED: the `App unit tests` job is not `continue-on-error`, unlike this
+    // preview job and unlike `unit`. It still does not block a merge — `main` has no
+    // required_status_checks — so read it as a louder signal, not as a gate.
     //
-    // The distinction matters here specifically: this is a do-not-restore
-    // instruction, so a maintainer who checks its stated reason, finds no suite and
-    // concludes the comment is stale could try to restore procedures that no longer
-    // exist. The reason above — they were deleted — is the one that holds.
+    // The do-not-restore instruction still stands, and its reason is the one above:
+    // the procedures were deleted from this app. That is what makes restoring them
+    // here impossible, independently of what any other suite covers.
   });
 });

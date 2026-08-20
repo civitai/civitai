@@ -265,6 +265,21 @@ jobs:
     #
     # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate.
     # Remove `continue-on-error` and this comment together.
+    #
+    # WHERE THAT STANDS, measured 2026-08-20 so the next reader does not repeat the
+    # archaeology. Over the 39 most recent completed runs the `Unit tests` STEP was red
+    # in 8, across 8 DISTINCT branches — which reads as flake but was not: every one
+    # predates #4191, which fixed a ledger test that had been TRUNK red and therefore
+    # failed on every PR regardless of its contents. Of the runs started after that
+    # merge, 5 of 5 are green across 4 branches. Encouraging, and far too short a
+    # window to act on — 36 minutes is not "a couple of weeks".
+    #
+    # Two things to know before re-measuring. The run-level `conclusion` is USELESS
+    # here: `continue-on-error` makes it `success` while the step underneath is
+    # `failure`, so read `steps[].conclusion` from the jobs endpoint, not the run.
+    # And this workflow is `pull_request`-only, so the suite never runs against `main`
+    # itself — a trunk-red test shows up as every PR going red at once, which is the
+    # signature to look for and exactly what the 8 above turned out to be.
     continue-on-error: true
     timeout-minutes: 30
     steps:
@@ -380,7 +395,9 @@ jobs:
     # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
     # no required_status_checks — it is a signal someone has to look at and dismiss.
     #
-    # `apps/moderator` is absent on purpose: it has no vitest config, so nothing selects it.
+    # Selection is by vitest config, so an app without one is silently not covered here. Every app
+    # under `apps/` has one today; scripts/ci/assert-workspace-suites-ran.mjs is what notices if that
+    # stops being true.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

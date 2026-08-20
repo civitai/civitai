@@ -111,12 +111,21 @@ CI already scopes itself this way and gates only on **added** files for exactly 
 
 ### Testing
 ```bash
-pnpm run test:unit:run    # Vitest unit suite (the one you almost always want)
-pnpm run test:component   # Vitest component suite (browser mode — see Git Worktrees for NixOS)
-pnpm run test:lint-rules  # Convention guards (see below)
-pnpm test                 # Playwright e2e
-pnpm run test:ui          # Playwright with UI
+pnpm run test:unit:run     # Vitest unit suite over src/ + scripts/ (the one you almost always want)
+pnpm run test:packages:run # Vitest, the packages/* suites
+pnpm run test:apps:run     # Vitest, the apps/* suites
+pnpm run test:component    # Vitest component suite (browser mode — see Git Worktrees for NixOS)
+pnpm run test:lint-rules   # Convention guards (see below)
+pnpm test                  # Playwright e2e
+pnpm run test:ui           # Playwright with UI
 ```
+
+These are **separate suites over disjoint directories**, not layers of one — `test:unit:run` does not
+run a single test under `packages/` or `apps/`, because the `unit` project's `include` is root-relative.
+Which of them CI runs, and which of those can actually fail a check, differs per suite: see the job
+comments in `.github/workflows/lint.yml`. `main` has no required status checks, so no suite blocks a
+merge; the strongest a red one gets is rendering red for a human to notice, and a job marked
+`continue-on-error` does not even do that.
 
 The vitest suites are projects in `vitest.config.mts`. The unit suite is **two** projects —
 `unit` and `unit-native` — so select it as **`--project 'unit*'`**, never `--project unit`.
@@ -163,7 +172,15 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 
 #### Convention guards run as tests
 Several repo conventions are enforced by tests, not by eslint — `pnpm run test:lint-rules` runs all of them:
-`no-wholesale-module-mock` (the `importOriginal` rule above), `no-io-in-transaction`, `no-module-scope-cache`, `no-unloadable-image-fixture`. They live in `src/server/services/__tests__/`. If one fails, fix the code — don't add an exemption without saying why.
+`no-wholesale-module-mock` (the `importOriginal` rule above), `no-io-in-transaction`, `no-module-scope-cache`,
+`no-server-infra-in-app-graph`, `no-stale-moderator-route-probe`, `no-unbounded-paging-fake`,
+`no-unloadable-image-fixture`. They live in `src/server/services/__tests__/`. If one fails, fix the code — don't
+add an exemption without saying why. **Add a new guard to the `test:lint-rules` script when you write one**, or it
+is discoverable only by reading the directory.
+
+`test:lint-rules` is a convenience selector, not the enforcement point: these files match the `unit` project's
+`include`, so they already run in `pnpm run test:unit:run` and in CI's `Unit tests` job. No workflow invokes
+`test:lint-rules` itself.
 
 #### A passing test says nothing about how it FAILS — check the revert
 **"The tests would catch a regression here" is a claim about the failure mode, not about coverage.** A green
