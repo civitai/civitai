@@ -112,14 +112,26 @@ async function collectPrismaMetrics(db: typeof dbRead | typeof dbWrite, type: 'r
 // Both registries are wrapped rather than only the one that recently grew collectors,
 // because the asymmetry would be arbitrary: they are the same construct with the same
 // failure mode, and the next collector could be added to either.
+//
+// 🔴 IT LIVES ON `instrumentationRegistry`, NOT ON THE DEFAULT REGISTRY IT REPORTS ON.
+// A failure counter that is dropped by the very failure it counts is not a signal. When
+// `client.register.metrics()` rejects, its ENTIRE block is absent from the response — and a
+// counter registered there would go with it, leaving a permanently missing series exactly when it
+// should read 1, 2, 3. Registering on the other registry means the far more consequential failure
+// (the default registry carries the default metrics plus every seeded counter) stays observable.
+// Residual blind spot, stated rather than hidden: if the INSTRUMENTATION registry is the one that
+// fails, this counter goes with it — but that failure also removes every instrumentation metric at
+// once, which is not a subtle signal.
 const REGISTRY_SCRAPE_FAILURES = 'registry_scrape_failures_total';
 const registryScrapeFailures =
-  (client.register.getSingleMetric(REGISTRY_SCRAPE_FAILURES) as client.Counter<'registry'>) ??
+  (instrumentationRegistry.getSingleMetric(
+    REGISTRY_SCRAPE_FAILURES
+  ) as client.Counter<'registry'>) ??
   new client.Counter({
     name: REGISTRY_SCRAPE_FAILURES,
     help: "Scrapes where a prom-client Registry's metrics() rejected — one collect() callback threw — so that registry's entire block is absent from the response.",
     labelNames: ['registry'] as const,
-    registers: [client.register],
+    registers: [instrumentationRegistry],
   });
 
 // Seeded for the same reason as the Prisma counter: a healthy pod must report an
@@ -139,7 +151,15 @@ async function collectRegistryMetrics(
   try {
     return await registry.metrics();
   } catch {
-    registryScrapeFailures.inc({ registry: registryName });
+    try {
+      registryScrapeFailures.inc({ registry: registryName });
+    } catch {
+      // The `as` cast above is unchecked, so `inc` can itself throw if this name is ever
+      // registered elsewhere with a different labelset. Unguarded, that would throw OUT of the
+      // very catch block whose job is to stop one bad collector from 500-ing the scrape —
+      // converting a degraded response into the total failure this function exists to prevent.
+      // Losing the count is survivable; losing the scrape is the thing being prevented.
+    }
     return '';
   }
 }

@@ -164,8 +164,12 @@ registerInstrumentationMetric(
     })
 );
 
-// 🔴 WHY EVERY GAUGE BELOW USES registerInstrumentationMetric, AND WHY A globalThis
-// "initialized" FLAG IS THE WRONG TOOL HERE.
+// 🔴 WHY THE BULKHEAD GAUGES USE registerInstrumentationMetric, AND WHY A globalThis
+// "initialized" FLAG IS THE WRONG TOOL FOR THEM.
+//
+// Not every gauge below: the nine pg pool gauges further down deliberately KEEP
+// `if (!global.pgGaugeInitialized)` and stay off the shared registry. The note at that block
+// explains why moving them was tried, measured, and reverted.
 //
 // This module is evaluated in BOTH webpack graphs: the instrumentation graph reaches it at pod
 // start (instrumentation.node.ts -> ~/server/eventloop-longtask -> here), and the pages/API graph
@@ -175,8 +179,8 @@ registerInstrumentationMetric(
 // registry plus the globalThis-pinned `instrumentationRegistry`; the instrumentation graph's
 // default registry is scraped by nobody.
 //
-// The blocks below used to be wrapped in `if (!global.heavyBulkheadGaugeInitialized)` and
-// `if (!global.pgGaugeInitialized)`. That pairs a PROCESS-scoped flag with a GRAPH-scoped
+// The bulkhead block below used to be wrapped in `if (!global.heavyBulkheadGaugeInitialized)`,
+// exactly as the pg block still is. That pairs a PROCESS-scoped flag with a GRAPH-scoped
 // registry, and the mismatch is fatal in one direction only: the instrumentation graph gets here
 // first, registers every gauge into its own unscraped registry, and sets the flag — so when the
 // pages graph evaluates this module it takes the early-out and registers NOTHING into the registry
@@ -242,8 +246,8 @@ registerInstrumentationMetric(
 // Measured on a preview running exactly that change: `node_postgres_read_total_count` read 1 while
 // idle and still 1 under 30 concurrent `/api/v1/images` requests, with every write-pool gauge at 0
 // throughout. Frozen, plausible-looking, and wrong — which is strictly worse than the honest
-// absence they have today, and is the same false-all-clear class as the `or vector(0)` this PR
-// removes from the reject panel. An absent metric prompts a question; a confident 0 ends one.
+// absence they have today. It is the same false-all-clear class as an `or vector(0)` on a panel
+// whose metric does not exist: an absent metric prompts a question, a confident 0 ends one.
 //
 // Making them real means pinning the pools in `pgDb.ts` for prod too. That changes production DB
 // connection topology (today: one pool set per emitted graph), so it is its own change with its
