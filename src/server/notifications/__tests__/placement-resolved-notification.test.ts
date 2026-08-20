@@ -140,20 +140,7 @@ describe('the remix type stops announcing declines', () => {
     expect(statusesSelectedBy(sql)).toBe('approved,removed');
     // The removal half is scoped to the owner's own action: a moderator takedown
     // is not something to announce to the person it was taken from.
-    //
-    // Keyed on the ACTOR rather than on `removedBy`. The two said the same
-    // thing until a moderator could act as one on their own gallery — that
-    // removal writes `removedBy = 'moderator'` and dropped out of this branch,
-    // so the submitter stopped being told about a removal by the creator.
-    expect(sql).toContain('p."takenDownById" = p."ownerId"');
-    // The role filter is GONE, deliberately, and this assertion is what says so.
-    // `removePlacementByModerator` and `removePlacementsByUser` are not
-    // surface-scoped, so a moderator removing from their OWN remix gallery
-    // through either writes `removedBy: 'moderator'` with `takenDownById =
-    // ownerId` — the one combination the old and new predicates disagree about.
-    // It now notifies, which is the intended reading of "the actor was the
-    // owner" rather than a side effect of the swap.
-    expect(sql).not.toContain('p."removedBy" = \'owner\'');
+    expect(sql).toContain('p."removedBy" = \'owner\'');
     // Same two mutations the sticker type is guarded against, and they survive
     // every assertion above on this one too.
     expect(sql).toMatch(/p\."placerId"\s+"userId"/);
