@@ -56,6 +56,7 @@ export function ModelsInfinite({
       useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
       activeBaseModels={filters?.baseModels}
       salesByModelId={salesByModelId}
+      hasSaleProvider
     >
       {!models.length && isFetching ? (
         <Center p="xl">

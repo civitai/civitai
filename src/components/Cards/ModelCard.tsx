@@ -98,12 +98,15 @@ function ModelCardContent({ data }: Props) {
     [isEarlyAccess, isUpdated, theme, colorScheme]
   );
 
-  const { useModelVersionRedirect, activeBaseModels, salesByModelId } = useModelCardContext();
+  const { useModelVersionRedirect, activeBaseModels, salesByModelId, hasSaleProvider } =
+    useModelCardContext();
   // Absent until the batched lookup lands, so the badge appears a beat after the card — deliberate: a
   // sale is worth an extra request, not a slower feed.
-  // The feed passes a map down; every other surface (home blocks, collections, related models, search)
-  // asks for its own, which tRPC batches into one request per render burst.
-  const ownSale = useModelSaleBadge(data.id, !!salesByModelId);
+  // The feed passes a map down; surfaces that cannot ask for their own. `hasSaleProvider` is set by the
+  // provider itself, so a card does not fire its own query during the render before the map resolves —
+  // reading `!!salesByModelId` fired every card once on first paint and the requests were already gone
+  // by the time the flag flipped.
+  const ownSale = useModelSaleBadge(data.id, !!hasSaleProvider);
   const sale = salesByModelId?.[data.id] ?? ownSale;
   const cardBaseModels = getCardBaseModels(
     data as Parameters<typeof getCardBaseModels>[0],

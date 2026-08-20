@@ -27,6 +27,14 @@ function registerNumericTypeParsers() {
   if (numericParsersRegistered) return;
   types.setTypeParser(types.builtins.NUMERIC, (val) => parseFloat(val));
   types.setTypeParser(types.builtins.INT8, (val) => parseFloat(val));
+  // TIMESTAMP (oid 1114) is `timestamp without time zone`, which pg's default parser reads as LOCAL
+  // time. db-helpers.ts registers a UTC parser for the same oid, so the main app and any Kysely app
+  // read the SAME COLUMN hours apart — which is how a scheduled sale twice appeared to start in the
+  // future to one app and in the past to the other. These columns are written as UTC instants; read
+  // them that way everywhere.
+  // Byte-identical to db-helpers.ts's parser on purpose: two near-copies of a date transform is how
+  // the two apps disagreed in the first place.
+  types.setTypeParser(types.builtins.TIMESTAMP, (val) => new Date(val.replace(' ', 'T') + 'Z'));
   numericParsersRegistered = true;
 }
 

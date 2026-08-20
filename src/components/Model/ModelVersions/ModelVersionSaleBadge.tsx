@@ -36,63 +36,6 @@ export function SaleDiscountLabel({
   );
 }
 
-/** Plain-text form, for a tooltip or an aria-label where a component cannot go. */
-export const saleDiscountText = (sale: {
-  discountType: 'Fixed' | 'Percent';
-  discountAmount: number;
-}) =>
-  sale.discountType === 'Percent'
-    ? `${sale.discountAmount}% off`
-    : `${sale.discountAmount.toLocaleString()} Buzz off`;
-
-/**
- * The struck-through price comes from `sale.listTerms`, which the server sends beside the already
- * discounted `terms`. Recomputing it here would be a second implementation of the discount, free to
- * disagree with the one that charges.
- *
- * `isOwner` only changes the wording: an owner is quoted their stored price, so "your sale" reads
- * correctly where "on sale" would imply they are being charged it.
- */
-export function ModelVersionSaleBadge({
-  sale,
-  isOwner,
-  className,
-}: {
-  sale: SaleDisplay | null | undefined;
-  isOwner?: boolean;
-  className?: string;
-}) {
-  const listPrice = sale?.listTerms.download?.price;
-  if (!sale) return null;
-
-  const endsAt = new Date(sale.endsAt);
-
-  return (
-    <Tooltip label={`Sale ends ${formatDate(endsAt, 'MMM D, YYYY h:mm A')}`} withArrow>
-      <Group gap={6} wrap="nowrap" className={clsx('items-center', className)}>
-        <IconTag size={16} className="text-green-6" />
-        <Text size="xs" fw={600} className="text-green-6">
-          {isOwner ? (
-            <>
-              Your sale — <SaleDiscountLabel sale={sale} />
-            </>
-          ) : (
-            <SaleDiscountLabel sale={sale} />
-          )}
-        </Text>
-        {listPrice != null && !isOwner && (
-          <Text size="xs" c="dimmed" td="line-through">
-            {listPrice.toLocaleString()} Buzz
-          </Text>
-        )}
-        <Text size="xs" c="dimmed">
-          until {formatDate(endsAt, 'MMM D')}
-        </Text>
-      </Group>
-    </Tooltip>
-  );
-}
-
 /**
  * The prominent form, for the model page: a sale is a reason to act now, so it sits above the download
  * card rather than inside it, where it read as one more line of card furniture.
@@ -111,10 +54,10 @@ export function ModelVersionSaleBanner({
 
   const listPrice = sale.listTerms.download?.price;
   const endsAt = new Date(sale.endsAt);
-  // The page now shows the sale price to everyone, owner included, so the strikethrough beside it would
-  // repeat what this line already says. An owner instead gets the number that vanished from the page:
-  // their own list price, which is what the sale is discounting FROM.
-  const quotedStoredPrice = isOwner || isModerator;
+  // The page shows the sale price to everyone now, so a strikethrough would repeat the line below it.
+  // The OWNER instead gets the number that vanished from the page — their own list price. A moderator
+  // gets neither: it is not their price, and not their sale.
+  const showStrikethrough = !isOwner && !isModerator;
 
   return (
     <Card withBorder p="sm" className="border-green-6 bg-green-0 dark:bg-green-9/20">
@@ -127,7 +70,7 @@ export function ModelVersionSaleBanner({
               <SaleDiscountLabel sale={sale} size="sm" />
             </Text>
             <Text size="xs" c="dimmed">
-              {quotedStoredPrice && listPrice != null && (
+              {isOwner && listPrice != null && (
                 <>Your list price is {listPrice.toLocaleString()} Buzz · </>
               )}
               Ends {formatDate(endsAt, 'MMM D, YYYY h:mm A')}
@@ -147,7 +90,7 @@ export function ModelVersionSaleBanner({
             </Text>
           </div>
         </Group>
-        {!quotedStoredPrice && listPrice != null && (
+        {showStrikethrough && listPrice != null && (
           <Text size="sm" c="dimmed" td="line-through" className="whitespace-nowrap">
             {listPrice.toLocaleString()} Buzz
           </Text>

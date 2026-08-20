@@ -82,6 +82,7 @@ import {
   getCachedCapTier,
   getPaidAccess,
   getFreshSalesForPermanentGate,
+  bustModelSaleCache,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
@@ -2572,6 +2573,9 @@ export const bustMvCache = async (
 ) => {
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
+  // The sale badge is cached per MODEL and reached only from here — Creator Studio's bust POSTs to the
+  // endpoint that calls this, so without it a cancelled sale stayed advertised for the whole TTL.
+  await bustModelSaleCache(versionIds).catch(() => undefined);
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,

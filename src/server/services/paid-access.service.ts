@@ -217,6 +217,7 @@ function paidAccessCache(entityType: PaidAccessEntityType) {
  */
 type CachedModelSale = {
   modelId: number;
+  startsAtMs: number;
   endsAtMs: number;
   discountType: SaleDiscountKind;
   discountAmount: number;
@@ -249,10 +250,16 @@ async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[
   if (!modelIds.length) return [];
   const now = new Date();
   const rows = await dbRead.$queryRaw<
-    { modelId: number; endsAt: Date; discountType: SaleDiscountKind; discountAmount: number }[]
+    {
+      modelId: number;
+      startsAt: Date;
+      endsAt: Date;
+      discountType: SaleDiscountKind;
+      discountAmount: number;
+    }[]
   >`
     SELECT DISTINCT ON (mv."modelId")
-      mv."modelId" AS "modelId", s."endsAt" AS "endsAt",
+      mv."modelId" AS "modelId", s."startsAt" AS "startsAt", s."endsAt" AS "endsAt",
       s."discountType" AS "discountType", s."discountAmount" AS "discountAmount"
     FROM "ModelVersionSaleItem" si
     JOIN "ModelVersionSale" s ON s.id = si."saleId"
@@ -269,6 +276,7 @@ async function querySalesForModels(modelIds: number[]): Promise<CachedModelSale[
   `;
   return rows.map((r) => ({
     modelId: Number(r.modelId),
+    startsAtMs: r.startsAt.getTime(),
     endsAtMs: r.endsAt.getTime(),
     discountType: r.discountType,
     discountAmount: r.discountAmount,
@@ -289,8 +297,10 @@ export async function getActiveSalesForModels(
   > = {};
   for (const row of Object.values(cached)) {
     if (!row) continue;
-    // Evaluated per request, not baked into the cached value: the window is the durable fact.
-    if (row.endsAtMs <= now.getTime()) continue;
+    // BOTH edges, evaluated per request against the cached window. Without the start bound a sale
+    // scheduled up to MAX_SALE_LEAD_DAYS out was badged from the moment it was saved, while the model
+    // page and the charge correctly showed full price — the one thing the spec says must never happen.
+    if (row.startsAtMs > now.getTime() || row.endsAtMs <= now.getTime()) continue;
     out[row.modelId] = {
       endsAt: new Date(row.endsAtMs),
       discountType: row.discountType,
@@ -435,6 +445,12 @@ const hasChargeablePrice = (terms: PaidAccessTerms | undefined) => {
   return download > 0 || generation > 0;
 };
 
+/** The price a sale is resolved against: whichever chargeable tier this gate actually has. */
+const saleAnchorPrice = (terms: ModelVersionTerms | undefined): number => {
+  const { download, generation } = gatePrices(terms);
+  return Math.max(download, generation);
+};
+
 export type ViewerMonetization = {
   paidAccess: PaidAccessRow | undefined;
   /**
@@ -524,20 +540,20 @@ export async function getViewerMonetization({
       // An owner or moderator is shown the STORED price — their editors write it back — but they are still
       // told a sale is running. Suppressing it here made a creator's own model page the one place their
       // own live sale was invisible.
-      const ownerSale = row?.sales?.length
-        ? bestSaleFor(gatePrices(row.terms as ModelVersionTerms).download, row.sales)
+      const ownerTier = row?.sales?.length ? capTiers.get(ownerOf(v) as number) ?? null : null;
+      const ownerCapped = row?.sales?.length
+        ? cappedTerms(row.terms as ModelVersionTerms, ownerTier, {
+            permanent: isPermanentGate(row),
+            mediaType: capMediaType(v.baseModel),
+          })
         : undefined;
-      const ownerTier = ownerSale ? capTiers.get(ownerOf(v) as number) ?? null : null;
+      // Resolved against the CAPPED price, the same one discountedTerms will re-pick at. Anchoring on
+      // the stored price let the banner name one sale ("50% off") beside a price produced by another.
+      const ownerSale = ownerCapped
+        ? bestSaleFor(saleAnchorPrice(ownerCapped), row?.sales)
+        : undefined;
       const ownerBuyerTerms =
-        ownerSale && row
-          ? discountedTerms(
-              cappedTerms(row.terms as ModelVersionTerms, ownerTier, {
-                permanent: isPermanentGate(row),
-                mediaType: capMediaType(v.baseModel),
-              }),
-              row.sales
-            )
-          : undefined;
+        ownerSale && ownerCapped ? discountedTerms(ownerCapped, row?.sales) : undefined;
       out[v.id] = {
         paidAccess: row,
         sale:
@@ -571,7 +587,7 @@ export async function getViewerMonetization({
       : undefined;
     const saleTerms = listTerms ? discountedTerms(listTerms, row?.sales) : undefined;
     const activeSale = row?.sales?.length
-      ? bestSaleFor(gatePrices(listTerms).download, row.sales)
+      ? bestSaleFor(saleAnchorPrice(listTerms), row.sales)
       : undefined;
     out[v.id] = {
       paidAccess: row && saleTerms ? { ...row, terms: saleTerms } : undefined,
@@ -581,7 +597,7 @@ export async function getViewerMonetization({
         activeSale &&
         listTerms &&
         saleTerms &&
-        gatePrices(saleTerms).download < gatePrices(listTerms).download
+        saleAnchorPrice(saleTerms) < saleAnchorPrice(listTerms)
           ? {
               listTerms,
               buyerTerms: saleTerms,
@@ -699,6 +715,21 @@ export async function getPublicPaidAccessForModelVersions(
 
 export async function bustPaidAccessCache(entityType: PaidAccessEntityType, entityIds: number[]) {
   if (entityIds.length) await paidAccessCache(entityType).bust(entityIds);
+}
+
+/**
+ * Bust the badge cache for the models these versions belong to. Separate from the gate cache because it
+ * is keyed by MODEL, and it had no bust path at all until a review pointed out that a cancelled sale
+ * therefore stayed advertised for the full TTL every time rather than only when a bust failed.
+ */
+export async function bustModelSaleCache(modelVersionIds: number[]) {
+  if (!modelVersionIds.length) return;
+  const rows = await dbWrite.modelVersion.findMany({
+    where: { id: { in: modelVersionIds } },
+    select: { modelId: true },
+  });
+  const modelIds = [...new Set(rows.map((r) => r.modelId))];
+  if (modelIds.length) await modelSaleCache().bust(modelIds);
 }
 
 /**

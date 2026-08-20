@@ -5,6 +5,8 @@ import { trpc } from '~/utils/trpc';
 type Context = {
   useModelVersionRedirect?: boolean;
   activeBaseModels?: string[];
+  /** Set by a container that supplies the map, so cards do not each fetch their own. */
+  hasSaleProvider?: boolean;
   /** modelId -> its running sale. Absent means no sale. */
   salesByModelId?: Record<
     number,
@@ -26,10 +28,12 @@ export const useModelCardContext = () => {
  */
 /**
  * The sale for ONE model, for a card rendered outside any provider — home blocks, collections, related
- * models, search results. tRPC batches concurrent queries into a single HTTP request, so a grid of cards
- * still costs one round trip, and the per-model result is cached by react-query for the whole page.
+ * models, search results.
  *
- * A container that already has the map (the main feed) passes it down instead, and this stays disabled.
+ * ⚠️ This is one request PER CARD. tRPC only batches for an authenticated browser (see shouldBatch in
+ * utils/trpc.ts), so an anonymous grid issues one XHR each, and even when batched the URL cap fits about
+ * 24 ops. A container that can supply the map should pass `salesByModelId` and skip this entirely —
+ * that is why the skip flag is "a provider owns this", not "the provider's data has arrived".
  */
 export const useModelSaleBadge = (modelId: number, skip: boolean) => {
   const { data } = trpc.model.getActiveSales.useQuery(
@@ -53,10 +57,11 @@ export const ModelCardContextProvider = ({
   useModelVersionRedirect,
   activeBaseModels,
   salesByModelId,
+  hasSaleProvider,
 }: Context & { children: ReactNode }) => {
   const value = useMemo(
-    () => ({ useModelVersionRedirect, activeBaseModels, salesByModelId }),
-    [useModelVersionRedirect, activeBaseModels, salesByModelId]
+    () => ({ useModelVersionRedirect, activeBaseModels, salesByModelId, hasSaleProvider }),
+    [useModelVersionRedirect, activeBaseModels, salesByModelId, hasSaleProvider]
   );
   return <ModelCardContext.Provider value={value}>{children}</ModelCardContext.Provider>;
 };

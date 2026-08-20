@@ -2,6 +2,7 @@ import { Button, Text } from '@mantine/core';
 import { IconArrowRight, IconTag } from '@tabler/icons-react';
 import React from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
+import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useQueryModels } from '~/components/Model/model.utils';
@@ -30,6 +31,10 @@ export const OnSaleSection = ({ user }: ProfileSectionProps) => {
     { keepPreviousData: true, enabled: inView }
   );
 
+  // Every card in this section is on sale by definition, so without the shared map it was the worst
+  // offender: one request per card, 32 of them.
+  const salesByModelId = useModelSaleBadges(models.map((m) => m.id));
+
   const isNullState = !isLoading && !models.length;
 
   if (isNullState) return null;
@@ -54,7 +59,7 @@ export const OnSaleSection = ({ user }: ProfileSectionProps) => {
             title="On sale"
             icon={<IconTag />}
             action={
-              <Link legacyBehavior href={`/user/${user.username}/models`} passHref>
+              <Link legacyBehavior href={`/user/${user.username}/models?onSale=true`} passHref>
                 <Button
                   h={34}
                   component="a"
@@ -66,11 +71,13 @@ export const OnSaleSection = ({ user }: ProfileSectionProps) => {
               </Link>
             }
           >
-            <ShowcaseGrid itemCount={models.length} rows={2}>
-              {models.map((model) => (
-                <ModelCard data={model} key={model.id} />
-              ))}
-            </ShowcaseGrid>
+            <ModelCardContextProvider hasSaleProvider salesByModelId={salesByModelId}>
+              <ShowcaseGrid itemCount={models.length} rows={2}>
+                {models.map((model) => (
+                  <ModelCard data={model} key={model.id} />
+                ))}
+              </ShowcaseGrid>
+            </ModelCardContextProvider>
           </ProfileSection>
         ))}
     </div>

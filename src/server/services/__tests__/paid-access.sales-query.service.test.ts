@@ -76,6 +76,9 @@ describe('getSalesFor — which sales reach which version', () => {
     const where = saleItemFindMany.mock.calls[0][0].where;
     expect(where.modelVersionId).toEqual({ in: [1] });
     expect(where.sale.endsAt.gt).toBeInstanceOf(Date);
+    // The BOUND, not just its shape: asserting instanceof passed for `new Date(0)`, which loads and
+    // caches every sale ever run.
+    expect(Math.abs(where.sale.endsAt.gt.getTime() - Date.now())).toBeLessThan(5_000);
     expect(where.sale.OR).toEqual([{ canceledAt: null }, { canceledAt: { gt: expect.any(Date) } }]);
   });
 
