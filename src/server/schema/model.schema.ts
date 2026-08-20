@@ -320,11 +320,18 @@ export type ModelMeta = Partial<{
    * XGuard text-moderation forensics. Surfaced to moderators through
    * `getModelModerationDetail`; stripped from every client-facing path by
    * `stripMinorHashMeta`. Sibling of `profanity`, not a replacement — a moderator
-   * looking at an older model needs to know which detector produced the terms.
+   * looking at an older model needs to know which detector produced the finding.
+   *
+   * Scores rather than matched terms, because that is what these policies return:
+   * the labels v1 acts on are LLM-scored (they come back with `topToken` /
+   * `policyHash` and no `matchedTerms` key at all), so a term list would be
+   * permanently empty. `matchedTerms` is kept for the keyword-backed policies that
+   * do populate it, and is empty for the rest.
    */
   textModeration: {
+    /** The labels that triggered, with the score and threshold behind each. */
+    labels: { label: string; score: number; threshold: number }[];
     matchedTerms: string[];
-    triggeredLabels: string[];
     scannedAt: string;
   };
   minorFlagSnapshot: MinorFlagSnapshot;

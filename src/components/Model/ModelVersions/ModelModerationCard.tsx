@@ -185,12 +185,20 @@ export function ModelModerationCard({
                         Text scan {formatDate(data.textModeration.scannedAt)}
                       </Text>
                       <Group gap={4}>
-                        {data.textModeration.triggeredLabels.map((label) => (
-                          <Badge key={label} size="sm" radius="xl" color="orange" variant="light">
-                            {label}
+                        {data.textModeration.labels.map((l) => (
+                          <Badge key={l.label} size="sm" radius="xl" color="orange" variant="light">
+                            {l.label} {l.score.toFixed(2)}
                           </Badge>
                         ))}
                       </Group>
+                      {/* How close a call it was. The labels v1 acts on are LLM-scored, so
+                          the score against its own threshold is the only detail available —
+                          these policies return no matched terms. */}
+                      <Text size="xs" c="dimmed">
+                        {data.textModeration.labels
+                          .map((l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`)
+                          .join(' · ')}
+                      </Text>
                       {data.textModeration.matchedTerms.length > 0 && (
                         <Group gap={4}>
                           {data.textModeration.matchedTerms.map((m, i) => (

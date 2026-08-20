@@ -130,6 +130,41 @@ export function triggeredLabelKeys(
 }
 
 /**
+ * Score and threshold for each of the given labels, from `results[]`.
+ *
+ * This is the forensic payload that actually exists. The LLM-scored policies return
+ * `topToken` / `policyHash` and no `matchedTerms` key at all, so a term list is empty
+ * for them; the score against its own threshold is what tells a reviewer how close a
+ * call it was.
+ *
+ * A label present only in the scan's `triggeredLabels` and absent from `results[]`
+ * has no score to report and is skipped — recording a fabricated 0 would read as a
+ * near-miss when it is actually a missing measurement.
+ */
+export function triggeredLabelDetails(
+  output: ScanOutputLike | null | undefined,
+  triggeredKeys: ReadonlySet<string>
+): { label: string; score: number; threshold: number }[] {
+  const seen = new Set<string>();
+  const details: { label: string; score: number; threshold: number }[] = [];
+
+  for (const entry of asResults(output)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const label = readLabel(entry);
+    if (!label || !triggeredKeys.has(label) || seen.has(label)) continue;
+
+    const { score, threshold } = entry;
+    if (typeof score !== 'number' || !Number.isFinite(score)) continue;
+    if (typeof threshold !== 'number' || !Number.isFinite(threshold)) continue;
+
+    seen.add(label);
+    details.push({ label, score, threshold });
+  }
+
+  return details;
+}
+
+/**
  * Union of the text terms matched by the given labels. `results[]` covers every
  * submitted label, not only the ones that fired, so filtering on `triggeredKeys` is
  * load-bearing rather than defensive.

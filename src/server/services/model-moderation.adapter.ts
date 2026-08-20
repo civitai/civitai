@@ -8,8 +8,10 @@ import type { ModerationAdapter } from '~/server/services/entity-moderation.serv
 import {
   collectMatchedTerms,
   missingRequestedLabels,
+  triggeredLabelDetails,
   triggeredLabelKeys,
 } from '~/server/services/moderation-label-helpers';
+import { recordModelTextModerationOutcome } from '~/server/prom/model-moderation.metrics';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -150,12 +152,16 @@ function submitModelScan({
 async function recordForensics({
   entityId,
   matchedTerms,
-  triggeredLabels,
+  labels,
 }: {
   entityId: number;
   matchedTerms: string[];
-  triggeredLabels: string[];
+  labels: { label: string; score: number; threshold: number }[];
 }) {
+  // Bound as TEXT and cast in SQL rather than bound as jsonb — binding a jsonb
+  // parameter breaks when two copies of @prisma/client are in the bundle.
+  const labelsJson = JSON.stringify(labels);
+
   // Database-side jsonb merge, not a read-modify-write of the whole object. A
   // `minorFlagSnapshot` written between the read and the write would otherwise be
   // erased, and that key is what gates the owner's appeal flow.
@@ -163,8 +169,8 @@ async function recordForensics({
     UPDATE "Model" m
     SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
       'textModeration', jsonb_build_object(
+        'labels', ${labelsJson}::jsonb,
         'matchedTerms', to_jsonb(${matchedTerms}::text[]),
-        'triggeredLabels', to_jsonb(${triggeredLabels}::text[]),
         'scannedAt', now()
       )
     )
@@ -235,10 +241,11 @@ export const modelModerationAdapter: ModerationAdapter = {
       0,
       MAX_PERSISTED_MATCHED_TERMS
     );
+    const labels = triggeredLabelDetails(output, triggered);
 
     // Recorded whether or not the flip happens, matching the profanity branch: a moderator
     // reviewing a model they already ruled on still needs to see that the scan disagreed.
-    await recordForensics({ entityId, matchedTerms, triggeredLabels });
+    await recordForensics({ entityId, matchedTerms, labels });
 
     const stored = model.lockedProperties ?? [];
     // A stored lock is a moderator's call: minor-flagging sets nsfw:false and locks it.
@@ -248,8 +255,12 @@ export const modelModerationAdapter: ModerationAdapter = {
       // Gated on the level actually being wrong: `updateModelNsfwLevels` matches every
       // `nsfw = true` row unconditionally, so calling it on a correct row still writes,
       // fires the model row trigger, and queues a Meilisearch re-render.
-      if (model.nsfw && model.nsfwLevel !== nsfwBrowsingLevelsFlag)
+      if (model.nsfw && model.nsfwLevel !== nsfwBrowsingLevelsFlag) {
         await updateModelNsfwLevels([entityId]);
+        recordModelTextModerationOutcome('repaired');
+      } else {
+        recordModelTextModerationOutcome('skipped_locked');
+      }
       return;
     }
 
@@ -266,6 +277,7 @@ export const modelModerationAdapter: ModerationAdapter = {
     `;
 
     if (!flipped) {
+      recordModelTextModerationOutcome('declined_race');
       logToAxiom({
         name: 'model-text-moderation',
         type: 'warning',
@@ -300,12 +312,17 @@ export const modelModerationAdapter: ModerationAdapter = {
       )
       .catch(() => null);
 
+    recordModelTextModerationOutcome('applied');
+
     logToAxiom({
       name: 'model-text-moderation',
       type: 'info',
       message: 'nsfw flag applied',
       modelId: entityId,
       triggeredLabels,
+      // Scores, not just names: during a ramp the question is whether flags are
+      // landing near their thresholds (policy needs tuning) or far above them.
+      labels,
     }).catch(() => null);
   },
 

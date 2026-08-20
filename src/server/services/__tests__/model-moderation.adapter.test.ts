@@ -11,7 +11,14 @@ import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constan
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as FliptClient from '~/server/flipt/client';
 
-const { entityChangesMock } = vi.hoisted(() => ({ entityChangesMock: vi.fn() }));
+const { entityChangesMock, outcomeMock } = vi.hoisted(() => ({
+  entityChangesMock: vi.fn(),
+  outcomeMock: vi.fn(),
+}));
+
+vi.mock('~/server/prom/model-moderation.metrics', () => ({
+  recordModelTextModerationOutcome: outcomeMock,
+}));
 
 vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
@@ -103,6 +110,7 @@ describe('modelModerationAdapter.applyResult', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     entityChangesMock.mockResolvedValue(undefined);
+    outcomeMock.mockReturnValue(undefined);
     flags({ [SUBMIT_FLAG]: true, [APPLY_FLAG]: true });
     dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow());
     // Rows affected. The flip is guarded in its own WHERE, so 0 means "a lock landed first".
@@ -192,7 +200,10 @@ describe('modelModerationAdapter.applyResult', () => {
 
       await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
 
-      expect(forensicsCall()?.values).toEqual([['matched phrase'], ['explicit'], 1]);
+      expect(JSON.parse(forensicsCall()?.values[0] as string)).toEqual([
+        { label: 'explicit', score: 0.9, threshold: 0.5 },
+      ]);
+      expect(forensicsCall()?.values[1]).toEqual(['matched phrase']);
     });
 
     // A prior callback may have flipped nsfw and died before recomputing levels; a replayed
@@ -302,7 +313,10 @@ describe('modelModerationAdapter.applyResult', () => {
     it('records matched terms and the triggered labels', async () => {
       await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
 
-      expect(forensicsCall()?.values).toEqual([['matched phrase'], ['suggestive'], 1]);
+      expect(JSON.parse(forensicsCall()?.values[0] as string)).toEqual([
+        { label: 'suggestive', score: 0.9, threshold: 0.5 },
+      ]);
+      expect(forensicsCall()?.values[1]).toEqual(['matched phrase']);
     });
 
     // The merge happens in the database. A read-modify-write of the whole object would erase a
@@ -338,7 +352,7 @@ describe('modelModerationAdapter.applyResult', () => {
         } as never,
       });
 
-      expect((forensicsCall()?.values[0] as string[]).length).toBe(50);
+      expect((forensicsCall()?.values[1] as string[]).length).toBe(50);
     });
 
     // `okOutput` builds `results` from exactly `triggeredLabels`, so every result there is a
@@ -384,7 +398,7 @@ describe('modelModerationAdapter.applyResult', () => {
         } as never,
       });
 
-      expect([...(forensicsCall()?.values[0] as string[])].sort()).toEqual([
+      expect([...(forensicsCall()?.values[1] as string[])].sort()).toEqual([
         'explicit term',
         'suggestive term',
       ]);
@@ -420,8 +434,10 @@ describe('modelModerationAdapter.applyResult', () => {
       });
 
       expect(flipCall()).toBeDefined();
-      expect(forensicsCall()?.values[0]).toEqual(['results-only term']);
-      expect(forensicsCall()?.values[1]).toEqual(['explicit']);
+      expect(forensicsCall()?.values[1]).toEqual(['results-only term']);
+      expect(JSON.parse(forensicsCall()?.values[0] as string)).toEqual([
+        { label: 'explicit', score: 0.9, threshold: 0.5 },
+      ]);
     });
   });
 
@@ -743,5 +759,83 @@ describe('resolveBackfillCursor', () => {
     expect(
       resolveBackfillCursor({ windowEnd: 50_000, maxId: 2_862_887, truncated: true })
     ).toBe(50_000);
+  });
+});
+
+// A `Succeeded` EntityModeration row looks identical whichever of these happened, so without
+// the counter a ramp cannot tell "flag rate rose" from "half of them are being declined" —
+// two problems needing opposite responses.
+describe('apply-stage outcome metric', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    entityChangesMock.mockResolvedValue(undefined);
+    outcomeMock.mockReturnValue(undefined);
+    flags({ [SUBMIT_FLAG]: true, [APPLY_FLAG]: true });
+    dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow());
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+  });
+
+  it('counts a flag that was applied', async () => {
+    await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
+    expect(outcomeMock).toHaveBeenCalledWith('applied');
+  });
+
+  it('counts a model a moderator had already ruled on', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow({ lockedProperties: ['nsfw'] }));
+    await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
+    expect(outcomeMock).toHaveBeenCalledWith('skipped_locked');
+  });
+
+  it('counts a level repaired after an earlier callback died mid-apply', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(
+      modelRow({ nsfw: true, nsfwLevel: 1, lockedProperties: ['nsfw'] })
+    );
+    await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
+    expect(outcomeMock).toHaveBeenCalledWith('repaired');
+  });
+
+  it('counts a lock that landed between the read and the write', async () => {
+    dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: readonly string[]) =>
+      strings.join('?').includes('SET nsfw = TRUE') ? 0 : 1
+    );
+    await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
+    expect(outcomeMock).toHaveBeenCalledWith('declined_race');
+  });
+
+  // Nothing reached the apply stage, so nothing should be counted — otherwise the
+  // denominator is every callback rather than every candidate flag.
+  it('counts nothing when no level label triggered', async () => {
+    await modelModerationAdapter.applyResult?.(applyArgs(['Scat']));
+    expect(outcomeMock).not.toHaveBeenCalled();
+  });
+
+  it('counts nothing while the apply flag is off', async () => {
+    flags({ [SUBMIT_FLAG]: true, [APPLY_FLAG]: false });
+    await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
+    expect(outcomeMock).not.toHaveBeenCalled();
+  });
+});
+
+// The labels v1 acts on are LLM-scored and return no matchedTerms key at all, so a forensics
+// payload built only from terms is permanently empty — which is what the moderator card would
+// have rendered. Verified against live XGuard on 2026-08-20.
+describe('triggeredLabelDetails', () => {
+  it('reports score and threshold for triggered labels only', async () => {
+    const { triggeredLabelDetails } = await import('~/server/services/moderation-label-helpers');
+    const out = {
+      results: [
+        { label: 'Suggestive', score: 0.9237, threshold: 0.5, triggered: true },
+        { label: 'NSFW', score: 0.6623, threshold: 0.75, triggered: false },
+      ],
+    };
+    expect(triggeredLabelDetails(out, new Set(['suggestive']))).toEqual([
+      { label: 'suggestive', score: 0.9237, threshold: 0.5 },
+    ]);
+  });
+
+  // Recording a fabricated 0 would read as a near-miss when it is a missing measurement.
+  it('skips a label that has no score in results[]', async () => {
+    const { triggeredLabelDetails } = await import('~/server/services/moderation-label-helpers');
+    expect(triggeredLabelDetails({ results: [] }, new Set(['suggestive']))).toEqual([]);
   });
 });
