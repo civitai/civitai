@@ -33,11 +33,11 @@ two tools side by side, which is a comparison that stops being possible today. A
 
 ## P0 — blocking, needed before the Retool shutdown
 
-- **Repoint the main app's "lookup user" button off Retool** — reported again this round: the profile
-  action still opens Retool. Not a new item and not a second box: it is the `NEXT_PUBLIC_USER_LOOKUP_URL`
-  half of **[Repoint the four lookup env vars](#p0--blocking-needed-before-the-retool-shutdown-1)**, first
-  raised 08-17 and carried below. Recorded here because an independent re-report is what says an item is
-  still live — and this one breaks the moment Retool stops answering.
+- **Repoint the main app's "lookup user" button off Retool** — ✅ done, see
+  **[Repoint the four lookup env vars](#p0--blocking-needed-before-the-retool-shutdown-1)** below. Not a
+  new item and not a second box: it is the `NEXT_PUBLIC_USER_LOOKUP_URL` half of that one, first raised
+  08-17. Recorded here because an independent re-report is what says an item is still live — and this one
+  would have broken the moment Retool stopped answering.
 
 - [ ] **A strike is issued but never appears.** Issuing a strike from User Lookup marks the account as
       carrying an active strike, but the Strikes section on both Basic Info and Notes & Strikes shows none
@@ -85,11 +85,11 @@ two tools side by side, which is a comparison that stops being possible today. A
       `<mod app>/retool/image-lookup?q=<imageId>` and `<mod app>/retool/article-lookup?q=<articleId>`.
       So this is two menu items, not a feature.
 
-      **One thing to settle first.** The existing moderator entry points are one env var per target
-      (`NEXT_PUBLIC_USER_LOOKUP_URL`, `…_CHAT_`, `…_POST_`, `…_MODEL_`) — adding image and article makes
-      six variables that all differ by a path segment. Worth deciding whether these two follow that
-      pattern or whether all six collapse to one moderator-app base URL, since the four existing ones are
-      already being repointed (see the P0 above) and that is the cheap moment to change the shape.
+      **The thing this asked to settle is settled.** It proposed choosing between one env var per target
+      and a single moderator-app base URL; the repoint P0 above took the second, so there is now one
+      `NEXT_PUBLIC_MODERATOR_APP_URL` and the per-target paths live in
+      [`~/shared/constants/moderator-app`](../../src/shared/constants/moderator-app.ts). Adding image and
+      article is two menu items plus two path helpers there, and no new configuration.
 
 - [ ] **Put Buzz send/deduct on the dashboard audit list.** The request came with a restatement of an
       existing decision — that sending and removing Buzz should be limited to two people — which was
@@ -105,7 +105,13 @@ two tools side by side, which is a comparison that stops being possible today. A
 
 ## Shipped this round
 
-Nothing yet. The two `e14a5428dd` references above are work that landed *before* this round was triaged
+- **The four lookup env vars are off Retool**, closing the carried P0 and the re-reported "lookup user"
+  button with it. The one that needed code rather than config was **Lookup Post**: `3239ac735b` deleted it
+  believing the spoke had no post page, when Bulk Image Manager is that page. It is back on the post
+  context menu, and the empty `Moderator` label that deletion left behind is no longer empty. Full
+  per-target breakdown in the carried P0 below.
+
+The two `e14a5428dd` references above are work that landed *before* this round was triaged
 and that plausibly resolves parts of it — they are marked open deliberately, because "probably fixed by
 something adjacent" is not the same as verified, and the verification here needs a `/admin` pass and a
 moderator who is not an admin.
@@ -123,10 +129,20 @@ round still reads as the record of what was reported that day.
 
 ## P0 — blocking, needed before the Retool shutdown
 
-- [ ] **Repoint the four lookup env vars off Retool** *(first raised 08-17)* — handover blocker
-      [5b](retool-migration-handover.md). Config only; post and model both target Bulk Image Manager,
-      which is ported. **This is the same change as the "lookup user" button re-reported above** — one
-      task, one box.
+- [x] **Repoint the four lookup env vars off Retool** *(first raised 08-17)* — handover blocker
+      [5b](retool-migration-handover.md). **This is the same change as the "lookup user" button
+      re-reported above** — one task, one box. It did not end up as config only:
+
+      - **user** — `NEXT_PUBLIC_USER_LOOKUP_URL` replaced by `NEXT_PUBLIC_MODERATOR_APP_URL`, which
+        carries a default, so the item works with nothing provisioned (`3239ac735b`).
+      - **post** — "Lookup Post" was *removed* by `3239ac735b` on the reasoning that the spoke has no
+        post page. That was wrong: Bulk Image Manager is the post page. Re-added, pointing at
+        `<mod app>/retool/bulk-image-manager?source=post&q=<postId>`. Note the param shape — the spoke
+        takes `source` + `q`, not the `postId` Retool used.
+      - **model** — stays removed. Explicitly waived: Bulk Image Manager sourced by model is not what
+        the old Retool model lookup did, and nobody asked for it back.
+      - **chat** — `NEXT_PUBLIC_CHAT_LOOKUP_URL` had no reader left in `src/`; its only call site went
+        with the reports page in `95157404b0`. Removed from `client-schema.ts` rather than repointed.
 - [ ] **Finish the environment and database steps** *(first raised 08-17)* — handover blockers
       [#1–#4](retool-migration-handover.md). Narrower than that list reads: `CIVITAI_MOD_API_KEY` is
       retired and must NOT be provisioned, so what remains is `RETOOL_DATABASE_URL` per deployed

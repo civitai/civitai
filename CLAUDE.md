@@ -433,12 +433,32 @@ from Defender real-time scanning, and a tree outside it silently runs slow):
 
 ```bash
 git fetch origin main
-git worktree add <repos-root>/wt-<name> -b <branch> origin/main   # origin/main, not a stale local main
+git worktree add <repos-root>/wt-<name> -b <branch> origin/main   # both args required — see below
 git -C <repos-root>/model-share submodule sync --recursive
 git -C <repos-root>/wt-<name> submodule update --init event-engine-common
 printf 'use flake\n' > <repos-root>/wt-<name>/.envrc && direnv allow   # from inside the worktree
 pnpm install
 ```
+
+**Always `-b <branch> origin/main`. Never the shorthand.** Both halves of that argument are
+load-bearing and neither is optional:
+
+- **`-b <branch>`** creates a new branch and **refuses if the name already exists**, which is the
+  property that makes this safe to run without checking first. Without `-b`,
+  `git worktree add <path> <existing-branch>` checks out a branch someone else may be building on.
+- **`origin/main`** is the base. Without it the new branch forks from *this* worktree's `HEAD` — the
+  local `main` you last pulled, not the real one.
+
+🔴 **`git worktree add <path>` with neither is the trap**, because it looks like it worked: git
+silently invents a branch named after the directory's basename and forks it from local `HEAD`. You
+get a new branch, so nothing errors, and the staleness only surfaces later as conflicts against a
+`main` that moved. Tell from the outside: **branch name identical to the directory name** is the
+signature. That is how `worktrees/moderator-feedback` was created (2026-08-20) — branch `moderator-feedback`
+based at `74bd61e6d8`, which was the primary worktree's `main`, while `origin/main` was already three
+commits further on at `e21fc62eea`.
+
+`git fetch origin main` on the first line is what keeps `origin/main` honest — the trap is not
+avoided by remembering the flags if the ref they name is itself stale.
 
 **Remove one when its PR merges** — don't hand-roll this, and don't reach for `git worktree remove`
 (it refuses whenever `event-engine-common` is checked out):
