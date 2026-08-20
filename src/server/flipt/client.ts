@@ -178,6 +178,9 @@ export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;
 export const isFliptSync = flipt.isEnabledSync;
 export const ensureFliptInitialized = flipt.ensureInitialized;
+// Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
+// caches (no `this`), so unbinding here is safe — same as the accessors above.
+export const getFliptCacheStats = flipt.getCacheStats;
 
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`
