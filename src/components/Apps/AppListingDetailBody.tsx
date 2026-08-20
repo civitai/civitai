@@ -26,6 +26,7 @@ import {
   IconFlag,
   IconInfoCircle,
   IconPencil,
+  IconPlugConnected,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
@@ -45,6 +46,7 @@ import {
   type DetailActionMode,
   getDetailPrimaryAction,
   getOwnerEditHref,
+  shouldShowConnectCapability,
   shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
@@ -1114,6 +1116,27 @@ export function AppListingDetailBody({
               <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />}>
                 This app runs entirely off-platform — no Civitai install, account access, or
                 permissions.
+              </Alert>
+            )}
+
+            {/* The POSITIVE half of the same permission signal (#4207).
+                🔴 These two Alerts are MUTUALLY EXCLUSIVE by construction, not by
+                convention: `shouldShowConnectCapability` is the exact complement
+                of `shouldShowOffsiteDisclosure` over one shared domain, so
+                exactly one renders for an off-site listing with a destination and
+                neither renders otherwise. Do not add a third condition here, and
+                do not inline either predicate — the disclosure makes a SECURITY
+                claim and the reason it lives in a pure function is that inline in
+                this JSX nothing could test it. The relationship (never both,
+                never neither) is pinned as a single test in
+                `__tests__/appListingDetailView.test.ts`.
+                🔴 This is a CAPABILITY, not a kind: it selects a sentence, never
+                a badge or a CTA. #4200 removed the off-site sub-kind and this
+                must not reintroduce it by the back door. */}
+            {shouldShowConnectCapability(detail.kindData) && (
+              <Alert variant="light" color="blue" icon={<IconPlugConnected size={16} />}>
+                This app runs off-platform, but can connect to your Civitai account — you&apos;ll be
+                asked to sign in and approve access.
               </Alert>
             )}
           </Stack>
