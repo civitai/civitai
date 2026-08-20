@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { HubSourcePanel } from '~/components/Hubs/HubSourcePanel';
 import { HubsLayout } from '~/components/Hubs/HubsLayout';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { Meta } from '~/components/Meta/Meta';
@@ -92,13 +91,6 @@ export default Page(
                 sources: hub.sources.map(({ id: _id, ...source }) => source),
               });
             }}
-          />
-
-          <HubSourcePanel
-            hubId={hub.id}
-            name={hub.name}
-            maxSources={hubLimits.sourcesPerHub}
-            sources={hub.sources.map(({ id: _id, ...source }) => source)}
           />
 
           {!hasSources ? (

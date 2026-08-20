@@ -6,6 +6,7 @@ import {
   IconPlus,
   IconSearch,
 } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -13,6 +14,15 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
+import { hubLimits } from '~/server/schema/user-hub.schema';
+// Loaded on demand: the panel pulls QuickSearchDropdown, which statically imports
+// react-instantsearch and instantsearch.js — ~100KB gz that a feed route has no
+// use for until you edit sources. AppHeader keeps AutocompleteSearch out of the
+// shared bundle the same way.
+const HubSourcePanel = dynamic(
+  () => import('~/components/Hubs/HubSourcePanel').then((m) => m.HubSourcePanel),
+  { ssr: false }
+);
 import { trpc } from '~/utils/trpc';
 import classes from './HubsLayout.module.scss';
 
@@ -30,6 +40,14 @@ function HubsSidebarContent({ activeHubId }: { activeHubId?: number }) {
   const [search, setSearch] = useState('');
 
   const { data: hubs = [] } = trpc.userHub.getAll.useQuery();
+
+  // The sources belong to the hub you are on, so they live beside it rather than
+  // above the feed — the position the 2026-08-19 meeting moved away from, because
+  // a full-width source list "covers up like a third of your screen".
+  const { data: activeHub } = trpc.userHub.getById.useQuery(
+    { id: activeHubId as number },
+    { enabled: !!activeHubId }
+  );
 
   const create = trpc.userHub.upsert.useMutation({
     onSuccess: async (hub) => {
@@ -64,6 +82,15 @@ function HubsSidebarContent({ activeHubId }: { activeHubId?: number }) {
           leftSection={<IconSearch size={14} />}
           value={search}
           onChange={(event) => setSearch(event.currentTarget.value)}
+        />
+      )}
+
+      {activeHubId && activeHub && (
+        <HubSourcePanel
+          hubId={activeHub.id}
+          name={activeHub.name}
+          maxSources={hubLimits.sourcesPerHub}
+          sources={activeHub.sources.map(({ id: _id, ...source }) => source)}
         />
       )}
 
