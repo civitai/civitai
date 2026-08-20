@@ -74,7 +74,7 @@ describe('🔴 the screenshot gallery fill rule is declared AND wired', () => {
     'Without `.gallery > :last-child:nth-child(odd) { grid-column: 1 / -1 }` a listing ' +
     'with ONE screenshot renders it at half the main column with dead space beside it, ' +
     'and so does the trailing tile of any odd count. The rule is written as a ' +
-    'structural selector on purpose: ScreenshotTile hides itself on a load error, so ' +
+    'structural selector on purpose: a tile is dropped on a load error, so ' +
     'the rendered tile count is not screenshots.length and cannot be computed before ' +
     'render. See the stylesheet header.';
 
@@ -209,7 +209,7 @@ describe('🔴 the screenshot gallery fill rule is declared AND wired', () => {
     expect(
       body,
       'ScreenshotGallery is computing its column count from the screenshots array. ' +
-        'ScreenshotTile hides ITSELF on a load error, so that number is not the number ' +
+        'a tile is DROPPED on a load error, so that number is not the number ' +
         'of tiles the browser ends up with — the fill rule is a CSS structural selector ' +
         'precisely so it does not have to know. See the stylesheet header.'
     ).not.toMatch(/cols=\{[^}]*shots\b/);

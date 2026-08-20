@@ -280,6 +280,28 @@ export function OffsiteReviewQueue() {
  * resetting its approve/reject UI state — mirrors `OnsiteReviewModal`). The body is
  * exported so the combined code+media review surface can re-host it WITHOUT this
  * `<Modal>` shell.
+ *
+ * 🔴 THE `Modal.Stack` WRAPPER IS LOAD-BEARING, NOT DECORATION, AND IT IS HALF OF A
+ * SEAM. The listing PREVIEW inside this modal renders `AppListingDetailBody`, whose
+ * screenshot gallery opens a full-screen `AppListingScreenshotViewer` — a second
+ * `<Modal>`, nested inside this one. Mantine's Esc handling is a per-Modal `window`
+ * keydown listener in CAPTURE phase (`ModalBase/use-modal.mjs`), so with no
+ * coordination BOTH handlers fire for one key: dismissing the lightbox also closed
+ * THIS modal, discarding the `rejectionReason` / `approvalNotes` the moderator was
+ * typing (local state in `OffsiteReviewModalBody`, and `keepMounted` is false so it is
+ * gone) along with their place in the queue. Measured, not theorised.
+ *
+ * `Modal.Stack` + `stackId` makes Mantine gate instead of race: `closeOnEscape` and
+ * `trapFocus` become `ctx.currentId === stackId` (`Modal.mjs:53-57`), so only the
+ * top-most member of the stack responds to Escape, and the key is handed back to this
+ * modal the moment the viewer closes.
+ *
+ * 🔴 BOTH HALVES ARE REQUIRED AND NEITHER ERRORS WITHOUT THE OTHER — the viewer's
+ * `stackId` is inert with no `Modal.Stack` ancestor, and this wrapper does nothing on
+ * its own. That is what makes it a seam rather than two settings, and it is pinned as
+ * one in `__tests__/appListingScreenshotViewerWiring.test.ts`. Do not remove the
+ * wrapper because "there is only one modal here" — the second one is three components
+ * down, inside the preview.
  */
 export function OffsiteReviewModal({
   request,
@@ -295,41 +317,44 @@ export function OffsiteReviewModal({
   const busyRef = useRef(false);
   const isOnsite = request?.kind === 'onsite';
   return (
-    <Modal
-      opened={!!request}
-      onClose={() => {
-        if (busyRef.current) return;
-        onClose();
-      }}
-      title={
-        request ? (
-          <Group gap={6}>
-            <Text fw={600}>{request.slug}</Text>
-            <Badge
-              color={isOnsite ? 'teal' : 'grape'}
-              size="sm"
-              variant="light"
-              data-testid="apps-offsite-kind-badge"
-            >
-              {isOnsite ? 'listing media' : 'external'}
-            </Badge>
-          </Group>
-        ) : null
-      }
-      size="lg"
-      centered
-    >
-      {request && (
-        <OffsiteReviewModalBody
-          key={request.id}
-          request={request}
-          onClose={onClose}
-          onActioned={onActioned}
-          readOnly={readOnly}
-          busyRef={busyRef}
-        />
-      )}
-    </Modal>
+    <Modal.Stack>
+      <Modal
+        stackId="offsite-review"
+        opened={!!request}
+        onClose={() => {
+          if (busyRef.current) return;
+          onClose();
+        }}
+        title={
+          request ? (
+            <Group gap={6}>
+              <Text fw={600}>{request.slug}</Text>
+              <Badge
+                color={isOnsite ? 'teal' : 'grape'}
+                size="sm"
+                variant="light"
+                data-testid="apps-offsite-kind-badge"
+              >
+                {isOnsite ? 'listing media' : 'external'}
+              </Badge>
+            </Group>
+          ) : null
+        }
+        size="lg"
+        centered
+      >
+        {request && (
+          <OffsiteReviewModalBody
+            key={request.id}
+            request={request}
+            onClose={onClose}
+            onActioned={onActioned}
+            readOnly={readOnly}
+            busyRef={busyRef}
+          />
+        )}
+      </Modal>
+    </Modal.Stack>
   );
 }
 

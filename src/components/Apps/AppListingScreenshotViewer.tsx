@@ -1,4 +1,4 @@
-import { ActionIcon, Center, Group, Modal, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Modal, Text, Tooltip } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { useEffect } from 'react';
@@ -29,10 +29,19 @@ import type { ListingGalleryScreenshot } from '~/server/schema/blocks/app-listin
  *     open), `closeOnEscape`, and `returnFocus` — all defaulting to `true`
  *     (`Modal.mjs:26-37`). None of it is hand-rolled here.
  *   - **The full-screen media chrome** — `fullScreen` + `withOverlay={false}` + the
- *     `styles={{ inner, content, header, body }}` block — is copied verbatim from
- *     `TrainingSampleViewer` / `GeneratedOutputLightbox` / `Model3DLightbox`, which
- *     are the three existing lightboxes and share it identically. It is the repo's
- *     de-facto full-screen-media convention; it has simply never been extracted.
+ *     `styles={{ inner, content, body }}` block — is taken from
+ *     `TrainingSampleViewer` / `GeneratedOutputLightbox` / `Model3DLightbox`, the
+ *     three existing lightboxes, which set those three keys identically. It is the
+ *     repo's de-facto full-screen-media convention; it has simply never been
+ *     extracted. 🔴 THIS VIEWER DIVERGES IN ONE KEY, DELIBERATELY: all three also set
+ *     `header: { position: 'absolute', right: 0, zIndex: 10 }` and this one does not,
+ *     because none of them renders a `title` — their header holds a close button and
+ *     nothing else, so lifting it out of the flow buys the media its full height. This
+ *     viewer's header carries the dialog's visible label, which has to stay readable
+ *     and in flow; absolute-positioning it would float the listing's name over the
+ *     screenshot. (An earlier version of this bullet said the block was "copied
+ *     verbatim" and that all three "share it identically" — the rendering was right,
+ *     the claim was not.)
  *   - **`useHotkeys` from `@mantine/hooks`** for the arrow keys — the convention at
  *     every arrow-nav site in the repo (`TrainingSampleViewer.tsx:154`,
  *     `GeneratedOutputLightbox.tsx:32`, `ImageDetailProvider`). There is no shared
@@ -168,6 +177,29 @@ export function AppListingScreenshotViewer({
       onClose={onClose}
       fullScreen
       withOverlay={false}
+      // 🔴 STACK MEMBERSHIP — this is what stops ONE Escape closing this viewer AND
+      // whatever dialog it is nested inside. `preview` renders this body inside the
+      // moderator review `Modal` (`OffsiteReviewQueue`'s `OffsiteReviewModal`), and
+      // Mantine's Esc handling is a per-Modal `window` keydown listener in CAPTURE
+      // phase (`ModalBase/use-modal.mjs`), so by default every open Modal's handler
+      // fires for the same key: the moderator lost the rejection reason they were
+      // typing, and their place in the queue, by dismissing a lightbox.
+      //
+      // `Modal.Stack` is Mantine's answer and it gates rather than races —
+      // `closeOnEscape` and `trapFocus` become `ctx.currentId === stackId`
+      // (`Modal.mjs:53-57`), so only the top-most member responds. The ordering trick
+      // it replaces cannot work here: `useWindowEvent` deps are `[type, listener]` and
+      // Mantine passes a NEW inline arrow every render, so each Modal re-registers its
+      // listener on every render and "who runs first" is whatever rendered last.
+      //
+      // 🔴 It degrades cleanly where there is no stack. `stackProps` is applied only
+      // `if (ctx && stackId)`, and on the public `/apps/store-preview/<slug>` page
+      // there is no `Modal.Stack` ancestor — so `ctx` is undefined, this prop is inert,
+      // and the viewer behaves exactly as it did. The COUNTERPART lives in
+      // `OffsiteReviewQueue`, which must wrap its modal in a `Modal.Stack`; that pairing
+      // is a seam, so it is pinned as one in
+      // `__tests__/appListingScreenshotViewerWiring.test.ts`.
+      stackId="app-listing-screenshot-viewer"
       // Labels the dialog (Mantine renders it as the `aria-labelledby` target). Kept
       // to the LISTING rather than the caption so the dialog's accessible name is
       // stable across navigation — a name that changes under the user is a worse
@@ -175,67 +207,94 @@ export function AppListingScreenshotViewer({
       // the body, which is where a screen reader will read it in document order.
       title={`${name} screenshots`}
       closeButtonProps={{ 'aria-label': 'Close screenshot viewer' }}
-      // The full-screen media chrome shared by every lightbox in the repo.
+      // 🔴 The full-screen media chrome, adapted from the three existing lightboxes
+      // (`TrainingSampleViewer`, `GeneratedOutputLightbox`, `Model3DLightbox`), which
+      // all three set `inner` / `content` / `body` exactly as below. They ALSO set
+      // `header: { position: 'absolute', right: 0, zIndex: 10 }`, and this one
+      // deliberately does not: that rule lifts a header containing nothing but a close
+      // button out of the flow so the media can use the full height. This viewer
+      // renders a `title`, so its header carries text that has to stay readable and in
+      // flow — an absolute header would overlap the image with the listing's name.
+      // (An earlier version of this comment claimed the block was "copied verbatim"
+      // and that all three "share it identically". The rendering is right; the claim
+      // was not.)
       styles={{
         inner: { position: 'absolute' },
         content: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
         body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 16 },
       }}
     >
-      <Group justify="space-between" wrap="nowrap" mb="xs">
-        <Text size="sm" c="dimmed" data-testid="apps-listing-screenshot-position">
-          {position} / {total}
-        </Text>
-      </Group>
-
-      <div className="relative flex min-h-0 flex-1 items-center justify-center">
-        {shot && index !== null && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            // Keyed by index so navigating swaps the ELEMENT rather than mutating one
-            // `src`. Without it a browser keeps painting the previous shot until the
-            // new one decodes, and — worse — a stale `error` from the outgoing URL
-            // would be attributed to the incoming index.
-            key={index}
-            src={shot.url}
-            alt={shot.caption ? shot.caption : `${name} screenshot ${index + 1}`}
-            data-testid="apps-listing-screenshot-viewer-image"
-            onError={() => onBroken(index)}
-            style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }}
-          />
-        )}
-        {!shot && (
-          // One frame at most: the rescue effect above runs immediately after.
-          <Center className="absolute inset-0">
-            <Text c="dimmed">Loading screenshot…</Text>
-          </Center>
+      {/* 🔴 A marker for "THIS dialog", and it exists because its absence produced a
+          false reading. `[role="dialog"][aria-modal="true"]` identifies a Mantine modal
+          but NOT WHICH ONE — and in the `preview` posture there are two, so a
+          document-scoped query for the viewer silently resolved to the review modal
+          instead. Tests anchor on this and walk up to the dialog. */}
+      <div data-testid="apps-listing-screenshot-viewer" className="flex min-h-0 flex-1 flex-col">
+        {/* Rendered only for a shot that is actually on screen. A `0 / N` beside a
+            placeholder is a statement about nothing — see the media block below. */}
+        {shot && (
+          <Text size="sm" c="dimmed" mb="xs" data-testid="apps-listing-screenshot-position">
+            {position} / {total}
+          </Text>
         )}
 
-        <NavButton
-          label="Previous screenshot"
-          disabled={prevIndex === undefined}
-          onClick={() => prevIndex !== undefined && onIndexChange(prevIndex)}
-          className="left-2 top-1/2 -translate-y-1/2"
-        >
-          <IconChevronLeft size={24} />
-        </NavButton>
-        <NavButton
-          label="Next screenshot"
-          disabled={nextIndex === undefined}
-          onClick={() => nextIndex !== undefined && onIndexChange(nextIndex)}
-          className="right-2 top-1/2 -translate-y-1/2"
-        >
-          <IconChevronRight size={24} />
-        </NavButton>
+        <div className="relative flex min-h-0 flex-1 items-center justify-center">
+          {shot && index !== null && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              // Keyed by index so navigating swaps the ELEMENT rather than mutating one
+              // `src`. Without it a browser keeps painting the previous shot until the
+              // new one decodes, and — worse — a stale `error` from the outgoing URL
+              // would be attributed to the incoming index.
+              key={index}
+              src={shot.url}
+              // 🔴 EMPTY when there is a caption, because the caption is rendered as
+              // TEXT directly below. Naming the image with the same string makes a
+              // screen reader announce it twice; an `alt=""` image beside its own
+              // visible caption is the standard pairing. The descriptive fallback is
+              // kept for a shot that has no caption, where nothing else names it.
+              alt={shot.caption ? '' : `${name} screenshot ${index + 1}`}
+              data-testid="apps-listing-screenshot-viewer-image"
+              onError={() => onBroken(index)}
+              style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }}
+            />
+          )}
+          {/* 🔴 NOTHING is rendered when there is no viable shot — deliberately, and
+              this replaces a "Loading screenshot…" placeholder that was simply false:
+              the state it described is not loading, it is "the shot 404'd or vanished",
+              and the rescue effect above moves off it (or closes) in the same commit.
+              A one-frame lie is still a lie, and it sat next to a `0 / N` indicator
+              that was counting a shot nobody could see. */}
+
+          {/* 🔴 The arrows live INSIDE this `relative` box, not beside it — they are
+              `absolute`, so they position against the nearest positioned ancestor, and
+              moving them out silently reparents them to the page. */}
+          <NavButton
+            label="Previous screenshot"
+            disabled={prevIndex === undefined}
+            onClick={() => prevIndex !== undefined && onIndexChange(prevIndex)}
+            className="left-2 top-1/2 -translate-y-1/2"
+          >
+            <IconChevronLeft size={24} />
+          </NavButton>
+          <NavButton
+            label="Next screenshot"
+            disabled={nextIndex === undefined}
+            onClick={() => nextIndex !== undefined && onIndexChange(nextIndex)}
+            className="right-2 top-1/2 -translate-y-1/2"
+          >
+            <IconChevronRight size={24} />
+          </NavButton>
+        </div>
+
+        {/* The caption is rendered for every shot that HAS one, and the element is
+            absent otherwise — never an empty box holding a line of vertical space. */}
+        {shot?.caption && (
+          <Text size="sm" mt="xs" data-testid="apps-listing-screenshot-caption">
+            {shot.caption}
+          </Text>
+        )}
       </div>
-
-      {/* The caption is rendered for every shot that HAS one, and the element is
-          absent otherwise — never an empty box holding a line of vertical space. */}
-      {shot?.caption && (
-        <Text size="sm" mt="xs" data-testid="apps-listing-screenshot-caption">
-          {shot.caption}
-        </Text>
-      )}
     </Modal>
   );
 }

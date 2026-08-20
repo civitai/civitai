@@ -1,3 +1,5 @@
+import { Modal } from '@mantine/core';
+import { useState } from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -92,6 +94,7 @@ vi.mock('~/components/Apps/AppListingComments', () => ({
 
 // Import AFTER the mocks are declared (vi.mock is hoisted, imports are not).
 const { AppListingDetailBody } = await import('./AppListingDetailBody');
+const { AppListingScreenshotViewer } = await import('./AppListingScreenshotViewer');
 
 beforeEach(async () => {
   await page.viewport(...WIDE);
@@ -174,8 +177,23 @@ const tiles = (container: HTMLElement) =>
     container.querySelectorAll<HTMLElement>('[data-testid="apps-listing-screenshot-tile"]')
   );
 
-/** The viewer's modal, or null when it is closed. It renders in a PORTAL, not in `container`. */
-const viewer = () => document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
+/**
+ * The viewer's modal, or null when it is closed. It renders in a PORTAL, not in
+ * `container`.
+ *
+ * 🔴 ANCHORED ON THE VIEWER'S OWN MARKER, NOT ON `[role="dialog"][aria-modal="true"]`,
+ * AND THAT IS A CORRECTION. The selector-only form identifies "a Mantine modal" but
+ * not WHICH ONE, and in the `preview` posture there are two of them — so in the nested
+ * tests below it silently resolved to the moderator REVIEW modal. Every "the viewer is
+ * closed" assertion then read the wrong element: one waited 10s for the review modal to
+ * disappear, another declared the viewer open before it existed. Both looked like
+ * product defects. The suite never had two dialogs before, so nothing could have caught
+ * it — the config-blind case, exactly.
+ */
+const viewer = () =>
+  (document
+    .querySelector('[data-testid="apps-listing-screenshot-viewer"]')
+    ?.closest('[role="dialog"]') as HTMLElement | null) ?? null;
 
 /** The `<img>` the viewer is displaying, read from the document (portal again). */
 const viewerImage = () =>
@@ -407,11 +425,37 @@ describe('screenshot viewer — accessibility', () => {
     expect(all).toHaveLength(3);
     for (const tile of all) expect(tile.tagName).toBe('BUTTON');
 
-    // The accessible name is COMPUTED FROM CONTENT (image alt + caption), never an
-    // aria-label that would strip the visible caption (WCAG 2.5.3).
+    // The accessible name is COMPUTED FROM CONTENT, never an aria-label that would
+    // strip the visible caption (WCAG 2.5.3).
     const third = all[2];
     expect(third.textContent).toContain('Shot three');
-    expect(third.querySelector('img')?.getAttribute('alt')).toBe('Shot three');
+
+    // 🔴 …AND IT IS ANNOUNCED ONCE. The image carries `alt=""` when there is a caption,
+    // because the caption is already inside this button as text and BOTH contribute to
+    // the computed name. Asserted through the accessibility tree rather than by reading
+    // the attribute: with the caption duplicated into `alt` the name was
+    // "Shot three Shot three", so a query for the exact caption matched NOTHING while
+    // every attribute-level assertion still passed.
+    await expect
+      .element(page.getByRole('button', { name: 'Shot three', exact: true }))
+      .toBeVisible();
+  });
+
+  /**
+   * The captionless tile still gets a describing name, from the `alt` fallback — the
+   * control that says the `alt=""` above is conditional and not a blanket removal.
+   */
+  test('a tile with NO caption is named by its image alt instead', async () => {
+    const { container } = await renderBody(
+      base({ screenshots: [{ url: okShot(0), caption: null }] })
+    );
+    expect(tiles(container)).toHaveLength(1);
+    expect(tiles(container)[0].querySelector('img')?.getAttribute('alt')).toBe(
+      'My App screenshot 1'
+    );
+    await expect
+      .element(page.getByRole('button', { name: 'My App screenshot 1', exact: true }))
+      .toBeVisible();
   });
 
   test('a tile opens the viewer from the keyboard alone', async () => {
@@ -475,6 +519,281 @@ describe('screenshot viewer — accessibility', () => {
   });
 });
 
+/**
+ * 🔴 THE RESCUE EFFECT — the branch this feature argues hardest for, and the one that
+ * had NO coverage in either tier until this block existed.
+ *
+ * It is what stops the viewer sitting on an empty frame when the shot it is displaying
+ * stops being displayable: tiles are `loading="lazy"`, so a dangling URL below the fold
+ * is only discovered when the VIEWER fetches it, and the listing's screenshot array can
+ * also change under an open viewer. Two fixtures elsewhere in this file had to be
+ * reshaped *because* the rescue silently produced the right answer by another route —
+ * and yet mutating the whole effect body to an unconditional `return` left all of the
+ * other tests green. The node project cannot see it at all (it is an effect, not
+ * arithmetic). So it was the single least-tested branch in the change, while being the
+ * one the headers cite most.
+ *
+ * 🔴 DRIVEN AS AN ORDINARY CONTROLLED COMPONENT — no gallery, no tiles, no image
+ * loading. The rescue's inputs are just `index` / `shots` / `broken`, and the gallery
+ * can only reach a few of their combinations by racing a real 404. Rendering the viewer
+ * directly makes every branch reachable deterministically, and `onIndexChange` /
+ * `onClose` are spies rather than state, so the effect's DECISION is observed instead
+ * of its downstream consequence.
+ */
+describe('screenshot viewer — the rescue effect', () => {
+  const NAME = 'My App';
+
+  function renderViewer(over: {
+    shots: { url: string; caption: string | null }[];
+    index: number | null;
+    broken?: ReadonlySet<number>;
+  }) {
+    const onIndexChange = vi.fn();
+    const onClose = vi.fn();
+    const onBroken = vi.fn();
+    const rendered = renderWithProviders(
+      <AppListingScreenshotViewer
+        shots={over.shots}
+        name={NAME}
+        broken={over.broken ?? new Set<number>()}
+        index={over.index}
+        onIndexChange={onIndexChange}
+        onClose={onClose}
+        onBroken={onBroken}
+      />
+    );
+    return { rendered, onIndexChange, onClose, onBroken };
+  }
+
+  /**
+   * 🔴 FORWARD IS PREFERRED WHEN BOTH DIRECTIONS ARE AVAILABLE. Shot 2 of 5 is broken,
+   * so 1 and 3 are both reachable and the two arms of the `??` give DIFFERENT answers —
+   * which is the only fixture shape in which swapping them is visible. A fixture where
+   * only one direction is viable would be satisfied by either order.
+   */
+  test('rescues FORWARD when both directions are viable', async () => {
+    const { onIndexChange, onClose } = renderViewer({
+      shots: okShots(5),
+      index: 2,
+      broken: new Set([2]),
+    });
+
+    await vi.waitFor(() => expect(onIndexChange).toHaveBeenCalledWith(3));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The backward arm, reached only when there is nothing ahead: the last shot of three
+   * has 404'd, so forward is exhausted and the rescue falls back to 1. A mutant that
+   * drops the `?? adjacentViableIndex(index, -1, …)` arm closes the viewer here
+   * instead — losing a listing that still has two perfectly good screenshots.
+   */
+  test('falls BACK when there is nothing viable ahead', async () => {
+    const { onIndexChange, onClose } = renderViewer({
+      shots: okShots(3),
+      index: 2,
+      broken: new Set([2]),
+    });
+
+    await vi.waitFor(() => expect(onIndexChange).toHaveBeenCalledWith(1));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  /** An index past the end of a shrunken array resolves backward, into the array. */
+  test('rescues an index left over from a longer screenshot list', async () => {
+    const { onIndexChange, onClose } = renderViewer({ shots: okShots(3), index: 3 });
+
+    await vi.waitFor(() => expect(onIndexChange).toHaveBeenCalledWith(2));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 NOTHING VIABLE IN EITHER DIRECTION → CLOSE, and it must be `onClose`, not an
+   * index. This is the arm that keeps the viewer from becoming a permanently empty
+   * dialog, and it is separately asserted that no index was proposed — a rescue that
+   * both closed AND navigated would leave the gallery holding a stale open index.
+   */
+  test('CLOSES when no screenshot is viable in either direction', async () => {
+    const { onIndexChange, onClose } = renderViewer({
+      shots: okShots(3),
+      index: 1,
+      broken: new Set([0, 1, 2]),
+    });
+
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onIndexChange).not.toHaveBeenCalled();
+  });
+
+  /** An index far past a two-shot array has nothing to step to — it closes. */
+  test('CLOSES when the index is far outside a shrunken list', async () => {
+    const { onIndexChange, onClose } = renderViewer({ shots: okShots(2), index: 5 });
+
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onIndexChange).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE NEGATIVE CONTROL, and without it every assertion above is satisfied by an
+   * effect that fires on EVERYTHING. A viewer sitting on a perfectly good shot must be
+   * left alone: no rescue, no close, and the shot still on screen. This is the mutant
+   * "delete the `|| viable` half of the guard" — which no other test here can see.
+   */
+  test('does NOT fire for a viable shot (negative control)', async () => {
+    const { onIndexChange, onClose } = renderViewer({ shots: okShots(5), index: 2 });
+
+    await expectShowing(2);
+    // Give the effect every chance to misfire before asserting it did not.
+    await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+    expect(onIndexChange).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  /** Closed viewer: the effect must not act on a `null` index either. */
+  test('does NOT fire while the viewer is closed (negative control)', async () => {
+    const { onIndexChange, onClose } = renderViewer({ shots: okShots(5), index: null });
+
+    await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+    expect(viewer()).toBeNull();
+    expect(onIndexChange).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 NESTED IN THE MODERATOR REVIEW MODAL — the `preview` posture's real shape.
+ *
+ * `OffsiteReviewQueue`'s `OffsiteReviewModal` renders `<AppListingDetailBody … preview />`
+ * inside a Mantine `<Modal>`, so opening a screenshot puts one Modal inside another.
+ * Mantine's Esc handling is a **per-Modal `window` keydown listener in CAPTURE phase**
+ * (`@mantine/core/…/ModalBase/use-modal.mjs`), so without coordination EVERY open
+ * Modal's handler fires for the same key — one Escape closed the viewer AND the review
+ * modal, discarding the moderator's in-progress `rejectionReason` / `approvalNotes`
+ * (local state in `OffsiteReviewModalBody`, `keepMounted: false`) and their place in
+ * the queue.
+ *
+ * 🔴 THESE TESTS ASSERT THE RELATIONSHIP, NOT A PROP VALUE, AND THAT IS THE POINT.
+ * The seam gate already pinned that `closeOnEscape` is not switched OFF — which is the
+ * MIRROR IMAGE of this defect, and is exactly why this area read as covered while it
+ * was not. A guard that certifies the opposite half of a hazard is worse than no guard.
+ * So: one Escape, two open dialogs, and the assertion is about which of them is still
+ * there afterwards.
+ *
+ * 🔴 WHY ORDERING TRICKS WERE NOT THE FIX, read off the installed source rather than
+ * guessed: `useWindowEvent` lists `[type, listener]` as its deps and Mantine passes a
+ * NEW inline arrow every render, so each Modal's listener is torn down and re-added on
+ * every one of its renders. Registration order — the only thing that decides which
+ * `window`-capture listener runs first — is therefore whatever rendered most recently,
+ * and a `stopImmediatePropagation` from the inner modal cannot be relied on to preempt
+ * the outer. Mantine's own answer is `Modal.Stack`, which gates `closeOnEscape` (and
+ * `trapFocus`) on `ctx.currentId === stackId` (`Modal.mjs:53-57`) instead of racing.
+ */
+describe('screenshot viewer — nested inside the moderator review modal', () => {
+  /**
+   * The production shape: a `Modal.Stack` wrapping the review `Modal`, with the
+   * listing body — and therefore the screenshot viewer — rendered as its child. The
+   * viewer joins the same stack through React context, which reaches it even though
+   * both modals render into portals (context follows the React tree, not the DOM).
+   */
+  function NestedReviewHarness({ detail }: { detail: ListingDetail }) {
+    const [outerOpen, setOuterOpen] = useState(true);
+    return (
+      <Modal.Stack>
+        <Modal
+          opened={outerOpen}
+          onClose={() => setOuterOpen(false)}
+          stackId="offsite-review"
+          title="Review request"
+        >
+          <div data-testid="outer-review-modal-body">
+            <AppListingDetailBody detail={detail} preview />
+          </div>
+        </Modal>
+      </Modal.Stack>
+    );
+  }
+
+  const outerBody = () => document.querySelector('[data-testid="outer-review-modal-body"]');
+
+  async function openNestedViewer(detail: ListingDetail) {
+    await renderWithProviders(<NestedReviewHarness detail={detail} />);
+    await vi.waitFor(() => expect(outerBody()).not.toBeNull());
+    const tile = document.querySelectorAll<HTMLElement>(
+      '[data-testid="apps-listing-screenshot-tile"]'
+    );
+    expect(tile).toHaveLength(5);
+    await userEvent.click(tile[2]);
+    await expectShowing(2);
+    return tile[2];
+  }
+
+  /**
+   * 🔴 THE DEFECT. One Escape must close the INNER dialog only.
+   *
+   * Both halves are asserted because either alone is satisfiable by a broken viewer:
+   * "the outer survives" is also true of a viewer whose Escape does nothing at all,
+   * and "the viewer closed" is also true of the bug this fixes.
+   */
+  test('one Escape closes the VIEWER and leaves the review modal open', async () => {
+    await openNestedViewer(base({ screenshots: okShots(5) }));
+    expect(outerBody(), 'the review modal was not open to begin with').not.toBeNull();
+
+    await userEvent.keyboard('{Escape}');
+
+    await vi.waitFor(() => expect(viewer()).toBeNull());
+    expect(
+      outerBody(),
+      'one Escape closed BOTH dialogs — the moderator just lost their rejection reason'
+    ).not.toBeNull();
+  });
+
+  /**
+   * 🔴 THE CONTROL, and it is what stops the test above passing for the wrong reason.
+   * With no viewer open, Escape must still close the review modal — otherwise a fix
+   * that simply disabled Escape everywhere would satisfy the assertion above while
+   * making the moderator's own dialog unclosable.
+   */
+  test('with no viewer open, Escape still closes the review modal (control)', async () => {
+    await renderWithProviders(<NestedReviewHarness detail={base({ screenshots: okShots(5) })} />);
+    await vi.waitFor(() => expect(outerBody()).not.toBeNull());
+    expect(viewer()).toBeNull();
+
+    await userEvent.keyboard('{Escape}');
+
+    await vi.waitFor(() => expect(outerBody()).toBeNull());
+  });
+
+  /**
+   * A SECOND Escape, once the viewer is gone, closes the review modal — so the fix
+   * hands the key back rather than swallowing it for the rest of the session. This is
+   * the pair to the control above: together they say Escape is *scoped*, not disabled.
+   */
+  test('a second Escape, after the viewer has closed, closes the review modal', async () => {
+    await openNestedViewer(base({ screenshots: okShots(5) }));
+
+    await userEvent.keyboard('{Escape}');
+    await vi.waitFor(() => expect(viewer()).toBeNull());
+    expect(outerBody()).not.toBeNull();
+
+    await userEvent.keyboard('{Escape}');
+    await vi.waitFor(() => expect(outerBody()).toBeNull());
+  });
+
+  /**
+   * The close BUTTON was already correct (the auditor's probe returned `true` for it),
+   * but it is asserted here anyway: the fix changes how the viewer participates in
+   * Escape, and "the other way out still works" is the kind of thing a scoping change
+   * breaks silently.
+   */
+  test('the viewer close button closes only the viewer', async () => {
+    await openNestedViewer(base({ screenshots: okShots(5) }));
+
+    await page.getByRole('button', { name: 'Close screenshot viewer' }).click();
+
+    await vi.waitFor(() => expect(viewer()).toBeNull());
+    expect(outerBody()).not.toBeNull();
+  });
+});
+
 describe('screenshot viewer — broken screenshots', () => {
   /**
    * 🔴 THE INDEX-SPACE TEST, AND THE ONE THIS FEATURE IS MOST LIKELY TO GET WRONG.
@@ -496,9 +815,10 @@ describe('screenshot viewer — broken screenshots', () => {
    *
    * The `data-screenshot-index` assertion is the direct form of the same claim: the
    * tile states which shot it represents, and under the renumbering mutant it states
-   * `2` where the correct value is `3`. The `alt` list is the positive control that
-   * the first tile really rendered and then removed itself — `Shot one` is present in
-   * the fixture and absent from the DOM.
+   * `2` where the correct value is `3`. The CAPTION list is the positive control that
+   * the first tile really rendered and was then dropped — `Shot one` is present in the
+   * fixture and absent from the DOM. (It reads the tiles' text rather than their image
+   * `alt`, because a captioned tile's `alt` is deliberately empty; see the a11y test.)
    */
   test('a broken screenshot does not shift the index the surviving tiles open', async () => {
     const shots = okShots(5);
@@ -506,7 +826,7 @@ describe('screenshot viewer — broken screenshots', () => {
     const { container } = await renderBody(base({ screenshots: shots }));
 
     await vi.waitFor(() => expect(tiles(container)).toHaveLength(4));
-    expect(tiles(container).map((t) => t.querySelector('img')?.getAttribute('alt'))).toEqual([
+    expect(tiles(container).map((t) => t.textContent?.trim())).toEqual([
       'Shot two',
       'Shot three',
       'Shot four',
@@ -638,6 +958,107 @@ describe('screenshot viewer — broken screenshots', () => {
    * exactly the pre-existing behaviour (the tiles hide themselves; the `Screenshots`
    * heading stays) — and, the new part, there is still no dialog to open.
    */
+  /**
+   * 🔴 A NEW SCREENSHOT LIST INVALIDATES THE BROKEN SET, because the broken set is a
+   * list of POSITIONS and positions only mean something relative to one array.
+   *
+   * The listing's screenshots can change under a mounted gallery — a `getAppDetail`
+   * invalidate on the live page, or the moderator review preview swapping its locally
+   * built preview for the fetched one. Without a reset, "index 0 is broken" survives
+   * into the new set and hides whichever screenshot now happens to sit at index 0: a
+   * perfectly good image, gone, with no error anywhere.
+   *
+   * Latent rather than live today only because the preview's fallback list is empty, so
+   * the swap only ever goes empty→populated. That is a property of one consumer, not of
+   * this component, and it is exactly the kind of thing that changes without anyone
+   * remembering this depended on it.
+   */
+  test('a NEW screenshot list clears the broken set rather than hiding the wrong tile', async () => {
+    const first = okShots(3);
+    first[0] = { url: brokenShot(70), caption: 'Shot one' };
+    const { container, rerender } = await renderWithProviders(
+      <AppListingDetailBody detail={base({ screenshots: first })} />
+    );
+    // Index 0 has 404'd, so two tiles remain — the state the reset has to discard.
+    await vi.waitFor(() => expect(tiles(container)).toHaveLength(2));
+
+    // A genuinely different list: three loadable shots, none of them shared with the
+    // first set, so nothing about the old indices can still be true.
+    const second = [
+      { url: okShot(10), caption: 'Fresh one' },
+      { url: okShot(11), caption: 'Fresh two' },
+      { url: okShot(12), caption: 'Fresh three' },
+    ];
+    await rerender(<AppListingDetailBody detail={base({ screenshots: second })} />);
+
+    await vi.waitFor(() => expect(tiles(container)).toHaveLength(3));
+    expect(tiles(container).map((t) => t.dataset.screenshotIndex)).toEqual(['0', '1', '2']);
+  });
+
+  /**
+   * The same reset closes an OPEN viewer, for the same reason: `openIndex` is a
+   * position too, and holding it across a swap points the viewer at a screenshot the
+   * user never asked to see.
+   */
+  test('a NEW screenshot list closes an open viewer', async () => {
+    const { container, rerender } = await renderWithProviders(
+      <AppListingDetailBody detail={base({ screenshots: okShots(3) })} />
+    );
+    await userEvent.click(tiles(container)[2]);
+    await expectShowing(2);
+
+    await rerender(
+      <AppListingDetailBody
+        detail={base({ screenshots: [{ url: okShot(20), caption: 'Only one' }] })}
+      />
+    );
+
+    await vi.waitFor(() => expect(viewer()).toBeNull());
+  });
+
+  /**
+   * 🔴 THE NEGATIVE CONTROL — a re-render carrying an EQUAL list must NOT reset.
+   * `screenshots` is a fresh array on every refetch, so an identity-keyed reset would
+   * fire on every poll: an open lightbox would slam shut and already-failed tiles would
+   * flash back in and re-request, forever. The reset is keyed on the URLs, and this is
+   * what says so.
+   *
+   * 🔴 THE OPEN VIEWER IS THE OBSERVABLE, AND THAT IS A CORRECTION FOUND BY MUTATION.
+   * This test used to assert only the tile COUNT after an equal re-render, and it
+   * measured nothing: an identity-keyed reset DOES clear the broken set there, but the
+   * restored tile re-requests its dangling URL and errors again within a frame, so the
+   * count converges back to 2 before any assertion can run. The mutant SURVIVED a green
+   * test. `openIndex` is reset by the same code path and does NOT converge — a closed
+   * viewer stays closed — so it is the assertion with teeth. Do not drop it back to a
+   * count check.
+   */
+  test('an equal-but-new screenshots array does NOT reset the broken set (control)', async () => {
+    const build = () => {
+      const s = okShots(3);
+      s[0] = { url: brokenShot(71), caption: 'Shot one' };
+      return s;
+    };
+    const { container, rerender } = await renderWithProviders(
+      <AppListingDetailBody detail={base({ screenshots: build() })} />
+    );
+    await vi.waitFor(() => expect(tiles(container)).toHaveLength(2));
+
+    // Open the viewer, so the reset has something non-converging to destroy.
+    await userEvent.click(tiles(container)[1]);
+    await expectShowing(2);
+
+    // A brand-new array object with identical contents — what a refetch produces.
+    await rerender(<AppListingDetailBody detail={base({ screenshots: build() })} />);
+    await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+
+    // The viewer is untouched…
+    expect(viewer(), 'an equal refetch closed the open lightbox').not.toBeNull();
+    expect(viewerImage()?.getAttribute('src')).toBe(okShot(2));
+    // …and so is the broken set.
+    expect(tiles(container)).toHaveLength(2);
+    expect(tiles(container).map((t) => t.dataset.screenshotIndex)).toEqual(['1', '2']);
+  });
+
   test('every screenshot broken — no tiles remain and nothing can be opened', async () => {
     const { container } = await renderBody(
       base({

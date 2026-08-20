@@ -396,12 +396,20 @@ function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
  *
  * 🔴 IT IS A REAL `<button>` (`UnstyledButton`), NOT an `<img onClick>`. The tile has
  * to be tab-reachable and Enter/Space-activatable, and the accessible name has to
- * come from somewhere: it is COMPUTED FROM THE CONTENT (the image `alt` plus the
- * caption text) rather than pinned with an `aria-label`, so the name always contains
- * the caption the viewer can see — a bare `aria-label="View screenshot"` would strip
- * it and break WCAG 2.5.3 label-in-name. The button sits INSIDE the `Card` rather
- * than replacing it so the grid's children stay one element per tile, which is what
- * the gallery's fill rule (`:last-child:nth-child(odd)`) matches on.
+ * come from somewhere: it is COMPUTED FROM THE CONTENT rather than pinned with an
+ * `aria-label`, so the name always contains the caption the viewer can see — a bare
+ * `aria-label="View screenshot"` would strip it and break WCAG 2.5.3 label-in-name.
+ * The button sits INSIDE the `Card` rather than replacing it so the grid's children
+ * stay one element per tile, which is what the gallery's fill rule
+ * (`:last-child:nth-child(odd)`) matches on.
+ *
+ * 🔴 …AND THE IMAGE IS `alt=""` WHEN THERE IS A CAPTION, because the caption is
+ * rendered as TEXT inside the same button. Both contribute to the computed name, so
+ * naming the image with the caption too made the control announce "Shot three Shot
+ * three" — measured, and the reason `getByRole('button', { name: 'Shot three' })`
+ * matched nothing at all. An `alt=""` image beside its own visible caption is the
+ * standard pairing. The descriptive fallback stays for a captionless shot, where
+ * nothing else names the tile.
  */
 function ScreenshotTile({
   shot,
@@ -434,7 +442,7 @@ function ScreenshotTile({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={shot.url}
-          alt={shot.caption ? shot.caption : `${name} screenshot ${index + 1}`}
+          alt={shot.caption ? '' : `${name} screenshot ${index + 1}`}
           loading="lazy"
           onError={onBroken}
           style={{ width: '100%', height: 'auto', display: 'block' }}
@@ -479,9 +487,11 @@ function ScreenshotTile({
  * LAST child and at an ODD position spans `1 / -1` — so the gallery uses the width
  * it actually has. See the stylesheet's header for why it is written as a
  * structural CSS selector rather than a count-aware `cols` value: `ScreenshotTile`
- * hides ITSELF on a load error, so the rendered tile count is discovered after
- * render and any number computed from `shots.length` here would be wrong for
- * exactly the listings with broken art.
+ * is DROPPED on a load error — it reports upward and the gallery filters it out —
+ * so the rendered tile count is discovered after render and any number computed
+ * from `shots.length` here would be wrong for exactly the listings with broken art.
+ * (It used to hide ITSELF, from its own `useState`; the DOM result is identical,
+ * but the decision moved to the gallery so the viewer skips the same shots.)
  *
  * 🔴 Do not "simplify" this to `cols={shots.length === 1 ? 1 : 2}`. That reads as
  * the same fix and is not: it fires on the ARRAY, so a 2-shot listing whose first
@@ -511,6 +521,29 @@ function ScreenshotGallery({
     (index: number) => setBroken((prev) => withBrokenIndex(prev, index)),
     []
   );
+
+  // 🔴 BOTH PIECES OF STATE ARE POSITIONS IN `shots`, SO A DIFFERENT `shots` MAKES
+  // THEM LIES. If the array changes under a mounted gallery — a `getAppDetail`
+  // invalidate, or the review preview swapping its local
+  // `buildListingDetailPreview(request)` for `previewQuery.data.detail`
+  // (`OffsiteReviewQueue`) — then "index 2 is broken" is a fact about screenshots that
+  // are no longer there, and it hides the WRONG tile in the new set. The viewer's
+  // rescue effect covers the open VIEWER; nothing covered the GRID.
+  //
+  // Keyed on the URL LIST rather than the array's identity, deliberately: `screenshots`
+  // is a fresh array on every refetch even when the content is identical, and resetting
+  // then would make already-failed tiles flash back in and re-request on every poll.
+  // The URLs are what the indices mean, so they are what has to change.
+  //
+  // Written as a render-phase adjustment (React's documented "adjusting state when a
+  // prop changes") rather than an effect, so the stale set is never rendered even once.
+  const urls = shots.map((s) => s.url).join('\n');
+  const [seenUrls, setSeenUrls] = useState(urls);
+  if (seenUrls !== urls) {
+    setSeenUrls(urls);
+    setBroken(NO_BROKEN_SCREENSHOTS);
+    setOpenIndex(null);
+  }
 
   if (shots.length === 0) return null;
 

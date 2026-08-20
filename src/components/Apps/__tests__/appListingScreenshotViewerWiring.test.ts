@@ -158,12 +158,22 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
   });
 
   /**
-   * 🔴 THE MODAL'S A11Y CONTRACT IS THREE MANTINE DEFAULTS, AND DEFAULTS ARE EXACTLY
+   * 🔴 THE MODAL'S A11Y CONTRACT IS A SET OF MANTINE DEFAULTS, AND DEFAULTS ARE EXACTLY
    * WHAT GETS SWITCHED OFF IN PASSING. `trapFocus`, `returnFocus` and `closeOnEscape`
    * all default to `true` (`@mantine/core` `Modal.mjs`), which is why the viewer sets
    * none of them — and why nothing in a diff would draw attention to a `={false}`
-   * appearing. Each of the three is measured for real in the browser suite; this is
-   * the blocking half.
+   * appearing.
+   *
+   * 🔴 READ THE `closeOnEscape` LINE FOR EXACTLY WHAT IT SAYS, WHICH IS LESS THAN IT
+   * LOOKS. It pins that Escape is not switched OFF. That is the MIRROR IMAGE of the
+   * defect this feature actually had — one Escape closing the viewer AND the moderator
+   * review modal it is nested in — and while this assertion was the only thing here
+   * mentioning Escape, the area READ as covered while the real hazard was untested. A
+   * guard that certifies the opposite half of a hazard is worse than no guard, because
+   * it answers the question nobody needed answered. The nesting behaviour is a
+   * RELATIONSHIP between two dialogs, so it is asserted as one, in
+   * `AppListingDetailBody.viewer.browser.test.tsx` ("nested inside the moderator review
+   * modal"), and its structural half is the `Modal.Stack` seam in the test below.
    */
   it('🔴 the viewer does not switch OFF focus trap, focus return or Esc', () => {
     const src = norm(viewerSrc());
@@ -174,11 +184,59 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
         src,
         `AppListingScreenshotViewer sets ${prop}={false}. That is the modal's a11y ` +
           `contract — focus moves into the dialog, returns to the tile that opened it, ` +
-          `and Escape closes it. All three are Mantine defaults, so turning one off is ` +
+          `and Escape closes it. All are Mantine defaults, so turning one off is ` +
           `a one-word edit no reviewer would flag.`
       ).not.toContain(`${prop}={false}`);
     }
     // …and the dialog really is labelled, which is what `aria-labelledby` resolves to.
     expect(src).toContain('title={`${name} screenshots`}');
+  });
+
+  /**
+   * 🔴 THE SECOND SEAM: `Modal.Stack` IS TWO HALVES IN TWO FILES, AND NEITHER ERRORS
+   * ALONE.
+   *
+   * In the `preview` posture the listing body renders inside `OffsiteReviewQueue`'s
+   * review `<Modal>`, so the screenshot viewer is a Modal nested in a Modal. Mantine's
+   * Esc handling is a per-Modal `window` keydown listener in CAPTURE phase, so without
+   * coordination one key closes BOTH — taking the moderator's in-progress rejection
+   * reason and their place in the queue with it.
+   *
+   * The fix pairs a `stackId` on the viewer with a `Modal.Stack` wrapper on the review
+   * modal, and the failure mode of losing either half is SILENCE: `stackId` with no
+   * `Modal.Stack` ancestor is inert (`stackProps` is applied only `if (ctx && stackId)`),
+   * and a `Modal.Stack` around a single modal changes nothing. Nothing throws, nothing
+   * warns, and the regression is only visible by opening a screenshot from the review
+   * queue and pressing one key. That is what makes it a seam rather than two settings.
+   */
+  it('🔴 the viewer joins a Modal.Stack that the review modal actually provides', () => {
+    const REVIEW = path.resolve(__dirname, '../OffsiteReviewQueue.tsx');
+    const viewer = norm(viewerSrc());
+    const review = norm(stripComments(fs.readFileSync(REVIEW, 'utf8')));
+
+    // Positive controls: both matchers can see their target, and the comment stripper
+    // is what stops each file's own PROSE (which names both halves verbatim) from
+    // satisfying the gate.
+    expect(norm('<Modal stackId="x" />')).toContain('stackId=');
+    expect(norm('<Modal.Stack>')).toContain('<Modal.Stack>');
+    expect(norm(stripComments('/* <Modal.Stack> stackId="offsite-review" */'))).not.toContain(
+      '<Modal.Stack>'
+    );
+
+    expect(
+      viewer,
+      'AppListingScreenshotViewer no longer joins a modal stack. Nested inside the ' +
+        'moderator review modal, one Escape will now close BOTH dialogs and discard ' +
+        'whatever the moderator had typed. See the header on its `stackId` prop.'
+    ).toContain('stackId="app-listing-screenshot-viewer"');
+
+    expect(
+      review,
+      'OffsiteReviewQueue no longer wraps its review Modal in a <Modal.Stack>. The ' +
+        "screenshot viewer's `stackId` is INERT without it (Modal.mjs applies stack " +
+        'props only `if (ctx && stackId)`), so Escape silently goes back to closing ' +
+        'both dialogs at once. Both halves are required; neither errors alone.'
+    ).toContain('<Modal.Stack>');
+    expect(review, 'The review Modal lost its own stackId.').toContain('stackId="offsite-review"');
   });
 });
