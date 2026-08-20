@@ -47,6 +47,8 @@ const SKIP_DIRS = new Set([
   'coverage',
 ]);
 const SCAN_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.sql']);
+/** The scanned extensions that take JS comment syntax — i.e. everything but `.sql`. */
+const JS_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
 /**
  * Four spellings a write can take. A single Prisma-only pattern would miss a raw-SQL or Kysely
@@ -76,14 +78,33 @@ const WRITE_PATTERNS: Array<[kind: string, re: RegExp]> = [
  * enumeration that writes nothing. It made trunk red for every PR until someone either declared a
  * non-writer in the ledger or deleted the documentation, and both would have been wrong.
  *
- * Scoped to `.sql` deliberately. The same argument applies to a commented-out `.ts` writer, but
- * stripping there could only ever SHRINK the enumeration, which is the direction this ledger is
- * also meant to catch — so that half needs its own evidence, not a drive-by.
+ * Originally scoped to `.sql` alone, with the `.ts` half deferred for evidence rather than taken
+ * as a drive-by — the concern being that stripping could only ever SHRINK the enumeration, which
+ * is a direction this ledger also exists to catch. That evidence now exists, and it says the
+ * unstripped side was the broken one: a file containing NOTHING but
+ *
+ *     // await dbWrite.modelFileHash.createMany({ data: rows });
+ *
+ * was enumerated as a live writer (measured 2026-08-20 by planting exactly that and watching the
+ * ledger assertion fail with the probe file listed). So `.ts` was not the safe default; it was the
+ * same defect with a different comment syntax, and the `.sql` fix simply reached it first.
+ *
+ * The shrink risk is real, so it is controlled rather than argued away — see the two tests below
+ * that pin BOTH directions: a commented writer must not be counted, and a live writer on a line
+ * carrying a trailing comment must still be.
  */
-export function stripSqlComments(source: string, ext: string): string {
-  if (ext !== '.sql') return source;
-  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
+export function stripCommentsForExt(source: string, ext: string): string {
+  if (ext === '.sql') {
+    return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
+  }
+  // `--` is a DECREMENT operator in JS/TS, so the SQL rule must never run here: `i--; foo();`
+  // would lose the rest of the line and hide a real writer.
+  if (JS_EXTENSIONS.has(ext)) return stripComments(source);
+  return source;
 }
+
+/** Kept as the old name so any external caller keeps working; `.sql` behaviour is unchanged. */
+export const stripSqlComments = stripCommentsForExt;
 
 const isTestFile = (relPath: string) =>
   relPath.includes('__tests__') || /\.(test|spec)\.[cm]?[jt]sx?$/.test(relPath);
@@ -116,7 +137,7 @@ function enumerateWriters(): string[] {
   for (const file of files) {
     const rel = path.relative(REPO_ROOT, file);
     if (isTestFile(rel)) continue;
-    const source = stripSqlComments(fs.readFileSync(file, 'utf8'), path.extname(file));
+    const source = stripCommentsForExt(fs.readFileSync(file, 'utf8'), path.extname(file));
     if (!source.includes('odelFileHash')) continue; // cheap prefilter, case-insensitive on the M
     for (const [, re] of WRITE_PATTERNS) {
       re.lastIndex = 0;
@@ -192,6 +213,61 @@ describe('ModelFileHash writer ledger', () => {
     expect(files.length).toBeGreaterThan(1000);
     expect(files).toContain(path.join(REPO_ROOT, 'src/server/services/model-file-scan.service.ts'));
     expect(enumerateWriters().length).toBeGreaterThan(0);
+  });
+
+  // ── the comment seam, pinned in BOTH directions ─────────────────────────────────────────
+  //
+  // `stripComments` existed and was tested here long before anything called it: the enumerator
+  // ran its patterns over the RAW source, so the stripper's own tests passed while the path that
+  // matters skipped it entirely. Both halves were covered; the seam between them was not. These
+  // two tests drive the enumerator's transform rather than the stripper alone, which is the only
+  // arrangement that could have caught it.
+  //
+  // They are a PAIR on purpose. Stripping can shrink the enumeration as well as correct it, and a
+  // ledger that silently stops seeing a real writer is worse than one that over-reports — so the
+  // second test exists to fail if the first is ever "fixed" by stripping too aggressively.
+
+  it('does not count a writer that is only mentioned in a comment', () => {
+    const commented = [
+      '// await dbWrite.modelFileHash.createMany({ data: rows });',
+      '/* await dbWrite.modelFileHash.upsert({ where, create, update }); */',
+      " * await kyselyDb.insertInto('ModelFileHash').values(rows).execute();",
+      'const x = 1; // await dbWrite.modelFileHash.createMany({ data: rows });',
+    ].join('\n');
+
+    for (const ext of ['.ts', '.tsx', '.js', '.mjs', '.cjs']) {
+      const stripped = stripCommentsForExt(commented, ext);
+      const hit = WRITE_PATTERNS.find(([, re]) => {
+        re.lastIndex = 0;
+        return re.test(stripped);
+      });
+      expect(hit?.[0], `${ext}: a commented-out writer was counted as live`).toBeUndefined();
+    }
+  });
+
+  it('still counts a live writer sharing a line with a comment (shrink control)', () => {
+    // The direction the original `.sql`-only scoping was protecting. If stripping ever eats live
+    // code, the ledger goes quiet about a real writer — and quiet is exactly what it cannot do.
+    const live = 'await dbWrite.modelFileHash.createMany({ data: rows }); // derived from the scan';
+    for (const ext of ['.ts', '.tsx', '.js', '.mjs', '.cjs']) {
+      const stripped = stripCommentsForExt(live, ext);
+      const matched = WRITE_PATTERNS.some(([, re]) => {
+        re.lastIndex = 0;
+        return re.test(stripped);
+      });
+      expect(matched, `${ext}: stripping hid a LIVE writer`).toBe(true);
+    }
+    // `--` is a decrement operator in JS, not a comment. Running the SQL rule here would swallow
+    // the rest of the line and hide this writer.
+    const decrement = 'i--; await dbWrite.modelFileHash.createMany({ data: rows });';
+    const strippedTs = stripCommentsForExt(decrement, '.ts');
+    expect(
+      WRITE_PATTERNS.some(([, re]) => {
+        re.lastIndex = 0;
+        return re.test(strippedTs);
+      }),
+      'the SQL `--` rule leaked into JS and hid a writer after a decrement'
+    ).toBe(true);
   });
 
   it('detects a planted writer in every spelling a write can take (negative control)', () => {
