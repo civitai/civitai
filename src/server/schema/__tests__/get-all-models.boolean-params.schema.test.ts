@@ -20,8 +20,12 @@ import { modelsEndpointSchema } from '~/pages/api/v1/models';
  */
 
 // A `z.preprocess` field can THROW rather than return an issue (commaDelimitedNumberArray
-// calls .map on whatever it is handed), and at module scope that would fail collection —
-// zero tests, reported as a pass. Treat a throw as "does not accept this value".
+// calls .map on whatever it is handed), so a bare safeParse over every key is not safe.
+// Treat a throw as "does not accept this value".
+//
+// Keep every call to this inside an `it` body. An earlier version derived the key list at
+// module scope, where that same throw failed COLLECTION: the file reported as a pass with
+// zero tests. Inside a test, a throw is a red test.
 function parseOne(schema: z.ZodObject, key: string, value: unknown) {
   try {
     const result = schema.safeParse({ [key]: value });
@@ -36,8 +40,14 @@ function booleanKeys(schema: z.ZodObject) {
 }
 
 /**
- * Every field that is meant to read a boolean OUT OF A QUERY STRING. Named, and only for
- * the non-vacuity guard below — the assertions themselves stay derived from the schema.
+ * Every field that is meant to read a boolean OUT OF A QUERY STRING.
+ *
+ * The `'false'` check below stays derived from the schema and needs nothing from this list
+ * — that is the point of the file. But this list drives two assertions that CANNOT be
+ * derived: the non-vacuity guard, and the both-polarity check. So an eleventh
+ * `booleanString()` field added to the schema is covered for the bug this PR fixed, and is
+ * NOT covered for the opposite failure (a field that rejects everything) until it is named
+ * here. Add it in both places.
  */
 const QUERY_STRING_BOOLEANS = [
   'favorites',
@@ -77,6 +87,17 @@ function describeSchema(label: string, schema: z.ZodObject, expected: string[]) 
         expect(parseOne(schema, key, 'true')?.value, `?${key}=true`).toBe(true);
         expect(parseOne(schema, key, 'false')?.value, `?${key}=false`).toBe(false);
         expect(parseOne(schema, key, true)?.value, `${key}: true`).toBe(true);
+      }
+    });
+
+    // An empty value is REJECTED, which 400s the whole request. That is a decision, not an
+    // accident: `?earlyAccess=` reads as asking FOR early access, so if it meant anything it
+    // would have to mean `true` — requiring an explicit value avoids picking a side. It is
+    // also a behaviour change from `z.coerce.boolean()`, which read empty as `false`, so it
+    // is pinned here rather than left to a PR comment.
+    it('rejects an empty value rather than guessing what it meant', () => {
+      for (const key of expected) {
+        expect(parseOne(schema, key, ''), `?${key}= should be rejected`).toBeNull();
       }
     });
   });
