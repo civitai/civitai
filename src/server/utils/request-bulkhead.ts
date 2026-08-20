@@ -43,19 +43,36 @@ type Slot = { active: number };
 // The admission-control BEHAVIOUR was always correct in the graph that serves requests; only a
 // reader in another graph saw nothing. Sharing the state makes the limit genuinely per-POD rather
 // than per-pod-per-graph, which is what the cap was always documented to mean.
+// ONE key holding BOTH maps, rather than a key each. The two are a single invariant — un-sharing
+// either one reintroduces the defect on its own half — and `scripts/server-graph-watchlist.mjs`
+// carries one `globalKey` per entry, so two keys would mean two watchlist entries naming the same
+// module. That combination is not merely redundant, it is unenforceable: the gate's fixture emits
+// one chunk per entry carrying only that entry's key, so each entry fails on the other's chunk and
+// the module can never be green (measured — it red-lined the gate's own positive control).
 declare global {
   // eslint-disable-next-line no-var
-  var __civitaiBulkheadSlots: Map<string, Slot> | undefined;
-  // eslint-disable-next-line no-var
-  var __civitaiBulkheadRejects: Map<string, number> | undefined;
+  var __civitaiBulkheadState:
+    | { slots: Map<string, Slot>; rejects: Map<string, number> }
+    | undefined;
 }
 
-const slots: Map<string, Slot> =
-  globalThis.__civitaiBulkheadSlots ?? (globalThis.__civitaiBulkheadSlots = new Map());
+// `??=` is the repo's canonical adopt-or-create form for these pins, matching
+// `structured-log-sink.ts` and `server-fault-override.ts`. It is not a style preference:
+// `scripts/__tests__/check-server-graph-singletons.test.ts` asserts this exact shape against
+// comment-stripped source, so a key surviving only in prose, or a binding that quietly reverted to
+// module scope, cannot pass for a real pin. `??=` specifically (not `=`) is what makes the SECOND
+// copy adopt the first's state instead of replacing it — the original bug is `=` in one character.
+const bulkheadState = (globalThis.__civitaiBulkheadState ??= {
+  slots: new Map(),
+  rejects: new Map(),
+});
+
+// Destructured once: both maps are only ever mutated in place, never reassigned, so these bindings
+// stay pointed at the shared objects for the life of the process.
+const slots = bulkheadState.slots;
 
 // Process-wide reject counter (per key) for observability / tuning.
-const rejects: Map<string, number> =
-  globalThis.__civitaiBulkheadRejects ?? (globalThis.__civitaiBulkheadRejects = new Map());
+const rejects = bulkheadState.rejects;
 
 /**
  * Acquire one concurrency slot for `key`. Throws BulkheadFullError IMMEDIATELY

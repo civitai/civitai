@@ -40,6 +40,12 @@ export const WATCHLIST = [
     why: 'The one WeakSet recording which thrown errors are SERVER faults despite a 4xx tRPC code. The marker is added by throwers (e.g. `~/server/recaptcha/client`) and read by `classifyErrorFault` in `~/server/logging/client` — a module the bundler inlines into many emitted chunks (13 when this rule was added; this module itself, 12). A copy holding a private WeakSet answers `isEscalatedServerFault` false forever, so the escalation silently never happens: the fault logs as routine client feedback, with no error and no counter. Vitest cannot see this (it loads each module once), so this gate is the only check that can.',
   },
   {
+    rule: 'SHARED_STATE',
+    module: 'src/server/utils/request-bulkhead.ts',
+    globalKey: '__civitaiBulkheadState',
+    why: 'The one object holding BOTH the in-flight slot Map and the cumulative reject Map for the heavy-route bulkhead. They are mutated by the request path (the REST `/api/v1/images` handler, `/api/v1/blocks/images`, the tRPC `heavyProcedure` middleware, and the SSR `prefetchInfinite` calls on the post/model detail pages) and READ by the collect() callbacks of `civitai_app_heavy_bulkhead_active`/`_rejects` in `src/server/prom/client.ts` — a module the instrumentation entry also pulls in, so the reader and the writer genuinely can land in different graphs. This module is emitted THREE times in the production server build (measured: `[bulkhead] HEAVY_REQUEST_CONCURRENCY=` appears 3x on every pod, against one `[instrumentation] Running in nodejs runtime`). A copy holding private Maps is a bulkhead whose gauges read permanently empty state — exactly how those two metrics emitted ZERO series for 74 days while looking registered, deployed and healthy. The two maps share one key deliberately: they are one invariant, and a rule carries one globalKey, so splitting them would need two entries naming this same module — which this gate cannot express, since its fixture emits one chunk per entry carrying only that entry`s key. Vitest cannot see any of this (it loads each module once), so this gate is the only check that can.',
+  },
+  {
     rule: 'SINGLETON',
     module: 'packages/civitai-telemetry/src/otel-logs.ts',
     why: 'Holds the memoized OTel Logger and the bridge counters in module scope, and is loaded only from the instrumentation entry, which is also what registers the LoggerProvider. A second copy would be a second bridge that never sees that registration — and whose counters register into a registry nothing scrapes.',

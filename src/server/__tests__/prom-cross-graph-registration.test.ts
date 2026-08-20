@@ -31,17 +31,58 @@ vi.unmock('~/server/prom/client');
 // ...which means this suite owns the reason that stub exists. Both pg modules build real pools at
 // module scope; the gauges only ever read the three pool counters, so a counter-shaped stub is a
 // faithful stand-in for what the code under test actually consumes.
-const poolStub = () => ({ totalCount: 0, idleCount: 0, waitingCount: 0 });
+//
+// 🔴 EVERY ONE OF THESE TWELVE NUMBERS IS DISTINCT, AND THAT IS THE WHOLE POINT.
+// The nine pg gauges are declared as (name, help, reader) triples, which is a pure transposition
+// hazard: reading `pgDbRead` where `pgDbWrite` was meant, or `.totalCount` where `.idleCount` was
+// meant, is a one-token slip that no type checker can catch because every reader has the same
+// shape. A fixture of zeros — or of any value shared between two pools — makes all of those slips
+// render byte-identical output, so the tests pass and the gauges silently report another pool's
+// numbers. Measured: with an all-zero stub, five such mutants SURVIVED a fully green suite.
+// Pairwise-distinct values are what make a transposition observable at all.
+// Keep them distinct if you touch this.
+const pools = {
+  read: { totalCount: 11, idleCount: 12, waitingCount: 13 },
+  write: { totalCount: 21, idleCount: 22, waitingCount: 23 },
+  readLong: { totalCount: 31, idleCount: 32, waitingCount: 33 },
+  datapacket: { totalCount: 41, idleCount: 42, waitingCount: 43 },
+} as Record<string, { totalCount: number; idleCount: number; waitingCount: number } | undefined>;
+
+// Exposed as GETTERS, not as captured values. Vite compiles `import { pgDbReadLong }` into a
+// namespace property access at each use site, so a getter is re-read every time the gauge's
+// collect() runs — which lets a test drop a pool to `undefined` and exercise the null-guard branch
+// against real code. Capturing the values here instead would bind whatever the mock factory saw on
+// its first run, and the absent-pool case would silently assert against a pool that is still
+// present (it did, before this was changed).
 vi.mock('~/server/db/pgDb', () => ({
-  pgDbRead: poolStub(),
-  pgDbWrite: poolStub(),
-  pgDbReadLong: poolStub(),
+  get pgDbRead() {
+    return pools.read;
+  },
+  get pgDbWrite() {
+    return pools.write;
+  },
+  get pgDbReadLong() {
+    return pools.readLong;
+  },
 }));
-vi.mock('~/server/db/datapacketDb', () => ({ datapacketDbRead: poolStub() }));
+vi.mock('~/server/db/datapacketDb', () => ({
+  get datapacketDbRead() {
+    return pools.datapacket;
+  },
+}));
+
+const POOL_DEFAULTS = {
+  read: { totalCount: 11, idleCount: 12, waitingCount: 13 },
+  write: { totalCount: 21, idleCount: 22, waitingCount: 23 },
+  readLong: { totalCount: 31, idleCount: 32, waitingCount: 33 },
+  datapacket: { totalCount: 41, idleCount: 42, waitingCount: 43 },
+};
+const restorePools = () => {
+  for (const [k, v] of Object.entries(POOL_DEFAULTS)) pools[k] = { ...v };
+};
 
 type BulkheadGlobals = typeof globalThis & {
-  __civitaiBulkheadSlots?: unknown;
-  __civitaiBulkheadRejects?: unknown;
+  __civitaiBulkheadState?: unknown;
   __civitaiInstrumentationRegistry?: { clear?: () => void };
 };
 
@@ -51,8 +92,7 @@ type BulkheadGlobals = typeof globalThis & {
 // makes each case start from the honest empty state a fresh pod has.
 const clearCrossGraphState = () => {
   const g = globalThis as BulkheadGlobals;
-  delete g.__civitaiBulkheadSlots;
-  delete g.__civitaiBulkheadRejects;
+  delete g.__civitaiBulkheadState;
   g.__civitaiInstrumentationRegistry?.clear?.();
   delete g.__civitaiInstrumentationRegistry;
 };
@@ -60,9 +100,13 @@ const clearCrossGraphState = () => {
 beforeEach(() => {
   vi.resetModules();
   clearCrossGraphState();
+  restorePools();
 });
 
-afterEach(clearCrossGraphState);
+afterEach(() => {
+  clearCrossGraphState();
+  restorePools();
+});
 
 describe('request-bulkhead state is process-wide, not graph-wide', () => {
   it('a slot acquired in one graph is visible in another graph', async () => {
@@ -147,6 +191,55 @@ describe('prom/client registers into the registry /api/metrics scrapes', () => {
     ]) {
       expect(instrumentationRegistry.getSingleMetric(name), name).toBeTruthy();
     }
+  });
+
+  // Existence alone is a weak assertion for these nine: they are (name, help, reader) triples, so
+  // every wrong-pool / wrong-counter slip still produces a registered, non-empty gauge. Only the
+  // VALUE distinguishes `pgDbRead.idleCount` from `pgDbWrite.totalCount`. Each expected number
+  // below is unique across the fixture, so any transposition renders a number that appears nowhere
+  // in the expected set rather than coincidentally matching a sibling.
+  it('maps every pg gauge to the right pool and the right counter', async () => {
+    const { instrumentationRegistry } = await importAsBothGraphs();
+    const scraped = await instrumentationRegistry.metrics();
+
+    for (const line of [
+      'node_postgres_read_total_count 11',
+      'node_postgres_read_idle_count 12',
+      'node_postgres_read_waiting_count 13',
+      'node_postgres_write_total_count 21',
+      'node_postgres_write_idle_count 22',
+      'node_postgres_write_waiting_count 23',
+      'node_postgres_pool_total_count{pool="read"} 11',
+      'node_postgres_pool_total_count{pool="write"} 21',
+      'node_postgres_pool_total_count{pool="read_long"} 31',
+      'node_postgres_pool_total_count{pool="datapacket_read"} 41',
+      'node_postgres_pool_idle_count{pool="read"} 12',
+      'node_postgres_pool_idle_count{pool="write"} 22',
+      'node_postgres_pool_idle_count{pool="read_long"} 32',
+      'node_postgres_pool_idle_count{pool="datapacket_read"} 42',
+      'node_postgres_pool_waiting_count{pool="read"} 13',
+      'node_postgres_pool_waiting_count{pool="write"} 23',
+      'node_postgres_pool_waiting_count{pool="read_long"} 33',
+      'node_postgres_pool_waiting_count{pool="datapacket_read"} 43',
+    ]) {
+      expect(scraped, line).toContain(line);
+    }
+  });
+
+  // The null-guard on each labelled pool has no observable effect while every pool is present, so
+  // deleting it survives any all-pools-present fixture. A pool that is genuinely absent is the only
+  // input that reaches the branch — and the contract is that it reports 0 rather than throwing
+  // `Value is not a valid number` out of Gauge.set, which would reject the whole registry scrape.
+  it('reports 0 for an absent pool instead of throwing out of collect()', async () => {
+    pools.readLong = undefined;
+    const { instrumentationRegistry } = await importAsBothGraphs();
+
+    const scraped = await instrumentationRegistry.metrics();
+    expect(scraped).toContain('node_postgres_pool_total_count{pool="read_long"} 0');
+    expect(scraped).toContain('node_postgres_pool_idle_count{pool="read_long"} 0');
+    expect(scraped).toContain('node_postgres_pool_waiting_count{pool="read_long"} 0');
+    // The surviving pools must be untouched — a guard that swallows too much would zero them too.
+    expect(scraped).toContain('node_postgres_pool_total_count{pool="write"} 21');
   });
 
   it('does not register a gauge twice when both graphs evaluate the module', async () => {
