@@ -423,11 +423,16 @@ describe('getDetailPrimaryAction — off-site', () => {
 
   /**
    * An empty-string client id is FALSY, which is what the deleted
-   * `resolveOffsiteSubKind` tested — so it took the no-client arm. The
-   * projection now guarantees this never reaches the wire (`|| null` in
-   * `detailKindData`), but this view-model is called directly by
-   * `app-listing-actionable.service` and by `MySubmissionsList`, so pin the
-   * truthiness here too rather than relying on a caller.
+   * `resolveOffsiteSubKind` tested — so it took the no-client arm.
+   * `app-listing.service.detailKindData`'s `|| null` guarantees this never
+   * reaches the wire by THAT path, but `app-listing-actionable.service` calls
+   * this view-model directly with a listing row, so pin the truthiness here
+   * rather than relying on a caller. (`MySubmissionsList` also calls it
+   * directly, but hardcodes `kind: 'onsite'` and never reaches this branch —
+   * it is NOT an off-site caller; an earlier version of this note implied it
+   * was.) The mod-review preview builder reaches it too, via
+   * `buildListingDetailPreview` → `AppListingDetailBody`, and it uses
+   * `?? null` — see `shouldShowOffsiteDisclosure`'s docstring.
    */
   it('an empty-string connectClientId takes the no-client arm (truthiness, not nullish)', () => {
     const action = getDetailPrimaryAction(

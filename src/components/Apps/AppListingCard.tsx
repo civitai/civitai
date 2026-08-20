@@ -41,10 +41,22 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * App Store Listings (W13) — P2b unified store CARD, over BOTH kinds.
  *
  * Renders one `ListingCard` (from `appListings.listAvailable`): cover + app icon
- * + name + tagline + creator chip + a kind badge (App / Connect app / Off-site)
- * + the Steam-style recommend rollup + a kind-aware CTA (Open / View details /
- * Visit ↗ / Connect). Mirrors the visual language of the live `AppBlockCard`
- * (Mantine Card + category-glyph cover placeholder) so listings feel native.
+ * + name + tagline + creator chip + the Steam-style recommend rollup + a
+ * kind-aware CTA (Open / View details / Visit ↗). Mirrors the visual language of
+ * the live `AppBlockCard` (Mantine Card + category-glyph cover placeholder) so
+ * listings feel native.
+ *
+ * 🔴 THERE IS NO KIND BADGE ON THIS CARD. This line used to claim "a kind badge
+ * (App / Connect app / Off-site)" — doubly wrong: two of those labels no longer
+ * exist (the off-site display sub-kind was collapsed), and the card does not
+ * render a badge at all. The evidence is the IMPORT GRAPH, checkable by grep:
+ * `getListingBadge` lives in `appListingCardView` and is imported by two test
+ * files and nothing else — this component does not import it. (There is an
+ * "Off-site is absent" check in `AppListingCard.browser.test.tsx`, but it uses
+ * the `expect.element(...).not.toBeInTheDocument()` form that is INERT in this
+ * repo — issue #4197 — so it is not evidence of anything. Don't cite it.)
+ * The kind signal here is the CTA (an external "Visit" anchor vs. an internal
+ * Open / View details link), plus the off-site disclosure on the detail page.
  *
  * LIVE (P2d cut over): this is the DEFAULT `/apps` store card
  * (`AppListingsMarketplaceBody` → `AppListingCard`) over BOTH kinds. The page is

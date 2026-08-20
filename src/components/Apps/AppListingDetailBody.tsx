@@ -957,9 +957,15 @@ export function AppListingDetailBody({
                 that is FALSE of a listing with an OAuth app connected, and inline
                 it was covered by nothing. Read that function's docstring before
                 changing what the sentence says or when it appears. It replaces a
-                `subKind === 'external-link'` test, which was derived from
-                `connectClientId` by a truthiness test and nothing else — same
-                predicate, no derived taxonomy, identical rendering. */}
+                `subKind === 'external-link'` test: identical rendering for every
+                input produced by `app-listing.service` (truthiness on both
+                sides), and for the mod-review preview builder identical except
+                at `connectClientId === ''`, where the disclosure now SHOWS —
+                see `shouldShowOffsiteDisclosure`'s docstring for why that is the
+                safer answer. 🔴 This component is also rendered with a detail
+                built by `buildListingDetailPreview` (`OffsiteReviewQueue`'s
+                fallback), which is why that builder's `connectClientId`
+                passthrough carries its own test. */}
             {shouldShowOffsiteDisclosure(detail.kindData) && (
               <Alert variant="light" color="blue" icon={<IconInfoCircle size={16} />}>
                 This app runs entirely off-platform — no Civitai install, account access, or

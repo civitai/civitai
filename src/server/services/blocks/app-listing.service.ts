@@ -502,10 +502,13 @@ export function listingMatureFilter(redCapable: boolean): Prisma.Sql {
  * public external App-store GA. Mirrors `listingMatureFilter`'s pure-`Prisma.Sql`
  * shape (uses the `al` alias, safe to AND into the keyset WHERE):
  *   - `full`            → `TRUE` (no kind restriction — byte-identical to today).
- *   - `public-external` → `al.kind = 'offsite'` — the offsite subset ONLY, for BOTH
- *     sub-kinds (`connect` AND `external-link`). Onsite App Blocks are excluded.
+ *   - `public-external` → `al.kind = 'offsite'` — the offsite subset ONLY, whether
+ *     or not the listing links an OAuth client. Onsite App Blocks are excluded.
  *     🔴 The kind gate is `kind='offsite'`, NOT `connect_client_id IS NULL` — an
  *     offsite listing is public whether or not it links an OAuth connect client.
+ *     (This used to say "for BOTH sub-kinds (`connect` AND `external-link`)";
+ *     that display taxonomy is gone — offsite is one kind — but the gate itself
+ *     is unchanged, because it never keyed on the sub-kind in the first place.)
  *   - `none`            → `FALSE` — fail-closed. (The router short-circuits `none`
  *     before reaching SQL, so this is defense-in-depth, never the live path.)
  *
@@ -686,8 +689,8 @@ export async function getListingDetail(
   if (!row || row.status !== 'approved') return null;
   // STORE-SCOPE kind gate (the public/onsite security boundary): under
   // `public-external` an ONSITE listing is indistinguishable from a missing one —
-  // return null so no crafted id/slug can reach an onsite listing's detail. Both
-  // offsite sub-kinds (connect + external-link) remain visible (gate on `kind`,
+  // return null so no crafted id/slug can reach an onsite listing's detail. EVERY
+  // offsite listing remains visible, OAuth-connected or not (gate on `kind`,
   // never `connectClientId`). `full` imposes no kind restriction (unchanged).
   if (scope === 'public-external' && row.kind !== 'offsite') return null;
   // DEPLOY-GATE (generic, all app-blocks): an ONSITE listing whose backing

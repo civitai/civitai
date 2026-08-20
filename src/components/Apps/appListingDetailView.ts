@@ -207,11 +207,25 @@ export function getDetailPrimaryAction(
   // by a kind: an app with no OAuth client connected has simply nowhere to send
   // you ("Unavailable"), whereas an app that DOES connect to your Civitai
   // account has a second, not-yet-built route ("Connect", stubbed). This test
-  // used to read `kd.subKind === 'external-link'`; `subKind` was derived from
-  // `connectClientId` by a truthiness test and nothing else, so reading the
-  // field directly is the SAME predicate with no derived taxonomy in between —
-  // behaviour is byte-identical for every input. Whether the stub should exist
-  // at all is a product question this change deliberately does not answer.
+  // used to read `kd.subKind === 'external-link'`.
+  //
+  // 🔴 EQUIVALENCE, STATED AT THE SCOPE IT ACTUALLY HOLDS — there are TWO
+  // producers of this DTO and they did not agree:
+  //   - `app-listing.service.detailKindData` derived the sub-kind by TRUTHINESS
+  //     (`connectClientId ? … : …`), so reading the field directly is the same
+  //     predicate and the behaviour is byte-identical for every input there.
+  //   - `reviewListingPreview.detailKindData` (the mod-review preview) used
+  //     `!= null` for the sub-kind while passing the field through with
+  //     `?? null`. At `connectClientId === ''` those disagree: the OLD preview
+  //     hid the disclosure and showed this Connect stub; the NEW one shows the
+  //     disclosure and "Unavailable". That is a real, if practically
+  //     unreachable, behaviour change (`connect_client_id` is an FK to
+  //     `OauthClient.id` and `offsite-listing.schema.ts` requires
+  //     `z.string().min(1)` on create), and the new answer is the safer of the
+  //     two — an empty string is not a connected OAuth app.
+  //
+  // Whether the stub should exist at all is a product question this change
+  // deliberately does not answer.
   if (!kd.connectClientId) {
     return {
       label: 'Unavailable',
@@ -251,8 +265,25 @@ export function getDetailPrimaryAction(
  *   - a non-null `externalUrl` — there is no "runs off-platform" claim to make
  *     about a listing with nowhere to run.
  *
- * Truthiness on `connectClientId`, matching the projection's `|| null` and the
- * no-destination fallback above, so all three read the capability the same way.
+ * Truthiness on `connectClientId`, matching `app-listing.service`'s `|| null`
+ * and the no-destination fallback above, so all three read the capability the
+ * same way.
+ *
+ * 🔴 TWO PRODUCERS FEED THIS, and only one is the store read path.
+ * `OffsiteReviewQueue`'s `ListingPreviewSection` renders `AppListingDetailBody`
+ * with a detail from `buildListingDetailPreview` whenever the mod-only
+ * projection query is loading, errors, or the row has no `appListingId` — so
+ * that builder's `connectClientId` is load-bearing for THIS claim, and it has
+ * its own passthrough test for exactly that reason. If you add a third
+ * producer, give it one too.
+ *
+ * That preview builder passes the field through with `?? null` while its old
+ * sub-kind used `!= null`, so at `connectClientId === ''` this predicate now
+ * SHOWS the disclosure where the old code hid it. Practically unreachable
+ * (`connect_client_id` is an FK to `OauthClient.id`; `offsite-listing.schema.ts`
+ * requires `z.string().min(1)` on create) and the safer of the two answers — an
+ * empty string is not a connected OAuth app — but it is a real difference, so
+ * do not read "identical rendering" as universal across both producers.
  */
 export function shouldShowOffsiteDisclosure(kindData: ListingDetail['kindData']): boolean {
   return kindData.kind === 'offsite' && !kindData.connectClientId && !!kindData.externalUrl;
