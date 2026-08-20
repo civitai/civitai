@@ -367,6 +367,13 @@ const featureFlags = createFeatureFlags({
     fliptKey: 'model-metric-privacy-readtime',
   },
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
+  // User-composed hubs (/hubs). `availability: []` = DARK by default and FAILS
+  // CLOSED, so the pages, the tRPC router and the nav entry all stay off until the
+  // `user-hubs` flag exists in Flipt — the flag lands separately, in the private
+  // GitOps repo. On a Flipt boolean, `enabled: true` is the NO-ROLLOUT-MATCHED
+  // fallback (on for every anonymous request), not the on-switch: the rollout is
+  // `enabled: false` plus a segment rule.
+  userHubs: { availability: [], fliptKey: 'user-hubs' },
   // Rewrite orchestrator blob URLs to the Cloudflare-fronted proxy for RU users
   // (their ISPs DPI-block the bare orchestration origin). `availability: []` =
   // DARK by default and FAILS CLOSED (empty availability → static eval false when

@@ -68,6 +68,7 @@ import type {
   UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
 } from './../schema/image.schema';
+import { requiresImageDbPath } from './../schema/image.schema';
 import {
   getAllImages,
   getEntityCoverImage,
@@ -276,31 +277,15 @@ export const getInfiniteImagesHandler = async ({
 }) => {
   const { user, features, signal } = ctx;
 
-  // Params the search index physically can't serve â€” these must use the DB
-  // (getAllImages). The decision is server-side: there is no client `useIndex`
-  // flag, so a client can't force the expensive un-indexed path on a broad query.
-  // Correctness-critical filters (wrong results if the index ignored them):
-  // - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
-  //   unique cache keys in BitDex that hurt cache hit rate)
-  // - collectionId: requires relational joins through CollectionItem
-  // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
-  // - imageId: not a search-index filter
-  // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
-  //   a modelId-only query would silently return the global feed (matches the
-  //   /api/v1/images legacy-method logic)
-  // Ordering-only:
-  // - prioritizedUserIds: DB-level user prioritization (TODO in getAllImagesIndex).
-  //   Only forces the DB when scoped to a model (its sole legit use â€” the model
-  //   showcase carousel, which always pairs it with modelVersionId). Sent alone it
-  //   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
-  const requiresDbPath =
-    !!input.postId ||
-    !!input.postIds?.length ||
-    !!input.collectionId ||
-    !!input.reactions?.length ||
-    !!input.imageId ||
-    (!!input.modelId && !input.modelVersionId) ||
-    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
+  // The hub pages and the whole hub router are behind `userHubs`, but `hubId` is a
+  // plain feed input, so `/images?hubId=N` would keep serving a hub after the flag
+  // was turned back off — the feed under someone else's chrome. Refused rather than
+  // ignored: silently dropping the filter serves the GLOBAL feed to a caller who
+  // asked for a hub.
+  if (input.hubId && !features.userHubs)
+    throw throwAuthorizationError('Hubs are not available yet');
+
+  const requiresDbPath = requiresImageDbPath(input);
 
   // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
   // can only run when the index can serve the query.
@@ -315,7 +300,11 @@ export const getInfiniteImagesHandler = async ({
 
   // Use getAllImagesIndex when BitDex is active or the index can serve the query;
   // otherwise use getAllImages (DB).
-  const useIndex = useBitdex || (features.imageIndexFeed && !requiresDbPath);
+  // A hub is only expressible on the index — its collection sources are served by
+  // the indexed `collectionIds` field, which the raw-SQL path has no equivalent
+  // for. Routing one to the DB would drop the filter rather than fail, so hubs
+  // pin the index path regardless of the feature flag.
+  const useIndex = !!input.hubId || useBitdex || (features.imageIndexFeed && !requiresDbPath);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();

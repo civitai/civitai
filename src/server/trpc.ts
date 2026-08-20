@@ -473,6 +473,11 @@ const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
 });
 export const appDeveloperProcedure = protectedProcedure.use(hasAppBlocksAuthor);
 
+// Hubs are dark until the `user-hubs` Flipt flag exists. Fail-CLOSED: `userHubs`
+// carries no static availability, so an absent flag / Flipt-down leaves every hub
+// procedure refusing, which is the pre-hubs behaviour.
+export const userHubProcedure = protectedProcedure.use(isFlagProtected('userHubs'));
+
 /**
  * Verified procedure to prevent users from making actions
  * if they haven't completed the onboarding process
