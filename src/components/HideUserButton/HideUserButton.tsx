@@ -20,16 +20,27 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
     e.preventDefault();
     e.stopPropagation();
 
+    const wantHidden = !alreadyHiding;
+
     toggleHiddenMutation
       .mutateAsync({
         kind: 'user',
         data: [{ id: userId }],
-        hidden: !alreadyHiding,
+        hidden: wantHidden,
       })
       .then(({ hidden }) => {
-        // The server refuses a hide it ranks below an existing block, so report its
-        // outcome rather than the one we asked for.
-        const nowHidden = hidden ?? !alreadyHiding;
+        // A refused hide means a block already covers this user. The un-hide copy
+        // would say their content will show up in their feed — the opposite of what
+        // the block they set is doing.
+        if (wantHidden && hidden === false) {
+          showSuccessNotification({
+            title: 'User already blocked',
+            message: 'Your block already keeps this user out of your feed',
+          });
+          return;
+        }
+
+        const nowHidden = hidden ?? wantHidden;
         showSuccessNotification({
           title: `User marked as ${nowHidden ? 'hidden' : 'show'}`,
           message: `Content from this user will${nowHidden ? ' not' : ''} show up in your feed`,

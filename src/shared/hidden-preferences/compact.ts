@@ -258,8 +258,8 @@ export type HiddenToggleKind = keyof typeof HIDDEN_KIND_TO_KEY;
  * from `onMutate` — the `added`/`removed` diff cannot, because five of the six
  * kinds return both empty on every call.
  *
- * Takes the whole `result` rather than a destructured `hidden` so a caller cannot
- * drop the field and silently make the override inert.
+ * Takes the whole `result` rather than a destructured `hidden`, which removes one
+ * way to make the override inert — not the only one; see `applyToggleSuccess`.
  *
  * `hidden` is one flag for the whole batch, matching the server, which inspects
  * only `data[0]` for the kinds that send it. Both current senders pass a single
@@ -275,4 +275,44 @@ export function reconcileHiddenToggle(
   const next = applyServerHiddenToggle(cache, key, result.added, result.removed);
   if (result.hidden === undefined) return next;
   return applyOptimisticHiddenToggle(next, key, items, result.hidden);
+}
+
+/**
+ * The empty legacy cache used when `getHidden` has not populated yet. Rare —
+ * `getHidden` is prefetched — and a real fetch overwrites it; `expandHiddenPreferences`
+ * reads the legacy shape fine.
+ */
+export const EMPTY_HIDDEN_CACHE = {
+  hiddenImages: [],
+  hiddenModels: [],
+  hiddenModel3Ds: [],
+  hiddenUsers: [],
+  hiddenTags: [],
+  blockedUsers: [],
+  blockedByUsers: [],
+} as unknown as HiddenCache;
+
+/**
+ * The whole of the mutation's `onSuccess` cache write, so the wiring is executable
+ * without React Query. Kept here rather than inline in the hook because nothing in
+ * the repo runs that hook: mutating the arguments of the inline version left the
+ * entire suite green while reinstating the phantom state this exists to prevent.
+ */
+export function applyToggleSuccess(
+  cache: HiddenCache | undefined,
+  variables: { kind: HiddenToggleKind; data: Array<{ id: number }> },
+  result: { added: Array<{ id: number }>; removed: Array<{ id: number }>; hidden?: boolean }
+): HiddenCache {
+  return reconcileHiddenToggle(cache ?? EMPTY_HIDDEN_CACHE, variables.kind, variables.data, result);
+}
+
+/**
+ * What `onError` must do with the cache. React Query treats an `undefined` updater
+ * result as "no update", so handing back a missing snapshot silently leaves the
+ * optimistic write standing forever — refetching is the only correct fallback.
+ */
+export function planToggleRollback(
+  previous: HiddenCache | undefined
+): { restore: HiddenCache } | { invalidate: true } {
+  return previous === undefined ? { invalidate: true } : { restore: previous };
 }

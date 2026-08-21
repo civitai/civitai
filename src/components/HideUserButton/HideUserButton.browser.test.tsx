@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as HiddenPreferences from '~/hooks/hidden-preferences';
+import type * as Notifications from '~/utils/notifications';
 
 /**
  * 868kurj0y — `Block > Hide > Follow`, so a hide over an existing block is refused
@@ -34,7 +36,10 @@ vi.mock('~/hooks/hidden-preferences', () => ({
   }),
 }));
 
-vi.mock('~/utils/notifications', () => ({ showSuccessNotification: mocks.showSuccess }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof Notifications>()),
+  showSuccessNotification: mocks.showSuccess,
+}));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 
@@ -107,8 +112,10 @@ describe('HideUserButton — a blocked target is not offered the Hide control', 
 
   // The gate reads a React-Query cache that is EMPTY while `getHidden` is in flight,
   // so the control does render on a blocked user on a cold client. The toast is then
-  // the last thing that can lie about what happened.
-  test('a refused hide reports NOT hidden, not success', async () => {
+  // the last thing that can lie about what happened — and the server refuses in
+  // exactly one case, where the content IS suppressed. Telling the viewer it "will
+  // show up in your feed" denies a block they set.
+  test('a refused hide never says the content will show up', async () => {
     mocks.toggleResult = { hidden: false };
 
     renderButton();
@@ -118,8 +125,8 @@ describe('HideUserButton — a blocked target is not offered the Hide control', 
     await vi.waitFor(() => expect(mocks.showSuccess).toHaveBeenCalled());
     expect(mocks.showSuccess).toHaveBeenCalledTimes(1);
     const { title, message } = mocks.showSuccess.mock.calls[0][0];
-    expect(title).toBe('User marked as show');
-    expect(message).toContain('will show up in your feed');
+    expect(message).not.toMatch(/will show up in your feed/);
+    expect(`${title} ${message}`).toMatch(/block/i);
   });
 
   // Negative control: pinning only the refusal would pass with the copy inverted.
@@ -159,4 +166,20 @@ describe('HideUserButton — a blocked target is not offered the Hide control', 
 
     await expect.element(page.getByRole('button', { name: 'Unhide' })).toBeInTheDocument();
   });
+});
+
+// `importOriginal` is the house style for this, but spreading the real barrel loads
+// `~/utils/trpc` and drags CivitaiSessionContext into the render — every test above
+// then fails at the matcher ceiling. This is the same protection without the import:
+// the mock above hand-lists two of the barrel's exports, and a new one appearing
+// silently hands `undefined` to whichever consumer starts using it.
+test('the mock still covers the whole hidden-preferences barrel', async () => {
+  const actual = await vi.importActual<typeof HiddenPreferences>('~/hooks/hidden-preferences');
+
+  expect(Object.keys(actual).sort()).toEqual([
+    'useHiddenPreferencesData',
+    'useQueryHiddenPreferences',
+    'useToggleHiddenPreferences',
+    'useUpdateHiddenPreferences',
+  ]);
 });

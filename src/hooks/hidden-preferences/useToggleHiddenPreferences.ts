@@ -1,23 +1,12 @@
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import {
   applyOptimisticHiddenToggle,
+  applyToggleSuccess,
+  EMPTY_HIDDEN_CACHE,
   HIDDEN_KIND_TO_KEY,
-  reconcileHiddenToggle,
+  planToggleRollback,
 } from '~/shared/hidden-preferences/compact';
 import { trpc } from '~/utils/trpc';
-
-// Legacy (object-wrapped) empty cache — used only when the query cache is empty
-// during an optimistic write (rare; getHidden is prefetched). A real fetch
-// overwrites this, and `expandHiddenPreferences` reads the legacy shape fine.
-const emptyLegacy = {
-  hiddenImages: [],
-  hiddenModels: [],
-  hiddenModel3Ds: [],
-  hiddenUsers: [],
-  hiddenTags: [],
-  blockedUsers: [],
-  blockedByUsers: [],
-};
 
 export const useToggleHiddenPreferences = () => {
   const queryUtils = trpc.useUtils();
@@ -33,29 +22,31 @@ export const useToggleHiddenPreferences = () => {
 
       return { previous };
     },
-    onSuccess: async (result, { kind, data }) => {
-      queryUtils.hiddenPreferences.getHidden.setData(undefined, (old = emptyLegacy as any) =>
-        reconcileHiddenToggle(old, kind, data, result)
+    onSuccess: async (result, variables) => {
+      queryUtils.hiddenPreferences.getHidden.setData(undefined, (old) =>
+        applyToggleSuccess(old as any, variables, result)
       );
 
       // Invalidate user lists when user or blockedUser preferences change
-      if (kind === 'user' || kind === 'blockedUser') {
+      if (variables.kind === 'user' || variables.kind === 'blockedUser') {
         await queryUtils.user.getLists.invalidate();
         await queryUtils.user.getList.invalidate();
       }
     },
-    onError: (_error, _variables, context) => {
-      queryUtils.hiddenPreferences.getHidden.setData(undefined, context?.previous);
+    onError: async (_error, _variables, context) => {
+      const plan = planToggleRollback(context?.previous as any);
+      if ('restore' in plan)
+        queryUtils.hiddenPreferences.getHidden.setData(undefined, plan.restore as any);
+      else await queryUtils.hiddenPreferences.getHidden.invalidate();
     },
   });
-  // trpc.hiddenPreferences.getHidden.useQuery();
 };
 
 export const useUpdateHiddenPreferences = () => {
   const queryUtils = trpc.useUtils();
   const updateHiddenPreferences = ({ kind, data, hidden }: ToggleHiddenSchemaOutput) => {
     const key = HIDDEN_KIND_TO_KEY[kind];
-    queryUtils.hiddenPreferences.getHidden.setData(undefined, (old = emptyLegacy as any) =>
+    queryUtils.hiddenPreferences.getHidden.setData(undefined, (old = EMPTY_HIDDEN_CACHE as any) =>
       applyOptimisticHiddenToggle(old, key, data, hidden)
     );
   };

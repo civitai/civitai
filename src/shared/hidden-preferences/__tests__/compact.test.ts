@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { HiddenPreferenceTypes } from '~/server/services/user-preferences.service';
 import {
   applyOptimisticHiddenToggle,
+  applyToggleSuccess,
   expandHiddenPreferences,
+  planToggleRollback,
   reconcileHiddenToggle,
   HIDDEN_PREFS_COMPACT_VERSION,
   isCompactHiddenPreferences,
@@ -242,5 +244,76 @@ describe('optimistic cache mutation — shape parity (compact vs legacy)', () =>
     const ids = res.hiddenModels.map((x) => x.id);
     expect(ids).toContain(500);
     expect(ids).not.toContain(100);
+  });
+});
+
+/**
+ * The mutation's cache wiring. It lives in this module rather than inline in
+ * `useToggleHiddenPreferences` because no test in the repo runs that hook — the
+ * mutations below all passed against the inline version.
+ */
+describe('toggleHidden cache wiring', () => {
+  const hidden30 = () =>
+    applyOptimisticHiddenToggle(structuredClone(legacy), 'hiddenUsers', [{ id: 30 }], true);
+
+  it('forwards the toggled ids, so a refusal actually reaches them', () => {
+    // Mutating the call to pass `[]` reinstates the exact phantom state this PR
+    // removes, and every other test in this file stays green.
+    const res = applyToggleSuccess(
+      hidden30(),
+      { kind: 'user', data: [{ id: 30 }] },
+      { added: [], removed: [], hidden: false }
+    );
+
+    expect(res.hiddenUsers.map((x) => x.id)).not.toContain(30);
+  });
+
+  it('forwards the kind, so the override lands on the right set', () => {
+    const res = applyToggleSuccess(
+      hidden30(),
+      { kind: 'user', data: [{ id: 30 }] },
+      { added: [], removed: [], hidden: true }
+    );
+
+    expect(res.hiddenUsers.map((x) => x.id)).toContain(30);
+    expect(res.hiddenModels.map((x) => x.id)).not.toContain(30);
+  });
+
+  it('substitutes an empty cache when getHidden has not populated', () => {
+    const res = applyToggleSuccess(
+      undefined,
+      { kind: 'user', data: [{ id: 30 }] },
+      { added: [], removed: [], hidden: true }
+    );
+
+    expect(res.hiddenUsers.map((x) => x.id)).toEqual([30]);
+  });
+
+  // 🔴 Identity, not contents. The accepted path must return the SAME object:
+  // `expandHiddenPreferences` is a useMemo keyed on it and HiddenPreferencesProvider
+  // rebuilds every Map when it changes — measured ~93ms of main-thread stall per
+  // click at the tail if this breaks. Membership assertions cannot see it.
+  it('returns the base cache BY REFERENCE when nothing changes', () => {
+    const cache = hidden30();
+
+    expect(
+      reconcileHiddenToggle(cache, 'user', [{ id: 30 }], {
+        added: [],
+        removed: [],
+        hidden: true,
+      })
+    ).toBe(cache);
+  });
+
+  // React Query reads an `undefined` updater result as "no update", so restoring a
+  // missing snapshot would leave the optimistic write standing forever.
+  it('plans a refetch when onMutate captured no snapshot', () => {
+    expect(planToggleRollback(undefined)).toEqual({ invalidate: true });
+  });
+
+  it('restores the snapshot when there is one', () => {
+    const snapshot = structuredClone(legacy);
+
+    expect(planToggleRollback(snapshot)).toEqual({ restore: snapshot });
   });
 });
