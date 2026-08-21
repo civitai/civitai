@@ -7,7 +7,15 @@ import {
   useFreePlacementStanding,
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
-import { useOwnedSticker, useStickerCosmetics } from '~/components/Sticker/sticker.util';
+import {
+  allocateDraftEntitlements,
+  unownedGateFor,
+  useOwnedSticker,
+  useStickerCosmetics,
+  useStickerRefill,
+} from '~/components/Sticker/sticker.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { trpc } from '~/utils/trpc';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { STICKER_PLACEMENT_MIN_SCALE, stickerMaxScale } from '~/shared/utils/sticker-placement';
@@ -63,6 +71,52 @@ export function DraftStickerLayer() {
   // per sticker would be N observers refetching through an arrangement.
   const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
   const freeOffer = freeOfferFor(space, standing);
+
+  /**
+   * What the placer has left of each sticker, and what a top-up costs.
+   *
+   * `getStickerBalances` takes no input, so it genuinely shares the tray's cache
+   * entry. The offers query does NOT share it by accident — it is keyed on the
+   * OWNED ids inside `useStickerRefill`, which is the only way both callers ask
+   * the same question. Keying it on the drafted ids, as this did first, is a
+   * second request that refetches every time a draft is laid down.
+   */
+  const currentUser = useCurrentUser();
+  const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: !!currentUser && targetImageId != null,
+  });
+  const refillFor = useStickerRefill();
+
+  const paidDraftIds = useStickerPlacementDraftStore((state) => state.paidDraftIds);
+  const duplicateDraft = useStickerPlacementDraftStore((state) => state.duplicateDraft);
+
+  /**
+   * Who is covered and who is buying, recomputed from the whole set every time
+   * it changes.
+   *
+   * 🔴 THIS REPLACES A SNAPSHOT, AND THAT IS THE POINT. The gate used to be
+   * decided when a draft was created and written onto it — so with one use left,
+   * deleting the covered draft left the other one still asking to be bought for
+   * a use that had just been handed back. Entitlement belongs to the set.
+   */
+  const entitlements = useMemo(
+    () => allocateDraftEntitlements({ drafts, balances, freeAvailable: !!freeOffer, paidDraftIds }),
+    [drafts, balances, freeOffer, paidDraftIds]
+  );
+
+  const onDuplicate = useCallback(
+    (id: string) => {
+      const current = useStickerPlacementDraftStore.getState().drafts;
+      const source = current.find((draft) => draft.id === id);
+      if (!source) return null;
+
+      // Only the sticker-not-owned-yet gate travels with a copy. Whether an
+      // owned sticker still has a use is decided across the whole set on every
+      // render — storing that answer here is exactly what froze it before.
+      return duplicateDraft(id, unownedGateFor(source));
+    },
+    [duplicateDraft]
+  );
 
   const gesture = useRef<Gesture | null>(null);
   // Held in a ref because the pointer listener is bound once; re-binding it when
@@ -239,10 +293,24 @@ export function DraftStickerLayer() {
             selected={draft.id === selectedDraftId}
             dressed={dressed}
             price={space?.price ?? 0}
-            freeOffer={freeOffer}
             ownerShare={space?.ownerShare}
             ownerUsername={space?.ownerUsername}
             onGesture={onGesture}
+            onDuplicate={onDuplicate}
+            // The sticker-not-owned-yet gate belongs to the draft; the
+            // is-there-a-use-left gate belongs to the set and is decided above.
+            purchase={
+              draft.purchase ??
+              (entitlements.get(draft.id)?.covered
+                ? undefined
+                : refillFor(
+                    draft.cosmeticId,
+                    sticker.find((option) => option.id === draft.cosmeticId)?.pricePerUse
+                  ))
+            }
+            // Exactly one draft can take the free placement — it is once per
+            // image — so the offer goes to that one rather than to all of them.
+            freeOffer={entitlements.get(draft.id)?.free ? freeOffer : null}
           />
         );
       })}

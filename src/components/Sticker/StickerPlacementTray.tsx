@@ -1,8 +1,9 @@
 import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon } from '@mantine/core';
 import { IconAlertTriangle, IconInfoCircle, IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { Countdown } from '~/components/Countdown/Countdown';
 import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
@@ -12,10 +13,9 @@ import {
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
-import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -79,53 +79,6 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
   const { grab, dragging } = useStickerDragOut(maxScale);
 
-  // Asked for every owned sticker rather than only the spent ones, because the
-  // list of spent ones changes as drafts are laid down — keying the query on it
-  // would refetch mid-arrangement, and the answer is the same either way.
-  // Capped at what the schema accepts. Past it the whole query fails zod, and
-  // the failure is invisible — `offers` stays undefined and the pack option
-  // silently never appears for anyone with a large collection. Newest-obtained
-  // first, which is the order the row is already in.
-  const ownedIds = useMemo(
-    () => sticker.slice(0, STICKER_OFFER_LIMIT).map((option) => option.id),
-    [sticker]
-  );
-  const { data: offers } = trpc.cosmetic.getStickerOffers.useQuery(
-    { ids: ownedIds },
-    { enabled: !!currentUser && !!ownedIds.length, staleTime: 60_000 }
-  );
-  /**
-   * What a spent sticker's draft may be refilled with. The listing is offered
-   * only while it is genuinely on sale — a delisted or sold-out one would show a
-   * price the purchase then refuses.
-   *
-   * `pricePerUse` falls back to the owned payload's copy so the single-use price
-   * is there on the first frame, before the offers query lands.
-   */
-  const refillOffer = (cosmeticId: number, ownedPricePerUse?: number) => {
-    const offer = offers?.find((entry) => entry.cosmeticId === cosmeticId);
-    const listing = offer?.listing;
-
-    return {
-      refill: true,
-      perUse: offer?.pricePerUse ?? ownedPricePerUse,
-      ...(listing
-        ? {
-            pack: {
-              shopItemId: listing.shopItemId,
-              unitAmount: listing.unitAmount,
-              acceptsBlue: listing.acceptsBlue,
-              uses: listing.uses,
-              viaShopUserId: listing.viaShopUserId ?? undefined,
-            },
-          }
-        : {}),
-      // `undefined` until the offers land, which shows no attribution rather
-      // than crediting the wrong party while it is unknown.
-      creatorUsername: offer ? offer.creatorUsername : undefined,
-    };
-  };
-
   if (!showing) return null;
 
   // `null` is unlimited and `undefined` is not loaded yet. Collapsing them
@@ -134,12 +87,10 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // Drafts already on the image are subtracted, because each one will spend a
   // use when it is bought. Without this you could lay out three with one use
   // left and only find out at the third purchase, having arranged all of them.
-  const balanceFor = (cosmeticId: number) => {
-    const remaining = balances?.find((balance) => balance.cosmeticId === cosmeticId)?.remaining;
-    if (remaining == null) return remaining;
-    const drafted = drafts.filter((draft) => draft.cosmeticId === cosmeticId).length;
-    return Math.max(remaining - drafted, 0);
-  };
+  // Shared with the duplicate action, which asks the same question about the
+  // same three states. It was this rule written out twice, which is the drift
+  // the refill offer had already been split into two copies by.
+  const balanceFor = (cosmeticId: number) => remainingStickerUses({ balances, drafts, cosmeticId });
 
   const price = space?.price ?? 0;
   // The same predicate the draft's own control uses, so the sentence here and
@@ -155,12 +106,15 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
    * appearing on ordinary paid images are two `&&`s nothing can observe.
    */
   const freeUnavailableReason = preCommitFreeReason(freeAvailable, standing, space);
+  // `Countdown` needs a Date; the query hands back whatever JSON carried.
+  const resetsAt = standing?.resetsAt ? new Date(standing.resetsAt) : null;
 
   const notes = trayNotes({
     freeAvailable,
     price,
     review: space?.mode === 'review',
     reason: freeUnavailableReason,
+    declineFee: space?.declineFee,
   });
   // Says the panel can be got out of the way, and that more than one is allowed,
   // only once there is something that would survive it. Before that both are
@@ -206,6 +160,18 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                     )}
                     <Text size="xs" c={note.tone === 'warn' ? 'yellow.6' : 'dimmed'}>
                       {note.text}
+                      {/* The spent-allowance line is the one note whose answer
+                          keeps changing while the panel is open, so it says WHEN
+                          rather than a phrase that ages: a live countdown to the
+                          reset instead of "it comes back tomorrow" still sitting
+                          there at 11:59. Only on that note, and only when the
+                          server told us when. */}
+                      {note.id === 'reason' && standing && standing.remaining <= 0 && resetsAt && (
+                        <>
+                          {' Next free placement: '}
+                          <Countdown endTime={resetsAt} format="short" />
+                        </>
+                      )}
                     </Text>
                   </div>
                 ))}
@@ -258,15 +224,13 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   <button
                     key={option.id}
                     type="button"
-                    // An exhausted sticker drags out like any other. What is
-                    // different is the draft it makes: it carries the price of
-                    // one more use, and asks for that before it can be placed.
-                    // Arranging it first is the point — the same argument as
-                    // buying one from the shop, and the same gesture.
-                    onPointerDown={grab(
-                      option.id,
-                      exhausted ? refillOffer(option.id, option.pricePerUse) : undefined
-                    )}
+                    // 🔴 NO GATE IS STORED HERE, DELIBERATELY. An exhausted
+                    // sticker drags out like any other and the draft layer
+                    // decides what it owes, because that answer changes as other
+                    // drafts come and go: freezing "you must buy this" onto the
+                    // draft is what left a sticker asking to be bought for a use
+                    // another draft had just handed back.
+                    onPointerDown={grab(option.id)}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
                       drafts.some((draft) => draft.cosmeticId === option.id) ||

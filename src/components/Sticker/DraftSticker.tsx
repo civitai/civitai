@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import {
   IconAlertTriangleFilled,
+  IconCopy,
   IconDropletHalf2,
   IconFlipVertical,
   IconMessage,
@@ -39,7 +40,7 @@ import {
 import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-copy';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
-import { useBuyStickerUses } from '~/components/Sticker/sticker.util';
+import { purchaseCanBeRetriedFresh, useBuyStickerUses } from '~/components/Sticker/sticker.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -50,7 +51,7 @@ import {
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import type { StickerDraft } from '~/store/sticker-placement-draft.store';
+import type { DraftPurchase, StickerDraft } from '~/store/sticker-placement-draft.store';
 import {
   pointerToSurfaceFraction,
   useStickerPlacementDraftStore,
@@ -68,21 +69,6 @@ const NOTE_WIDTH = 220;
 
 /** `mt-2`, in pixels, and the clearance the flipped side is built from. */
 const BUY_BUTTON_GAP = 8;
-
-/**
- * A purchase's idempotency key, which the server refuses a repeat of.
- *
- * Feature-detected for the same reason the draft ids are: `crypto.randomUUID`
- * is undefined outside a secure context, and throwing here would take down the
- * purchase button on any http origin that is not localhost. The fallback is
- * still unique per page — and a key that repeats across sessions would only ever
- * refuse a charge, never duplicate one.
- */
-let purchaseKeySequence = 0;
-const nextPurchaseKey = () =>
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `00000000-0000-4000-8000-${String(++purchaseKeySequence).padStart(12, '0')}`;
 
 /**
  * The nearest ancestor that clips — the carousel's viewport on the image detail
@@ -132,6 +118,8 @@ export function DraftSticker({
   ownerShare,
   ownerUsername,
   onGesture,
+  onDuplicate,
+  purchase,
 }: {
   draft: StickerDraft;
   art: ResolvedSticker;
@@ -148,18 +136,41 @@ export function DraftSticker({
   ownerShare: number | undefined;
   ownerUsername: string | null | undefined;
   onGesture: StartGesture;
+  /**
+   * Makes a second draft of this sticker. Supplied by the host rather than
+   * called on the store from here, because whether the copy needs to be bought
+   * depends on the viewer's remaining uses — which the layer can see and this
+   * component cannot.
+   */
+  onDuplicate?: (id: string) => string | null;
+  /**
+   * What this draft still has to buy, decided ACROSS the drafts on the image
+   * rather than frozen onto this one when it was created.
+   *
+   * The draft's own `purchase` is the sticker-not-owned-yet case, which is a
+   * fact about this draft. Whether an owned sticker's use is available is a fact
+   * about the whole set — delete a draft and its use goes to the next one — so
+   * the host recomputes it and passes it down.
+   */
+  purchase?: DraftPurchase;
 }) {
   const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
+  const markPaidForUse = useStickerPlacementDraftStore((state) => state.markPaidForUse);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const queryUtils = trpc.useUtils();
-  // One buying intent, minted with the draft and reused by every press on it.
-  // The server refuses a repeat of the same key, so a double-click or a retry
-  // after a timeout cannot be charged twice.
-  const purchaseKey = useRef(nextPurchaseKey());
+  // 🔴 ONE KEY PER STICKER PER SESSION, HELD IN THE STORE — not one per draft.
+  // A pack grants the sticker itself and `markPurchased` then frees every draft
+  // of it, so two copies showing two buy buttons are ONE buying intent. Minted
+  // per draft, pressing both within a second was two keys and two charges for
+  // something you only get once; duplicating put those two buttons a click
+  // apart. The per-use path below is unaffected: each use genuinely is another
+  // purchase.
+  const packPurchaseKey = useStickerPlacementDraftStore((state) => state.packPurchaseKey);
+  const clearPackPurchaseKey = useStickerPlacementDraftStore((state) => state.clearPackPurchaseKey);
   const buyUses = useBuyStickerUses();
 
   const buySticker = async () => {
-    const pack = draft.purchase?.pack;
+    const pack = purchase?.pack;
     if (!pack) return;
 
     try {
@@ -167,10 +178,9 @@ export function DraftSticker({
         shopItemId: pack.shopItemId,
         viaShopUserId: pack.viaShopUserId,
         payWith: pack.acceptsBlue ? 'blue-first' : undefined,
-        // One key per draft, minted once: a double-click, a retry, or a second
-        // tab replaying this purchase is one intent and must be charged once.
-        // Stickers can be bought repeatedly now, so nothing else refuses it.
-        idempotencyKey: purchaseKey.current,
+        // One key per sticker per session: a double-click, a retry, a second tab
+        // — or the second copy's own buy button — are one intent, charged once.
+        idempotencyKey: packPurchaseKey(draft.cosmeticId),
         // The number this button is showing. A listing re-priced while the panel
         // sat open must refuse rather than charge something else.
         expectedUnitAmount: pack.unitAmount,
@@ -180,11 +190,29 @@ export function DraftSticker({
       // tray keeps calling this sticker spent and offering to sell it again.
       await queryUtils.cosmetic.getStickerBalances.invalidate();
       markPurchased(draft.cosmeticId);
+      // 🔴 SUCCESS ENDS THE INTENT; THE SESSION DOES NOT. The server's
+      // idempotency check is not a soft dedupe — it looks up a persisted
+      // purchase row and throws — so holding this key would refuse the NEXT
+      // legitimate purchase of the same pack in this session with "this purchase
+      // has already been completed", and the sticker would stay unbuyable until
+      // a reload. Buy a refill pack, spend it, want another: that flow worked
+      // before the key became session-scoped and has to keep working.
+      //
+      // The race this key exists for is unaffected: two copies pressed inside
+      // the same second both read the key BEFORE either resolves, so the second
+      // is still refused as one intent charged once.
+      clearPackPurchaseKey(draft.cosmeticId);
       showSuccessNotification({
         title: 'Sticker purchased',
         message: 'Place it whenever you like — it stays where you put it.',
       });
     } catch (error) {
+      // 🔴 ONLY WHERE THE SERVER DECLINED. A 4xx is the end of the attempt, so
+      // the next press is a new intent and needs a new key. A 5xx or a timeout
+      // is NOT: the charge may well have gone through, and minting a fresh key
+      // for the retry is how one purchase becomes two. Holding it wrongly costs
+      // a refusal on the next press; releasing it wrongly costs someone's Buzz.
+      if (purchaseCanBeRetriedFresh(error)) clearPackPurchaseKey(draft.cosmeticId);
       showErrorNotification({
         title: 'Could not buy that sticker',
         error: error instanceof Error ? error : new Error('Purchase failed'),
@@ -196,7 +224,7 @@ export function DraftSticker({
   // the shop's business, not this button's — the sticker is already arranged and
   // the next press after this one is Place.
   const buyOneUse = async () => {
-    const perUse = draft.purchase?.perUse;
+    const perUse = purchase?.perUse;
     if (perUse == null) return;
 
     try {
@@ -208,11 +236,11 @@ export function DraftSticker({
         expectedPricePerUse: perUse,
         payWith: 'default',
       });
-      // This draft only. One use funds one placement, so lifting the gate from
-      // every draft of the sticker would show a Place button on stickers that
-      // cannot be placed — the server refuses them at `assertHasUse`, after the
-      // button has already claimed they were paid for.
-      markPurchased(draft.cosmeticId, draft.id);
+      // 🔴 THE USE BELONGS TO THE DRAFT THAT PAID FOR IT. Coverage is otherwise
+      // assigned in creation order, so buying from the second of two copies
+      // raised the balance and covered the FIRST — this button would not change,
+      // which reads as a purchase that failed and invites paying twice.
+      markPaidForUse(draft.id);
     } catch (error) {
       showErrorNotification({
         title: 'Could not buy a use',
@@ -246,8 +274,8 @@ export function DraftSticker({
   // share of them is a claim about money that does not move. PR 3's accept
   // reward is the creator's side of a free placement and is not derived from
   // this split, so it does not belong in this sentence either.
-  const payout = draft.purchase
-    ? stickerPurchaseCopy(draft.purchase.creatorUsername)
+  const payout = purchase
+    ? stickerPurchaseCopy(purchase.creatorUsername)
     : placingFree
     ? null
     : payoutCopy(ownerShare, ownerUsername);
@@ -256,14 +284,14 @@ export function DraftSticker({
   // use: it is the cheaper of the two and exactly what placing this draft
   // spends, so the larger commitment is the one you have to ask for.
   const [buyMode, setBuyMode] = useState<'use' | 'pack'>('use');
-  const canBuyUse = draft.purchase?.perUse != null;
-  const canBuyPack = !!draft.purchase?.pack;
+  const canBuyUse = purchase?.perUse != null;
+  const canBuyPack = !!purchase?.pack;
   const offersBoth = canBuyUse && canBuyPack;
   // A first purchase has no per-use option at all — you cannot top up a sticker
   // you do not own — so the toggle's value only decides anything when both are
   // open.
   const effectiveMode = offersBoth ? buyMode : canBuyPack ? 'pack' : 'use';
-  const packUses = draft.purchase?.pack?.uses;
+  const packUses = purchase?.pack?.uses;
 
   // Local to the draft rather than in the store: it is written once, read once
   // at purchase, and putting it in the store would make every keystroke a
@@ -444,7 +472,7 @@ export function DraftSticker({
       const target = event.currentTarget;
       const take = (gesture: Gesture) => {
         if (!onGesture(gesture)) return;
-        select(draft.id);
+        select(gesture.draftId);
         try {
           target.setPointerCapture(gesture.pointerId);
         } catch {
@@ -453,10 +481,27 @@ export function DraftSticker({
       };
 
       if (mode === 'move') {
+        /**
+         * Alt-drag leaves a copy behind and drags the new one, the way every
+         * photo editor does it.
+         *
+         * The gesture continues against the COPY rather than the original, which
+         * is why `onDuplicate` hands back an id: dragging the original instead
+         * would leave the duplicate stranded under the pointer and move the
+         * thing the placer was trying to keep in place.
+         *
+         * The copy lands at the original's position for this path — the button's
+         * nudge exists so a click produces something visible, but an alt-drag is
+         * about to be positioned by the pointer, and offsetting it first makes
+         * the sticker jump out from under the cursor at the start of the drag.
+         */
+        const altCopyId = event.altKey ? onDuplicate?.(draft.id) : null;
+        if (altCopyId) move(altCopyId, { x: draft.x, y: draft.y });
+
         // Keep the sticker where it was relative to the grab, instead of
         // snapping its centre to the cursor.
         take({
-          draftId: draft.id,
+          draftId: altCopyId ?? draft.id,
           pointerId: event.pointerId,
           mode: 'move',
           offsetX: draft.x - point.x,
@@ -524,6 +569,34 @@ export function DraftSticker({
       ...(note.trim() ? { comment: note } : {}),
     },
   });
+
+  /**
+   * A second copy of this sticker, already arranged.
+   *
+   * Placing several of one sticker meant a trip back through the tray for each,
+   * which is what this removes. It creates a DRAFT and nothing else — the copy
+   * is bought and placed by the same button and the same mutation as the first,
+   * so there is no second route into the charge path and nothing here can place
+   * a sticker without being charged for it.
+   *
+   * Absent rather than disabled where the host does not supply a handler: a
+   * control that cannot act is a question the placer has to answer by pressing
+   * it.
+   */
+  const duplicateControl = onDuplicate && (
+    <Tooltip label="Duplicate" withinPortal>
+      <ActionIcon
+        size="sm"
+        radius="xl"
+        variant="subtle"
+        color="gray"
+        aria-label="Duplicate this sticker"
+        onClick={() => onDuplicate(draft.id)}
+      >
+        <IconCopy size={14} />
+      </ActionIcon>
+    </Tooltip>
+  );
 
   const flipControl = (
     <Tooltip label={draft.flip ? 'Unflip' : 'Flip'} withinPortal>
@@ -691,6 +764,7 @@ export function DraftSticker({
             className="absolute -top-9 left-0 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
             onPointerDown={pressPanel}
           >
+            {duplicateControl}
             {flipControl}
             {opacityControl}
           </div>
@@ -752,6 +826,7 @@ export function DraftSticker({
             className="flex items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
             onPointerDown={pressPanel}
           >
+            {duplicateControl}
             {flipControl}
             {opacityControl}
             {removeControl}
@@ -829,7 +904,7 @@ export function DraftSticker({
             deliberately does not. This is the last moment the placer can change
             their mind, and it is what makes auto-accept and review read as two
             different offers rather than a setting nobody can see. */}
-        {!draft.purchase && freeOffer && (
+        {!purchase && freeOffer && (
           <SegmentedControl
             size="xs"
             radius="xl"
@@ -842,23 +917,23 @@ export function DraftSticker({
           />
         )}
 
-        {draft.purchase && effectiveMode === 'pack' && draft.purchase.pack ? (
+        {purchase && effectiveMode === 'pack' && purchase.pack ? (
           <BuzzTransactionButton
             size="sm"
             style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={draft.purchase.pack.unitAmount}
-            accountTypes={draft.purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
-            label={draft.purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
+            buzzAmount={purchase.pack.unitAmount}
+            accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
+            label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
             loading={purchasingShopItem}
             onPerformTransaction={buySticker}
           />
-        ) : draft.purchase ? (
+        ) : purchase ? (
           // Owned, and out of uses. One use, because one is what placing this
           // draft spends.
           <BuzzTransactionButton
             size="sm"
             style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={draft.purchase.perUse ?? 0}
+            buzzAmount={purchase.perUse ?? 0}
             accountTypes={spendTypes}
             label="Buy a use"
             loading={buyUses.isPending}
@@ -866,7 +941,7 @@ export function DraftSticker({
             // charge, and the listing price is not a stand-in for one. Says so
             // rather than offering a button that cannot work.
             error={
-              draft.purchase.perUse == null
+              purchase.perUse == null
                 ? 'This sticker sells no extra uses, and it is not on sale right now'
                 : undefined
             }
@@ -920,7 +995,7 @@ export function DraftSticker({
         {/* The second payment, said before the first one is made. Someone who
             buys a sticker to put it here and then meets another price has been
             surprised with their own money. */}
-        {draft.purchase && (
+        {purchase && (
           <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
             <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
             <Text size="xs" c="gray.3" className="leading-tight">
