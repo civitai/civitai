@@ -221,7 +221,9 @@ export function defaultStartRun({ worktree, args, onLog, onExit }) {
     // The old pipe path could call onExit with lines still in flight.
     //
     // `finally`, because draining calls back into `onLog`: a consumer that throws would otherwise
-    // leave both descriptors open and the capture file on disk, per run, in a long-lived daemon.
+    // leave both descriptors open and the capture file on disk. Scope, stated honestly: the
+    // daemon's own `onLog` is `addLog`, which cannot throw, so no daemon run reaches this today —
+    // it is cheap insurance against a future consumer, not a live leak.
     try {
       capture.drain(true);
     } finally {
@@ -461,7 +463,8 @@ export class TestQueue {
       run.killRequestedAt = this.now();
       // Not guarded, unlike the dispose below, and the asymmetry is deliberate: `defaultStartRun`
       // puts its whole kill body inside its own try/catch, and the daemon always uses that runner
-      // (it is the only `new TestQueue` and passes no `startRun`). Nothing here can throw.
+      // (the daemon's is the only PRODUCTION `new TestQueue`, and it passes no `startRun`; the
+      // other constructions are in tests). Nothing here can throw.
       run.handle?.kill(true);
 
       // Dispose, then settle HERE — the two go together, and the first version shipped only the

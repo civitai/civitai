@@ -21,6 +21,23 @@ const { createOutputCapture, defaultStartRun, READ_WINDOW_BYTES } = await import
 // nothing. importActual is how a test that mocks a module still reaches the genuine one.
 const { spawn: realSpawn } = await vi.importActual<typeof ChildProcess>('child_process');
 
+/** Every capture this process currently owns. */
+const listCaptures = () =>
+  readdirSync(tmpdir()).filter((f) => f.startsWith(`civitai-test-run-${process.pid}-`));
+
+/**
+ * The captures created since `before`, i.e. the ones THIS case owns.
+ *
+ * A snapshot taken after the fact claims every live capture for this pid, and these cases share a
+ * fork — so a defect in a SIBLING test leaves its file behind and this one fails on the
+ * bookkeeping rather than on its own assertion. The mutant still dies, at the wrong line, which
+ * silently over-credits whatever this test was meant to cover. A delta is exact.
+ */
+const capturesCreatedBy = (before: string[]): string[] =>
+  listCaptures()
+    .filter((f) => !before.includes(f))
+    .map((f) => resolve(tmpdir(), f));
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '../..');
 
@@ -400,6 +417,7 @@ describe('the queue hands its child the capture file, not a pipe', () => {
     const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
     spawnMock.mockReturnValue(child);
 
+    const before = listCaptures();
     let seen = 0;
     const handle = defaultStartRun({
       worktree: repoRoot,
@@ -419,12 +437,10 @@ describe('the queue hands its child the capture file, not a pipe', () => {
     // that a file it does not own has been deleted, and goes red with no defect present. Measured:
     // a single foreign file made the unmutated test fail, and made three mutants report a false
     // KILLED. The filename carries the owning pid precisely so this can be scoped.
-    const capturePath = readdirSync(tmpdir())
-      .filter((f) => f.startsWith(`civitai-test-run-${process.pid}-`))
-      .map((f) => resolve(tmpdir(), f));
-    // The positive control for the scope above. An empty list makes every deletion assertion
-    // below a no-op loop that passes trivially — so if the filename format ever changes, this
-    // fails loudly instead of the suite quietly protecting nothing. Measured at exactly 1.
+    const capturePath = capturesCreatedBy(before);
+    // The positive control for the delta above. An empty list makes the deletion assertions below
+    // a no-op loop that passes trivially — so if the filename format ever changes, this fails
+    // loudly instead of the suite quietly protecting nothing. Measured at exactly 1.
     expect(capturePath).toHaveLength(1);
     writeSync(stdio[1], 'boom one\nboom two\n');
 
@@ -447,6 +463,7 @@ describe('the queue hands its child the capture file, not a pipe', () => {
     const child = Object.assign(new EventEmitter(), { pid: 4242, kill: vi.fn() });
     spawnMock.mockReturnValue(child);
 
+    const before = listCaptures();
     let seen = 0;
     defaultStartRun({
       worktree: repoRoot,
@@ -460,9 +477,7 @@ describe('the queue hands its child the capture file, not a pipe', () => {
       onExit: () => {},
     });
     const stdio = (spawnMock.mock.calls[0][2] as { stdio: number[] }).stdio;
-    const mine = readdirSync(tmpdir())
-      .filter((f) => f.startsWith(`civitai-test-run-${process.pid}-`))
-      .map((f) => resolve(tmpdir(), f));
+    const mine = capturesCreatedBy(before);
     // Same positive control as above: an empty list would make the loop below vacuous.
     expect(mine).toHaveLength(1);
     writeSync(stdio[1], 'boom one\nboom two\n');
