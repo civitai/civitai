@@ -144,7 +144,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, deleteFilesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -905,11 +905,6 @@ export const upsertModelVersion = async ({
       tracker.entityChanges(changeRows).catch(() => null);
     }
 
-    // Run it in the background to avoid blocking the request.
-    ingestModelById({ id: version.modelId }).catch((error) =>
-      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
-    );
-
     // The orchestrator caches fee + payoutEnabled per version, and payoutEnabled now derives from the
     // fee, so a fee change that doesn't invalidate it keeps pricing and paying against the old value.
     // Never rejects: the write has already committed, and a failed bust must not surface as a failed save.
@@ -1019,10 +1014,6 @@ export const updateModelVersionPaidAccess = async ({
     });
     tracker.entityChanges(changeRows).catch(() => null);
   }
-
-  ingestModelById({ id: modelId }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId })
-  );
 
   return { id, modelId };
 };
@@ -1652,11 +1643,6 @@ export const publishModelVersionById = async ({
   );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
-  );
-
-  // Run it in the background to avoid blocking the request.
-  ingestModelById({ id: version.modelId }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
   );
 
   return version;

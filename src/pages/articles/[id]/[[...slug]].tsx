@@ -63,6 +63,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
+import { isArticlePublished } from '~/server/services/article.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import {
@@ -82,6 +83,14 @@ import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 import { useInView } from 'react-intersection-observer';
+
+const NOT_FOUND = Symbol('article-not-found');
+
+const isNotFoundError = (error: unknown) => {
+  // `code` at the top level is a server-side `TRPCError`; `data.code` is a `TRPCClientError`.
+  const err = error as { code?: string; data?: { code?: string } } | null | undefined;
+  return err?.code === 'NOT_FOUND' || err?.data?.code === 'NOT_FOUND';
+};
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -109,7 +118,20 @@ export const getServerSideProps = createServerSideProps({
 
     if (ssg) {
       // Fetch article to check slug and prefetch for client hydration
-      const article = await ssg.article.getById.fetch({ id: result.data.id }).catch(() => null);
+      const fetched = await ssg.article.getById
+        .fetch({ id: result.data.id })
+        .catch((error) => (isNotFoundError(error) ? NOT_FOUND : null));
+
+      // `getById` is viewer-scoped: it resolves for the owner and moderators and throws
+      // NOT_FOUND for everyone else, so this 404s a draft/hidden article for crawlers while
+      // its author still loads it. The publish check keeps a live article out of that branch —
+      // `getById` also throws NOT_FOUND while a published article is being re-scanned after an
+      // edit, and a 404 on an indexed URL is not a state to enter transiently. Any other
+      // failure keeps the 200 and lets the client refetch.
+      if (fetched === NOT_FOUND && !(await isArticlePublished(result.data.id)))
+        return { notFound: true };
+
+      const article = fetched === NOT_FOUND ? null : fetched;
 
       if (article) {
         gating = { contentNsfwLevel: article.nsfwLevel };
@@ -333,6 +355,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         canonical: `/articles/${article.id}/${slugit(article.title)}`,
         alternate: `/articles/${article.id}`,
         schema: articleSchema,
+        ogType: 'article' as const,
         deIndex: !article?.publishedAt || article?.availability === Availability.Unsearchable,
       }}
     >

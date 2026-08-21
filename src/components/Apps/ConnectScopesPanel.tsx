@@ -47,7 +47,7 @@ export function ConnectScopesPanel({
           <Tooltip
             multiline
             w={300}
-            label="The account permissions this external app asks to be granted when a user connects it. They are bounded by the OAuth client's allowed-scope ceiling; the per-scope note is the developer's stated reason and is not verified by the platform."
+            label="The account permissions this standalone app asks to be granted when a user connects it. They are bounded by the OAuth client's allowed-scope ceiling; the per-scope note is the developer's stated reason and is not verified by the platform."
           >
             <ThemeIcon size="xs" variant="subtle" color="gray">
               <IconInfoCircle size={13} />

@@ -170,6 +170,10 @@ export function AddUserContentModal({ collectionId }: Props) {
                   userId: currentUser?.id,
                   period: 'AllTime',
                   sort: ImageSort.Newest,
+                  // The feed carves out the caller's own unpublished posts, which is right
+                  // for a profile and wrong for a picker: an unpublished image cannot be
+                  // added to a collection.
+                  publishedOnly: true,
                   hidden: undefined,
                   types: undefined,
                   withMeta: undefined,

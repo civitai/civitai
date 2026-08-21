@@ -135,8 +135,6 @@ const storedModel = {
 const baseInput = {
   type: ModelType.Checkpoint,
   uploadType: ModelUploadType.Created,
-  // Draft keeps applyModelFlagSideEffects's ingest/search-index side effects out of the
-  // update path so this scaffold's mocked collaborators stay untouched.
   status: ModelStatus.Draft,
 } satisfies Partial<ModelUpsertInput>;
 

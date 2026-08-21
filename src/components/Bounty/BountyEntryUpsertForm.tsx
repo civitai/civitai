@@ -269,7 +269,10 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     <IconTrash size={26} strokeWidth={2.5} />
                   </LegacyActionIcon>
                 </div>
-                {image.meta && (
+                {/* hasMeta is false whenever hideMeta is set, but this form is the
+                    owner's own, and getMediaGenerationData serves the owner their
+                    hidden prompt. */}
+                {(image.hasMeta || image.hideMeta) && (
                   <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                     <ImageMetaPopover2 imageId={image.id} type={image.type}>
                       <LegacyActionIcon component="div" variant="light" color="dark" size="lg">

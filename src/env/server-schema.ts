@@ -649,9 +649,6 @@ export const serverSchema = z
     CLOUDFLARE_TURNSTILE_SECRET: z.string().optional(),
     CF_INVISIBLE_TURNSTILE_SECRET: z.string().optional(),
     CF_MANAGED_TURNSTILE_SECRET: z.string().optional(),
-    CONTENT_SCAN_ENDPOINT: isProd ? z.string() : z.string().optional(),
-    CONTENT_SCAN_CALLBACK_URL: z.string().optional(),
-    CONTENT_SCAN_MODEL: z.string().optional(),
     // TIPALTI. It uses a lot of little env vars, so we group them here.
     // iFrame Related:
     TIPALTI_PAYER_NAME: z.string().optional(),

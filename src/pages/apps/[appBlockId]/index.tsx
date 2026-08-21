@@ -30,6 +30,7 @@ import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import {
   approvedListingSlugQuery,
   resolveLegacyAppRoute,
@@ -482,7 +483,7 @@ export default function AppDetailPage() {
                   <Stack gap="xs">
                     <Title order={4}>External site</Title>
                     <Text size="sm" c="dimmed">
-                      This standalone app opens an external link in a new tab:{' '}
+                      This {STANDALONE_KIND_LABEL} app opens an external link in a new tab:{' '}
                       <Anchor href={externalUrl!} target="_blank" rel="noopener noreferrer">
                         {externalUrl!.replace(/^https?:\/\//, '')}
                       </Anchor>
