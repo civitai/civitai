@@ -907,20 +907,27 @@ export const toggleFollowUser = async ({
     select: { type: true },
   });
 
+  // Every write below is scoped by `type`. The row read a moment ago may already
+  // be a different type — a block applied from another tab, say — and an
+  // unqualified `delete`/`update` on the PK would take that block with it while
+  // reporting success.
   if (engagement) {
     if (engagement.type === 'Follow') {
-      await dbWrite.userEngagement.delete({
-        where: { userId_targetUserId: { userId, targetUserId } },
+      await dbWrite.userEngagement.deleteMany({
+        where: { userId, targetUserId, type: UserEngagementType.Follow },
       });
       await userFollowsCache.refresh(userId);
       return false;
     } else if (engagement.type === 'Hide') {
-      await dbWrite.userEngagement.update({
-        where: { userId_targetUserId: { userId, targetUserId } },
-        data: { type: 'Follow' },
+      const { count } = await dbWrite.userEngagement.updateMany({
+        where: { userId, targetUserId, type: UserEngagementType.Hide },
+        data: { type: UserEngagementType.Follow },
       });
       await userFollowsCache.refresh(userId);
-      return true;
+      // Zero rows means the Hide is gone — replaced by a Block, most likely — so
+      // no follow was established and saying otherwise would be a lie the caller
+      // acts on (reward, notification, tracking event).
+      return count > 0;
     }
 
     return false;
@@ -971,30 +978,39 @@ export const toggleHideUser = async ({
     select: { type: true },
   });
 
-  if (engagement) {
-    if (engagement.type === 'Hide')
-      await dbWrite.userEngagement.delete({
-        where: { userId_targetUserId: { userId, targetUserId } },
-      });
-    else if (engagement.type === 'Follow')
-      await dbWrite.userEngagement.update({
-        where: { userId_targetUserId: { userId, targetUserId } },
-        data: { type: 'Hide' },
-      });
+  // A Block already hides the target and is strictly stronger, so a hide over one
+  // leaves it alone and reports the target as hidden — which it is. Previously
+  // this matched neither branch, wrote nothing, and returned falsy, so the caller
+  // logged the hide as a removal.
+  if (engagement?.type === UserEngagementType.Block) return true;
 
-    return false;
+  const hiding = engagement?.type !== UserEngagementType.Hide;
+
+  // Scoped by `type`, never by the PK alone: the row read above may already be a
+  // Block, and an unqualified `delete`/`update` would destroy it while reporting
+  // success.
+  if (hiding) {
+    const { count } = await dbWrite.userEngagement.updateMany({
+      where: { userId, targetUserId, type: { not: UserEngagementType.Block } },
+      data: { type: UserEngagementType.Hide },
+    });
+    if (!count)
+      await dbWrite.userEngagement
+        .create({ data: { type: UserEngagementType.Hide, targetUserId, userId } })
+        // Nothing to update: either no row (create it) or a Block arrived in
+        // between (P2002, and keeping it is the intended end state). Both leave
+        // the target hidden, so fall through to the cache refresh.
+        .catch((error) => {
+          if (!isPrismaUniqueViolation(error)) throw error;
+        });
+  } else {
+    await dbWrite.userEngagement.deleteMany({
+      where: { userId, targetUserId, type: UserEngagementType.Hide },
+    });
   }
 
-  await dbWrite.userEngagement
-    .create({ data: { type: 'Hide', targetUserId, userId } })
-    .catch((error) => {
-      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
-      // constraint (P2002). The engagement now exists — idempotent, so still
-      // refresh the cache + return true instead of bubbling a 500.
-      if (!isPrismaUniqueViolation(error)) throw error;
-    });
   await userFollowsCache.refresh(userId);
-  return true;
+  return hiding;
 };
 
 export const getUserList = async ({ username, type, limit, page }: GetUserListSchema) => {
