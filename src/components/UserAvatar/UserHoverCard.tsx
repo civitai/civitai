@@ -5,6 +5,7 @@ import type { ReactElement, ReactNode } from 'react';
 import { createContext, useContext, useSyncExternalStore } from 'react';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { trpc } from '~/utils/trpc';
+import { HOVER_CLOSE_DELAY_MS, HOVER_DELAY_MS } from './hover-card.constants';
 
 // Loaded with the hover, not with the page. The creator card drags in profile
 // cosmetics, live metrics and edge media, and a feed renders dozens of avatars
@@ -19,8 +20,10 @@ const SmartCreatorCard = dynamic(() =>
  */
 export const HOVER_CARD_WIDTH = 400;
 
-export const HOVER_DELAY_MS = 500;
-export const HOVER_CLOSE_DELAY_MS = 150;
+// Defined in their own module so a consumer that wants only the timing does not
+// take this component with it; re-exported here because every existing importer
+// reads them from this path.
+export { HOVER_CLOSE_DELAY_MS, HOVER_DELAY_MS } from './hover-card.constants';
 
 /**
  * Above Mantine's default popover layer. A hover card is frequently rendered

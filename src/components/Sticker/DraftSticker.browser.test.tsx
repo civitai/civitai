@@ -7,6 +7,7 @@ import type * as Trpc from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
+import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 
 /**
@@ -332,5 +333,37 @@ describe('the free option carries the mode', () => {
     await renderDraft(null, { ownerShare: 1 });
 
     await expect.element(page.getByText(/proceeds go to/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The glyph on the flip control has to name the axis the transform mirrors
+ * across, and Tabler's names run the other way: `IconFlipHorizontal` draws a
+ * HORIZONTAL mirror line, which reads as a top-to-bottom flip. Picking the icon
+ * by its name is how this control ended up showing the wrong one twice.
+ *
+ * So this asserts the geometry rather than the icon's name or its path data: the
+ * mirror line is the one sub-path of the glyph that is a straight line, and a
+ * vertical line has zero width. That survives a Tabler version bump redrawing
+ * the arrows, and still fails if someone swaps the pair back.
+ */
+describe('the flip control draws the axis it mirrors across', () => {
+  test('mirror line is vertical, matching the artwork transform', async () => {
+    // The claim the glyph has to agree with. `scaleX(-1)` mirrors left-to-right,
+    // i.e. across a VERTICAL axis — read it here rather than restating it, so
+    // changing the transform to `scaleY` fails this test instead of silently
+    // making the icon wrong again.
+    expect(stickerArtworkStyle({ flip: true, opacity: 1 }).transform).toBe('scaleX(-1)');
+
+    await renderDraft(null);
+
+    const button = (await page
+      .getByRole('button', { name: 'Flip this sticker' })
+      .element()) as HTMLElement;
+    const boxes = Array.from(button.querySelectorAll('path')).map((path) => path.getBBox());
+
+    expect(boxes.length).toBeGreaterThan(0);
+    expect(boxes.some((box) => box.width === 0 && box.height > 0)).toBe(true);
+    expect(boxes.some((box) => box.height === 0 && box.width > 0)).toBe(false);
   });
 });
