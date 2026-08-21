@@ -11,9 +11,10 @@
 -- APPLY BY HAND, off-peak. This repo does not run `prisma migrate deploy`.
 --
 -- Measured on the prod replica 2026-08-21: 42,187,643 rows total, of which
--- 3,080,711 (7.3%) reference one of 1,317,709 soft-deleted users — 771,882 by a
--- deleted user, 2,367,030 aimed at one, 58,201 both. The work list below takes
--- ~35 s to build.
+-- 3,080,712 (7.3%) reference one of 1,317,709 soft-deleted users — 771,882 by a
+-- deleted user, 2,367,030 aimed at one, 58,201 both. EXPLAIN ANALYZE of the work
+-- list below: one Seq Scan, two hashed subplans off `User_deletedAt_notnull_idx`,
+-- 16.1 s.
 --
 -- 🔴 Run it with autocommit on (plain psql, no surrounding BEGIN). The DO block
 -- COMMITs per batch, which PostgreSQL refuses inside an explicit transaction.
