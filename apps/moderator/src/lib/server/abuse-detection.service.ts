@@ -38,7 +38,11 @@ export type AbuseFinding = {
 };
 
 /**
- * Postgres `undefined_object`, raised when `ON CONFLICT (…)` names columns no unique index covers.
+ * Postgres `invalid_column_reference`, raised when `ON CONFLICT (…)` names columns no unique index
+ * covers. (NOT `undefined_object`, which is 42704 — the class name matters because a maintainer
+ * deciding whether to widen this catch needs to know 42P10 is broader than it looks: a bad
+ * ORDER BY/GROUP BY reference raises it too. Inside `writeRun` the realistic sources are narrow.
+ * `mod-activity.ts` documents the same code for the same ON CONFLICT case.)
  *
  * 🔴 This is the failure mode of a HALF-APPLIED schema, and it is otherwise undiagnosable from the
  * producer's side: it presents as a 500 on every POST forever, and the job retries into it. The

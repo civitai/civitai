@@ -13,6 +13,12 @@
 --
 -- Idempotent: safe to re-run.
 
+-- 🔴 REQUIRED. Without it psql continues past a failed statement, and the one environment the DROP
+-- below targets — one that ran an earlier version and may hold duplicate (detector, started_at)
+-- rows — is exactly where the CREATE UNIQUE INDEX fails. It would then drop the old index anyway,
+-- leaving that deployment with NO unique index (every write 42P10s) and no per-detector index either.
+\set ON_ERROR_STOP on
+
 CREATE TABLE IF NOT EXISTS abuse_detection_run (
   id          bigserial PRIMARY KEY,
   -- Opaque producer key (`reaction-abuse`, `review-bomb`, …). The UI supplies the display name.
@@ -37,13 +43,16 @@ CREATE TABLE IF NOT EXISTS abuse_detection_run (
 -- ⚠️ On an existing deployment, de-duplicate before adding it:
 --   DELETE FROM abuse_detection_run a USING abuse_detection_run b
 --    WHERE a.detector = b.detector AND a.started_at = b.started_at AND a.id < b.id;
--- Keeps the HIGHEST id — last writer wins, matching what the runtime upsert does. Keeping the
--- lowest would make the migration and the running code disagree about which duplicate is current.
+-- Keeps the HIGHEST id, i.e. the most recently inserted duplicate. The runtime upsert reaches the
+-- same CONTENT a different way — it keeps the original row's id and overwrites its columns — so the
+-- two agree on which report survives, not on which row identity does.
 CREATE UNIQUE INDEX IF NOT EXISTS abuse_detection_run_detector_started_key
   ON abuse_detection_run (detector, started_at);
--- Superseded by the unique index above, which covers the same leading column. Dropped rather than
--- left behind: an environment that ran an earlier copy of this file still carries it, and a
--- redundant index is pure write cost on every insert.
+-- Superseded by the unique index above: same columns in the same order, and btree scans backward,
+-- so it serves `WHERE detector = $1 ORDER BY started_at DESC` identically. (A shared LEADING column
+-- would NOT be sufficient grounds — the full column list matching is.) Dropped rather than left
+-- behind: an environment that ran an earlier copy of this file still carries it, and a redundant
+-- index is pure write cost on every insert.
 DROP INDEX IF EXISTS abuse_detection_run_detector_started_idx;
 
 CREATE INDEX IF NOT EXISTS abuse_detection_run_started_idx

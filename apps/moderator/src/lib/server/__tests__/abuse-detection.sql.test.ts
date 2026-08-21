@@ -7,6 +7,7 @@ import {
   type DatabaseConnection,
 } from 'kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MAX_FINDINGS_PER_REPORT } from '@civitai/moderation';
 import type { AbuseDetectionDB } from '../abuse-detection-db';
 
 /**
@@ -35,16 +36,24 @@ const params: readonly unknown[][] = [];
  * abuse_detection_finding` unreachable, and a mutant widening its `WHERE` to every run in the table
  * passed the entire suite.
  *
- * Returning one canned row lets every statement compile. The row's shape is irrelevant — nothing
- * here asserts on results, only on the SQL that was built to fetch them.
+ * Returning a canned row lets every statement compile. The driver ignores the SQL entirely and
+ * answers EVERY query with `cannedRows`, so a test that wants the empty path sets it — the row count
+ * a chain sees is fixed here, never by the query's own LIMIT.
+ *
+ * The id is deliberately NOT 1. `run.id` from the run insert flows into the findings DELETE and
+ * INSERT, so a distinctive value lets those assert the id they were given rather than accepting any
+ * number — otherwise dropping `.returning('id')` is invisible here while breaking outright against a
+ * real driver (`run.id` undefined → DELETE scoped to NULL, INSERT violating `run_id NOT NULL`).
  */
-class OneRowDriver extends DummyDriver {
+const CANNED_RUN_ID = 4242;
+let cannedRows: unknown[] = [{ id: CANNED_RUN_ID }];
+
+class CannedRowDriver extends DummyDriver {
   async acquireConnection(): Promise<DatabaseConnection> {
     return {
       // Generic in `R`, matching `DatabaseConnection` — a concrete row type here does not satisfy it
-      // and svelte-check rejects the whole dialect. The row's contents are irrelevant; only its
-      // EXISTENCE matters, because that is what lets a chain continue past its first read.
-      executeQuery: async <R>() => ({ rows: [{ id: 1 } as unknown as R] }),
+      // and svelte-check rejects the whole dialect.
+      executeQuery: async <R>() => ({ rows: cannedRows as R[] }),
       streamQuery: async function* () {
         yield { rows: [] };
       },
@@ -56,7 +65,7 @@ function compileOnlyDb() {
   return new Kysely<AbuseDetectionDB>({
     dialect: {
       createAdapter: () => new PostgresAdapter(),
-      createDriver: () => new OneRowDriver(),
+      createDriver: () => new CannedRowDriver(),
       createIntrospector: (k) => new PostgresIntrospector(k),
       createQueryCompiler: () => new PostgresQueryCompiler(),
     },
@@ -79,6 +88,7 @@ const service = await import('../abuse-detection.service');
 beforeEach(() => {
   sql.length = 0;
   (params as unknown[][]).length = 0;
+  cannedRows = [{ id: CANNED_RUN_ID }];
 });
 
 /** Whitespace-normalised, so a prettier reflow of the builder chain cannot fail these. */
@@ -121,28 +131,56 @@ describe('compiled SQL — column names and shape', () => {
     expect(params[0]).toContain(42);
   });
 
+  // The default is the CONTRACT's cap, so the reader can never drop rows the writer accepted. Every
+  // other test passes an explicit limit, which left the default unpinned: lowering it to 100 — a
+  // silent 900-row truncation on a conforming report — survived the whole suite.
+  it('defaults to the contract cap, so the reader cannot be narrower than the writer', async () => {
+    await service.getAbuseFindings(7);
+    expect(params[params.length - 1]).toContain(MAX_FINDINGS_PER_REPORT + 1);
+  });
+
+  // 🔴 Before the canned row this was the ONLY path any test took, and it was unasserted; after it,
+  // the path became unreachable. If it regressed, a merely-nonexistent run would throw on
+  // `row.id`, the route would catch it, and a 404 would render as "could not reach the database" —
+  // the exact misdiagnosis the discriminated statuses exist to prevent.
+  it('getAbuseRun returns null for a run that does not exist', async () => {
+    cannedRows = [];
+    await expect(service.getAbuseRun(999)).resolves.toBeNull();
+    // And it stops there rather than issuing the counts query for a run it did not find.
+    expect(sql).toHaveLength(1);
+  });
+
   it('getAbuseFindings orders by confidence then id, and over-fetches by one to detect the cap', async () => {
     await service.getAbuseFindings(7, 10);
     const q = lastSql();
+    // 🔴 Scoped to the run. Without this the detail page for run N renders EVERY finding in the
+    // table ranked by confidence — the same defect gated below for `getAbuseRun`'s counts, on the
+    // sibling query feeding the same screen.
+    expect(q).toContain('where "run_id" = $');
+    expect(params[params.length - 1]).toContain(7);
     expect(q).toContain('order by "confidence" desc, "id" asc');
     // `limit + 1` is how truncation is detected; a bare `limit` would make `truncated` always false.
     expect(params[params.length - 1]).toContain(11);
   });
 
-  // The SQL tier can only see that `limit + 1` reached the driver. What the function DOES with the
-  // extra row is behaviour, and it was unasserted: `>` → `>=` (a full page falsely reporting
-  // "showing the first N of N") and dropping the `.slice` (rendering N+1 rows while claiming N) both
-  // survived. The row-returning driver yields one row, so these are driven by the limit instead.
+  // What the function DOES with the extra row is behaviour the compiled SQL cannot show: `>` → `>=`
+  // (a full page falsely reporting "showing the first N of N") and dropping the `.slice` (rendering
+  // N+1 rows while claiming N) both used to survive.
+  //
+  // ⚠️ The driver returns ONE row for every query regardless of the compiled LIMIT, so these cases
+  // are driven by varying the limit against that fixed count — not by the query actually fetching a
+  // different number. The `limit + 1` over-fetch is pinned separately, by the parameter assertion
+  // above; nothing here observes it.
   describe('truncation', () => {
     it('reports truncated when the query came back over the limit', async () => {
-      // limit 0 → over-fetch of 1 → the driver's single row exceeds it.
+      // One row back (the driver's fixed count) against a limit of 0 — more than asked for.
       const { findings, truncated } = await service.getAbuseFindings(7, 0);
       expect(truncated).toBe(true);
       expect(findings).toHaveLength(0); // the probe row is dropped, never rendered
     });
 
     it('does not report truncated when the row count merely reaches the limit', async () => {
-      // limit 1 → over-fetch of 2 → one row back, which is exactly the limit, not beyond it.
+      // One row back against a limit of 1 — exactly the limit, so not truncated. `>=` fails here.
       const { findings, truncated } = await service.getAbuseFindings(7, 1);
       expect(truncated).toBe(false);
       expect(findings).toHaveLength(1);
@@ -193,6 +231,10 @@ describe('compiled SQL — column names and shape', () => {
     const del = all.find((s) => s.startsWith('delete from "abuse_detection_finding"'));
     expect(del).toBeDefined();
     expect(del).toContain('where "run_id" = $1');
+    // The VALUE, not just the placeholder: this is the id the run insert returned, so dropping
+    // `.returning('id')` — invisible to a placeholder-only assertion — fails here.
+    const delParams = params[sql.findIndex((s2) => s2.startsWith('delete from'))];
+    expect(delParams).toEqual([CANNED_RUN_ID]);
 
     const delAt = all.findIndex((s) => s.startsWith('delete from "abuse_detection_finding"'));
     const insAt = all.findIndex((s) => s.startsWith('insert into "abuse_detection_finding"'));

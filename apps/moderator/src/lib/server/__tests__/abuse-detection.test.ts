@@ -198,6 +198,44 @@ describe('abuseReportInput — the wire contract', () => {
     expect(parsed.success).toBe(true);
   });
 
+  // `actioned: false` is most of what the detectors produce and `action IS NULL` is the database's
+  // own spelling of it, so a producer serialising a nullable field emits exactly this. Refusing it
+  // would lose every run from the commonest possible payload.
+  it('accepts an explicit null action on a finding that was not actioned', () => {
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [{ userId: 5, confidence: 0.3, reason: 'r', actioned: false, action: null }],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('still refuses a null action on a finding that WAS actioned', () => {
+    // The pairing rule has to treat null and undefined alike in BOTH directions, or accepting null
+    // above would punch a hole in the CHECK the contract exists to protect.
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [{ userId: 5, confidence: 0.9, reason: 'r', actioned: true, action: null }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  // The object-level refinement runs EVEN WHEN a field failed its own validation, and `Date.parse`
+  // does not fail on a rejected string — it guesses, reading a naive timestamp as local time. West
+  // of UTC that compares as later than a `Z` finish and adds a false ordering error beside the real
+  // one. Asserting the COUNT is what makes the bail observable; asserting `success: false` alone
+  // passes either way.
+  it('reports exactly one issue for a naive timestamp, not a spurious ordering error too', () => {
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      startedAt: '2026-08-21T11:00:00.123456',
+      findings: [],
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues).toHaveLength(1);
+    expect(parsed.error.issues[0].path).toEqual(['startedAt']);
+  });
+
   it.each([
     ['reason', { userId: 5, confidence: 0.5, reason: '', actioned: false }],
     ['action', { userId: 5, confidence: 0.5, reason: 'r', actioned: true, action: '' }],
@@ -234,14 +272,24 @@ describe('recordAbuseRun', () => {
     expect(values.finished_at.toISOString()).toBe('2026-08-21T11:04:00.000Z');
   });
 
-  // Found by a negative control that was SUPPOSED to be caught and wasn't: hardcoding `detector` in
-  // the insert left the whole suite green. A wrong detector files every run under another producer,
-  // where the board groups by exactly that column.
+  // 🔴 The detector here is DELIBERATELY not `baseRun`'s. Every other fixture uses
+  // `reaction-abuse`, so an assertion naming that same literal cannot distinguish "the input was
+  // written" from "the code hardcodes the value my fixture happens to use" — a mutant substituting
+  // the plausible constant survives a fully green suite. This test's first version did exactly that:
+  // it was written in response to a negative control and repeated the control's own blind spot,
+  // dying only to an obviously-wrong value like 'BROKEN'.
+  //
+  // A wrong detector files every run under another producer, and the board groups by that column.
   it('writes the reported detector and summary, not a substitute', async () => {
-    await recordAbuseRun({ ...baseRun, summary: 'daily digest line', findings: [] });
+    await recordAbuseRun({
+      ...baseRun,
+      detector: 'review-bomb',
+      summary: 'daily digest line',
+      findings: [],
+    });
 
     const values = valuesFor('abuse_detection_run') as { detector: string; summary: string | null };
-    expect(values.detector).toBe('reaction-abuse');
+    expect(values.detector).toBe('review-bomb');
     expect(values.summary).toBe('daily digest line');
   });
 
@@ -312,6 +360,27 @@ describe('recordAbuseRun', () => {
   it('upserts the run rather than inserting a second copy', async () => {
     await recordAbuseRun({ ...baseRun, findings: [] });
     expect(calls.some(([m]) => m === 'onConflict')).toBe(true);
+  });
+
+  // 🔴 The failure mode of a half-applied schema. Without translation it is a bare 500 on every POST
+  // forever, with the producer retrying into it and nothing anywhere naming the cause.
+  it('translates a missing-unique-index error into one that names the DDL', async () => {
+    transactionExecute.mockRejectedValueOnce(
+      Object.assign(new Error('there is no unique or exclusion constraint matching…'), {
+        code: '42P10',
+      })
+    );
+
+    await expect(recordAbuseRun({ ...baseRun, findings: [] })).rejects.toThrow(/schema\.sql/);
+  });
+
+  it('passes any other database error through untouched', async () => {
+    // Only the one diagnosable case is rewritten; rewriting more would hide real faults behind a
+    // message telling an operator to run DDL that is already applied.
+    const original = Object.assign(new Error('connection terminated'), { code: '57P01' });
+    transactionExecute.mockRejectedValueOnce(original);
+
+    await expect(recordAbuseRun({ ...baseRun, findings: [] })).rejects.toBe(original);
   });
 
   it('defaults absent counters to an empty object rather than null', async () => {
