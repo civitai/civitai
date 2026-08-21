@@ -57,6 +57,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
 import {
@@ -258,10 +259,18 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   const { id } = ctx.user;
 
   try {
-    const unreadCount = await getUserNotificationCount({
-      userId: id,
-      unread: true,
-    });
+    // Concurrent, not serial: these hit two different backends — the
+    // notifications service over HTTP (with its own retries) and the main
+    // Postgres replica — with no data dependency between them. Awaiting them in
+    // sequence tacked a full DB round trip onto a request already waiting on a
+    // retrying HTTP call.
+    const [unreadCount, placementCounts] = await Promise.all([
+      getUserNotificationCount({ userId: id, unread: true }),
+      // Degrades to zeroes rather than failing the request, matching
+      // getUserNotificationCount: an under-reported badge for one session beats
+      // taking the notification bell down with it.
+      getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
+    ]);
 
     const reduced = unreadCount.reduce(
       (acc, { category, count }) => {
@@ -272,7 +281,28 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       },
       { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
     );
-    return reduced;
+
+    // `pendingPlacements` rides along here rather than getting its own query:
+    // this is the one request that already runs once per session for every
+    // signed-in user (`staleTime: Infinity`, see useQueryNotificationsCount),
+    // and the user menu badge needs a number on every page. A second per-page
+    // count would be a production cost for a creator-only chore.
+    //
+    // Deliberately NOT folded into `all`: that number is the notification bell's
+    // badge, and a pending placement is not an unread notification. Adding it
+    // there would inflate the bell by rows the drawer cannot show and cannot
+    // clear. It is also excluded by name from the client's mark-all-read wipe —
+    // see NON_CATEGORY_COUNT_KEYS in notifications.utils.ts, which is where the
+    // invariant for adding another non-category key to this payload lives.
+    return {
+      ...reduced,
+      // One number for the menu entry, and the split for the segmented control
+      // on the placements page — the entry points at both queues now, so a
+      // sticker-only count would under-report the thing it links to.
+      pendingPlacements: placementCounts.sticker + placementCounts.remix,
+      pendingStickerPlacements: placementCounts.sticker,
+      pendingRemixSubmissions: placementCounts.remix,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

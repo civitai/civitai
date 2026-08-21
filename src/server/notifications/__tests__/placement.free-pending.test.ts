@@ -66,6 +66,20 @@ describe('remix gallery pending notifications', () => {
 
     expect(message!.message).toContain('someone');
     expect(message!.message).not.toMatch(/buzz|\d/i);
-    expect(message!.url).toBe('/images/74');
+  });
+
+  it('sends the creator to the remix side of their placements queue', () => {
+    // Was `/images/74`. Both surfaces' pending notifications now land on the
+    // unified `/user/placements`, on their own tab: landing on the one image is
+    // how an owner answered a single submission and never learned the rest of
+    // the queue existed.
+    const message = placementNotifications['remix-gallery-free-pending'].prepareMessage({
+      details: { placementId: 5, imageId: 74, placerId: 52, placerUsername: 'someone' },
+    });
+
+    expect(message!.url).toBe('/user/placements?type=remix&tab=received');
+    // Named explicitly: a revert to the per-image link is still a valid-looking
+    // URL, so asserting only the shape would not catch it.
+    expect(message!.url).not.toContain('/images/');
   });
 });

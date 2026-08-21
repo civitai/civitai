@@ -49,8 +49,16 @@ export function resolveMigratedRoute(path: string): string | undefined {
   return key === undefined ? undefined : MIGRATED_ROUTES[key] + path.slice(key.length);
 }
 
-/** Whether a main-app href (`/moderator/foo`) now redirects out to the moderator app. */
+/**
+ * Whether a main-app href (`/moderator/foo`) now redirects out to the moderator app.
+ *
+ * Query and hash are stripped first. The nav has entries that carry one — a
+ * pre-filtered link to the same page — and matching on the raw href would score
+ * `creator-shop?type=sticker` as unmigrated while plain `creator-shop` migrated,
+ * leaving one nav entry silently pointing at a page that had moved.
+ */
 export function isMigratedModeratorHref(href: string): boolean {
   if (!href.startsWith(MODERATOR_PREFIX)) return false;
-  return migratedRouteKey(href.slice(MODERATOR_PREFIX.length)) !== undefined;
+  const path = href.slice(MODERATOR_PREFIX.length).split(/[?#]/)[0];
+  return migratedRouteKey(path) !== undefined;
 }
