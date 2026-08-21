@@ -26,11 +26,48 @@ export type DownloadInfo = {
  */
 export class DeliveryWorkerError extends Error {
   readonly statusCode: number;
+  /**
+   * Set by `resolveDownloadUrl` when the storage resolver was consulted FIRST and
+   * also failed, so this delivery-worker error is the second of two answers.
+   *
+   * 🔴 Load-bearing for `isDefiniteNotFound`. The delivery worker is the legacy
+   * path keyed off `ModelFile.url`; a file whose bytes are registered only in
+   * `file_locations` is resolvable ONLY through the storage resolver. So when the
+   * resolver could not answer, a delivery-worker 404 does not mean the object is
+   * absent — it can equally mean "the only component that could have found it was
+   * down". Keeping the resolver's error here is what lets the two be told apart.
+   */
+  resolverError?: unknown;
   constructor(statusCode: number, statusText: string) {
     // Keep the historical "Delivery worker error: …" message so existing
     // callers/log-matchers that key off it are unaffected.
     super(`Delivery worker error: ${statusText}`);
     this.name = 'DeliveryWorkerError';
+    this.statusCode = statusCode;
+  }
+}
+
+/**
+ * Thrown by `getDownloadUrlByFileId` when the storage resolver responds non-OK.
+ * Carries the resolver's HTTP `statusCode` for the same reason
+ * `DeliveryWorkerError` does: a caller must be able to tell "this file is not
+ * there" (404) from "the resolver could not answer" (5xx, auth, rate limit).
+ *
+ * This previously threw a bare `Error`, which discarded the status — so every
+ * failure mode looked identical downstream. `createModelFileScanRequest` then
+ * treated all of them as `not-found` and wrote a PERMANENT `ModelFile.exists=false`
+ * tombstone, which also permanently excludes the file from ever being scanned
+ * (see `scanFilesFallbackJob`'s `exists` filter). Measured 2026-08-20: 41 of 41
+ * readable tombstoned files were still fully downloadable, so the tombstones were
+ * recording resolver outages, not missing objects.
+ */
+export class StorageResolverError extends Error {
+  readonly statusCode: number;
+  constructor(statusCode: number, errorText: string) {
+    // Keep the historical "Storage resolver error: …" message so existing
+    // callers/log-matchers that key off it are unaffected.
+    super(`Storage resolver error: ${errorText}`);
+    this.name = 'StorageResolverError';
     this.statusCode = statusCode;
   }
 }
@@ -92,7 +129,7 @@ export async function getDownloadUrlByFileId(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => response.statusText);
-    throw new Error(`Storage resolver error: ${errorText}`);
+    throw new StorageResolverError(response.status, errorText);
   }
 
   const result = await response.json();
@@ -100,6 +137,69 @@ export async function getDownloadUrlByFileId(
     url: result.url,
     urlExpiryDate: new Date(result.urlExpiryDate),
   };
+}
+
+/**
+ * Statuses that positively assert the object is not there — 404 and 410 only.
+ *
+ * 410 is included to match the download endpoint, which has always treated
+ * `404 || 410` as "the key doesn't resolve to a stored file"
+ * (`src/pages/api/download/[...key].ts`) — a handling decision that predates this
+ * code. Whether the delivery worker actually EMITS a 410 is not established in
+ * this repo (it is a Cloudflare Worker whose source lives elsewhere), so treat
+ * 410 as defensive parity, not as an observed case.
+ */
+const ABSENCE_STATUSES = new Set([404, 410]);
+
+/**
+ * Did this resolution failure prove the file is not there, as opposed to proving
+ * only that we could not ask?
+ *
+ * Deliberately narrow: only the statuses in `ABSENCE_STATUSES` count, and when the
+ * storage resolver was consulted it must be the one that said so. A caller acting
+ * on `true` writes a permanent tombstone that also permanently exempts the file
+ * from virus/pickle scanning, so the asymmetry matters — a wrongly-`true` answer
+ * silently leaves a public file unscanned forever, while a wrongly-`false` answer
+ * costs one retry on the next tick.
+ *
+ * 400 (malformed key) is NOT included even though such keys are genuinely
+ * unresolvable: 400 is also what a transiently-misbehaving upstream returns, and
+ * the malformed-key population is separately identifiable from the stored `url`
+ * itself. Anything without a status (transport reject, config error, timeout) is
+ * likewise not proof of absence.
+ */
+export function isDefiniteNotFound(err: unknown): boolean {
+  // Note: unreachable from the scan pre-flight today — `resolveDownloadUrl` always
+  // falls through to the delivery worker, so a StorageResolverError never escapes
+  // it. Kept so the predicate is correct for any direct caller of
+  // `getDownloadUrlByFileId`.
+  if (err instanceof StorageResolverError) return ABSENCE_STATUSES.has(err.statusCode);
+
+  if (err instanceof DeliveryWorkerError) {
+    if (!ABSENCE_STATUSES.has(err.statusCode)) return false;
+    // The resolver was consulted first and also failed. Its answer decides: only
+    // the resolver can locate a file registered in `file_locations`, so unless IT
+    // reported absence, this is "the legacy path can't see it", not "gone".
+    //
+    // 🔴 `!== undefined`, NOT an `instanceof` narrowing. A resolver that fails at
+    // the TRANSPORT layer (connection refused, DNS, TCP timeout — what a pod
+    // outage actually looks like) throws a TypeError, not a StorageResolverError.
+    // Narrowing the guard would leave that unattached and fall through to
+    // `return true`, tombstoning the file: precisely the bug this exists to stop.
+    if (err.resolverError !== undefined) {
+      return (
+        err.resolverError instanceof StorageResolverError &&
+        ABSENCE_STATUSES.has(err.resolverError.statusCode)
+      );
+    }
+    // Reached when the resolver was not CONSULTED at all — the disabled path, or
+    // a direct `getDownloadUrl` caller. (It cannot mean "the resolver succeeded":
+    // `resolveDownloadUrl` returns on success rather than reaching the fallback.)
+    // The delivery worker was then the only authority, and it said not-there.
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -119,13 +219,26 @@ export async function resolveDownloadUrl(
   fileName?: string
 ): Promise<DownloadInfo> {
   if (isStorageResolverEnabled()) {
+    let resolverError: unknown;
     try {
       return await getDownloadUrlByFileId(fileId, fileName);
-    } catch {
+    } catch (err) {
       // Fall back to delivery worker when the storage resolver doesn't have
       // this file (e.g. File table records like BountyEntry attachments that
-      // aren't synced to file_locations).
-      return getDownloadUrl(fileUrl, fileName);
+      // aren't synced to file_locations). The fallback must still happen on a
+      // resolver 404 — that is its whole purpose — so we cannot short-circuit
+      // here. But we must not DISCARD the resolver's answer either: keep it and
+      // attach it below, so a caller can tell "both said absent" from "the
+      // resolver was down and the legacy path simply can't see this file".
+      resolverError = err;
+    }
+    try {
+      return await getDownloadUrl(fileUrl, fileName);
+    } catch (deliveryWorkerError) {
+      if (deliveryWorkerError instanceof DeliveryWorkerError) {
+        deliveryWorkerError.resolverError = resolverError;
+      }
+      throw deliveryWorkerError;
     }
   }
   return getDownloadUrl(fileUrl, fileName);
