@@ -132,6 +132,7 @@ async function getPlacementSection({
   userId,
   side,
   limit,
+  skip = 0,
   blockedIds,
   domainLevels,
   viewerLevels,
@@ -139,6 +140,14 @@ async function getPlacementSection({
   userId: number;
   side: 'placer' | 'owner';
   limit: number;
+  /**
+   * Offset paging, on the GROUPS. A cursor would be better and is not available:
+   * the order is `max(createdAt)` per image, which is not a column and cannot be
+   * compared against a keyset. The cost is that a placement landing mid-walk can
+   * shift a row across a page boundary — visible as a repeat on a browse feed,
+   * which is what this is.
+   */
+  skip?: number;
   /**
    * Both directions of the viewer's blocks. A block is a PAIR, so this excludes
    * people the viewer blocked and people who blocked the viewer — and it is
@@ -180,12 +189,19 @@ async function getPlacementSection({
     _count: { _all: true },
     _max: { createdAt: true },
     orderBy: { _max: { createdAt: 'desc' } },
-    take: limit,
+    take: limit + 1,
+    skip,
   });
 
-  if (!groups.length) return [];
+  if (!groups.length) return { items: [], hasMore: false };
 
-  const targetIds = groups.map((group) => group.targetId);
+  // Read off the row past the page, BEFORE the image filter drops anything. A
+  // page that came back short because its images were unpublished still has a
+  // next page, and deciding from what survived would end the walk early.
+  const hasMore = groups.length > limit;
+  const page = groups.slice(0, limit);
+
+  const targetIds = page.map((group) => group.targetId);
 
   const [images, rows] = await Promise.all([
     viewableImages({ imageIds: targetIds, domainLevels, viewerLevels }),
@@ -204,7 +220,7 @@ async function getPlacementSection({
     }),
   ]);
 
-  return groups.flatMap((group) => {
+  const items = page.flatMap((group) => {
     const image = images.get(group.targetId);
     if (!image) return [];
 
@@ -233,6 +249,8 @@ async function getPlacementSection({
       },
     ];
   });
+
+  return { items, hasMore };
 }
 
 /**
@@ -293,20 +311,22 @@ async function getStickerHoldings(userId: number) {
  * cannot leak what it was never sent, and "the tab hides it" is not a control
  * when the payload is a fetch away.
  */
-export async function getStickerBook({
+/**
+ * Whose book this is, and what this viewer may have of it.
+ *
+ * 🔴 SHARED BY EVERY ENTRY POINT, AND THAT IS THE POINT. The tab and the
+ * drill-in page are two procedures reading the same private content; a second
+ * copy of this decision is how one of them ends up without the banned check or
+ * without a toggle. Anything new that reads a book calls this first.
+ */
+async function resolveBookAccess({
   username,
   viewerId,
-  isModerator = false,
-  limit = 12,
-  domainLevels,
-  viewerLevels,
+  isModerator,
 }: {
   username: string;
   viewerId?: number;
-  isModerator?: boolean;
-  limit?: number;
-  domainLevels: number;
-  viewerLevels: number;
+  isModerator: boolean;
 }) {
   const user = await dbRead.user.findFirst({
     where: { username },
@@ -325,11 +345,86 @@ export async function getStickerBook({
   // tabs are, and open to moderators for the same reason theirs are.
   const banned = !!user.bannedAt && !isOwner && !isModerator;
 
-  if (banned || !access.canViewBook) {
+  return {
+    user,
+    isOwner,
+    access:
+      banned || !access.canViewBook
+        ? { ...access, canViewBook: false, canViewStickers: false, canViewEarnings: false }
+        : access,
+  };
+}
+
+/**
+ * One page of a single section, for the "View all" behind each row.
+ *
+ * The same query the tab runs, with an offset — deliberately not a second query
+ * shaped for a bigger page. What differs between the row and the page is how
+ * many, and nothing else.
+ */
+export async function getStickerBookSection({
+  username,
+  side,
+  page = 1,
+  limit = 30,
+  viewerId,
+  isModerator = false,
+  domainLevels,
+  viewerLevels,
+}: {
+  username: string;
+  side: 'placer' | 'owner';
+  page?: number;
+  limit?: number;
+  viewerId?: number;
+  isModerator?: boolean;
+  domainLevels: number;
+  viewerLevels: number;
+}) {
+  const { user, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
+
+  // The gate is re-asked here rather than assumed from the tab having rendered.
+  // A procedure is a URL, and a hidden book must refuse this one on its own.
+  if (!access.canViewBook) return { items: [], hasMore: false, isOwner, access };
+
+  const sectionLimit = Math.min(Math.max(limit, 1), MAX_SECTION_LIMIT);
+  const blockedIds = viewerId ? await getBlockedPairIds(viewerId) : [];
+
+  const { items, hasMore } = await getPlacementSection({
+    userId: user.id,
+    side,
+    limit: sectionLimit,
+    skip: Math.max(page - 1, 0) * sectionLimit,
+    blockedIds,
+    domainLevels,
+    viewerLevels,
+  });
+
+  return { items, hasMore, isOwner, access };
+}
+
+export async function getStickerBook({
+  username,
+  viewerId,
+  isModerator = false,
+  limit = 12,
+  domainLevels,
+  viewerLevels,
+}: {
+  username: string;
+  viewerId?: number;
+  isModerator?: boolean;
+  limit?: number;
+  domainLevels: number;
+  viewerLevels: number;
+}) {
+  const { user, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
+
+  if (!access.canViewBook) {
     return {
       userId: user.id,
       isOwner,
-      access: { ...access, canViewBook: false, canViewStickers: false, canViewEarnings: false },
+      access,
       stickers: [],
       placed: [],
       received: [],
@@ -371,8 +466,10 @@ export async function getStickerBook({
       // means unlimited here, so a visitor must not be handed the field at all.
       ...(access.canViewQuantities ? { remaining: unlimited ? null : remaining ?? 0 } : {}),
     })),
-    placed,
-    received,
+    // The row's items only. `hasMore` belongs to the drill-in page, which asks
+    // for its own pages; on the tab the "View all" link is there either way.
+    placed: placed.items,
+    received: received.items,
     earnedBuzz,
   };
 }

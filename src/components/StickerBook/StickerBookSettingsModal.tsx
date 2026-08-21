@@ -1,8 +1,5 @@
-import { Anchor, Divider, Modal, Stack, Switch, Text } from '@mantine/core';
-import { IconExternalLink } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { Divider, Modal, Stack, Switch } from '@mantine/core';
 import { PlacementSpaceSection } from '~/components/Account/PlacementSpaceSection';
-import { STICKER_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { trpc } from '~/utils/trpc';
 
@@ -71,21 +68,6 @@ export function StickerBookSettingsModal({
         />
 
         <PlacementSpaceSection />
-
-        <Divider />
-
-        {/* Ellie asked for a way through to the history from inside this modal.
-            The Creator Studio analytic it will eventually point at does not
-            exist yet, so this goes to the queue page, which already carries both
-            directions. */}
-        <Text size="sm">
-          <Anchor component={Link} href={STICKER_QUEUE_SENT_URL}>
-            <span className="inline-flex items-center gap-1">
-              <IconExternalLink size={14} />
-              Find your placement history here
-            </span>
-          </Anchor>
-        </Text>
       </Stack>
     </Modal>
   );

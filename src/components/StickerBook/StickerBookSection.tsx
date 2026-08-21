@@ -1,12 +1,12 @@
-import { Badge, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Text, Title } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import type { RouterOutput } from '~/types/router';
 
-type BookSection = RouterOutput['stickerBook']['get']['placed'];
-type BookItem = BookSection[number];
+type BookItems = RouterOutput['stickerBook']['get']['placed'];
+type BookItem = BookItems[number];
 
 /**
  * One row of the book: images carrying stickers, with the stickers drawn where
@@ -24,24 +24,29 @@ export function StickerBookSection({
   emptyMessage,
   items,
   countLabel,
-  nameLabel,
+  viewAllHref,
 }: {
   title: string;
   emptyMessage: string;
-  items: BookSection;
-  /** What the badge counts on a card carrying more than one. */
+  items: BookItems;
   countLabel: (count: number) => string;
-  /** How the people on the other end of the placement are described. */
-  nameLabel: (names: string[]) => string | null;
+  viewAllHref: string;
 }) {
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-baseline gap-2">
-        <Title order={3}>{title}</Title>
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-baseline gap-2">
+          <Title order={3}>{title}</Title>
+          {!!items.length && (
+            <Text size="sm" c="dimmed">
+              {items.length}
+            </Text>
+          )}
+        </div>
         {!!items.length && (
-          <Text size="sm" c="dimmed">
-            {items.length}
-          </Text>
+          <Anchor component={Link} href={viewAllHref} size="sm">
+            View all
+          </Anchor>
         )}
       </div>
 
@@ -50,42 +55,53 @@ export function StickerBookSection({
           {emptyMessage}
         </Text>
       ) : (
-        <StickerPlacementBatchProvider imageIds={items.map((item) => item.imageId)}>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {items.map((item) => (
-              <StickerBookCard
-                key={item.imageId}
-                item={item}
-                countLabel={countLabel}
-                nameLabel={nameLabel}
-              />
-            ))}
-          </div>
-        </StickerPlacementBatchProvider>
+        <StickerBookGrid items={items} countLabel={countLabel} />
       )}
     </section>
+  );
+}
+
+/** The grid itself, shared by the row on the tab and the page behind it. */
+export function StickerBookGrid({
+  items,
+  countLabel,
+}: {
+  items: BookItems;
+  countLabel: (count: number) => string;
+}) {
+  if (!items.length) return null;
+
+  return (
+    <StickerPlacementBatchProvider imageIds={items.map((item) => item.imageId)}>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        {items.map((item) => (
+          <StickerBookCard key={item.imageId} item={item} countLabel={countLabel} />
+        ))}
+      </div>
+    </StickerPlacementBatchProvider>
   );
 }
 
 function StickerBookCard({
   item,
   countLabel,
-  nameLabel,
 }: {
   item: BookItem;
   countLabel: (count: number) => string;
-  nameLabel: (names: string[]) => string | null;
 }) {
   const { image } = item;
   const names = item.counterparts.map((user) => user.username);
-  const caption = nameLabel(names);
+  // "+2" rather than a list: a card is one line wide and names are not bounded.
+  const caption = names.length
+    ? `by ${names[0]}${names.length > 1 ? ` +${names.length - 1}` : ''}`
+    : null;
 
   return (
     <div className="overflow-hidden rounded-lg border border-gray-3 bg-white dark:border-dark-4 dark:bg-dark-7">
       <Link href={`/images/${item.imageId}`} className="relative block">
         {/* The card is the picture's own shape rather than a fixed square: the
-            sticker's position is a fraction of the ARTWORK, and a crop moves
-            the artwork inside the box. `CardStickerOverlay` measures the drawn
+            sticker's position is a fraction of the ARTWORK, and a crop moves the
+            artwork inside the box. `CardStickerOverlay` measures the drawn
             rectangle and would be correct either way — this keeps a sticker
             placed near an edge from being cropped out of the card entirely. */}
         <EdgeMedia

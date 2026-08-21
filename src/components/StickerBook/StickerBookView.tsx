@@ -7,6 +7,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StickerBookSection } from '~/components/StickerBook/StickerBookSection';
 import { StickerBookSettingsModal } from '~/components/StickerBook/StickerBookSettingsModal';
 import { StickerBookStickers } from '~/components/StickerBook/StickerBookStickers';
+import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -51,6 +52,9 @@ export function StickerBookView({ username }: { username: string }) {
     );
 
   const nothingYet = !data.placed.length && !data.received.length && !data.stickers.length;
+  const bookHref = `/user/${username}/sticker-book`;
+  const placedCopy = stickerBookSectionCopy('placer', { username, isOwner });
+  const receivedCopy = stickerBookSectionCopy('owner', { username, isOwner });
 
   return (
     <div className="flex flex-col gap-6">
@@ -122,27 +126,19 @@ export function StickerBookView({ username }: { username: string }) {
       )}
 
       <StickerBookSection
-        title={isOwner ? 'Images you stickered' : `Images ${username} stickered`}
-        emptyMessage={
-          isOwner ? "You haven't had a sticker accepted on anyone else's image yet." : 'None yet.'
-        }
+        title={placedCopy.title}
+        emptyMessage={placedCopy.empty}
         items={data.placed}
-        countLabel={(count) => `${count} stickers`}
-        nameLabel={(names) => (names.length ? `by ${names[0]}${extra(names)}` : null)}
+        countLabel={placedCopy.countLabel}
+        viewAllHref={`${bookHref}?view=placer`}
       />
 
       <StickerBookSection
-        title={
-          isOwner ? 'Your images that got stickered' : `${username}'s images that got stickered`
-        }
-        emptyMessage={
-          isOwner
-            ? 'Nobody has put a sticker on your work yet. Accepted placements show up here.'
-            : 'None yet.'
-        }
+        title={receivedCopy.title}
+        emptyMessage={receivedCopy.empty}
         items={data.received}
-        countLabel={(count) => `${count} stickers`}
-        nameLabel={(names) => (names.length ? `by ${names[0]}${extra(names)}` : null)}
+        countLabel={receivedCopy.countLabel}
+        viewAllHref={`${bookHref}?view=owner`}
       />
 
       {nothingYet && isOwner && (
@@ -163,6 +159,3 @@ export function StickerBookView({ username }: { username: string }) {
     </div>
   );
 }
-
-/** "+2" rather than a list: a card is one line wide and names are not bounded. */
-const extra = (names: string[]) => (names.length > 1 ? ` +${names.length - 1}` : '');

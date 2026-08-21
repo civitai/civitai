@@ -10,7 +10,9 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
   getBlockedPairIds: (...args: [number]) => blockedPairIds(...args),
 }));
 
-const { getStickerBook } = await import('~/server/services/sticker-book.service');
+const { getStickerBook, getStickerBookSection } = await import(
+  '~/server/services/sticker-book.service'
+);
 
 const CREATOR = 11;
 const STRANGER = 22;
@@ -278,6 +280,106 @@ describe('getStickerBook — what leaves the server', () => {
   it('bounds the section limit rather than passing a caller number through', async () => {
     await getStickerBook({ username: 'creator', viewerId: CREATOR, limit: 5000, ...levels });
 
-    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBe(60);
+    // The cap plus the one row that decides `hasMore`. Asserted as the cap it
+    // came from rather than as 61, so raising the cap fails here rather than
+    // silently letting a caller ask for 5000.
+    for (const call of placementGroupBy.mock.calls) expect(call[0].take).toBe(60 + 1);
+  });
+});
+
+describe('getStickerBookSection — the drill-in page', () => {
+  it('refuses a hidden book, as its own gate', async () => {
+    // The page is a URL of its own. A guard that lived only on the tab would be
+    // no guard at all, and this is exactly the shape that ends up optional
+    // during a fix round.
+    creatorWithSettings({ hideStickerBook: true });
+
+    const section = await getStickerBookSection({
+      username: 'creator',
+      side: 'owner',
+      viewerId: STRANGER,
+      ...levels,
+    });
+
+    expect(section.access.canViewBook).toBe(false);
+    expect(section.items).toEqual([]);
+    expect(placementGroupBy).not.toHaveBeenCalled();
+  });
+
+  it('serves the hidden book to a moderator', async () => {
+    creatorWithSettings({ hideStickerBook: true });
+
+    const section = await getStickerBookSection({
+      username: 'creator',
+      side: 'owner',
+      viewerId: MODERATOR,
+      isModerator: true,
+      ...levels,
+    });
+
+    expect(section.items).toHaveLength(1);
+  });
+
+  it('applies the viewer blocks the same way the tab does', async () => {
+    blockedPairIds.mockResolvedValue([STRANGER]);
+
+    await getStickerBookSection({
+      username: 'creator',
+      side: 'owner',
+      viewerId: STRANGER,
+      ...levels,
+    });
+
+    expect(placementGroupBy.mock.calls[0][0].where).toMatchObject({
+      ownerId: CREATOR,
+      placerId: { notIn: [STRANGER] },
+    });
+  });
+
+  it('offsets by whole pages', async () => {
+    await getStickerBookSection({
+      username: 'creator',
+      side: 'placer',
+      page: 3,
+      limit: 10,
+      viewerId: CREATOR,
+      ...levels,
+    });
+
+    expect(placementGroupBy.mock.calls[0][0].skip).toBe(20);
+    expect(placementGroupBy.mock.calls[0][0].take).toBe(11);
+  });
+
+  it('starts at the top when no page is given', async () => {
+    await getStickerBookSection({
+      username: 'creator',
+      side: 'placer',
+      viewerId: CREATOR,
+      ...levels,
+    });
+
+    expect(placementGroupBy.mock.calls[0][0].skip).toBe(0);
+  });
+
+  it('reports another page even when this one came back empty after filtering', async () => {
+    // Two groups for a page of one, and the image on both is unpublished. The
+    // page is empty and the walk is NOT over — deciding `hasMore` from what
+    // survived the filter would end it here.
+    placementGroupBy.mockResolvedValue([
+      { targetId: IMAGE, _count: { _all: 1 }, _max: { createdAt: new Date('2026-08-20') } },
+      { targetId: IMAGE + 1, _count: { _all: 1 }, _max: { createdAt: new Date('2026-08-19') } },
+    ]);
+    imageFindMany.mockResolvedValue([]);
+
+    const section = await getStickerBookSection({
+      username: 'creator',
+      side: 'owner',
+      limit: 1,
+      viewerId: CREATOR,
+      ...levels,
+    });
+
+    expect(section.items).toEqual([]);
+    expect(section.hasMore).toBe(true);
   });
 });

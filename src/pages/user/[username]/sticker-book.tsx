@@ -2,7 +2,9 @@ import React from 'react';
 import { useRouter } from 'next/router';
 import { Page } from '~/components/AppLayout/Page';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
+import { StickerBookSectionPage } from '~/components/StickerBook/StickerBookSectionPage';
 import { StickerBookView } from '~/components/StickerBook/StickerBookView';
+import { isStickerBookSide } from '~/components/StickerBook/sticker-book.util';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
@@ -28,10 +30,20 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function StickerBookPage() {
+  const router = useRouter();
   const username = useUsername();
   if (!username) return null;
 
-  return <StickerBookView username={username} />;
+  // `?view=` rather than a nested route, so the profile tab bar keeps the
+  // sticker book selected on the drill-in — it highlights on the last path
+  // segment.
+  const view = router.query.view;
+
+  return isStickerBookSide(view) ? (
+    <StickerBookSectionPage username={username} side={view} />
+  ) : (
+    <StickerBookView username={username} />
+  );
 }
 
 export default Page(StickerBookPage, { getLayout: UserProfileLayout });
