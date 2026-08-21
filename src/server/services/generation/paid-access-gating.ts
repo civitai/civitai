@@ -6,7 +6,7 @@ import {
 } from '@civitai/buzz';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { getViewerMonetization } from '~/server/services/paid-access.service';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 
 // The subset of a generation resource that paid-access gating reads/mutates. Kept structural so the
 // caller passes its full (much larger) resource type unchanged.
@@ -49,22 +49,15 @@ export async function applyPaidAccessGating<T extends PaidAccessGatingResource>(
   resources: T[],
   user: GenerationViewer
 ) {
-  // Deduped by id, keeping each version's baseModel: a video gate priced above the image ceiling would
-  // otherwise advertise a lower price here than earlyAccessPurchase actually charges.
-  const byId = new Map(resources.map((r) => [r.id, { id: r.id, baseModel: r.baseModel }]));
+  const byId = new Map(resources.map((r) => [r.id, { id: r.id }]));
   if (!byId.size) return;
-  // Wire prices are what this viewer is charged, so a lapsed owner can't advertise more than they bill.
-  // The decision below is unaffected: it turns on free/trial/purchase, never on a price.
-  const monetization = await getViewerMonetization({
-    versions: [...byId.values()],
-    viewer: user,
-  });
+  const monetization = await getPaidAccess('ModelVersion', [...byId.keys()]);
   const isOwnerOrMod = (ownerId: number) =>
     (!!user.id && ownerId === user.id) || !!user.isModerator;
 
   const gated = new Map<number, { resource: T; ownerId: number; terms: ModelVersionTerms }>();
   for (const r of resources) {
-    const row = monetization[r.id]?.paidAccess;
+    const row = monetization[r.id];
     if (row && isPaidAccessActive(row)) {
       gated.set(r.id, { resource: r, ownerId: row.ownerId, terms: row.terms as ModelVersionTerms });
       r.paidAccess = { endsAt: row.endsAt, terms: row.terms as ModelVersionTerms };

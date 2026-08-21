@@ -624,6 +624,7 @@ model User {
   placementsReceived                 Placement[]                @relation("PlacementOwner")
   placementsMade                     Placement[]                @relation("PlacementPlacer")
   placementsSold                     Placement[]                @relation("PlacementSeller")
+  pricingSlots                       PricingSlot[]
 
   @@index([deletedAt])
 }
@@ -1172,6 +1173,23 @@ model LicensingRoot {
   updatedAt      DateTime     @updatedAt
 
   @@index([baseModel, modelType])
+}
+
+// One row per ENTITY an owner has put a price on — a licensing fee or a permanent paid-access gate,
+// not one per kind. Write-once and never deleted when the price is cleared: a slot is spent once and
+// never returned. No foreign key to the entity, because the key is polymorphic — so deleting a version
+// does not refund its slot, and rows outliving their entity are inert (the count is month-scoped).
+//
+// See the migration for the apply-order and lock caveats.
+model PricingSlot {
+  entityType PaidAccessEntityType
+  entityId   Int
+  ownerId    Int
+  owner      User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime             @default(now())
+
+  @@id([entityType, entityId])
+  @@index([ownerId, createdAt])
 }
 
 enum LicensingFeeType {

@@ -275,12 +275,8 @@ export const getModelHandler = async ({
     const monetizationByVersion = await getViewerMonetization({
       versions: filteredVersions.map((x) => ({
         id: x.id,
-        ownerId: model.user.id,
         licensingFee: x.licensingFee != null ? Number(x.licensingFee) : null,
-        modelType: model.type,
-        baseModel: x.baseModel,
       })),
-      viewer: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
     });
     // The DTO donationGoal seeds ONLY the owner's edit form → raw owner read (unfiltered by the
     // public EA-window/opt-out), and owner/mod only. Public display reads modelVersion.donationGoal.
@@ -368,7 +364,7 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const { paidAccess, licensingFee, effectiveLicensingFee } = monetizationByVersion[version.id];
+      const { paidAccess, licensingFee } = monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -434,7 +430,6 @@ export const getModelHandler = async ({
       return {
         ...version,
         licensingFee,
-        effectiveLicensingFee,
         metrics: undefined,
         hiddenMetrics: versionHidden,
         rank: {

@@ -1,43 +1,34 @@
 <script lang="ts">
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { capUpsellRows, shouldUpsellCap, type CapTier } from '$lib/monetization/paid-access';
+  import {
+    tierAllowanceRows,
+    shouldUpsellAllowance,
+    type CapTier,
+  } from '$lib/monetization/paid-access';
   import { CIVITAI_MEMBERSHIP_URL } from '$lib/creator-program';
 
-  // Turns a cap from a dead end into an upgrade nudge, beside the input the creator is pressing against.
-  // Deliberately quiet: a link, not a banner, and absent until the value nears the ceiling.
-  //
-  // `capFor` must be the SAME expression that bounds the input — passing the function rather than a table
-  // is what stops the popover quoting a number the field beside it contradicts.
+  // Turns the monthly pricing allowance from a dead end into an upgrade nudge, beside the counter the
+  // creator is pressing against. Deliberately quiet: a link, not a banner, and absent until they near it.
   let {
-    value,
-    cap,
+    used,
+    limit,
     capTier,
-    capFor,
-    title,
-    perLabel,
+    title = 'New prices per month',
     expanded = false,
   }: {
-    value: number | null | undefined;
-    cap: number;
+    /** Slots spent this calendar month. */
+    used: number | null | undefined;
+    limit: number;
     capTier: CapTier;
-    capFor: (tier: CapTier) => number;
-    title: string;
-    /** Denominator for a ratio-domain cap, e.g. '10 generations'. Omitted for flat prices. */
-    perLabel?: string;
-    /** Show the tiers inline instead of behind the trigger — for a creator already over their cap, who
-     * shouldn't have to click to find out what they'd earn. */
+    title?: string;
+    /** Show the tiers inline instead of behind the trigger — for a creator already at their limit. */
     expanded?: boolean;
   } = $props();
 
-  const show = $derived(shouldUpsellCap({ value, cap, tier: capTier }));
-  const rows = $derived(capUpsellRows(capFor));
-  const fmt = (n: number) =>
-    !Number.isFinite(n)
-      ? 'Unlimited'
-      : perLabel
-        ? `${n.toLocaleString()} ⚡ / ${perLabel}`
-        : `${n.toLocaleString()} ⚡`;
+  const show = $derived(shouldUpsellAllowance({ used, limit, tier: capTier }));
+  const rows = tierAllowanceRows();
+  const fmt = (n: number | null) => (n == null ? 'Unlimited' : `${n.toLocaleString()} / month`);
 </script>
 
 {#snippet capRows()}
@@ -51,7 +42,7 @@
             {row.label}
             {#if isCurrent}<span class="ml-1 font-normal text-blue-4">· you</span>{/if}
           </td>
-          <td class="py-1 text-right tabular-nums">{fmt(row.cap)}</td>
+          <td class="py-1 text-right tabular-nums">{fmt(row.monthlyPrices)}</td>
         </tr>
       {/each}
     </tbody>
@@ -72,7 +63,7 @@
 {:else if show}
   <Popover.Root>
     <Popover.Trigger class="text-xs text-blue-4 underline-offset-2 hover:underline">
-      Want to charge more?
+      Want to price more models?
     </Popover.Trigger>
     <Popover.Content class="w-72 border-dark-4 bg-dark-7 p-3 text-sm text-white">
       {@render capRows()}

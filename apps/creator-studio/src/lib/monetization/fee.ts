@@ -10,7 +10,6 @@ export {
   feeToRatio,
   ratioToFee,
   formatFeeRatio,
-  maxLicensingFee,
   maxLicensingFeeCeiling,
   capMediaType,
   monetizationLimits,

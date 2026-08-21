@@ -17,19 +17,17 @@ import {
   separateGenerationPriceMissing,
   CAP_TIERS,
   nextCapTier,
-  shouldUpsellCap,
-  cappedTerms,
-  maxPaidAccessPrice,
-  maxPermanentAccessModels,
-  tierCapRows,
   type ModelVersionTerms,
 } from './paid-access';
+import {
+  monthlyPricingAllowance,
+  shouldUpsellAllowance,
+  tierAllowanceRows,
+} from './pricing-allowance';
 import {
   MAX_LICENSING_FEE,
   feeToRatio,
   VIDEO_CAP_MULTIPLIER,
-  effectiveLicensingFee,
-  maxLicensingFee,
   maxLicensingFeeCeiling,
   suggestedFeePerImage,
 } from './licensing-fee';
@@ -252,28 +250,19 @@ describe('acceptsBlueBuzz — an extra accepted currency, not a second price', (
     expect(acceptsBlueBuzz(buildModelVersionTerms({ ...opts, acceptsBlueBuzz: true }))).toBe(true);
   });
 
-  it('survives price capping and a usage-control migration', () => {
+  it('survives a usage-control migration', () => {
     const terms = buildModelVersionTerms({ accessPrice: 5000, acceptsBlueBuzz: true });
-    expect(acceptsBlueBuzz(cappedTerms(terms, 'free', { permanent: true }))).toBe(true);
     expect(acceptsBlueBuzz(migrateTermsForUsageControl(terms, true))).toBe(true);
   });
 });
 
-describe('video pricing — every ceiling is 5x on a video model', () => {
-  it('multiplies the licensing-fee cap for each tier and model type', () => {
-    for (const tier of CAP_TIERS) {
-      for (const modelType of ['Checkpoint', 'LORA']) {
-        expect(maxLicensingFee(tier, modelType, 'video')).toBe(
-          maxLicensingFee(tier, modelType, 'image') * VIDEO_CAP_MULTIPLIER
-        );
-      }
-    }
-  });
-
-  it('multiplies the paid-access price cap, leaving gold unlimited', () => {
-    expect(maxPaidAccessPrice('free', 'video')).toBe(maxPaidAccessPrice('free') * 5);
-    expect(maxPaidAccessPrice('silver', 'video')).toBe(maxPaidAccessPrice('silver') * 5);
-    expect(maxPaidAccessPrice('gold', 'video')).toBe(Infinity);
+describe('video pricing — the fee ceiling is 5x on a video model', () => {
+  it('multiplies the licensing-fee ceiling', () => {
+    expect(maxLicensingFeeCeiling('video')).toBe(
+      maxLicensingFeeCeiling('image') * VIDEO_CAP_MULTIPLIER
+    );
+    expect(maxLicensingFeeCeiling('video')).toBe(500);
+    expect(maxLicensingFeeCeiling('image')).toBe(MAX_LICENSING_FEE);
   });
 
   it('multiplies the suggested default, so a new video model is not seeded too low', () => {
@@ -286,33 +275,34 @@ describe('video pricing — every ceiling is 5x on a video model', () => {
     );
   });
 
-  it('does NOT multiply the permanent-gate allowance — it counts gates, it does not price them', () => {
-    expect(maxPermanentAccessModels('free')).toBe(3);
-    expect(tierCapRows().find((r) => r.tier === 'free')?.permanentGates).toBe(3);
+  it('does NOT multiply the monthly allowance — it counts prices, it does not size them', () => {
+    expect(monthlyPricingAllowance('free')).toBe(3);
+    expect(tierAllowanceRows().find((r) => r.tier === 'free')?.monthlyPrices).toBe(3);
+  });
+});
+
+describe('monthlyPricingAllowance — what membership actually governs', () => {
+  it('rises with the tier and is unlimited at gold', () => {
+    expect(monthlyPricingAllowance('free')).toBe(3);
+    expect(monthlyPricingAllowance('bronze')).toBe(10);
+    expect(monthlyPricingAllowance('silver')).toBe(25);
+    expect(monthlyPricingAllowance('gold')).toBe(Infinity);
   });
 
-  it('gold video is no longer clamped by the image ceiling', () => {
-    // The whole point of raising the ceiling: 5 x 100 must survive rather than saturating at 100.
-    expect(maxLicensingFee('gold', 'Checkpoint', 'video')).toBe(500);
-    expect(maxLicensingFeeCeiling('video')).toBe(500);
-    expect(maxLicensingFeeCeiling('image')).toBe(MAX_LICENSING_FEE);
+  it('charges the legacy founder tier as bronze', () => {
+    expect(monthlyPricingAllowance('founder')).toBe(monthlyPricingAllowance('bronze'));
   });
 
-  it('clamps a stored fee against the video cap, not the image one', () => {
-    expect(effectiveLicensingFee(20, 'free', 'Checkpoint', 'image')).toBe(1);
-    expect(effectiveLicensingFee(20, 'free', 'Checkpoint', 'video')).toBe(5);
+  it('falls back to the FREE allowance for an unknown or lapsed tier, never to zero', () => {
+    // Losing a membership must never take away the ability to price anything at all.
+    expect(monthlyPricingAllowance(null)).toBe(3);
+    expect(monthlyPricingAllowance(undefined)).toBe(3);
+    expect(monthlyPricingAllowance('platinum')).toBe(3);
   });
 
-  it('prices gate terms against the video cap', () => {
-    const terms = { download: { price: 5000 } };
-    expect(cappedTerms(terms, 'free', { permanent: true, mediaType: 'image' })).toEqual({
-      download: { price: 500 },
-    });
-    expect(cappedTerms(terms, 'free', { permanent: true, mediaType: 'video' })).toEqual({
-      download: { price: 2500 },
-    });
-    // A timed early-access window has no ceiling — stored is what buyers pay.
-    expect(cappedTerms(terms, 'free', { permanent: false, mediaType: 'image' })).toEqual(terms);
+  it('reports unlimited as null for display, so it survives a JSON boundary', () => {
+    expect(tierAllowanceRows().find((r) => r.tier === 'gold')?.monthlyPrices).toBeNull();
+    expect(tierAllowanceRows().map((r) => r.tier)).toEqual([...CAP_TIERS]);
   });
 });
 
@@ -338,31 +328,29 @@ describe('capMediaType — which column a base model lands in', () => {
 
 // The caps table renders each ceiling through feeToRatio, so a cap that can't be expressed as whole Buzz
 // over 1 or 10 generations would render as an unusable ratio the editor can't accept.
-it('every licensing cap is a whole number of Buzz over 1 or 10 generations', () => {
-  for (const tier of CAP_TIERS)
-    for (const mediaType of ['image', 'video'] as const)
-      for (const modelType of ['Checkpoint', 'LORA']) {
-        const { buzz, images } = feeToRatio(maxLicensingFee(tier, modelType, mediaType));
-        expect([1, 10]).toContain(images);
-        expect(Number.isInteger(buzz)).toBe(true);
-      }
+it('the licensing ceiling is a whole number of Buzz over 1 or 10 generations', () => {
+  for (const mediaType of ['image', 'video'] as const) {
+    const { buzz, images } = feeToRatio(maxLicensingFeeCeiling(mediaType));
+    expect([1, 10]).toContain(images);
+    expect(Number.isInteger(buzz)).toBe(true);
+  }
 });
 
-describe('shouldUpsellCap — nudge only when the ceiling is actually in the way', () => {
-  it('offers an upgrade once the value reaches 80% of the cap', () => {
-    expect(shouldUpsellCap({ value: 79, cap: 100, tier: 'free' })).toBe(false);
-    expect(shouldUpsellCap({ value: 80, cap: 100, tier: 'free' })).toBe(true);
-    expect(shouldUpsellCap({ value: 100, cap: 100, tier: 'free' })).toBe(true);
+describe('shouldUpsellAllowance — nudge only when the limit is actually in the way', () => {
+  it('offers an upgrade once the creator reaches 80% of their allowance', () => {
+    expect(shouldUpsellAllowance({ used: 7, limit: 10, tier: 'free' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 8, limit: 10, tier: 'free' })).toBe(true);
+    expect(shouldUpsellAllowance({ used: 10, limit: 10, tier: 'free' })).toBe(true);
   });
 
-  it('stays quiet for an empty or comfortably-low value', () => {
-    expect(shouldUpsellCap({ value: null, cap: 100, tier: 'free' })).toBe(false);
-    expect(shouldUpsellCap({ value: 0, cap: 100, tier: 'free' })).toBe(false);
-    expect(shouldUpsellCap({ value: 10, cap: 100, tier: 'free' })).toBe(false);
+  it('stays quiet with plenty of headroom', () => {
+    expect(shouldUpsellAllowance({ used: null, limit: 10, tier: 'free' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 0, limit: 10, tier: 'free' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 1, limit: 10, tier: 'free' })).toBe(false);
   });
 
   it('never upsells gold — there is nothing above it', () => {
-    expect(shouldUpsellCap({ value: 100, cap: 100, tier: 'gold' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 100, limit: 10, tier: 'gold' })).toBe(false);
     expect(nextCapTier('gold')).toBeNull();
   });
 
@@ -374,12 +362,9 @@ describe('shouldUpsellCap — nudge only when the ceiling is actually in the way
     expect(nextCapTier('silver')).toBe('gold');
   });
 
-  // 99999 >= Infinity * 0.8 is false by arithmetic, so an Infinity case would pass even without the
-  // guard. cap: 0 is the one that actually pins it — reachable via maxFeeBuzzForRatio at the free/other
-  // cap of 0.1 with a denominator of 1, where floor() yields 0.
-  it('never upsells against an unlimited or zero cap', () => {
-    expect(shouldUpsellCap({ value: 99999, cap: Infinity, tier: 'silver' })).toBe(false);
-    expect(shouldUpsellCap({ value: 0, cap: 0, tier: 'free' })).toBe(false);
-    expect(shouldUpsellCap({ value: 5, cap: 0, tier: 'free' })).toBe(false);
+  it('never upsells against an unlimited or zero limit', () => {
+    expect(shouldUpsellAllowance({ used: 99999, limit: Infinity, tier: 'silver' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 0, limit: 0, tier: 'free' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 5, limit: 0, tier: 'free' })).toBe(false);
   });
 });

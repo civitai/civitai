@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { formatPricingAllowance, isAlreadyPriced, pricingAllowanceState } from '@civitai/buzz';
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
@@ -34,15 +35,25 @@
     caps: CreatorCaps;
   } = $props();
 
-  const permanentCap = $derived(caps.permanentCap);
-  const permanentUsed = $derived(caps.permanentUsed);
+  const pricingLimit = $derived(caps.pricingLimit);
+  const pricingUsed = $derived(caps.pricingUsed);
   const earlyAccessUsed = $derived(caps.earlyAccessUsed);
   const earlyAccessCap = $derived(caps.earlyAccessCap);
   const maxEarlyAccessDays = $derived(caps.maxEarlyAccessDays);
   const tier = $derived(caps.tier);
-  const permAtCap = $derived(
-    permanentCap !== null && permanentCap > 0 && permanentUsed >= permanentCap
+  // A version that already carries a price is exempt — only a NEW price spends allowance, so an edit
+  // must never be blocked by a full month. A TIMED window is not a price: it prices itself out when the
+  // window closes, so it must not count as one here.
+  const alreadyPriced = $derived(
+    isAlreadyPriced({
+      licensingFee: version.licensingFee,
+      hasPermanentGate: !!version.paidAccessConfig?.permanent,
+    })
   );
+  const allowance = $derived(
+    pricingAllowanceState({ used: pricingUsed, limit: pricingLimit, exempt: alreadyPriced })
+  );
+  const permAtCap = $derived(allowance.atLimit);
 
   // Ever actually published — a Scheduled version's future anchor doesn't count, and an unpublished
   // version that once went live does. Seeding and eligibility must agree on this or the drawer can open
@@ -113,7 +124,7 @@
       // take an early-access window. publishedAt is no good here: the republish job overwrites it.
       publishedCount: everPublished ? 1 : 0,
       maxEarlyAccessDays,
-      permanentSlotsLeft: canChoosePermanent ? 1 : 0,
+      pricingSlotsLeft: canChoosePermanent ? 1 : 0,
       resolving: false,
     })
   );
@@ -126,15 +137,13 @@
     permBlocked,
     timedBlockedReason: canChooseTimed ? undefined : eligibility.timedBlockedReason,
     maxEarlyAccessDays,
-    permanentUsed,
-    permanentCap,
+    pricingUsed,
+    pricingLimit,
     earlyAccessUsed,
     earlyAccessCap,
     tierLabel,
     capTier: caps.capTier,
-    accessCapFor: (t, permanent) =>
-      monetizationLimits({ tier: t, baseModel: version.baseModel, permanent }).access.maxPrice,
-    storedAccessPrice: version.paidAccessConfig?.accessPrice ?? 0,
+
     hadDonationGoal,
   });
   // Usage control gates paid access: Download (download + gen) and Generation (on-site gen only, no
@@ -230,11 +239,11 @@
   {:else if !canChooseTimed && !canChoosePermanent && !version.paidAccessConfig}
     <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
       {#if version.status === 'Published'}
-        Early access can't be started after a version is published, and you've reached your
-        permanent paid-access limit ({permanentUsed} of {permanentCap}).
+        Early access can't be started after a version is published, and you've used this month's
+        pricing allowance ({formatPricingAllowance(allowance)}).
       {:else}
         Early access isn't available for your account yet — it unlocks as your creator score grows.
-        You've also reached your permanent paid-access limit ({permanentUsed} of {permanentCap}).
+        You've also used this month's pricing allowance ({formatPricingAllowance(allowance)}).
       {/if}
     </p>
   {:else}

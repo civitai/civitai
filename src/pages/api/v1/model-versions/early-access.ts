@@ -7,7 +7,8 @@ import {
   updateModelVersionPaidAccess,
 } from '~/server/services/model-version.service';
 import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
-import { assertPaidAccessCaps } from '~/server/services/paid-access.service';
+import { assertMonetizationWrite } from '~/server/services/paid-access.service';
+import { recordPricingSlot } from '~/server/services/pricing-slot.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
@@ -34,7 +35,7 @@ export default AuthedEndpoint(
 
     const version = await getVersionById({
       id: input.id,
-      select: { modelId: true, baseModel: true },
+      select: { modelId: true, baseModel: true, licensingFee: true },
     });
     if (!version) return res.status(404).json({ error: 'Model version not found' });
 
@@ -61,8 +62,8 @@ export default AuthedEndpoint(
       });
     }
 
-    // Permanent access is reachable only from the Creator Studio — require the shared token. The tier caps
-    // themselves are enforced below (assertPaidAccessCaps), not by whoever is calling.
+    // Permanent access is reachable only from the Creator Studio — require the shared token. The
+    // monetization rules themselves are enforced below, not by whoever is calling.
     if (paidAccess?.permanent && !user.isModerator && req.query.token !== env.WEBHOOK_TOKEN) {
       return res
         .status(403)
@@ -70,15 +71,23 @@ export default AuthedEndpoint(
     }
 
     try {
-      // Per-tier price + permanent-count caps. This endpoint is reachable directly with a session cookie, so
-      // without this a creator could POST any price and bypass the caps the tRPC handler and the Creator
-      // Studio action both apply. Tier is read fresh so a lapse takes effect immediately.
-      await assertPaidAccessCaps({
-        userId: user.id,
+      // Eligibility floor + monthly allowance. This endpoint is reachable directly with a session
+      // cookie, so without this a creator could POST a gate and bypass the rules the tRPC handler and
+      // the Creator Studio action both apply. Tier is read fresh so a change takes effect immediately.
+      // The OWNER, not the actor: a moderator may reach this endpoint for anyone's version, and the
+      // floor and the allowance are about whoever sells the model.
+      const ownerId = model?.userId ?? user.id;
+      const actingOnOwnModel = ownerId === user.id;
+      const { spendsSlot } = await assertMonetizationWrite({
+        ownerId,
         isModerator: user.isModerator,
         versionId: input.id,
         paidAccess,
-        tier: await getCapTier(user.id),
+        // Without this a version that already charges a fee reads as newly priced when a gate is added
+        // — which, with no backfill, is every fee-bearing version there is.
+        storedLicensingFee: version.licensingFee != null ? Number(version.licensingFee) : 0,
+        tier: () => getCapTier(ownerId),
+        userMeta: actingOnOwnModel ? user.meta : undefined,
         baseModel: version.baseModel,
       });
 
@@ -98,6 +107,9 @@ export default AuthedEndpoint(
         actorUserId: user.id,
         isModerator: user.isModerator,
       });
+
+      if (spendsSlot)
+        await recordPricingSlot({ entityType: 'ModelVersion', entityId: updated.id, ownerId });
 
       await queueModelEarlyAccessReindex({ id: updated.modelId }).catch((e) => {
         console.error('Unable to update model early access deadline', e);

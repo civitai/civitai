@@ -123,7 +123,7 @@ import type {
   UpdateCreatorShopSettingsInput,
 } from '~/server/schema/creator-shop.schema';
 import { type ModelVersionTerms } from '@civitai/buzz';
-import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 
 // Shop surfaces hide stickers until the flag is on. Rendering is never gated —
 // an owned sticker in a comment or DM shows for everyone regardless.
@@ -1368,19 +1368,8 @@ export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAcc
   const gatedIds = modelVersionIds.filter((id) => paidAccess[id]?.terms);
   if (!gatedIds.length) return prices;
 
-  // Owner comes from the model, not PaidAccess.ownerId, so a transferred model prices off whoever owns
-  // it now. The shop is a public listing — no viewer, so nobody gets the owner's stored prices.
-  const owners = await dbRead.modelVersion.findMany({
-    where: { id: { in: gatedIds } },
-    select: { id: true, baseModel: true, model: { select: { userId: true } } },
-  });
-  const monetization = await getViewerMonetization({
-    versions: owners.map((v) => ({ id: v.id, ownerId: v.model.userId, baseModel: v.baseModel })),
-    viewer: {},
-  });
-
   for (const id of gatedIds) {
-    const terms = monetization[id]?.paidAccess?.terms as ModelVersionTerms | undefined;
+    const terms = paidAccess[id]?.terms as ModelVersionTerms | undefined;
     const price = terms?.download?.price ?? 0;
     if (price > 0) prices[id] = price;
   }

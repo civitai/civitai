@@ -32,14 +32,12 @@ const {
   mockResolveCanGenerateForVersions,
   mockGetShouldChargeForResources,
   mockGetFeaturedModels,
-  mockGetCapTiers,
   currentUser,
 } = vi.hoisted(() => ({
   mockQueryRaw: vi.fn(),
   mockResolveCanGenerateForVersions: vi.fn(),
   mockGetShouldChargeForResources: vi.fn(),
   mockGetFeaturedModels: vi.fn(),
-  mockGetCapTiers: vi.fn(),
   currentUser: { value: undefined as undefined | Record<string, unknown> },
 }));
 
@@ -55,10 +53,6 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 
 vi.mock('~/server/services/model.service', () => ({
   getFeaturedModels: mockGetFeaturedModels,
-}));
-
-vi.mock('~/server/services/paid-access.service', () => ({
-  getCapTiers: mockGetCapTiers,
 }));
 
 // MixedAuthEndpoint resolves the (optional) session and passes it as the 3rd
@@ -304,7 +298,6 @@ beforeEach(() => {
   );
   mockGetShouldChargeForResources.mockResolvedValue({ 77: false });
   mockGetFeaturedModels.mockResolvedValue([]);
-  mockGetCapTiers.mockResolvedValue(new Map());
 });
 
 describe('createModelFileDownloadUrl', () => {

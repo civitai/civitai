@@ -1,3 +1,6 @@
+import { finiteOrNull, monthlyPricingAllowance } from '@civitai/buzz';
+import { countPricingSlotsThisMonth } from '~/server/services/pricing-slot.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import {
   declineReviewHandler,
   deleteModelVersionHandler,
@@ -95,6 +98,13 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
 });
 
 export const modelVersionRouter = router({
+  getPricingAllowance: protectedProcedure.query(async ({ ctx }) => {
+    const limit = monthlyPricingAllowance(await getCapTier(ctx.user.id));
+    return {
+      used: await countPricingSlotsThisMonth(ctx.user.id),
+      limit: finiteOrNull(limit),
+    };
+  }),
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionSchema)

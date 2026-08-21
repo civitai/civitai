@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { enhance, deserialize } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -36,10 +37,8 @@
     limits,
     suggestedFee,
     needsAffirmation,
-    permanentSlotsLeft,
+    pricingSlotsLeft,
     capTier,
-    capFor,
-    accessCapFor,
     caps,
     feeCapsByType,
   }: {
@@ -48,16 +47,15 @@
     limits: MonetizationLimits;
     suggestedFee: number | undefined;
     needsAffirmation: boolean;
-    permanentSlotsLeft: number;
+    pricingSlotsLeft: number;
     capTier: CapTier;
-    capFor: (tier: CapTier, images: number) => number;
-    accessCapFor: (tier: CapTier) => number | null;
+
     /** Per model/media type caps across the selection, lowest first. */
     feeCapsByType: { label: string; cap: number }[];
     caps: {
       tier: string;
-      permanentUsed: number;
-      permanentCap: number | null;
+      pricingUsed: number;
+      pricingLimit: number | null;
       maxEarlyAccessDays: number;
       earlyAccessUsed: number;
       earlyAccessCap: number;
@@ -150,50 +148,64 @@
     }
   });
 
-  // Resolved on the server: "select all matching" reaches versions this page never loaded, so the
-  // affected list can't be computed from what's on screen.
-  let freeGenAffected = $state<{ versionId: number; modelName: string; versionName: string }[]>([]);
-  let loadingFreeGen = $state(false);
-  $effect(() => {
-    if (action !== 'usageControl' || usageControl !== 'Generation' || versionIds.length === 0) {
-      freeGenAffected = [];
-      return;
-    }
-    const ids = versionIds.join(',');
-    loadingFreeGen = true;
+  // Both previews are resolved on the server: "select all matching" reaches versions this page never
+  // loaded, so neither answer can be computed from what is on screen.
+  //
+  // Derived, never fetched into $state from an $effect. The selection changes while a request is in
+  // flight — deselect a version, reopen on another action — and the assigning form let the older
+  // response land on the newer selection, silently describing the wrong set of versions.
+  async function preview<T>(formAction: string, ids: number[], read: (data: any) => T, empty: T) {
     const body = new FormData();
-    body.set('versionIds', ids);
-    fetch('?/freeGenerationPreview', { method: 'POST', body })
-      .then((r) => r.text())
-      .then((r) => {
-        const parsed = deserialize(r);
-        freeGenAffected =
-          parsed.type === 'success'
-            ? ((parsed.data?.affected ?? []) as typeof freeGenAffected)
-            : [];
-      })
-      .catch(() => (freeGenAffected = []))
-      .finally(() => (loadingFreeGen = false));
-  });
+    body.set('versionIds', ids.join(','));
+    const parsed = deserialize(await (await fetch(formAction, { method: 'POST', body })).text());
+    return parsed.type === 'success' ? read(parsed.data) : empty;
+  }
 
+  type FreeGenAffected = { versionId: number; modelName: string; versionName: string }[];
+  const freeGenPreview = $derived(
+    browser && action === 'usageControl' && usageControl === 'Generation' && versionIds.length > 0
+      ? preview<FreeGenAffected>(
+          '?/freeGenerationPreview',
+          versionIds,
+          (d) => (d?.affected ?? []) as FreeGenAffected,
+          []
+        )
+      : null
+  );
+  const publishedPreview = $derived(
+    browser && action === 'paidAccess' && versionIds.length > 0
+      ? preview<number>('?/publishedPreview', versionIds, (d) => Number(d?.published ?? 0), 0)
+      : null
+  );
+
+  // resolveGateEligibility needs a value, not a promise. It takes `resolving` so an unanswered preview
+  // shows as "checking" rather than as zero-published, which would offer a timed window the server
+  // refuses; the awaited value below replaces it the moment it lands.
   let publishedCount = $state(0);
-  let loadingPublished = $state(false);
+  let loadingPublished = $state(true);
   $effect(() => {
-    if (action !== 'paidAccess' || versionIds.length === 0) {
+    const pending = publishedPreview;
+    if (!pending) {
       publishedCount = 0;
+      loadingPublished = false;
       return;
     }
-    const body = new FormData();
-    body.set('versionIds', versionIds.join(','));
     loadingPublished = true;
-    fetch('?/publishedPreview', { method: 'POST', body })
-      .then((r) => r.text())
-      .then((r) => {
-        const parsed = deserialize(r);
-        publishedCount = parsed.type === 'success' ? Number(parsed.data?.published ?? 0) : 0;
+    let current = true;
+    pending
+      .then((n) => {
+        // Guarded: a response for a superseded selection must not overwrite the current one.
+        if (current) publishedCount = n;
       })
-      .catch(() => (publishedCount = 0))
-      .finally(() => (loadingPublished = false));
+      .catch(() => {
+        if (current) publishedCount = 0;
+      })
+      .finally(() => {
+        if (current) loadingPublished = false;
+      });
+    return () => {
+      current = false;
+    };
   });
 
   const eligibility = $derived(
@@ -201,7 +213,7 @@
       selectedCount: count,
       publishedCount,
       maxEarlyAccessDays: caps.maxEarlyAccessDays,
-      permanentSlotsLeft,
+      pricingSlotsLeft,
       resolving: loadingPublished,
     })
   );
@@ -217,14 +229,12 @@
     permBlocked: eligibility.permBlocked,
     timedBlockedReason: eligibility.timedBlockedReason,
     maxEarlyAccessDays: caps.maxEarlyAccessDays,
-    permanentUsed: caps.permanentUsed,
-    permanentCap: caps.permanentCap,
+    pricingUsed: caps.pricingUsed,
+    pricingLimit: caps.pricingLimit,
     earlyAccessUsed: caps.earlyAccessUsed,
     earlyAccessCap: caps.earlyAccessCap,
     tierLabel: caps.tier ? caps.tier[0].toUpperCase() + caps.tier.slice(1) : '',
     capTier,
-    accessCapFor: (t, permanent) => (permanent ? accessCapFor(t) : null),
-    storedAccessPrice: 0,
     hadDonationGoal: false,
   });
 
@@ -233,8 +243,11 @@
   const affirmationOk = $derived(!affirmable || !needsAffirmation || affirmed);
   const canApply = $derived(count > 0 && confirmed && affirmationOk && !submitting);
 
-  // Permanent access consumes tier slots; the server rejects an over-cap selection, so say so here first.
-  const overSlots = $derived(action === 'paidAccess' && count > permanentSlotsLeft);
+  // Both a fee and a permanent gate spend allowance, so both need the warning — the fee path is
+  // all-or-nothing, so without it a 20-version selection just returns 403 with nothing on screen first.
+  const overSlots = $derived(
+    (action === 'paidAccess' || action === 'fee') && count > pricingSlotsLeft
+  );
 
   const submit = () => {
     // Captured before the await: the handler clears `action` on success, so reading it afterwards
@@ -376,6 +389,19 @@
         </Dialog.Description>
       </Dialog.Header>
 
+      {#snippet allowanceAlert()}
+        <Alert.Root variant="destructive">
+          <IconAlertTriangle />
+          <Alert.Title>Over this month's pricing allowance</Alert.Title>
+          <Alert.Description>
+            You can price {pricingSlotsLeft} more model{pricingSlotsLeft === 1 ? '' : 's'} this month,
+            but
+            {count} are selected. Deselect some, or the save will be rejected. Versions you already charge
+            for don't count.
+          </Alert.Description>
+        </Alert.Root>
+      {/snippet}
+
       <form method="POST" action={BULK_ACTION_FORM[action]} use:enhance={submit} class="contents">
         <input type="hidden" name="versionIds" value={versionIds.join(',')} />
 
@@ -387,10 +413,11 @@
                 bind:buzz
                 bind:images
                 {limits}
-                {capTier}
-                {capFor}
                 suggested={suggestedFee != null ? feeToRatio(suggestedFee) : undefined}
               />
+              {#if overSlots}
+                {@render allowanceAlert()}
+              {/if}
               {#if feeCapsByType.length > 1}
                 <div class="rounded-lg border border-dark-4 p-2">
                   <p class="mb-1 text-[10px] font-medium uppercase tracking-wider text-dark-2">
@@ -422,16 +449,7 @@
               gateNotice={publishedNotice}
             />
             {#if overSlots && ea.permanent}
-              <Alert.Root variant="destructive">
-                <IconAlertTriangle />
-                <Alert.Title>Over your permanent-access limit</Alert.Title>
-                <Alert.Description>
-                  Your tier allows {permanentSlotsLeft} more permanent-access version{permanentSlotsLeft ===
-                  1
-                    ? ''
-                    : 's'}, but {count} are selected. Deselect some, or the save will be rejected.
-                </Alert.Description>
-              </Alert.Root>
+              {@render allowanceAlert()}
             {/if}
           {:else if action === 'usageControl'}
             <UsageControlPicker
@@ -445,29 +463,35 @@
               A gated version's price moves to whichever tier survives — no version is left gated
               without a price.
             </p>
-            {#if usageControl === 'Generation'}
-              {#if loadingFreeGen}
+            {#if usageControl === 'Generation' && freeGenPreview}
+              {#await freeGenPreview}
                 <p class="text-xs text-dark-2">Checking for versions that give generation away…</p>
-              {:else if freeGenAffected.length > 0}
-                <Alert.Root variant="destructive">
-                  <IconAlertTriangle />
-                  <Alert.Title>
-                    {freeGenAffected.length} version{freeGenAffected.length === 1 ? '' : 's'} will stop
-                    giving generation away
-                  </Alert.Title>
-                  <Alert.Description>
-                    <p class="mb-2">
-                      These charge for downloads and give generation away free. Generation-only
-                      can't do both, so they'll start charging their download price to generate.
-                    </p>
-                    <ul class="max-h-32 overflow-y-auto text-xs">
-                      {#each freeGenAffected as v (v.versionId)}
-                        <li class="truncate">{v.modelName} · {v.versionName}</li>
-                      {/each}
-                    </ul>
-                  </Alert.Description>
-                </Alert.Root>
-              {/if}
+              {:then affected}
+                {#if affected.length > 0}
+                  <Alert.Root variant="destructive">
+                    <IconAlertTriangle />
+                    <Alert.Title>
+                      {affected.length} version{affected.length === 1 ? '' : 's'} will stop giving generation
+                      away
+                    </Alert.Title>
+                    <Alert.Description>
+                      <p class="mb-2">
+                        These charge for downloads and give generation away free. Generation-only
+                        can't do both, so they'll start charging their download price to generate.
+                      </p>
+                      <ul class="max-h-32 overflow-y-auto text-xs">
+                        {#each affected as v (v.versionId)}
+                          <li class="truncate">{v.modelName} · {v.versionName}</li>
+                        {/each}
+                      </ul>
+                    </Alert.Description>
+                  </Alert.Root>
+                {/if}
+              {:catch}
+                <p class="text-xs text-yellow-5">
+                  Couldn't check which versions give generation away — they will still be switched.
+                </p>
+              {/await}
             {/if}
           {:else if action === 'clearFee'}
             <p class="text-sm text-dark-1">

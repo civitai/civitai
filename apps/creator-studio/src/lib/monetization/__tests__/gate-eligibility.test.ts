@@ -5,7 +5,7 @@ const base = {
   selectedCount: 10,
   publishedCount: 0,
   maxEarlyAccessDays: 7,
-  permanentSlotsLeft: 20,
+  pricingSlotsLeft: 20,
   resolving: false,
 };
 
@@ -47,7 +47,7 @@ describe('resolveGateEligibility', () => {
 
   it('reports permanent as blocked only when no slots remain', () => {
     expect(resolveGateEligibility(base).canChoosePermanent).toBe(true);
-    const full = resolveGateEligibility({ ...base, permanentSlotsLeft: 0 });
+    const full = resolveGateEligibility({ ...base, pricingSlotsLeft: 0 });
     expect(full.canChoosePermanent).toBe(false);
     expect(full.permBlocked).toBe(true);
   });

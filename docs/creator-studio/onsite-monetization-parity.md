@@ -57,11 +57,12 @@ No schema change, no migration, no backfill.
       `requirements.validMembership` (`status IN ('incomplete','active')`, `LIMIT 1`, no tier ordering); the
       server enforces with `getHighestTierSubscription` (excludes canceled/past_due/unpaid, picks the highest
       tier). **The server is authoritative; the UI should display the server-computed cap, not recompute tier
-      client-side.** Have the form loader return `{ permanentCap, permanentUsed }` computed with the same helper
-      enforcement uses — then displayed == enforced by construction, and it also delivers the live "X of Y"
+      client-side.** Have the form loader return the allowance state computed with the same helper
+      enforcement uses (`pricingAllowanceState`, exposed onsite via `modelVersion.getPricingAllowance`) — then displayed == enforced by construction, and it also delivers the live "X of Y"
       count below. (Same pattern as creator-studio's loader.)
-- [ ] **Live "X of Y set" count onsite.** Only the tier *allowance* is shown today; the usage count needs a
-      small tRPC query. Hitting the cap currently surfaces as a server error with a specific message.
+- [x] **Live "X of Y set" count onsite.** Done in the monetization revamp: `modelVersion.getPricingAllowance`
+      feeds the count into the upsert form, so displayed == enforced. Note the meaning changed — it counts new
+      prices this calendar month against the membership allowance, not concurrent permanent gates.
 - [ ] **Naming divergence.** UI says "Paid Access"; every field is `earlyAccess*`. Rename deliberately or
       accept the split.
 
@@ -159,7 +160,7 @@ they differ by mode *and* entity type:
 | | Gated by | Limits |
 | --- | --- | --- |
 | Early access (timed) | creator **score** | concurrent count (`scoreQuantityUnlock`) **and** max days (`scoreTimeFrameUnlock`) |
-| Permanent | CP **tier** | concurrent count (`bronze 3 / silver 10 / gold ∞`) |
+| Permanent | Membership **tier** | monthly pricing allowance (`free 3 / bronze 10 / silver 25 / gold ∞` new prices per calendar month) |
 | Comics | **unknown** | **unknown** — different axis, or none |
 
 So the split is:

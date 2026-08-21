@@ -23,6 +23,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     modelVersion: {
       getLicensingRoots: { useQuery: () => ({ data: undefined }) },
       getUserEarlyAccessVersions: { useQuery: () => ({ data: [] }) },
+      // Hand-listed, so every router entry the component reads has to appear here or it throws on
+      // render — the whole suite went red on this one when the allowance counter was added.
+      getPricingAllowance: { useQuery: () => ({ data: { used: 0, limit: 3 } }) },
       upsert: { useMutation: () => ({ mutateAsync, isPending: false }) },
     },
     useUtils: () => ({

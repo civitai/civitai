@@ -1,11 +1,17 @@
 # Unifying licensing fees + paid access into `@civitai/monetization`
 
+> Symbol names in Steps 3–5 predate the 2026-08-21 monetization revamp: `getCapTiers`, `capTierCache`,
+> `assertPaidAccessCaps`, `countUserPermanentAccessVersions`, `strictestCapMediaType` and
+> `currentAccessPrices` no longer exist. The **shapes** of those steps survive — read them as "the
+> cache/count/guard layer", and substitute `pricing-slot.service.ts` / `pricing-slot.ts` /
+> `assertMonetizationWrite`.
+
 **Status:** Plan — not started. Sequenced so every step ships independently.
 
 ## Why
 
-`@civitai/buzz` already shares the **pure** monetization rules — caps, `effectiveLicensingFee`,
-`cappedTerms`, `monetizationLimits`, `resolveCapTier`, `isPermanentGate`, `gatePrices`. Everything that
+`@civitai/buzz` already shares the **pure** monetization rules — the fee ceiling, the pricing allowance
+(`monthlyPricingAllowance`, `pricingAllowanceState`), `isPermanentGate`, `gatePrices`. Everything that
 touches the **database or a cache** is written twice: once in the main app against Prisma, once in the
 spoke against kysely.
 
@@ -16,6 +22,7 @@ That seam produced four money bugs in one week. This is the argument for the wor
 | Fee set in Creator Studio kept earning tips (CU 868kk4j2k)        | Main app maintained `DisablePayout` alongside the fee; the spoke's `writeFee` never touched `flags` |
 | "Fee set" filter listed 64,485 versions whose chip read "Fee off" | Spoke filtered `IS NOT NULL`; every read gates `> 0`                                                |
 | Licensing fee clamped for a gold member                           | Tier read from a cache the spoke can't bust                                                         |
+| Floor + allowance enforced twice (2026-08-21) | `pricing-slot.service.ts` and the spoke's `pricing-slot.ts` are independent implementations of the same rule — the seam this plan exists to close, added again |
 | Cleared fee stored `0`, not `NULL`                                | Two clear paths, two normalizations                                                                 |
 
 Each was fixed in both places by hand. The next one will be too, unless the DB/cache layer is shared.

@@ -6,7 +6,7 @@ export type GateEligibilityInput = {
   publishedCount: number;
   /** 0 when the creator's score hasn't unlocked early access at all. */
   maxEarlyAccessDays: number;
-  permanentSlotsLeft: number;
+  pricingSlotsLeft: number;
   /** True while the published count is still being fetched — treated as "can't offer timed yet". */
   resolving: boolean;
 };
@@ -27,7 +27,7 @@ export function resolveGateEligibility({
   selectedCount,
   publishedCount,
   maxEarlyAccessDays,
-  permanentSlotsLeft,
+  pricingSlotsLeft,
   resolving,
 }: GateEligibilityInput): GateEligibility {
   const eligibleForTimed = Math.max(0, selectedCount - publishedCount);
@@ -48,8 +48,8 @@ export function resolveGateEligibility({
   return {
     eligibleForTimed,
     canChooseTimed,
-    canChoosePermanent: permanentSlotsLeft > 0,
-    permBlocked: permanentSlotsLeft <= 0,
+    canChoosePermanent: pricingSlotsLeft > 0,
+    permBlocked: pricingSlotsLeft <= 0,
     timedBlockedReason,
     timedPartialNotice:
       canChooseTimed && publishedCount > 0

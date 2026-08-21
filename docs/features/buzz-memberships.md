@@ -237,9 +237,9 @@ component takes a `creatorProgramDisabled` prop that `PlanCard` sets for `buzzPu
 products and `/pricing/buzz` sets always — rendering it crossed-out/grey like any other
 unavailable perk. Tag any future Creator-Program-only perk the same way.
 
-**Not** tagged: "Higher licensing-fee & paid-access price caps at higher tiers". Those caps
-ride on the tier itself rather than on Creator Program membership, so Buzz memberships keep
-them. There's a comment on the entry saying so — don't "fix" it by adding the marker.
+**Not** tagged: the monthly pricing allowance ("Put a price on N models a month"). It rides on
+the tier itself rather than on Creator Program membership, so Buzz memberships keep it. There's a
+comment on the entry saying so — don't "fix" it by adding the marker.
 
 Everything else (generation limits, vault, private models, priority) is a plain tier check
 and is _meant_ to see the Buzz membership.

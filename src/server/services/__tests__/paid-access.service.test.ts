@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { increaseDate } from '~/utils/date-helpers';
 
-const { mockDbWrite, mockBust, mockCacheFetch } = vi.hoisted(() => ({
+const { mockDbWrite, mockBust, mockCacheFetch, mockSlotCount } = vi.hoisted(() => ({
+  mockSlotCount: vi.fn(async () => 0),
   // Keyed by the cache's redis key so one stub can drive both the PaidAccess and cap-tier caches.
   mockCacheFetch: vi.fn(async (_key: string, _ids: number[]) => ({} as Record<string, unknown>)),
   mockDbWrite: {
@@ -17,11 +18,18 @@ const { mockDbWrite, mockBust, mockCacheFetch } = vi.hoisted(() => ({
   mockBust: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: mockDbWrite }));
+vi.mock('~/server/db/client', () => ({
+  // Stubbed at the DB layer rather than by mocking pricing-slot.service: assertPricingAllowed calls
+  // countPricingSlotsThisMonth through the module-local binding, which a module mock cannot intercept.
+  // This way the rules under test — the floor, the allowance arithmetic, the already-priced exemption —
+  // are the real ones.
+  dbRead: { pricingSlot: { count: mockSlotCount } },
+  dbWrite: mockDbWrite,
+}));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
 vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: {
-    CACHES: { PAID_ACCESS: 'test:paid-access', PAID_ACCESS_CAP_TIER: 'test:cap-tier' },
+    CACHES: { PAID_ACCESS: 'test:paid-access' },
   },
 }));
 vi.mock('~/server/utils/cache-helpers', () => ({
@@ -32,7 +40,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 }));
 
 import {
-  assertPaidAccessCaps,
+  assertMonetizationWrite,
   assertPaidAccessInput,
   getViewerMonetization,
   materializePaidAccessEndsAt,
@@ -227,12 +235,9 @@ describe('toPublicPaidAccessDto — the v1 public API view', () => {
   });
 });
 
-describe('getViewerMonetization — gate price and licensing fee capped as one', () => {
+describe('getViewerMonetization — the stored price is the charged price', () => {
   const OWNER = 7;
   const FUTURE = new Date('2099-01-01T00:00:00.000Z');
-
-  // Permanent (timeframeDays null) — the only kind with a price ceiling. A timed window is uncapped and
-  // has its own tests below.
   const row = (over: Record<string, unknown> = {}) => ({
     entityId: 1,
     ownerId: OWNER,
@@ -241,281 +246,355 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
     terms: { download: { price: 5000 } },
     ...over,
   });
+  const drive = (gates: Record<string, unknown>) =>
+    mockCacheFetch.mockImplementation(async () => gates);
 
-  const drive = (
-    gates: Record<string, unknown>,
-    tiers: Record<number, string | null> = { [OWNER]: null }
-  ) =>
-    mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier'
-        ? Object.fromEntries(
-            Object.entries(tiers).map(([id, tier]) => [id, { userId: Number(id), tier }])
-          )
-        : gates
-    );
-
-  it('lowers an over-cap gate price for a non-owner when the owner has lapsed', async () => {
+  it('quotes a permanent gate at its stored price — nothing clamps it any more', async () => {
     drive({ 1: row() });
 
-    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
-
-    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 500 } });
-  });
-
-  it('leaves the OWNER the stored price — their editors write these terms back', async () => {
-    drive({ 1: row() });
-
-    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: OWNER } });
+    const out = await getViewerMonetization({ versions: [{ id: 1 }] });
 
     expect(out[1].paidAccess?.terms).toEqual({ download: { price: 5000 } });
   });
 
-  it('leaves a MODERATOR the stored price', async () => {
-    drive({ 1: row() });
+  it('quotes a timed early-access window the same way', async () => {
+    drive({ 1: row({ timeframeDays: 7 }) });
 
-    const out = await getViewerMonetization({
-      versions: [{ id: 1 }],
-      viewer: { id: 2, isModerator: true },
-    });
+    const out = await getViewerMonetization({ versions: [{ id: 1 }] });
 
     expect(out[1].paidAccess?.terms).toEqual({ download: { price: 5000 } });
   });
 
-  it('leaves a price already under the cap alone', async () => {
-    drive({ 1: row({ terms: { download: { price: 300 } } }) });
-
-    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
-
-    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 300 } });
-  });
-
-  it('caps a paid generation tier and keeps trialLimit', async () => {
-    drive({
-      1: row({ terms: { download: { price: 5000 }, generation: { price: 2000, trialLimit: 5 } } }),
-    });
-
-    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
-
-    expect(out[1].paidAccess?.terms).toEqual({
-      download: { price: 500 },
-      generation: { price: 500, trialLimit: 5 },
-    });
-  });
-
-  // A paid generation tier with no explicit price falls back to the download price at charge time, so
-  // the display must NOT invent one — capping the download alone keeps the two in step.
-  it('does not invent a generation price when the tier relies on the download fallback', async () => {
-    drive({ 1: row({ terms: { download: { price: 5000 }, generation: { trialLimit: 5 } } }) });
-
-    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
-
-    expect(out[1].paidAccess?.terms).toEqual({
-      download: { price: 500 },
-      generation: { trialLimit: 5 },
-    });
-  });
-
-  it('never turns a free generation grant into a paid one', async () => {
-    drive({ 1: row({ terms: { download: { price: 5000 }, generation: { free: true } } }) });
-
-    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
-
-    expect(out[1].paidAccess?.terms).toEqual({
-      download: { price: 500 },
-      generation: { free: true },
-    });
-  });
-
-  it('caps a generation-only gate without inventing a download tier', async () => {
-    drive({ 1: row({ terms: { generation: { price: 3000, trialLimit: 10 } } }) });
-
-    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
-
-    expect(out[1].paidAccess?.terms).toEqual({ generation: { price: 500, trialLimit: 10 } });
-    expect(out[1].paidAccess?.terms).not.toHaveProperty('download');
-  });
-
-  it('keeps a stored fee of 0 as 0 rather than null', async () => {
+  it('returns the stored licensing fee untouched', async () => {
     drive({ 1: row() });
 
-    const out = await getViewerMonetization({
-      versions: [{ id: 1, ownerId: OWNER, licensingFee: 0, modelType: 'Checkpoint' }],
-      viewer: { id: 2 },
-    });
+    const out = await getViewerMonetization({ versions: [{ id: 1, licensingFee: 8 }] });
 
-    expect(out[1].licensingFee).toBe(0);
+    expect(out[1].licensingFee).toBe(8);
   });
 
-  it('caps the licensing fee against the same tier as the gate', async () => {
+  // A reintroduced clamp would show up here as a second cache key being fetched.
+  it('resolves no subscription tier at all — one cache, the gate rows', async () => {
     drive({ 1: row() });
 
-    const out = await getViewerMonetization({
-      versions: [{ id: 1, ownerId: OWNER, licensingFee: 8, modelType: 'Checkpoint' }],
-      viewer: { id: 2 },
-    });
+    await getViewerMonetization({ versions: [{ id: 1, licensingFee: 8 }] });
 
-    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 500 } });
-    expect(out[1].licensingFee).toBe(1); // free-tier checkpoint cap
-  });
-
-  it('caps a licensing fee on an UNGATED version when the owner is given', async () => {
-    drive({});
-
-    const out = await getViewerMonetization({
-      versions: [{ id: 1, ownerId: OWNER, licensingFee: 8, modelType: 'Checkpoint' }],
-      viewer: { id: 2 },
-    });
-
-    expect(out[1].paidAccess).toBeUndefined();
-    expect(out[1].licensingFee).toBe(1);
-  });
-
-  it('resolves cap tiers in ONE batched fetch across distinct owners', async () => {
-    drive(
-      {
-        1: row({ entityId: 1, ownerId: 8 }),
-        2: row({ entityId: 2, ownerId: 8 }),
-        3: row({ entityId: 3, ownerId: 9 }),
-      },
-      { 8: null, 9: null }
-    );
-
-    await getViewerMonetization({
-      versions: [{ id: 1 }, { id: 2 }, { id: 3 }],
-      viewer: { id: 2 },
-    });
-
-    const tierCalls = mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier');
-    expect(tierCalls).toHaveLength(1);
-    expect(tierCalls[0][1]).toEqual([8, 9]);
-  });
-
-  it('runs NO cap-tier fetch when nothing is chargeable', async () => {
-    drive({ 1: row({ terms: { generation: { free: true } } }) });
-
-    await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
-
-    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+    const keys = new Set(mockCacheFetch.mock.calls.map(([key]) => key));
+    expect([...keys]).toEqual(['test:paid-access:ModelVersion']);
   });
 });
 
 describe('getViewerMonetization — an unset gate/fee is never invented', () => {
-  const drive = () =>
-    mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier' ? { 7: { userId: 7, tier: null } } : {}
-    );
+  const drive = () => mockCacheFetch.mockImplementation(async () => ({}));
 
-  it('no gate and no fee: nothing charged, and no cap tier is even resolved', async () => {
+  it('no gate and no fee: nothing charged', async () => {
     drive();
 
-    const out = await getViewerMonetization({
-      versions: [{ id: 1, ownerId: 7 }],
-      viewer: { id: 2 },
-    });
+    const out = await getViewerMonetization({ versions: [{ id: 1 }] });
 
-    expect(out[1]).toEqual({
-      paidAccess: undefined,
-      licensingFee: null,
-      effectiveLicensingFee: null,
-    });
-    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+    expect(out[1]).toEqual({ paidAccess: undefined, licensingFee: null });
   });
 
-  it('a null fee stays null rather than falling back to the free-tier cap', async () => {
+  it('a null fee stays null rather than becoming 0', async () => {
     drive();
 
-    const out = await getViewerMonetization({
-      versions: [{ id: 1, ownerId: 7, licensingFee: null, modelType: 'Checkpoint' }],
-      viewer: { id: 2 },
-    });
+    const out = await getViewerMonetization({ versions: [{ id: 1, licensingFee: null }] });
 
     expect(out[1].licensingFee).toBeNull();
   });
 });
 
-describe('getViewerMonetization — the price ceiling is permanent-only', () => {
-  const OWNER = 7;
-  const drive = (gates: Record<string, unknown>) =>
-    mockCacheFetch.mockImplementation(async (key: string) =>
-      key === 'test:cap-tier' ? { [OWNER]: { userId: OWNER, tier: null } } : gates
-    );
-  const row = (over: Record<string, unknown>) => ({
-    entityId: 1,
-    ownerId: OWNER,
-    endsAtMs: new Date('2099-01-01T00:00:00.000Z').getTime(),
-    terms: { download: { price: 5000 } },
-    ...over,
+// The write gate. Each rule is exercised against a version with NO existing price, since that is the
+// only case either rule applies to — the "editing is always free" direction is at the end, and is the
+// property that grandfathers everything priced before these rules existed.
+describe('assertMonetizationWrite', () => {
+  const ELIGIBLE = { scores: { models: 50000 } };
+
+  beforeEach(() => {
+    mockCacheFetch.mockImplementation(async () => ({}));
+    mockSlotCount.mockResolvedValue(0);
   });
 
-  it('lowers an over-cap PERMANENT gate to the tier ceiling', async () => {
-    drive({ 1: row({ timeframeDays: null }) });
-
-    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
-
-    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 500 } });
+  it('rejects a fee above the flat ceiling', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: null,
+        licensingFee: 101,
+        storedLicensingFee: 0,
+        tier: 'gold',
+        userMeta: ELIGIBLE,
+      })
+    ).rejects.toThrow(/at most 100 Buzz/);
   });
 
-  it('leaves a TIMED early-access window at its stored price', async () => {
-    drive({ 1: row({ timeframeDays: 7 }) });
-
-    const out = await getViewerMonetization({ versions: [{ id: 1 }], viewer: { id: 2 } });
-
-    expect(out[1].paidAccess?.terms).toEqual({ download: { price: 5000 } });
+  it('allows 500 on a video model — the ceiling is 5x there', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: null,
+        licensingFee: 500,
+        storedLicensingFee: 0,
+        tier: 'free',
+        userMeta: ELIGIBLE,
+        baseModel: 'Hunyuan Video',
+      })
+    ).resolves.toEqual({ spendsSlot: true });
   });
 
-  it('still caps the licensing fee on a timed gate — it is charged per generation, not per window', async () => {
-    drive({ 1: row({ timeframeDays: 7 }) });
+  it('does not check a paid-access price at all — it is uncapped', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: { permanent: true, terms: { download: { price: 10_000_000 } } } as never,
+        tier: 'free',
+        userMeta: ELIGIBLE,
+      })
+    ).resolves.toEqual({ spendsSlot: true });
+  });
 
-    const out = await getViewerMonetization({
-      versions: [{ id: 1, ownerId: OWNER, licensingFee: 8, modelType: 'Checkpoint' }],
-      viewer: { id: 2 },
+  it('refuses a creator below the eligibility floor', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: { permanent: true, terms: {} } as never,
+        tier: 'gold',
+        userMeta: { scores: { models: 9999 } },
+      })
+    ).rejects.toThrow(/creator score of 10,000/);
+  });
+
+  it('refuses once the monthly allowance is spent', async () => {
+    mockSlotCount.mockResolvedValue(3);
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: { permanent: true, terms: {} } as never,
+        tier: 'free',
+        userMeta: ELIGIBLE,
+      })
+    ).rejects.toThrow(/priced 3 of 3 models this month/);
+  });
+
+  it('never blocks gold — its allowance is unlimited, so no count is even read', async () => {
+    mockSlotCount.mockResolvedValue(9999);
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: { permanent: true, terms: {} } as never,
+        tier: 'gold',
+        userMeta: ELIGIBLE,
+      })
+    ).resolves.toEqual({ spendsSlot: true });
+    expect(mockSlotCount).not.toHaveBeenCalled();
+  });
+
+  // Deliberate, and the opposite of every other creator-score gate: the floor is a statement about who
+  // may sell, not a permission level. A moderator exemption here would be a silent bypass of both rules.
+  it('does NOT exempt moderators from the floor or the allowance', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        isModerator: true,
+        paidAccess: { permanent: true, terms: {} } as never,
+        tier: 'free',
+        userMeta: { scores: { models: 100 } },
+      })
+    ).rejects.toThrow(/creator score/);
+  });
+
+  it('exempts a moderator from the FEE CEILING only', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        isModerator: true,
+        paidAccess: null,
+        licensingFee: 5000,
+        storedLicensingFee: 10,
+        tier: 'free',
+        userMeta: ELIGIBLE,
+      })
+    ).resolves.toEqual({ spendsSlot: false });
+  });
+
+  // The gate lookup feeds BOTH wasPriced and the willBePriced fallback.
+  describe('the existing permanent gate makes a version already-priced', () => {
+    const gateRow = (timeframeDays: number | null) => ({
+      1: {
+        entityId: 1,
+        ownerId: 1,
+        endsAtMs: new Date('2099-01-01T00:00:00.000Z').getTime(),
+        timeframeDays,
+        terms: { download: { price: 500 } },
+      },
     });
 
-    expect(out[1].licensingFee).toBe(1);
-  });
-});
+    it('lets a below-floor owner add a fee to a version they already gate, at no cost', async () => {
+      mockCacheFetch.mockImplementation(async () => gateRow(null));
+      mockSlotCount.mockResolvedValue(99);
 
-// The write guard, both directions. The cap shipping without this distinction didn't only under-charge
-// buyers — it also stopped a free-tier creator SETTING a 10k early-access price at all (CU 868kk3avk).
-describe('assertPaidAccessCaps — the price ceiling is permanent-only', () => {
-  const gate = (over: Record<string, unknown>) => ({
-    terms: { download: { price: 10000 } },
-    ...over,
-  });
-  const noExistingGate = () =>
-    mockCacheFetch.mockImplementation(async () => ({} as Record<string, unknown>));
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 1,
+          paidAccess: null,
+          licensingFee: 5,
+          storedLicensingFee: 0,
+          tier: 'free',
+          userMeta: { scores: { models: 0 } },
+        })
+      ).resolves.toEqual({ spendsSlot: false });
+    });
 
-  it('rejects an over-cap PERMANENT price', async () => {
-    noExistingGate();
+    // The negative control: without it the test above passes for the wrong reason, since a lookup that
+    // returns nothing at all also produces spendsSlot on the same inputs.
+    it('charges for the same write when no gate row exists', async () => {
+      mockCacheFetch.mockImplementation(async () => ({}));
+
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 1,
+          paidAccess: null,
+          licensingFee: 5,
+          storedLicensingFee: 0,
+          tier: 'free',
+          userMeta: { scores: { models: 50000 } },
+        })
+      ).resolves.toEqual({ spendsSlot: true });
+    });
+
+    // A timed window is not a price, so it must not confer the exemption.
+    it('does not treat a TIMED window as already-priced', async () => {
+      mockCacheFetch.mockImplementation(async () => gateRow(7));
+
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 1,
+          paidAccess: null,
+          licensingFee: 5,
+          storedLicensingFee: 0,
+          tier: 'free',
+          userMeta: { scores: { models: 0 } },
+        })
+      ).rejects.toThrow(/creator score/);
+    });
+
+    // A fee-only edit on an already-gated version leaves it gated: willBePriced falls back to the row.
+    it('keeps a gated version priced when the write clears its fee', async () => {
+      mockCacheFetch.mockImplementation(async () => gateRow(null));
+
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 1,
+          paidAccess: null,
+          licensingFee: 0,
+          storedLicensingFee: 5,
+          tier: 'free',
+          userMeta: { scores: { models: 0 } },
+        })
+      ).resolves.toEqual({ spendsSlot: false });
+    });
+  });
+
+  // Moving to a stricter media axis is not a raise by the numbers, but it does put the fee over the
+  // ceiling that will apply — and nothing clamps at charge time any more.
+  it('refuses an untouched video-ceiling fee when the write switches to an image base model', async () => {
     await expect(
-      assertPaidAccessCaps({
-        userId: 1,
-        paidAccess: gate({ permanent: true }) as never,
-        tier: 'free',
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: null,
+        licensingFee: 500,
+        storedLicensingFee: 500,
+        tier: 'gold',
+        userMeta: { scores: { models: 50000 } },
+        baseModel: 'SDXL 1.0',
+        storedBaseModel: 'Hunyuan Video',
       })
-    ).rejects.toThrow(/permanent paid-access price/);
+    ).rejects.toThrow(/at most 100 Buzz per generation on this base model/);
   });
 
-  it('allows the same price on a TIMED early-access window', async () => {
-    noExistingGate();
+  it('still allows re-saving that fee while the version stays on a video base model', async () => {
     await expect(
-      assertPaidAccessCaps({
-        userId: 1,
-        paidAccess: gate({ permanent: false, timeframeDays: 7 }) as never,
-        tier: 'free',
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: null,
+        licensingFee: 500,
+        storedLicensingFee: 500,
+        tier: 'gold',
+        userMeta: { scores: { models: 50000 } },
+        baseModel: 'Hunyuan Video',
+        storedBaseModel: 'Hunyuan Video',
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ spendsSlot: false });
   });
 
-  it('never blocks a moderator', async () => {
-    noExistingGate();
+  // Named after what it claims: the floor test below fails at the floor and never reaches the allowance.
+  it('does not exempt moderators from the ALLOWANCE either', async () => {
+    mockSlotCount.mockResolvedValue(3);
     await expect(
-      assertPaidAccessCaps({
-        userId: 1,
+      assertMonetizationWrite({
+        ownerId: 1,
         isModerator: true,
-        paidAccess: gate({ permanent: true }) as never,
+        paidAccess: { permanent: true, terms: {} } as never,
         tier: 'free',
+        userMeta: { scores: { models: 50000 } },
       })
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(/3 of 3/);
+  });
+
+  // The grandfathering rule, and the reason no backfill is needed: a version that already carries a
+  // price is exempt from both rules and spends nothing, however far below the floor its owner is.
+  it('lets a below-floor creator edit a price they already charge, at no cost', async () => {
+    mockSlotCount.mockResolvedValue(99);
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: null,
+        licensingFee: 5,
+        storedLicensingFee: 2,
+        tier: 'free',
+        userMeta: { scores: { models: 0 } },
+      })
+    ).resolves.toEqual({ spendsSlot: false });
+  });
+
+  it('treats an absent licensingFee as unchanged, not cleared', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: null,
+        storedLicensingFee: 2,
+        tier: 'free',
+        userMeta: { scores: { models: 0 } },
+      })
+    ).resolves.toEqual({ spendsSlot: false });
+  });
+
+  it('spends nothing when the write leaves the version unpriced', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: null,
+        licensingFee: 0,
+        storedLicensingFee: 0,
+        tier: 'free',
+        userMeta: { scores: { models: 0 } },
+      })
+    ).resolves.toEqual({ spendsSlot: false });
+  });
+
+  // A timed window is not a price: it prices itself out when the window closes.
+  it('does not spend a slot on a timed early-access window', async () => {
+    await expect(
+      assertMonetizationWrite({
+        ownerId: 1,
+        paidAccess: { permanent: false, timeframeDays: 7, terms: {} } as never,
+        tier: 'free',
+        userMeta: { scores: { models: 0 } },
+      })
+    ).resolves.toEqual({ spendsSlot: false });
   });
 });

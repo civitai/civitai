@@ -1,7 +1,7 @@
 import type { DefaultMantineColor, ThemeIconVariant } from '@mantine/core';
 import { Divider, List, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconAdCircleOff, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
-import { finiteOrNull, maxPaidAccessPrice } from '@civitai/buzz';
+import { finiteOrNull, monthlyPricingAllowance } from '@civitai/buzz';
 
 export const benefitIconSize = 18;
 const themeIconSize = benefitIconSize + 6;
@@ -34,31 +34,28 @@ const defaultBenefits = [
     ),
   },
   {
-    // Deliberately NOT creatorProgram-gated: the price caps ride on the tier itself, so
-    // Buzz-purchased memberships keep them even though they get no Creator Program.
+    // Deliberately NOT creatorProgram-gated: the allowance rides on the tier itself, so
+    // Buzz-purchased memberships keep it even though they get no Creator Program.
     tiers: ['bronze', 'silver', 'gold'],
-    // Rendered per card from the enforced cap table, so a card can never advertise a price the server
-    // would reject. The un-owned rendering (greyed card, or a tier with no cap entry) falls back to the
-    // qualitative line rather than quoting someone else's ceiling.
+    // Rendered per card from the enforced allowance table, so a card can never advertise a number the
+    // server would reject. The un-owned rendering falls back to the qualitative line rather than
+    // quoting someone else's allowance.
     content: (tier?: string) => {
-      const cap = tier ? finiteOrNull(maxPaidAccessPrice(tier)) : undefined;
+      const limit = tier ? finiteOrNull(monthlyPricingAllowance(tier)) : undefined;
       return (
         <Text>
-          {cap === undefined ? (
-            <>Higher </>
+          {limit === undefined ? (
+            <>Price more models each month</>
           ) : (
             <>
-              Charge up to{' '}
+              Put a price on{' '}
               <Text component="span" fw={600}>
-                {cap === null ? 'any price' : `${cap.toLocaleString()} ⚡`}
+                {limit === null ? 'unlimited models' : `${limit.toLocaleString()} models`}
               </Text>{' '}
-              for paid access, and higher{' '}
+              a month — a licensing fee or paid access. Changing a price you have already set is
+              always free.
             </>
           )}
-          <Text td="underline" component="a" href="/creator-program" target="_blank">
-            licensing-fee caps
-          </Text>
-          {cap === undefined ? <> at higher tiers</> : <> (5× for video models)</>}
         </Text>
       );
     },

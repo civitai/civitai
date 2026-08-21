@@ -79,15 +79,12 @@ import {
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
   assertPaidAccessInput,
-  getCachedCapTier,
   getPaidAccess,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
 import {
   type ModelVersionTerms,
-  capMediaType,
-  effectivePaidAccessPrice,
   isPermanentGate,
   acceptsBlueBuzz,
   generationPrice,
@@ -2222,18 +2219,10 @@ export const earlyAccessPurchase = async ({
   // Generation `price` is optional — `generationPrice` applies the download-price fallback (and is
   // unit-tested in @civitai/buzz, so the charged amount stays covered).
   //
-  // A PERMANENT gate is charged at the OWNER's current cap, not the stored price: a lapsed membership
-  // drops what buyers pay to the free-tier cap (CU 868kj4q4j), and the stored value is left alone so
-  // re-subscribing restores it. A TIMED early-access window has no ceiling, so it charges as stored —
-  // this must mirror getViewerMonetization, or buyers see one price and get billed another.
-  const storedPrice = type === 'download' ? terms.download?.price : generationPrice(terms);
+  // The stored price is what the buyer pays. Paid access carries no ceiling, so nothing here resolves
+  // the owner's membership — what they set is what is charged, permanent or timed alike.
+  const amount = (type === 'download' ? terms.download?.price : generationPrice(terms)) ?? 0;
   const permanent = isPermanentGate(paidAccess);
-  // Skipped for a timed gate: there's nothing to clamp against, so no reason to pay for the lookup.
-  const ownerTier = permanent ? await getCachedCapTier(modelVersion.model.userId) : null;
-  const amount = effectivePaidAccessPrice(storedPrice, ownerTier, {
-    permanent,
-    mediaType: capMediaType(modelVersion.baseModel),
-  });
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {
