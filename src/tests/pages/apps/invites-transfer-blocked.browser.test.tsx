@@ -204,7 +204,8 @@ describe('the payload fake honours its input (positive control)', () => {
     const card = page.getByTestId('apps-transfer-aot_2');
     await expect.element(card).toBeInTheDocument();
     await expect.element(card).toHaveTextContent('Other Thing');
-    await expect.element(card).toHaveTextContent(/External app/i);
+    // The kind badge, realigned on the store's own word (see listingKindLabels).
+    await expect.element(card).toHaveTextContent('Standalone app');
     // The card the OTHER arm rendered is not in this tree, so the two are genuinely
     // distinct renders rather than one cached DOM read twice.
     expect(page.getByTestId('apps-transfer-aot_1').elements()).toHaveLength(0);
