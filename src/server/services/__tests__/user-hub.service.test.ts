@@ -14,8 +14,16 @@ vi.mock('~/server/services/collection.service', () => ({
   getUserCollectionPermissionsByIds: permissionsMock,
 }));
 
-import { resolveHubSources, upsertUserHub } from '~/server/services/user-hub.service';
-import { HUB_COLLECTION_SOURCES_ENABLED, hubLimits } from '~/server/schema/user-hub.schema';
+import {
+  getUserHubById,
+  resolveHubSources,
+  upsertUserHub,
+} from '~/server/services/user-hub.service';
+import {
+  HUB_COLLECTION_SOURCES_ENABLED,
+  hubLimits,
+  upsertUserHubSchema,
+} from '~/server/schema/user-hub.schema';
 import {
   CollectionReadConfiguration,
   MetricTimeframe,
@@ -46,6 +54,10 @@ function stubVersions(versionsByModel: Record<number, number[]>) {
 beforeEach(() => {
   vi.clearAllMocks();
   stubVersions({});
+  // The service maps whatever the write returns before handing it back, so the
+  // fakes have to return a row rather than undefined.
+  dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, metadata: {} });
+  dbMock.dbWrite.userHub.update.mockResolvedValue({ id: 9, metadata: {} });
 });
 
 describe('resolveHubSources', () => {
@@ -313,4 +325,72 @@ describe('upsertUserHub collection sources', () => {
       await expect(upsertUserHub(hubInput(43))).resolves.not.toThrow();
     }
   );
+});
+
+// `UserHub` has no description column, so the field lives on `metadata`. That makes
+// three things silent rather than loud if they break: an update that REPLACES the
+// json drops whatever else is on it; an omitted field that defaults to empty wipes
+// a description the caller never touched; and a filter key the feed refuses would
+// reach `image.getInfinite` if the whole blob were handed back.
+describe('description and filters on metadata', () => {
+  it('merges the description into the existing metadata rather than replacing it', async () => {
+    dbMock.dbRead.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      metadata: { description: 'old', somethingElse: 'keep me' },
+    });
+
+    await upsertUserHub({ id: 9, description: 'new', userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata).toEqual({ description: 'new', somethingElse: 'keep me' });
+  });
+
+  it('leaves the description alone when the input omits it', async () => {
+    dbMock.dbRead.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      metadata: { description: 'still here' },
+    });
+
+    await upsertUserHub({ id: 9, name: 'renamed', userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata).toBeUndefined();
+  });
+
+  it('truncates an over-long description instead of rejecting the whole edit', () => {
+    const parsed = upsertUserHubSchema.parse({
+      id: 9,
+      description: 'x'.repeat(hubLimits.descriptionLength + 50),
+    });
+
+    expect(parsed.description).toHaveLength(hubLimits.descriptionLength);
+  });
+
+  it('drops a stored filter key that is not on the allowlist', async () => {
+    // A hub feed is index-only: `collectionId` forces the DB path, and
+    // `getInfiniteImagesSchema` refuses it alongside `hubId`. Reaching the page at
+    // all means it was never handed back.
+    dbMock.dbRead.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      sources: [],
+      metadata: { filters: { withMeta: true, collectionId: 4 } },
+    });
+
+    const hub = await getUserHubById({ id: 9, userId: 5 });
+
+    expect(hub.filters).toEqual({ withMeta: true });
+  });
+
+  it('reads back an empty filter set when the stored json is nonsense', async () => {
+    dbMock.dbRead.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      sources: [],
+      metadata: { filters: 'not an object' },
+    });
+
+    const hub = await getUserHubById({ id: 9, userId: 5 });
+
+    expect(hub.filters).toEqual({});
+    expect(hub.description).toBeNull();
+  });
 });

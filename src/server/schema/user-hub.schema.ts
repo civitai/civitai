@@ -7,6 +7,7 @@ export const hubLimits = {
   sourcesPerHub: 50,
   nameLength: 60,
   aliasLength: 60,
+  descriptionLength: 300,
   // Caps the RESOLVED ids, which is a different quantity from the source count:
   // one Model source expands to every version of that model, and each version id
   // is then repeated across three filter arms.
@@ -56,6 +57,25 @@ export const userHubSourceSchema = z.object({
   index: z.number().int().min(0).default(0),
 });
 
+/**
+ * The subset of the images-feed filter menu a hub remembers. Named key by key
+ * rather than stored as a blob: `hubId` may only be combined with filters the
+ * search index can serve (see `requiresImageDbPath`), and the feed input refuses
+ * the rest. Anything not listed here is a session-only choice, not a hub setting.
+ */
+export const hubFeedFiltersSchema = z.object({
+  baseModels: z.array(z.string()).max(20).optional(),
+  tools: z.array(z.number().int().positive()).max(20).optional(),
+  techniques: z.array(z.number().int().positive()).max(20).optional(),
+  withMeta: z.boolean().optional(),
+  fromPlatform: z.boolean().optional(),
+  remixesOnly: z.boolean().optional(),
+  nonRemixesOnly: z.boolean().optional(),
+  hideChallenges: z.boolean().optional(),
+});
+
+export type HubFeedFilters = z.infer<typeof hubFeedFiltersSchema>;
+
 export const upsertUserHubSchema = z.object({
   id: z.number().optional(),
   // Optional for the same reason as `sources` below: a rename, a sort change and a
@@ -63,6 +83,15 @@ export const upsertUserHubSchema = z.object({
   // cached copy of a field it did not change can revert another's edit. Required on
   // CREATE, enforced in the service where the create branch is explicit.
   name: z.string().trim().min(1).max(hubLimits.nameLength).optional(),
+  // Stored on `metadata.description` — `UserHub` has no column for it, and adding
+  // one means a migration against a table that is already live. Named here rather
+  // than accepting a `metadata` object, so the client can never write the rest of
+  // it. Truncated, not rejected, for the same reason as `alias`.
+  description: z
+    .string()
+    .trim()
+    .transform((value) => value.slice(0, hubLimits.descriptionLength))
+    .nullish(),
   // Deliberately NOT `.default()`. These are applied to an UPDATE, so a default
   // means "an omitted field is silently overwritten" rather than "left alone" —
   // which reset a user's sort and period every time they toggled a source off.
@@ -75,6 +104,9 @@ export const upsertUserHubSchema = z.object({
   // into a full replacement, so a save issued before another one's invalidate
   // settled reverted it.
   sources: z.array(userHubSourceSchema).max(hubLimits.sourcesPerHub).optional(),
+  // Same "omitted means leave alone" rule as `sources`; stored on
+  // `metadata.filters`, like `description`.
+  filters: hubFeedFiltersSchema.optional(),
 });
 
 export const setUserHubOrderSchema = z.object({
@@ -84,3 +116,15 @@ export const setUserHubOrderSchema = z.object({
 export type UpsertUserHubInput = z.infer<typeof upsertUserHubSchema>;
 export type UserHubSourceInput = z.infer<typeof userHubSourceSchema>;
 export type SetUserHubOrderInput = z.infer<typeof setUserHubOrderSchema>;
+
+export const resolveHubSourceSchema = z.object({
+  url: z.string().trim().min(1).max(500),
+});
+
+export type ResolveHubSourceInput = z.infer<typeof resolveHubSourceSchema>;
+
+export const getHubSourceSuggestionsSchema = z.object({
+  query: z.string().trim().max(100).optional(),
+});
+
+export type GetHubSourceSuggestionsInput = z.infer<typeof getHubSourceSuggestionsSchema>;

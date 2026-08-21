@@ -1,112 +1,88 @@
-import { Button, Card, Center, Group, Loader, Stack, Text, Title } from '@mantine/core';
-import { useState } from 'react';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { IconLayoutGrid, IconPlus, IconTrash } from '@tabler/icons-react';
-import Link from 'next/link';
-import { NotFound } from '~/components/AppLayout/NotFound';
-import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import { Button, Card, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { IconLayoutGrid, IconPlus, IconUsers } from '@tabler/icons-react';
+import { Page } from '~/components/AppLayout/Page';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { HubsLayout } from '~/components/Hubs/HubsLayout';
+import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getUserHubs } from '~/server/services/user-hub.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, features }) => {
     if (!features?.userHubs) return { notFound: true };
     if (!session?.user) return { redirect: { destination: '/login', permanent: false } };
+
+    // `/hubs` is an entry point, not a page: it lands on a hub the way /collections
+    // does. Only someone with no hubs at all sees anything rendered here.
+    const hubs = await getUserHubs({ userId: session.user.id });
+    if (hubs.length) return { redirect: { destination: `/hubs/${hubs[0].id}`, permanent: false } };
   },
 });
 
-export default function HubsPage() {
-  const currentUser = useCurrentUser();
-  const utils = trpc.useUtils();
-  const { data: hubs = [], isLoading } = trpc.userHub.getAll.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
+const points = [
+  {
+    icon: IconUsers,
+    title: 'Pick who fills it',
+    text: 'Creators and models you already follow, gathered into one feed.',
+  },
+  {
+    icon: IconLayoutGrid,
+    title: 'Keep them apart',
+    text: 'One hub per interest, each with its own sort and time range.',
+  },
+];
 
-  const createMutation = trpc.userHub.upsert.useMutation({
-    onSuccess: () => utils.userHub.getAll.invalidate(),
-  });
-  // Tracks WHICH hub is being deleted: `isPending` alone is one flag for the whole
-  // list, so deleting one hub spun the button on every row.
-  const [deletingId, setDeletingId] = useState<number | null>(null);
-  const deleteMutation = trpc.userHub.delete.useMutation({
-    onSuccess: () => utils.userHub.getAll.invalidate(),
-    onSettled: () => setDeletingId(null),
-  });
+export default Page(
+  function HubsEmptyPage() {
+    return (
+      <>
+        <Meta title="My Hubs | Civitai" deIndex />
+        <MasonryContainer className="min-h-full">
+          <div className="py-6">
+            <Card withBorder p={0} radius="md" className="overflow-hidden">
+              <div className="flex flex-col md:flex-row">
+                <div className="flex flex-col gap-4 border-gray-3 bg-gray-0 p-6 md:w-72 md:border-r dark:border-dark-4 dark:bg-dark-6">
+                  {points.map(({ icon: Icon, title, text }) => (
+                    <div key={title} className="flex gap-3">
+                      <ThemeIcon variant="light" size="lg" radius="md">
+                        <Icon size={18} />
+                      </ThemeIcon>
+                      <div>
+                        <Text fw={600} size="sm">
+                          {title}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {text}
+                        </Text>
+                      </div>
+                    </div>
+                  ))}
+                </div>
 
-  if (!currentUser) return <NotFound />;
-
-  return (
-    <>
-      <Meta title="My Hubs | Civitai" deIndex />
-      <div className="container max-w-3xl py-6">
-        <Group justify="space-between" mb="lg">
-          <Title order={1}>My hubs</Title>
-          <Button
-            leftSection={<IconPlus size={16} />}
-            loading={createMutation.isPending}
-            onClick={() => createMutation.mutate({ name: 'New hub', sources: [] })}
-          >
-            New hub
-          </Button>
-        </Group>
-
-        {isLoading ? (
-          <Center py="xl">
-            <Loader />
-          </Center>
-        ) : hubs.length === 0 ? (
-          <Card withBorder p="xl">
-            <Stack align="center" gap="xs">
-              <IconLayoutGrid size={32} className="text-gray-5" />
-              <Text fw={500}>You have no hubs yet</Text>
-              <Text size="sm" c="dimmed" ta="center">
-                A hub is a feed you compose yourself from the creators, models and collections you
-                want to follow.
-              </Text>
-            </Stack>
-          </Card>
-        ) : (
-          <Stack gap="xs">
-            {hubs.map((hub) => (
-              <Card key={hub.id} withBorder p="md">
-                <Group justify="space-between" wrap="nowrap">
-                  <Link href={`/hubs/${hub.id}`} className="flex-1">
-                    <Text fw={600}>{hub.name}</Text>
-                    <Text size="sm" c="dimmed">
-                      {hub.sources.length === 0
-                        ? 'No sources yet'
-                        : `${hub.sources.length} source${hub.sources.length === 1 ? '' : 's'}`}
-                    </Text>
-                  </Link>
-                  <PopConfirm
-                    message={`Delete "${hub.name}"? Its sources go with it, and this cannot be undone.`}
-                    onConfirm={() => {
-                      setDeletingId(hub.id);
-                      deleteMutation.mutate({ id: hub.id });
-                    }}
-                    confirmButtonColor="red"
-                    width={260}
-                    withArrow
-                    withinPortal
+                <Stack gap="md" p="xl" className="min-w-0 flex-1" justify="center">
+                  <Title order={2}>You don&apos;t have any hubs yet</Title>
+                  <Text c="dimmed">
+                    A hub is a feed you compose yourself, from the creators, models and collections
+                    you want to keep an eye on. Make one and it shows up in the rail on the left.
+                  </Text>
+                  <Button
+                    size="md"
+                    className="self-start"
+                    leftSection={<IconPlus size={18} />}
+                    onClick={() => dialogStore.trigger({ component: HubUpsertModal })}
                   >
-                    <LegacyActionIcon
-                      variant="subtle"
-                      color="red"
-                      aria-label={`Delete ${hub.name}`}
-                      loading={deletingId === hub.id}
-                    >
-                      <IconTrash size={18} />
-                    </LegacyActionIcon>
-                  </PopConfirm>
-                </Group>
-              </Card>
-            ))}
-          </Stack>
-        )}
-      </div>
-    </>
-  );
-}
+                    Create a hub now
+                  </Button>
+                </Stack>
+              </div>
+            </Card>
+          </div>
+        </MasonryContainer>
+      </>
+    );
+  },
+  { InnerLayout: HubsLayout }
+);

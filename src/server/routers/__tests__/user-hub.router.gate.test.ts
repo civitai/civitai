@@ -26,6 +26,8 @@ vi.mock('~/server/services/user-hub.service', () => ({
   upsertUserHub: vi.fn().mockResolvedValue({ id: 1 }),
   deleteUserHub: vi.fn().mockResolvedValue(undefined),
   setUserHubOrder: vi.fn().mockResolvedValue(undefined),
+  getHubSourceSuggestions: vi.fn().mockResolvedValue({ users: [], models: [], collections: [] }),
+  resolveHubSourceFromUrl: vi.fn().mockResolvedValue(null),
 }));
 
 import { userHubRouter } from '~/server/routers/user-hub.router';
@@ -40,6 +42,8 @@ const inputs: Record<string, unknown> = {
   upsert: { name: 'a hub' },
   delete: { id: 1 },
   setOrder: { ids: [] },
+  sourceSuggestions: { query: 'a' },
+  resolveSource: { url: 'https://civitai.com/user/someone' },
 };
 
 const procedureNames = Object.keys(
