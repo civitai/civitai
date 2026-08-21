@@ -59,10 +59,17 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // no-wholesale-module-mock): a hand-written factory silently breaks every importer
 // the day the real module grows an export it omits — and in this project that
 // surfaces as `Tests no tests`, i.e. as nothing to see rather than as a failure.
-vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
-  ...(await importOriginal<typeof FeatureFlagsMod>()),
-  useFeatureFlags: () => ({ appBlocks: true, appListings: true, appBlocksPages: false }),
-}));
+// Both hooks, one flags object — see the note in `AppListingDetailBody.browser.test.tsx`:
+// `useCanReviewListing` reads the OPTIONAL hook, so overriding only the throwing one
+// leaves the two disagreeing and silently resolves store scope `none`.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
+  const flags = { appBlocks: true, appListings: true, appBlocksPages: false };
+  return {
+    ...(await importOriginal<typeof FeatureFlagsMod>()),
+    useFeatureFlags: () => flags,
+    useOptionalFeatureFlags: () => flags,
+  };
+});
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: {

@@ -199,10 +199,10 @@ export function useForgetStickerPlacement() {
  * **A listing.** Whatever it says, the claim re-decides all of it under a lock,
  * so this only ever chooses which offer to show — never whether one is allowed.
  */
-export function useFreePlacementStanding(imageId?: number) {
+export function useFreePlacementStanding(imageId?: number, enabled = true) {
   const { data, isLoading } = trpc.placement.getFreeStanding.useQuery(
     { surface: 'sticker', targetType: 'image', targetId: imageId as number },
-    { enabled: !!imageId, staleTime: 60_000 }
+    { enabled: enabled && !!imageId, staleTime: 60_000 }
   );
 
   return { standing: data, isLoading };

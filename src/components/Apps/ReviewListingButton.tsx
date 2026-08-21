@@ -3,8 +3,14 @@ import { useDisclosure } from '@mantine/hooks';
 import { IconThumbDown, IconThumbUp } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LISTING_REVIEW_DETAILS_MAX } from '~/server/schema/blocks/app-listing-review.schema';
+import { resolveClientStoreScope } from '~/shared/utils/app-blocks-access';
+import {
+  scopeAdmitsListingKind,
+  type StoreListingKind,
+} from '~/shared/utils/store-visibility-scope';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -41,17 +47,50 @@ import { trpc } from '~/utils/trpc';
  */
 
 /**
- * May THIS viewer review THIS listing? Signed-in AND not the listing owner.
+ * May THIS viewer review THIS listing? Signed-in, not the listing owner, AND holding
+ * a store scope that admits the listing's KIND.
  *
- * Mirrors the server gate (`upsertReview` is protected and 403s a self-review); the
- * server remains the source of truth and this only decides whether to render an
- * affordance. Extracted so the Button and the detail page's `⋮` menu item read the
- * same predicate instead of each re-deriving it.
+ * Mirrors the server gate (`upsertReview` is protected, 403s a self-review, and
+ * NOT_FOUNDs a listing the caller's scope hides); the server remains the source of
+ * truth and this only decides whether to render an affordance. Extracted so the
+ * Button and the detail page's `⋮` menu item read the same predicate instead of each
+ * re-deriving it.
+ *
+ * 🔴 THE `listingKind` TERM CLOSES THE SECOND HALF OF THE SAME DEFECT. The write gate
+ * used to be keyed on the `app-listings` flag while the read path had moved to a
+ * resolved scope, so the external-only cohort saw this button on an offsite listing
+ * and got `UNAUTHORIZED` on submit. Fixing only the server would leave the mirror
+ * image live: the same cohort reaching an ONSITE listing (via a store-preview link,
+ * a shared URL, a cached page) would still be offered a control the server now
+ * correctly refuses. Both directions are the one anti-goal — never show an affordance
+ * that will be rejected — so both are gated on the SAME resolved scope and the SAME
+ * shared `scopeAdmitsListingKind` rule the server applies.
+ *
+ * `listingKind` is OPTIONAL and an omitted value SKIPS the kind term (not "assume
+ * onsite"): callers that genuinely have no kind in hand must not be silently
+ * downgraded to hiding the button for everyone. Every in-product caller passes it —
+ * the detail DTO carries `kind` at top level.
  */
-export function useCanReviewListing({ ownerUserId }: { ownerUserId: number | null }): boolean {
+export function useCanReviewListing({
+  ownerUserId,
+  listingKind,
+}: {
+  ownerUserId: number | null;
+  /** The listing's kind. Omit only when genuinely unavailable — the term is skipped. */
+  listingKind?: StoreListingKind;
+}): boolean {
   const currentUser = useCurrentUser();
+  // 🔴 `useOptionalFeatureFlags`, not `useFeatureFlags`: the latter THROWS outside the
+  // provider, and this hook runs from a shared predicate rather than from a component
+  // that owns its mounting context. Outside the provider the flags read `null`,
+  // `resolveClientStoreScope` fails closed to `none`, and the affordance is hidden —
+  // the safe direction for a control the server may refuse.
+  const features = useOptionalFeatureFlags();
   if (!currentUser) return false;
   if (ownerUserId != null && ownerUserId === currentUser.id) return false;
+  if (listingKind && !scopeAdmitsListingKind(resolveClientStoreScope(features), listingKind)) {
+    return false;
+  }
   return true;
 }
 
@@ -78,10 +117,7 @@ export function ReviewListingModal({
   const close = onClose;
 
   const enabled = !!currentUser && opened;
-  const { data: myReview } = trpc.appListings.getMyReview.useQuery(
-    { appListingId },
-    { enabled }
-  );
+  const { data: myReview } = trpc.appListings.getMyReview.useQuery({ appListingId }, { enabled });
 
   // Seed the form from the viewer's existing review once it loads (keyed on the
   // review id so a fresh load reseeds without clobbering in-progress typing).
@@ -208,12 +244,15 @@ export function ReviewListingModal({
 export function ReviewListingButton({
   appListingId,
   ownerUserId,
+  listingKind,
 }: {
   appListingId: string;
   /** The listing owner's user id — the CTA is hidden for them (no self-review). */
   ownerUserId: number | null;
+  /** The listing's kind — forwarded to the store-scope gate. See {@link useCanReviewListing}. */
+  listingKind?: StoreListingKind;
 }) {
-  const canReview = useCanReviewListing({ ownerUserId });
+  const canReview = useCanReviewListing({ ownerUserId, listingKind });
   const [opened, { open, close }] = useDisclosure(false);
   // Same query, same key as the modal's — react-query dedupes, so the label and the
   // modal title cannot disagree about whether this is an edit.

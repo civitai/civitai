@@ -9,6 +9,7 @@ export function CategoryTagFilters() {
       selected={categoryTag}
       setSelected={(value) => setCategoryTag(value)}
       filter={(tag) => !['celebrity'].includes(tag)}
+      includeAll={false}
     />
   );
 }

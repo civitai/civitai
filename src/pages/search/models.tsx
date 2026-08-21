@@ -11,7 +11,7 @@ import {
 } from '~/components/Search/CustomSearchComponents';
 import { useEffect } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
+import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
@@ -141,6 +141,10 @@ export function ModelsHitList() {
     }
   }, [modelId, status, showMore, isLastPage, hits]);
 
+  // Must stay above every early return below — a hook called after one changes the hook
+  // count between the loading and loaded renders (React error #310).
+  const salesByModelId = useModelSaleBadges((items as { id: number }[]).map((x) => x.id));
+
   if (hits.length === 0) {
     const NotFound = (
       <div className="flex items-center justify-center">
@@ -202,6 +206,8 @@ export function ModelsHitList() {
       <ModelCardContextProvider
         activeBaseModels={activeBaseModels}
         useModelVersionRedirect={activeBaseModels.length > 0}
+        hasSaleProvider
+        salesByModelId={salesByModelId}
       >
         <MasonryGrid
           data={items as any}

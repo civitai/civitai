@@ -1,5 +1,5 @@
 import { FliptClient } from '@flipt-io/flipt-client-js';
-import { fliptCacheKey, TtlCache } from './cache';
+import { fliptCacheKey, TtlCache, type TtlCacheStats } from './cache';
 import { loadFliptConnection, loadFliptTuning, type FliptConfig, type FliptTuning } from './env';
 
 export type FliptLogFn = (message: string, ...args: unknown[]) => void;
@@ -48,6 +48,14 @@ export type FliptFeatureFlags = {
   ensureInitialized(): Promise<void>;
   /** The underlying client if initialized, else `null`. Escape hatch for raw SDK calls. */
   getClientSync(): FliptClient | null;
+  /**
+   * Cumulative eval-cache counters for both caches. Pure read; safe to call on a
+   * scrape interval. See `TtlCacheStats` — `expiredMisses` vs `rotations` is what
+   * separates a TTL-bound cache (raise the TTL) from a capacity-bound one (raise
+   * `maxEntries`); a bare hit rate cannot tell those apart, and they have opposite
+   * remedies.
+   */
+  getCacheStats(): { boolean: TtlCacheStats; variant: TtlCacheStats };
   config: FliptResolvedConfig;
 };
 
@@ -230,6 +238,9 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
         // Swallow eval errors (incl. "flag not found"); caller falls back to null
         return null;
       }
+    },
+    getCacheStats() {
+      return { boolean: boolCache.stats(), variant: variantCache.stats() };
     },
   };
 }

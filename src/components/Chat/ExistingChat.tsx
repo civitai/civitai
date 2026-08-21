@@ -13,7 +13,6 @@ import {
   Stack,
   Text,
   Textarea,
-  Title,
   Tooltip,
   UnstyledButton,
   useComputedColorScheme,
@@ -45,6 +44,8 @@ import { div } from 'motion/react-m';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatLayout } from '~/components/Chat/useChatTheme';
+import { getMessageRowFlags, isSameDay } from '~/components/Chat/message-grouping';
 import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -1136,19 +1137,25 @@ function ChatInputBox({
 }
 
 const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
-  if (!href) return <Title order={6}>{title}</Title>;
+  if (!href) return <span className={classes.embedTitle}>{title}</span>;
 
   if (constants.chat.externalRegex.test(href)) {
     return (
-      <Anchor href={href} target="_blank" rel="noopener noreferrer" variant="link">
-        <Title order={6}>{title}</Title>
+      <Anchor
+        className={classes.embedTitle}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        underline="hover"
+      >
+        {title}
       </Anchor>
     );
   }
 
   return (
-    <Anchor component={Link} href={href} variant="link">
-      <Title order={6}>{title}</Title>
+    <Anchor className={classes.embedTitle} component={Link} href={href} underline="hover">
+      {title}
     </Anchor>
   );
 };
@@ -1171,29 +1178,25 @@ const EmbedMessage = ({ content }: { content: string }) => {
   if (!title && !description && !image) return <></>;
 
   const modHref = getLinkHref(href);
+  // A link to an image unfurls to the image alone. Shown at thumbnail size it is
+  // an icon of itself, so the card becomes the frame and the preview fills it.
+  const isMediaOnly = !title && !description;
 
   return (
-    <Group
-      style={{ alignSelf: 'center' }}
-      className={clsx(classes.chatMessage, classes.embedCard)}
-      wrap="nowrap"
-    >
-      {(!!title || !!description) && (
-        <Stack>
+    <div className={clsx(classes.embedRow, { [classes.embedMedia]: isMediaOnly })}>
+      {!isMediaOnly && (
+        <div className={classes.embedBody}>
           {!!title && <EmbedLink href={modHref} title={title} />}
-          {!!description && <Text size="xs">{description}</Text>}
-        </Stack>
+          {!!description && <div className={classes.embedDesc}>{description}</div>}
+        </div>
       )}
-      {!!image && (
-        <EdgeMedia
-          src={image}
-          width={75}
-          height={75}
-          alt="Link preview"
-          style={{ objectFit: 'cover' }}
-        />
-      )}
-    </Group>
+      {!!image &&
+        (isMediaOnly ? (
+          <EdgeMedia src={image} width={450} alt="Link preview" className={classes.embedImage} />
+        ) : (
+          <EdgeMedia src={image} width={112} alt="Link preview" className={classes.embedThumb} />
+        ))}
+    </div>
   );
 };
 
@@ -1252,24 +1255,23 @@ function DisplayMessages({
 
   const blur = replaceBadWords || domainColor === 'green';
 
-  let loopMsgDate = new Date(1970);
-  let loopPreviousChatter = 0;
+  const rowFlags = useMemo(() => getMessageRowFlags(chats), [chats]);
+  const bubbles = useChatLayout() === 'bubbles';
 
   return (
     <StickerProvider ids={stickerIds}>
       <LazyMotion features={loadMotion}>
         {chats.map((c, idx) => {
-          const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
-          const sameChatter = loopPreviousChatter === c.userId;
-          const shouldShowInfo = hourDiff >= 1 || !sameChatter;
-          const showDayChip = !isSameDay(c.createdAt, loopMsgDate);
-
-          loopMsgDate = c.createdAt;
-          loopPreviousChatter = c.userId;
+          const { showHeader, showDayChip, isNewSender } = rowFlags[idx];
+          const isEmbed = c.contentType === ChatMessageType.Embed;
 
           const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
           const isMe = c.userId === currentUser?.id;
           const isSystemChat = c.userId === -1;
+          // An unfurl is written by the system but belongs to whoever posted the
+          // link, so in Bubbles it takes that person's side rather than always
+          // the left — which would strand your own link previews opposite you.
+          const isMySide = isEmbed ? c.referenceMessage?.userId === currentUser?.id : isMe;
 
           const quotedUser = !!c.referenceMessage
             ? tChat?.chatMembers?.find((cm) => cm.userId === c.referenceMessage?.userId)?.user
@@ -1283,12 +1285,16 @@ function DisplayMessages({
               <PStack
                 component={div}
                 gap={0}
+                className={clsx({
+                  [classes.bubbles]: bubbles,
+                  [classes.mineRow]: bubbles && isMySide,
+                })}
                 style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.12 }}
               >
-                {isSystemChat && c.contentType === ChatMessageType.Embed ? (
+                {isSystemChat && isEmbed ? (
                   <EmbedMessage content={c.content} />
                 ) : isSystemChat ? (
                   <Text className={classes.systemNote} component="div" size="xs">
@@ -1297,8 +1303,13 @@ function DisplayMessages({
                     </CustomMarkdown>
                   </Text>
                 ) : (
-                  <div className={clsx(classes.messageRow, { [classes.grouped]: !shouldShowInfo })}>
-                    {shouldShowInfo && (
+                  <div
+                    className={clsx(classes.messageRow, {
+                      [classes.grouped]: !showHeader,
+                      [classes.newSender]: isNewSender,
+                    })}
+                  >
+                    {showHeader && (
                       <Group gap={8} align="center" wrap="nowrap" className={classes.messageHead}>
                         {!!cachedUser ? (
                           <UserAvatar user={cachedUser} withUsername size="sm" />
@@ -1408,14 +1419,6 @@ function DisplayMessages({
         })}
       </LazyMotion>
     </StickerProvider>
-  );
-}
-
-function isSameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
   );
 }
 

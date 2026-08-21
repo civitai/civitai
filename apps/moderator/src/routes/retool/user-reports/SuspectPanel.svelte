@@ -10,6 +10,7 @@
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
   import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
+  import StrikeList from '$lib/components/StrikeList.svelte';
   import { STRIKE_REASONS } from '$lib/moderation-reasons';
   import { reportReasonLabel, reportStatusVariant } from '$lib/reports';
   import SuspectFilterBar from './SuspectFilterBar.svelte';
@@ -32,6 +33,7 @@
     imageResult,
     legacyStrikeCount,
     modActivity,
+    retoolActivity,
     reportsOnUser,
   }: {
     suspectId: number;
@@ -47,12 +49,9 @@
     imageResult: string | null;
     legacyStrikeCount: number;
     modActivity: NonNullable<PageData['modActivity']>;
+    retoolActivity: NonNullable<PageData['retoolActivity']>;
     reportsOnUser: NonNullable<PageData['reportsOnUser']>;
   } = $props();
-
-  // Read once per render rather than per row: `Date.now()` inside the loop makes every row's expiry a
-  // separate reading of the clock for no gain.
-  const now = new Date();
 
   let striking = $state(false);
   let strikeReason = $state('');
@@ -162,27 +161,12 @@
 
   <div class="mb-4">
     <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Strikes ({strikes.length})</h3>
-    {#if strikes.length === 0}
-      <p class="text-sm text-dark-2">No strikes on this account.</p>
-    {:else}
-      <ul class="space-y-1 text-sm">
-        {#each strikes as s (s.id)}
-          {@const spent = s.voidedAt != null || s.status !== 'Active' || s.expiresAt < now}
-          <li class="flex flex-wrap items-baseline gap-x-2">
-            <!-- A voided or lapsed strike still counts as history but not as rope, so it must not read
-                 the same as one holding the account at its limit. -->
-            <Badge variant={spent ? 'outline' : 'destructive'}>
-              {s.voidedAt != null ? 'voided' : s.expiresAt < now ? 'expired' : s.reason}
-            </Badge>
-            <span class="text-dark-0">{s.description}</span>
-            <span class="text-xs text-dark-2">
-              {s.points} point{s.points === 1 ? '' : 's'} · {dateTime(s.createdAt)}
-              {#if !spent}· until {dateTime(s.expiresAt)}{/if}
-            </span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+    <StrikeList
+      {strikes}
+      empty={legacyStrikeCount > 0
+        ? 'No strikes issued since the Retool cutover.'
+        : 'No strikes on this account.'}
+    />
     {#if legacyStrikeCount > 0}
       <p class="mt-1 text-xs text-dark-2">
         Plus {legacyStrikeCount} from the Retool era, in User Lookup — that table is history and is not
@@ -197,10 +181,12 @@
   <div class="mb-4 grid gap-4 sm:grid-cols-2">
     <div>
       <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
-        Moderation activity ({modActivity.length})
+        Moderation activity ({modActivity.length + retoolActivity.length})
       </h3>
-      {#if modActivity.length === 0}
+      {#if modActivity.length === 0 && retoolActivity.length === 0}
         <p class="text-sm text-dark-2">Nothing recorded against this account.</p>
+      {:else if modActivity.length === 0}
+        <p class="mb-1 text-sm text-dark-2">Nothing since the Retool migration.</p>
       {:else}
         <ul class="space-y-1 text-sm">
           {#each modActivity.slice(0, 8) as a (a.id)}
@@ -215,14 +201,35 @@
           {/each}
         </ul>
       {/if}
+
+      <!-- Kept apart rather than merged: the Retool rows carry a display name, not a moderator id, and
+           no entity link, so interleaving them would imply a continuity the data does not have. -->
+      {#if retoolActivity.length}
+        <ul class="mt-1 space-y-1 text-sm">
+          {#each retoolActivity.slice(0, 8) as a (`retool-${a.id}`)}
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <span class="text-dark-0">{a.action ?? 'action'}</span>
+              <span class="text-xs text-dark-2">
+                Retool{#if a.app} · {a.app}{/if}{#if a.moderator} · {a.moderator}{/if}
+                · {dateTime(a.at)}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
 
     <div>
+      <!-- Reports against the ACCOUNT row, not against content they own. "Reports received" is
+           `getReportsReceived`'s name for the content union, and reusing it here would say an account
+           with dozens of open image reports has never been reported. -->
       <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
-        Reports received ({reportsOnUser.length}, human-filed)
+        Account reports ({reportsOnUser.length}, human-filed)
       </h3>
       {#if reportsOnUser.length === 0}
-        <p class="text-sm text-dark-2">Never reported before this one.</p>
+        <p class="text-sm text-dark-2">
+          No prior report against the account itself. Reports on their content are not counted here.
+        </p>
       {:else}
         <ul class="space-y-1 text-sm">
           {#each reportsOnUser.slice(0, 8) as r (r.id)}

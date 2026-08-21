@@ -6,7 +6,7 @@ import {
 } from '@civitai/buzz';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { getPaidAccess } from '~/server/services/paid-access.service';
+import { getViewerMonetization } from '~/server/services/paid-access.service';
 
 // The subset of a generation resource that paid-access gating reads/mutates. Kept structural so the
 // caller passes its full (much larger) resource type unchanged.
@@ -51,13 +51,15 @@ export async function applyPaidAccessGating<T extends PaidAccessGatingResource>(
 ) {
   const byId = new Map(resources.map((r) => [r.id, { id: r.id }]));
   if (!byId.size) return;
-  const monetization = await getPaidAccess('ModelVersion', [...byId.keys()]);
+  // Sale-aware, and viewer-aware with it: an owner is shown their stored price, a buyer the
+  // discounted one.
+  const monetization = await getViewerMonetization({ versions: [...byId.values()], viewer: user });
   const isOwnerOrMod = (ownerId: number) =>
     (!!user.id && ownerId === user.id) || !!user.isModerator;
 
   const gated = new Map<number, { resource: T; ownerId: number; terms: ModelVersionTerms }>();
   for (const r of resources) {
-    const row = monetization[r.id];
+    const row = monetization[r.id]?.paidAccess;
     if (row && isPaidAccessActive(row)) {
       gated.set(r.id, { resource: r, ownerId: row.ownerId, terms: row.terms as ModelVersionTerms });
       r.paidAccess = { endsAt: row.endsAt, terms: row.terms as ModelVersionTerms };

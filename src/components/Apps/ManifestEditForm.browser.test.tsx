@@ -77,9 +77,7 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
     await expect
       .element(page.getByRole('textbox', { name: 'models:read:self' }))
       .toBeInTheDocument();
-    await expect
-      .element(page.getByRole('textbox', { name: 'user:read:self' }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole('textbox', { name: 'user:read:self' })).toBeInTheDocument();
     // The seeded justification is pre-filled.
     await expect
       .element(page.getByRole('textbox', { name: 'models:read:self' }))
@@ -121,12 +119,8 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
       />
     );
     // The declared scopes render as CHECKBOXES (selector), seeded checked.
-    await expect
-      .element(page.getByRole('checkbox', { name: 'models:read:self' }))
-      .toBeChecked();
-    await expect
-      .element(page.getByRole('checkbox', { name: 'user:read:self' }))
-      .toBeChecked();
+    await expect.element(page.getByRole('checkbox', { name: 'models:read:self' })).toBeChecked();
+    await expect.element(page.getByRole('checkbox', { name: 'user:read:self' })).toBeChecked();
   });
 
   test('the deferred "Target slots" editor is GONE from the form', async () => {
@@ -179,9 +173,9 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
       .toHaveValue('Does a thing.');
     // New version defaults to a patch bump of the current version.
     await expect.element(page.getByRole('textbox', { name: 'New version' })).toHaveValue('1.0.1');
-    await expect.element(page.getByRole('textbox', { name: 'Block ID (immutable)' })).toHaveValue(
-      'my-block'
-    );
+    await expect
+      .element(page.getByRole('textbox', { name: 'Block ID (immutable)' }))
+      .toHaveValue('my-block');
   });
 
   test('clearing all justification inputs submits an explicit empty object (not undefined) so stored rationale is overwritten', async () => {
@@ -227,11 +221,41 @@ describe('ManifestEditForm — tagline + category (manifest-governed store field
         manifest={{ ...BASE_MANIFEST, tagline: 'Does the thing', category: 'utility' }}
       />
     );
-    await expect.element(page.getByRole('textbox', { name: 'Tagline' })).toHaveValue(
-      'Does the thing'
-    );
+    await expect
+      .element(page.getByRole('textbox', { name: 'Tagline' }))
+      .toHaveValue('Does the thing');
     // Mantine Select renders as a combobox whose display value is the LABEL.
     await expect.element(page.getByRole('textbox', { name: 'Category' })).toHaveValue('Utility');
+  });
+
+  /**
+   * 🔴 CALL-SITE ASSERTION for the CONTENT-RATING Select, which shipped
+   * `label: r` — the raw stored key — while the Category Select one control up
+   * was already mapped.
+   *
+   * The fixture stores `pg13` rather than `BASE_MANIFEST`'s `g` deliberately:
+   * `g` → `G` differs from its key only in CASE, so it cannot separate the
+   * shared map from a `toUpperCase()`. `pg13` → `PG-13` separates it from every
+   * mechanical transformation of the key at once.
+   */
+  test('🔴 the content-rating Select displays the LABEL, not the stored key', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={{ ...BASE_MANIFEST, contentRating: 'pg13' }}
+      />
+    );
+    const rating = page.getByRole('textbox', { name: 'Content rating' });
+    await expect.element(rating).toHaveValue('PG-13');
+    // 🔴 The two near-miss spellings, named so neither can ship silently — asserted
+    // by reading the value rather than through `expect.element(...).not.*`, which
+    // is INERT in this repo (#4197). The positive assertion above is this read's
+    // control: it proves the element resolves and carries a value at all.
+    const value = (rating.element() as HTMLInputElement).value;
+    expect(value).not.toBe('pg13');
+    expect(value).not.toBe('PG13');
   });
 
   test('Save includes the trimmed tagline + selected category on the patch', async () => {

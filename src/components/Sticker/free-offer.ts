@@ -1,9 +1,16 @@
+import { FREE_SLOT_TAKEN_NOTE, SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
+import { numberWithCommas } from '~/utils/number-helpers';
+
 /**
  * Whether the free offer is on the table, and what it says.
  *
- * Its own module with no imports, for the same reason `payout-copy.ts` is one:
- * these are the branches most worth testing and the least worth dragging
- * Mantine, tRPC and the edge image loader into a unit run to reach.
+ * One import, and it is a constants module — for the same reason `payout-copy.ts`
+ * has none: these are the branches most worth testing and the least worth
+ * dragging Mantine, tRPC and the edge image loader into a unit run to reach.
+ * `~/shared/utils/placement` pulls in none of that. It is the rules themselves,
+ * and the clauses that describe them live beside them there, so the remix
+ * gallery does not have to import a sticker module for a fact neither surface
+ * owns.
  *
  * The predicate lives here rather than at each of the three places that need it
  * — the button's tray, the draft layer, and the draft itself — because three
@@ -51,26 +58,31 @@ export const isPlacingFree = (chosen: 'free' | 'paid' | null, offer: { instant: 
   (chosen ?? (offer ? 'free' : 'paid')) === 'free' && !!offer;
 
 /**
- * The free option's own label, which carries the mode.
+ * The free option's own label.
  *
- * The mode goes here rather than on the sticker button because this is the last
- * moment the placer can change their mind, and it makes auto-accept and review
- * read as two different offers rather than one setting they cannot see. The
- * button upstream stays a single number.
+ * 🔴 **Deliberately does NOT carry the mode any more.** It read `Free · needs
+ * review` beside a plain `100 Buzz`, which says the paid one does not — and on
+ * this surface both go to the creator for review, always. Justin's words on
+ * seeing it: "it makes it seem like the other one's not going to need review".
+ *
+ * The mode is still said, once, under the button that spends the placement,
+ * where it applies to whichever option is selected rather than to one of them.
  */
-export const freeOptionLabel = (instant: boolean) =>
-  instant ? 'Free · instant' : 'Free · needs review';
+export const freeOptionLabel = () => 'Free';
 
 /**
- * The one line under a review-mode free option.
+ * The one line under the button that spends the placement.
  *
- * Said before the press, not after, because it is the whole asymmetry of the
- * free tier: the image's slot comes back when a creator declines and the
- * placer's day does not. Somebody who would rather spend Buzz on a creator who
- * reviews needs that fact while both options are still on screen.
+ * Shrunk to the only fact that has to land: pressing this spends your free
+ * placement, and a decline does not give it back. It used to be two sentences
+ * explaining the asymmetry between the creator's slot and the placer's day —
+ * true, but nobody standing over a Place button is reading a paragraph about
+ * accounting.
+ *
+ * Under the button rather than above it, with an alert triangle, so it reads as
+ * a consequence of pressing rather than as a description of the option.
  */
-export const FREE_REVIEW_CAVEAT =
-  "Your free placement for today is spent even if they decline. The creator's slot comes back; your allowance does not.";
+export const FREE_REVIEW_CAVEAT = 'Spends your free placement, even if they decline it';
 
 /**
  * What went wrong when a free claim was refused, from state re-read after the
@@ -101,6 +113,15 @@ export const FREE_REVIEW_CAVEAT =
  * conditions of an adjacent pair, so a swap fails rather than passing on
  * fixtures that only ever trip one rung.
  */
+/**
+ * The spent-allowance sentence, which three surfaces say.
+ *
+ * The bar said "Yours is back", the refusal ladder said "It comes back", and
+ * both name the shared budget — two wordings of the one fact this change exists
+ * to stop drifting. One function, so a reword lands everywhere or nowhere.
+ */
+export const spentAllowanceNote = () => "You have used today's free placement.";
+
 export function freeRefusalMessage(standing?: FreeStanding, space?: FreeCapacity) {
   // Permanent for this image, and true of everybody — so it outranks the two
   // below it, which are about this placer and about right now.
@@ -110,14 +131,63 @@ export function freeRefusalMessage(standing?: FreeStanding, space?: FreeCapacity
   if (standing?.usedHere) return 'You have already used a free sticker on this image.';
   // Transient, and it says when it lifts — derived from the reset the server
   // computed rather than restating the boundary here.
-  if (standing && standing.remaining <= 0)
-    return `You have used today's free placement. It comes back ${allowanceResetLabel(
-      standing.resetsAt
-    )}.`;
+  if (standing && standing.remaining <= 0) return spentAllowanceNote();
   // The most transient of all — a declined placement releases its slot at once.
+  //
+  // ⚠️ Two readers, two truths, so the wording is chosen by the caller. Someone
+  // who pressed and lost the race is told they lost it; someone still deciding
+  // has pressed nothing, and "first" would be false. `preCommitFreeReason`
+  // substitutes `FREE_SLOT_TAKEN_NOTE` for exactly this rung.
   if (space && space.freeSlotsRemaining <= 0)
     return 'Someone took the last free slot on this image first.';
   return null;
+}
+
+/**
+ * The reason free is unavailable, said while the choice is still being made — or
+ * `null` when there is nothing worth saying.
+ *
+ * 🔴 **The reason existed and was only ever shown AFTER the server refused.**
+ * `freeRefusalMessage` had exactly one consumer, the post-refusal handler, so
+ * somebody who had spent their day or already free-placed here saw a plain paid
+ * button, pressed it, and paid. The remix modal has rendered its reason inline
+ * since it shipped; this is that pattern for the surface that lacked it.
+ *
+ * Two guards, and each one is a state where the sentence would be worse than
+ * silence:
+ *
+ * - **`freeAvailable`** — free is on the table, so there is no refusal to
+ *   explain. Without this the ladder's last rung would narrate a slot count at
+ *   somebody about to take one.
+ * - **`freeSlots <= 0`** — this creator takes no free placements at all, which
+ *   is the first rung and true of every ordinary paid image. Nobody is waiting
+ *   on an offer that was never made, so it would be noise on most of the site.
+ *
+ * Both inputs must have arrived. Asserted from defaulted zeroes this tells a
+ * fresh reader their allowance is spent for as long as the query takes.
+ *
+ * Separate from `freeRefusalMessage` rather than folded into it, because that
+ * one answers a refusal that already happened and may not be about the free tier
+ * at all — its `null` return is load-bearing there in a way it is not here.
+ */
+export function preCommitFreeReason(
+  freeAvailable: boolean,
+  standing?: FreeStanding,
+  space?: FreeCapacity
+) {
+  if (freeAvailable) return null;
+  if (!space || !standing) return null;
+  if (space.freeSlots <= 0) return null;
+
+  // 🔴 The one rung whose wording depends on who is reading it. The ladder's
+  // version — "someone took the last free slot FIRST" — was written for a
+  // placer who pressed and lost a race. Said before the press it is false about
+  // the reader and contradicts what the bar's own tooltip says for the same
+  // state, so both take the shared clause instead.
+  if (!standing.usedHere && standing.remaining > 0 && space.freeSlotsRemaining <= 0)
+    return FREE_SLOT_TAKEN_NOTE;
+
+  return freeRefusalMessage(standing, space);
 }
 
 /**
@@ -151,44 +221,151 @@ type FreeStanding = {
 type FreeCapacity = { freeSlots: number; freeSlotsRemaining: number };
 
 /**
- * When the daily allowance comes back, in words.
+ * The free label on the reaction bar, or `null` for no label at all.
  *
- * Falls back to the boundary the server currently uses rather than saying nothing,
- * because a refusal that cannot say when it lifts is worse than one that names a
- * default — but the value is preferred, so changing the day boundary changes this
- * sentence instead of making it wrong.
+ * 🔴 **This is the fix for the whole ticket.** The bar used to print the
+ * creator's `N of M free` capacity, which is a fact about the IMAGE, in a place
+ * every reader takes as an offer to THEM — so a viewer who had spent their day
+ * saw "1 of 1 free" on every image, pressed it, and was charged. Justin hit it
+ * live in a meeting; a user hit it ninety minutes after launch.
+ *
+ * All three rules have to hold before the word "free" is allowed on screen: the
+ * creator must have an open slot, the viewer must still have their placement for
+ * today, and they must not already have free-placed on this image. The number is
+ * the smaller of the two counts, because that is how many the reader can take.
+ *
+ * ⚠️ **`standing` is `undefined` while the query is in flight, and that is not
+ * "no allowance".** Rendering the paid state on `undefined` would flash the
+ * price and then add a free label a beat later; the label is simply absent until
+ * the answer lands, which is what an image with no free capacity also shows.
  */
-function allowanceResetLabel(resetsAt?: Date | string) {
-  if (!resetsAt) return 'at midnight UTC';
-  const at = new Date(resetsAt);
-  if (Number.isNaN(at.getTime())) return 'at midnight UTC';
+export function barFreeLabel(space?: FreeCapacity, standing?: FreeStanding) {
+  if (!space || !standing) return null;
+  if (space.freeSlots <= 0 || space.freeSlotsRemaining <= 0) return null;
+  if (standing.remaining <= 0 || standing.usedHere) return null;
 
-  return `at ${at.toISOString().slice(11, 16)} UTC`;
+  return `${Math.min(space.freeSlotsRemaining, standing.remaining)} free`;
 }
 
 /**
- * The tray's price line, which has to name both offers when both are open.
+ * The line on the free hint, or `null` when there is no hint to show.
  *
- * The use is the constant: a free placement is free of the creator's price and of
- * nothing else. Saying so here is what stops the tray and the Place button
- * disagreeing about what a sticker costs.
+ * 🔴 **Replaces the bar's tooltip, and the difference is who gets to see it.** A
+ * tooltip is hover-only, so on a phone the whole free tier was invisible until
+ * you opened the tray — the state that matters most, "you have one and it is
+ * free", was told only to people with a mouse. A popover is on screen for
+ * everyone and dismissable by anyone.
+ *
+ * Said only where free is genuinely on offer. The states where it is not —
+ * spent, held, already used here, no capacity — get nothing at the bar at all
+ * and are explained in the tray, at the point the choice is actually made. A
+ * notice that pops up to tell you what you CANNOT have is an interruption
+ * charging rent on somebody else's image.
  */
-export const trayPriceLine = (freeAvailable: boolean, price: number) =>
-  freeAvailable ? `Free, or ${price} Buzz · one use either way` : `${price} Buzz + one use`;
+export function freeHintText(space?: FreeCapacity, standing?: FreeStanding) {
+  const label = barFreeLabel(space, standing);
+  if (!label) return null;
+
+  const count = Math.min(space?.freeSlotsRemaining ?? 0, standing?.remaining ?? 0);
+
+  // A label, not a sentence. It sits on a chip beside a button, where "You have
+  // a free sticker today" is three words of throat-clearing before the noun.
+  return count === 1 ? 'Daily free sticker' : `${count} daily free stickers`;
+}
 
 /**
- * What the tray says a decline costs on a review-mode space.
+ * What the tray says, as separate short lines rather than one sentence.
  *
- * 🔴 The free half is `FREE_REVIEW_CAVEAT` itself rather than a paraphrase of it.
- * There are three statements of this rule in the product — this one, the caveat
- * under the draft's own free option, and `declineConsequence`'s free branch on the
- * owner's side — and two of the three now come from one constant, so a change to
- * what a decline costs cannot leave a stale copy behind in the tray.
+ * 🔴 **The prose version was unreadable.** It ran the full width of the panel —
+ * price, then review, then what a decline costs, then why free was unavailable,
+ * concatenated with ` · ` separators — and at that width nobody reads to the
+ * end. Justin, looking at it: "the text is just way too long there… completely
+ * unreadable."
  *
- * The paid half is kept in both branches: where both offers are open, somebody
- * choosing to pay still needs the fee disclosure.
+ * Lines also fix a defect the concatenation kept producing: each fragment had to
+ * know whether another would be appended after it, so a full stop added to one
+ * of them rendered a separator mid-sentence. A list has no such coupling.
+ *
+ * Ordered by what changes a decision: what it costs, what happens to it, what
+ * pressing spends, and last the reason free is off the table — which is the only
+ * one that is about the reader rather than the placement.
+ *
+ * `tone` picks the icon at the render site rather than naming one here, so this
+ * module stays free of anything that has to be mounted to be tested.
  */
-export const trayReviewLine = (freeAvailable: boolean) =>
-  freeAvailable
-    ? ` ${FREE_REVIEW_CAVEAT} A paid placement leaves part of what you paid with them.`
-    : ' If they decline, part of what you paid stays with them.';
+export type TrayNote = { id: string; tone: 'info' | 'warn'; text: string };
+
+export function trayNotes({
+  freeAvailable,
+  price,
+  review,
+  reason,
+  declineFee,
+}: {
+  freeAvailable: boolean;
+  price: number;
+  /**
+   * What the creator keeps if they decline, in Buzz. Absent while the space is
+   * still loading, which is why the vaguer sentence survives as a fallback
+   * rather than being deleted — a number that is not known yet must not render
+   * as "they keep 0 Buzz".
+   */
+  declineFee?: number;
+  /** The space reviews placements, so nothing goes live until the owner says so. */
+  review: boolean;
+  /** From `preCommitFreeReason` — `null` whenever free is genuinely on offer. */
+  reason?: string | null;
+}): TrayNote[] {
+  const notes: TrayNote[] = [
+    {
+      id: 'price',
+      tone: 'info',
+      text: freeAvailable
+        ? `Free, or ${price} Buzz · one use either way`
+        : `${price} Buzz + one use`,
+    },
+  ];
+
+  // Only where free is on the table. Naming the shared budget to somebody who
+  // has no free placement to spend explains a limit they did not ask about.
+  if (freeAvailable)
+    notes.push({
+      id: 'shared',
+      tone: 'info',
+      // The clause itself, capitalised — not "Your free one is …" in front of
+      // it. On a line of its own the preamble is four words the reader has to
+      // get past to reach the fact, and the line has to stay short enough to
+      // read at a glance beside an icon.
+      text: `${SHARED_ALLOWANCE_NOTE.charAt(0).toUpperCase()}${SHARED_ALLOWANCE_NOTE.slice(1)}`,
+    });
+
+  if (review)
+    notes.push({
+      id: 'review',
+      tone: 'info',
+      text: 'Only you see it until the creator approves',
+    });
+
+  // What pressing costs, which differs by what is being pressed: a free
+  // placement spends the day regardless, a paid one leaves part of the money.
+  if (review)
+    notes.push({
+      id: 'decline',
+      tone: 'warn',
+      text: freeAvailable
+        ? FREE_REVIEW_CAVEAT
+        : declineFee
+        ? // The exact number, because "part of what you paid" is the one thing a
+          // placer cannot check for themselves and the amount is what actually
+          // leaves their wallet. It comes from the server already computed: the
+          // rate is operator-tunable and floors at 1⚡, so a percentage worked
+          // out here would be wrong on precisely the cheap placements the floor
+          // exists for.
+          `If they decline, they keep ${numberWithCommas(declineFee)} Buzz`
+        : 'If they decline, part of what you paid stays with them',
+    });
+
+  if (reason) notes.push({ id: 'reason', tone: 'warn', text: reason });
+
+  return notes;
+}

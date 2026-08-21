@@ -344,13 +344,24 @@ export enum StripeConnectStatus {
   Rejected = 'Rejected',
 }
 
+// Tipalti's own spelling. These ARE the strings in
+// UserPaymentConfiguration.tipaltiAccountStatus, both for rows written before the webhook
+// validated anything and for the values `Tipalti.payeeStatusSchema` parses incoming ones against —
+// so normalising their casing here silently breaks every comparison. INTERNAL_VALUE is Tipalti's
+// sentinel for a status this API version does not expose.
 export enum TipaltiStatus {
   PendingOnboarding = 'PendingOnboarding',
-  Active = 'ACTIVE',
-  Suspended = 'SUSPENDED',
-  Blocked = 'BLOCKED',
-  BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
+  Active = 'Active',
+  Suspended = 'Suspended',
+  Blocked = 'Blocked',
+  BlockedByProvider = 'BlockedByProvider',
   InternalValue = 'INTERNAL_VALUE',
+}
+
+const blockedTipaltiStatuses = [TipaltiStatus.Blocked, TipaltiStatus.BlockedByProvider] as const;
+
+export function isBlockedTipaltiStatus(status: string | null | undefined) {
+  return blockedTipaltiStatuses.some((s) => s === status);
 }
 
 export enum OrchPriorityTypes {
@@ -438,7 +449,6 @@ export enum NewOrderSignalActions {
 export enum ExternalModerationType {
   Clavata = 'Clavata',
 }
-
 
 export enum MarketplacePaymentMethod {
   CashApp = 'CashApp',

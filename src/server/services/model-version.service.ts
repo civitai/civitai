@@ -80,11 +80,14 @@ import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
   assertPaidAccessInput,
   getPaidAccess,
+  getFreshSalesForPermanentGate,
+  bustModelSaleCache,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
 import {
   type ModelVersionTerms,
+  discountedPrice,
   isPermanentGate,
   acceptsBlueBuzz,
   generationPrice,
@@ -138,7 +141,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, deleteFilesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -899,11 +902,6 @@ export const upsertModelVersion = async ({
       tracker.entityChanges(changeRows).catch(() => null);
     }
 
-    // Run it in the background to avoid blocking the request.
-    ingestModelById({ id: version.modelId }).catch((error) =>
-      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
-    );
-
     // The orchestrator caches fee + payoutEnabled per version, and payoutEnabled now derives from the
     // fee, so a fee change that doesn't invalidate it keeps pricing and paying against the old value.
     // Never rejects: the write has already committed, and a failed bust must not surface as a failed save.
@@ -1013,10 +1011,6 @@ export const updateModelVersionPaidAccess = async ({
     });
     tracker.entityChanges(changeRows).catch(() => null);
   }
-
-  ingestModelById({ id: modelId }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId })
-  );
 
   return { id, modelId };
 };
@@ -1648,11 +1642,6 @@ export const publishModelVersionById = async ({
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
-  // Run it in the background to avoid blocking the request.
-  ingestModelById({ id: version.modelId }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
-  );
-
   return version;
 };
 
@@ -2219,10 +2208,16 @@ export const earlyAccessPurchase = async ({
   // Generation `price` is optional — `generationPrice` applies the download-price fallback (and is
   // unit-tested in @civitai/buzz, so the charged amount stays covered).
   //
-  // The stored price is what the buyer pays. Paid access carries no ceiling, so nothing here resolves
-  // the owner's membership — what they set is what is charged, permanent or timed alike.
-  const amount = (type === 'download' ? terms.download?.price : generationPrice(terms)) ?? 0;
+  // Paid access carries no ceiling, so nothing here resolves the owner's membership: the stored price
+  // is the pre-sale price, permanent or timed alike.
+  const storedPrice = (type === 'download' ? terms.download?.price : generationPrice(terms)) ?? 0;
   const permanent = isPermanentGate(paidAccess);
+  // Sales are read from the PRIMARY, not the cached gate: a cancelled sale must stop discounting the
+  // moment the creator ends it, and the cache is an hour behind with a fire-and-forget bust. The same
+  // `discountedPrice` runs in getViewerMonetization, which also owns the floor — the two must agree or
+  // buyers are billed a price they were never shown. Two copies of this arithmetic drifted apart once.
+  const sales = await getFreshSalesForPermanentGate(modelVersionId, permanent, paidAccess.ownerId);
+  const amount = discountedPrice(storedPrice, sales);
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {
@@ -2552,6 +2547,13 @@ export const bustMvCache = async (
 ) => {
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
+  // The sale badge is cached per MODEL and reached only from here — Creator Studio's bust POSTs to the
+  // endpoint that calls this, so without it a cancelled sale stayed advertised for the whole TTL.
+  try {
+    await bustModelSaleCache(versionIds);
+  } catch {
+    // Best-effort, like the busts around it: a stale badge is not worth failing an unpublish over.
+  }
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,

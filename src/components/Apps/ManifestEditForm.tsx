@@ -23,6 +23,7 @@ import {
   MARKETPLACE_CATEGORY_LABELS,
   isMarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -108,7 +109,10 @@ export function ManifestEditForm({
       await utils.blocks.getMyAppManifest.invalidate({ appBlockId });
     },
     onError: (err) => {
-      showErrorNotification({ title: 'Could not submit manifest update', error: new Error(err.message) });
+      showErrorNotification({
+        title: 'Could not submit manifest update',
+        error: new Error(err.message),
+      });
     },
   });
 
@@ -130,8 +134,7 @@ export function ManifestEditForm({
       !!manifest.scopeJustifications &&
       typeof manifest.scopeJustifications === 'object' &&
       Object.keys(manifest.scopeJustifications).length > 0;
-    const shouldSend =
-      Object.keys(scopeJustifications).length > 0 || storedHadJustifications;
+    const shouldSend = Object.keys(scopeJustifications).length > 0 || storedHadJustifications;
     mutation.mutate({
       appBlockId,
       patch: {
@@ -161,7 +164,11 @@ export function ManifestEditForm({
   // BlockManifestValidator (which is what actually enforces the tagline cap).
   const taglineTooLong = tagline.trim().length > MANIFEST_TAGLINE_MAX_LENGTH;
   const canSave =
-    versionValid && versionHigher && !mutation.isPending && name.trim().length > 0 && !taglineTooLong;
+    versionValid &&
+    versionHigher &&
+    !mutation.isPending &&
+    name.trim().length > 0 &&
+    !taglineTooLong;
 
   return (
     <Stack gap="md">
@@ -169,8 +176,8 @@ export function ManifestEditForm({
 
       <Alert icon={<IconInfoCircle size={16} />} color="blue" variant="light">
         Saving commits the new manifest to your app&apos;s repository and opens a moderator review.
-        The change does <strong>not</strong> go live until a moderator approves it. blockId
-        (<code>{slug}</code>) cannot be changed.
+        The change does <strong>not</strong> go live until a moderator approves it. blockId (
+        <code>{slug}</code>) cannot be changed.
       </Alert>
 
       <TextInput label="Block ID (immutable)" value={slug} readOnly disabled />
@@ -189,7 +196,9 @@ export function ManifestEditForm({
         value={tagline}
         onChange={(e) => setTagline(e.currentTarget.value)}
         error={
-          taglineTooLong ? `Tagline must be at most ${MANIFEST_TAGLINE_MAX_LENGTH} characters` : undefined
+          taglineTooLong
+            ? `Tagline must be at most ${MANIFEST_TAGLINE_MAX_LENGTH} characters`
+            : undefined
         }
       />
 
@@ -217,7 +226,12 @@ export function ManifestEditForm({
 
       <Select
         label="Content rating"
-        data={[...ALLOWED_CONTENT_RATINGS].map((r) => ({ value: r, label: r }))}
+        // `ALLOWED_CONTENT_RATINGS` is the manifest validator's own copy of the same
+        // five values; the LABEL still comes from the one display map (was `label: r`).
+        data={[...ALLOWED_CONTENT_RATINGS].map((r) => ({
+          value: r,
+          label: offsiteContentRatingLabel(r),
+        }))}
         value={contentRating}
         onChange={(v) => setContentRating(v ?? 'g')}
       />
@@ -242,8 +256,8 @@ export function ManifestEditForm({
           Scopes
         </Text>
         <Text size="xs" c="dimmed">
-          The permissions your app requests. Must be a subset of your app&apos;s granted
-          scopes — the server enforces this. Sensitive scopes are flagged.
+          The permissions your app requests. Must be a subset of your app&apos;s granted scopes —
+          the server enforces this. Sensitive scopes are flagged.
         </Text>
         <BlockScopeSelector value={scopes} onChange={setScopes} />
       </Stack>
@@ -254,9 +268,8 @@ export function ManifestEditForm({
             Permission justifications
           </Text>
           <Text size="xs" c="dimmed">
-            Optional. Explain why your app needs each requested permission — a
-            moderator sees this during review. (These are shown as-is and are not
-            automatically verified.)
+            Optional. Explain why your app needs each requested permission — a moderator sees this
+            during review. (These are shown as-is and are not automatically verified.)
           </Text>
           <Stack gap="xs" mt={4}>
             {scopes.map((scope) => (

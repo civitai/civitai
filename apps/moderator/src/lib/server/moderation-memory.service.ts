@@ -90,14 +90,19 @@ export async function strikeCountsByUserIds(ids: number[]): Promise<Map<number, 
 // /api/mod/send-mod-notification). Sent through the same client the strike path uses — the main-app
 // endpoint only forwards to this service, so going direct removes a hop and one more place the
 // payload shape can drift.
+
+/** Where a moderator warning sends the user when the caller names no destination. The content-policy
+ *  page is the main app's own answer to "why was I contacted" — it is what the footer, image detail
+ *  and training upload all link to, and what Retool sent. */
+const MOD_NOTIFICATION_URL = '/safety';
 export async function sendModNotification(input: {
   userId: number;
   message: string;
-  /** `system-announcement` renders this as the click-through. Without it the notification is dead
-   *  text — Retool sent `/safety`, or `/generate` for its non-AI-content reason. */
+  /** `system-announcement` renders this as the click-through; without one the notification is dead text. */
   url?: string;
   moderatorId: number;
 }): Promise<ActionResult> {
+  const url = input.url ?? MOD_NOTIFICATION_URL;
   try {
     await getNotifications().createNotification({
       // The minute bucket is what makes this a double-submit guard rather than a permanent one: keyed
@@ -108,7 +113,7 @@ export async function sendModNotification(input: {
       userId: input.userId,
       type: 'system-announcement',
       category: 'System',
-      details: { message: input.message, ...(input.url ? { url: input.url } : {}) },
+      details: { message: input.message, url },
     });
   } catch (e) {
     console.error('[moderation-memory] notification failed', e);

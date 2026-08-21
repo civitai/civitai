@@ -77,6 +77,7 @@ export const trainingDetailsBaseModelsAnima = ['anima'] as const;
 export const trainingDetailsBaseModelsBoogu = ['boogu'] as const;
 export const trainingDetailsBaseModelsKrea2 = ['krea2'] as const;
 export const trainingDetailsBaseModelsMageFlow = ['mageflow'] as const;
+export const trainingDetailsBaseModelsIdeogram4 = ['ideogram4'] as const;
 export const trainingDetailsBaseModelsAcestep15 = ['acestep_15'] as const;
 export const trainingDetailsBaseModelsAcestep15Xl = [
   'acestep_15_xl_base',
@@ -99,6 +100,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsBoogu,
   ...trainingDetailsBaseModelsKrea2,
   ...trainingDetailsBaseModelsMageFlow,
+  ...trainingDetailsBaseModelsIdeogram4,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -397,7 +399,20 @@ export const donationGoalInputSchema = z.object({
 export type ModelVersionPaidAccessDto = {
   endsAt: Date | null;
   timeframeDays: number | null;
+  /** Already discounted when a sale is live — `sale.listTerms` carries what it was before. */
   terms: ModelVersionTerms;
+  /**
+   * Present only while a sale is actually discounting this viewer's price. `listTerms` is the
+   * pre-sale price so the UI can strike it through; `endsAt` is what a countdown reads.
+   */
+  sale: {
+    listTerms: ModelVersionTerms;
+    /** What a buyer is quoted, so an owner can be shown it without recomputing the discount. */
+    buyerTerms: ModelVersionTerms;
+    endsAt: Date;
+    discountType: 'Fixed' | 'Percent';
+    discountAmount: number;
+  } | null;
 };
 
 // Narrow input for editing only a version's paid access (e.g. from the creator studio) without

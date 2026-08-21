@@ -5090,6 +5090,42 @@ model PaidAccess {
   @@index([entityType, endsAt]) // expiry-job + early-access-complete notification scan by end time
 }
 
+enum SaleDiscountType {
+  Fixed
+  Percent
+}
+
+// A scheduled discount laid OVER a version's PaidAccess price. The gate's own `terms` is never
+// rewritten, so a creator editing their base price mid-sale cannot lose it, and "what did this cost
+// on the day" stays answerable. Effective price is resolved at read time — see discountedTerms in
+// @civitai/buzz. Sales cover permanent paid access only, never a timed early-access window.
+model ModelVersionSale {
+  id             Int                   @id @default(autoincrement())
+  userId         Int
+  // Optional: naming a sale is a creator's choice, not a requirement.
+  name           String?
+  discountType   SaleDiscountType
+  // Buzz for Fixed, whole percent for Percent. Never a float — this reaches a price.
+  discountAmount Int
+  startsAt       DateTime
+  endsAt         DateTime
+  canceledAt     DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  versions       ModelVersionSaleItem[]
+
+  @@index([userId, startsAt])
+}
+
+model ModelVersionSaleItem {
+  saleId         Int
+  modelVersionId Int
+  sale           ModelVersionSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@id([saleId, modelVersionId])
+  @@index([modelVersionId])
+}
+
 enum EntityCollaboratorStatus {
   Pending
   Approved

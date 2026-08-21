@@ -162,6 +162,8 @@ export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess"
 
 export type PaidAccessEntityType = "ModelVersion" | "ComicChapter";
 
+export type SaleDiscountType = "Fixed" | "Percent";
+
 export type EntityCollaboratorStatus = "Pending" | "Approved" | "Rejected";
 
 export type ClubAdminPermission = "ManageMemberships" | "ManageTiers" | "ManagePosts" | "ManageClub" | "ManageResources" | "ViewRevenue" | "WithdrawRevenue";
@@ -3294,6 +3296,26 @@ export interface PaidAccess {
   terms: JsonValue;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ModelVersionSale {
+  id: number;
+  userId: number;
+  name: string | null;
+  discountType: SaleDiscountType;
+  discountAmount: number;
+  startsAt: Date;
+  endsAt: Date;
+  canceledAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  versions?: ModelVersionSaleItem[];
+}
+
+export interface ModelVersionSaleItem {
+  saleId: number;
+  modelVersionId: number;
+  sale?: ModelVersionSale;
 }
 
 export interface EntityCollaborator {

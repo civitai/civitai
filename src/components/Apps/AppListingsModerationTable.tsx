@@ -41,6 +41,7 @@ import {
   type SubmissionGroup,
 } from '~/components/Apps/submissionsTable';
 import { SortableTh, StatusSections, SubmissionSearch } from '~/components/Apps/submissionsTableUi';
+import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import type { ModerationListingRow } from '~/server/services/blocks/app-listing.service';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -131,10 +132,7 @@ export function AppListingsModerationTable({
 }: {
   /** Opens the PAGE-OWNED off-site review modal. The second arg is fired after a
    *  successful approve/reject so this table can invalidate + reset its own paging. */
-  openOffsiteReview: (
-    row: OffsitePendingRow,
-    onActioned?: () => void | Promise<void>
-  ) => void;
+  openOffsiteReview: (row: OffsitePendingRow, onActioned?: () => void | Promise<void>) => void;
 }) {
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
@@ -214,7 +212,9 @@ export function AppListingsModerationTable({
           const seen = new Set(accumulated.map((r) => r.id));
           return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
         })();
-    return merged.filter((r) => !(r.kind === 'onsite' && effectiveModerationStatus(r) === 'pending'));
+    return merged.filter(
+      (r) => !(r.kind === 'onsite' && effectiveModerationStatus(r) === 'pending')
+    );
   }, [accumulated, page, cursor]);
 
   // Group (one group per listing — the mod view isn't version-collapsed), apply the
@@ -315,8 +315,11 @@ export function AppListingsModerationTable({
                   </Table.Td>
                   <Table.Td>
                     {row.category ? (
-                      <Badge size="sm" variant="light">
-                        {row.category}
+                      // testid so the display-label assertion can select this badge
+                      // STRUCTURALLY — a text search for a category word would also
+                      // match the app's name or a status chip.
+                      <Badge size="sm" variant="light" data-testid="apps-listing-mod-category">
+                        {marketplaceCategoryLabel(row.category)}
                       </Badge>
                     ) : (
                       <Text size="xs" c="dimmed">

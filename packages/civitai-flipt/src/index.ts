@@ -8,4 +8,4 @@ export {
   type FliptConnection,
   type FliptTuning,
 } from './env';
-export { TtlCache, fliptCacheKey } from './cache';
+export { TtlCache, fliptCacheKey, type TtlCacheStats } from './cache';

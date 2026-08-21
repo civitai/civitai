@@ -1,24 +1,47 @@
 import type { GroupProps } from '@mantine/core';
-import { Group } from '@mantine/core';
+import { Center, Group, Loader, Popover, ScrollArea } from '@mantine/core';
+import { IconWorld } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { PeriodFilter } from '~/components/Filters';
+import { useState } from 'react';
+import { FilterButton } from '~/components/Buttons/FilterButton';
+import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SortFilter } from '~/components/Filters/SortFilter';
+import { hubExcludedFilterKeys } from '~/components/Image/Filters/media-filter-keys';
+import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { ImageSort } from '~/server/common/enums';
 import type { HubSort } from '~/server/schema/user-hub.schema';
-import { hubSortSchema } from '~/server/schema/user-hub.schema';
-import type { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { hubFeedFiltersSchema, hubLimits, hubSortSchema } from '~/server/schema/user-hub.schema';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+const HubSourcePanel = dynamic(
+  () => import('~/components/Hubs/HubSourcePanel').then((m) => m.HubSourcePanel),
+  {
+    ssr: false,
+    loading: () => (
+      <Center py="md">
+        <Loader size="sm" />
+      </Center>
+    ),
+  }
+);
+
 /**
- * Sort and period for a hub, rendered in the sub-nav where every other feed
- * puts them. Controlled rather than store-backed: these belong to the hub and
- * persist with it, so they must not be shared with whatever the user last picked
- * on /images.
+ * Sort and filters for a hub, rendered in the sub-nav where every other feed puts
+ * them, and using the same controls the images feed uses. Controlled rather than
+ * store-backed: these belong to the hub and persist with it, so they must not be
+ * shared with whatever the user last picked on /images.
+ *
+ * Sources appear both here and in the rail on purpose, until we learn which one
+ * people use.
  */
 export function HubFeedFilters({ ...groupProps }: GroupProps) {
   const router = useRouter();
   const hubId = Number(router.query.id);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const utils = trpc.useUtils();
 
   const { data: hub } = trpc.userHub.getById.useQuery(
@@ -40,26 +63,74 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
   if (!hub) return null;
 
   const sort = hubSortSchema.catch(ImageSort.Newest).parse(hub.sort);
-
-  const save = (changes: { sort?: HubSort; period?: MetricTimeframe }) =>
-    upsert.mutate({
-      id: hub.id,
-      sort: changes.sort ?? sort,
-      period: changes.period ?? hub.period,
-    });
+  const sourceCount = hub.sources.length;
 
   return (
-    <Group gap={4} wrap="nowrap" {...groupProps}>
+    <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
+      {/* The app theme defaults Popover to withinPortal:false, and the sub-nav
+          clips — so this one says so explicitly. */}
+      <Popover
+        position="bottom-end"
+        withinPortal
+        shadow="md"
+        width={340}
+        opened={sourcesOpen}
+        onChange={setSourcesOpen}
+      >
+        <Popover.Target>
+          <FilterButton
+            icon={IconWorld}
+            active={sourcesOpen}
+            // Controlled Popover, so the target does not toggle itself.
+            onClick={() => setSourcesOpen((open) => !open)}
+          >
+            {sourceCount} {sourceCount === 1 ? 'source' : 'sources'}
+          </FilterButton>
+        </Popover.Target>
+        <Popover.Dropdown p="sm">
+          <ScrollArea.Autosize mah={400}>
+            <HubSourcePanel
+              hubId={hub.id}
+              // Opening the picker in here pushes the popover past its own height
+              // and it starts scrolling inside a scroll. Adding lives in the rail.
+              hideAdd
+              maxSources={hubLimits.sourcesPerHub}
+              sources={hub.sources.map(({ id: _id, ...source }) => source)}
+            />
+          </ScrollArea.Autosize>
+        </Popover.Dropdown>
+      </Popover>
+
       <SortFilter
         type="images"
         value={sort}
         options={hubSortSchema.options.map((value) => ({ label: value, value }))}
-        onChange={(value) => save({ sort: value as HubSort })}
+        onChange={(value) =>
+          upsert.mutate({ id: hub.id, sort: value as HubSort, period: hub.period })
+        }
       />
-      <PeriodFilter
-        type="images"
-        value={hub.period}
-        onChange={(value) => save({ period: value })}
+      <MediaFiltersDropdown
+        w="100%"
+        filterType="images"
+        isFeed
+        size="compact-sm"
+        exclude={hubExcludedFilterKeys}
+        query={{
+          ...hub.filters,
+          period: hub.period,
+          types: hub.mediaTypes,
+        }}
+        onChange={(next) =>
+          upsert.mutate({
+            id: hub.id,
+            sort,
+            // Clear omits `period` to mean "back to the default"; falling back to
+            // the hub's current value would leave the one filter Clear names.
+            period: (next.period ?? MetricTimeframe.AllTime) as MetricTimeframe,
+            mediaTypes: (next.types ?? []) as MediaType[],
+            filters: hubFeedFiltersSchema.parse(next),
+          })
+        }
       />
     </Group>
   );

@@ -75,6 +75,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         }),
       },
       withdrawExternalRequest: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      // The restored owner takedown pair. Present here so the CONTAINER block below mounts
+      // at all — the mutation hooks run unconditionally on render, so an absent entry is a
+      // `Cannot read properties of undefined` at mount, not a missing assertion. What these
+      // two procedures are actually CALLED WITH is asserted in
+      // `MyAppsBody.authorActions.browser.test.tsx`, which owns the ledger.
+      republishOwnListing: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      unpublishOwnListing: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      listMyListingModerationEvents: {
+        useQuery: () => ({ data: { items: [] }, isLoading: false, error: null }),
+      },
     },
     blocks: {
       withdrawPublishRequest: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },

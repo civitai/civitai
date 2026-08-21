@@ -10,6 +10,7 @@ import {
   Pagination,
   Paper,
   ScrollArea,
+  SegmentedControl,
   Select,
   SimpleGrid,
   Stack,
@@ -47,6 +48,7 @@ import {
 import type { Icon as TablerIcon } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import type { ComponentProps, ReactNode } from 'react';
+import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -90,10 +92,14 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
+import type { StatusFilter } from '~/components/CreatorShop/Submit/review-queue-query';
+import {
+  statusFromQuery,
+  typesFromQuery,
+} from '~/components/CreatorShop/Submit/review-queue-query';
 import { PackContentsPanel } from '~/components/CreatorShop/Pack/PackContentsPanel';
 import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 
-type StatusFilter = CosmeticShopItemStatus | 'all';
 type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
 
 const statusFilterOptions: { label: string; value: StatusFilter }[] = [
@@ -239,10 +245,19 @@ export const getServerSideProps = createServerSideProps({
 
 function CreatorShopReviewPage() {
   const currentUser = useCurrentUser();
+  const router = useRouter();
+  // Seeded from the URL once, then owned by this component. Not kept in sync
+  // with `router.query` on every render: the page writes the query itself, and
+  // two writers on one value is how a filter ends up fighting its own history
+  // entry.
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
-    CosmeticShopItemStatus.PendingReview
+    () =>
+      statusFromQuery(router.query.status, statusFilterOptions) ??
+      CosmeticShopItemStatus.PendingReview
   );
-  const [typeFilter, setTypeFilter] = useState<ReviewQueueFilterType[]>([]);
+  const [typeFilter, setTypeFilter] = useState<ReviewQueueFilterType[]>(() =>
+    typesFromQuery(router.query.type)
+  );
   const [selectedCreator, setSelectedCreator] = useState<{ id: number; username: string } | null>(
     null
   );
@@ -291,6 +306,53 @@ function CreatorShopReviewPage() {
     apply();
     goToPage(1);
   }
+
+  // Mirror the two linkable filters back into the URL so the address bar is
+  // always a link to what is on screen — shallow, so it never refetches the
+  // page, and `replace` rather than `push` so narrowing a filter does not build
+  // a back-button trail through every intermediate selection.
+  useEffect(() => {
+    // Everything this effect does NOT own is carried through untouched. Building
+    // the query from scratch erased utm/ref params and anything else a link
+    // arrived with — the shared `useZodRouteParams` merges for the same reason.
+    const preserved = Object.entries(router.query).filter(
+      ([key, value]) => typeof value === 'string' && key !== 'status' && key !== 'type'
+    ) as [string, string][];
+
+    const next: Record<string, string> = Object.fromEntries(preserved);
+    if (statusFilter !== CosmeticShopItemStatus.PendingReview) next.status = statusFilter;
+    if (typeFilter.length) next.type = typeFilter.join(',');
+
+    // Sorted on both sides before comparing: `router.query` arrives in the
+    // URL's key order and `next` in insertion order, so an unsorted compare
+    // reported a difference for a pure reordering and fired one pointless
+    // replace on arrival from the pre-filtered nav link.
+    const render = (entries: [string, string][]) =>
+      new URLSearchParams([...entries].sort(([a], [b]) => a.localeCompare(b))).toString();
+
+    const current = render(
+      Object.entries(router.query).flatMap(([key, value]) =>
+        typeof value === 'string' ? [[key, value] as [string, string]] : []
+      )
+    );
+    if (current === render(Object.entries(next))) return;
+
+    router.replace({ pathname: router.pathname, query: next }, undefined, { shallow: true });
+    // `router` is deliberately out of the deps — it changes identity on every
+    // navigation, which would re-run this against its own write.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, typeFilter]);
+
+  /**
+   * Which type tab is lit.
+   *
+   * Derived from `typeFilter` rather than held alongside it — the multi-select
+   * can express things the tabs cannot (two types at once), and a second piece
+   * of state would let the two disagree. Nothing is lit for a multi-type
+   * selection, which is honest: no single tab describes it.
+   */
+  const activeTypeTab =
+    typeFilter.length === 0 ? 'all' : typeFilter.length === 1 ? typeFilter[0] : null;
 
   useEffect(() => {
     setSelectedId((cur) => (cur && items.some((i) => i.id === cur) ? cur : items[0]?.id ?? null));
@@ -544,6 +606,19 @@ function CreatorShopReviewPage() {
             allowDeselect={false}
             leftSection={<IconFilter size={16} />}
             comboboxProps={{ withinPortal: true }}
+          />
+          {/* One visible click per type, because the multi-select alone left
+              stickers indistinguishable from everything else in the queue —
+              you had to know they were in there to narrow to them. The
+              multi-select stays for the things tabs cannot say (two types at
+              once); both write the same `typeFilter`. */}
+          <SegmentedControl
+            size="xs"
+            value={activeTypeTab ?? ''}
+            onChange={(v) =>
+              changeQuery(() => setTypeFilter(v === 'all' ? [] : [v as ReviewQueueFilterType]))
+            }
+            data={[{ label: 'All', value: 'all' }, ...reviewQueueTypeOptions]}
           />
           <MultiSelect
             size="sm"

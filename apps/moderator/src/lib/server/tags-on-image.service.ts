@@ -3,7 +3,7 @@ import { REDIS_KEYS } from '@civitai/redis';
 import type { TagSource } from '@civitai/db-schema/enums';
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
-import { syncSearchIndex } from './search-index';
+import { syncSearchIndexBulk } from './search-index';
 import { bustImageTagCaches } from './cache';
 
 // Unset fields stay NULL; upsert_tag_on_image preserves the existing value on conflict — so a flip can pass
@@ -91,6 +91,5 @@ export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void
   await sql`SELECT update_nsfw_levels_new(ARRAY[${sql.join(
     imageIds.map((id) => sql`${id}::int`)
   )}])`.execute(dbWrite);
-  for (const id of imageIds)
-    syncSearchIndex({ entityType: 'image', entityId: id, action: 'update' });
+  void syncSearchIndexBulk({ entityType: 'image', entityIds: imageIds, action: 'update' });
 }

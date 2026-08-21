@@ -1,6 +1,6 @@
 {
   "name": "@civitai/moderator-app",
-  "version": "0.0.31",
+  "version": "0.0.33",
   "private": true,
   "type": "module",
   "scripts": {
@@ -51,7 +51,7 @@
     "svelte-eslint-parser": "^0.43.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.9.2",
-    "vitest": "^4.0.18",
+    "vitest": "^4.1.11",
     "vite": "^7.0.4"
   }
 }

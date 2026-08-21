@@ -27,6 +27,7 @@ export const ProfileSectionTypeDef = {
   ImagesOverview: 'imagesOverview',
   RecentReviews: 'recentReviews',
   Shop: 'shop',
+  OnSale: 'onSale',
 } as const;
 
 export type ProfileSectionType = (typeof ProfileSectionTypeDef)[keyof typeof ProfileSectionTypeDef];

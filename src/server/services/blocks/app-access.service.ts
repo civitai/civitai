@@ -851,6 +851,27 @@ export type MyAppListing = {
    * Empty array = nothing to flag. Never `undefined`.
    */
   problems: ListingProblem[];
+  /**
+   * The listing's MOST-RECENT moderation-event action, or `null`.
+   *
+   * 🔴 CARRIED BECAUSE `removed` ALONE CANNOT TELL THE AUTHOR APART FROM A MODERATOR, and
+   * that distinction is what decides whether the row may offer **Republish**.
+   * `app_listings.status = 'removed'` is written by BOTH an owner self-unpublish and a mod
+   * takedown; only the last event separates them (`owner-unpublish` ⇒ the owner may restore
+   * it, anything else ⇒ `republishOwnListing` 403s and a moderator `relistListing` is the
+   * only way back). Without this field `/apps/mine` cannot render either affordance
+   * correctly — it would either hide Republish from an author who is entitled to it, or
+   * offer a guaranteed-403 button on a moderator takedown.
+   *
+   * Populated ONLY for a `removed` listing (the sole state that reads it); `null`
+   * everywhere else — including on a removed listing with no recorded event, which
+   * {@link ownerListingState} treats as a mod removal, the SAFE direction.
+   *
+   * 🔴 NORMALISED, NOT RAW — see {@link normalizeLastModerationAction} and the note at its
+   * call site. This read is reachable by a seated EDITOR, so it carries the one bit the UI
+   * branches on and never the moderator's actual verb.
+   */
+  lastModerationAction: NormalizedModerationAction | null;
 };
 
 /**
@@ -880,7 +901,7 @@ export type MyAppListing = {
  */
 export type AppListingAuthoringContext = Omit<
   MyAppListing,
-  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems'
+  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems' | 'lastModerationAction'
 > & {
   /**
    * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
@@ -896,6 +917,24 @@ export type AppListingAuthoringContext = Omit<
    */
   connectClientId: string | null;
 };
+
+/**
+ * The one moderation-event action `/apps/mine` is allowed to name, and the bucket for
+ * everything else.
+ *
+ * 🔴 THE VALUE SPACE IS THE POINT. `owner-unpublish` is the only action the client may act
+ * on (it is what `republishOwnListing`'s last-event guard permits), so every other verb
+ * collapses to `other` before it leaves the server. Widening this back to the raw string
+ * re-opens the editor-disclosure hole described at the call site — do not "simplify" it away.
+ */
+export const OWNER_UNPUBLISH_EVENT = 'owner-unpublish';
+export type NormalizedModerationAction = typeof OWNER_UNPUBLISH_EVENT | 'other';
+
+/** `null` in ⇒ `null` out (no event); the owner's own unpublish keeps its name; all else → `other`. */
+function normalizeLastModerationAction(action: string | null): NormalizedModerationAction | null {
+  if (action == null) return null;
+  return action === OWNER_UNPUBLISH_EVENT ? OWNER_UNPUBLISH_EVENT : 'other';
+}
 
 /** Hydrate {@link resolveAccessibleListingIds} into rows, newest listing first. */
 async function hydrateMyAppListings(
@@ -946,6 +985,34 @@ async function hydrateMyAppListings(
     orderBy: { serialId: 'desc' },
     take: limit,
   });
+  /**
+   * For every REMOVED listing, its MOST-RECENT moderation-event action.
+   *
+   * 🔴 ONE batched query, and ONLY over the removed subset — the same shape
+   * `blocks.router::listMyPublishRequests` and the off-site `listMySubmissions` already use,
+   * so the three author surfaces derive owner-hidden-vs-mod-removed from one query pattern
+   * rather than three. `distinct` + `orderBy desc` is the latest-per-listing keyset.
+   *
+   * The `.length` guard is not micro-optimisation: the overwhelmingly common case is an
+   * author with no removed listings, and skipping the round-trip keeps this read at the ONE
+   * hydrate query `app-access.accessible-listings.test.ts` pins by call count.
+   */
+  const removedListingIds = rows
+    .filter((r: { status: string }) => r.status === 'removed')
+    .map((r: { id: string }) => r.id);
+  const lastEvents = removedListingIds.length
+    ? await dbRead.appListingModerationEvent.findMany({
+        where: { appListingId: { in: removedListingIds } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        distinct: ['appListingId'],
+        select: { appListingId: true, action: true },
+      })
+    : [];
+  const lastActionByListingId = new Map<string, string>(
+    (lastEvents as Array<{ appListingId: string | null; action: string }>)
+      .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
+      .map((e) => [e.appListingId, e.action])
+  );
   const ownedSet = new Set(ids.ownedIds);
   return rows.map(
     (r: {
@@ -996,6 +1063,22 @@ async function hydrateMyAppListings(
           tagline: r.tagline ?? null,
           category: r.category ?? null,
         }).problems,
+        // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
+        // returning an action would let a stale event re-open Republish on a live listing.
+        //
+        // 🔴 NORMALISED TO THE DISTINCTION, NOT THE VERB, AND THAT IS A DISCLOSURE BOUNDARY.
+        // `listMine` is reachable by an accepted EDITOR, and the only other route to a
+        // listing's moderation actions (`listMyListingModerationEvents`) is owner-scoped —
+        // so shipping the raw action would hand a seated collaborator facts they have no
+        // route to today, and specific ones: `claim` says a moderator seized the app from
+        // an impersonating owner, `purge`/`report-resolve`/`report-dismiss` each narrate a
+        // different enforcement history. The consumer needs exactly one bit — may the owner
+        // press Republish — so that is all this carries. Same bar {@link MyAppListing}
+        // already sets for `iconUrl` ("discloses nothing to a seated editor that the store
+        // does not"); the raw verb neither met it nor argued for an exception.
+        lastModerationAction: normalizeLastModerationAction(
+          r.status === 'removed' ? lastActionByListingId.get(r.id) ?? null : null
+        ),
       };
     }
   );

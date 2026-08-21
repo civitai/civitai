@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { offsetWithin } from '~/components/Sticker/CardStickerOverlay';
+import { mediaContentRectOf } from '~/components/Sticker/media-content-rect';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacementBatch } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -68,11 +69,18 @@ export function PostStickerOverlay({ imageId }: { imageId: number }) {
       const self = offsetWithin(node, stop);
       if (!at || !self) return;
 
+      // A post image is not cropped today — nothing here sets `object-fit`, so
+      // this resolves to the element box and the behaviour is unchanged. It goes
+      // through the same helper as the card overlay anyway, because the two
+      // measure the same thing and the card's copy was silently wrong under a
+      // crop for as long as both existed.
+      const drawn = mediaContentRectOf(element);
+
       const next = {
-        width: element.offsetWidth,
-        height: element.offsetHeight,
-        left: at.x - self.x,
-        top: at.y - self.y,
+        width: drawn.width,
+        height: drawn.height,
+        left: at.x - self.x + drawn.left,
+        top: at.y - self.y + drawn.top,
       };
       setBox((current) => (same(current, next) ? current : next));
     };
@@ -81,7 +89,17 @@ export function PostStickerOverlay({ imageId }: { imageId: number }) {
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     observer.observe(media);
-    return () => observer.disconnect();
+
+    // The natural size arrives with the file, and no ResizeObserver fires for
+    // it. Harmless here while nothing crops; correct if anything ever does.
+    media.addEventListener('load', measure);
+    media.addEventListener('loadedmetadata', measure);
+
+    return () => {
+      observer.disconnect();
+      media.removeEventListener('load', measure);
+      media.removeEventListener('loadedmetadata', measure);
+    };
   }, [hasPlacements]);
 
   // A post is a scroll, so an overlay that armed on mount would play its whole

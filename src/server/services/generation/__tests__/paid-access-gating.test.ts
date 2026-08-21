@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelVersionTerms } from '@civitai/buzz';
 
-const { mockGetPaidAccess, mockHasEntityAccess } = vi.hoisted(() => ({
+const { mockGetPaidAccess, mockHasEntityAccess, mockGetViewerMonetization } = vi.hoisted(() => ({
   mockGetPaidAccess: vi.fn(),
   mockHasEntityAccess: vi.fn(),
+  mockGetViewerMonetization: vi.fn(),
 }));
 
 vi.mock('~/server/services/paid-access.service', () => ({
-  getPaidAccess: mockGetPaidAccess,
+  getViewerMonetization: mockGetViewerMonetization,
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: mockHasEntityAccess }));
 
@@ -48,6 +50,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetPaidAccess.mockResolvedValue({});
   mockHasEntityAccess.mockResolvedValue([]);
+  mockGetViewerMonetization.mockImplementation(
+    async ({ versions }: { versions: { id: number }[] }) => {
+      const rows = await mockGetPaidAccess(versions.map((v) => v.id));
+      return Object.fromEntries(
+        versions.map((v) => [v.id, { paidAccess: rows[v.id], sale: null, licensingFee: null }])
+      );
+    }
+  );
 });
 
 describe('applyPaidAccessGating — the sole paid generation gate', () => {
@@ -174,7 +184,10 @@ describe('applyPaidAccessGating — the gate rows it asks for', () => {
 
     await applyPaidAccessGating([resource()], { id: OWNER, isModerator: false });
 
-    expect(mockGetPaidAccess).toHaveBeenCalledWith('ModelVersion', [1]);
+    expect(mockGetViewerMonetization).toHaveBeenCalledWith({
+      versions: [{ id: 1 }],
+      viewer: expect.anything(),
+    });
   });
 
   it('puts the stored terms on the wire', async () => {
@@ -193,6 +206,9 @@ describe('applyPaidAccessGating — the gate rows it asks for', () => {
 
     await applyPaidAccessGating([resource(), resource()], { id: 2 });
 
-    expect(mockGetPaidAccess).toHaveBeenCalledWith('ModelVersion', [1]);
+    expect(mockGetViewerMonetization).toHaveBeenCalledWith({
+      versions: [{ id: 1 }],
+      viewer: expect.anything(),
+    });
   });
 });

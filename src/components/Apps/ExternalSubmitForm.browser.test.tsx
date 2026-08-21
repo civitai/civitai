@@ -1,3 +1,4 @@
+import Router from 'next/router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -130,6 +131,17 @@ vi.mock('~/utils/notifications', () => ({
 
 const { ExternalSubmitForm } = await import('./ExternalSubmitForm');
 
+/**
+ * The stubbed pages-router SINGLETON (see `test/component-setup.tsx`). `Cancel` is no
+ * longer a `<Link>` — it is a real button that decides whether to navigate — so the
+ * navigation itself is now an observable this suite asserts on.
+ *
+ * Reached through the DEFAULT export rather than `useRouter()`: the setup file's mock
+ * returns the same object from both (`default: router`, `useRouter: () => router`), and
+ * calling a hook at module scope is a rules-of-hooks violation even against a stub.
+ */
+const routerMock = Router as unknown as { push: ReturnType<typeof vi.fn> };
+
 beforeEach(() => {
   mocks.submit.mockClear();
   mocks.mutate.mockClear();
@@ -142,6 +154,12 @@ beforeEach(() => {
   mocks.search = { data: { items: [], nextCursor: undefined }, isFetching: false };
   // Default caller: NOT a moderator → own-clients dropdown (existing tests unchanged).
   mocks.currentUser = null;
+  // 🔴 The setup file's `next/router` stub is a module-level SINGLETON shared by every
+  // test in the run, so its `push` spy accumulates calls across tests. Without this
+  // clear, the "Cancel did NOT navigate" assertions would read a previous test's call
+  // and go red for the wrong reason — or, worse, a genuinely broken Cancel would be
+  // masked by an earlier test's legitimate navigation.
+  routerMock.push.mockClear();
 });
 
 /** Fill a valid App URL on step 0 and advance to the App & scopes step. */
@@ -225,7 +243,9 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
     await expect.element(page.getByTestId('apps-offsite-justification-1')).toBeInTheDocument();
     // Next is BLOCKED until the sensitive justification is filled.
     await expect.element(page.getByTestId('apps-offsite-wizard-next-app')).toBeDisabled();
-    await page.getByTestId('apps-offsite-justification-1').fill('reads the profile to greet the user');
+    await page
+      .getByTestId('apps-offsite-justification-1')
+      .fill('reads the profile to greet the user');
     await expect.element(page.getByTestId('apps-offsite-wizard-next-app')).toBeEnabled();
   });
 
@@ -245,6 +265,55 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
     await page.getByTestId('apps-offsite-wizard-next-app').click();
     await page.getByRole('button', { name: 'Create draft' }).click();
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 CALL-SITE ASSERTION for the two rating surfaces this wizard owns: the
+   * Details step's Content-rating `<Select>` option list, and the "Draft created"
+   * summary badge that echoes the chosen value back to the author.
+   *
+   * End-to-end on purpose — option LABEL → selection → summary badge. Picking the
+   * option by its accessible name IS the option-list guard: had the list still
+   * shipped `label: r` (or the `PG13` its `toUpperCase()` produced), this
+   * `getByRole('option', { name: 'PG-13' })` would not resolve and the test would
+   * die before ever reaching the badge.
+   *
+   * `pg13` is chosen over the form's default `g` deliberately: `g` → `G` differs
+   * only in CASE, while `PG-13` is a string no transformation of its key yields.
+   */
+  test('🔴 the rating Select and the Draft-created badge both show the LABEL, not the key', async () => {
+    mocks.clients = {
+      data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 0 }],
+      isLoading: false,
+    };
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+
+    // Positive control BEFORE touching anything: the form starts at `g`, and the
+    // closed Select must already read its label rather than the key.
+    const ratingSelect = page.getByRole('textbox', { name: 'Content rating' });
+    await expect.element(ratingSelect).toBeInTheDocument();
+    expect((ratingSelect.element() as HTMLInputElement).value).toBe('G');
+
+    await ratingSelect.click();
+    await page.getByRole('option', { name: 'PG-13' }).click();
+    expect((ratingSelect.element() as HTMLInputElement).value).toBe('PG-13');
+
+    await page.getByRole('button', { name: 'Create draft' }).click();
+    // 🔴 The VALUE half is untouched: the mutation still carries the stored key.
+    // The pair is the point — a mutant that mapped the value instead of the label
+    // would satisfy the assertion above and break this one.
+    expect(mocks.mutate).toHaveBeenCalledWith(expect.objectContaining({ contentRating: 'pg13' }));
+
+    // The "Draft created" summary badge echoes the same LABEL back to the author.
+    const assets = page.getByTestId('apps-offsite-wizard-assets-panel');
+    await expect.element(assets).toBeInTheDocument();
+    const text = assets.element().textContent ?? '';
+    expect(text).toContain('PG-13');
+    expect(text).not.toContain('Content rating: pg13');
   });
 
   test('the page <title> (not the host) fills the Name; slug still derives from the host; og:description autofills the Description', async () => {
@@ -270,7 +339,9 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
       .element(page.getByTestId('apps-offsite-submit-name'))
       .toHaveValue('Civitai Cosmetic Studio');
     // Slug still derives from the URL host (hyphenated — slugs keep hyphens).
-    await expect.element(page.getByRole('textbox', { name: /^Slug/ })).toHaveValue('cosmetic-studio');
+    await expect
+      .element(page.getByRole('textbox', { name: /^Slug/ }))
+      .toHaveValue('cosmetic-studio');
     // og:description autofills the (empty) Description field.
     await expect
       .element(page.getByTestId('apps-offsite-submit-description'))
@@ -300,7 +371,9 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
     await expect
       .element(page.getByTestId('apps-offsite-submit-name'))
       .toHaveValue('Cosmetic Studio');
-    await expect.element(page.getByRole('textbox', { name: /^Slug/ })).toHaveValue('cosmetic-studio');
+    await expect
+      .element(page.getByRole('textbox', { name: /^Slug/ }))
+      .toHaveValue('cosmetic-studio');
   });
 
   test('when the meta fetch ERRORS, the Name still falls back to the de-hyphenated host name', async () => {
@@ -343,7 +416,13 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
 
   test('autofill does NOT clobber a description the user already typed', async () => {
     mocks.meta = {
-      data: { name: undefined, tagline: undefined, description: 'OG desc', coverImageUrl: undefined, iconImageUrl: undefined },
+      data: {
+        name: undefined,
+        tagline: undefined,
+        description: 'OG desc',
+        coverImageUrl: undefined,
+        iconImageUrl: undefined,
+      },
       isFetching: false,
       isSuccess: true,
     };
@@ -697,5 +776,158 @@ describe('ExternalSubmitForm — auto-trigger, status, re-pull, data-URI icon', 
     await expect
       .element(page.getByTestId('apps-offsite-submit-name'))
       .toHaveValue('User Typed Name');
+  });
+});
+
+/**
+ * 🔴 CANCEL USED TO DISCARD EVERYTHING SILENTLY.
+ *
+ * `Cancel` was a plain `<Button component={Link} href="/apps/mine">`: one click and
+ * every field entered — URL, name, description, scope justifications — was gone, with
+ * no warning and no undo. It now confirms first.
+ *
+ * BOTH DIRECTIONS ARE THE REQUIREMENT. A confirmation that also fires on an untouched
+ * wizard is a nag, and a nag is dismissed reflexively — which would make the dialog
+ * worthless on the one occasion it protects real work. The pristine case below is not
+ * a nice-to-have; it is half the behaviour.
+ */
+describe('ExternalSubmitForm — Cancel confirms before discarding', () => {
+  test('🔴 PRISTINE form: Cancel leaves immediately, no confirmation', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    const cancel = page.getByTestId('apps-offsite-wizard-cancel');
+    await expect.element(cancel).toBeInTheDocument();
+    await cancel.click();
+
+    // It navigated…
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/mine'));
+    // …and the modal was never raised. Asserted AFTER the navigation settled, so this
+    // is a real absence in a mounted tree rather than a first-empty-observation pass.
+    await expect.element(page.getByTestId('apps-offsite-discard-confirm')).not.toBeInTheDocument();
+  });
+
+  test('🔴 DIRTY form: Cancel prompts instead of navigating', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
+
+    await page.getByTestId('apps-offsite-wizard-cancel').click();
+
+    // The prompt is up…
+    await expect.element(page.getByText('Discard this submission?')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-discard-confirm')).toBeInTheDocument();
+    // …and NOTHING was discarded yet: no navigation happened on the Cancel click.
+    expect(routerMock.push).not.toHaveBeenCalled();
+  });
+
+  test('🔴 "Keep editing" dismisses the prompt and PRESERVES the input', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    // A URL carrying a PATH, deliberately: clicking Cancel blurs the input, which
+    // fires the existing canonicalisation, and a bare origin comes back with a
+    // trailing slash. Using a path form keeps this test about "the input survived the
+    // prompt" instead of quietly pinning URL-normalisation behaviour it does not own.
+    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com/app');
+    await page.getByTestId('apps-offsite-wizard-cancel').click();
+    await expect.element(page.getByTestId('apps-offsite-discard-cancel')).toBeInTheDocument();
+
+    await page.getByTestId('apps-offsite-discard-cancel').click();
+
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-url'))
+      .toHaveValue('https://vitrine.civitai.com/app');
+    expect(routerMock.push).not.toHaveBeenCalled();
+  });
+
+  test('🔴 "Discard and leave" is what actually navigates away', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
+    await page.getByTestId('apps-offsite-wizard-cancel').click();
+    await page.getByTestId('apps-offsite-discard-confirm').click();
+
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/mine'));
+  });
+
+  /**
+   * Dirtiness is measured across the WHOLE form, not just the visible step — a
+   * confirmation that only noticed step-1 input would silently discard the name,
+   * description and justifications entered on later steps.
+   */
+  test('🔴 input entered on a LATER step still triggers the confirmation', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await page.getByTestId('apps-offsite-submit-name').fill('My App');
+
+    // Back to the step that owns Cancel.
+    await page.getByTestId('apps-offsite-wizard-back-details').click();
+    await page.getByTestId('apps-offsite-wizard-back-app').click();
+    await page.getByTestId('apps-offsite-wizard-cancel').click();
+
+    await expect.element(page.getByTestId('apps-offsite-discard-confirm')).toBeInTheDocument();
+    expect(routerMock.push).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 STEP 2 EXPLAINS WHAT AN OAUTH APP IS.
+ *
+ * "Your OAuth app" assumed prior knowledge. A developer listing a standalone app may
+ * never have registered an OAuth client and has no reason to know why listing needs
+ * one — the picker previously named the requirement without ever explaining it.
+ */
+describe('ExternalSubmitForm — the OAuth requirement is explained', () => {
+  test('🔴 step 2 explains the relationship in plain language', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+
+    const explainer = page.getByTestId('apps-offsite-oauth-explainer');
+    await expect.element(explainer).toBeInTheDocument();
+    // The WHOLE normalised sentence, pinned literally. A guard on a keyword like
+    // "OAuth" is walkable by rewording, and rewording is exactly what happens to
+    // prose. Written out here rather than compared to the constant, so the constant
+    // cannot define its own expectation.
+    expect(explainer.element().textContent).toBe(
+      'An OAuth app is the registration that lets people sign in to your app with their Civitai account, and that decides what your app may read or do on their behalf. Every standalone listing links to one, so visitors can see up front what they would be granting.'
+    );
+  });
+
+  test('🔴 it is shown BEFORE the picker, to a user who already has a client', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await expect.element(page.getByTestId('apps-offsite-client-select')).toBeInTheDocument();
+    // Not conditional on the empty state — the explanation is for everyone.
+    await expect.element(page.getByTestId('apps-offsite-oauth-explainer')).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 DEFENCE IN DEPTH, DELIBERATELY STILL REACHABLE. The mode selector now surfaces
+   * this prerequisite before any work, but a client can be deleted mid-flow, so the
+   * step-2 empty state must NOT become unreachable-by-construction. This is the test
+   * that would go red if a future "the selector already handles it" cleanup removed it.
+   */
+  test('🔴 the step-2 empty state survives (a client can be deleted mid-flow)', async () => {
+    mocks.clients = { data: [], isLoading: false };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+
+    const empty = page.getByTestId('apps-offsite-no-clients');
+    await expect.element(empty).toBeInTheDocument();
+    expect(empty.element().textContent).toBe(
+      'You have no eligible OAuth apps. Register one in your account settings first, then come back to list it.'
+    );
+  });
+
+  /**
+   * 🔴 A PENDING FETCH IS NOT AN EMPTY LIST — the same invariant the mode selector
+   * carries, asserted at the second surface that depends on it. `data: undefined` is
+   * the unsettled shape; it must render the loader, never the "you have none" alert.
+   */
+  test('🔴 an UNSETTLED clients query renders the loader, not "you have none"', async () => {
+    mocks.clients = { data: undefined, isLoading: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+
+    // Settle on the loader, then assert the alert's absence in a mounted tree.
+    await expect.element(page.getByTestId('apps-offsite-clients-loading')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-no-clients')).not.toBeInTheDocument();
   });
 });

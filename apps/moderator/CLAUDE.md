@@ -70,6 +70,21 @@ provenance is the only reason it differs from the standard at all.
   implementation of the wrong thing — that is how four capabilities were missed on one page after
   passing every review.
 
+  There is a skill per inbound path, and each carries its own traps and cutover:
+  [`retool-migration`](../../.claude/skills/retool-migration/SKILL.md) (from a Retool export) and
+  [`moderator-page-migration`](../../.claude/skills/moderator-page-migration/SKILL.md) (from
+  `src/pages/moderator/**` — which also deletes the legacy page and trims what it orphans).
+
+- ⚠️ **The suite is narrow — it covers reports and nothing else.** Four files, 76 tests, all on the
+  report queue and its actions. So for work anywhere else in this app a green `pnpm test` says only
+  that reports still pass, and `typecheck` remains the whole of what was verified. Say which of the two
+  you mean when reporting: a typecheck cannot see a wrong predicate, a mis-attributed row or a mute
+  that never lifts, all of which have shipped here and been found later by reading the code.
+
+  **Worth covering next**, in the same style: the pure decision functions where a wrong answer is silent
+  and consequential — `chatReportSubject`, `resolveImageId`/`resolveArticleId`, `getTimedMute`'s
+  `source`, `parseIdListStrict`, and the flag and browsing-level helpers.
+
 ## Non-negotiables
 
 Duplicated verbatim in every SvelteKit app's `CLAUDE.md` because **this file always loads and the

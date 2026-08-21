@@ -275,8 +275,10 @@ export const getModelHandler = async ({
     const monetizationByVersion = await getViewerMonetization({
       versions: filteredVersions.map((x) => ({
         id: x.id,
+        ownerId: model.user.id,
         licensingFee: x.licensingFee != null ? Number(x.licensingFee) : null,
       })),
+      viewer: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
     });
     // The DTO donationGoal seeds ONLY the owner's edit form → raw owner read (unfiltered by the
     // public EA-window/opt-out), and owner/mod only. Public display reads modelVersion.donationGoal.
@@ -364,7 +366,7 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const { paidAccess, licensingFee } = monetizationByVersion[version.id];
+      const { paidAccess, licensingFee, sale } = monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -445,7 +447,7 @@ export const getModelHandler = async ({
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
         earlyAccessDeadline,
-        paidAccess: toModelVersionPaidAccessDto(paidAccess),
+        paidAccess: toModelVersionPaidAccessDto(paidAccess, sale),
         donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
         canDownload,
         canGenerate,
@@ -1484,8 +1486,7 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
 
     const meta = (model.meta as ModelMeta | null) || {};
     // Deliberately not upsertModel: this only sets meta, and routing it through the full
-    // upsert ran the non-moderator profanity filter over the model name and re-triggered
-    // ingestModel (the select omits `description`, so descriptionChanged was always true).
+    // upsert ran the non-moderator profanity filter over the model name.
     const updatedModel = await updateModelById({
       id: model.id,
       data: { meta: { ...meta, needsReview: true } as Prisma.JsonObject },

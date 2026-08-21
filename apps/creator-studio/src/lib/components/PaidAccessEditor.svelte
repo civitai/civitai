@@ -9,6 +9,8 @@
   import UsageControlPicker from '$lib/components/monetization/UsageControlPicker.svelte';
   import PaidAccessFields from '$lib/components/monetization/PaidAccessFields.svelte';
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
+  import SaleUndercutNotice from '$lib/components/monetization/SaleUndercutNotice.svelte';
+  import { type ModelVersionSaleWindow } from '@civitai/buzz';
   import type { PaidAccessContext } from '$lib/monetization/paid-access-form';
   import { resolveGateEligibility } from '$lib/monetization/gate-eligibility';
   import {
@@ -29,10 +31,13 @@
     version,
     onClose,
     caps,
+    sales,
   }: {
     version: CreatorModelVersion;
     onClose: () => void;
     caps: CreatorCaps;
+    /** Live or upcoming sales covering this version — a base-price edit moves what buyers pay under them. */
+    sales?: ModelVersionSaleWindow[];
   } = $props();
 
   const pricingLimit = $derived(caps.pricingLimit);
@@ -257,6 +262,16 @@
       <input type="hidden" name="usageControl" value={usageControl} />
 
       <PaidAccessFields bind:ea bind:genMode {isGenOnly} ctx={paidAccessCtx} />
+      <!-- Capped, not stored. A sale composes over `cappedTerms`, so a lapsed gold creator storing
+           5000 is billed 500 and a 20% sale takes buyers to 400 — quoting 4000 here would be wrong on
+           the one screen whose whole job is stating a price. The ceiling governs permanent gates only. -->
+      <!-- Only for a permanent gate: a sale cannot cover early access, so quoting a sale price beside a
+           timed gate advertises a discount that will never apply. -->
+      <SaleUndercutNotice
+        sales={version.paidAccessConfig?.permanent === true ? sales : []}
+        storedPrice={version.paidAccessConfig?.accessPrice ?? 0}
+        newPrice={ea.accessPrice}
+      />
       {#if mustAffirm}
         <RightsAffirmation bind:checked={rightsAffirmed} />
       {/if}

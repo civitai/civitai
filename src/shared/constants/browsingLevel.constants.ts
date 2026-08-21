@@ -117,6 +117,64 @@ export const OFFSITE_CONTENT_RATING_LADDER = ['g', 'pg', 'pg13', 'r', 'x'] as co
 export type OffsiteRatingValue = (typeof OFFSITE_CONTENT_RATING_LADDER)[number];
 
 /**
+ * Off-site content rating → its USER-FACING label. The counterpart of
+ * `MARKETPLACE_CATEGORY_LABELS`, and the single source of truth for how a stored
+ * rating is spelled to a human.
+ *
+ * 🔴 THE WORDS ARE NOT DERIVED FROM THE ENUM, AND MUST NOT BE. Three surfaces had
+ * each invented their own transformation of the same five values — the store
+ * detail rail and the moderator queue rendered the raw key (`pg13`), the off-site
+ * submit form uppercased it (`PG13`), and title-casing it would give `Pg13`. All
+ * three are spellings this site uses NOWHERE else.
+ *
+ * The chosen words are `browsingLevelLabels` — the maturity vocabulary Civitai
+ * ALREADY shows users on models, images and posts. Four of the five rungs
+ * (`pg`/`pg13`/`r`/`x`) map onto an `NsfwLevel` with an existing label, so they
+ * reuse it verbatim (`PG`, `PG-13`, `R`, `X`) and one app cannot read "PG-13" on
+ * a model page and "pg13" in the store. `g` is the one rung the browsing ladder
+ * has no bit for — it shares `pg`'s PG ceiling but is a distinct stored value a
+ * moderator can pick — so it takes the natural next rung of the same
+ * film-classification ladder the other four already are: `G`.
+ *
+ * Spelled out LITERALLY here rather than read out of `browsingLevelLabels`, so
+ * this map answers "what does the store say?" on its own — and a unit test pins
+ * the four overlapping rungs to `browsingLevelLabels` as a RELATIONSHIP, so
+ * rewording either vocabulary alone goes red instead of silently diverging.
+ *
+ * ⚠️ `PG-13` carries a HYPHEN. That is the site's existing spelling and it is the
+ * whole point: no mechanical transformation of the string `pg13` produces it.
+ */
+export const OFFSITE_CONTENT_RATING_LABELS: Record<OffsiteRatingValue, string> = {
+  g: 'G',
+  pg: 'PG',
+  pg13: 'PG-13',
+  r: 'R',
+  x: 'X',
+};
+
+/** Type guard — is the given value one of the known off-site content ratings. */
+export function isOffsiteContentRating(value: unknown): value is OffsiteRatingValue {
+  return (
+    typeof value === 'string' &&
+    (OFFSITE_CONTENT_RATING_LADDER as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Stored content-rating value → its display label, with a RAW FALLBACK.
+ *
+ * `AppListing.contentRating` is a nullable free-text column (`string | null`), not
+ * the closed union — the backfill service explicitly guards against "a poison row
+ * (an out-of-domain contentRating)" — so a renderer can be handed a value outside
+ * the ladder. Mirrors `marketplaceCategoryLabel`: map it if known, otherwise show
+ * the raw string. Never blank, never a throw; a details row is decoration and must
+ * not be able to blank the page it decorates.
+ */
+export function offsiteContentRatingLabel(rating: string): string {
+  return isOffsiteContentRating(rating) ? OFFSITE_CONTENT_RATING_LABELS[rating] : rating;
+}
+
+/**
  * Map an off-site content rating (`g|pg|pg13|r|x` — nullable) to the MAXIMUM
  * `NsfwLevel` bit its published assets may carry. Reuses the canonical
  * `orchestratorNsfwLevelMap` (which lacks the SFW `g` rating → PG). A null/unknown

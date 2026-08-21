@@ -2,7 +2,6 @@ import { Button } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
-import { useModelQueryParams } from '~/components/Model/model.utils';
 import { parseNumericStringArray } from '~/utils/query-string-helpers';
 
 function ClearButton({ label, onClear }: { label: string; onClear: () => void }) {
@@ -47,13 +46,4 @@ export function ActiveTagFilter() {
       onClear={handleClear}
     />
   );
-}
-
-/** `/models` carries the tag by name in `?tag=` rather than by id. */
-export function ActiveModelTagFilter() {
-  const { tag, set } = useModelQueryParams();
-
-  if (!tag) return null;
-
-  return <ClearButton label={`Clear tag: ${tag}`} onClear={() => set({ tag: undefined })} />;
 }

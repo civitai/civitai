@@ -9,15 +9,13 @@ import {
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { AppDetailsModal } from '~/components/Apps/AppDetailsModal';
-import {
-  CATEGORY_ICONS,
-  FALLBACK_CATEGORY_ICON,
-} from '~/components/Apps/marketplaceCategoryIcons';
+import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
   isMarketplaceCategory,
-  MARKETPLACE_CATEGORY_LABELS,
+  marketplaceCategoryLabel,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
@@ -61,15 +59,6 @@ export interface AppBlockCardProps {
    * track recents are unaffected.
    */
   onRecentOpen?: (block: AvailableBlock) => void;
-}
-
-/**
- * Maps a stored category value to its display label. Falls back to the raw
- * value for an unrecognised category (soft contract — adding a category is a
- * one-line const edit, and an older client won't crash on a newer category).
- */
-function categoryLabel(category: string): string {
-  return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
 }
 
 /**
@@ -224,7 +213,7 @@ export function AppBlockCard({
                 size="sm"
                 leftSection={<IconExternalLink size={12} />}
               >
-                Standalone
+                {STANDALONE_KIND_LABEL}
               </Badge>
             )}
             {/* Mod-assigned marketplace category (+ its icon). NULL until a mod
@@ -240,7 +229,7 @@ export function AppBlockCard({
                     size="sm"
                     leftSection={<CategoryIcon size={12} />}
                   >
-                    {categoryLabel(block.category)}
+                    {marketplaceCategoryLabel(block.category)}
                   </Badge>
                 );
               })()}

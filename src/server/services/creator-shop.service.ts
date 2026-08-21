@@ -123,7 +123,7 @@ import type {
   UpdateCreatorShopSettingsInput,
 } from '~/server/schema/creator-shop.schema';
 import { type ModelVersionTerms } from '@civitai/buzz';
-import { getPaidAccess } from '~/server/services/paid-access.service';
+import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
 
 // Shop surfaces hide stickers until the flag is on. Rendering is never gated —
 // an owned sticker in a comment or DM shows for everyone regardless.
@@ -1368,8 +1368,15 @@ export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAcc
   const gatedIds = modelVersionIds.filter((id) => paidAccess[id]?.terms);
   if (!gatedIds.length) return prices;
 
+  // A public listing: no viewer, so everyone is quoted the buyer price — which means a live sale
+  // discounts it. Reading the gate rows directly would advertise the pre-sale number.
+  const monetization = await getViewerMonetization({
+    versions: gatedIds.map((id) => ({ id })),
+    viewer: {},
+  });
+
   for (const id of gatedIds) {
-    const terms = paidAccess[id]?.terms as ModelVersionTerms | undefined;
+    const terms = monetization[id]?.paidAccess?.terms as ModelVersionTerms | undefined;
     const price = terms?.download?.price ?? 0;
     if (price > 0) prices[id] = price;
   }

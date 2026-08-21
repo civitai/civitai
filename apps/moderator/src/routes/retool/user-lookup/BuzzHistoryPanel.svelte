@@ -4,9 +4,16 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
   import { fetchBuzzHistory, filterTransactions, typesIn, type BuzzTransaction } from './buzz-history';
 
   let { userId }: { userId: number } = $props();
+
+  // The counterparty lists rendered ten and headed themselves with the full count, so a moderator
+  // looking for who an account farmed Buzz with saw "(47)" over ten rows and nothing saying so.
+  const TOTALS_SHOWN = 10;
+  let paymentTotalsOpen = $state(false);
+  let receiptTotalsOpen = $state(false);
 
   // Retool's `After date` picker, as a window. Bounded because the table is 1.5B rows.
   const WINDOWS = [7, 30, 90, 180, 365];
@@ -52,17 +59,24 @@
   };
 </script>
 
-{#snippet totals(title: string, rows: BuzzTransaction[])}
+{#snippet totals(
+  title: string,
+  rows: BuzzTransaction[],
+  expanded: boolean,
+  onToggle: () => void,
+  capped: boolean
+)}
+  {@const agg = aggregate(rows)}
   <div class="min-w-0 flex-1">
     <h4 class="mb-2 text-sm font-semibold text-white">
       {title}
-      <span class="font-normal text-dark-2">({num(aggregate(rows).length)})</span>
+      <span class="font-normal text-dark-2">({num(agg.length)})</span>
     </h4>
     {#if rows.length === 0}
       <p class="text-sm text-dark-2">Nothing in this window.</p>
     {:else}
       <ul class="space-y-1 text-sm">
-        {#each aggregate(rows).slice(0, 10) as a (a.id)}
+        {#each expanded ? agg : agg.slice(0, TOTALS_SHOWN) as a (a.id)}
           <li class="flex flex-wrap items-baseline gap-x-2">
             <span class="tabular-nums text-dark-0">{num(a.total)}</span>
             {#if a.name}
@@ -76,6 +90,7 @@
           </li>
         {/each}
       </ul>
+      <ShowMoreButton total={agg.length} shown={TOTALS_SHOWN} {expanded} {capped} {onToggle} />
     {/if}
   </div>
 {/snippet}
@@ -210,11 +225,17 @@
       <div class="mt-6 flex flex-col gap-6 border-t border-dark-4 pt-4 lg:flex-row">
         {@render totals(
           'Paid to, by counterparty',
-          filterTransactions(result.payments, paymentType, paymentSearch)
+          filterTransactions(result.payments, paymentType, paymentSearch),
+          paymentTotalsOpen,
+          () => (paymentTotalsOpen = !paymentTotalsOpen),
+          result.truncated
         )}
         {@render totals(
           'Received from, by counterparty',
-          filterTransactions(result.receipts, receiptType, receiptSearch)
+          filterTransactions(result.receipts, receiptType, receiptSearch),
+          receiptTotalsOpen,
+          () => (receiptTotalsOpen = !receiptTotalsOpen),
+          result.truncated
         )}
       </div>
     {/if}

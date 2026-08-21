@@ -137,6 +137,8 @@ export type PaidAccessRow = {
   /** Timed-window length in days; null = permanent. Materialized into endsAt at publish. */
   timeframeDays?: number | null;
   terms: PaidAccessTerms;
+  /** Scheduled sales covering this entity — windows only, never a resolved price. See discountedTerms. */
+  sales?: ModelVersionSaleWindow[];
 };
 
 /**
@@ -251,4 +253,208 @@ export function migrateTermsForUsageControl(
       trialLimit: generation?.trialLimit ?? 0,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled sales (CU 868ktk1ku)
+// ---------------------------------------------------------------------------
+
+export type SaleDiscountKind = 'Fixed' | 'Percent';
+
+/** One scheduled discount over a version. Windows only — an effective price is never stored. */
+export type ModelVersionSaleWindow = {
+  id: number;
+  discountType: SaleDiscountKind;
+  /** Buzz for Fixed, whole percent for Percent. */
+  discountAmount: number;
+  startsAt: Date;
+  endsAt: Date;
+  canceledAt?: Date | null;
+};
+
+/**
+ * Sale-days a tier may have discounted per month. Shared for the same reason the caps above are: Creator
+ * Studio authors sales and the main app prices them, and a limit only one of them knows is not a limit.
+ */
+export const SALE_DAYS_BY_TIER: Record<string, number> = {
+  free: 3,
+  // Legacy paid tier — allowances match bronze.
+  founder: 7,
+  bronze: 7,
+  silver: 14,
+  gold: 30,
+};
+
+/** No sale at all below this creator score, on every tier — a paid membership does not buy past it. */
+export const MIN_CREATOR_SCORE_FOR_SALE = 10_000;
+
+/** How far ahead a sale may be scheduled, so next month's promo can be prepared from the back half of this one. */
+export const MAX_SALE_LEAD_DAYS = 14;
+
+/**
+ * KeyValue row both apps read the sale limits from, so a limit can move without a deploy and a pricing page
+ * can state it without hard-coding it. The tables above are the defaults when the row is absent or partial.
+ */
+export const SALE_LIMITS_KEY = 'sale-limits';
+
+export type SaleLimitOverrides = {
+  saleDaysByTier?: Record<string, number>;
+  minCreatorScore?: number;
+  maxLeadDays?: number;
+};
+
+/**
+ * Sale-days a tier gets. An unknown or lapsed tier gets the FREE allowance rather than 0, as with access
+ * caps — a lapse must not retroactively invalidate a scheduled sale.
+ */
+export function maxSaleDays(
+  tier: string | null | undefined,
+  overrides?: SaleLimitOverrides
+): number {
+  const table = { ...SALE_DAYS_BY_TIER, ...(overrides?.saleDaysByTier ?? {}) };
+  return (tier ? table[tier] : undefined) ?? table.free;
+}
+
+export const minCreatorScoreForSale = (overrides?: SaleLimitOverrides): number =>
+  overrides?.minCreatorScore ?? MIN_CREATOR_SCORE_FOR_SALE;
+
+export const maxSaleLeadDays = (overrides?: SaleLimitOverrides): number =>
+  overrides?.maxLeadDays ?? MAX_SALE_LEAD_DAYS;
+
+/** Live at `now`: started, not yet ended, not cancelled before this moment. */
+export const isSaleActive = (sale: ModelVersionSaleWindow, now: Date = new Date()): boolean =>
+  sale.startsAt <= now && sale.endsAt > now && (sale.canceledAt == null || sale.canceledAt > now);
+
+/**
+ * What one sale takes off a price. `Math.min(price, off)` is what keeps a fixed discount from making a
+ * price negative; the outer `Math.max(0, …)` floors it at free.
+ *
+ * Percent is FLOORED, which rounds the leftover in the seller's favour — 33% of 33 takes 10 off, not 11,
+ * so the buyer pays 23. That is deliberate (an integer currency has to break the tie somewhere and the
+ * creator is the one being paid), but it is the opposite of what "in the buyer's favour" would mean, so
+ * do not switch this to Math.round on the assumption it is a wash.
+ */
+export function saleDiscountFor(price: number, sale: ModelVersionSaleWindow): number {
+  if (price <= 0) return 0;
+  const off =
+    sale.discountType === 'Percent'
+      ? Math.floor((price * sale.discountAmount) / 100)
+      : sale.discountAmount;
+  return Math.max(0, Math.min(price, off));
+}
+
+/**
+ * The sale a buyer should get at `now`: the one that takes the most off. Sales may overlap — a sale
+ * crossing a month boundary meets the next month's, and both spent their own budget — so the deepest
+ * discount wins rather than whichever row came back first. Percent and fixed are compared at a price,
+ * not against each other, because 20% and 200 Buzz have no order until you know what they apply to.
+ */
+export function bestSaleFor(
+  price: number,
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  now: Date = new Date()
+): ModelVersionSaleWindow | undefined {
+  let best: ModelVersionSaleWindow | undefined;
+  let bestOff = 0;
+  for (const sale of sales ?? []) {
+    if (!isSaleActive(sale, now)) continue;
+    const off = saleDiscountFor(price, sale);
+    if (off > bestOff) {
+      best = sale;
+      bestOff = off;
+    }
+  }
+  return best;
+}
+
+/** Buzz a sale can never take a purchase below. */
+export const MIN_SALE_PRICE = 1;
+
+/**
+ * One price with the best active sale applied. The charge and every display path call THIS — the repo has
+ * already paid for the alternative once (see computePackAmountDue: "the button subtracted a discount the
+ * server never applied"), and two implementations of the same arithmetic had already diverged here on the
+ * floor before a review caught it.
+ *
+ * Floors at 1, not 0: a zero-Buzz purchase writes no ledger row, and the 30-day refund path reads amounts
+ * back from the ledger, so a free purchase would be unrefundable and invisible to reporting.
+ */
+export function discountedPrice(
+  price: number,
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  now: Date = new Date()
+): number {
+  const sale = bestSaleFor(price, sales, now);
+  if (!sale) return price;
+  return Math.max(MIN_SALE_PRICE, price - saleDiscountFor(price, sale));
+}
+
+/**
+ * Terms with any active sale applied — what a buyer pays. Compose OVER cappedTerms, never under: the tier
+ * ceiling decides what the creator may charge, and the sale comes off what the buyer would actually have
+ * been billed. The other order lets the cap silently eat the discount (a lapsed gold creator stored at 5000
+ * is billed 500; 20% off must be 400, not 4000 clamped back to 500).
+ *
+ * Applies to BOTH chargeable prices. A generation tier with no price of its own falls back to the download
+ * price, which is discounted here already, so it follows automatically.
+ */
+export function discountedTerms(
+  terms: ModelVersionTerms,
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  now: Date = new Date()
+): ModelVersionTerms {
+  if (!sales?.length) return terms;
+  const paidGen = paidGenerationGrant(terms);
+  const discount = (price: number) => discountedPrice(price, sales, now);
+  return {
+    ...terms,
+    ...(terms.download
+      ? { download: { ...terms.download, price: discount(terms.download.price) } }
+      : {}),
+    ...(paidGen?.price != null
+      ? { generation: { ...paidGen, price: discount(paidGen.price) } }
+      : {}),
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whole days a sale takes out of the budget: its scheduled length, shortened to where it was actually
+ * cancelled. A sale reserves its full window when scheduled and RETURNS the untaken tail if it is cancelled
+ * or cut short — cancel before it starts and it costs nothing. Without that return, "you may always cut a
+ * sale short" would cost the creator exactly as much as running it in full, and the permission would be
+ * worth nothing. Rounded up, so a run of half-day sales can't slice past the budget.
+ */
+export function saleDaysCharged(sale: ModelVersionSaleWindow): number {
+  const end =
+    sale.canceledAt != null && sale.canceledAt < sale.endsAt ? sale.canceledAt : sale.endsAt;
+  const ms = end.getTime() - sale.startsAt.getTime();
+  return ms <= 0 ? 0 : Math.ceil(ms / DAY_MS);
+}
+
+/**
+ * Sale-days a creator has spent in the month a sale STARTS in. Counting by start month is what lets a sale
+ * cross a month boundary without costing twice — the alternative refuses a sale for reaching into a month
+ * whose budget is untouched, which reads as a bug to the creator.
+ */
+export function saleDaysUsed(
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  month: Date
+): number {
+  const year = month.getUTCFullYear();
+  const mon = month.getUTCMonth();
+  return (sales ?? [])
+    .filter((s) => s.startsAt.getUTCFullYear() === year && s.startsAt.getUTCMonth() === mon)
+    .reduce((total, s) => total + saleDaysCharged(s), 0);
+}
+
+/** Sale-days left in `month` for a tier. Never negative — a tier downgrade must not read as debt. */
+export function remainingSaleDays(
+  tier: string | null | undefined,
+  sales: ModelVersionSaleWindow[] | undefined | null,
+  month: Date,
+  overrides?: SaleLimitOverrides
+): number {
+  return Math.max(0, maxSaleDays(tier, overrides) - saleDaysUsed(sales, month));
 }

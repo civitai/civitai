@@ -10,6 +10,7 @@
     reportReasonLabel,
     reportStatusVariant,
     reportStatuses,
+    reportActionPath,
   } from '$lib/reports';
   import { fetchUserReports, type ReportRow } from './user-reports';
   import ListCard from './ListCard.svelte';
@@ -121,7 +122,8 @@
 {#snippet reportList(rows: ReportRow[], limit: number, showReporter: boolean)}
   <ul class="space-y-2 text-sm">
     {#each rows.slice(0, limit) as r (r.id)}
-      {@const url = entityUrl(civitaiUrl, r.entityType, r.entityId)}
+      {@const url = entityUrl(civitaiUrl, r.type, r.entityId)}
+      {@const actionPath = reportActionPath(r.type, r.id)}
       <li>
         <div class="flex flex-wrap items-baseline gap-x-2">
           <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
@@ -151,6 +153,7 @@
               </a>
             </span>
           {/if}
+          <a href={actionPath} class={LINK_CLASS}>open in queue</a>
           {#if r.statusSetBy}<span>handled by {r.statusSetBy}</span>{/if}
           {#if r.previouslyReviewedCount}
             <span>reviewed {r.previouslyReviewedCount}× before</span>

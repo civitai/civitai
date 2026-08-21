@@ -75,6 +75,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: vi.fn(),
   getPublicPaidAccessForModelVersions: vi.fn().mockResolvedValue({}),
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/creator-program.service', () => ({
   getValidCreatorMembershipMap: vi.fn().mockResolvedValue(new Map()),
