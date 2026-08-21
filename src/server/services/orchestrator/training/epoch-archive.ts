@@ -8,11 +8,14 @@ import {
 } from '~/server/services/orchestrator/blobArchive';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
+import type { TrainingRunNameParts } from '~/shared/utils/training-file-names';
 import {
   trainingEpochModelFileName,
   trainingEpochSampleFileName,
   trainingRunArchiveName,
 } from '~/shared/utils/training-file-names';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import { trainingArchitectureKey } from '~/utils/training/run-summary';
 
 type NormalizedEpoch = { epochNumber: number; modelUrl: string; sampleImages: string[] };
 
@@ -56,18 +59,16 @@ export function buildEpochArchiveEntries({
   modelName,
   versionName,
   versionId,
+  architecture,
   maxEntries = MAX_BLOB_ARCHIVE_ENTRIES,
-}: {
+}: TrainingRunNameParts & {
   trainingResults: TrainingResults;
-  modelName: string;
-  versionName: string;
-  versionId: number;
   maxEntries?: number;
 }): TrainingEpochArchiveEntries {
   const epochs = [...normalizeEpochs(trainingResults)].sort(
     (a, b) => a.epochNumber - b.epochNumber
   );
-  const run = { modelName, versionName, versionId };
+  const run = { modelName, versionName, versionId, architecture };
   const candidates: Array<{ url: string; fileName: (blobId: string) => string }> = [];
   for (const epoch of epochs) {
     candidates.push({
@@ -128,6 +129,7 @@ export async function getTrainingEpochArchive({
     select: {
       id: true,
       name: true,
+      trainingDetails: true,
       model: { select: { userId: true, name: true } },
       files: { select: { metadata: true }, where: { type: 'Training Data' } },
     },
@@ -145,6 +147,9 @@ export async function getTrainingEpochArchive({
     modelName: modelVersion.model.name,
     versionName: modelVersion.name,
     versionId: modelVersion.id,
+    architecture: trainingArchitectureKey(
+      modelVersion.trainingDetails as TrainingDetailsObj | null
+    ),
   };
   const { entries, unresolvedCount, cappedCount } = buildEpochArchiveEntries({
     trainingResults,

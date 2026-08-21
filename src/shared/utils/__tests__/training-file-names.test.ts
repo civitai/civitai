@@ -8,6 +8,29 @@ import {
 const MODEL = 'My Cool Model!';
 
 describe('training file names', () => {
+  it('includes the architecture so multi-training outputs are self-describing', () => {
+    expect(
+      trainingEpochModelFileName({
+        modelName: MODEL,
+        versionName: 'V1',
+        versionId: 401,
+        architecture: 'sdxl',
+        epochNumber: 6,
+      })
+    ).toBe('My_Cool_Model__sdxl_V1-401_epoch_6.safetensors');
+  });
+
+  it('omits the architecture segment for runs that predate it', () => {
+    expect(
+      trainingEpochModelFileName({
+        modelName: MODEL,
+        versionName: 'V1',
+        versionId: 401,
+        epochNumber: 6,
+      })
+    ).toBe('My_Cool_Model__V1-401_epoch_6.safetensors');
+  });
+
   it('distinguishes the same epoch number across two runs of one model', () => {
     const first = trainingEpochModelFileName({
       modelName: MODEL,
@@ -40,6 +63,7 @@ describe('training file names', () => {
         modelName: 'M'.repeat(664),
         versionName: 'V'.repeat(296),
         versionId: 4029135,
+        architecture: 'A'.repeat(64),
         epochNumber: 100,
         sampleNumber: 10,
       },
@@ -60,6 +84,20 @@ describe('training file names', () => {
     expect(trainingEpochModelFileName({ ...args, versionId: 401 })).not.toBe(
       trainingEpochModelFileName({ ...args, versionId: 402 })
     );
+  });
+
+  // These names land in a Content-Disposition header, and `architecture` comes from an unvalidated
+  // cast of the trainingDetails JSON.
+  it('strips header-breaking characters from every user-controlled part', () => {
+    const name = trainingEpochModelFileName({
+      modelName: 'evil"\r\nX-Injected: 1',
+      versionName: 'v\n1',
+      versionId: 401,
+      architecture: 'sd\r\nxl"',
+      epochNumber: 6,
+    });
+
+    expect(name).not.toMatch(/[\r\n"]/);
   });
 
   it('still produces a usable name when the version name sanitizes away', () => {

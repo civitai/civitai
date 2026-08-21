@@ -36,6 +36,7 @@ import type {
 } from '~/server/schema/training.schema';
 import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -235,6 +236,9 @@ export const moveAsset = async ({
 }: MoveAssetInput & { userId: number }) => {
   // Check if it's a blob URL (new format)
   if (blobUrlRegex.test(url)) {
+    // blobUrlRegex matches a path, so it says nothing about which host answers. This URL is
+    // fetched and its body stored under our own bucket — see isTrustedOrchestratorUrl.
+    if (!isTrustedOrchestratorUrl(url)) throw throwBadRequestError('Invalid asset URL');
     return moveAssetFromBlob({ url, modelVersionId });
   }
 

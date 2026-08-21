@@ -49,6 +49,8 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { getEpochJobAndFileName } from '~/server/utils/model-helpers';
 import { trainingEpochModelFileName } from '~/shared/utils/training-file-names';
+import { TrainingRunSummary } from '~/components/Training/TrainingRunSummary/TrainingRunSummary';
+import { trainingArchitectureKey } from '~/utils/training/run-summary';
 import { epochsCompletedForRun } from '~/shared/utils/training-epochs';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
@@ -86,6 +88,7 @@ const EpochRow = ({
   isVideo,
   modelName,
   versionName,
+  architecture,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
   epochIndex: number;
@@ -106,6 +109,7 @@ const EpochRow = ({
   isVideo: boolean;
   modelName: string;
   versionName: string;
+  architecture?: string | null;
 }) => {
   const currentUser = useCurrentUser();
   // On small containers the 4 labeled actions overflow the card, so collapse the
@@ -121,6 +125,7 @@ const EpochRow = ({
       modelName,
       versionName,
       versionId: modelVersionId,
+      architecture,
       epochNumber: epoch.epochNumber,
     });
     document.body.appendChild(link);
@@ -515,6 +520,7 @@ export default function TrainingSelectFile({
   const [continuingFrom, setContinuingFrom] = useState<number | undefined>();
 
   const thisTrainingDetails = modelVersion.trainingDetails as TrainingDetailsObj | undefined;
+  const architecture = trainingArchitectureKey(thisTrainingDetails);
   const trainingEnded =
     modelVersion.trainingStatus === TrainingStatus.InReview ||
     modelVersion.trainingStatus === TrainingStatus.Approved ||
@@ -827,6 +833,11 @@ export default function TrainingSelectFile({
 
   return (
     <Stack>
+      <TrainingRunSummary
+        modelName={model.name}
+        versionName={modelVersion.name}
+        trainingDetails={thisTrainingDetails}
+      />
       {showBlockingError ? (
         <Stack p="xl" align="center">
           <IconAlertCircle size={52} />
@@ -978,6 +989,7 @@ export default function TrainingSelectFile({
             isVideo={isVideo}
             modelName={model.name}
             versionName={modelVersion.name}
+            architecture={architecture}
           />
           {epochs.length > 1 && (
             <>
@@ -1009,6 +1021,7 @@ export default function TrainingSelectFile({
                   isVideo={isVideo}
                   modelName={model.name}
                   versionName={modelVersion.name}
+                  architecture={architecture}
                 />
               ))}
             </>

@@ -12,6 +12,7 @@
  */
 const MODEL_NAME_MAX = 80;
 const VERSION_NAME_MAX = 40;
+const ARCHITECTURE_MAX = 20;
 
 function sanitize(value: string, maxLength: number) {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, maxLength);
@@ -24,35 +25,32 @@ function versionScope({ versionName, versionId }: { versionName: string; version
   return name ? `${name}-${versionId}` : `${versionId}`;
 }
 
+export type TrainingRunNameParts = {
+  modelName: string;
+  versionName: string;
+  versionId: number;
+  /** Short base-model key from `trainingArchitectureKey`, e.g. `pony`, `krea2`. Absent on older runs. */
+  architecture?: string | null;
+};
+
 export function trainingRunFilePrefix({
   modelName,
   versionName,
   versionId,
-}: {
-  modelName: string;
-  versionName: string;
-  versionId: number;
-}) {
-  return `${sanitize(modelName, MODEL_NAME_MAX)}_${versionScope({ versionName, versionId })}`;
+  architecture,
+}: TrainingRunNameParts) {
+  const arch = architecture ? sanitize(architecture, ARCHITECTURE_MAX).replace(/^_+|_+$/g, '') : '';
+  return [sanitize(modelName, MODEL_NAME_MAX), arch, versionScope({ versionName, versionId })]
+    .filter(Boolean)
+    .join('_');
 }
 
-export function trainingEpochModelFileName(args: {
-  modelName: string;
-  versionName: string;
-  versionId: number;
-  epochNumber: number;
-}) {
+export function trainingEpochModelFileName(args: TrainingRunNameParts & { epochNumber: number }) {
   return `${trainingRunFilePrefix(args)}_epoch_${args.epochNumber}.safetensors`;
 }
 
 export function trainingEpochSampleFileName(
-  args: {
-    modelName: string;
-    versionName: string;
-    versionId: number;
-    epochNumber: number;
-    sampleNumber: number;
-  },
+  args: TrainingRunNameParts & { epochNumber: number; sampleNumber: number },
   extension: string
 ) {
   return `${trainingRunFilePrefix(args)}_epoch_${args.epochNumber}_sample_${
@@ -60,10 +58,6 @@ export function trainingEpochSampleFileName(
   }${extension}`;
 }
 
-export function trainingRunArchiveName(args: {
-  modelName: string;
-  versionName: string;
-  versionId: number;
-}) {
+export function trainingRunArchiveName(args: TrainingRunNameParts) {
   return `${trainingRunFilePrefix(args)}_training.zip`;
 }
