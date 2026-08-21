@@ -6,8 +6,14 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
+  import {
+    BLOCKLIST_TYPES,
+    BLOCKLIST_DESCRIPTIONS,
+    humanizeBlocklistType,
+    visibleBlocklistItems,
+  } from '$lib/blocklist';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
@@ -15,38 +21,44 @@
 
   let mode = $state<'add' | 'remove'>('add');
   let text = $state('');
+  let filter = $state('');
+
+  // EmailDomain is 8295 entries in production. Rendering the whole list is both unusable and
+  // enough DOM to stall the tab, so the list is filtered first and then capped.
+  const CHIP_LIMIT = 200;
 
   // Keyed on the URL — the tab is `?type=`. Depending on `data` instead meant every successful add or
-  // remove (which invalidates) also forced `mode` back to 'add', so a moderator working in Remove mode
-  // was silently returned to Add and their next clicks staged nothing.
+  // remove (which invalidates) also forced `mode` back to 'add', so a moderator part-way through a
+  // bulk removal was silently returned to Add.
   const subject = $derived(page.url.search);
   $effect(() => {
     subject;
     untrack(() => {
       text = '';
       mode = 'add';
+      filter = '';
     });
   });
 
   const sortedItems = $derived([...data.blocklist.data].sort());
+  const shown = $derived(visibleBlocklistItems(sortedItems, filter, CHIP_LIMIT));
+  const matches = $derived(shown.matches);
+  const visibleItems = $derived(shown.visible);
 
   function setMode(next: 'add' | 'remove') {
     mode = next;
     text = '';
   }
 
-  function stageForRemoval(item: string) {
-    if (mode !== 'remove') return;
-    const current = text
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    if (!current.includes(item)) text = [...current, item].join(', ');
-  }
-
   const submit: SubmitFunction = () => async ({ result, update }) => {
     if (result.type === 'success') text = '';
     await update(); // re-runs load → fresh blocklist (and the shared Redis cache is already updated)
+  };
+
+  // Deliberately does NOT clear `text`: a chip is its own form, so wiping the textarea would throw
+  // away a bulk edit the moderator is part-way through typing.
+  const submitChip: SubmitFunction = () => async ({ update }) => {
+    await update();
   };
 </script>
 
@@ -117,21 +129,38 @@
   {:else}
     <div class="flex flex-col gap-2">
       <span class="text-sm font-medium">{humanizeBlocklistType(data.type)} ({sortedItems.length})</span>
-      <div class="flex flex-wrap gap-2">
-        {#each sortedItems as item (item)}
-          <button
-            type="button"
-            disabled={mode !== 'remove'}
-            onclick={() => stageForRemoval(item)}
-            class="rounded-md bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border {mode ===
-            'remove'
-              ? 'cursor-pointer hover:bg-red-500/15 hover:text-red-300'
-              : 'cursor-default'}"
-          >
-            {item}
-          </button>
-        {/each}
-      </div>
+      <Input bind:value={filter} placeholder="Filter entries" />
+      {#if matches.length === 0}
+        <p class="text-sm text-muted-foreground">No entry contains "{filter.trim()}".</p>
+      {:else}
+        <div class="flex flex-wrap gap-2">
+          {#each visibleItems as item (item)}
+            <span
+              class="flex items-center gap-1 rounded-md bg-muted py-1 pl-3 pr-1 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border"
+            >
+              {item}
+              <form method="POST" action="?/remove" use:enhance={submitChip} class="flex">
+                <input type="hidden" name="id" value={data.blocklist.id} />
+                <input type="hidden" name="blocklist" value={item} />
+                <button
+                  type="submit"
+                  aria-label="Remove {item}"
+                  title="Remove {item}"
+                  class="rounded px-1 leading-none text-muted-foreground hover:bg-red-500/15 hover:text-red-300"
+                >
+                  &times;
+                </button>
+              </form>
+            </span>
+          {/each}
+        </div>
+        {#if matches.length > visibleItems.length}
+          <p class="text-xs text-muted-foreground">
+            Showing {visibleItems.length} of {matches.length} matches. Narrow the filter to reach the
+            rest.
+          </p>
+        {/if}
+      {/if}
     </div>
   {/if}
 </div>
