@@ -169,7 +169,6 @@ export function StickerPlacementBar({
           <StickerCountChip
             count={total}
             revealed={revealed}
-            showLabel
             tooltip={revealed ? 'Hide stickers on all images' : 'Show stickers on all images'}
             onClick={toggle}
             // Revealed reads as `hasReacted`, so the toggle's on state borrows
@@ -248,6 +247,21 @@ export function StickerPlacementBar({
                   ...buttonStyling?.('BuzzTip')?.style,
                   ...(inviting || freeLabel ? inviteStyle : null),
                 }}
+                // 🔴 Two fixes, one cause: an INLINE background.
+                //
+                // `Button.Group` squares the corners between its children and
+                // leaves the outer ones alone — but this is the group's last
+                // child AND `Popover.Target` clones it, so the rounding it
+                // should inherit from being last is stated here instead. That
+                // is the outside edge of the fused control; square there reads
+                // as a rendering fault.
+                //
+                // And an inline background beats every CSS `:hover` Mantine
+                // ships, which is why this row went inert the moment these
+                // buttons started carrying the invite tint. A filter has no
+                // background of its own to be overridden, so it works over
+                // whatever styling the row hands us.
+                className="rounded-r-full transition-[filter] duration-150 hover:brightness-110"
               >
                 <IconPlus size={16} stroke={2.5} />
                 {/* Only where the viewer can actually take it. The old label

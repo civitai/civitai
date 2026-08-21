@@ -286,7 +286,9 @@ export function freeHintText(space?: FreeCapacity, standing?: FreeStanding) {
 
   const count = Math.min(space?.freeSlotsRemaining ?? 0, standing?.remaining ?? 0);
 
-  return count === 1 ? 'You have a free sticker today' : `You have ${count} free stickers today`;
+  // A label, not a sentence. It sits on a chip beside a button, where "You have
+  // a free sticker today" is three words of throat-clearing before the noun.
+  return count === 1 ? 'Daily free sticker' : `${count} daily free stickers`;
 }
 
 /**

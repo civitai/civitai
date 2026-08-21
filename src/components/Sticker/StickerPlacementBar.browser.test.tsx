@@ -395,7 +395,7 @@ describe('StickerPlacementBar — free slots', () => {
     await renderBar();
 
     // No hover anywhere in this test. That is the point of it.
-    await expect.element(page.getByText('You have a free sticker today')).toBeInTheDocument();
+    await expect.element(page.getByText('Daily free sticker')).toBeInTheDocument();
   });
 
   test.each([
@@ -413,7 +413,7 @@ describe('StickerPlacementBar — free slots', () => {
 
     // A popover that appears to tell you what you cannot have is an
     // interruption on somebody else's image.
-    expect(page.getByText(/You have/).elements()).toHaveLength(0);
+    expect(page.getByText(/free sticker/i).elements()).toHaveLength(0);
     // The button is still there and still opens the tray, which is where the
     // reason lives now.
     expect(page.getByRole('button', { name: /^Place a sticker/ }).elements()).toHaveLength(1);
@@ -429,12 +429,12 @@ describe('StickerPlacementBar — free slots', () => {
     await renderBar();
 
     await page.getByRole('button', { name: 'Dismiss' }).click();
-    await expect.element(page.getByText('You have a free sticker today')).not.toBeInTheDocument();
+    await expect.element(page.getByText('Daily free sticker')).not.toBeInTheDocument();
 
     // And it does not come back on the next render, which is what "dismiss"
     // means to the person who pressed it.
     await renderBar();
-    expect(page.getByText('You have a free sticker today').elements()).toHaveLength(0);
+    expect(page.getByText('Daily free sticker').elements()).toHaveLength(0);
   });
 
   /**
@@ -452,7 +452,7 @@ describe('StickerPlacementBar — free slots', () => {
     });
     await renderBar();
 
-    await expect.element(page.getByText('You have a free sticker today')).toBeInTheDocument();
+    await expect.element(page.getByText('Daily free sticker')).toBeInTheDocument();
   });
 
   test('asks for the standing exactly once where the viewer can place', async () => {

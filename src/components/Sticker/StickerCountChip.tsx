@@ -26,11 +26,16 @@ export function useStickerInviteStyle() {
  * The sticker entry chip, shared by the image detail view and feed cards so the
  * empty state is written once rather than once per surface.
  *
- * A count of zero reads as an invitation rather than a fact: the word instead of
- * the number, under the place button's tint instead of the reaction row's. Only
- * the detail view ever passes zero — a card with no stickers renders nothing at
- * all, because a card offers no way to place one and would be advertising an
- * action it does not have.
+ * **The icon and the number, and nothing else.** The word "stickers" was the
+ * widest thing in a row that has to fit beside the reaction buttons on a phone,
+ * and the icon already says it. A count of zero is the icon alone, wearing the
+ * place button's tint instead of the reaction row's — an invitation rather than
+ * a fact. Only the detail view ever passes zero: a card with no stickers renders
+ * nothing at all, because a card offers no way to place one and would be
+ * advertising an action it does not have.
+ *
+ * The accessible name still spells it out. Losing a word to save space is a
+ * layout decision, and it must not reach a screen reader.
  *
  * Deliberately just the button: each surface wraps it in whatever its own row
  * needs — `Button.Group` beside the plus on the detail view, nothing on a card —
@@ -39,7 +44,6 @@ export function useStickerInviteStyle() {
 export function StickerCountChip({
   count,
   revealed,
-  showLabel,
   tooltip,
   ariaLabel,
   onClick,
@@ -48,8 +52,6 @@ export function StickerCountChip({
 }: {
   count: number;
   revealed: boolean;
-  /** Spell out "3 stickers" rather than "3", where the row has room for it. */
-  showLabel?: boolean;
   /** Omit for no tooltip at all — see the bar, which now says nothing on hover. */
   tooltip?: string;
   ariaLabel?: string;
@@ -78,19 +80,35 @@ export function StickerCountChip({
       variant={empty || revealed ? 'light' : 'subtle'}
       color={empty ? 'yellow' : 'gray'}
       onClick={onClick}
-      aria-label={ariaLabel}
-      leftSection={<IconSticker size={16} />}
+      // 🔴 The name has to survive the word being dropped from the face of the
+      // chip. Without this the accessible name falls back to the text content,
+      // which is now a bare numeral — "3" — or, at zero, nothing at all.
+      aria-label={
+        ariaLabel ?? (empty ? 'stickers' : `${count} ${count === 1 ? 'sticker' : 'stickers'}`)
+      }
       {...restButtonProps}
       style={{ ...providedStyle, ...(empty ? inviteStyle : null) }}
-      className={clsx(providedClassName, className)}
+      // Hover has to be a filter, not a colour: the row hands these buttons an
+      // inline background, and an inline style beats every CSS `:hover` rule
+      // Mantine ships — which is why the whole row stopped responding once the
+      // tint arrived.
+      className={clsx(
+        providedClassName,
+        className,
+        'transition-[filter] duration-150 hover:brightness-110'
+      )}
     >
-      <Text size="xs" fw={600}>
-        {empty
-          ? 'stickers'
-          : showLabel
-          ? `${count} ${count === 1 ? 'sticker' : 'stickers'}`
-          : count}
-      </Text>
+      {/* The icon sits in the body rather than in `leftSection`, which reserves
+          a gap beside itself — at zero there is nothing to the right of it and
+          the chip would carry a hole where the word used to be. */}
+      <IconSticker size={16} className={clsx(!empty && 'mr-1')} />
+      {/* No text at zero: the icon IS the invitation, and the tint says the
+          rest. A number only appears once there is one. */}
+      {!empty && (
+        <Text size="xs" fw={600}>
+          {count}
+        </Text>
+      )}
     </Button>
   );
 
