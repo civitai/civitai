@@ -157,6 +157,10 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/comics-review', label: 'Comics Review' },
+  // One grant covers the section. Its detail view (`/abuse/<runId>`) resolves here by prefix rather
+  // than being listed: a run and its findings are one thing, and granting the list without the rows
+  // would show a moderator a count they cannot open.
+  { path: '/abuse', label: 'Abuse Detection' },
   { path: '/blocklists', label: 'Blocklists' },
   // One grant covers the whole lab. Its sub-pages (labels, runs, docs) resolve here by prefix rather than
   // being listed: they are steps of one loop, and granting a reviewer the queue but not the run history

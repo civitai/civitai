@@ -1,6 +1,7 @@
 import type { z } from 'zod';
-import { MOD_ACTION, imageModerateInput } from '@civitai/moderation';
+import { MOD_ACTION, abuseReportInput, imageModerateInput } from '@civitai/moderation';
 import { acceptImage, blockImage } from '../image-moderation.service';
+import { recordAbuseRun } from '../abuse-detection.service';
 
 // The cross-app moderator-action registry. Each entry maps an action the main app invokes over
 // `/api/mod/[action]` to a spoke handler. The input SCHEMA is the shared `@civitai/moderation` contract
@@ -31,6 +32,25 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
   },
 };
 
+/**
+ * Backs an automated detector reporting one run. Unlike every other entry here there is NO acting
+ * moderator: the caller is a scheduled job holding the shared token, and `WebhookEndpoint` never
+ * populates `locals.user`, so there is no identity to assert and none is asked for. The `userId` on
+ * each finding is the account the finding is ABOUT.
+ *
+ * Write-only from the producer's side — this stores the report and grants nothing. Nothing here
+ * excludes, mutes or bans; acting stays with the detector that already owns that credential, which
+ * is what keeps a compromised reporting path from becoming a moderation path.
+ */
+const abuseReport: ModAction<z.infer<typeof abuseReportInput>> = {
+  schema: abuseReportInput,
+  handler: async (input) => {
+    const { runId } = await recordAbuseRun(input);
+    return { runId, findings: input.findings.length };
+  },
+};
+
 export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.imageModerate]: imageModerate,
+  [MOD_ACTION.abuseReport]: abuseReport,
 };
