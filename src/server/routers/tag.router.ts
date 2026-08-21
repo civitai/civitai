@@ -13,7 +13,9 @@ import {
   getHomeExcludedTagsHandler,
 } from '~/server/controllers/tag.controller';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import type { GetTagsInput } from '~/server/schema/tag.schema';
 import {
   addTagVotesSchema,
   adjustTagsSchema,
@@ -41,7 +43,16 @@ export const tagRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getTagsInput.optional())
     .use(applyUserPreferences)
-    .use(cacheIt({ ttl: 60 }))
+    .use(
+      // applyUserPreferences injects four id lists; getTags reads only
+      // excludedTagIds. Hashing the other three cost up to 213ms of synchronous
+      // event-loop block per request for accounts with large hidden sets.
+      cacheIt<GetTagsInput & UserPreferencesInput>({
+        ttl: 60,
+        excludeKeys: ['excludedImageIds', 'excludedUserIds', 'excludedModelIds'],
+        varyBy: (ctx) => ({ adminTags: ctx.features.adminTags }),
+      })
+    )
     .query(getAllTagsHandler),
   getHomeExcluded: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

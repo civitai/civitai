@@ -1,11 +1,10 @@
 import * as z from 'zod';
 import { DomainColor } from '~/shared/utils/prisma/enums';
 
-// Stamped by `applyRequestDomainColor`, never sent by the client. It must live on
-// the INPUT rather than be read from ctx.req inside the service: `cacheIt` builds
-// its Redis key by hashing the input object only, so a domain resolved off the
-// request would leave one cache entry shared across colors and .red would serve
-// .com's boards.
+// Stamped by `applyRequestDomainColor`, never sent by the client. It has to reach
+// `cacheIt`'s key: a domain read off ctx.req inside the service would leave one
+// cache entry shared across colors, and .red would serve .com's boards. Carrying
+// it on the input is one way; `cacheIt`'s `varyBy` is the other.
 const domainColorEnum = z.enum(DomainColor);
 
 export type GetLeaderboardPositionsInput = z.infer<typeof getLeaderboardPositionsSchema>;
