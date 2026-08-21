@@ -1,54 +1,21 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import {
+  placementImageSelect,
+  publishedPlacementImageWhere,
+} from '~/server/selectors/placement-image.selector';
 import type { QueueImage } from '~/server/utils/queue-image';
 import { toQueueImage } from '~/server/utils/queue-image';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { StickerBookSettings } from '~/shared/utils/sticker-book';
+import { getStickerBalances } from '~/server/services/sticker.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
+import { PLACEMENT_OWNER_PAYOUT_KINDS } from '~/shared/utils/placement';
 import { stickerBookAccess } from '~/shared/utils/sticker-book';
 
 const SURFACE = 'sticker' as const;
 const TARGET_TYPE = 'image' as const;
-
-/**
- * A placement whose money actually moved to the owner.
- *
- * `toOwner` is the approval split; `feeToOwner` is the fee a decline leaves
- * behind. Both are Buzz the creator received for a sticker, which is the
- * question the total answers — and the decline fee is the one the creator is
- * least likely to be able to account for anywhere else.
- */
-const OWNER_PAYOUT_KINDS = ['toOwner', 'feeToOwner'];
-
-/** What one image looks like in either section. */
-const IMAGE_SELECT = {
-  id: true,
-  url: true,
-  name: true,
-  width: true,
-  height: true,
-  type: true,
-  metadata: true,
-  nsfwLevel: true,
-} as const;
-
-/**
- * The publish rules a sticker book obeys.
- *
- * The same set `getMyStickerPlacements` applies to somebody else's image, and
- * applied here to the profile owner's own work as well. A sticker book is a
- * browse surface, not a queue: nobody has to act on a row, so an image that is
- * unpublished, unscanned or taken down is simply not in it — for its owner
- * either, rather than the owner seeing a book their visitors do not.
- */
-const PUBLIC_IMAGE_FILTER = {
-  post: { publishedAt: { not: null } },
-  ingestion: 'Scanned',
-  tosViolation: false,
-  minor: false,
-  poi: false,
-} as const;
 
 /**
  * How many placement rows a section may consider before it stops.
@@ -91,8 +58,8 @@ async function viewableImages({
   if (!imageIds.length) return new Map<number, StickerBookImage>();
 
   const images = await dbRead.image.findMany({
-    where: { id: { in: [...new Set(imageIds)] }, ...PUBLIC_IMAGE_FILTER },
-    select: IMAGE_SELECT,
+    where: { id: { in: [...new Set(imageIds)] }, ...publishedPlacementImageWhere },
+    select: placementImageSelect,
   });
 
   const result = new Map<number, StickerBookImage>();
@@ -112,11 +79,14 @@ async function viewableImages({
  * One section of the book: images carrying approved sticker placements, one card
  * per IMAGE.
  *
- * Grouped in the database rather than in JS over a window of rows. The card
- * carries a count ("2 stickers"), and a count derived from whatever fitted in
- * the window goes wrong exactly on the images that got the most attention — and
- * grouping is also what stops one image appearing five times because five people
- * stickered it, which is the repetition Ellie objected to in the session.
+ * Grouped in the database rather than in JS over a window of rows: it is what
+ * stops one image appearing five times because five people stickered it, which
+ * is the repetition Ellie objected to in the session.
+ *
+ * No count comes back with it. The card's count chip reads the shared placement
+ * batch — which is also the reveal control — and a second count computed here
+ * would be filtered differently from the stickers actually drawn, so the badge
+ * could say 3 over an image wearing 4.
  *
  * Approved only, in both directions. A pending placement is a request the target
  * creator has not answered yet; it is visible to the two parties in the review
@@ -186,7 +156,6 @@ async function getPlacementSection({
   const groups = await dbRead.placement.groupBy({
     by: ['targetId'],
     where,
-    _count: { _all: true },
     _max: { createdAt: true },
     orderBy: { _max: { createdAt: 'desc' } },
     take: limit + 1,
@@ -237,9 +206,6 @@ async function getPlacementSection({
       {
         imageId: group.targetId,
         image,
-        // The group's count, so it is the number of placements rather than the
-        // number this page happened to be able to name.
-        placementCount: group._count._all,
         latestAt: group._max.createdAt,
         // Newest first, de-duplicated: one person stickering an image three
         // times is one name.
@@ -272,45 +238,13 @@ async function getEarnedBuzz(userId: number) {
     JOIN "Placement" p ON p.id = pt."placementId"
     WHERE p."ownerId" = ${userId}
       AND p."surface" = ${SURFACE}
-      AND pt."kind" = ANY(${OWNER_PAYOUT_KINDS}::text[])
+      AND pt."kind" = ANY(${[...PLACEMENT_OWNER_PAYOUT_KINDS]}::text[])
       AND pt."transactionId" IS NOT NULL
   `;
 
   return row?.earned ?? 0;
 }
 
-/**
- * The stickers a creator holds, newest acquisition first — the order the
- * placement tray uses, so the same collection reads the same way in both places.
- *
- * `remaining` is summed and `unlimited` decided the way `getStickerBalances`
- * does, because spending drains across holdings and a single NULL holding wins
- * outright. It is stripped before it leaves this module when the viewer is not
- * the owner.
- */
-async function getStickerHoldings(userId: number) {
-  return dbRead.$queryRaw<{ cosmeticId: number; remaining: number | null; unlimited: boolean }[]>`
-    SELECT
-      uc."cosmeticId",
-      SUM(uc."remaining")::int AS "remaining",
-      bool_or(uc."remaining" IS NULL) AS "unlimited"
-    FROM "UserCosmetic" uc
-    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-    WHERE uc."userId" = ${userId} AND c.type = 'Sticker'::"CosmeticType"
-    GROUP BY uc."cosmeticId"
-    ORDER BY MAX(uc."obtainedAt") DESC
-  `;
-}
-
-/**
- * One creator's sticker book, shaped for whoever is looking at it.
- *
- * 🔴 EVERY PRIVATE FIELD IS DECIDED HERE, NOT IN THE COMPONENT. The two toggles,
- * the moderator override and the owner-only quantities all resolve on the server
- * and the withheld halves are never serialised — a client that forgets a check
- * cannot leak what it was never sent, and "the tab hides it" is not a control
- * when the payload is a fetch away.
- */
 /**
  * Whose book this is, and what this viewer may have of it.
  *
@@ -436,7 +370,11 @@ export async function getStickerBook({
   const blockedIds = viewerId ? await getBlockedPairIds(viewerId) : [];
 
   const [holdings, placed, received, earnedBuzz] = await Promise.all([
-    access.canViewStickers ? getStickerHoldings(user.id) : Promise.resolve([]),
+    // Newest acquisition first — the order the placement tray presents the same
+    // collection in.
+    access.canViewStickers
+      ? getStickerBalances(user.id, { newestFirst: true })
+      : Promise.resolve([]),
     getPlacementSection({
       userId: user.id,
       side: 'placer',
@@ -460,11 +398,11 @@ export async function getStickerBook({
     userId: user.id,
     isOwner,
     access,
-    stickers: holdings.map(({ cosmeticId, remaining, unlimited }) => ({
+    stickers: holdings.map(({ cosmeticId, remaining }) => ({
       cosmeticId,
       // Absent, not zero and not null, for anyone but the owner: `null` already
       // means unlimited here, so a visitor must not be handed the field at all.
-      ...(access.canViewQuantities ? { remaining: unlimited ? null : remaining ?? 0 } : {}),
+      ...(access.canViewQuantities ? { remaining } : {}),
     })),
     // The row's items only. `hasMore` belongs to the drill-in page, which asks
     // for its own pages; on the tab the "View all" link is there either way.

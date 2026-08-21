@@ -1,4 +1,6 @@
+import type { Context } from '~/server/createContext';
 import {
+  allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -32,3 +34,29 @@ export function getServerBrowsingLevel({
   // Blue/red: honor the user's saved preference; fall back to public when nsfw is off.
   return user?.showNsfw && user.browsingLevel ? user.browsingLevel : publicBrowsingLevelsFlag;
 }
+
+/**
+ * What the viewer may see, with the SFW domain applied.
+ *
+ * The level itself is client-supplied, as it is for every image listing.
+ *
+ * ⚠️ A BACKSTOP, NOT THE CONTROL. `applyDomainFeature` (see `trpc.ts`) already
+ * clamps `input.browsingLevel` in place on every procedure, and clamps it
+ * HARDER — anonymous viewers get PG there, where this gives PG-13. This exists
+ * so a surface that shows content the host creator did not choose cannot inherit
+ * the host's own admissibility if that middleware is ever bypassed; it must
+ * never be read as the statement of the rule.
+ */
+export const viewerBrowsingLevel = (ctx: Context, requested: number) =>
+  ctx.features.isGreen ? requested & sfwBrowsingLevelsFlag : requested;
+
+/**
+ * What this domain may be SENT, as opposed to what the viewer asked for.
+ *
+ * The review queues carry no browsing level by design — an owner has to see what
+ * is waiting on them whatever their own settings say — which makes them the one
+ * path that hands an above-ceiling asset to a SFW client. Blur is not that
+ * control: it is built from the viewer's own level and never reads the domain's.
+ */
+export const domainServableLevels = (ctx: Context) =>
+  ctx.features.isGreen ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;

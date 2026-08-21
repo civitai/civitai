@@ -171,12 +171,12 @@ describe('getStickerBook — what leaves the server', () => {
     expect(earningsQueries).toHaveLength(0);
   });
 
-  it('counts placements from the group, not from the rows it could name', async () => {
-    // Two placements, one nameable row. A count taken from the rows would say 1
-    // — wrong exactly on the images that got the most attention.
+  it('returns one card per image, however many placements it carries', async () => {
+    // Two placements on one image. The section is a grid of images, not of
+    // placements — a repeat per sticker is the shape Ellie objected to.
     const book = await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
 
-    expect(book.received[0].placementCount).toBe(2);
+    expect(book.received).toHaveLength(1);
     expect(book.received[0].counterparts).toHaveLength(1);
   });
 
@@ -366,8 +366,8 @@ describe('getStickerBookSection — the drill-in page', () => {
     // page is empty and the walk is NOT over — deciding `hasMore` from what
     // survived the filter would end it here.
     placementGroupBy.mockResolvedValue([
-      { targetId: IMAGE, _count: { _all: 1 }, _max: { createdAt: new Date('2026-08-20') } },
-      { targetId: IMAGE + 1, _count: { _all: 1 }, _max: { createdAt: new Date('2026-08-19') } },
+      { targetId: IMAGE, _max: { createdAt: new Date('2026-08-20') } },
+      { targetId: IMAGE + 1, _max: { createdAt: new Date('2026-08-19') } },
     ]);
     imageFindMany.mockResolvedValue([]);
 

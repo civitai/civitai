@@ -129,7 +129,6 @@ export function StickerBookView({ username }: { username: string }) {
         title={placedCopy.title}
         emptyMessage={placedCopy.empty}
         items={data.placed}
-        countLabel={placedCopy.countLabel}
         viewAllHref={`${bookHref}?view=placer`}
       />
 
@@ -137,7 +136,6 @@ export function StickerBookView({ username }: { username: string }) {
         title={receivedCopy.title}
         emptyMessage={receivedCopy.empty}
         items={data.received}
-        countLabel={receivedCopy.countLabel}
         viewAllHref={`${bookHref}?view=owner`}
       />
 

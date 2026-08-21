@@ -21,15 +21,12 @@ export function stickerBookSectionCopy(
   side: StickerBookSide,
   { username, isOwner }: { username: string; isOwner: boolean }
 ) {
-  const countLabel = (count: number) => `${count} stickers`;
-
   if (side === 'placer')
     return {
       title: isOwner ? 'Images you stickered' : `Images ${username} stickered`,
       empty: isOwner
         ? "You haven't had a sticker accepted on anyone else's image yet."
         : 'Nothing here yet.',
-      countLabel,
     };
 
   return {
@@ -39,6 +36,5 @@ export function stickerBookSectionCopy(
     empty: isOwner
       ? 'Nobody has put a sticker on your work yet. Accepted placements show up here.'
       : 'Nothing here yet.',
-    countLabel,
   };
 }

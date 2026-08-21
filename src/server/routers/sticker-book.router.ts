@@ -4,7 +4,7 @@ import {
 } from '~/server/schema/sticker-book.schema';
 import { getStickerBook, getStickerBookSection } from '~/server/services/sticker-book.service';
 import { publicProcedure, router } from '~/server/trpc';
-import { domainServableLevels, viewerBrowsingLevel } from '~/server/utils/placement-levels';
+import { domainServableLevels, viewerBrowsingLevel } from '~/server/utils/browsing-level';
 
 export const stickerBookRouter = router({
   /**

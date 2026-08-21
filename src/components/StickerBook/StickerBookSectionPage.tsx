@@ -70,7 +70,7 @@ export function StickerBookSectionPage({
         </Title>
       </div>
 
-      <StickerBookGrid items={data.items} countLabel={copy.countLabel} />
+      <StickerBookGrid items={data.items} />
 
       {!data.items.length && (
         <Text size="sm" c="dimmed">

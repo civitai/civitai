@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isNonProductionDatabase, warnIfDatabaseEnvironmentUnset } from '~/env/database-target';
@@ -589,8 +589,17 @@ export async function purchaseStickerUses({
   return { cosmeticId, quantity, pricePerUse, amount, remaining };
 }
 
-/** Remaining balance per owned sticker; NULL entries are unlimited. */
-export async function getStickerBalances(userId: number) {
+/**
+ * Remaining balance per owned sticker; NULL entries are unlimited.
+ *
+ * `newestFirst` orders by the most recent acquisition, which is the order the
+ * placement tray and the sticker book present a collection in. It is an argument
+ * rather than a second query because everything else about the question — the
+ * SUM across holdings, the unlimited rule, the Sticker-only join — is what the
+ * next WHERE clause will be added to, and it must only be possible to add it
+ * once.
+ */
+export async function getStickerBalances(userId: number, { newestFirst = false } = {}) {
   // SUM, not MAX: spending drains across holdings, so the spendable balance is
   // the total. A NULL holding is unlimited and wins outright — bool_or gives
   // that in the same pass rather than a second query.
@@ -605,6 +614,7 @@ export async function getStickerBalances(userId: number) {
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     WHERE uc."userId" = ${userId} AND c.type = 'Sticker'::"CosmeticType"
     GROUP BY uc."cosmeticId"
+    ${newestFirst ? Prisma.sql`ORDER BY MAX(uc."obtainedAt") DESC` : Prisma.empty}
   `;
 
   return rows.map(({ cosmeticId, remaining, unlimited }) => ({
