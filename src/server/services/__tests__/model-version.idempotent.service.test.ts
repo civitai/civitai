@@ -158,6 +158,44 @@ describe('toggleModelVersionEngagement', () => {
       toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any })
     ).rejects.toThrow('db down');
   });
+
+  // 868kurkc7. `ModelVersionEngagementType` has exactly ONE member today, so a
+  // PK-addressed write here is not a bug yet — it becomes one the day a second value
+  // is added, silently, because nothing in the code says so. Pinned as a shape.
+  it.each(['deleteMany', 'updateMany'] as const)(
+    'issues no PK-addressed write (%s branch)',
+    async (branch) => {
+      mockDbWrite.modelVersionEngagement.findUnique.mockResolvedValueOnce({
+        type: branch === 'deleteMany' ? 'Notify' : 'Something',
+      });
+      mockDbWrite.modelVersionEngagement.deleteMany.mockResolvedValue({ count: 1 });
+      mockDbWrite.modelVersionEngagement.updateMany.mockResolvedValue({ count: 1 });
+
+      await toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any });
+
+      expect(mockDbWrite.modelVersionEngagement[branch]).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ userId: 1, modelVersionId: 2 }),
+        })
+      );
+      expect([
+        ...mockDbWrite.modelVersionEngagement.delete.mock.calls,
+        ...mockDbWrite.modelVersionEngagement.update.mock.calls,
+      ]).toEqual([]);
+    }
+  );
+
+  it('scopes each write by the type it READ', async () => {
+    mockDbWrite.modelVersionEngagement.findUnique.mockResolvedValueOnce({ type: 'Something' });
+    mockDbWrite.modelVersionEngagement.updateMany.mockResolvedValue({ count: 1 });
+
+    await toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any });
+
+    expect(mockDbWrite.modelVersionEngagement.updateMany).toHaveBeenCalledWith({
+      where: { userId: 1, modelVersionId: 2, type: 'Something' },
+      data: { type: 'Notify' },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

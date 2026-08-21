@@ -121,6 +121,9 @@ export function resolveCacheExpiry(
  * with the same `key` but different `lookupFn`s would otherwise hand each other's rows back during a
  * degraded fetch.
  */
+/** Seconds a write-through `update` holds its per-entry lock. Bounds one GET + one SET. */
+const UPDATE_LOCK_TTL = 5;
+
 export function createCacheBuilders(deps: CacheBuilderDeps) {
   const { redis, metrics, logFailOpen, logRefreshError, log, clearByPattern } = deps;
   const degradedIdInFlight = new Map<string, Promise<unknown>>();
@@ -545,12 +548,68 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
     }
 
+    /**
+     * Write-through: rewrite ONE cached entry from the delta the caller already
+     * knows, instead of re-deriving it from the origin. For a cache whose entry is a
+     * large per-user collection, `refresh` costs a full unbounded primary query per
+     * mutation; this costs a GET and a SET.
+     *
+     * Returns whether the entry was rewritten. FALSE means there was nothing here to
+     * correct — absent, a debounce or notFound marker, past its expiry, or another
+     * writer holds the entry — and the caller decides what that means. A caller that
+     * needs the entry to be right afterwards must fall back to `refresh`, since a
+     * missing entry would otherwise be repopulated by the next reader from the
+     * REPLICA, which is the one thing a just-written value cannot tolerate.
+     *
+     * `cachedAt` is carried over rather than reset, and the physical expiry is the
+     * remainder of the original: an entry maintained by deltas must still age out on
+     * its own schedule, or a drifted one never self-heals.
+     */
+    async function update(id: number, updater: (current: T) => T): Promise<boolean> {
+      const entryKey = `${key}:${id}` as RedisKeyTemplateCache;
+      // Two concurrent read-modify-writes on one entry lose one of the deltas, and a
+      // lost delta persists for the rest of the TTL. The loser reports false and
+      // takes the caller's fallback, which re-derives from the origin.
+      const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}:update` as RedisKeyTemplateCache;
+
+      try {
+        if (!(await redis.setNxKeepTtlWithEx(lockKey, '1', UPDATE_LOCK_TTL))) return false;
+      } catch (err) {
+        logFailOpen('write-degraded', `createCachedArray update lock [${key}]`, err, { key, id });
+        return false;
+      }
+
+      try {
+        const [current] = await redis.packed.mGet<T>([entryKey]);
+        const marker = current as AnyRecord | null;
+        if (!current || marker?.notFound || marker?.debounce || !marker?.cachedAt) return false;
+
+        const EX =
+          resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl) -
+          Math.floor((Date.now() - new Date(marker.cachedAt).getTime()) / 1000);
+        if (EX <= 0) return false;
+
+        const next = updater(current);
+        if (dontCacheFn?.(next)) return false;
+        await redis.packed.set(entryKey, { ...next, cachedAt: marker.cachedAt }, { EX });
+        // After the write, not before: a concurrent fetch between the two would
+        // otherwise refill L1 with the pre-update value and pin it for localTtl.
+        dropLocal([id]);
+        return true;
+      } catch (err) {
+        logFailOpen('write-degraded', `createCachedArray update [${key}]`, err, { key, id });
+        return false;
+      } finally {
+        await redis.del(lockKey).catch(() => undefined);
+      }
+    }
+
     async function flush() {
       localCache?.clear();
       await clearByPattern(`${key}:*`);
     }
 
-    return { fetch, bust: staleWhileRevalidate ? invalidate : bust, refresh, flush };
+    return { fetch, bust: staleWhileRevalidate ? invalidate : bust, refresh, update, flush };
   }
 
   function createCachedObject<T extends object>(lookupOptions: CachedLookupOptions<T>) {
@@ -578,6 +637,7 @@ export type CachedArray<T extends object> = {
   fetch(ids: number[]): Promise<T[]>;
   bust(id: number | number[], options?: { debounceTime?: number }): Promise<void>;
   refresh(id: number | number[]): Promise<void>;
+  update(id: number, updater: (current: T) => T): Promise<boolean>;
   flush(): Promise<void>;
 };
 export type CachedObject<T extends object> = Omit<CachedArray<T>, 'fetch'> & {

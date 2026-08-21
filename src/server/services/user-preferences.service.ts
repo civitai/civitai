@@ -1,6 +1,6 @@
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { userFollowsCache } from '~/server/redis/caches';
+import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
@@ -571,16 +571,26 @@ async function toggleHiddenTags({
     // if hidden === true, then I only need to create non-existing tagEngagements, no need to remove an engagements
     const toDelete = hidden ? [] : tagIds.filter((id) => existingHidden.includes(id));
 
+    // Both statements are scoped by the `type` each row was READ as, never by the
+    // (userId, tagId) key alone. `TagEngagement` holds one row per pair carrying one
+    // type, so an unqualified write lands on whatever occupies the row — including a
+    // Follow or Allow a sibling writer established between the read and here.
     if (toDelete.length) {
       await dbWrite.tagEngagement.deleteMany({
-        where: { userId, tagId: { in: toDelete } },
+        where: { userId, tagId: { in: toDelete }, type: 'Hide' },
       });
     }
     if (toUpdate.length) {
-      await dbWrite.tagEngagement.updateMany({
-        where: { userId, tagId: { in: toUpdate } },
-        data: { type: 'Hide' },
-      });
+      const observed = new Map(matchedTags.map((x) => [x.tagId, x.type]));
+      // At most two passes — `toUpdate` excludes the Hide rows, and the enum has
+      // three members.
+      for (const type of new Set(toUpdate.map((id) => observed.get(id)))) {
+        const ids = toUpdate.filter((id) => observed.get(id) === type);
+        await dbWrite.tagEngagement.updateMany({
+          where: { userId, tagId: { in: ids }, type },
+          data: { type: 'Hide' },
+        });
+      }
     }
     if (toCreate.length) {
       // skipDuplicates so a concurrent toggle that already inserted some of these
@@ -650,9 +660,16 @@ async function toggleHideModel({
   // already-hidden model deleted it — both the inverse of what was asked.
   const hiding = setTo ?? engagement?.type !== 'Hide';
 
+  // Every write below is scoped by the `type` the row was READ as, never by the PK
+  // alone. `ModelEngagement` holds one row per (user, model) carrying one of
+  // Favorite | Hide | Mute | Notify, so a PK-addressed write lands on whatever
+  // occupies the row — including a type a sibling writer established a millisecond
+  // ago, which is then gone. Unlike `UserEngagement` these four have no precedence
+  // order, so the guard is the type this call actually observed: a writer can only
+  // replace what it saw.
   if (!hiding) {
     if (engagement?.type === 'Hide')
-      await dbWrite.modelEngagement.delete({ where: { userId_modelId: { userId, modelId } } });
+      await dbWrite.modelEngagement.deleteMany({ where: { userId, modelId, type: 'Hide' } });
   } else if (!engagement)
     await dbWrite.modelEngagement
       .create({ data: { userId, modelId, type: 'Hide' } })
@@ -662,8 +679,8 @@ async function toggleHideModel({
         if (!isPrismaUniqueViolation(error)) throw error;
       });
   else if (engagement.type !== 'Hide')
-    await dbWrite.modelEngagement.update({
-      where: { userId_modelId: { userId, modelId } },
+    await dbWrite.modelEngagement.updateMany({
+      where: { userId, modelId, type: engagement.type },
       data: { type: 'Hide' },
     });
 
@@ -700,8 +717,8 @@ async function toggleHideModel3D({
 
   if (!hiding) {
     if (engagement?.type === 'Hide')
-      await dbWrite.model3DEngagement.delete({
-        where: { userId_model3dId: { userId, model3dId } },
+      await dbWrite.model3DEngagement.deleteMany({
+        where: { userId, model3dId, type: 'Hide' },
       });
   } else if (!engagement)
     await dbWrite.model3DEngagement
@@ -712,8 +729,8 @@ async function toggleHideModel3D({
         if (!isPrismaUniqueViolation(error)) throw error;
       });
   else if (engagement.type !== 'Hide')
-    await dbWrite.model3DEngagement.update({
-      where: { userId_model3dId: { userId, model3dId } },
+    await dbWrite.model3DEngagement.updateMany({
+      where: { userId, model3dId, type: engagement.type },
       data: { type: 'Hide' },
     });
 
@@ -751,11 +768,23 @@ async function toggleHideUser({
   // unqualified, it deleted whatever Follow or Block held the pair, and unfiltered
   // on intent it created a Hide row when asked to un-hide a pair that had none.
   let hidden = false;
-  if (hiding)
+  if (hiding) {
     hidden = await setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
-  else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
+    // Whether the Hide was claimed or a standing Block kept it out, the pair does
+    // not carry a Follow afterwards.
+    await setUserFollowCached({ userId, targetUserId, following: false });
+  } else {
+    const removed = await clearUserEngagement({
+      userId,
+      targetUserId,
+      type: UserEngagementType.Hide,
+    });
+    // Removing a Hide leaves the pair empty. Matching NOTHING means it holds
+    // something else — a Follow, possibly — and only the origin knows which.
+    if (removed) await setUserFollowCached({ userId, targetUserId, following: false });
+    else await userFollowsCache.refresh(userId);
+  }
 
-  await userFollowsCache.refresh(userId);
   await HiddenUsers.refreshCache({ userId });
 
   return {
@@ -855,7 +884,7 @@ async function toggleBlockUser({
   // resolved in the statement). `deleteMany` cannot raise P2025 on an
   // already-removed row, and its `type` filter makes "never delete a Follow or
   // a Hide" structural rather than a branch condition.
-  if (blocking)
+  if (blocking) {
     await dbWrite.userEngagement
       .upsert({
         where: { userId_targetUserId: { userId, targetUserId } },
@@ -874,9 +903,20 @@ async function toggleBlockUser({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Block });
+    // The pair carries a Block now, so it carries no Follow.
+    await setUserFollowCached({ userId, targetUserId, following: false });
+  } else {
+    const removed = await clearUserEngagement({
+      userId,
+      targetUserId,
+      type: UserEngagementType.Block,
+    });
+    // Same as the un-hide above: a removed Block leaves the pair empty, while
+    // matching nothing means something else holds it.
+    if (removed) await setUserFollowCached({ userId, targetUserId, following: false });
+    else await userFollowsCache.refresh(userId);
+  }
 
-  await userFollowsCache.refresh(userId);
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
 
@@ -907,10 +947,12 @@ async function toggleHideImage({
   });
   const hiding = setTo ?? engagement?.type !== 'Hide';
 
+  // Same shape as `toggleHideModel`: scoped by the type read, so un-hiding cannot
+  // delete a Favorite and hiding cannot overwrite one it never saw.
   if (!hiding) {
     if (engagement?.type === 'Hide')
-      await dbWrite.imageEngagement.delete({
-        where: { userId_imageId: { userId, imageId } },
+      await dbWrite.imageEngagement.deleteMany({
+        where: { userId, imageId, type: 'Hide' },
       });
   } else if (!engagement)
     await dbWrite.imageEngagement
@@ -921,8 +963,8 @@ async function toggleHideImage({
         if (!isPrismaUniqueViolation(error)) throw error;
       });
   else if (engagement.type !== 'Hide')
-    await dbWrite.imageEngagement.update({
-      where: { userId_imageId: { userId, imageId } },
+    await dbWrite.imageEngagement.updateMany({
+      where: { userId, imageId, type: engagement.type },
       data: { type: 'Hide' },
     });
 

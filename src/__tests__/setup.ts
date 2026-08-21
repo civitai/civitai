@@ -261,6 +261,7 @@ vi.mock('~/server/logging/client', async (importOriginal) => ({
 // Mock session invalidation
 vi.mock('~/server/auth/session-invalidation', () => ({
   refreshSession: vi.fn().mockResolvedValue(undefined),
+  invalidateSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock Freshdesk integration

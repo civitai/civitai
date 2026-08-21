@@ -1612,6 +1612,42 @@ export async function getUserFollows(userId: number) {
   return userFollows[userId]?.follows ?? [];
 }
 
+/**
+ * Apply one follow/unfollow to the cached set instead of re-deriving it.
+ *
+ * Every follow / hide / block toggle used to end in `userFollowsCache.refresh`,
+ * which refetches the user's ENTIRE follow set from the primary. Measured on prod
+ * (868kurkd0): 19,224 buffers and ~100 ms for a user with 130k follows, per click,
+ * three orders of magnitude above the toggle's own statements — with no
+ * single-flight in front of it.
+ *
+ * The refetch stays as the fallback rather than being replaced. It reads the
+ * PRIMARY deliberately: the replica can be behind the write that just happened, and
+ * the point of touching the cache here is that the user sees their own action.
+ *
+ * Call this ONLY where the resulting follow state is known for certain. Where it is
+ * not — an un-hide or an unblock that matched no row, which leaves a pair that may
+ * still hold a Follow — call `userFollowsCache.refresh` and take the cost.
+ */
+export async function setUserFollowCached({
+  userId,
+  targetUserId,
+  following,
+}: {
+  userId: number;
+  targetUserId: number;
+  following: boolean;
+}) {
+  const updated = await userFollowsCache.update(userId, (current) => {
+    const follows = new Set(current.follows);
+    if (following) follows.add(targetUserId);
+    else follows.delete(targetUserId);
+    return { ...current, follows: [...follows] };
+  });
+
+  if (!updated) await userFollowsCache.refresh(userId);
+}
+
 type ImageTagsCacheItem = {
   imageId: number;
   tags: ImageTagComposite[];

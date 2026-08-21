@@ -150,7 +150,7 @@ describe('toggleHidden kind=blockedUser — cache invalidation', () => {
   it('refreshes both projections of the row plus the follows cache', async () => {
     const blocked = vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
     const blockedBy = vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
-    const follows = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+    const update = vi.spyOn(userFollowsCache, 'update').mockResolvedValue(true);
 
     await block(true);
 
@@ -158,7 +158,47 @@ describe('toggleHidden kind=blockedUser — cache invalidation', () => {
     // target's "blocked by" list on `targetUserId`.
     expect(blocked).toHaveBeenCalledWith({ userId });
     expect(blockedBy).toHaveBeenCalledWith({ userId: targetUserId });
-    expect(follows).toHaveBeenCalledWith(userId);
+    // The pair carries a Block now, so the follow set must lose the target. Assert
+    // the DELTA the updater applies, not that the cache was touched: an updater that
+    // added the id would pass a bare call check and leave the blocker following the
+    // person they blocked.
+    expect(update).toHaveBeenCalledWith(userId, expect.any(Function));
+    const updater = update.mock.calls[0][1];
+    expect(updater({ userId, follows: [targetUserId, 7] })).toEqual({
+      userId,
+      follows: [7],
+    });
+  });
+
+  it('falls back to the full refresh when there is no cached entry to correct', async () => {
+    vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
+    vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
+    // No entry, a marker, or another writer holding it. Leaving the cache alone
+    // there means the next reader repopulates it from the REPLICA, which can be
+    // behind the block that just committed.
+    vi.spyOn(userFollowsCache, 'update').mockResolvedValue(false);
+    const refresh = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+
+    await block(true);
+
+    expect(refresh).toHaveBeenCalledWith(userId);
+  });
+
+  it('re-derives the follow set when an unblock matched no row', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+    // `deleteMany` matching nothing means the pair is not the Block this call read —
+    // it may hold a Follow — so the resulting follow state is unknown and the delta
+    // is not ours to apply.
+    engagement.deleteMany.mockResolvedValue({ count: 0 });
+    vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
+    vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
+    const update = vi.spyOn(userFollowsCache, 'update').mockResolvedValue(true);
+    const refresh = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+
+    await block(false);
+
+    expect(update).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith(userId);
   });
 
   it('refreshes them on an unblock too, not only on a block', async () => {

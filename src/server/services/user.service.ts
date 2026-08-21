@@ -37,6 +37,7 @@ import {
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
+  setUserFollowCached,
   userDownloadsCache,
   userFollowsCache,
 } from '~/server/redis/caches';
@@ -855,24 +856,30 @@ export const toggleModelEngagement = async ({
   });
   setTo ??= engagement?.type === type ? false : true;
 
+  // Every write is scoped by the `type` the row was READ as, never by the PK alone.
+  // `ModelEngagement` holds one row per (user, model) carrying one of
+  // Favorite | Hide | Mute | Notify, and the four have no precedence order, so the
+  // only guard available is the type this call observed — a writer replaces what it
+  // saw or nothing. Unqualified, a Hide arriving here landed on whatever another
+  // writer had just established and reported success.
   if (engagement) {
     if (!setTo && engagement.type === type) {
-      await dbWrite.modelEngagement.delete({
-        where: { userId_modelId: { userId, modelId } },
-      });
+      await dbWrite.modelEngagement.deleteMany({ where: { userId, modelId, type } });
       if (type === 'Hide') await HiddenModels.refreshCache({ userId });
       return false;
     } else if (setTo && engagement.type !== type) {
-      await dbWrite.modelEngagement.update({
-        where: { userId_modelId: { userId, modelId } },
+      const { count } = await dbWrite.modelEngagement.updateMany({
+        where: { userId, modelId, type: engagement.type },
         data: { type, createdAt: new Date() },
       });
-      // EITHER side of the conversion changes hidden-ness, so the other branches'
-      // `type === 'Hide'` test is not enough here: converting away from Hide leaves
-      // the model filtered out of the feed, and converting to it leaves it showing.
-      if (type === 'Hide' || engagement.type === 'Hide')
+      // `HiddenModels` is keyed on `type = 'Hide'`, so a conversion in EITHER
+      // direction changes the hidden set. Nothing refreshed it here before, leaving
+      // a model hidden after the user converted the row to Notify.
+      if (count && (type === 'Hide' || engagement.type === 'Hide'))
         await HiddenModels.refreshCache({ userId });
-      return true;
+      // Zero rows means a concurrent writer replaced the row we read; it does not
+      // carry `type`, and saying otherwise is a claim the caller acts on.
+      return count > 0;
     }
     return true; // no change
   } else if (setTo === false) return false;
@@ -910,14 +917,14 @@ export const toggleFollowUser = async ({
   if (engagement) {
     if (engagement.type === 'Follow') {
       await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Follow });
-      await userFollowsCache.refresh(userId);
+      await setUserFollowCached({ userId, targetUserId, following: false });
       return false;
     } else if (engagement.type === 'Hide') {
       const { count } = await dbWrite.userEngagement.updateMany({
         where: { userId, targetUserId, type: UserEngagementType.Hide },
         data: { type: UserEngagementType.Follow },
       });
-      await userFollowsCache.refresh(userId);
+      await setUserFollowCached({ userId, targetUserId, following: count > 0 });
       // This branch REMOVES a Hide, and `HiddenUsers` is keyed on `type = 'Hide'`.
       // Without this the target stays hidden from the feed of the user who just
       // followed them, until the hash TTL expires.
@@ -943,7 +950,6 @@ export const toggleFollowUser = async ({
       if (!isPrismaUniqueViolation(error)) throw error;
       return null;
     });
-  await userFollowsCache.refresh(userId);
 
   if (!ret) {
     const winner = await dbWrite.userEngagement.findUnique({
@@ -954,8 +960,12 @@ export const toggleFollowUser = async ({
     // follow-notification (deduped by `key`) — but the row can equally be a Block,
     // which outranks a Follow. Returning true there tells the user they follow
     // someone they do not, and pays a follow reward for it.
-    return winner?.type === UserEngagementType.Follow;
+    const followed = winner?.type === UserEngagementType.Follow;
+    await setUserFollowCached({ userId, targetUserId, following: followed });
+    return followed;
   }
+
+  await setUserFollowCached({ userId, targetUserId, following: true });
 
   {
     const details: NotifDetailsFollowedBy = {
@@ -1063,8 +1073,13 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
     dbWrite.account.deleteMany({ where: { userId: user.id } }),
     dbWrite.session.deleteMany({ where: { userId: user.id } }),
+    // Two OR elements, not one carrying two fields — that is a single ANDed
+    // predicate (`userId = X AND targetUserId = X`), which matches only a
+    // self-engagement row and so deleted nothing. `deleteUser` soft-deletes the User
+    // row, so no FK cascade covers for it: every follow, hide and block of a deleted
+    // account survived and kept being counted by `getUserList`.
     dbWrite.userEngagement.deleteMany({
-      where: { OR: [{ userId: user.id, targetUserId: user.id }] },
+      where: { OR: [{ userId: user.id }, { targetUserId: user.id }] },
     }),
     dbWrite.user.update({
       where: { id: user.id },
@@ -1081,6 +1096,12 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+
+  // The engagement rows are gone for real now, so the deleted user's own follow set
+  // has to go with them. Their FOLLOWERS' caches are deliberately left to expire on
+  // their own TTL — a popular account has six figures of them, and what each holds
+  // is an id whose content this same call has already removed.
+  await userFollowsCache.bust(user.id);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   await deleteBasicDataForUser(id);
