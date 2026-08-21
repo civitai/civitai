@@ -37,7 +37,7 @@ export function StickerBookStickers({
     return (
       <Group gap="xs">
         {stickers.slice(0, 8).map((sticker) => (
-          <Skeleton key={sticker.cosmeticId} height={64} width={64} radius="md" />
+          <Skeleton key={sticker.cosmeticId} height={96} width={96} radius="md" />
         ))}
       </Group>
     );
@@ -90,18 +90,18 @@ function StickerTile({
     >
       <HoverCard.Target>
         <div
-          className={`flex w-16 shrink-0 flex-col items-center gap-1 rounded border border-transparent p-1 ${
+          className={`flex w-24 shrink-0 flex-col items-center gap-1 rounded border border-transparent p-1 ${
             exhausted ? 'opacity-40' : ''
           }`}
         >
           <EdgeImage
             src={art.url}
             alt={`:${art.slug}:`}
-            options={{ height: 96, anim: art.animated, optimized: true }}
-            style={{ height: 48, width: 'auto' }}
+            options={{ height: 144, anim: art.animated, optimized: true }}
+            style={{ height: 72, width: 'auto' }}
           />
           {showQuantity && (
-            <Text size="10px" c="dimmed">
+            <Text size="xs" c="dimmed">
               {remaining === null ? '∞' : remaining ?? '…'}
             </Text>
           )}

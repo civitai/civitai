@@ -1,5 +1,5 @@
 import { Button, Group, Text, ThemeIcon, Title } from '@mantine/core';
-import { IconChevronRight } from '@tabler/icons-react';
+import { IconArrowRight } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StickerBookGrid } from '~/components/StickerBook/StickerBookGrid';
@@ -73,15 +73,17 @@ export function StickerBookSection({
       shaded={shaded}
       action={
         !!items.length && (
-          // A button rather than link text, matching the overview's section
-          // actions.
+          // The overview's section action, prop for prop — same height, same
+          // subtle variant, same arrow. Two "View all"s that look different on
+          // adjacent tabs read as two different affordances.
           <Button
             component={Link}
             href={viewAllHref}
-            variant="default"
-            rightSection={<IconChevronRight size={16} />}
+            h={34}
+            variant="subtle"
+            rightSection={<IconArrowRight size={16} />}
           >
-            View all
+            <Text inherit>View all</Text>
           </Button>
         )
       }

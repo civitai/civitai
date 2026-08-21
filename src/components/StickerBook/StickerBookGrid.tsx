@@ -9,8 +9,17 @@ import type { RouterOutput } from '~/types/router';
 
 type BookItems = RouterOutput['stickerBook']['get']['placed'];
 
-/** What a card is drawn at, matching the profile feeds it sits beside. */
-const CARD_HEIGHT = 450;
+/**
+ * A card is a FIXED width and the row holds as many as fit — the feed's shape,
+ * and Justin's call on review. Scaling cards to fill the row instead makes the
+ * same image a different size on every viewport, and a sticker drawn as a
+ * fraction of the artwork changes size with it.
+ *
+ * The height is that width at the 7:9 the profile sections use, so the grid
+ * keeps its rhythm whatever each picture's own aspect is.
+ */
+const CARD_WIDTH = 280;
+const CARD_HEIGHT = Math.round((CARD_WIDTH * 9) / 7);
 
 /**
  * The images in one section, drawn with the standard feed card.
@@ -32,10 +41,15 @@ export function StickerBookGrid({ items, side }: { items: BookItems; side: Stick
 
   return (
     <ImagesProvider images={images}>
-      <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div
+        className="grid items-start gap-3"
+        style={{ gridTemplateColumns: `repeat(auto-fill, ${CARD_WIDTH}px)` }}
+      >
         {items.map((item) => (
           <div key={item.imageId} className="relative">
-            <ImagesCard data={item.image} height={CARD_HEIGHT} />
+            <div style={{ width: CARD_WIDTH }}>
+              <ImagesCard data={item.image} height={CARD_HEIGHT} />
+            </div>
             <PlacedBy counterparts={item.counterparts} side={side} />
           </div>
         ))}
