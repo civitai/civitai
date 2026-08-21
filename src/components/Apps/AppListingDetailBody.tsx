@@ -975,9 +975,11 @@ export function AppListingDetailBody({
                       Edit
                     </Menu.Item>
                   )}
-                  {/* Review affordance (thumbs/recommend) — hidden for the owner + signed-out
-                      viewers by `useCanReviewListing`; the write proc is protected +
-                      flag-gated + self-review-blocked server-side. */}
+                  {/* Review affordance (thumbs/recommend) — hidden for the owner, signed-out
+                      viewers, AND viewers whose resolved store scope does not admit this
+                      listing's kind, all by `useCanReviewListing`. The write proc is
+                      protected + STORE-SCOPE-gated (not flag-gated — that spelling was the
+                      defect) + self-review-blocked server-side. */}
                   {canReview && (
                     <Menu.Item
                       leftSection={<IconThumbUp size={14} stroke={1.5} />}

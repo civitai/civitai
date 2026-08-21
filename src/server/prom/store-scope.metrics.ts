@@ -80,7 +80,8 @@ const metrics =
     resolutions: new client.Counter({
       name: PROM_PREFIX + 'store_scope_resolutions_total',
       help:
-        'Cumulative App-store read-scope resolutions, by resolved scope ' +
+        'Cumulative App-store visibility-scope resolutions (READ and WRITE paths — the ' +
+        'review write gate keys on this same scope), by resolved scope ' +
         '(full|public-external|none) and whether a session user was present (user|anon). ' +
         'Monotonic; use rate(). A logged-in population that is entirely `none` while a ' +
         'cohort flag is open is the civitai#3983 signature.',
@@ -89,9 +90,11 @@ const metrics =
     applied: new client.Counter({
       name: PROM_PREFIX + 'store_scope_applied_total',
       help:
-        'Cumulative store-scope values a read ENTRY POINT actually branched on, by entrypoint. ' +
-        "`scope` is `absent` when no scope reached the branch at all — the one case a caller's " +
-        'own default (`?? none` on tRPC, `?? full` in the listing service) silently erases. ' +
+        'Cumulative store-scope values an ENTRY POINT actually branched on, by entrypoint. ' +
+        'Covers the store READS and the review WRITES (trpc-review-write, trpc-my-review), ' +
+        'which key on the same scope. ' +
+        '`scope` is `absent` when no scope reached the branch at all — the case a defaulting ' +
+        'caller would silently erase (every such default now fails CLOSED via narrowStoreScope). ' +
         'Compare against store_scope_resolutions_total: a resolution mix that disagrees with ' +
         'the applied mix means the scope is being LOST between the resolver and the branch.',
       labelNames: ['scope', 'entrypoint'],

@@ -58,7 +58,9 @@ const { mockRead, mockWrite } = vi.hoisted(() => {
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
   };
-  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(write));
+  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+    cb(write)
+  );
   const read: ReadMock = {
     appListing: { findUnique: vi.fn(async () => null) },
     appListingReview: {
@@ -84,8 +86,8 @@ function reviewableListing() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockWrite.$transaction.mockImplementation(
-    async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite)
+  mockWrite.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+    cb(mockWrite)
   );
   mockWrite.appListingReview.findUnique.mockResolvedValue(null);
   mockWrite.appListingReview.upsert.mockResolvedValue(SAVED_REVIEW);
@@ -113,13 +115,20 @@ describe('upsertAppListingReview — new review (no prior)', () => {
     const res = await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: true },
+      scope: 'full',
     });
 
     expect(res.isNewReview).toBe(true);
     // Review written to the PRIMARY, keyed on (appListingId, userId), userId FORCED.
     const upsertArgs = mockWrite.appListingReview.upsert.mock.calls[0][0];
-    expect(upsertArgs.where).toEqual({ appListingId_userId: { appListingId: APP_ID, userId: CALLER } });
-    expect(upsertArgs.create).toMatchObject({ appListingId: APP_ID, userId: CALLER, recommended: true });
+    expect(upsertArgs.where).toEqual({
+      appListingId_userId: { appListingId: APP_ID, userId: CALLER },
+    });
+    expect(upsertArgs.create).toMatchObject({
+      appListingId: APP_ID,
+      userId: CALLER,
+      recommended: true,
+    });
 
     // Metric: create ensures the row exists with +1; update path increments +1.
     const m = metricUpsertArgs();
@@ -134,6 +143,7 @@ describe('upsertAppListingReview — new review (no prior)', () => {
     await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: false },
+      scope: 'full',
     });
     const m = metricUpsertArgs();
     expect(m.create).toEqual({ appListingId: APP_ID, thumbsUpCount: 0, thumbsDownCount: 1 });
@@ -151,6 +161,7 @@ describe('upsertAppListingReview — editing an existing review', () => {
     const res = await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: true, details: 'nice app' },
+      scope: 'full',
     });
     expect(res.isNewReview).toBe(false);
     expect(mockWrite.appListingReview.upsert).toHaveBeenCalledTimes(1);
@@ -167,6 +178,7 @@ describe('upsertAppListingReview — editing an existing review', () => {
     await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: false },
+      scope: 'full',
     });
     const m = metricUpsertArgs();
     // create clamps the down bucket to ≥0 (only reached if the row were absent).
@@ -191,6 +203,7 @@ describe('upsertAppListingReview — editing an existing review', () => {
     await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: false },
+      scope: 'full',
     });
     // Prior didn't count (excluded) and the edit stays excluded → no counter change.
     expect(mockWrite.appListingMetric.upsert).not.toHaveBeenCalled();
@@ -199,9 +212,17 @@ describe('upsertAppListingReview — editing an existing review', () => {
 
 describe('upsertAppListingReview — eligibility + input gates', () => {
   it('self-review is rejected (owner) with no write', async () => {
-    mockRead.appListing.findUnique.mockResolvedValue({ id: APP_ID, userId: CALLER, status: 'approved' });
+    mockRead.appListing.findUnique.mockResolvedValue({
+      id: APP_ID,
+      userId: CALLER,
+      status: 'approved',
+    });
     await expect(
-      upsertAppListingReview({ userId: CALLER, input: { appListingId: APP_ID, recommended: true } })
+      upsertAppListingReview({
+        userId: CALLER,
+        input: { appListingId: APP_ID, recommended: true },
+        scope: 'full',
+      })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
@@ -209,7 +230,11 @@ describe('upsertAppListingReview — eligibility + input gates', () => {
   it('a missing listing → NOT_FOUND', async () => {
     mockRead.appListing.findUnique.mockResolvedValue(null);
     await expect(
-      upsertAppListingReview({ userId: CALLER, input: { appListingId: APP_ID, recommended: true } })
+      upsertAppListingReview({
+        userId: CALLER,
+        input: { appListingId: APP_ID, recommended: true },
+        scope: 'full',
+      })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
@@ -218,7 +243,11 @@ describe('upsertAppListingReview — eligibility + input gates', () => {
     for (const status of ['draft', 'pending', 'rejected', 'removed']) {
       mockRead.appListing.findUnique.mockResolvedValue({ id: APP_ID, userId: OWNER, status });
       await expect(
-        upsertAppListingReview({ userId: CALLER, input: { appListingId: APP_ID, recommended: true } })
+        upsertAppListingReview({
+          userId: CALLER,
+          input: { appListingId: APP_ID, recommended: true },
+          scope: 'full',
+        })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     }
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
@@ -243,12 +272,14 @@ describe('upsertAppListingReview — eligibility + input gates', () => {
     await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: true, details: '  loved it  ' },
+      scope: 'full',
     });
     expect(mockWrite.appListingReview.upsert.mock.calls[0][0].create.details).toBe('loved it');
 
     await upsertAppListingReview({
       userId: CALLER,
       input: { appListingId: APP_ID, recommended: true, details: '   ' },
+      scope: 'full',
     });
     expect(mockWrite.appListingReview.upsert.mock.calls[1][0].create.details).toBeNull();
   });
@@ -262,7 +293,7 @@ describe('getMyAppListingReview', () => {
       details: 'ok',
       createdAt: new Date(),
     });
-    const res = await getMyAppListingReview(APP_ID, CALLER);
+    const res = await getMyAppListingReview(APP_ID, CALLER, { scope: 'full' });
     expect(res).toMatchObject({ id: 7, recommended: true });
     // The (appListingId, userId) pair is still the whole identity — `findFirst` only
     // exists so the store-scope relation filter can AND onto it (empty under `full`).
@@ -275,7 +306,7 @@ describe('getMyAppListingReview', () => {
 
   it('returns null when the caller has no review', async () => {
     mockRead.appListingReview.findFirst.mockResolvedValue(null);
-    expect(await getMyAppListingReview(APP_ID, CALLER)).toBeNull();
+    expect(await getMyAppListingReview(APP_ID, CALLER, { scope: 'full' })).toBeNull();
   });
 });
 
@@ -307,7 +338,7 @@ describe('listAppListingReviews', () => {
     expect(args.where).toMatchObject({ appListing: { is: { status: 'approved' } } });
   });
 
-  it('public-external scope → relation filter ANDs kind:offsite (an onsite listing\'s reviews are empty)', async () => {
+  it("public-external scope → relation filter ANDs kind:offsite (an onsite listing's reviews are empty)", async () => {
     mockRead.appListingReview.findMany.mockResolvedValue([]);
     await listAppListingReviews({ appListingId: APP_ID, limit: 20 }, { scope: 'public-external' });
     const args = mockRead.appListingReview.findMany.mock.calls[0][0];

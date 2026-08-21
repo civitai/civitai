@@ -48,6 +48,14 @@ const mocks = vi.hoisted(() => ({
   creator: null as null | Record<string, unknown>,
   reportMutate: vi.fn(),
   upsertMutate: vi.fn(),
+  // Store-visibility flags, MUTABLE per test. Previously a fixed literal inside the
+  // provider mock, which meant this suite could only ever construct a `full`-scope
+  // viewer — and so was structurally unable to see the `public-external` seam the
+  // review affordance is gated on. See the store-scope block at the end.
+  features: { appBlocks: true, appListings: true, appBlocksPages: false } as Record<
+    string,
+    boolean
+  >,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -91,14 +99,11 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
 // `useFeatureFlags` left the optional one resolving to the REAL null-outside-provider
 // value, i.e. store scope `none`, which silently hid the review affordance and failed two
 // tests here for a reason that had nothing to do with what they assert.
-vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
-  const flags = { appBlocks: true, appListings: true, appBlocksPages: false };
-  return {
-    ...(await importOriginal<typeof FeatureFlagsMod>()),
-    useFeatureFlags: () => flags,
-    useOptionalFeatureFlags: () => flags,
-  };
-});
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
+  useFeatureFlags: () => mocks.features,
+  useOptionalFeatureFlags: () => mocks.features,
+}));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
 // module-mock): a hand-written replacement silently breaks every importer the
 // day '~/utils/trpc' grows an export this factory omits.
@@ -196,6 +201,7 @@ const { clearRecentlyOpenedApps, getRecentlyOpenedApps } = await import(
 );
 
 beforeEach(async () => {
+  mocks.features = { appBlocks: true, appListings: true, appBlocksPages: false };
   mocks.currentUser = null;
   mocks.relatedItems = [];
   mocks.recorded = [];
@@ -288,6 +294,22 @@ async function renderScoped(ui: Parameters<typeof renderWithProviders>[0]) {
   return { container, within: page.elementLocator(container) };
 }
 
+const MENU = 'apps-listing-actions-menu';
+
+/** Open the `⋮` menu of THIS mount and return the portalled dropdown element. */
+async function openMenu(within: ReturnType<typeof page.elementLocator>) {
+  const trigger = within.getByTestId(MENU);
+  await expect.element(trigger).toBeInTheDocument();
+  await userEvent.click(trigger);
+  // The dropdown is PORTALLED (`withinPortal`), so it is not inside the render
+  // container — query it page-wide, and wait for it rather than reading a
+  // still-empty DOM.
+  return vi.waitUntil(() => document.querySelector('[role="menu"], .mantine-Menu-dropdown'), {
+    timeout: 10000,
+    interval: 25,
+  });
+}
+
 describe('AppListingDetailBody', () => {
   test('kind + category badges are NOT rendered as HEADER badges (round-2 truncation fix)', async () => {
     // "App" was formerly the on-site kind badge's exact-match text. It must not come
@@ -314,22 +336,6 @@ describe('AppListingDetailBody', () => {
   // button column with no menu at all, so `apps-listing-actions-menu` does not exist
   // there and every test in this block fails on it. Genuine regression coverage for
   // the header restructure.
-
-  const MENU = 'apps-listing-actions-menu';
-
-  /** Open the `⋮` menu of THIS mount and return the portalled dropdown element. */
-  async function openMenu(within: ReturnType<typeof page.elementLocator>) {
-    const trigger = within.getByTestId(MENU);
-    await expect.element(trigger).toBeInTheDocument();
-    await userEvent.click(trigger);
-    // The dropdown is PORTALLED (`withinPortal`), so it is not inside the render
-    // container — query it page-wide, and wait for it rather than reading a
-    // still-empty DOM.
-    return vi.waitUntil(() => document.querySelector('[role="menu"], .mantine-Menu-dropdown'), {
-      timeout: 10000,
-      interval: 25,
-    });
-  }
 
   test('🔴 the owner sees Edit in the menu → on-site manifest editor', async () => {
     mocks.currentUser = { id: 5, username: 'alice' }; // matches base().creator.id
@@ -1419,5 +1425,72 @@ describe('AppListingDetailBody — the public collaborator byline (anonymous vie
     );
     await expect.element(within.getByTestId('apps-listing-creator-card')).toBeInTheDocument();
     expect(container.querySelector('[data-testid="apps-listing-collaborator-42"]')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STORE-SCOPE SEAM — the join between the resolved scope and the review affordance.
+//
+// 🔴 THIS BLOCK EXISTS BECAUSE BOTH HALVES WERE ALREADY MUTATION-KILLED AND THE JOIN
+// STILL WAS NOT. `useCanReviewListing`'s kind term is covered by
+// `ReviewListingButton.storeScope.browser.test.tsx`, and the server gate by its own
+// suites — but the only LIVE wiring of the two, `listingKind: detail.kind` in
+// `AppListingDetailBody`, was owned by nobody. Measured: deleting that one property
+// makes the entire client half inert and the whole component tier stays 982/982
+// GREEN. Neither detail suite could see it, because until now neither could
+// construct a `public-external` viewer at all (`mocks.features` was a fixed literal).
+//
+// A component-scoped test cannot catch a seam by construction; the fixture has to
+// build the COMBINED state — this viewer, this listing kind — which is what these do.
+// ---------------------------------------------------------------------------
+
+describe('AppListingDetailBody — store-scope review seam', () => {
+  /** The external-only tester cohort: neither store flag, only the external one. */
+  const PUBLIC_EXTERNAL = {
+    appBlocks: false,
+    appListings: false,
+    appListingsPublicExternal: true,
+  };
+
+  test('🔴 public-external viewer on an ONSITE listing gets NO Review item', async () => {
+    mocks.features = PUBLIC_EXTERNAL;
+    mocks.currentUser = { id: 999, username: 'bob' };
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ kind: 'onsite' })} />
+    );
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    // POSITIVE half first — the dropdown really is populated, so the Review zero
+    // below is about the scope gate and not about an empty or unopened menu.
+    expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
+    expect(dropdown.querySelectorAll('[data-testid="apps-listing-review-action"]')).toHaveLength(0);
+  });
+
+  test('🔴 the SAME viewer on an OFFSITE listing DOES get the Review item', async () => {
+    // The discriminating arm. Without it, a gate that hid the affordance from this
+    // cohort unconditionally would pass the test above and look correct.
+    mocks.features = PUBLIC_EXTERNAL;
+    mocks.currentUser = { id: 999, username: 'bob' };
+    const { within } = await renderScoped(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: { kind: 'offsite', externalUrl: 'https://example.com', connectClientId: null },
+        })}
+      />
+    );
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
+  });
+
+  test('a FULL-scope viewer still gets Review on an ONSITE listing (unchanged)', async () => {
+    // The control that a moderator would have run — and the reason this defect was
+    // invisible from a privileged account.
+    mocks.features = { appBlocks: true, appListings: true, appListingsPublicExternal: false };
+    mocks.currentUser = { id: 999, username: 'bob' };
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ kind: 'onsite' })} />
+    );
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
   });
 });

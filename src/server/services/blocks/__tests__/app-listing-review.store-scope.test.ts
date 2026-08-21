@@ -6,6 +6,7 @@ import {
   upsertAppListingReview,
 } from '~/server/services/blocks/app-listing-review.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 const mockRead = dbMock.dbRead;
 const mockWrite = dbMock.dbWrite;
 
@@ -36,10 +37,6 @@ type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
   appListingReview: { findUnique: ReturnType<typeof vi.fn>; upsert: ReturnType<typeof vi.fn> };
   appListingMetric: { upsert: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
-};
-type ReadMock = {
-  appListing: { findUnique: ReturnType<typeof vi.fn> };
-  appListingReview: { findFirst: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
 };
 
 // Fixtures: pairwise distinct, non-default, and no value equal to a constant an
@@ -158,15 +155,6 @@ describe('upsertAppListingReview — full scope is unchanged', () => {
     expect(mockWrite.appListingReview.upsert).toHaveBeenCalledTimes(1);
   });
 
-  it('an omitted scope defaults to `full` — pre-existing callers keep working', async () => {
-    mockRead.appListing.findUnique.mockResolvedValue(listingOfKind(ONSITE_ID, 'onsite'));
-    await upsertAppListingReview({
-      userId: CALLER,
-      input: { appListingId: ONSITE_ID, recommended: true },
-    });
-    expect(mockWrite.appListingReview.upsert).toHaveBeenCalledTimes(1);
-  });
-
   it('the kind gate does NOT swallow the ordinary gates — a self-review is still refused', async () => {
     // Positive control on the ordering: with a kind the scope ADMITS, the later
     // owner check must still fire. Without this, a gate that refused everything
@@ -197,6 +185,59 @@ describe('upsertAppListingReview — full scope is unchanged', () => {
 // ---------------------------------------------------------------------------
 // getMyAppListingReview — the same kind gate, soft (null, not a throw).
 // ---------------------------------------------------------------------------
+
+describe('🔴 an absent / unrecognized scope FAILS CLOSED, never to `full`', () => {
+  // The sibling `listAvailableListings` shipped `?? 'full'` on the reasoning that
+  // "every caller passes an explicit scope". Every caller did — and production still
+  // reached it with `undefined`, serving the whole catalogue to anonymous callers
+  // (civitai#3983). These pin that the same `??` cannot come back here, on a WRITE.
+
+  it('upsertReview with NO scope argument refuses an onsite listing (not `full`)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(listingOfKind(ONSITE_ID, 'onsite'));
+    await expect(
+      upsertAppListingReview({
+        userId: CALLER,
+        input: { appListingId: ONSITE_ID, recommended: true },
+        scope: undefined as unknown as StoreVisibilityScope,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockWrite.appListingReview.upsert).not.toHaveBeenCalled();
+  });
+
+  it('upsertReview with an UNRECOGNIZED scope refuses (a value we cannot interpret is not an entitlement)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(listingOfKind(OFFSITE_ID, 'offsite'));
+    await expect(
+      // A scope from a future branch this build does not understand.
+      upsertAppListingReview({
+        userId: CALLER,
+        input: { appListingId: OFFSITE_ID, recommended: true },
+        scope: 'partner-preview' as unknown as StoreVisibilityScope,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockWrite.appListingReview.upsert).not.toHaveBeenCalled();
+  });
+
+  it('getMyReview with an unrecognized scope applies an IMPOSSIBLE kind filter, not an empty one', async () => {
+    // The asymmetry that was live: the DB-filter helper returned `{}` — no
+    // restriction — for every scope that was not literally `public-external`.
+    await getMyAppListingReview(ONSITE_ID, CALLER, {
+      scope: 'partner-preview' as unknown as StoreVisibilityScope,
+    });
+    expect(mockRead.appListingReview.findFirst.mock.calls[0][0].where.appListing).toEqual({
+      is: { kind: '__none__' },
+    });
+  });
+
+  it('listReviews with an unrecognized scope likewise cannot match a row', async () => {
+    await listAppListingReviews(
+      { appListingId: ONSITE_ID },
+      { scope: 'partner-preview' as unknown as StoreVisibilityScope }
+    );
+    expect(mockRead.appListingReview.findMany.mock.calls[0][0].where.appListing).toEqual({
+      is: { status: 'approved', kind: '__none__' },
+    });
+  });
+});
 
 describe('getMyAppListingReview — kind gate', () => {
   it('public-external ANDs the offsite relation filter onto the lookup', async () => {
