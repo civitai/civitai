@@ -253,6 +253,13 @@ describe('getStickerBook — what leaves the server', () => {
     expect(imageFindMany).not.toHaveBeenCalled();
     expect(allImages).toHaveBeenCalled();
     expect(allImages.mock.calls[0][0]).toMatchObject({ ids: [IMAGE], browsingLevel: 1 });
+    // 🔴 `user`, and NOT `userId`. The feed reads `userId` as its AUTHOR filter,
+    // so passing the viewer there narrows the book to images the viewer
+    // uploaded — which empties "images you stickered" entirely, because those
+    // are by definition somebody else's. Costs nothing to assert and the bug
+    // renders as an empty section rather than as an error.
+    expect(allImages.mock.calls[0][0]).not.toHaveProperty('userId');
+    expect(allImages.mock.calls[0][0]).toMatchObject({ user: { id: CREATOR } });
     expect(book.received[0].image).toMatchObject({ id: IMAGE });
   });
 

@@ -230,7 +230,11 @@ async function imagesForBook({
     include: [],
   });
 
-  const { items } = await getAllImages({ ...input, user, userId: user?.id });
+  // `user` and NOT `userId`. They are not the viewer twice: `userId` is the feed's
+  // AUTHOR filter, so passing the viewer there quietly narrows the book to images
+  // the viewer uploaded — which leaves "images you stickered" empty, since those
+  // are by definition somebody else's.
+  const { items } = await getAllImages({ ...input, user });
   const byId = new Map(items.map((image) => [image.id, image]));
 
   // The book's order, not the feed's. An image the feed withheld is simply
