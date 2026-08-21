@@ -15,8 +15,14 @@
     // artwork grows under stickers that stay put, and every one of them drifts
     // off the spot it was placed on for as long as the pointer is on the card.
     //
-    // Same box, so the same transform is exact: the overlay is `inset-0` of the
-    // element the media fills, and both scale about their own centre.
+    // 🔴 WHAT MAKES THIS EXACT IS COINCIDENT CENTRES, NOT EQUAL BOXES. Two boxes
+    // of different sizes scaled about one centre map every point identically;
+    // two boxes of the SAME size about different centres do not. So the property
+    // to preserve is that the media and this overlay share a centre — which they
+    // do because the overlay is `inset-0` of the element the media fills edge to
+    // edge. `.image` pins its own height below for exactly that reason: let the
+    // media box shrink and the centres separate, and this rule starts CAUSING
+    // the drift it exists to remove.
     ~ :global([data-sticker-overlay]) {
       transform: scale(1.05) rotate(0.02deg);
     }
@@ -31,7 +37,15 @@
 
 .image {
   flex: 1;
-  height: 100%;
+  // `!important` because `EdgeMedia` puts its own `.responsive` class — which
+  // sets `height: auto` — on this same element, at the same specificity and in
+  // the same cascade layer. The winner is then chunk order and nothing else.
+  // `Cards.module.css` carries the same `!important` for the same collision.
+  //
+  // It is load-bearing for stickers, not only for looks: a media box shorter
+  // than the card moves its centre up, and the hover rule above scales the
+  // overlay about a centre the picture no longer shares.
+  height: 100% !important;
   min-width: 100%;
   object-fit: cover;
   object-position: top;
