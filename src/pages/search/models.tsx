@@ -141,6 +141,10 @@ export function ModelsHitList() {
     }
   }, [modelId, status, showMore, isLastPage, hits]);
 
+  // Must stay above every early return below — a hook called after one changes the hook
+  // count between the loading and loaded renders (React error #310).
+  const salesByModelId = useModelSaleBadges((items as { id: number }[]).map((x) => x.id));
+
   if (hits.length === 0) {
     const NotFound = (
       <div className="flex items-center justify-center">
@@ -193,8 +197,6 @@ export function ModelsHitList() {
       </div>
     );
   }
-
-  const salesByModelId = useModelSaleBadges((items as { id: number }[]).map((x) => x.id));
 
   return (
     <Stack>
