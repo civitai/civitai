@@ -7,36 +7,15 @@ import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
 import { SortFilter } from '~/components/Filters/SortFilter';
-import type { MediaFilterKey } from '~/components/Image/Filters/MediaFiltersDropdown';
+import { hubExcludedFilterKeys } from '~/components/Image/Filters/media-filter-keys';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { ImageSort } from '~/server/common/enums';
 import type { HubSort } from '~/server/schema/user-hub.schema';
 import { hubFeedFiltersSchema, hubLimits, hubSortSchema } from '~/server/schema/user-hub.schema';
-import type { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-/**
- * Controls the hub cannot keep. A hub's filters persist on the row, and the ones
- * here are either per-session states (a hidden-images view, your own unpublished
- * or scheduled posts) or moderation tooling — none of them describe the hub, so
- * offering a control that forgets itself on reload is worse than not offering it.
- *
- * `hub-filter-parity.test.ts` asserts everything NOT listed here is persistable.
- */
-export const hubExcludedFilterKeys: MediaFilterKey[] = [
-  'hidden',
-  'scheduled',
-  'notPublished',
-  'requiringMeta',
-  'includePG13',
-  'poiOnly',
-  'minorOnly',
-  'disablePoi',
-  'disableMinor',
-  'hideManualResources',
-  'hideAutoResources',
-];
 
 const HubSourcePanel = dynamic(
   () => import('~/components/Hubs/HubSourcePanel').then((m) => m.HubSourcePanel),
@@ -148,7 +127,9 @@ export function HubFeedFilters({ ...groupProps }: GroupProps) {
           upsert.mutate({
             id: hub.id,
             sort,
-            period: (next.period ?? hub.period) as MetricTimeframe,
+            // Clear omits `period` to mean "back to the default"; falling back to
+            // the hub's current value would leave the one filter Clear names.
+            period: (next.period ?? MetricTimeframe.AllTime) as MetricTimeframe,
             mediaTypes: (next.types ?? []) as MediaType[],
             filters: hubFeedFiltersSchema.parse(next),
           })

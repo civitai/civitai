@@ -31,38 +31,9 @@ import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
+import type { MediaFilterKey } from '~/components/Image/Filters/media-filter-keys';
 
-/**
- * One key per control in the dropdown, so a caller that cannot honour a control
- * can drop it by name. Feeds differ in what they can serve — a hub is index-only
- * and cannot express `hidden`, for instance — and rendering a control that
- * silently does nothing is worse than not offering it.
- */
-export const mediaFilterKeys = [
-  'period',
-  'types',
-  'includePG13',
-  'withMeta',
-  'requiringMeta',
-  'hidden',
-  'fromPlatform',
-  'scheduled',
-  'remixesOnly',
-  'nonRemixesOnly',
-  'hideChallenges',
-  'hideManualResources',
-  'hideAutoResources',
-  'poiOnly',
-  'minorOnly',
-  'disablePoi',
-  'disableMinor',
-  'notPublished',
-  'baseModels',
-  'tools',
-  'techniques',
-] as const;
-
-export type MediaFilterKey = (typeof mediaFilterKeys)[number];
+export type { MediaFilterKey };
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -93,7 +64,19 @@ export function MediaFiltersDropdown({
   // PG-13 access to opt in/out of.
   const showPG13Toggle = isGreen && !!currentUser;
   const showChallengeToggle = filterType !== 'modelImages';
-  const shows = useCallback((key: MediaFilterKey) => !exclude?.includes(key), [exclude]);
+  // The three `hide*` booleans predate `exclude` and gate the same controls. They
+  // fold into one list here so the component has a single gate — two would drift
+  // the moment a chip is added to one and not the other.
+  const excluded = useMemo<MediaFilterKey[]>(
+    () => [
+      ...(exclude ?? []),
+      ...(hideMediaTypes ? (['types'] as const) : []),
+      ...(hideBaseModels ? (['baseModels'] as const) : []),
+      ...(hideTools ? (['tools'] as const) : []),
+    ],
+    [exclude, hideMediaTypes, hideBaseModels, hideTools]
+  );
+  const shows = useCallback((key: MediaFilterKey) => !excluded.includes(key), [excluded]);
   // A section whose every chip is excluded would otherwise render as a lone divider.
   const showResources = shows('hideManualResources') || shows('hideAutoResources');
   const showModerator = (
@@ -185,9 +168,7 @@ export function MediaFiltersDropdown({
   // Every term is gated on `shows` as well: a count that includes a control the
   // caller excluded reads as an active filter the user cannot find or clear.
   const filterLength =
-    ('types' in mergedFilters && !hideMediaTypes && shows('types')
-      ? mergedFilters.types?.length ?? 0
-      : 0) +
+    ('types' in mergedFilters && shows('types') ? mergedFilters.types?.length ?? 0 : 0) +
     (shows('withMeta') && mergedFilters.withMeta ? 1 : 0) +
     (shows('requiringMeta') && mergedFilters.requiringMeta ? 1 : 0) +
     (shows('hidden') && mergedFilters.hidden ? 1 : 0) +
@@ -201,7 +182,7 @@ export function MediaFiltersDropdown({
     (shows('period') && mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime
       ? 1
       : 0) +
-    (!hideBaseModels && shows('baseModels') ? mergedFilters.baseModels?.length ?? 0 : 0) +
+    (shows('baseModels') ? mergedFilters.baseModels?.length ?? 0 : 0) +
     ((shows('remixesOnly') && !!mergedFilters.remixesOnly) ||
     (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly)
       ? 1
@@ -246,7 +227,7 @@ export function MediaFiltersDropdown({
         </Stack>
       )}
       <Stack gap="md">
-        {!hideMediaTypes && shows('types') && (
+        {shows('types') && (
           <>
             <Divider label="Media type" className="text-sm font-bold" mb={4} />
             <Chip.Group
@@ -434,7 +415,7 @@ export function MediaFiltersDropdown({
           </>
         )}
 
-        {!hideBaseModels && shows('baseModels') && (
+        {shows('baseModels') && (
           <>
             <Divider label="Base model" className="text-sm font-bold" mb={4} />
             <MultiSelect
@@ -449,7 +430,7 @@ export function MediaFiltersDropdown({
           </>
         )}
 
-        {!hideTools && shows('tools') && (
+        {shows('tools') && (
           <>
             <Divider label="Tools" className="text-sm font-bold" mb={4} />
             <ToolMultiSelect

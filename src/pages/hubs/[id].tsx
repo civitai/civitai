@@ -140,6 +140,7 @@ export default Page(
                   remixesOnly: hub.filters.remixesOnly,
                   nonRemixesOnly: hub.filters.nonRemixesOnly,
                   hideChallenges: hub.filters.hideChallenges,
+                  includePG13: hub.filters.includePG13,
                   // Stored on the hub and empty by default; an empty list means
                   // "every type", which is what omitting the filter does.
                   types: hub.mediaTypes.length ? hub.mediaTypes : undefined,

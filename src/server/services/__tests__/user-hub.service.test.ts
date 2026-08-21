@@ -15,6 +15,7 @@ vi.mock('~/server/services/collection.service', () => ({
 }));
 
 import {
+  getHubSourceSuggestions,
   getUserHubById,
   resolveHubSourceFromUrl,
   resolveHubSources,
@@ -491,5 +492,116 @@ describe('what a pasted link is allowed to name', () => {
 
     expect(source).toBeNull();
     expect(dbMock.dbRead.collection.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// The write half of `metadata.filters`. The read half is covered above, and the
+// two look alike enough that covering only the read reads as covering both — drop
+// the filters key from the update and nothing else in this suite goes red, while
+// every filter the user picks silently forgets itself on reload.
+describe('persisting the feed filters', () => {
+  it('merges filters into the existing metadata', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      metadata: { description: 'keep me' },
+    });
+
+    await upsertUserHub({ id: 9, filters: { withMeta: true }, userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata).toEqual({ description: 'keep me', filters: { withMeta: true } });
+  });
+
+  it('writes both keys when a save carries description and filters together', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({ id: 9, metadata: {} });
+
+    await upsertUserHub({
+      id: 9,
+      description: 'both',
+      filters: { hideChallenges: true },
+      userId: 5,
+    });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata).toEqual({
+      description: 'both',
+      filters: { hideChallenges: true },
+    });
+  });
+
+  it('stores filters on a new hub', async () => {
+    dbMock.dbRead.userHub.count.mockResolvedValue(0);
+
+    await upsertUserHub({ name: 'new', filters: { fromPlatform: true }, userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.create.mock.calls[0][0];
+    expect(arg.data.metadata).toEqual({ filters: { fromPlatform: true } });
+  });
+
+  it('clears the description when an empty string is saved', async () => {
+    dbMock.dbWrite.userHub.findFirst.mockResolvedValue({
+      id: 9,
+      metadata: { description: 'gone soon' },
+    });
+
+    await upsertUserHub({ id: 9, description: '', userId: 5 });
+
+    const arg = dbMock.dbWrite.userHub.update.mock.calls[0][0];
+    expect(arg.data.metadata.description).toBeUndefined();
+  });
+});
+
+// Each arm reads a table that also holds other people's rows. A `userId` dropped
+// from any of these where clauses is a leak with no visible symptom — the picker
+// simply offers more, which looks like the feature working.
+describe('source suggestions stay inside the viewer', () => {
+  it('scopes the creators arm to the viewer', async () => {
+    dbMock.dbRead.userEngagement.findMany.mockResolvedValue([]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+
+    expect(dbMock.dbRead.userEngagement.findMany.mock.calls[0][0].where.userId).toBe(5);
+  });
+
+  it('scopes every models arm to the viewer', async () => {
+    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
+
+    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model });
+
+    expect(dbMock.dbRead.model.findMany.mock.calls[0][0].where.userId).toBe(5);
+    expect(dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0].where.userId).toBe(5);
+    // The bookmark arm is scoped by the collection it reads, which is itself the
+    // viewer's — so assert the lookup that picked it, not the item query.
+    expect(dbMock.dbRead.collection.findFirst.mock.calls[0][0].where.userId).toBe(5);
+    expect(dbMock.dbRead.collectionItem.findMany.mock.calls[0][0].where.collectionId).toBe(77);
+  });
+
+  it('offers no collections while the write path refuses them', async () => {
+    expect(HUB_COLLECTION_SOURCES_ENABLED).toBe(false);
+
+    const result = await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Collection });
+
+    expect(result).toEqual([]);
+    expect(dbMock.dbRead.collectionContributor.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// A source pointed at a taken-down model contributes nothing to the feed forever,
+// and the row gives no clue why.
+describe('taken-down models', () => {
+  it('will not name a version whose model is deleted', async () => {
+    dbMock.dbRead.modelVersion.findFirst.mockResolvedValue(null);
+
+    const source = await resolveHubSourceFromUrl({
+      url: 'https://civitai.com/model-versions/456',
+      userId: 5,
+    });
+
+    expect(source).toBeNull();
+    const where = dbMock.dbRead.modelVersion.findFirst.mock.calls[0][0].where;
+    expect(where.model.deletedAt).toBeNull();
   });
 });

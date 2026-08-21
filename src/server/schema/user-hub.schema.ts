@@ -77,6 +77,10 @@ export const hubFeedFiltersSchema = z.object({
   remixesOnly: z.boolean().optional(),
   nonRemixesOnly: z.boolean().optional(),
   hideChallenges: z.boolean().optional(),
+  // A green-domain content control, not a session state: a hub that cannot carry
+  // it is hard-capped to public content with no control anywhere to lift the cap,
+  // because the hub feed runs with the global filter store disabled.
+  includePG13: z.boolean().optional(),
 });
 
 export type HubFeedFilters = z.infer<typeof hubFeedFiltersSchema>;
