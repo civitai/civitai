@@ -15,8 +15,7 @@ import {
   freeRefusalOutcome,
   isPlacingFree,
   preCommitFreeReason,
-  trayPriceLine,
-  trayReviewLine,
+  trayNotes,
 } from '~/components/Sticker/free-offer';
 
 describe('the free option is a price, not a process', () => {
@@ -318,46 +317,106 @@ describe('what a refused free claim does next', () => {
 });
 
 /**
- * The tray's two sentences, here rather than in the component because inline
- * neither ternary was observable: dropping either one turns nothing red and
- * produces the exact contradiction the lines exist to prevent.
+ * The tray's lines.
+ *
+ * They were one sentence, concatenated with ` · ` separators, spanning the full
+ * width of the panel — and at that width nobody read to the end. They are now
+ * one short line each, and the coupling went with the prose: no fragment has to
+ * know whether another will be appended after it, which is what made a full stop
+ * in one of them render a separator mid-sentence.
  */
-describe('the tray states both offers when both are open', () => {
-  it('names free and the price together, with the use as the constant', () => {
-    const both = trayPriceLine(true, 700);
+describe('the tray says its piece in short lines', () => {
+  const texts = (notes: ReturnType<typeof trayNotes>) => notes.map((note) => note.text).join(' | ');
 
-    expect(both).toMatch(/Free/);
-    expect(both).toMatch(/700 Buzz/);
+  it('names free and the price together when both are open', () => {
+    const notes = trayNotes({ freeAvailable: true, price: 700, review: false });
+
+    expect(texts(notes)).toMatch(/Free, or 700 Buzz/);
     // Free of the creator's price and of nothing else. Without this the tray and
     // the Place button disagree about what a sticker costs.
-    expect(both).toMatch(/one use either way/);
+    expect(texts(notes)).toMatch(/one use either way/);
   });
 
   it('names only the price when free is not on offer', () => {
-    const paid = trayPriceLine(false, 700);
+    const notes = trayNotes({ freeAvailable: false, price: 700, review: false });
 
-    expect(paid).toBe('700 Buzz + one use');
-    expect(paid).not.toMatch(/[Ff]ree/);
+    expect(texts(notes)).toBe('700 Buzz + one use');
+    expect(texts(notes)).not.toMatch(/[Ff]ree/);
+  });
+
+  it('names the shared budget only where there is a free one to spend', () => {
+    // Case-insensitive: the line capitalises the clause, because on a row of
+    // its own it starts the sentence rather than continuing one.
+    expect(texts(trayNotes({ freeAvailable: true, price: 700, review: false }))).toMatch(
+      new RegExp(SHARED_ALLOWANCE_NOTE, 'i')
+    );
+    // Explaining a limit to somebody who has nothing to spend against it is
+    // noise about a thing they did not ask for.
+    expect(texts(trayNotes({ freeAvailable: false, price: 700, review: false }))).not.toMatch(
+      new RegExp(SHARED_ALLOWANCE_NOTE, 'i')
+    );
   });
 
   /**
    * 🔴 The free half is `FREE_REVIEW_CAVEAT` itself, not a paraphrase. Three
    * places in the product state what a decline costs a free placer — this, the
-   * caveat under the draft's own free option, and `declineConsequence` on the
-   * owner's side — and two of the three now come from one constant.
+   * line under the draft's own Place button, and `declineConsequence` on the
+   * owner's side — and two of the three come from one constant.
    */
   it('reuses the owned caveat rather than restating it', () => {
-    expect(trayReviewLine(true)).toContain(FREE_REVIEW_CAVEAT);
+    expect(texts(trayNotes({ freeAvailable: true, price: 700, review: true }))).toContain(
+      FREE_REVIEW_CAVEAT
+    );
   });
 
-  it('keeps the paid fee disclosure in both branches', () => {
-    // Where both offers are open, somebody choosing to pay still needs it.
-    for (const freeAvailable of [true, false])
-      expect(trayReviewLine(freeAvailable)).toMatch(/part of what you paid/);
+  it('keeps the paid fee disclosure where the space reviews', () => {
+    expect(texts(trayNotes({ freeAvailable: false, price: 700, review: true }))).toMatch(
+      /part of what you paid/
+    );
   });
 
-  it('says nothing about an allowance when free is not on offer', () => {
-    expect(trayReviewLine(false)).not.toMatch(/allowance/);
+  it('says nothing about review on a space that does not review', () => {
+    const notes = trayNotes({ freeAvailable: true, price: 700, review: false });
+
+    expect(texts(notes)).not.toMatch(/approves/);
+    expect(texts(notes)).not.toMatch(/decline/);
+  });
+
+  /**
+   * The reason is last and warns, because it is the only line about the READER
+   * rather than about the placement — and it is the one they are looking for
+   * when free is not on offer.
+   */
+  it('puts the refusal last, and marks it', () => {
+    const notes = trayNotes({
+      freeAvailable: false,
+      price: 700,
+      review: true,
+      reason: 'You have already used a free sticker on this image.',
+    });
+
+    expect(notes[notes.length - 1]).toEqual({
+      id: 'reason',
+      tone: 'warn',
+      text: 'You have already used a free sticker on this image.',
+    });
+  });
+
+  it('adds no line at all when there is no reason to give', () => {
+    expect(
+      trayNotes({ freeAvailable: true, price: 700, review: true, reason: null }).some(
+        (note) => note.id === 'reason'
+      )
+    ).toBe(false);
+  });
+
+  /**
+   * Every line is its own row, so none of them can end up inside another. This
+   * is what the ` · ` concatenation could not promise.
+   */
+  it('keeps each line separate and short', () => {
+    for (const note of trayNotes({ freeAvailable: true, price: 700, review: true }))
+      expect(note.text.length).toBeLessThan(60);
   });
 });
 
@@ -608,15 +667,5 @@ describe('the shared-allowance note tracks the rules it describes', () => {
    */
   it('fails if a surface is added to the shared budget without updating the copy', () => {
     expect(Object.keys(PLACEMENT_SURFACES).sort()).toEqual(['remixGallery', 'sticker']);
-  });
-
-  /**
-   * The tray appends ` · this creator reviews placements…` straight onto the
-   * price line, so a terminated sentence there renders a separator mid-sentence.
-   * Asserted on the composed line rather than on the constant, because that is
-   * where the defect is visible and the constant alone cannot show it.
-   */
-  it('leaves the tray price line open for the clause that follows it', () => {
-    expect(trayPriceLine(true, 700).endsWith('.')).toBe(false);
   });
 });

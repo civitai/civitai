@@ -292,30 +292,82 @@ export function freeHintText(space?: FreeCapacity, standing?: FreeStanding) {
 }
 
 /**
- * The tray's price line, which has to name both offers when both are open.
+ * What the tray says, as separate short lines rather than one sentence.
  *
- * The use is the constant: a free placement is free of the creator's price and of
- * nothing else. Saying so here is what stops the tray and the Place button
- * disagreeing about what a sticker costs.
+ * 🔴 **The prose version was unreadable.** It ran the full width of the panel —
+ * price, then review, then what a decline costs, then why free was unavailable,
+ * concatenated with ` · ` separators — and at that width nobody reads to the
+ * end. Justin, looking at it: "the text is just way too long there… completely
+ * unreadable."
+ *
+ * Lines also fix a defect the concatenation kept producing: each fragment had to
+ * know whether another would be appended after it, so a full stop added to one
+ * of them rendered a separator mid-sentence. A list has no such coupling.
+ *
+ * Ordered by what changes a decision: what it costs, what happens to it, what
+ * pressing spends, and last the reason free is off the table — which is the only
+ * one that is about the reader rather than the placement.
+ *
+ * `tone` picks the icon at the render site rather than naming one here, so this
+ * module stays free of anything that has to be mounted to be tested.
  */
-export const trayPriceLine = (freeAvailable: boolean, price: number) =>
-  freeAvailable
-    ? `Free, or ${price} Buzz · one use either way, and your free one is ${SHARED_ALLOWANCE_NOTE}`
-    : `${price} Buzz + one use`;
+export type TrayNote = { id: string; tone: 'info' | 'warn'; text: string };
 
-/**
- * What the tray says a decline costs on a review-mode space.
- *
- * 🔴 The free half is `FREE_REVIEW_CAVEAT` itself rather than a paraphrase of it.
- * There are three statements of this rule in the product — this one, the caveat
- * under the draft's own free option, and `declineConsequence`'s free branch on the
- * owner's side — and two of the three now come from one constant, so a change to
- * what a decline costs cannot leave a stale copy behind in the tray.
- *
- * The paid half is kept in both branches: where both offers are open, somebody
- * choosing to pay still needs the fee disclosure.
- */
-export const trayReviewLine = (freeAvailable: boolean) =>
-  freeAvailable
-    ? ` ${FREE_REVIEW_CAVEAT} A paid placement leaves part of what you paid with them.`
-    : ' If they decline, part of what you paid stays with them.';
+export function trayNotes({
+  freeAvailable,
+  price,
+  review,
+  reason,
+}: {
+  freeAvailable: boolean;
+  price: number;
+  /** The space reviews placements, so nothing goes live until the owner says so. */
+  review: boolean;
+  /** From `preCommitFreeReason` — `null` whenever free is genuinely on offer. */
+  reason?: string | null;
+}): TrayNote[] {
+  const notes: TrayNote[] = [
+    {
+      id: 'price',
+      tone: 'info',
+      text: freeAvailable
+        ? `Free, or ${price} Buzz · one use either way`
+        : `${price} Buzz + one use`,
+    },
+  ];
+
+  // Only where free is on the table. Naming the shared budget to somebody who
+  // has no free placement to spend explains a limit they did not ask about.
+  if (freeAvailable)
+    notes.push({
+      id: 'shared',
+      tone: 'info',
+      // The clause itself, capitalised — not "Your free one is …" in front of
+      // it. On a line of its own the preamble is four words the reader has to
+      // get past to reach the fact, and the line has to stay short enough to
+      // read at a glance beside an icon.
+      text: `${SHARED_ALLOWANCE_NOTE.charAt(0).toUpperCase()}${SHARED_ALLOWANCE_NOTE.slice(1)}`,
+    });
+
+  if (review)
+    notes.push({
+      id: 'review',
+      tone: 'info',
+      text: 'Only you see it until the creator approves',
+    });
+
+  // What pressing costs, which differs by what is being pressed: a free
+  // placement spends the day regardless, a paid one leaves part of the money.
+  if (review)
+    notes.push({
+      id: 'decline',
+      tone: 'warn',
+      text: freeAvailable
+        ? FREE_REVIEW_CAVEAT
+        : 'If they decline, part of what you paid stays with them',
+    });
+
+  if (reason) notes.push({ id: 'reason', tone: 'warn', text: reason });
+
+  return notes;
+}

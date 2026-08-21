@@ -13,6 +13,7 @@ import {
   useStickerPlacements,
 } from '~/components/Sticker/placement.util';
 import { useCallback, useState } from 'react';
+import hintClasses from '~/components/Sticker/free-hint.module.scss';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
@@ -215,6 +216,11 @@ export function StickerPlacementBar({
             arrowSize={10}
             shadow="md"
             radius="md"
+            // Under the placement tray, which is `z-30` and fixed to the bottom
+            // of the viewport. Mantine's default (300) put this hint on top of
+            // the panel it exists to send people to — pointing at a button that
+            // was no longer the thing to press.
+            zIndex={20}
             // Dismissed by its own control only. A click-outside dismissal on a
             // hint anchored to a button people are about to press would count
             // pressing the button as "I have read this".
@@ -281,13 +287,29 @@ export function StickerPlacementBar({
               // The button's own yellow, because it is about that button and
               // nothing else. A neutral card floating over the image reads as a
               // site notice; this reads as the button talking.
-              className="border-none bg-yellow-4 px-3 py-2 dark:bg-yellow-6"
+              //
+              // The wiggle runs once, on appearance. Beside a picture somebody
+              // came to look at, a permanent animation is a nag; two beats is
+              // enough to move an eye that was already on the image.
+              className={clsx(
+                'border-none bg-yellow-4 px-3 py-2 dark:bg-yellow-6',
+                hintClasses.wiggle
+              )}
             >
               <div className="flex items-center gap-2">
                 <Text size="xs" fw={600} c="dark.8">
                   {hint}
                 </Text>
-                <CloseButton size="xs" c="dark.8" aria-label="Dismiss" onClick={dismissHint} />
+                <CloseButton
+                  size="xs"
+                  aria-label="Dismiss"
+                  onClick={dismissHint}
+                  // Mantine's close button hovers to a dark fill, which on this
+                  // yellow card is a black square around a black glyph — the
+                  // control disappears at the moment you reach for it. A tint of
+                  // the card's own ink instead, which darkens without hiding.
+                  className="text-dark-8 hover:bg-black/10"
+                />
               </div>
             </Popover.Dropdown>
           </Popover>
