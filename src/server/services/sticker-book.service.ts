@@ -159,8 +159,20 @@ async function getPlacementSection({
   // creator — silently, still returning rows, just somebody else's.
   const where =
     side === 'placer'
-      ? { surface: SURFACE, targetType: TARGET_TYPE, status: 'approved', placerId: userId, ownerId: blocked }
-      : { surface: SURFACE, targetType: TARGET_TYPE, status: 'approved', ownerId: userId, placerId: blocked };
+      ? {
+          surface: SURFACE,
+          targetType: TARGET_TYPE,
+          status: 'approved',
+          placerId: userId,
+          ownerId: blocked,
+        }
+      : {
+          surface: SURFACE,
+          targetType: TARGET_TYPE,
+          status: 'approved',
+          ownerId: userId,
+          placerId: blocked,
+        };
 
   const groups = await dbRead.placement.groupBy({
     by: ['targetId'],
@@ -259,9 +271,7 @@ async function getEarnedBuzz(userId: number) {
  * the owner.
  */
 async function getStickerHoldings(userId: number) {
-  return dbRead.$queryRaw<
-    { cosmeticId: number; remaining: number | null; unlimited: boolean }[]
-  >`
+  return dbRead.$queryRaw<{ cosmeticId: number; remaining: number | null; unlimited: boolean }[]>`
     SELECT
       uc."cosmeticId",
       SUM(uc."remaining")::int AS "remaining",

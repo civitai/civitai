@@ -85,10 +85,7 @@ describe('stickerBookAccess', () => {
   });
 
   it('shows the owner their own hidden book', () => {
-    const access = stickerBookAccess(
-      { hideStickerBook: true, hidePurchasedStickers: true },
-      owner
-    );
+    const access = stickerBookAccess({ hideStickerBook: true, hidePurchasedStickers: true }, owner);
 
     expect(access.canViewBook).toBe(true);
     expect(access.canViewStickers).toBe(true);

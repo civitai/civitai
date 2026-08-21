@@ -205,7 +205,16 @@ describe('getStickerBook — what leaves the server', () => {
 
   it('drops an image this domain may not serve rather than sending it withheld', async () => {
     imageFindMany.mockResolvedValue([
-      { id: IMAGE, url: 'abc', name: null, width: 1, height: 1, type: 'image', metadata: {}, nsfwLevel: 8 },
+      {
+        id: IMAGE,
+        url: 'abc',
+        name: null,
+        width: 1,
+        height: 1,
+        type: 'image',
+        metadata: {},
+        nsfwLevel: 8,
+      },
     ]);
 
     const book = await getStickerBook({

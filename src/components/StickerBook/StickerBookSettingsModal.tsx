@@ -52,9 +52,7 @@ export function StickerBookSettingsModal({
 
         <Switch
           checked={bookVisible}
-          onChange={(event) =>
-            mutate.mutate({ hideStickerBook: !event.currentTarget.checked })
-          }
+          onChange={(event) => mutate.mutate({ hideStickerBook: !event.currentTarget.checked })}
           label="Show my sticker book on my profile"
           description="Off hides the whole tab from visitors. Moderators can still see it."
         />

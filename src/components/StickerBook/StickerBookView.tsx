@@ -117,19 +117,14 @@ export function StickerBookView({ username }: { username: string }) {
               </Text>
             )}
           </div>
-          <StickerBookStickers
-            stickers={data.stickers}
-            showQuantities={access.canViewQuantities}
-          />
+          <StickerBookStickers stickers={data.stickers} showQuantities={access.canViewQuantities} />
         </section>
       )}
 
       <StickerBookSection
         title={isOwner ? 'Images you stickered' : `Images ${username} stickered`}
         emptyMessage={
-          isOwner
-            ? "You haven't had a sticker accepted on anyone else's image yet."
-            : 'None yet.'
+          isOwner ? "You haven't had a sticker accepted on anyone else's image yet." : 'None yet.'
         }
         items={data.placed}
         countLabel={(count) => `${count} stickers`}
@@ -137,7 +132,9 @@ export function StickerBookView({ username }: { username: string }) {
       />
 
       <StickerBookSection
-        title={isOwner ? 'Your images that got stickered' : `${username}'s images that got stickered`}
+        title={
+          isOwner ? 'Your images that got stickered' : `${username}'s images that got stickered`
+        }
         emptyMessage={
           isOwner
             ? 'Nobody has put a sticker on your work yet. Accepted placements show up here.'
