@@ -462,7 +462,7 @@ describe('the free hint is shown only where there is something to take', () => {
     // promise more than the image can accept.
     expect(
       freeHintText({ freeSlots: 4, freeSlotsRemaining: 3 }, { remaining: 2, usedHere: false })
-    ).toBe('You have 2 free stickers today');
+    ).toBe('2 daily free stickers');
   });
 
   /**
