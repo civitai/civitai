@@ -23,6 +23,16 @@ export type ChatTheme = {
   vars: Record<string, string> | null;
 };
 
+/**
+ * Named rather than `--mantine-font-family-monospace`, whose stack leads with
+ * `ui-monospace`/`SFMono-Regular` — the system UI mono, which reads as the app's
+ * own face on a Mac and defeats the point of the skin. Locally installed faces
+ * only, so the theme costs no webfont: the open-licensed ones are preferred and
+ * the platform monos are the floor.
+ */
+const TERMINAL_FONT =
+  "'Cascadia Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'DejaVu Sans Mono', Consolas, 'Liberation Mono', 'Courier New', monospace";
+
 export const chatThemes: ChatTheme[] = [
   {
     slug: 'default',
@@ -101,7 +111,8 @@ export const chatThemes: ChatTheme[] = [
       '--chat-text-dim': '#8fbf98',
       '--chat-meta': '#6f8a75',
       '--chat-hover': 'rgb(105 219 124 / 8%)',
-      '--chat-msg-font': 'var(--mantine-font-family-monospace)',
+      '--chat-ui-font': TERMINAL_FONT,
+      '--chat-msg-font': TERMINAL_FONT,
       '--chat-msg-size': '12.5px',
       '--chat-radius': '4px',
       '--chat-bubble': '#111c12',

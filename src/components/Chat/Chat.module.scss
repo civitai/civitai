@@ -33,7 +33,10 @@
   --chat-bg-image: none;
 
   /* Type and geometry are as much of a skin as colour is — a terminal that is
-     merely green is a recolour, not a terminal. */
+     merely green is a recolour, not a terminal. --chat-ui-font is the window's
+     own face: the rail, the headers and the usernames, which a theme that
+     restyles only the messages leaves speaking in the app's voice. */
+  --chat-ui-font: inherit;
   --chat-msg-font: inherit;
   --chat-msg-size: 13.5px;
   --chat-radius: 19px;
@@ -53,6 +56,7 @@
 .surface.surface {
   background-color: var(--chat-bg);
   background-image: var(--chat-bg-image);
+  font-family: var(--chat-ui-font);
 }
 
 /* The rail, the conversation header and the composer are the chrome around the

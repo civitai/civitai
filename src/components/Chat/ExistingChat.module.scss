@@ -28,6 +28,12 @@
   &.grouped {
     padding-top: 1px;
   }
+
+  /* Padding rather than margin so the hover band covers the gap too — a margin
+     here would leave an unlit strip above the row it belongs to. */
+  &.newSender {
+    padding-top: 12px;
+  }
 }
 
 .messageHead {
@@ -125,6 +131,74 @@
 .standalone.standalone {
   background-color: transparent;
   padding: 0;
+}
+
+/* An embed is the unfurl of a link in the message above it, not a message of its
+   own: it lines up under that message's body and keeps a full row of space below
+   so the next sender's header can never butt against it. The left margin is
+   .messageRow's 14px plus .messageBody's 34px. */
+.embedRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: min(420px, calc(100% - 62px));
+  margin: 2px 14px 10px 48px;
+  padding: 7px 9px;
+  border: 1px solid var(--chat-line);
+  border-left: 3px solid var(--chat-accent);
+  border-radius: var(--mantine-radius-sm);
+  background-color: var(--chat-panel);
+}
+
+/* A bare image unfurl is the preview — the card is just its frame. */
+.embedMedia {
+  padding: 0;
+  overflow: hidden;
+}
+
+.embedBody {
+  min-width: 0;
+  flex: 1;
+}
+
+.embedTitle {
+  display: block;
+  font-family: var(--chat-msg-font);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--chat-accent);
+  overflow-wrap: anywhere;
+}
+
+.embedDesc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 2px;
+  font-family: var(--chat-msg-font);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--chat-text-dim);
+}
+
+/* Fixed box, not intrinsic size: two unfurls in a row have to present the same
+   silhouette, or they read as misaligned against each other. */
+.embedThumb {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--mantine-radius-sm);
+  object-fit: cover;
+}
+
+.embedImage {
+  display: block;
+  max-width: 100%;
+  max-height: 260px;
+  object-fit: contain;
 }
 
 .editedTag {
