@@ -2,6 +2,7 @@ import { Title } from '@mantine/core';
 import { useEffect } from 'react';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
@@ -68,6 +69,7 @@ function ModelsPage() {
       <MasonryContainer className="flex flex-col gap-2">
         {username && typeof username === 'string' && <Title>Models by {username}</Title>}
         <div className="flex flex-col gap-2">
+          <CategoryTags />
           <ModelsInfinite filters={queryFilters} showEof showAds />
         </div>
       </MasonryContainer>
