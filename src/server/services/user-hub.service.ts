@@ -1,20 +1,35 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 import type {
+  GetHubSourceSuggestionsInput,
+  ResolveHubSourceInput,
   SetUserHubOrderInput,
   UpsertUserHubInput,
   UserHubSourceInput,
 } from '~/server/schema/user-hub.schema';
-import { HUB_COLLECTION_SOURCES_ENABLED, hubLimits } from '~/server/schema/user-hub.schema';
+import {
+  HUB_COLLECTION_SOURCES_ENABLED,
+  hubFeedFiltersSchema,
+  hubLimits,
+} from '~/server/schema/user-hub.schema';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
+  Availability,
+  CollectionContributorPermission,
+  CollectionMode,
   CollectionReadConfiguration,
+  CollectionType,
   MetricTimeframe,
+  ModelEngagementType,
+  ModelStatus,
+  UserEngagementType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
 import { ImageSort } from '~/server/common/enums';
 import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { getAllServerHosts } from '~/server/utils/server-domain';
+import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
 
 const hubSelect = {
   id: true,
@@ -23,20 +38,44 @@ const hubSelect = {
   sort: true,
   period: true,
   mediaTypes: true,
+  metadata: true,
   sources: {
     select: { id: true, type: true, targetId: true, alias: true, enabled: true, index: true },
     orderBy: { index: 'asc' },
   },
 } as const;
 
+type HubRow = { metadata: Prisma.JsonValue };
+
+function readMetadata(metadata: Prisma.JsonValue | undefined) {
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)
+    : {};
+}
+
+// `metadata` never leaves the service: callers get the fields it carries, so a key
+// added to it later is not published to every client by default.
+function toHubDetail<T extends HubRow>({ metadata, ...hub }: T) {
+  const stored = readMetadata(metadata);
+  const description = stored.description;
+  return {
+    ...hub,
+    description: typeof description === 'string' ? description : null,
+    // Re-validated on the way out: what is on the row was written by an older
+    // shape of this schema, and the feed refuses some combinations outright.
+    filters: hubFeedFiltersSchema.catch({}).parse(stored.filters ?? {}),
+  };
+}
+
 export type UserHubDetail = Awaited<ReturnType<typeof getUserHubs>>[number];
 
 export async function getUserHubs({ userId }: { userId: number }) {
-  return dbRead.userHub.findMany({
+  const hubs = await dbRead.userHub.findMany({
     where: { userId },
     select: hubSelect,
     orderBy: { index: 'asc' },
   });
+  return hubs.map(toHubDetail);
 }
 
 // Every read is scoped by userId rather than checked after the fetch, so an id
@@ -44,11 +83,11 @@ export async function getUserHubs({ userId }: { userId: number }) {
 export async function getUserHubById({ id, userId }: { id: number; userId: number }) {
   const hub = await dbRead.userHub.findFirst({ where: { id, userId }, select: hubSelect });
   if (!hub) throw throwNotFoundError('Hub not found');
-  return hub;
+  return toHubDetail(hub);
 }
 
 export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & { userId: number }) {
-  const { id, sources, ...data } = input;
+  const { id, sources, description, filters, ...data } = input;
 
   if (sources) {
     const duplicate = new Set<string>();
@@ -68,27 +107,57 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
     if (count >= hubLimits.hubsPerUser)
       throw throwBadRequestError(`You can have at most ${hubLimits.hubsPerUser} hubs`);
 
-    return dbWrite.userHub.create({
+    const hub = await dbWrite.userHub.create({
       data: {
         ...data,
         name: data.name,
         sort: data.sort ?? ImageSort.Newest,
         period: data.period ?? MetricTimeframe.AllTime,
         mediaTypes: data.mediaTypes ?? [],
+        metadata: {
+          ...(description ? { description } : {}),
+          ...(filters ? { filters } : {}),
+        },
         userId,
         index: count,
         sources: { create: (sources ?? []).map(({ id: _, ...source }) => source) },
       },
       select: hubSelect,
     });
+    return toHubDetail(hub);
   }
 
-  const existing = await dbRead.userHub.findFirst({ where: { id, userId }, select: { id: true } });
+  // Read through the WRITER, not the replica: this is a read-modify-write of one
+  // json column, and a replica lagging behind the previous save merges a stale
+  // description back over a newer one.
+  const existing = await dbWrite.userHub.findFirst({
+    where: { id, userId },
+    select: { id: true, metadata: true },
+  });
   if (!existing) throw throwNotFoundError('Hub not found');
 
-  if (!sources) return dbWrite.userHub.update({ where: { id, userId }, data, select: hubSelect });
+  // Merged rather than replaced, and only ever with the one key this schema names
+  // — `metadata` holds more than the description, and an omitted `description`
+  // means "leave it alone" for the same reason `sources` does.
+  const metadata =
+    description === undefined && filters === undefined
+      ? undefined
+      : {
+          ...readMetadata(existing.metadata),
+          ...(description === undefined ? {} : { description: description || undefined }),
+          ...(filters === undefined ? {} : { filters }),
+        };
 
-  return dbWrite.$transaction(async (tx) => {
+  if (!sources) {
+    const hub = await dbWrite.userHub.update({
+      where: { id, userId },
+      data: { ...data, ...(metadata ? { metadata } : {}) },
+      select: hubSelect,
+    });
+    return toHubDetail(hub);
+  }
+
+  const updated = await dbWrite.$transaction(async (tx) => {
     await tx.userHubSource.deleteMany({ where: { hubId: id } });
     return tx.userHub.update({
       // Scoped by userId as well as id, like every read here. Redundant while
@@ -96,10 +165,15 @@ export async function upsertUserHub({ userId, ...input }: UpsertUserHubInput & {
       // rail already anticipates — a check in a prior SELECT is a check that can
       // disagree with the write.
       where: { id, userId },
-      data: { ...data, sources: { create: sources.map(({ id: _, ...source }) => source) } },
+      data: {
+        ...data,
+        ...(metadata ? { metadata } : {}),
+        sources: { create: sources.map(({ id: _, ...source }) => source) },
+      },
       select: hubSelect,
     });
   });
+  return toHubDetail(updated);
 }
 
 export async function deleteUserHub({ id, userId }: { id: number; userId: number }) {
@@ -257,4 +331,246 @@ async function assertHubSourcesUsable({
         `"${collection.name}" limits the content ratings it shows, which a hub cannot honour. It cannot be used as a hub source.`
       );
   }
+}
+
+// What the viewer is allowed to see the name of. This is an id-to-name lookup over
+// a dense id space, so an unfiltered arm is a sweepable oracle for the names of
+// drafts, unpublished models and private collections. A source they cannot see is
+// a not-found, never a name plus a refusal.
+const visibleModel = (userId: number, isModerator?: boolean) =>
+  isModerator
+    ? { deletedAt: null }
+    : {
+        deletedAt: null,
+        OR: [
+          { userId },
+          { status: ModelStatus.Published, availability: { not: Availability.Private } },
+        ],
+      };
+
+export async function resolveHubSourceFromUrl({
+  url,
+  userId,
+  isModerator,
+}: ResolveHubSourceInput & { userId: number; isModerator?: boolean }) {
+  const ref = parseCivitaiUrlSafe(url, { hosts: getAllServerHosts() });
+  if (!ref) return null;
+
+  if (ref.type === 'user') {
+    // `User.username` is citext, so a plain equals is case-insensitive AND
+    // index-served. `mode: 'insensitive'` emits ILIKE, which no btree serves —
+    // 4.7s full table read vs 0.14ms, measured on the prod replica.
+    const user = await dbRead.user.findFirst({
+      where: { username: { equals: ref.username }, deletedAt: null },
+      select: { id: true, username: true },
+    });
+    if (!user) return null;
+    return { type: UserHubSourceType.User, targetId: user.id, alias: user.username ?? url };
+  }
+
+  if (ref.type === 'model') {
+    // A link carrying `?modelVersionId=` is someone looking at one version's
+    // gallery, which is what they mean to follow — the whole model is a broader
+    // ask than the link they copied.
+    if (ref.modelVersionId)
+      return resolveHubSourceFromUrl({
+        url: `/model-versions/${ref.modelVersionId}`,
+        userId,
+        isModerator,
+      });
+
+    const model = await dbRead.model.findFirst({
+      where: { id: ref.modelId, ...visibleModel(userId, isModerator) },
+      select: { id: true, name: true },
+    });
+    if (!model) return null;
+    return { type: UserHubSourceType.Model, targetId: model.id, alias: model.name };
+  }
+
+  if (ref.type === 'modelVersion') {
+    const version = await dbRead.modelVersion.findFirst({
+      where: {
+        id: ref.modelVersionId,
+        model: visibleModel(userId, isModerator),
+        ...(isModerator
+          ? {}
+          : {
+              OR: [
+                { model: { userId } },
+                { status: ModelStatus.Published, availability: { not: Availability.Private } },
+              ],
+            }),
+      },
+      select: { id: true, name: true, model: { select: { name: true } } },
+    });
+    if (!version) return null;
+    return {
+      type: UserHubSourceType.ModelVersion,
+      targetId: version.id,
+      alias: `${version.model.name} - ${version.name}`,
+    };
+  }
+
+  // Same gate the write path enforces, and in the same order: refusing after
+  // showing the name is not a refusal.
+  if (!HUB_COLLECTION_SOURCES_ENABLED) return null;
+
+  const [collection] = await dbRead.collection.findMany({
+    where: { id: ref.collectionId, read: { not: CollectionReadConfiguration.Private } },
+    select: { id: true, name: true },
+    take: 1,
+  });
+  if (!collection) return null;
+
+  const [permission] = await getUserCollectionPermissionsByIds({ ids: [collection.id], userId });
+  if (!permission?.read) return null;
+
+  return { type: UserHubSourceType.Collection, targetId: collection.id, alias: collection.name };
+}
+
+const SUGGESTIONS_LIMIT = 25;
+
+// How much of the viewer's relationship list the type-ahead searches. A name filter
+// expressed as a relation filter does NOT bound the work: Prisma emits it as a
+// subquery, the planner walks every one of the viewer's rows probing the target
+// table, and `take` only stops it early when matches are dense. Measured on the
+// prod replica: a viewer following 130,006 people paid 4.8s and ~4.85GB of buffers
+// for a term matching none of them — worst exactly for the rare term that makes a
+// type-ahead worth having.
+//
+// So the relationship list drives, bounded, and the name filter runs over the ids
+// it returns — a search of your most recent relationships, not all of them.
+const SUGGESTIONS_WINDOW = 500;
+
+/**
+ * What the source picker searches, one type at a time. Scoped to the viewer's own
+ * relationships rather than the whole site: creators they follow, models they own
+ * or asked to be notified about or bookmarked, and collections they follow.
+ * Anything outside that is still reachable by pasting its link.
+ *
+ * `ModelEngagementType.Notify` is the bell — the "favourite" button sets it and
+ * adds the model to the viewer's bookmark collection at the same time, which is
+ * why both are read here.
+ */
+export async function getHubSourceSuggestions({
+  userId,
+  type,
+  query,
+}: GetHubSourceSuggestionsInput & { userId: number }) {
+  const term = query?.trim();
+
+  if (type === UserHubSourceType.User) {
+    const follows = await dbRead.userEngagement.findMany({
+      where: { userId, type: UserEngagementType.Follow },
+      select: { targetUserId: true },
+      orderBy: { createdAt: 'desc' },
+      take: SUGGESTIONS_WINDOW,
+    });
+    if (!follows.length) return [];
+
+    const users = await dbRead.user.findMany({
+      where: {
+        id: { in: follows.map((f) => f.targetUserId) },
+        deletedAt: null,
+        // citext overloads equality, NOT `LIKE` — a plain `contains` here is
+        // case-SENSITIVE. Safe to ask for ILIKE now only because the id list
+        // above bounds it; unbounded, this is the 4.7GB scan.
+        ...(term ? { username: { contains: term, mode: 'insensitive' as const } } : {}),
+      },
+      select: { id: true, username: true },
+      take: SUGGESTIONS_LIMIT,
+    });
+
+    return users
+      .filter((user): user is { id: number; username: string } => !!user.username)
+      .map((user) => ({
+        type: UserHubSourceType.User,
+        targetId: user.id,
+        alias: user.username,
+      }));
+  }
+
+  if (type === UserHubSourceType.Collection) {
+    // Kept behind the same switch the write path enforces: offering a collection
+    // the server would refuse is worse than not listing it.
+    if (!HUB_COLLECTION_SOURCES_ENABLED) return [];
+
+    const followed = await dbRead.collectionContributor.findMany({
+      where: { userId, permissions: { has: CollectionContributorPermission.VIEW } },
+      select: { collectionId: true },
+      take: SUGGESTIONS_WINDOW,
+    });
+    if (!followed.length) return [];
+
+    const collections = await dbRead.collection.findMany({
+      where: {
+        id: { in: followed.map((f) => f.collectionId) },
+        ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
+      },
+      select: { id: true, name: true },
+      take: SUGGESTIONS_LIMIT,
+    });
+
+    return collections.map((collection) => ({
+      type: UserHubSourceType.Collection,
+      targetId: collection.id,
+      alias: collection.name,
+    }));
+  }
+
+  // The three relationships overlap, so the ids are gathered first and the name
+  // filter runs once over the union.
+  const bookmarkCollection = await dbRead.collection.findFirst({
+    where: { userId, type: CollectionType.Model, mode: CollectionMode.Bookmark },
+    select: { id: true },
+  });
+
+  const [ownModels, engaged, bookmarked] = await Promise.all([
+    dbRead.model.findMany({
+      where: { userId, deletedAt: null },
+      select: { id: true },
+      orderBy: { id: 'desc' },
+      take: SUGGESTIONS_WINDOW,
+    }),
+    dbRead.modelEngagement.findMany({
+      where: { userId, type: ModelEngagementType.Notify },
+      select: { modelId: true },
+      orderBy: { createdAt: 'desc' },
+      take: SUGGESTIONS_WINDOW,
+    }),
+    bookmarkCollection
+      ? dbRead.collectionItem.findMany({
+          where: { collectionId: bookmarkCollection.id, modelId: { not: null } },
+          select: { modelId: true },
+          orderBy: { id: 'desc' },
+          take: SUGGESTIONS_WINDOW,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const candidateIds = [
+    ...new Set([
+      ...ownModels.map((m) => m.id),
+      ...engaged.map((e) => e.modelId),
+      ...bookmarked.flatMap((b) => (b.modelId ? [b.modelId] : [])),
+    ]),
+  ];
+  if (!candidateIds.length) return [];
+
+  const models = await dbRead.model.findMany({
+    where: {
+      id: { in: candidateIds },
+      deletedAt: null,
+      ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
+    },
+    select: { id: true, name: true },
+    orderBy: { id: 'desc' },
+    take: SUGGESTIONS_LIMIT,
+  });
+
+  return models.map((model) => ({
+    type: UserHubSourceType.Model,
+    targetId: model.id,
+    alias: model.name,
+  }));
 }

@@ -3,6 +3,7 @@ import {
   Card,
   Collapse,
   Container,
+  Divider,
   Drawer,
   Group,
   ScrollArea,
@@ -24,21 +25,64 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
+import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showErrorNotification } from '~/utils/notifications';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-// Loaded on demand: the panel pulls QuickSearchDropdown, which statically imports
-// react-instantsearch and instantsearch.js — ~100KB gz that a feed route has no
-// use for until you edit sources. AppHeader keeps AutocompleteSearch out of the
-// shared bundle the same way.
 const HubSourcePanel = dynamic(
   () => import('~/components/Hubs/HubSourcePanel').then((m) => m.HubSourcePanel),
   { ssr: false }
 );
 import { trpc } from '~/utils/trpc';
 import classes from './HubsLayout.module.scss';
+
+function SectionHeader({
+  label,
+  right,
+  onClick,
+  expanded,
+}: {
+  label: React.ReactNode;
+  right?: React.ReactNode;
+  onClick?: () => void;
+  expanded?: boolean;
+}) {
+  const content = (
+    <Group gap={4} wrap="nowrap" className="min-w-0">
+      {onClick &&
+        (expanded ? (
+          <IconChevronDown size={14} className="shrink-0" />
+        ) : (
+          <IconChevronRight size={14} className="shrink-0" />
+        ))}
+      <Text size="xs" fw={700} tt="uppercase" c="dimmed" lineClamp={1}>
+        {label}
+      </Text>
+    </Group>
+  );
+
+  return (
+    <Group justify="space-between" wrap="nowrap" px="sm" py={6} gap="xs">
+      {onClick ? (
+        <UnstyledButton
+          className="min-w-0 flex-1"
+          aria-expanded={expanded}
+          onClick={onClick}
+          type="button"
+        >
+          {content}
+        </UnstyledButton>
+      ) : (
+        content
+      )}
+      {right}
+    </Group>
+  );
+}
 
 /**
  * The rail holds what belongs to the hub you are on — its sources — plus the
@@ -48,9 +92,13 @@ import classes from './HubsLayout.module.scss';
  * Followed hubs will join the list here when hub sharing lands; the layout does
  * not change when they do.
  */
-function HubsSidebarContent({ activeHubId }: { activeHubId?: number }) {
-  const router = useRouter();
-  const utils = trpc.useUtils();
+function HubsSidebarContent({
+  activeHubId,
+  onNewHub,
+}: {
+  activeHubId?: number;
+  onNewHub: () => void;
+}) {
   const [search, setSearch] = useState('');
   const [sourcesOpen, setSourcesOpen] = useState(false);
 
@@ -64,67 +112,35 @@ function HubsSidebarContent({ activeHubId }: { activeHubId?: number }) {
     { enabled: !!activeHubId }
   );
 
-  const create = trpc.userHub.upsert.useMutation({
-    onSuccess: async (hub) => {
-      await utils.userHub.getAll.invalidate();
-      await router.push(`/hubs/${hub.id}`);
-    },
-    onError: (error) =>
-      showErrorNotification({ title: 'Could not create hub', error: new Error(error.message) }),
-  });
-
   const term = search.trim().toLowerCase();
   const visible = term ? hubs.filter((hub) => hub.name.toLowerCase().includes(term)) : hubs;
 
   return (
-    <Stack gap="xs" p="xs">
-      <Group justify="space-between" wrap="nowrap">
-        <Text fw={600}>My hubs</Text>
-        <Button
-          size="compact-xs"
-          leftSection={<IconPlus size={14} />}
-          loading={create.isPending}
-          onClick={() => create.mutate({ name: 'New hub', sources: [] })}
-        >
-          New
-        </Button>
-      </Group>
-
-      {hubs.length > 3 && (
-        <TextInput
-          size="xs"
-          placeholder="Search your hubs"
-          leftSection={<IconSearch size={14} />}
-          value={search}
-          onChange={(event) => setSearch(event.currentTarget.value)}
-        />
-      )}
+    <Stack gap={0}>
+      <Text fw={600} px="sm" py="xs">
+        Civitai Hubs
+      </Text>
+      <Divider />
 
       {activeHubId && activeHub && (
-        <Card withBorder p="xs">
-          <UnstyledButton
-            className="w-full"
-            aria-expanded={sourcesOpen}
-            aria-label="Sources"
+        <>
+          <SectionHeader
+            label={`Sources for ${activeHub.name}`}
+            expanded={sourcesOpen}
             onClick={() => setSourcesOpen((value) => !value)}
-          >
-            <Group justify="space-between" wrap="nowrap">
-              <Group gap={4} wrap="nowrap">
-                {sourcesOpen ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
-                <Text fw={600}>Sources</Text>
-              </Group>
-              <Text size="xs" c="dimmed">
+            right={
+              <Text size="xs" c="dimmed" className="shrink-0">
                 {activeHub.sources.length} / {hubLimits.sourcesPerHub}
               </Text>
-            </Group>
-          </UnstyledButton>
+            }
+          />
 
           {/* Mounted only once opened, which is also what defers the panel's chunk:
               `dynamic` starts fetching as soon as the component renders, so
-              rendering it collapsed would pull instantsearch on every hub load. */}
+              rendering it collapsed would pull it on every hub load. */}
           <Collapse in={sourcesOpen}>
             {sourcesOpen && (
-              <div className="pt-2">
+              <div className="px-3 pb-3">
                 <HubSourcePanel
                   hubId={activeHub.id}
                   maxSources={hubLimits.sourcesPerHub}
@@ -133,32 +149,77 @@ function HubsSidebarContent({ activeHubId }: { activeHubId?: number }) {
               </div>
             )}
           </Collapse>
-        </Card>
+          <Divider />
+        </>
       )}
 
-      {visible.length === 0 ? (
-        <Text size="xs" c="dimmed">
-          {hubs.length === 0 ? 'No hubs yet.' : 'No hubs match that.'}
-        </Text>
-      ) : (
-        <Stack gap={2}>
-          {visible.map((hub) => (
-            <Link
-              key={hub.id}
-              href={`/hubs/${hub.id}`}
-              className={
-                hub.id === activeHubId
-                  ? 'rounded bg-gray-2 px-2 py-1 font-semibold dark:bg-dark-5'
-                  : 'rounded px-2 py-1 hover:bg-gray-1 dark:hover:bg-dark-6'
-              }
-            >
-              <Text size="sm" lineClamp={1}>
-                {hub.name}
+      <SectionHeader
+        label="My Hubs"
+        right={
+          <LegacyActionIcon
+            size="sm"
+            variant="subtle"
+            aria-label="New hub"
+            onClick={onNewHub}
+            className="shrink-0"
+          >
+            <IconPlus size={16} />
+          </LegacyActionIcon>
+        }
+      />
+
+      <Stack gap="xs" px="sm" pb="sm">
+        {hubs.length > 3 && (
+          <TextInput
+            size="xs"
+            placeholder="Search your hubs"
+            leftSection={<IconSearch size={14} />}
+            value={search}
+            onChange={(event) => setSearch(event.currentTarget.value)}
+          />
+        )}
+
+        {hubs.length === 0 ? (
+          <Card withBorder p="sm" radius="md">
+            <Stack gap="xs" align="flex-start">
+              <Text size="xs" c="dimmed">
+                You don&apos;t have any hubs yet. Create one and it shows up here.
               </Text>
-            </Link>
-          ))}
-        </Stack>
-      )}
+              <Button size="compact-xs" leftSection={<IconPlus size={14} />} onClick={onNewHub}>
+                Create a hub
+              </Button>
+            </Stack>
+          </Card>
+        ) : visible.length === 0 ? (
+          <Text size="xs" c="dimmed">
+            No hubs match that.
+          </Text>
+        ) : (
+          <Stack gap={4}>
+            {visible.map((hub) => (
+              <Link
+                key={hub.id}
+                href={`/hubs/${hub.id}`}
+                className={clsx(
+                  'rounded-md px-2 py-1.5',
+                  hub.id === activeHubId
+                    ? 'bg-gray-2 dark:bg-dark-5'
+                    : 'hover:bg-gray-1 dark:hover:bg-dark-6'
+                )}
+              >
+                <Text size="sm" fw={700} lineClamp={1}>
+                  {hub.name}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {hub.sources.length === 0
+                    ? 'No sources'
+                    : `${hub.sources.length} source${hub.sources.length === 1 ? '' : 's'}`}
+                </Text>
+              </Link>
+            ))}
+          </Stack>
+        )}
+      </Stack>
     </Stack>
   );
 }
@@ -173,6 +234,11 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
   const activeHubId = Number.isInteger(Number(router.query.id))
     ? Number(router.query.id)
     : undefined;
+
+  const openCreate = () => {
+    setDrawerOpen(false);
+    dialogStore.trigger({ component: HubUpsertModal });
+  };
 
   return (
     <Container fluid className={classes.container}>
@@ -198,7 +264,7 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
               needs) puts the overflow outside the border and past the viewport,
               with nothing to scroll it. */}
           <ScrollArea.Autosize mah="calc(100dvh - var(--header-height) - var(--footer-height) - 68px)">
-            <HubsSidebarContent activeHubId={activeHubId} />
+            <HubsSidebarContent activeHubId={activeHubId} onNewHub={openCreate} />
           </ScrollArea.Autosize>
         </Card>
       )}
@@ -220,13 +286,18 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
               opened={drawerOpen}
               onClose={() => setDrawerOpen(false)}
               size="100%"
-              title="My hubs"
+              title="Civitai Hubs"
             >
-              <HubsSidebarContent activeHubId={activeHubId} />
+              <HubsSidebarContent activeHubId={activeHubId} onNewHub={openCreate} />
             </Drawer>
           </>
         )}
-        {children}
+        {/* The feed's MasonryProvider lives INSIDE the rail's content column, not
+            around it. Measured from outside, it counts columns against the full
+            viewport and hands MasonryContainer a `combinedWidth` wider than the
+            column it renders in — which overflows the page and pushes the hub's
+            context menu off-screen. */}
+        <FeedLayout>{children}</FeedLayout>
       </div>
     </Container>
   );
