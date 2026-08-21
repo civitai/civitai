@@ -1,0 +1,353 @@
+<script lang="ts">
+  import { untrack } from 'svelte';
+  import { enhance } from '$app/forms';
+  import { page as pageState } from '$app/state';
+  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import { SvelteSet } from 'svelte/reactivity';
+  import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
+  import ImageActionBar from '$lib/components/ImageActionBar.svelte';
+  import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
+  import StrikeList from '$lib/components/StrikeList.svelte';
+  import { STRIKE_REASONS } from '$lib/moderation-reasons';
+  import { reportReasonLabel, reportStatusVariant } from '$lib/reports';
+  import SuspectFilterBar from './SuspectFilterBar.svelte';
+  import type { PageData } from './$types';
+  import { FormState } from '$lib/form-state.svelte';
+  import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { userLookupUrl } from '$lib/entity-url';
+
+  let {
+    suspectId,
+    suspect,
+    filters,
+    strikes,
+    notes,
+    canAct,
+    civitaiUrl,
+    strikeError,
+    notifyError,
+    imagesError,
+    imageResult,
+    legacyStrikeCount,
+    modActivity,
+    retoolActivity,
+    reportsOnUser,
+  }: {
+    suspectId: number;
+    suspect: NonNullable<PageData['suspect']>;
+    filters: PageData['filters'];
+    strikes: NonNullable<PageData['strikes']>;
+    notes: NonNullable<PageData['notes']>;
+    canAct: boolean;
+    civitaiUrl: string;
+    strikeError: string | null;
+    notifyError: string | null;
+    imagesError: string | null;
+    imageResult: string | null;
+    legacyStrikeCount: number;
+    modActivity: NonNullable<PageData['modActivity']>;
+    retoolActivity: NonNullable<PageData['retoolActivity']>;
+    reportsOnUser: NonNullable<PageData['reportsOnUser']>;
+  } = $props();
+
+  let striking = $state(false);
+  let strikeReason = $state('');
+  let notifying = $state(false);
+
+  const selected = new SvelteSet<string | number>();
+  const blockedIds = $derived(
+    new Set<string | number>(
+      suspect.items.filter((i) => i.ingestion === 'Blocked').map((i) => i.id)
+    )
+  );
+
+  // This panel owns its writes so a success can tear down what it armed. Inferring that from the
+  // action's return shape left a strike form open with a live submit after the strike had landed.
+  const onSubmit = new FormState({
+    reload: true,
+    onSuccess: () => {
+      striking = false;
+      notifying = false;
+      selected.clear();
+    },
+  });
+
+  // A new batch — a page of the grid, a filter change — must not carry the previous selection: those
+  // ids would still submit, and they belong to images no longer on screen. Keyed on the URL because
+  // `items` is a fresh array after ANY write on the page, which would discard a selection mid-assembly.
+  $effect(() => {
+    pageState.url.search;
+    untrack(() => selected.clear());
+  });
+</script>
+
+<section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <div class="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+    <div>
+      <h2 class="text-sm font-semibold text-white">
+        Reported account · {num(suspect.total)} images
+        {#if suspect.blocked > 0}
+          <span class="font-normal text-dark-2">· {num(suspect.blocked)} already blocked</span>
+        {/if}
+      </h2>
+      <p class="text-xs text-dark-2">
+        {num(suspect.matched)} match the filters; showing {suspect.items.length}.
+        {#if suspect.total > suspect.blocked}
+          {num(suspect.total - suspect.blocked)} remaining after prior enforcement.
+        {/if}
+        <a href={userLookupUrl(suspectId, 'reports')} class={LINK_CLASS}>
+          Their reports in User Lookup
+        </a>.
+      </p>
+    </div>
+    {#if canAct}
+      <div class="flex gap-2">
+        {#if !striking}
+          <Button size="sm" variant="destructive" onclick={() => (striking = true)}>Strike</Button>
+        {/if}
+        {#if !notifying}
+          <Button size="sm" onclick={() => (notifying = true)}>Notify</Button>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
+  {#if striking}
+    <form method="POST" action="?/strike" use:enhance={onSubmit.enhance} class="mb-3">
+      <input type="hidden" name="userId" value={suspectId} />
+      {#if strikeError}
+        <div
+          class="mb-2 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+          role="alert"
+        >
+          {strikeError}
+        </div>
+      {/if}
+      <CannedReasonPicker reasons={STRIKE_REASONS} idPrefix="strike" bind:value={strikeReason} />
+      <div class="mt-2 flex gap-2">
+        <Button type="submit" size="sm" variant="destructive" disabled={onSubmit.submitting}>
+          {onSubmit.submitting ? 'Working…' : 'Issue strike'}
+        </Button>
+        <Button type="button" size="sm" variant="outline" onclick={() => (striking = false)}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  {/if}
+
+  {#if notifying}
+    <form method="POST" action="?/notify" use:enhance={onSubmit.enhance} class="mb-3">
+      <input type="hidden" name="userId" value={suspectId} />
+      {#if notifyError}
+        <div
+          class="mb-2 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+          role="alert"
+        >
+          {notifyError}
+        </div>
+      {/if}
+      <Textarea name="message" rows={2} placeholder="What should this user be told?" required />
+      <div class="mt-2 flex gap-2">
+        <Button type="submit" size="sm" disabled={onSubmit.submitting}>Send</Button>
+        <Button type="button" size="sm" variant="outline" onclick={() => (notifying = false)}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  {/if}
+
+  <div class="mb-4">
+    <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Strikes ({strikes.length})</h3>
+    <StrikeList
+      {strikes}
+      empty={legacyStrikeCount > 0
+        ? 'No strikes issued since the Retool cutover.'
+        : 'No strikes on this account.'}
+    />
+    {#if legacyStrikeCount > 0}
+      <p class="mt-1 text-xs text-dark-2">
+        Plus {legacyStrikeCount} from the Retool era, in User Lookup — that table is history and is not
+        part of the counts above.
+      </p>
+    {/if}
+  </div>
+
+  <!-- Retool's other two history tabs. Without them this screen answers "what did they post" and not
+       "has anyone already dealt with this account", which is the question that decides whether to act
+       at all. Both capped at 20; User Lookup holds the full history. -->
+  <div class="mb-4 grid gap-4 sm:grid-cols-2">
+    <div>
+      <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
+        Moderation activity ({modActivity.length + retoolActivity.length})
+      </h3>
+      {#if modActivity.length === 0 && retoolActivity.length === 0}
+        <p class="text-sm text-dark-2">Nothing recorded against this account.</p>
+      {:else if modActivity.length === 0}
+        <p class="mb-1 text-sm text-dark-2">Nothing since the Retool migration.</p>
+      {:else}
+        <ul class="space-y-1 text-sm">
+          {#each modActivity.slice(0, 8) as a (a.id)}
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <span class="text-dark-0">{a.activity}</span>
+              <span class="text-xs text-dark-2">
+                {a.entityType}{a.entityId ? ` #${a.entityId}` : ''}
+                {#if a.moderatorUsername}· {a.moderatorUsername}{/if}
+                · {dateTime(a.createdAt)}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      <!-- Kept apart rather than merged: the Retool rows carry a display name, not a moderator id, and
+           no entity link, so interleaving them would imply a continuity the data does not have. -->
+      {#if retoolActivity.length}
+        <ul class="mt-1 space-y-1 text-sm">
+          {#each retoolActivity.slice(0, 8) as a (`retool-${a.id}`)}
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <span class="text-dark-0">{a.action ?? 'action'}</span>
+              <span class="text-xs text-dark-2">
+                Retool{#if a.app} · {a.app}{/if}{#if a.moderator} · {a.moderator}{/if}
+                · {dateTime(a.at)}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+
+    <div>
+      <!-- Reports against the ACCOUNT row, not against content they own. "Reports received" is
+           `getReportsReceived`'s name for the content union, and reusing it here would say an account
+           with dozens of open image reports has never been reported. -->
+      <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
+        Account reports ({reportsOnUser.length}, human-filed)
+      </h3>
+      {#if reportsOnUser.length === 0}
+        <p class="text-sm text-dark-2">
+          No prior report against the account itself. Reports on their content are not counted here.
+        </p>
+      {:else}
+        <ul class="space-y-1 text-sm">
+          {#each reportsOnUser.slice(0, 8) as r (r.id)}
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <Badge variant={reportStatusVariant(r.status)}>{r.status}</Badge>
+              <span class="text-dark-0">{reportReasonLabel(r.details, r.reason)}</span>
+              <span class="text-xs text-dark-2">
+                {#if r.reporter}by {r.reporter} · {/if}{dateTime(r.createdAt)}
+                {#if r.statusSetBy}· {r.status.toLowerCase()} by {r.statusSetBy}{/if}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  </div>
+
+  <!-- Retool showed the suspect's notes here. Filing a strike without reading the prior note is what
+       notes exist to prevent, and "it is in User Lookup" is a different screen. -->
+  <div class="mb-4">
+    <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Notes ({notes.length})</h3>
+    {#if notes.length === 0}
+      <p class="text-sm text-dark-2">No notes on this account.</p>
+    {:else}
+      <ul class="space-y-1 text-sm">
+        {#each notes.slice(0, 5) as n (n.id)}
+          <li class="min-w-0">
+            <p class="wrap-break-word whitespace-pre-wrap text-dark-0">{n.notes}</p>
+            <span class="text-xs text-dark-2">
+              {n.lastUpdateBy ?? 'unknown'} · {dateTime(n.lastUpdate)}
+            </span>
+          </li>
+        {/each}
+      </ul>
+      {#if notes.length > 5}
+        <a href={userLookupUrl(suspectId, 'notes')} class="mt-1 inline-block text-xs {LINK_CLASS}">
+          All {notes.length} notes
+        </a>
+      {/if}
+    {/if}
+  </div>
+
+  <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Recent content</h3>
+</section>
+
+<!-- Keyed on the URL, not on `data`: an unrelated write invalidates `load` and would otherwise reset a
+     half-typed filter or an in-progress selection. -->
+{#key pageState.url.search}
+  <SuspectFilterBar {filters} />
+{/key}
+
+{#if imagesError}
+  <div
+    class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
+    role="alert"
+  >
+    {imagesError}
+  </div>
+{:else if imageResult}
+  <div class="mb-3 rounded-md border border-dark-4 bg-dark-6 p-2 text-sm text-dark-0" role="status">
+    {imageResult}
+  </div>
+{/if}
+
+{#if canAct}
+  <ImageActionBar
+    {selected}
+    selectable={suspect.items.map((i) => i.id)}
+    onSubmit={onSubmit.enhance}
+    submitting={onSubmit.submitting}
+    notify={false}
+    blockedIds={blockedIds}
+  />
+{/if}
+
+<ImageQueueGrid
+  items={suspect.items}
+  {civitaiUrl}
+  nextCursor={suspect.nextCursor}
+  selected={canAct ? selected : undefined}
+  empty="No images match these filters."
+  endLabel="End of this account's content."
+  card={imageCard}
+  minColumn={200}
+/>
+
+{#snippet imageCard(img: {
+  tosViolation?: boolean;
+  needsReview?: string | null;
+  createdAt?: Date;
+  ingestion?: string;
+  blockedFor?: string | null;
+  prompt?: string | null;
+  negativePrompt?: string | null;
+  isProfilePicture?: boolean;
+  hasConnection?: boolean;
+})}
+  <div class="flex flex-col gap-1.5 p-2 text-xs text-dark-2">
+    <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <ImageFlagBadges
+        ingestion={img.ingestion}
+        blockedFor={img.blockedFor}
+        tosViolation={img.tosViolation}
+        needsReview={img.needsReview}
+      />
+      <!-- Removing either has consequences beyond the image: one blanks the account's avatar, the
+           other pulls an entry out of a bounty. -->
+      {#if img.isProfilePicture}<Badge variant="secondary">profile picture</Badge>{/if}
+      {#if img.hasConnection}<Badge variant="secondary">attached to entity</Badge>{/if}
+      <span>{dateTime(img.createdAt ?? null)}</span>
+    </div>
+    {#if img.prompt}
+      <p class="line-clamp-3 wrap-break-word" title={img.prompt}>{img.prompt}</p>
+    {/if}
+    {#if img.negativePrompt}
+      <p class="line-clamp-2 wrap-break-word text-dark-2/70" title={img.negativePrompt}>
+        neg: {img.negativePrompt}
+      </p>
+    {/if}
+  </div>
+{/snippet}

@@ -130,10 +130,20 @@ export function buildRewardsPayload({
       );
 
     const entry: StoredOverride = {};
+    // 🔴 `enabled` is written either way, and is the one field that does not
+    // follow the differs-from-the-default rule below.
+    //
+    // Its compiled default is ON and there is no compiled OFF, so "no entry" and
+    // "an operator turned this on" are the same row. Writing only the `false`
+    // meant switching a reward on DELETED its override — and if nothing else on
+    // that reward differed from its defaults, dropped the reward from the payload
+    // entirely, leaving no record that anyone decided anything. Two rewards
+    // turned on that way emptied the row in production and read back as a save
+    // that never happened.
+    entry.enabled = row.enabled;
     // Only what DIFFERS from the compiled default is stored, so a later change to
     // that default flows through instead of being frozen behind an override
     // written months earlier. An empty input therefore removes the override.
-    if (!row.enabled) entry.enabled = false;
     if (row.awardAmount !== '') entry.awardAmount = Number(row.awardAmount);
 
     if (reward.capOverridable) {
@@ -177,6 +187,33 @@ export function buildSetInput({
     expectedHash: hash,
     force,
   };
+}
+
+/**
+ * What a successful save does with its own response, extracted so the step the
+ * incident was actually about is not the one untested step in the panel.
+ *
+ * 🔴 Seeds the cache from the response instead of invalidating it. The switches
+ * render what the grant path RESOLVED, and that resolution is memoised per pod for
+ * a minute while a write invalidates only the pod that served it — so on ~100 pods
+ * a refetch here answers from a stale pod almost every time and shows the operator
+ * their own save as if it had not happened.
+ *
+ * `invalidate` is taken as a parameter it never calls, so a test can assert it was
+ * not called: a refetch reintroduced here is otherwise invisible to everything
+ * except a moderator watching their save do nothing.
+ */
+export function applySavedRewardConfig<T>(
+  saved: T,
+  panel: {
+    setDrafts: (drafts: null) => void;
+    setConflict: (conflict: null) => void;
+    cache: { setData: (input: undefined, value: T) => void; invalidate: () => unknown };
+  }
+) {
+  panel.setDrafts(null);
+  panel.setConflict(null);
+  panel.cache.setData(undefined, saved);
 }
 
 /**

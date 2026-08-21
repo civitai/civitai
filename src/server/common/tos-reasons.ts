@@ -117,3 +117,10 @@ export function mapToViolationType(
 
   return ViolationType.Other;
 }
+
+/** The moderator-facing wording for a violation, for the places that show a removal reason back to the
+ *  person it happened to. Falls back to the raw enum rather than throwing — a notification is not worth
+ *  losing over an unmapped value. */
+export function tosReasonLabel(violationType: ViolationType | string): string {
+  return TOS_REASONS.find((r) => r.value === violationType)?.label ?? String(violationType);
+}

@@ -13,7 +13,7 @@
  * NOT `screenshots.length` and is not known at render time — a `cols` value
  * computed from the array would be wrong for exactly the listings whose art is
  * broken. `:last-child` / `:nth-child` are matched against the LIVE DOM, so when a
- * tile removes itself the remaining ones are re-matched for free: 3 shots of which
+ * tile is dropped the remaining ones are re-matched for free: 3 shots of which
  * the middle one 404s leaves two tiles that correctly stay half-width, and 3 of
  * which two 404 leaves one tile that correctly goes full-width. Pinned as measured
  * geometry in `AppListingDetailBody.gallery.browser.test.tsx`.

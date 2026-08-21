@@ -131,7 +131,7 @@ beforeEach(async () => {
 
 /**
  * A screenshot URL that RESOLVES — an inline 320x180 SVG. It has to be a real,
- * loadable image: `ScreenshotTile` removes itself from the DOM on an `error` event, so
+ * loadable image: a tile is removed from the DOM on an `error` event, so
  * a tile built from an unreachable URL is not a tile whose width can be measured. The
  * 16:9 box keeps the rendered rows a sane height; only widths are asserted.
  */
@@ -139,7 +139,7 @@ const OK_SHOT = `data:image/svg+xml;base64,${btoa(
   '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"/>'
 )}`;
 
-/** A URL that cannot resolve, so the browser fires `error` and the tile hides itself. */
+/** A URL that cannot resolve, so the browser fires `error` and the tile is dropped. */
 const BROKEN_SHOT = (n: number) => `https://cdn.invalid.example/missing-${n}.png`;
 
 function base(over: Partial<ListingDetail>): ListingDetail {
@@ -354,7 +354,7 @@ describe('screenshot gallery — rendered tile width', () => {
    * 🔴 THE COUNT-MISMATCH CASE — the reason the fix is a CSS structural selector and
    * not a `cols` value computed from `screenshots.length`.
    *
-   * Three screenshots go in; two of them 404, so `ScreenshotTile` removes them and the
+   * Three screenshots go in; two of them 404, so the gallery drops them and the
    * browser ends up with ONE tile. Any number derived before render would still say
    * "3" here and would leave that survivor at half width. `:last-child:nth-child(odd)`
    * is matched against the LIVE DOM, so the remaining tile is re-matched for free.
@@ -425,7 +425,7 @@ describe('screenshot gallery — rendered tile width', () => {
 
     // POSITIVE CONTROL, and not a racy one — see the sibling test above. Indexes 1 and
     // 3 with nothing between them is a string pair only a three-element map can
-    // produce, so the middle tile demonstrably rendered and then removed itself.
+    // produce, so the middle tile demonstrably rendered and was then dropped.
     expect(Array.from(grid.querySelectorAll('img')).map((img) => img.getAttribute('alt'))).toEqual([
       'My App screenshot 1',
       'My App screenshot 3',

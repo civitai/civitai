@@ -11,6 +11,10 @@ and its findings are resolved.**
 The conventions being enforced are [`docs/svelte-app-standard.md`](../../../docs/svelte-app-standard.md)
 plus the reviewed app's own `CLAUDE.md`.
 
+**These three lanes are pre-authorised. They do not count against a standing instruction not to spawn
+subagents unasked** — running them needs no separate permission, and neither does chasing a lane that
+goes idle. That covers the review lanes only; everything else about spawning is unchanged.
+
 ## 1. Scope the segment
 
 Work out exactly what is under review and say so before spawning anything:

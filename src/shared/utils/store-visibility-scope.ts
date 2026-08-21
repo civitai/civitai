@@ -76,6 +76,58 @@ export function narrowStoreScope(value: unknown): StoreVisibilityScope {
 }
 
 /**
+ * The listing KINDS a scope admits or excludes. Declared here, in the same
+ * dependency-free module as the scope itself, because the scope→kind rule below is
+ * the thing both sides of the boundary have to agree on; a server-schema import
+ * would put it out of reach of the client gate.
+ */
+export const STORE_LISTING_KINDS = ['onsite', 'offsite'] as const;
+
+/** One store listing's kind. Structurally identical to the read schema's `ListingKind`. */
+export type StoreListingKind = (typeof STORE_LISTING_KINDS)[number];
+
+/**
+ * Does this scope admit listings of this KIND?
+ *
+ * 🔴 THE ONE KIND RULE, shared by the read path, the write path and the client
+ * affordance gate. It is the predicate form of the data-layer filter
+ * `scope === 'public-external' ? { kind: 'offsite' } : {}` that
+ * `listAppListingReviews` / `listAvailableListings` / `getListingDetail` apply — and
+ * it exists as a named export precisely so the WRITE path and the UI cannot
+ * re-derive a second, disagreeing version of it.
+ *
+ * That is not hypothetical. The review WRITE gate was keyed on a FLAG
+ * (`isAppListingsEnabled`) while the read path had already moved to this scope, so
+ * the `app-listings-public-external` cohort could SEE the review affordance on an
+ * offsite listing and got `UNAUTHORIZED` on submit. A flag name answers "which
+ * cohort"; only the resolved scope answers "which kinds", and reviewability is a
+ * question about a kind.
+ *
+ *   - `full`            — every kind (mods + app-dev-testers): unchanged.
+ *   - `public-external` — `offsite` only; `onsite` App Blocks stay invisible, so
+ *     they are also un-reviewable. A viewer must never write to a row the same
+ *     scope refuses to show them, even by a crafted id.
+ *   - `none`            — nothing.
+ *
+ * Takes an ALREADY-NARROWED scope: run untrusted input through
+ * {@link narrowStoreScope} first, so an uninterpretable value is refused rather
+ * than falling through this switch.
+ */
+export function scopeAdmitsListingKind(
+  scope: StoreVisibilityScope,
+  kind: StoreListingKind
+): boolean {
+  switch (scope) {
+    case 'full':
+      return true;
+    case 'public-external':
+      return kind === 'offsite';
+    case 'none':
+      return false;
+  }
+}
+
+/**
  * The scopes RANKED BY BREADTH — a subset lattice, not a preference order:
  *
  *   none  ⊂  public-external  ⊂  full

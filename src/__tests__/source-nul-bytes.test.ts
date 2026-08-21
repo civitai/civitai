@@ -4,6 +4,15 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 /**
+ * Windows refuses `symlink` without SeCreateSymbolicLinkPrivilege (admin or Developer Mode), so a
+ * plain 'dir' link makes these three controls EPERM on every ordinary Windows checkout — which is
+ * the shape this whole file exists to argue against: a gap that leaves through the same door as a
+ * pass. A junction is a reparse point the walk cannot tell apart (`lstat().isSymbolicLink()` is
+ * true, dangling ones included) and needs no privilege. POSIX ignores the argument entirely.
+ */
+const LINK_TYPE = process.platform === 'win32' ? 'junction' : 'dir';
+
+/**
  * 🔴 NO SOURCE FILE IN THE WORKING TREE MAY CONTAIN A LITERAL NUL BYTE.
  *
  * One 0x00 anywhere makes a content-search tool classify the WHOLE file as
@@ -537,10 +546,10 @@ describe('source files contain no literal NUL bytes', () => {
       fs.writeFileSync(path.join(base, 'shared/found.ts'), '// x\n');
       const root = path.join(base, 'repo');
       fs.mkdirSync(root);
-      fs.symlinkSync(path.join(base, 'shared'), path.join(root, 'src'), 'dir');
+      fs.symlinkSync(path.join(base, 'shared'), path.join(root, 'src'), LINK_TYPE);
       // A loop back to the root: without the realpath visited set this recurses
       // until the entry budget and never returns a clean result.
-      fs.symlinkSync(root, path.join(root, 'loop'), 'dir');
+      fs.symlinkSync(root, path.join(root, 'loop'), LINK_TYPE);
 
       const res = walkSourceFiles(root);
       expect(res.unreadable).toEqual([]);
@@ -557,7 +566,7 @@ describe('source files contain no literal NUL bytes', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nul-guard-'));
     try {
       fs.writeFileSync(path.join(dir, 'found.ts'), '// x\n');
-      fs.symlinkSync(path.join(dir, 'nowhere'), path.join(dir, 'dangling'), 'dir');
+      fs.symlinkSync(path.join(dir, 'nowhere'), path.join(dir, 'dangling'), LINK_TYPE);
 
       const res = walkSourceFiles(dir);
       expect(res.files).toEqual(['found.ts']);
@@ -598,7 +607,7 @@ describe('source files contain no literal NUL bytes', () => {
     try {
       fs.writeFileSync(path.join(dir, 'clean.ts'), 'const a = `x\\0y`;\n');
       fs.writeFileSync(path.join(dir, 'dirty.ts'), Buffer.from('const a = `x\0y`;\n', 'utf8'));
-      fs.symlinkSync(path.join(dir, 'nowhere'), path.join(dir, 'dangling'), 'dir');
+      fs.symlinkSync(path.join(dir, 'nowhere'), path.join(dir, 'dangling'), LINK_TYPE);
 
       const res = auditTree(dir);
       expect(res.files.sort()).toEqual(['clean.ts', 'dirty.ts']);

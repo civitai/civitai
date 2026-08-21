@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { getListingBadge } from '~/components/Apps/appListingCardView';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -53,8 +54,9 @@ describe('buildListingDetailRows — order', () => {
     const rows = buildListingDetailRows(detail(), { formatDate: fmt });
     const by = Object.fromEntries(rows.map((r) => [r.key, r]));
     expect(by.kind).toMatchObject({ label: 'Kind', value: 'On-site app' });
-    expect(by.category).toMatchObject({ label: 'Category', value: 'utility' });
-    expect(by.rating).toMatchObject({ label: 'Rating', value: 'pg' });
+    // 🔴 DISPLAY labels, not the stored enum. The fixture stores `utility` / `pg`.
+    expect(by.category).toMatchObject({ label: 'Category', value: 'Utility' });
+    expect(by.rating).toMatchObject({ label: 'Rating', value: 'PG' });
     // The SHARED ladder's word label plus the count, matching the model page's
     // "<label> (N)". Literal, not re-derived from `getRatingLabel`.
     expect(by.reviews).toMatchObject({
@@ -68,27 +70,173 @@ describe('buildListingDetailRows — order', () => {
     expect(by.updated).toMatchObject({ label: 'Updated', value: `formatted:${FIXED_DATE}` });
   });
 
-  it('the kind row names the sub-kind for both off-site shapes', () => {
-    const connect = buildListingDetailRows(
+  /**
+   * 🔴 NEW BEHAVIOUR (not regression coverage). The kind row used to read
+   * "Connect app" or "Off-site link" depending on `connectClientId`; off-site is
+   * one kind now, so it reads one word — and that word is the store kind
+   * filter's own "Standalone" (`KindFilterButtons`; renamed from "Off-site" by
+   * PR #4187), which the "Connect app" branch was contradicting on the majority
+   * of listings.
+   *
+   * Both fixtures set a DIFFERENT `connectClientId` and a DIFFERENT
+   * `externalUrl` — the two inputs the deleted fork could have keyed on — so a
+   * mutant that re-derives a label from either one moves at least one of these
+   * assertions.
+   */
+  it('🔴 the kind row reads one word for BOTH off-site shapes', () => {
+    const connected = buildListingDetailRows(
       detail({
-        kindData: { kind: 'offsite', subKind: 'connect', externalUrl: null, connectClientId: 'c1' },
+        kindData: { kind: 'offsite', externalUrl: null, connectClientId: 'c1' },
       }),
       { formatDate: fmt }
     );
-    expect(connect.find((r) => r.key === 'kind')?.value).toBe('Connect app');
+    expect(connected.find((r) => r.key === 'kind')?.value).toBe('Standalone');
 
-    const link = buildListingDetailRows(
+    // 🔴 The grandfathered production listing: an approved off-site row with NO
+    // OAuth client. It must render the same single label, not a blank / dash /
+    // "unknown" left behind by the deleted branch.
+    const grandfathered = buildListingDetailRows(
       detail({
         kindData: {
           kind: 'offsite',
-          subKind: 'external-link',
-          externalUrl: 'https://x.example',
+          externalUrl: 'https://grandfathered.example',
           connectClientId: null,
         },
       }),
       { formatDate: fmt }
     );
-    expect(link.find((r) => r.key === 'kind')?.value).toBe('Off-site link');
+    expect(grandfathered.find((r) => r.key === 'kind')?.value).toBe('Standalone');
+  });
+
+  /**
+   * The rail row and the card badge are two surfaces that MUST agree — the
+   * `kindLabel` docstring claimed they mirrored each other while they said
+   * "Off-site link" and "Off-site" respectively. Pinned as a relationship, so it
+   * fails if either side is reworded alone. (PR #4187 then reworded BOTH sides
+   * to "Standalone" together, which is exactly the case this is meant to allow.)
+   */
+  it('🔴 the off-site kind row is byte-identical to the card badge label', () => {
+    const rows = buildListingDetailRows(
+      detail({ kindData: { kind: 'offsite', externalUrl: null, connectClientId: null } }),
+      { formatDate: fmt }
+    );
+    expect(rows.find((r) => r.key === 'kind')?.value).toBe(
+      getListingBadge({
+        kind: 'offsite',
+        kindData: { kind: 'offsite', externalUrl: null },
+      }).label
+    );
+  });
+});
+
+/**
+ * 🔴 THE REPORTED DEFECT — "in the store preview, both the category and rating are
+ * lowercase". Both rows pushed the RAW stored enum while the card chip, the store
+ * filter buttons and both moderator selectors were already mapping the same two
+ * columns one component over.
+ *
+ * These are RED on the pre-fix builder: it emitted `utility` / `pg13`.
+ */
+describe('🔴 buildListingDetailRows — the category and rating rows render DISPLAY LABELS', () => {
+  const value = (rows: { key: string; value: string }[], key: string) =>
+    rows.find((r) => r.key === key)?.value;
+
+  /**
+   * The fixture deliberately does NOT reuse `detail()`'s defaults: `analytics` and
+   * `pg13` are pairwise distinct, distinct from the `utility`/`pg` used elsewhere in
+   * this file, and — the point of choosing `pg13` — its label `PG-13` is a string no
+   * mechanical transformation of the key produces, so an assertion on it cannot be
+   * satisfied by an implementation that uppercases or title-cases the enum.
+   */
+  it('🔴 the category row reads the label, not the stored value', () => {
+    const rows = buildListingDetailRows(detail({ category: 'analytics' }), { formatDate: fmt });
+    expect(value(rows, 'category')).toBe('Analytics');
+    expect(value(rows, 'category')).not.toBe('analytics');
+  });
+
+  it('🔴 the rating row reads the label, not the stored value', () => {
+    const rows = buildListingDetailRows(detail({ contentRating: 'pg13' }), { formatDate: fmt });
+    expect(value(rows, 'rating')).toBe('PG-13');
+    // The two near-miss fixes, named so neither can ship silently.
+    expect(value(rows, 'rating')).not.toBe('pg13');
+    expect(value(rows, 'rating')).not.toBe('PG13');
+  });
+
+  it('🔴 every rating on the ladder renders its own word', () => {
+    const expected: Array<[string, string]> = [
+      ['g', 'G'],
+      ['pg', 'PG'],
+      ['pg13', 'PG-13'],
+      ['r', 'R'],
+      ['x', 'X'],
+    ];
+    for (const [stored, label] of expected) {
+      const rows = buildListingDetailRows(detail({ contentRating: stored }), { formatDate: fmt });
+      expect(value(rows, 'rating')).toBe(label);
+    }
+  });
+
+  it('🔴 every category renders its own word', () => {
+    const expected: Array<[string, string]> = [
+      ['generation', 'Generation'],
+      ['games', 'Games'],
+      ['utility', 'Utility'],
+      ['discovery', 'Discovery'],
+      ['moderation', 'Moderation'],
+      ['analytics', 'Analytics'],
+      ['other', 'Other'],
+    ];
+    for (const [stored, label] of expected) {
+      const rows = buildListingDetailRows(detail({ category: stored }), { formatDate: fmt });
+      expect(value(rows, 'category')).toBe(label);
+    }
+  });
+
+  /**
+   * 🔴 THE FALLBACK, asserted at the ROW LEVEL and not only on the helpers.
+   *
+   * The row is DECORATION: an unknown value must degrade to the stored string. The
+   * two failure modes this rules out are a BLANK row (a lookup miss rendered
+   * straight) and a THROW (which, as this module's own header records, has already
+   * unmounted a moderator modal once).
+   *
+   * The fixtures are outside both taxonomies and share no substring with any label,
+   * so a mutant returning a constant cannot pass.
+   */
+  it('🔴 an unknown category/rating degrades to the raw value, and the rows still exist', () => {
+    const rows = buildListingDetailRows(
+      detail({ category: 'workflow-tools', contentRating: 'nc17' }),
+      { formatDate: fmt }
+    );
+    expect(keys(rows)).toContain('category');
+    expect(keys(rows)).toContain('rating');
+    expect(value(rows, 'category')).toBe('workflow-tools');
+    expect(value(rows, 'rating')).toBe('nc17');
+  });
+
+  it('🔴 an unknown value never throws (a details row must not blank the page)', () => {
+    expect(() =>
+      buildListingDetailRows(detail({ category: 'legacy_bucket', contentRating: 'xxx' }), {
+        formatDate: fmt,
+      })
+    ).not.toThrow();
+  });
+
+  /**
+   * The `preview` posture is the surface the tester was actually looking at (the
+   * moderator listing-media review renders an UNAPPROVED shadow listing). It drops
+   * the reviews/installs/updated rows but KEEPS category and rating — so the fix has
+   * to hold there too, and this is the case a fix applied only to the live posture
+   * would miss.
+   */
+  it('🔴 the preview posture renders the same labels as the live one', () => {
+    const args = detail({ category: 'discovery', contentRating: 'r' });
+    const live = buildListingDetailRows(args, { formatDate: fmt });
+    const preview = buildListingDetailRows(args, { preview: true, formatDate: fmt });
+    expect(value(preview, 'category')).toBe('Discovery');
+    expect(value(preview, 'rating')).toBe('R');
+    expect(value(preview, 'category')).toBe(value(live, 'category'));
+    expect(value(preview, 'rating')).toBe(value(live, 'rating'));
   });
 });
 

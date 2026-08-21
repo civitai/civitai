@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { ToolType } from '~/shared/utils/prisma/enums';
 import { TOOLS_SEARCH_INDEX } from '~/server/common/constants';
+import { toolsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { updateDocs } from '~/server/meilisearch/client';
 
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -14,7 +15,6 @@ const INDEX_ID = TOOLS_SEARCH_INDEX;
 
 const searchableAttributes = ['name', 'domain', 'company', 'description'];
 const sortableAttributes = ['createdAt', 'id', 'name'];
-const filterableAttributes = ['id', 'type', 'company'];
 const rankingRules = [
   'supported:desc',
   'sort',
@@ -56,10 +56,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   if (
-    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+    JSON.stringify(toolsFilterableAttributes.sort()) !==
+    JSON.stringify(settings.filterableAttributes)
   ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-      filterableAttributes
+      toolsFilterableAttributes
     );
 
     console.log(

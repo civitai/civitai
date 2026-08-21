@@ -5,6 +5,7 @@ import {
   IconBookmark,
   IconEye,
   IconFlag,
+  IconInfoCircle,
   IconPencil,
   IconRadar2,
   IconTrash,
@@ -33,6 +34,8 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useToggleImageFlag } from '~/components/Image/hooks/useToggleImageFlag';
 import { useImageContextMenuContext } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
 import { useImageContext } from '~/components/Image/ImageProvider';
+import { env } from '~/env/client';
+import { moderatorImageLookupPath } from '~/shared/constants/moderator-app';
 
 export type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -198,6 +201,14 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
             Report CSAM
           </Menu.Item>
           {postId && <ToggleSearchableMenuItem entityType="Post" entityId={postId} />}
+          <Menu.Item
+            component="a"
+            target="_blank"
+            leftSection={<IconInfoCircle size={14} stroke={1.5} />}
+            href={`${env.NEXT_PUBLIC_MODERATOR_APP_URL}${moderatorImageLookupPath(imageId)}`}
+          >
+            Lookup Image
+          </Menu.Item>
         </>
       )}
     </>

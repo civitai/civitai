@@ -3,7 +3,6 @@ import {
   deleteModelVersionHandler,
   earlyAccessModelVersionsOnTimeframeHandler,
   getModelVersionForEditHandler,
-  getModelVersionForTrainingReviewHandler,
   getModelVersionHandler,
   getModelVersionOwnerHandler,
   getModelVersionRunStrategiesHandler,
@@ -235,9 +234,6 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .query(modelVersionDonationGoalHandler),
-  getTrainingDetails: moderatorProcedure
-    .input(getByIdSchema)
-    .query(getModelVersionForTrainingReviewHandler),
   publishPrivateModelVersion: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(getByIdSchema)

@@ -11,6 +11,7 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
+import { collectionsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -71,14 +72,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  const filterableAttributes = ['user.username', 'type', 'nsfwLevel', 'id'];
-
   if (
     // Meilisearch stores sorted.
-    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+    JSON.stringify(collectionsFilterableAttributes.sort()) !==
+    JSON.stringify(settings.filterableAttributes)
   ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-      filterableAttributes
+      collectionsFilterableAttributes
     );
 
     console.log(

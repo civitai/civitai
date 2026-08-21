@@ -117,7 +117,9 @@ async function renderSubNav() {
   await expect.element(page.getByTestId(RENDER_BARRIER)).toBeInTheDocument();
 }
 
-const CONDITIONAL = ['Installed', 'My submissions', 'Revenue', 'Review'] as const;
+// "My submissions" was retired when its page merged into `/apps/mine`; "My apps" is the
+// surviving conditional tab and carries the same client-only hydration behaviour.
+const CONDITIONAL = ['Installed', 'Revenue', 'Review'] as const;
 
 beforeEach(() => {
   mocks.isClient = false;
@@ -245,7 +247,6 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     expect(renderedTabs()).toEqual([
       'Marketplace',
       'Installed',
-      'My submissions',
       'Revenue',
       'Review',
     ]);

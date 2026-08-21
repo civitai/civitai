@@ -3,7 +3,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
-  addToAllowlistSchema,
   backfillRestrictionTriggersSchema,
   debugAuditPromptSchema,
   getGenerationRestrictionsSchema,
@@ -13,7 +12,6 @@ import {
 } from '~/server/schema/user-restriction.schema';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import { debugAuditPrompt, type DebugAuditMatch } from '~/utils/metadata/audit';
-import { bustPromptAllowlistCache } from '~/server/services/orchestrator/promptAuditing';
 import { resolveUserRestriction } from '~/server/services/user-restriction-resolve.service';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -90,40 +88,6 @@ export const userRestrictionRouter = router({
     await resolveUserRestriction({ ...input, moderatorId: ctx.user.id });
     return { success: true };
   }),
-
-  /** Moderator adds a trigger to the prompt allowlist (marks as benign). */
-  addToAllowlist: moderatorProcedure
-    .input(addToAllowlistSchema)
-    .mutation(async ({ ctx, input }) => {
-      const { trigger, category, reason, userRestrictionId } = input;
-      const moderatorId = ctx.user.id;
-
-      await dbWrite.promptAllowlist.upsert({
-        where: { trigger_category: { trigger, category } },
-        create: {
-          trigger,
-          category,
-          addedBy: moderatorId,
-          reason,
-          userRestrictionId,
-        },
-        update: {
-          addedBy: moderatorId,
-          reason,
-        },
-      });
-
-      // Bust the cached allowlist so the change takes effect immediately
-      await bustPromptAllowlistCache();
-
-      logToAxiom({
-        name: 'prompt-allowlist-entry-added',
-        type: 'info',
-        details: { trigger, category, moderatorId, userRestrictionId },
-      });
-
-      return { success: true };
-    }),
 
   /** Debug endpoint to test prompt auditing without triggering any actions. */
   debugAudit: moderatorProcedure.input(debugAuditPromptSchema).mutation(async ({ input }) => {

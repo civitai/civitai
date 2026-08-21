@@ -6,6 +6,7 @@ import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
+import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { strikeIssuedEmail } from '~/server/email/templates';
 import type {
   CreateStrikeInput,
@@ -360,11 +361,20 @@ export async function evaluateStrikeEscalation(
 
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { muted: true, muteExpiresAt: true, meta: true },
+        select: { muted: true, mutedAt: true, muteExpiresAt: true, meta: true },
       });
       if (!user) return { totalPoints, action: 'none', notify: false };
 
       const currentMeta = (user.meta as UserMeta) ?? {};
+
+      // `mutedAt` is set ONLY by a moderator decision — a restriction uphold, the mod mute toggle, or
+      // the moderator app. Every automatic path (prompt auditing, scam auto-mute, and this file) leaves
+      // it null; `confirm-mutes`, `entity-moderation`, `prepare-leaderboard` and the generation notice
+      // all already read it that way. So it is what separates "a person decided this" from "we did",
+      // and strike escalation must not overwrite or lift the former.
+      // `!= null`, not `!== null`: an absent field must not confer protection. A caller that does not
+      // select `mutedAt` would otherwise make every mute look moderator-set and freeze de-escalation.
+      const moderatorMuted = user.muted && user.mutedAt != null;
 
       if (totalPoints >= INDEFINITE_MUTE_POINTS) {
         const alreadyFlagged = user.muted && currentMeta.strikeFlaggedForReview;
@@ -373,7 +383,10 @@ export async function evaluateStrikeEscalation(
           where: { id: userId },
           data: {
             muted: true,
-            muteExpiresAt: null, // A null expiry is what makes a mute indefinite
+            // A null expiry is what makes a mute indefinite. Escalating past a moderator's timed mute
+            // only ever tightens it, so the expiry goes either way — but see the timed branch below,
+            // where dropping it would LOOSEN one.
+            muteExpiresAt: null,
             meta: {
               ...currentMeta,
               strikeFlaggedForReview: true,
@@ -388,8 +401,13 @@ export async function evaluateStrikeEscalation(
 
       if (totalPoints >= TIMED_MUTE_POINTS) {
         // The window restarts on every evaluation, so a new strike extends an active mute
-        const muteExpiresAt = new Date(Date.now() + TIMED_MUTE_DAYS * DAY_MS);
+        const strikeExpiry = new Date(Date.now() + TIMED_MUTE_DAYS * DAY_MS);
         const alreadyTimedMuted = user.muted && user.muteExpiresAt !== null;
+        // Never SHORTEN a moderator's mute. A 30-day mute set by a person outlasting a 3-day strike
+        // window is the intended outcome; overwriting it silently released the account 27 days early.
+        const keepsLonger =
+          moderatorMuted && user.muteExpiresAt != null && user.muteExpiresAt > strikeExpiry;
+        const muteExpiresAt = keepsLonger ? user.muteExpiresAt : strikeExpiry;
 
         await tx.user.update({
           where: { id: userId },
@@ -410,21 +428,40 @@ export async function evaluateStrikeEscalation(
         return { totalPoints, action: 'muted', notify: !alreadyTimedMuted };
       }
 
-      // De-escalation: if user is currently muted from strikes, unmute them.
-      // Only unmute if the mute was from strikes (has muteExpiresAt set) or
-      // was flagged for review. Don't touch manual mutes (muteExpiresAt === null
-      // and no strike flag).
-      if (user.muted && (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview)) {
+      // Logged when the guard FIRES, because holding the mute is otherwise unobservable: correct
+      // behaviour here is an account staying muted, which looks exactly like nothing happening.
+      if (
+        user.muted &&
+        moderatorMuted &&
+        (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview)
+      ) {
+        logToAxiom({
+          type: 'info',
+          name: 'strike-de-escalation-skipped',
+          message: `Kept moderator mute on user ${userId} — strike de-escalation does not lift it`,
+          userId,
+          totalPoints,
+          muteExpiresAt: user.muteExpiresAt?.toISOString() ?? null,
+        });
+      }
+
+      // De-escalation: unmute a mute STRIKES applied. `moderatorMuted` is the guard — without it a
+      // moderator's timed mute was lifted the moment an unrelated strike decayed below the threshold,
+      // with a de-escalation notification to the user, and nothing recorded that it had happened.
+      if (
+        user.muted &&
+        !moderatorMuted &&
+        (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview)
+      ) {
+        // `clearedMuteFields` owns the whole "why was this muted" set — see its docstring. The review
+        // flag is this file's own, so it is layered on top of the meta the helper returns.
+        const cleared = clearedMuteFields(currentMeta);
         await tx.user.update({
           where: { id: userId },
           data: {
-            muted: false,
-            muteExpiresAt: null,
+            ...cleared,
             ...(currentMeta.strikeFlaggedForReview && {
-              meta: {
-                ...currentMeta,
-                strikeFlaggedForReview: false,
-              },
+              meta: { ...(cleared.meta as object), strikeFlaggedForReview: false },
             }),
           },
         });
@@ -749,12 +786,10 @@ export async function processTimedUnmutes(): Promise<{ unmutedCount: number }> {
       // evaluateStrikeEscalation handles re-muting if points are still high.
       // Only manually unmute if escalation returned 'none' (points < 2) or 'unmuted'.
       if (action === 'none') {
+        const existing = await dbRead.user.findUnique({ where: { id }, select: { meta: true } });
         await updateUserById({
           id,
-          data: {
-            muted: false,
-            muteExpiresAt: null,
-          },
+          data: clearedMuteFields(existing?.meta as UserMeta | null),
           updateSource: 'timed-unmute',
         });
         await refreshSession(id, { caller: 'strike' });

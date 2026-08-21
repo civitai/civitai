@@ -1,8 +1,20 @@
 # Retool DB Writes → API Endpoints Migration Plan
 
 **Parent ticket:** [868jk3qh8](https://app.clickup.com/t/868jk3qh8) — Migrate Retool DB writes to API endpoints / on-site UI
-**Status:** Draft — pending Justin sign-off before Phase 1 starts
+**Status:** DONE, then superseded — see below.
 **Owner:** TBD
+
+> 🔴 **This plan shipped and its central mechanism has since been replaced. Read it as history.**
+>
+> The endpoints were built as designed, on a `defineRetoolEndpoint` wrapper with one endpoint per
+> resource and an `action` field selecting the operation. On 2026-08-19, with Retool switched off, that
+> whole family was deleted: every action is now its own `defineModeratorEndpoint` route under
+> `/api/mod/*`, authenticated as the acting moderator rather than by a shared API key, and self-describing
+> at `/moderator/api`.
+>
+> Current shape and the endpoint list: [`../moderator-endpoints.md`](../moderator-endpoints.md).
+> The reasoning in *Why* below still holds — it is the argument for having endpoints at all, and that
+> argument is what the replacement kept.
 
 ---
 

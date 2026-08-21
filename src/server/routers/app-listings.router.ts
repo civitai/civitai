@@ -67,7 +67,6 @@ import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import {
   isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
-  isAppListingsEnabled,
   resolveStoreVisibilityScope,
   type StoreVisibilityScope,
 } from '~/server/services/app-blocks-flag';
@@ -172,9 +171,15 @@ const listingMediaCliScope = { requiredScope: TokenScope.AppBlocksSubmit } as co
  * 🔴 DARK / INERT as-merged: `app-listings-public-external` does NOT exist in Flipt
  * yet, so a mod/tester still resolves `full` and everyone else `none` — ZERO change
  * until that flag is created + enabled in a later phase. The AUTHOR gate
- * (`enforceAppBlocksAuthorFlag`) + the mod-only backfill (`enforceAppBlocksFlag`) +
- * the review WRITE gate (`enforceAppListingsWriteFlag`) intentionally stay on their
- * existing flags — the public-external axis is READ-only.
+ * (`enforceAppBlocksAuthorFlag`) + the mod-only backfill (`enforceAppBlocksFlag`)
+ * stay on their existing flags — authoring is a separate axis from viewing.
+ *
+ * 🔴 The review WRITE gate (`enforceAppListingsWriteFlag`) USED to be listed here
+ * too, on the reasoning that "the public-external axis is READ-only". That was the
+ * defect: reviewing is a WRITE the read scope authorises, so leaving it on
+ * `isAppListingsEnabled` locked the external-only cohort out of reviewing the very
+ * listings this scope showed them. It now resolves the SAME scope and applies the
+ * same kind rule — see that gate's own header.
  */
 const enforceAppListingsReadFlag = middleware(async ({ ctx, next }) => {
   const _storeScope = await resolveStoreVisibilityScope({ user: ctx.user });
@@ -182,19 +187,58 @@ const enforceAppListingsReadFlag = middleware(async ({ ctx, next }) => {
 });
 
 /**
- * Store WRITE gate — mirrors `enforceAppBlocksFlag`'s HARD-THROW shape (a write
- * with the store dark must REJECT, not soft-fail like the read gate) but keyed on
- * the DEDICATED store-visibility flag `isAppListingsEnabled` (which OR-falls-back
- * to `isAppBlocksEnabled`). This keeps the review WRITEs (`upsertReview`/
- * `getMyReview`) on the SAME flag as the store visibility + reviews read path
- * (`enforceAppListingsReadFlag`), so once `app-listings` widens independently of
- * the held block-runtime gate, a viewer who can SEE the review affordance can
- * also submit — instead of seeing the button and 403-ing on write. Zero change
- * today: the OR-fallback preserves the existing mods + app-dev-testers cohort.
+ * Store WRITE gate for the review procs (`upsertReview` / `getMyReview` — the
+ * COMPLETE set; `git grep enforceAppListingsWriteFlag` before adding a third).
+ *
+ * Mirrors `enforceAppBlocksFlag`'s HARD-THROW shape (a write with the store dark
+ * must REJECT, not soft-fail like the read gate), but keyed on
+ * `resolveStoreVisibilityScope` — the SAME resolver the read gate
+ * (`enforceAppListingsReadFlag`) uses — and the resolved scope is threaded onto
+ * ctx so each proc applies the shared KIND rule
+ * ({@link scopeAdmitsListingKind}) exactly as the read path's data-layer
+ * predicate does. `none` is the only scope this gate itself rejects.
+ *
+ * ## Why it is no longer keyed on a flag — the original reasoning, and how it failed
+ *
+ * This gate used to be `if (await isAppListingsEnabled({ user: ctx.user }))`, and
+ * the comment justifying that read:
+ *
+ * > "This keeps the review WRITEs (`upsertReview`/`getMyReview`) on the SAME flag
+ * > as the store visibility + reviews read path (`enforceAppListingsReadFlag`), so
+ * > once `app-listings` widens independently of the held block-runtime gate, a
+ * > viewer who can SEE the review affordance can also submit — instead of seeing
+ * > the button and 403-ing on write."
+ *
+ * 🔴 The GOAL was right and is kept verbatim below; the MECHANISM was a bet that
+ * the store would widen by widening `app-listings`, and it did not. It widened via
+ * a THIRD flag plus a scope resolver: `app-listings-public-external` →
+ * `resolveStoreVisibilityScope` → `public-external`. The read path moved onto the
+ * scope; this gate stayed on the flag. `isAppListingsEnabled` is
+ * `app-listings || app-blocks-enabled` and the external-only tester cohort holds
+ * NEITHER, so its members reached an offsite listing's detail page, saw the review
+ * button the read scope had legitimately shown them, and got
+ * `UNAUTHORIZED: Apps are not enabled` on submit — the exact failure the comment
+ * was written to prevent, arrived at by the route it did not anticipate.
+ *
+ * The lesson, and the reason the quotation is preserved rather than deleted:
+ * "same flag as the read path" was a PROXY for "same admission rule as the read
+ * path". The proxy held only while the read path was itself a flag check. Key the
+ * write on whatever the read path actually branches on — today the scope.
+ *
+ * INVARIANT (kept): a viewer who can SEE the review affordance can submit, and a
+ * viewer who cannot is not shown it. The client half is `useCanReviewListing`,
+ * which applies the same `scopeAdmitsListingKind` rule.
+ *
+ * Zero change for the existing cohort: a mod / app-dev-tester resolves `full`
+ * (axis 1 of the resolver IS `isAppListingsEnabled`), which admits every kind — so
+ * their behaviour is byte-identical to the flag check this replaces.
  */
 const enforceAppListingsWriteFlag = middleware(async ({ ctx, next }) => {
-  if (await isAppListingsEnabled({ user: ctx.user })) return next();
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+  const _storeScope = await resolveStoreVisibilityScope({ user: ctx.user });
+  if (_storeScope === 'none') {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+  }
+  return next({ ctx: { _storeScope } });
 });
 
 /**
@@ -893,6 +937,58 @@ export const appListingsRouter = router({
       });
     }),
 
+  /**
+   * AUTHOR: ONE listing's full publish history — the LAZY, per-row read behind the merged
+   * `/apps/mine` table's expandable rows.
+   *
+   * 🔴 PER-LISTING AND FETCHED ON EXPAND, deliberately. The page it replaced issued TWO
+   * unbounded per-user queries on mount (`blocks.listMyPublishRequests`, which fans out to
+   * four more queries, plus `appListings.listMySubmissions`) to render history nobody had
+   * asked to see. Here the table renders from `listMine` alone and this proc runs only for
+   * the row the caller actually opened.
+   *
+   * 🔴 NOT gated on the marketplace `appBlocks` flag — `appDeveloperProcedure`
+   * (`app-blocks-author`) only, matching the merged page's own SSR gate. `appBlocks` is
+   * store VISIBILITY; requiring it would blank an author's own history whenever store
+   * access is narrowed. (`blocks.listMyPublishRequests` carries `enforceAppBlocksFlag`,
+   * which is why it is not the read used here.)
+   *
+   * The union-of-two-tables reasoning lives in the service's module header — read it before
+   * changing either query.
+   */
+  listingHistory: appDeveloperProcedure
+    // Same `{ appListingId }` shape and bounds as `getAuthoringContext`; a second identical
+    // schema would just be a second thing to keep in step.
+    .input(appListingAuthoringContextSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { listListingHistory } = await import(
+        '~/server/services/blocks/app-listing-history.service'
+      );
+      return listListingHistory({ appListingId: input.appListingId, userId: ctx.user.id });
+    }),
+
+  /**
+   * AUTHOR: the caller's own submissions whose LISTING NO LONGER EXISTS.
+   *
+   * 🔴 THE ONE DELIBERATELY SUBMITTER-SCOPED READ ON THIS PAGE, and the exception proves
+   * the rule. Every other read here is ownership∪seat because an app exists to key on; a
+   * first version that was rejected or withdrawn had its pre-approval DRAFT listing
+   * DELETED (the slug release), so there is no app row left and `submitted_by_user_id` is
+   * the only identity the surviving record carries. Without this proc that population is
+   * unreachable from anywhere in the product — including from the "your app was rejected"
+   * notification, which now points here.
+   *
+   * Same `appBlocksAuthor`-only gate as the page and `listingHistory`.
+   */
+  listMyOrphanedSubmissions: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.user) return [];
+    const { listMyOrphanedSubmissions } = await import(
+      '~/server/services/blocks/app-listing-history.service'
+    );
+    return listMyOrphanedSubmissions({ userId: ctx.user.id });
+  }),
+
   /** MOD: pending off-site review queue (read-only in PR-a; approve/reject in PR-b). */
   listPendingRequests: moderatorProcedure
     .input(listOffsiteRequestsSchema)
@@ -939,7 +1035,9 @@ export const appListingsRouter = router({
     .input(approveExternalRequestSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Approving off-site listings is restricted to civitai team');
+        throw throwAuthorizationError(
+          'Approving standalone listings is restricted to civitai team'
+        );
       }
       const { approveExternalRequest } = await import(
         '~/server/services/blocks/offsite-listing.service'
@@ -969,7 +1067,9 @@ export const appListingsRouter = router({
     .input(rejectExternalRequestSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Rejecting off-site listings is restricted to civitai team');
+        throw throwAuthorizationError(
+          'Rejecting standalone listings is restricted to civitai team'
+        );
       }
       const { rejectExternalRequest } = await import(
         '~/server/services/blocks/offsite-listing.service'
@@ -1063,7 +1163,7 @@ export const appListingsRouter = router({
    */
   delistListing: moderatorProcedure.input(delistListingSchema).mutation(async ({ ctx, input }) => {
     if (!ctx.user?.isModerator) {
-      throw throwAuthorizationError('Delisting off-site listings is restricted to civitai team');
+      throw throwAuthorizationError('Delisting standalone listings is restricted to civitai team');
     }
     const { delistListing } = await import('~/server/services/blocks/offsite-moderation.service');
     try {
@@ -1076,7 +1176,7 @@ export const appListingsRouter = router({
   /** MOD relist a removed off-site listing (removed → approved). Reversibility. */
   relistListing: moderatorProcedure.input(relistListingSchema).mutation(async ({ ctx, input }) => {
     if (!ctx.user?.isModerator) {
-      throw throwAuthorizationError('Relisting off-site listings is restricted to civitai team');
+      throw throwAuthorizationError('Relisting standalone listings is restricted to civitai team');
     }
     const { relistListing } = await import('~/server/services/blocks/offsite-moderation.service');
     try {
@@ -1098,7 +1198,9 @@ export const appListingsRouter = router({
    */
   claimListing: moderatorProcedure.input(claimListingSchema).mutation(async ({ ctx, input }) => {
     if (!ctx.user?.isModerator) {
-      throw throwAuthorizationError('Reassigning off-site listings is restricted to civitai team');
+      throw throwAuthorizationError(
+        'Reassigning standalone listings is restricted to civitai team'
+      );
     }
     const { claimListing } = await import('~/server/services/blocks/offsite-moderation.service');
     try {
@@ -1119,7 +1221,7 @@ export const appListingsRouter = router({
    */
   purgeListing: moderatorProcedure.input(purgeListingSchema).mutation(async ({ ctx, input }) => {
     if (!ctx.user?.isModerator) {
-      throw throwAuthorizationError('Purging off-site listings is restricted to civitai team');
+      throw throwAuthorizationError('Purging standalone listings is restricted to civitai team');
     }
     const { purgeListing } = await import('~/server/services/blocks/offsite-moderation.service');
     try {
@@ -1189,7 +1291,9 @@ export const appListingsRouter = router({
     .input(resetListingToPendingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Resetting off-site listings is restricted to civitai team');
+        throw throwAuthorizationError(
+          'Resetting standalone listings is restricted to civitai team'
+        );
       }
       const { resetListingToPending } = await import(
         '~/server/services/blocks/offsite-moderation.service'
@@ -1391,19 +1495,21 @@ export const appListingsRouter = router({
   // ELIGIBILITY (locked W13 decision, enforced in the service): any signed-in
   // user EXCEPT the listing owner, for BOTH kinds, NO install/usage gate.
   //
-  // FLAG GATING: the WRITEs (`upsertReview`/`getMyReview`) are `protectedProcedure`
-  // (auth REQUIRED) + `enforceAppListingsWriteFlag` — the "store enabled for this
-  // viewer" gate keyed on the SAME dedicated `app-listings` flag as the store
-  // visibility + `listReviews` read path, THROWING UNAUTHORIZED when off (a real
-  // anon/non-store caller can't write). Keeping the writes on `app-listings`
-  // (not the held block-runtime `app-blocks-enabled`) means the review submit
-  // widens WITH the store, so a viewer who SEES the affordance can also submit
-  // instead of 403-ing. `listReviews` is `publicProcedure` +
-  // `enforceAppListingsReadFlag` (empty page when off, same posture as
-  // listAvailable). Zero change today: `isAppListingsEnabled` OR-falls-back to
-  // `isAppBlocksEnabled`, so the current mods + app-dev-testers cohort is
-  // unchanged. The review affordance renders only on the mod-only store-preview
-  // surface today (the public `/apps/[slug]` cutover is P2d).
+  // SCOPE GATING: the WRITEs (`upsertReview`/`getMyReview`) are `protectedProcedure`
+  // (auth REQUIRED) + `enforceAppListingsWriteFlag`, which resolves the SAME
+  // `StoreVisibilityScope` the read path uses and THROWS UNAUTHORIZED only on
+  // `none` (a real anon/non-store caller can't write). Each proc then threads its
+  // scope into the service, which applies the shared KIND rule
+  // (`scopeAdmitsListingKind`) — so a `public-external` viewer may review an
+  // OFFSITE listing (all their scope shows them) and NOT an onsite one, exactly
+  // matching `listReviews`'s data-layer kind filter. `listReviews` is
+  // `publicProcedure` + `enforceAppListingsReadFlag` (empty page when off, same
+  // posture as listAvailable).
+  //
+  // Zero change for mods + app-dev-testers: they resolve `full`, which admits
+  // every kind. The change is that the external-only cohort
+  // (`app-listings-public-external`) can now submit the reviews the store already
+  // let them see — the gate's own header has the history.
   //
   // FOLLOW-UP (deferred): a MOD exclude/report path for individual reviews.
   // `listReviews` ALREADY filters `exclude`/`tosViolation`, so a future mod action
@@ -1413,7 +1519,10 @@ export const appListingsRouter = router({
   /**
    * USER: create-or-update the caller's review for a listing (thumbs/recommend),
    * feeding the recommend metric SYNCHRONOUSLY in the same tx. Self-review /
-   * non-approved-listing gates are enforced in the service (FORBIDDEN / BAD_REQUEST).
+   * non-approved-listing gates are enforced in the service (FORBIDDEN / BAD_REQUEST),
+   * as is the STORE-SCOPE kind gate: a `public-external` caller writing to an ONSITE
+   * listing gets the same NOT_FOUND the read path gives them, never a distinguishable
+   * refusal (the listing is not merely un-writable to them, it is invisible).
    */
   upsertReview: protectedProcedure
     .use(enforceAppListingsWriteFlag)
@@ -1427,22 +1536,30 @@ export const appListingsRouter = router({
     .input(upsertAppListingReviewSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const scope = applyStoreScope(ctx, 'trpc-review-write');
       const { upsertAppListingReview } = await import(
         '~/server/services/blocks/app-listing-review.service'
       );
-      return upsertAppListingReview({ userId: ctx.user.id, input });
+      return upsertAppListingReview({ userId: ctx.user.id, input, scope });
     }),
 
-  /** USER: the caller's OWN review for a listing (form prefill), or null. */
+  /**
+   * USER: the caller's OWN review for a listing (form prefill), or null.
+   *
+   * Soft-fails on the kind gate (returns `null`, like `listReviews` returns an empty
+   * page) rather than throwing — this is a read, and a prefill for a listing the
+   * caller's scope hides is simply absent.
+   */
   getMyReview: protectedProcedure
     .use(enforceAppListingsWriteFlag)
     .input(getMyAppListingReviewSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user) return null;
+      const scope = applyStoreScope(ctx, 'trpc-my-review');
       const { getMyAppListingReview } = await import(
         '~/server/services/blocks/app-listing-review.service'
       );
-      return getMyAppListingReview(input.appListingId, ctx.user.id);
+      return getMyAppListingReview(input.appListingId, ctx.user.id, { scope });
     }),
 
   /** PUBLIC: keyset-paginated reviews for a listing (newest-first, mod-filtered). */

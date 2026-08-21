@@ -108,7 +108,7 @@ export default function ChatShareModal(props: { message: string }) {
           ];
         })
       );
-      useChatStore.setState({ existingChatId: selectedChat, open: true });
+      useChatStore.setState({ existingChatId: selectedChat, open: true, isSettingsOpen: false });
       dialog.onClose();
       setIsSending(false);
     },

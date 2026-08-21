@@ -1,0 +1,24 @@
+-- One Blocklist row per type.
+--
+-- 🔴 ORDERING: this FAILS while any type still has more than one row. One type had a
+-- duplicate row in production; the rows were merged and the duplicate removed on 2026-08-19
+-- before this migration was written. Run this only against an environment where that merge
+-- has happened; on a fresh environment seeded from the migrations there is nothing to merge
+-- and it applies cleanly.
+--
+-- Why it matters rather than being tidiness: there are now TWO writers of the same type-scoped
+-- Redis key — the main app and the moderator spoke (`apps/moderator/src/lib/server/
+-- blocklist.service.ts`, whose own header notes it writes the key the main app reads). With a
+-- duplicate row present, the two can pick different rows and each overwrite the other's cached
+-- answer for a month. Both now read deterministically and log the duplicate, but a code guard
+-- on each side is a convention two teams have to keep; this constraint is what actually makes
+-- the shared cache coherent, by making the state unrepresentable.
+--
+-- Check before applying, per environment:
+--   SELECT "type", count(*) FROM "Blocklist" GROUP BY "type" HAVING count(*) > 1;
+-- Expect zero rows. If it returns any, merge them first — do not drop a row to make this
+-- pass, since the loser's entries are exactly what was being missed.
+--
+-- Idempotent: re-running is a no-op once the index exists.
+
+CREATE UNIQUE INDEX IF NOT EXISTS "Blocklist_type_key" ON "Blocklist" ("type");

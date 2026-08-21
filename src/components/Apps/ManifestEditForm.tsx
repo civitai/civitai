@@ -23,6 +23,7 @@ import {
   MARKETPLACE_CATEGORY_LABELS,
   isMarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -217,7 +218,12 @@ export function ManifestEditForm({
 
       <Select
         label="Content rating"
-        data={[...ALLOWED_CONTENT_RATINGS].map((r) => ({ value: r, label: r }))}
+        // `ALLOWED_CONTENT_RATINGS` is the manifest validator's own copy of the same
+        // five values; the LABEL still comes from the one display map (was `label: r`).
+        data={[...ALLOWED_CONTENT_RATINGS].map((r) => ({
+          value: r,
+          label: offsiteContentRatingLabel(r),
+        }))}
         value={contentRating}
         onChange={(v) => setContentRating(v ?? 'g')}
       />
@@ -302,7 +308,7 @@ export function ManifestEditForm({
       {mutation.data && (
         <Alert color="green" variant="light">
           Submitted as review request <code>{mutation.data.publishRequestId}</code>. Track it on{' '}
-          <Link href="/apps/my-submissions">My submissions</Link>.
+          <Link href="/apps/mine">My apps</Link>.
         </Alert>
       )}
     </Stack>

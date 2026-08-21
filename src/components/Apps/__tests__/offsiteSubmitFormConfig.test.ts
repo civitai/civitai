@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OFFSITE_CATEGORY_OPTIONS,
+  OFFSITE_CONTENT_RATING_OPTIONS,
   OFFSITE_SUBMIT_LIMITS,
   emptyOffsiteSubmitForm,
   isOffsiteSubmitFormValid,
@@ -99,5 +101,57 @@ describe('validateOffsiteSubmitForm', () => {
   it('rejects an unknown content rating', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(validateOffsiteSubmitForm({ ...valid, contentRating: 'xxx' as any }).contentRating).toBeDefined();
+  });
+});
+
+/**
+ * 🔴 CALL-SITE COVERAGE for the two `<Select>` option lists.
+ *
+ * These two consts are the DATA both the standalone submit wizard
+ * (`ExternalSubmitForm`) and the listing edit form (`ExternalListingEditForm`)
+ * hand to Mantine, so pinning them here guards both surfaces without rendering
+ * either — and it guards the WIRING, not the label maps. A mutant that points
+ * either const back at its old re-derivation (`c.charAt(0).toUpperCase() +
+ * c.slice(1)` / `r.toUpperCase()`) leaves both label maps intact and every
+ * helper unit test green; only these assertions move.
+ *
+ * The `value` half is asserted alongside the `label` half deliberately: the
+ * whole failure mode being guarded is a surface that shows the stored key, so a
+ * test that only looked at labels could not tell a correct option list from one
+ * that had silently swapped the two halves.
+ */
+describe('🔴 the Select option lists render LABELS, never the stored key', () => {
+  it('category options pair each stored value with its display label', () => {
+    expect(OFFSITE_CATEGORY_OPTIONS).toEqual([
+      { value: 'generation', label: 'Generation' },
+      { value: 'games', label: 'Games' },
+      { value: 'utility', label: 'Utility' },
+      { value: 'discovery', label: 'Discovery' },
+      { value: 'moderation', label: 'Moderation' },
+      { value: 'analytics', label: 'Analytics' },
+      { value: 'other', label: 'Other' },
+    ]);
+  });
+
+  /**
+   * 🔴 `pg13` is the discriminating rung and the reason this assertion is not a
+   * loop: its label `PG-13` is the one value no transformation of the key
+   * produces, so it separates the shared map from BOTH near-miss re-derivations
+   * — the `PG13` this const used to ship, and the `Pg13` a title-case would give.
+   */
+  it('rating options pair each stored value with its display label', () => {
+    expect(OFFSITE_CONTENT_RATING_OPTIONS).toEqual([
+      { value: 'g', label: 'G' },
+      { value: 'pg', label: 'PG' },
+      { value: 'pg13', label: 'PG-13' },
+      { value: 'r', label: 'R' },
+      { value: 'x', label: 'X' },
+    ]);
+  });
+
+  it('no option anywhere renders its own stored key as the label', () => {
+    for (const o of [...OFFSITE_CATEGORY_OPTIONS, ...OFFSITE_CONTENT_RATING_OPTIONS]) {
+      expect(o.label).not.toBe(o.value);
+    }
   });
 });

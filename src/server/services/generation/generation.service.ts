@@ -696,6 +696,29 @@ export async function getUnstableResources() {
 /**
  * Whether the user passes the `generation-testing` Flipt flag — the `testers`
  * tier of the gate rules. Mods always do; anonymous callers never do.
+ *
+ * 🔴 `userId` MUST be in the CONTEXT, not only in the entityId argument.
+ *
+ * A Flipt segment constraint is one of two kinds and they read different inputs:
+ * `ENTITY_ID_COMPARISON_TYPE` matches the entityId argument, and
+ * `STRING_COMPARISON_TYPE` matches a property of the evaluation CONTEXT. The
+ * `testers` segment this flag rolls out to is `ANY_MATCH_TYPE` over two
+ * `STRING_COMPARISON_TYPE` constraints — `isModerator = "true"` and `userId
+ * isoneof [...]` — so it reads the context and never the entityId.
+ *
+ * This used to pass `{ isModerator: 'false' }` alone, with the user's id only as
+ * the entityId. Both constraints then failed for every non-moderator: the
+ * hardcoded `isModerator` by construction, and `userId` because the property was
+ * absent. The flag's base `enabled` is `false`, so the function returned `false`
+ * for every non-moderator regardless of the tester list — silently, and
+ * indistinguishably from "this user is not a tester".
+ *
+ * Deliberately NOT `buildFliptContext(user)`: this call site is handed
+ * `{ id, isModerator }`, not a `SessionUser`, so that helper would emit DEFAULTED
+ * values for `tier`, `isMember`, `isInCreatorProgram` and `isEarlyAdopter`. A
+ * fabricated context is worse than a narrow one — it would let a `tier`- or
+ * cohort-scoped rollout match on values this caller never knew. Emit only what
+ * is actually known here.
  */
 export async function resolveTestingAccess(user: {
   id?: number;
@@ -704,6 +727,7 @@ export async function resolveTestingAccess(user: {
   if (user.isModerator) return true;
   if (!user.id) return false;
   return isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_TESTING, String(user.id), {
+    userId: String(user.id),
     isModerator: 'false',
   });
 }

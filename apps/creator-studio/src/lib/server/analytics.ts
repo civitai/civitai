@@ -4,6 +4,7 @@ import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
+import { viewTrackingSql, ownerViewsDailySql } from '$lib/server/analytics-sql';
 import { VIEW_ENTITY, IMPRESSION_ENTITY } from '$lib/server/view-entities';
 import type { ViewEntity, ImpressionEntity } from '$lib/server/view-entities';
 
@@ -114,8 +115,10 @@ export type Model3dSummary = {
 };
 export type Model3dPanel = { models: Model3dSummary[]; tracking: boolean };
 
-// The article equivalent of ImageViewDetail. No comment series: the `comments` table's type enum covers
-// Model/Image/Post/Comment/Review/Bounty/BountyEntry and has no Article arm, so there is nothing to read.
+// The article equivalent of ImageViewDetail, minus the comment series — which is unbuilt, not impossible.
+// ClickHouse cannot answer it (the `comments` type enum has no Article arm), but ClickHouse is not where the
+// image drilldown reads comments from either: `fetchImageViewDetail` counts `CommentV2` through `Thread`, and
+// `Thread.articleId` exists, so the same query shape works here whenever someone wants the series.
 export type ArticleViewDetail = {
   articleId: number;
   title: string;
@@ -166,14 +169,14 @@ export const getTopMedia = createCache({
 }).get;
 
 export const getComics = createCache({
-  name: 'analytics:comics:v3',
+  name: 'analytics:comics:v4',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchComics(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getModel3ds = createCache({
-  name: 'analytics:model3d:v2',
+  name: 'analytics:model3d:v3',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchModel3ds(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -325,18 +328,6 @@ function seriesSql(
 // new entity type in the `type` enum has to be added to both or it counts as a delete here.
 const reactionCreateTypes = `('Image_Create', 'Comment_Create', 'CommentV2_Create', 'Review_Create', 'Question_Create', 'Answer_Create', 'BountyEntry_Create', 'Article_Create')`;
 const netReactions = `sum(if(type IN ${reactionCreateTypes}, 1, -1))`;
-
-// Image views come from `image_views_daily_by_owner`, a nightly owner-keyed rollup of `daily_views`, because
-// the same answer off `daily_views` needs `entityId IN (this creator's images)` — a creator's ids are scattered
-// across the whole id space, so the primary key prunes almost nothing and a 400-image creator reads 131M rows.
-// Against the rollup it is an `ownerId` prefix seek: 3 marks.
-//
-// Two consequences of the rollup being a nightly seal, both visible to the reader: today is absent until the
-// 02:00 refresh, and views on images with no `images_created` row are dropped by its join (~0.4% in 2026,
-// higher the further back you go).
-function ownerViewsDailySql(uid: number, from: string, to: string): string {
-  return `SELECT createdDate AS date, sum(views) AS value FROM image_views_daily_by_owner WHERE ownerId = ${uid} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO toDate('${to}') + 1 STEP 1`;
-}
 
 // Articles deliberately do NOT get the owner-rollup treatment images needed. There are ~32k articles on the
 // platform against 130M images, and the heaviest creator has 438 — so the creator's own ids fit in a literal
@@ -785,19 +776,17 @@ async function fetchImageViewDetail(
   };
 }
 
-// Has ANY row of this entity type ever been written, platform-wide? Answers "not collecting yet" as distinct
-// from "you have none". `LIMIT 1` short-circuits, and `entityType` leads the primary key on `daily_views`, so
-// this is a prefix seek rather than a scan — a few ms, so it runs per panel load.
+// Answers "was tracking collecting by the end of this period" as distinct from "you have none" — see
+// `$lib/server/analytics-sql`.
 //
-// 🔴 Deliberately NOT cached, and the reason is the asymmetry. This answer starts false and flips true once,
-// forever. Caching it means caching a `false` — and a cached `false` outlives the event it is wrong about, so
-// the surface keeps saying "not collecting yet" for the whole TTL after data lands. That is exactly what
-// happened with a 1h TTL: impressions were live and attributed, and the tile stayed hidden. A stale `true`
-// would be harmless; a stale `false` hides a working feature and looks identical to the real pre-launch state.
-export async function viewTrackingLive(entityType: string): Promise<boolean> {
-  const rows = await getClickhouse().$query<{ one: number }>(
-    `SELECT 1 AS one FROM daily_views WHERE entityType = '${entityType}' LIMIT 1`
-  );
+// 🔴 This function is uncached, but the answer is NOT: every caller returns it inside the object its
+// `createCache` wrapper stores, so a `false` survives that cache's TTL (~20 min for a month). That is
+// tolerable only because the answer is monotone — it flips false→true once per period and never back — so
+// the stale window is bounded and self-correcting. Anything that makes it non-monotone reintroduces a
+// surface that says "not collecting yet" over live data for a full TTL, which is how a working feature
+// stayed hidden once already.
+export async function viewTrackingLive(entityType: string, to: string): Promise<boolean> {
+  const rows = await getClickhouse().$query<{ one: number }>(viewTrackingSql(entityType, to));
   return rows.length > 0;
 }
 
@@ -822,7 +811,7 @@ async function fetchModel3ds(userId: number, from: string, to: string): Promise<
     ])
     .execute();
 
-  const tracking = await viewTrackingLive(VIEW_ENTITY.model3d);
+  const tracking = await viewTrackingLive(VIEW_ENTITY.model3d, to);
   if (!rows.length) return { models: [], tracking };
 
   const viewRows = await getClickhouse().$query<{ id: number | string; views: number | string }>(
@@ -896,11 +885,13 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     LEFT JOIN "ComicChapterRead" r ON r."chapterId" = c.id
     LEFT JOIN "Image" i ON i.id = p."coverImageId"
     WHERE p."userId" = ${uid}
+      -- Comic deletion is soft and lives in status, not in a deletedAt column like the sibling entities.
+      AND p.status <> 'Deleted'
     GROUP BY p.id, p.name, i.url, p."nsfwLevel", p."publishedAt"
     ORDER BY count(DISTINCT r."userId") DESC, p.id DESC
   `.execute(dbRead);
 
-  const tracking = await viewTrackingLive(VIEW_ENTITY.comicProject);
+  const tracking = await viewTrackingLive(VIEW_ENTITY.comicProject, to);
   const projectIds = result.rows.map((r) => Number(r.projectId));
   if (!projectIds.length) return { comics: [], tracking };
 

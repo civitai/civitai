@@ -50,14 +50,45 @@ export const retryFailedTextModeration = createJob(
       take: FETCH_LIMIT,
     });
 
-    if (!rows.length) return { processed: 0, retried: 0, missing: 0, errors: 0 };
+    if (!rows.length) return { processed: 0, retried: 0, missing: 0, errors: 0, skipped: 0 };
+
+    // Group by entityType so we can bulk-fetch content per type
+    const byType = new Map<
+      string,
+      { id: number; entityId: number; status: EntityModerationStatus }[]
+    >();
+    for (const row of rows) {
+      const list = byType.get(row.entityType) ?? [];
+      list.push({ id: row.id, entityId: row.entityId, status: row.status });
+      byType.set(row.entityType, list);
+    }
+
+    // Drop rows whose adapter is currently dark, BEFORE anything is spent on them. A
+    // declined submit looks exactly like a failed one, so leaving them in would burn
+    // their retry budget against a feature that never ran and then exclude them from
+    // the selection permanently — including after the flag comes back on.
+    let skipped = 0;
+    for (const [entityType, items] of byType) {
+      const isEnabled = getModerationAdapter(entityType)?.isEnabled;
+      if (!isEnabled) continue;
+
+      const active: typeof items = [];
+      for (const item of items) {
+        if (await isEnabled({ entityId: item.entityId })) active.push(item);
+        else skipped++;
+      }
+
+      if (active.length) byType.set(entityType, active);
+      else byType.delete(entityType);
+    }
 
     // Pre-increment retryCount on Pending-timeout rows. Terminal-failure rows
     // (Failed/Expired/Canceled) had their retryCount bumped by
     // `recordEntityModerationFailure` when the callback arrived, so they
     // already count against the cap. Pending-timeout rows never received a
     // callback, so without this bump they would retry indefinitely.
-    const pendingIds = rows
+    const pendingIds = [...byType.values()]
+      .flat()
       .filter((r) => r.status === EntityModerationStatus.Pending)
       .map((r) => r.id);
     if (pendingIds.length) {
@@ -65,14 +96,6 @@ export const retryFailedTextModeration = createJob(
         where: { id: { in: pendingIds } },
         data: { retryCount: { increment: 1 } },
       });
-    }
-
-    // Group by entityType so we can bulk-fetch content per type
-    const byType = new Map<string, { id: number; entityId: number }[]>();
-    for (const row of rows) {
-      const list = byType.get(row.entityType) ?? [];
-      list.push({ id: row.id, entityId: row.entityId });
-      byType.set(row.entityType, list);
     }
 
     let retried = 0;
@@ -146,6 +169,6 @@ export const retryFailedTextModeration = createJob(
       await dbWrite.entityModeration.deleteMany({ where: { id: { in: missingRowIds } } });
     }
 
-    return { processed: rows.length, retried, missing, errors };
+    return { processed: rows.length, retried, missing, errors, skipped };
   }
 );

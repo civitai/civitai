@@ -2,6 +2,8 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcMod from '~/utils/trpc';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 
 /**
  * W13 — AppListing REVIEW button (thumbs/recommend) component tests.
@@ -22,7 +24,14 @@ const mocks = vi.hoisted(() => ({
   currentUser: { id: 42, username: 'viewer' } as null | { id: number; username: string },
 }));
 
-vi.mock('~/utils/trpc', () => ({
+// 🔴 Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-mock).
+// This file previously hand-wrote the whole module, and that broke the day
+// `ReviewListingButton` started importing `~/providers/FeatureFlagsProvider` — which
+// imports `setTrpcBatchingEnabled` from here. The failure surfaced as
+// `Failed to import test file`, i.e. as an ERRORED SUITE with `Tests 0`, not as a
+// failing assertion: exactly the "no tests" shape that reads as nothing to see.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
   trpc: {
     appListings: {
       getMyReview: {
@@ -53,6 +62,21 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => mocks.currentUser,
 }));
 
+// `useCanReviewListing` reads `useOptionalFeatureFlags` for the store-scope KIND term.
+// These cases pass no `listingKind`, so the term is skipped and the flags are not
+// consulted — but the hook still runs, and outside a provider the REAL one returns
+// `null`. Pinned to a full-scope set so this suite keeps asserting ONLY the
+// signed-in / owner / write-wiring behaviours it was written for. The kind term has
+// its own suite: `ReviewListingButton.storeScope.browser.test.tsx`.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
+  const flags = { appBlocks: true, appListings: true, appListingsPublicExternal: false };
+  return {
+    ...(await importOriginal<typeof FeatureFlagsMod>()),
+    useFeatureFlags: () => flags,
+    useOptionalFeatureFlags: () => flags,
+  };
+});
+
 vi.mock('~/utils/notifications', () => ({
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
@@ -74,20 +98,40 @@ describe('ReviewListingButton', () => {
     await expect.element(page.getByRole('button', { name: /leave a review/i })).toBeInTheDocument();
   });
 
+  // 🔴 THESE TWO WERE VACUOUS AND ARE NOW COUNTS. `expect.element(...).not.toBeInTheDocument()`
+  // does not observe this harness: measured against a build where the button
+  // demonstrably renders, the `.not` form PASSED while `.toBeInTheDocument()` on the
+  // SAME locator in the SAME test ALSO passed. Both directions green on one element
+  // means the assertion was proving nothing, so neither gate below was actually
+  // pinned. `.elements()` returns an array, so this is a countable claim — and the
+  // sentinel is the positive control that separates "hidden" from "never mounted".
+  const SENTINEL = <span data-testid="review-cta-sentinel" />;
+
+  async function expectNoCta() {
+    await expect.element(page.getByTestId('review-cta-sentinel')).toBeInTheDocument();
+    expect(page.getByRole('button', { name: /leave a review/i }).elements()).toHaveLength(0);
+  }
+
   test('the listing owner does NOT see the CTA (no self-review)', async () => {
     mocks.currentUser = { id: 99, username: 'owner' };
-    renderWithProviders(<ReviewListingButton appListingId="apl_1" ownerUserId={99} />);
-    await expect
-      .element(page.getByRole('button', { name: /leave a review/i }))
-      .not.toBeInTheDocument();
+    renderWithProviders(
+      <>
+        {SENTINEL}
+        <ReviewListingButton appListingId="apl_1" ownerUserId={99} />
+      </>
+    );
+    await expectNoCta();
   });
 
   test('a signed-out viewer does NOT see the CTA', async () => {
     mocks.currentUser = null;
-    renderWithProviders(<ReviewListingButton appListingId="apl_1" ownerUserId={99} />);
-    await expect
-      .element(page.getByRole('button', { name: /leave a review/i }))
-      .not.toBeInTheDocument();
+    renderWithProviders(
+      <>
+        {SENTINEL}
+        <ReviewListingButton appListingId="apl_1" ownerUserId={99} />
+      </>
+    );
+    await expectNoCta();
   });
 
   test('picking Recommend + typing details submits upsertReview with the entered values', async () => {

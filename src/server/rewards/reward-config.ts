@@ -200,9 +200,12 @@ function buildConfig(rewards: Record<string, unknown>): RewardConfig {
 // NOT strict, and that is the fix rather than an oversight — see `loadConfig`.
 const envelopeSchema = z.object({ rewards: z.record(z.string(), z.unknown()).optional() });
 
-async function loadConfig(): Promise<RewardConfig> {
-  const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
-  const stored = row?.value ?? {};
+/**
+ * The resolution the grant path performs on a stored row, without reading one.
+ * Shared so an operator-facing view resolves a row exactly as the grant path
+ * would rather than re-implementing the salvage rules beside it.
+ */
+export function configFromStoredValue(stored: unknown): RewardConfig {
   const envelope = envelopeSchema.safeParse(stored);
 
   if (!envelope.success) {
@@ -243,6 +246,11 @@ async function loadConfig(): Promise<RewardConfig> {
     );
 
   return buildConfig(envelope.data.rewards ?? {});
+}
+
+async function loadConfig(): Promise<RewardConfig> {
+  const row = await dbRead.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
+  return configFromStoredValue(row?.value ?? {});
 }
 
 // Cache the parsed config, not the resolved decision: `resolveRewardConfig`
@@ -310,7 +318,18 @@ export async function getStoredRewardConfig(): Promise<StoredRewardConfig> {
   // the guard passes on save because both sides came from the same stale read.
   // No concurrency window is required — only that the LOAD fell inside one.
   const row = await dbWrite.keyValue.findUnique({ where: { key: REWARD_CONFIG_KEY } });
-  const value = row?.value ?? {};
+  return storedViewOf(row?.value ?? {});
+}
+
+/**
+ * The `StoredRewardConfig` for a row value already in hand.
+ *
+ * 🔴 `hash` is what the next save sends back as `expectedHash`. A writer that
+ * returns the hash it LOADED rather than the hash of what it just wrote hands
+ * the caller a token for a row that no longer exists, and the caller's next save
+ * is refused as someone else's edit.
+ */
+export function storedViewOf(value: unknown): StoredRewardConfig {
   return {
     value,
     malformed: !storedRewardConfigSchema.safeParse(value).success,
@@ -353,7 +372,7 @@ export async function setRewardConfig(
   config: z.infer<typeof rewardConfigSchema>,
   userId: number,
   { expectedHash, force = false }: { expectedHash?: string; force?: boolean } = {}
-) {
+): Promise<unknown> {
   const value = storedRewardConfigSchema.parse(config);
 
   // The primary, for the reason given on `getStoredRewardConfig`: a guard that
@@ -376,7 +395,17 @@ export async function setRewardConfig(
   if (expectedHash !== undefined && expectedHash !== rewardConfigHash(previous))
     throw throwConflictError(REWARD_CONFIG_CONFLICT.stale);
 
-  await dbWrite.keyValue.upsert({
+  // 🔴 Returns the row as POSTGRES stored it, not the object we sent.
+  //
+  // `value` is jsonb, which canonicalises key order (by length, then bytes) while
+  // `rewardConfigHash` is `JSON.stringify`, which is insertion-ordered. A hash
+  // taken from the in-memory object therefore describes a row that does not exist
+  // — the caller sends it back as `expectedHash` on their next save, the guard
+  // compares it against a hash of the row read back through jsonb, and refuses a
+  // lone moderator's second consecutive save as somebody else's edit. Verified on
+  // prod: `'{"enabled":true,"awardAmount":5,"cap":9}'::jsonb::text` returns
+  // `{"cap": 9, "enabled": true, "awardAmount": 5}`.
+  const written = await dbWrite.keyValue.upsert({
     where: { key: REWARD_CONFIG_KEY },
     create: { key: REWARD_CONFIG_KEY, value },
     update: { value },
@@ -392,15 +421,19 @@ export async function setRewardConfig(
     message: 'Reward config updated',
     userId,
     previous: JSON.stringify(previous ?? null),
-    value: JSON.stringify(value),
+    value: JSON.stringify(written.value),
   }).catch(() => null);
 
   invalidateRewardConfigCache();
   // Seed the fallback from what was just written. Clearing it and leaving it null
   // means a failed read on this pod moments later falls back to compiled defaults
   // — re-enabling the very reward this call just turned off.
-  lastGoodConfig = buildConfig(value.rewards ?? {});
-  return value;
+  // Through the same parser every other reader uses. `buildConfig` starts after the
+  // envelope, so the two agree only because `value` just came out of the schema —
+  // and a change to either salvage rule would have this pod's failure fallback
+  // built by different code from the same bytes than the config it just showed.
+  lastGoodConfig = configFromStoredValue(written.value);
+  return written.value;
 }
 
 /**
@@ -412,7 +445,21 @@ export async function resolveRewardConfig(
   type: string,
   defaults: RewardDefaults
 ): Promise<ResolvedRewardConfig> {
-  const entry = (await getRewardConfig())[type];
+  return resolveFromConfig(await getRewardConfig(), type, defaults);
+}
+
+/**
+ * The same resolution against a config the caller already holds. An
+ * operator-facing view reads the row itself — uncached, from the primary — and
+ * resolves it through this, so what it shows and what the grant path would pay
+ * cannot drift into two implementations.
+ */
+export function resolveFromConfig(
+  config: RewardConfig,
+  type: string,
+  defaults: RewardDefaults
+): ResolvedRewardConfig {
+  const entry = config[type];
   const override = entry?.override ?? {};
   const rejected = [...(entry?.rejected ?? [])];
 

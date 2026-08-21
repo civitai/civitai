@@ -55,6 +55,7 @@ export function ModelModerationCard({
   const locked = data?.lockedProperties ?? [];
   const hasFooter = !!(
     data?.profanity ||
+    data?.textModeration ||
     data?.unpublishedAt ||
     data?.takenDownAt ||
     data?.deletedAt
@@ -84,6 +85,7 @@ export function ModelModerationCard({
     flags.length +
     locked.length +
     (data?.profanity ? 1 : 0) +
+    (data?.textModeration ? 1 : 0) +
     (data?.unpublishedAt ? 1 : 0) +
     (data?.takenDownAt ? 1 : 0) +
     (data?.deletedAt ? 1 : 0);
@@ -174,6 +176,38 @@ export function ModelModerationCard({
                       )}
                       <Text size="xs" c="dimmed">
                         From lock time — may be stale; re-save to re-run the current filter.
+                      </Text>
+                    </Stack>
+                  )}
+                  {data.textModeration && (
+                    <Stack gap={4}>
+                      <Text size="xs" fw={600} c="orange">
+                        Text scan {formatDate(data.textModeration.scannedAt)}
+                      </Text>
+                      <Group gap={4}>
+                        {data.textModeration.labels.map((l) => (
+                          <Badge key={l.label} size="sm" radius="xl" color="orange" variant="light">
+                            {l.label} {l.score.toFixed(2)}
+                          </Badge>
+                        ))}
+                      </Group>
+                      {/* How close a call it was. The labels v1 acts on are LLM-scored, so
+                          the score against its own threshold is the only detail available —
+                          these policies return no matched terms. */}
+                      <Text size="xs" c="dimmed">
+                        {data.textModeration.labels
+                          .map((l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`)
+                          .join(' · ')}
+                      </Text>
+                      {data.textModeration.matchedTerms.length > 0 && (
+                        <Group gap={4}>
+                          {data.textModeration.matchedTerms.map((m, i) => (
+                            <Code key={i}>{m}</Code>
+                          ))}
+                        </Group>
+                      )}
+                      <Text size="xs" c="dimmed">
+                        Recorded even when a lock kept the flag from being applied.
                       </Text>
                     </Stack>
                   )}

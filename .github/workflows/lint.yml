@@ -265,6 +265,21 @@ jobs:
     #
     # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate.
     # Remove `continue-on-error` and this comment together.
+    #
+    # WHERE THAT STANDS, measured 2026-08-20 so the next reader does not repeat the
+    # archaeology. Over the 39 most recent completed runs the `Unit tests` STEP was red
+    # in 8, across 8 DISTINCT branches — which reads as flake but was not: every one
+    # predates #4191, which fixed a ledger test that had been TRUNK red and therefore
+    # failed on every PR regardless of its contents. Of the runs started after that
+    # merge, 5 of 5 are green across 4 branches. Encouraging, and far too short a
+    # window to act on — 36 minutes is not "a couple of weeks".
+    #
+    # Two things to know before re-measuring. The run-level `conclusion` is USELESS
+    # here: `continue-on-error` makes it `success` while the step underneath is
+    # `failure`, so read `steps[].conclusion` from the jobs endpoint, not the run.
+    # And this workflow is `pull_request`-only, so the suite never runs against `main`
+    # itself — a trunk-red test shows up as every PR going red at once, which is the
+    # signature to look for and exactly what the 8 above turned out to be.
     continue-on-error: true
     timeout-minutes: 30
     steps:
@@ -358,7 +373,13 @@ jobs:
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
   apps:
-    name: App unit tests
+    # Named for BOTH things it runs. It used to be "App unit tests", and the typecheck steps
+    # were added under that name — so a type error in an app would have rendered in the checks
+    # list as a failing unit-test job, pointing the reader at the wrong suite. Safe to rename:
+    # neither `main` nor `release` has any required_status_checks (re-verified 2026-08-20 via
+    # the branch-protection API, not inherited from the earlier note), so no merge gate keys
+    # on the old string.
+    name: App unit tests + typecheck
     runs-on: ubuntu-latest
     # The `apps/*` suites — the same gap as `packages` above, in the sibling directory, and
     # missed when that one was closed: the root config registered `packages/*/vitest.config.*`
@@ -374,7 +395,9 @@ jobs:
     # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
     # no required_status_checks — it is a signal someone has to look at and dismiss.
     #
-    # `apps/moderator` is absent on purpose: it has no vitest config, so nothing selects it.
+    # Selection is by vitest config, so an app without one is silently not covered here. Every app
+    # under `apps/` has one today; scripts/ci/assert-workspace-suites-ran.mjs is what notices if that
+    # stops being true.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -401,3 +424,26 @@ jobs:
       - name: Assert every app suite actually ran
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
+
+      # ── App typechecks ──────────────────────────────────────────────────
+      # No app under `apps/` was typechecked by anything before this. The root
+      # `pnpm run typecheck` is bounded by the root tsconfig `include` — `src`,
+      # `packages/*/src`, `scripts/local-dev/*.ts`, `tests`, `test`,
+      # `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers (this
+      # workflow's `typecheck` job and the `tekton / typecheck` status) run that
+      # same script, so the gap could not close on its own.
+      #
+      # Parked in this job rather than its own: `pnpm install` is the expensive
+      # part and this job has already paid for it. The tradeoff is that a type
+      # error renders under this job's name — hence the job rename above.
+      #
+      # Deliberately ONE step driving a script, not one `pnpm --filter` step per
+      # app. Per-app steps abort at the first red app, so a shared type change
+      # that breaks several of them reports one; and `pnpm --filter <name>` EXITS
+      # 0 WHEN THE NAME MATCHES NOTHING (measured, pnpm 10.28.1 — it prints "No
+      # projects matched the filters" and succeeds), so a hardcoded list of
+      # package names is one chance per app for a rename to turn this gate into a
+      # green no-op. The script derives the app set from disk, proves each filter
+      # selected a real package, and collects every failure. See its header.
+      - name: Typecheck apps
+        run: node scripts/ci/typecheck-apps.mjs

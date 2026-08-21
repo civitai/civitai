@@ -32,7 +32,7 @@ export function SubmitModeSelector({ onSelect }: { onSelect: (mode: SubmitMode) 
       <ModeCard
         icon={<IconExternalLink size={22} />}
         title="List an external app (connect your OAuth app)"
-        description="List an app hosted off-site by linking your registered OAuth app so users can grant it access. Disclose the scopes your app requests and why, add an optional homepage link — a moderator reviews before it appears."
+        description="List a standalone app hosted elsewhere by linking your registered OAuth app so users can grant it access. Disclose the scopes your app requests and why, add an optional homepage link — a moderator reviews before it appears."
         onSelect={() => onSelect('external')}
         testId="apps-submit-mode-card-external"
       />

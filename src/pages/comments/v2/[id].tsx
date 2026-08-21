@@ -1,146 +1,29 @@
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { threadUrlMap } from '~/server/notifications/comment.notifications';
+import { buildCommentPermalink, commentPermalinkSelect } from '~/server/utils/comment-permalink';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
   resolver: async ({ ctx }) => {
     const { id } = ctx.params as { id: string };
-    const select = {
-      image: {
-        select: {
-          id: true,
-        },
-      },
-      post: {
-        select: {
-          id: true,
-        },
-      },
-      review: {
-        select: {
-          id: true,
-        },
-      },
-      model: {
-        select: {
-          id: true,
-        },
-      },
-      article: {
-        select: {
-          id: true,
-        },
-      },
-      bounty: {
-        select: {
-          id: true,
-        },
-      },
-      bountyEntry: {
-        select: {
-          id: true,
-        },
-      },
-      challenge: {
-        select: {
-          id: true,
-        },
-      },
-      comicChapter: {
-        select: {
-          projectId: true,
-        },
-      },
-    };
+
+    // The select lives beside the resolver that reads it (`comment-permalink.ts`) rather than
+    // here, so the two cannot drift: the payload type is derived FROM this select, and the
+    // resolver's parameter type is derived from that payload. Narrow the select and the resolver
+    // stops compiling — which is the only thing that catches a select-correctness bug, since a
+    // mocked `dbRead` would just encode the same mistake in the fake.
     const commentV2 = await dbRead.commentV2.findUnique({
       where: { id: Number(id) },
-      select: {
-        id: true,
-        thread: {
-          select: {
-            id: true,
-            rootThread: {
-              select: {
-                id: true,
-                ...select,
-              },
-            },
-            comment: {
-              select: {
-                id: true,
-              },
-            },
-            ...select,
-          },
-        },
-      },
+      select: commentPermalinkSelect,
     });
 
     if (!commentV2) {
       return { notFound: true };
     }
 
-    const { thread } = commentV2;
-    const getThreadDetails = (thread: any) => {
-      if (thread.post) {
-        return { threadType: 'post', threadParentId: thread.post.id };
-      }
-      if (thread.review) {
-        return { threadType: 'review', threadParentId: thread.review.id };
-      }
-      if (thread.model) {
-        return { threadType: 'model', threadParentId: thread.model.id };
-      }
-      if (thread.article) {
-        return { threadType: 'article', threadParentId: thread.article.id };
-      }
-      if (thread.bounty) {
-        return { threadType: 'bounty', threadParentId: thread.bounty.id };
-      }
-      if (thread.bountyEntry) {
-        return {
-          threadType: 'bountyEntry',
-          threadParentId: thread.bountyEntry.id,
-        };
-      }
-      if (thread.challenge) {
-        return { threadType: 'challenge', threadParentId: thread.challenge.id };
-      }
-      if (thread.comicChapter) {
-        return { threadType: 'comicChapter', threadParentId: thread.comicChapter.projectId };
-      }
-      if (thread.image) {
-        return { threadType: 'image', threadParentId: thread.image.id };
-      }
-
-      return { threadType: null, threadParentId: null };
-    };
-
-    let threadData: { threadType: string | null; threadParentId: number | null } =
-      getThreadDetails(thread);
-
-    if ((!threadData.threadType || !threadData.threadParentId) && thread.rootThread) {
-      threadData = getThreadDetails(thread.rootThread);
-    }
-
-    if (!threadData.threadType || !threadData.threadParentId) {
-      return { notFound: true };
-    }
-
-    const url = threadUrlMap({
-      threadParentId: threadData.threadParentId,
-      threadType: threadData.threadType,
-      threadId: thread.id,
-      commentId: commentV2.id,
-      // Always pin the target comment as the thread root so it renders standalone via
-      // RootThreadProvider's activeComment path. Sidesteps cursor-paginated thread fetches
-      // (target may be on page N) and works uniformly for root and reply comments.
-      commentParentType: 'comment',
-      commentParentId: commentV2.id,
-    });
+    const url = buildCommentPermalink({ thread: commentV2.thread, commentId: commentV2.id });
 
     if (url) {
       return {

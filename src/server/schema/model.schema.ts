@@ -100,21 +100,26 @@ export const getAllModelsSchema = z.object({
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
     .optional(),
-  favorites: z.coerce.boolean().optional().default(false),
-  hidden: z.coerce.boolean().optional().default(false),
-  needsReview: z.coerce.boolean().optional(),
-  earlyAccess: z.coerce.boolean().optional(),
+  // The query-string booleans — `favorites` through `archived` below — are booleanString(),
+  // never z.coerce.boolean(): /api/v1/models parses this schema against raw req.query, where
+  // coerce runs JS Boolean() and makes `=false` true. This does NOT describe the whole object:
+  // `pending`, `disablePoi`, `disableMinor`, `isFeatured`, `poiOnly`, `minorOnly` and the
+  // spread-in `allow*` fields are plain z.boolean() on purpose — they reject a string outright,
+  // so the endpoint 400s rather than returning the wrong set.
+  favorites: booleanString().optional().default(false),
+  hidden: booleanString().optional().default(false),
+  needsReview: booleanString().optional(),
+  earlyAccess: booleanString().optional(),
+  paidAccess: booleanString().optional(),
   ids: commaDelimitedNumberArray().optional(),
   modelVersionIds: commaDelimitedNumberArray().optional(),
-  supportsGeneration: z.coerce.boolean().optional(),
-  fromPlatform: z.coerce.boolean().optional(),
-  followed: z.coerce.boolean().optional(),
+  supportsGeneration: booleanString().optional(),
+  fromPlatform: booleanString().optional(),
+  followed: booleanString().optional(),
   // Restrict to creators currently on the "new & upcoming" board. Server resolves
   // the board from this flag plus the request domain; the client sends no user list.
-  // booleanString, not z.coerce.boolean: the REST endpoint parses raw query strings,
-  // where coerce makes `?newCreators=false` truthy.
   newCreators: booleanString().optional(),
-  archived: z.coerce.boolean().optional(),
+  archived: booleanString().optional(),
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.enum(CollectionItemStatus)).optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
@@ -313,6 +318,24 @@ export type ModelMeta = Partial<{
   commentsLocked: boolean;
   profanityMatches: string[];
   profanityEvaluation: Pick<ProfanityEvaluation, 'reason' | 'metrics'>;
+  /**
+   * XGuard text-moderation forensics. Surfaced to moderators through
+   * `getModelModerationDetail`; stripped from every client-facing path by
+   * `stripMinorHashMeta`. Sibling of `profanity`, not a replacement — a moderator
+   * looking at an older model needs to know which detector produced the finding.
+   *
+   * Scores rather than matched terms, because that is what these policies return:
+   * the labels v1 acts on are LLM-scored (they come back with `topToken` /
+   * `policyHash` and no `matchedTerms` key at all), so a term list would be
+   * permanently empty. `matchedTerms` is kept for the keyword-backed policies that
+   * do populate it, and is empty for the rest.
+   */
+  textModeration: {
+    /** The labels that triggered, with the score and threshold behind each. */
+    labels: { label: string; score: number; threshold: number }[];
+    matchedTerms: string[];
+    scannedAt: string;
+  };
   minorFlagSnapshot: MinorFlagSnapshot;
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
@@ -497,15 +520,6 @@ export type PublishPrivateModelInput = z.infer<typeof publishPrivateModelSchema>
 export const publishPrivateModelSchema = z.object({
   modelId: z.number(),
   publishVersions: z.boolean(),
-});
-
-export type GetTrainingModerationFeedSchema = z.infer<typeof getTrainingModerationFeedSchema>;
-export const getTrainingModerationFeedSchema = infiniteQuerySchema.extend({
-  username: z.string().optional(),
-  dateFrom: z.date().optional(),
-  dateTo: z.date().optional(),
-  cannotPublish: z.boolean().optional(),
-  workflowId: z.string().optional(),
 });
 
 // Training models list schema with filtering and sorting

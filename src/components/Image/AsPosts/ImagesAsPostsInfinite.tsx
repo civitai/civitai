@@ -37,7 +37,6 @@ import {
   ImagesAsPostsInfiniteProvider,
   type ImagesAsPostsSource,
 } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -358,7 +357,6 @@ export function ImagesAsPostsInfinite({
                 .
               </Text>
             ) : null}
-            <ImageCategories />
             {enabled && isLoading ? (
               <Paper style={{ minHeight: 200, position: 'relative' }}>
                 <LoadingOverlay visible zIndex={10} />

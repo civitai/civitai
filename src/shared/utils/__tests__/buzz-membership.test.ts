@@ -3,6 +3,7 @@ import {
   BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
   getBuzzMembershipPrice,
   getSubscriptionDisplayBuzzType,
+  isCanonicalTierProduct,
   isMembershipActive,
 } from '~/shared/utils/buzz-membership';
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
@@ -215,6 +216,27 @@ describe('getSubscriptionDisplayBuzzType', () => {
       const config = getBuzzCurrencyConfig(getSubscriptionDisplayBuzzType(raw, 'green'));
       expect(config?.icon).toBeDefined();
     }
+  });
+});
+
+describe('isCanonicalTierProduct', () => {
+  it('accepts the cash tier product', () => {
+    expect(isCanonicalTierProduct({ tier: 'gold', rewardsMultiplier: 4 })).toBe(true);
+    expect(isCanonicalTierProduct({})).toBe(true);
+    expect(isCanonicalTierProduct(null)).toBe(true);
+  });
+
+  it('rejects the buzz-purchase and referral variants', () => {
+    expect(isCanonicalTierProduct({ tier: 'gold', buzzPurchase: true })).toBe(false);
+    expect(isCanonicalTierProduct({ tier: 'gold', referralGrantable: true })).toBe(false);
+  });
+
+  it('reads the marker whether it was stored as a boolean or a string', () => {
+    // `buzzPurchase` goes through booleanString(), so both forms exist in Product.metadata.
+    expect(isCanonicalTierProduct({ buzzPurchase: 'true' })).toBe(false);
+    expect(isCanonicalTierProduct({ referralGrantable: 'true' })).toBe(false);
+    expect(isCanonicalTierProduct({ buzzPurchase: 'false' })).toBe(true);
+    expect(isCanonicalTierProduct({ buzzPurchase: false })).toBe(true);
   });
 });
 

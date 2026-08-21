@@ -12,13 +12,13 @@ import type { ListingKindFilter } from '~/server/schema/blocks/app-listing-read.
  * when the store's filters moved into the `/models`-style Filters dropdown: the
  * dropdown panel and the body are now different files, so the control has to be
  * importable. The rendered markup and the props are UNCHANGED by the move — the
- * existing marketplace-body tests that click `Off-site` still address the same
+ * existing marketplace-body tests that click `Standalone` still address the same
  * button, they just open the dropdown first.
  */
 const KIND_OPTIONS: { value: ListingKindFilter; label: string; icon: typeof IconApps }[] = [
   { value: 'all', label: 'All apps', icon: IconLayoutGrid },
   { value: 'onsite', label: 'On-site', icon: IconApps },
-  { value: 'offsite', label: 'Off-site', icon: IconExternalLink },
+  { value: 'offsite', label: 'Standalone', icon: IconExternalLink },
 ];
 
 export interface KindFilterButtonsProps {

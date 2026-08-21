@@ -46,10 +46,12 @@ import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
-import { Flags } from '~/shared/utils/flags';
+import type { BrowsingLevelAttribute } from '~/components/Search/search-index-filters';
+import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
+import type { SearchIndexKey } from '~/components/Search/search.types';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isDefined } from '~/utils/type-guards';
+import { buildBrowsingLevelFilters, joinFilterClauses } from './search-filters';
 import styles from './CustomSearchComponents.module.scss';
 
 // const useStyles = createStyles((theme) => ({
@@ -262,21 +264,22 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
 };
 
 export const BrowsingLevelFilter = ({
-  attributeName,
+  indexKey,
+  attributeOverride,
   filters: _filters,
   ...props
-}: { attributeName: string; filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
+}: {
+  indexKey: SearchIndexKey;
+  attributeOverride?: BrowsingLevelAttribute;
+  filters?: string[] | string;
+} & Omit<ConfigureProps, 'filters'>) => {
   const browsingLevel = useBrowsingLevelDebounced();
+  const attribute = attributeOverride ?? BROWSING_LEVEL_ATTRIBUTE[indexKey];
 
-  const filters = useMemo(() => {
-    const browsingLevelArray = Flags.instanceToArray(browsingLevel);
-    const browsingLevelFilter = attributeName
-      ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
-      : null;
-    const filterList = Array.isArray(_filters) ? _filters : [_filters];
-
-    return [...filterList, browsingLevelFilter].filter(isDefined);
-  }, [browsingLevel, attributeName, _filters]);
+  const filters = useMemo(
+    () => buildBrowsingLevelFilters({ attribute, browsingLevel, filters: _filters }),
+    [browsingLevel, attribute, _filters]
+  );
 
   return <ApplyCustomFilter filters={filters} {...props} />;
 };
@@ -445,16 +448,9 @@ export const ApplyCustomFilter = ({
   filters: _filters,
   ...props
 }: { filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
-  const filters = useMemo(() => {
-    const filterList = Array.isArray(_filters) ? _filters : _filters ? [_filters] : [];
-    return filterList.map((f) => `(${f})`).join(' AND ');
-  }, [_filters]);
+  const filters = useMemo(() => joinFilterClauses(_filters), [_filters]);
 
-  const { refine } = useConfigure({ ...props, filters });
-
-  useEffect(() => {
-    refine({ filters });
-  }, [filters]);
+  useConfigure({ ...props, filters });
 
   return null;
 };

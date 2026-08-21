@@ -7,7 +7,7 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import { mapToViolationType } from '~/server/common/tos-reasons';
+import { mapToViolationType, tosReasonLabel } from '~/server/common/tos-reasons';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
@@ -63,30 +63,31 @@ import type {
   GetImageInput,
   GetInfiniteImagesOutput,
   ImageModerationSchema,
-  ImageReviewQueueInput,
   SetTosViolationSchema,
   SetVideoThumbnailInput,
   UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
 } from './../schema/image.schema';
+import { requiresImageDbPath } from './../schema/image.schema';
 import {
   getAllImages,
   getEntityCoverImage,
   getImage,
   getImageContestCollectionDetails,
-  getImageModerationReviewQueue,
   getImageResources,
   getReportViolationDetailsForImages,
   getResourceIdsForImages,
   filterPinnedImagesToVersion,
   getTagNamesForImages,
-  moderateImages,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
+import { moderatorApp } from '~/server/services/moderator-app.service';
+import { ModeratorClientError } from '@civitai/moderation';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 export const moderateImageHandler = async ({
   input,
@@ -96,40 +97,29 @@ export const moderateImageHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const images = await moderateImages({
-      ...input,
-      include: ['user-notification', 'phash-block'],
-      moderatorId: ctx.user.id,
+    // Delegated to the moderator spoke, which owns image moderation now: block/unblock + every side effect
+    // (pHash blocklist, DeleteTOS analytics, tos-violation notification, feed-existence/gallery/comic
+    // invalidation). We stay the thin authed proxy because the client callers (NeedsReviewBadge,
+    // UnblockImage) can't hold the internal token. `violationType`/`violationDetails` aren't forwarded — no
+    // live caller sets them, and the spoke derives the same values via mapToViolationType + report details.
+    await moderatorApp.imageModerate({
+      ids: input.ids,
+      reviewAction: input.reviewAction,
+      userId: ctx.user.id,
+      ip: resolveClientIpOrNull(ctx.req) ?? undefined,
+      userAgent: ctx.req.headers['user-agent'],
     });
-    if (input.reviewAction === 'block') {
-      const imageIds = images.map((img) => img.id);
-      const [imageTags, imageResources, reportDetails] = await Promise.all([
-        getTagNamesForImages(imageIds),
-        getResourceIdsForImages(imageIds),
-        getReportViolationDetailsForImages(imageIds),
-      ]);
-
-      await Limiter().process(images, (images) =>
-        ctx.track.images(
-          images.map(({ id, userId, nsfwLevel, needsReview }) => ({
-            type: 'DeleteTOS',
-            imageId: id,
-            nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-            tags: imageTags[id] ?? [],
-            resources: imageResources[id] ?? [],
-            tosReason: needsReview ?? 'other',
-            violationType:
-              input.violationType ?? mapToViolationType(needsReview, reportDetails[id]),
-            violationDetails: input.violationDetails ?? reportDetails[id]?.comment ?? '',
-            ownerId: userId,
-            userId: ctx.user.id,
-          }))
-        )
-      );
-    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
+    // If the spoke rejects the action with a 4xx (a bad/conflicting request rather than a server fault),
+    // surface it as the matching tRPC code with the spoke's clean message, not a generic 500.
+    if (error instanceof ModeratorClientError && error.status && error.status < 500)
+      throw new TRPCError({
+        code: error.status === 409 ? 'CONFLICT' : 'BAD_REQUEST',
+        message: error.message,
+        cause: error,
+      });
+    throw throwDbError(error);
   }
 };
 
@@ -218,6 +208,10 @@ export const setTosViolationHandler = async ({
         modelName: image.post?.title ?? `post #${image.postId as number}`,
         entity: 'image',
         url: `/images/${id}`,
+        // Only the moderator's own choice — the inferred fallback below is a classification for
+        // analytics, and telling someone their image broke a rule the moderator never picked is worse
+        // than telling them nothing.
+        ...(violationType ? { reason: tosReasonLabel(violationType) } : {}),
       },
     }).catch();
 
@@ -283,31 +277,15 @@ export const getInfiniteImagesHandler = async ({
 }) => {
   const { user, features, signal } = ctx;
 
-  // Params the search index physically can't serve â€” these must use the DB
-  // (getAllImages). The decision is server-side: there is no client `useIndex`
-  // flag, so a client can't force the expensive un-indexed path on a broad query.
-  // Correctness-critical filters (wrong results if the index ignored them):
-  // - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
-  //   unique cache keys in BitDex that hurt cache hit rate)
-  // - collectionId: requires relational joins through CollectionItem
-  // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
-  // - imageId: not a search-index filter
-  // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
-  //   a modelId-only query would silently return the global feed (matches the
-  //   /api/v1/images legacy-method logic)
-  // Ordering-only:
-  // - prioritizedUserIds: DB-level user prioritization (TODO in getAllImagesIndex).
-  //   Only forces the DB when scoped to a model (its sole legit use â€” the model
-  //   showcase carousel, which always pairs it with modelVersionId). Sent alone it
-  //   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
-  const requiresDbPath =
-    !!input.postId ||
-    !!input.postIds?.length ||
-    !!input.collectionId ||
-    !!input.reactions?.length ||
-    !!input.imageId ||
-    (!!input.modelId && !input.modelVersionId) ||
-    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
+  // The hub pages and the whole hub router are behind `userHubs`, but `hubId` is a
+  // plain feed input, so `/images?hubId=N` would keep serving a hub after the flag
+  // was turned back off — the feed under someone else's chrome. Refused rather than
+  // ignored: silently dropping the filter serves the GLOBAL feed to a caller who
+  // asked for a hub.
+  if (input.hubId && !features.userHubs)
+    throw throwAuthorizationError('Hubs are not available yet');
+
+  const requiresDbPath = requiresImageDbPath(input);
 
   // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
   // can only run when the index can serve the query.
@@ -322,7 +300,11 @@ export const getInfiniteImagesHandler = async ({
 
   // Use getAllImagesIndex when BitDex is active or the index can serve the query;
   // otherwise use getAllImages (DB).
-  const useIndex = useBitdex || (features.imageIndexFeed && !requiresDbPath);
+  // A hub is only expressible on the index — its collection sources are served by
+  // the indexed `collectionIds` field, which the raw-SQL path has no equivalent
+  // for. Routing one to the DB would drop the filter rather than fail, so hubs
+  // pin the index path regardless of the feature flag.
+  const useIndex = !!input.hubId || useBitdex || (features.imageIndexFeed && !requiresDbPath);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();
@@ -724,23 +706,6 @@ export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntiti
 };
 
 // #endregion
-
-export const getModeratorReviewQueueHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ImageReviewQueueInput;
-  ctx: Context;
-}) => {
-  try {
-    return await getImageModerationReviewQueue({
-      ...input,
-    });
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
 
 export const getImageContestCollectionDetailsHandler = async ({
   input,

@@ -36,6 +36,8 @@
  */
 
 import { getRatingLabel } from '~/utils/rating-label';
+import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /** A single label/value row of the Details panel. */
@@ -54,10 +56,15 @@ export type ListingDetailRow = {
   color?: string;
 };
 
-/** Human label for the store kind + sub-kind. Mirrors `getListingBadge`'s wording. */
+/**
+ * Human label for the store kind. Mirrors `getListingBadge`'s wording — and now
+ * actually does: off-site used to fork here into "Connect app" / "Off-site link"
+ * while the badge said "Connect app" / "Off-site", so the two surfaces disagreed
+ * about the SAME listing. One kind, one word, the same word the store's kind
+ * filter uses.
+ */
 function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
-  if (detail.kindData.kind === 'onsite') return 'On-site app';
-  return detail.kindData.subKind === 'connect' ? 'Connect app' : 'Off-site link';
+  return detail.kindData.kind === 'onsite' ? 'On-site app' : 'Standalone';
 }
 
 /**
@@ -85,11 +92,25 @@ export function buildListingDetailRows(
 
   rows.push({ key: 'kind', label: 'Kind', value: kindLabel(detail) });
 
+  // 🔴 BOTH VALUES GO THROUGH THEIR DISPLAY-LABEL MAP. These two rows shipped
+  // rendering the RAW stored enum — a tester read "utility" and "pg13" in the store
+  // preview — while the card chip, the filter buttons and both mod selectors were
+  // already mapping the same column one component over. Each helper keeps the raw
+  // value as its fallback, so an unknown/legacy rating or a category added after
+  // this client shipped degrades to the stored string rather than to a blank row.
   if (detail.category) {
-    rows.push({ key: 'category', label: 'Category', value: detail.category });
+    rows.push({
+      key: 'category',
+      label: 'Category',
+      value: marketplaceCategoryLabel(detail.category),
+    });
   }
   if (detail.contentRating) {
-    rows.push({ key: 'rating', label: 'Rating', value: detail.contentRating });
+    rows.push({
+      key: 'rating',
+      label: 'Rating',
+      value: offsiteContentRatingLabel(detail.contentRating),
+    });
   }
 
   if (!opts.preview) {

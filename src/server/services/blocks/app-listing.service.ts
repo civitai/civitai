@@ -21,8 +21,8 @@ import type {
   ListingKind,
   ListingRecommendRollup,
   ListingSort,
-  OffsiteSubKind,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import { queryCache } from '~/server/utils/cache-helpers';
 
 /**
@@ -149,11 +149,6 @@ export function recommendRollup(
   };
 }
 
-/** Off-site sub-kind: OAuth-connect when a connect client is set, else external-link. */
-export function resolveOffsiteSubKind(connectClientId: string | null | undefined): OffsiteSubKind {
-  return connectClientId ? 'connect' : 'external-link';
-}
-
 /**
  * Re-assert (defense-in-depth) that an off-site `externalUrl` is an https URL
  * before it reaches the wire — so a bad row can never surface a `javascript:` /
@@ -164,19 +159,16 @@ function safeExternalUrl(url: string | null | undefined): string | null {
   return url && /^https:\/\//i.test(url) ? url : null;
 }
 
-/** Build a CDN icon URL from an icon Image row (or null). */
-function iconUrl(icon: { url: string | null } | null | undefined): string | null {
-  return icon?.url ? getEdgeUrl(icon.url, { width: 256 }) : null;
-}
+/**
+ * Build a CDN icon URL from an icon Image row (or null).
+ *
+ * Thin alias over the shared projection in `listing-media-url.ts` — the author-facing
+ * `listMine` read needs the same hop, and two copies is two places to drift a width.
+ */
+const iconUrl = listingIconUrl;
 
 /** Cover URL = the cover Image, else the first screenshot's Image, else null. */
-function coverUrl(
-  cover: { url: string | null } | null | undefined,
-  firstScreenshotUrl: string | null
-): string | null {
-  if (cover?.url) return getEdgeUrl(cover.url, { width: 1200 });
-  return firstScreenshotUrl;
-}
+const coverUrl = listingCoverUrl;
 
 function creatorChip(
   user: { id: number; username: string | null; image: string | null } | null | undefined
@@ -260,7 +252,6 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
   if (row.kind === 'offsite') {
     return {
       kind: 'offsite',
-      subKind: resolveOffsiteSubKind(row.connectClientId),
       externalUrl: safeExternalUrl(row.externalUrl),
     };
   }
@@ -309,8 +300,8 @@ export type DetailKindDataSource = {
   kind: string;
   slug: string;
   // `| undefined` so a Prisma *create input* (whose nullable columns are optional)
-  // satisfies this as-is. Both consumers below (`safeExternalUrl`,
-  // `resolveOffsiteSubKind`) already accept `undefined` identically to `null`.
+  // satisfies this as-is. Both consumers below (`safeExternalUrl` and the
+  // `|| null` on `connectClientId`) treat `undefined` identically to `null`.
   externalUrl?: string | null;
   connectClientId?: string | null;
   appBlockId?: string | null;
@@ -319,14 +310,19 @@ export type DetailKindDataSource = {
 
 export function detailKindData(row: DetailKindDataSource): ListingDetailKindData {
   if (row.kind === 'offsite') {
-    const subKind = resolveOffsiteSubKind(row.connectClientId);
     return {
       kind: 'offsite',
-      subKind,
       externalUrl: safeExternalUrl(row.externalUrl),
       // The OAuth client_id is public (it's sent in the connect URL); the secret
-      // is never selected here. Null for an external-link listing.
-      connectClientId: subKind === 'connect' ? row.connectClientId ?? null : null,
+      // is never selected here. Null when no OAuth app is connected.
+      //
+      // 🔴 `|| null`, NOT `?? null`, and that is deliberate: this used to read
+      // `subKind === 'connect' ? row.connectClientId ?? null : null`, and the
+      // removed sub-kind was `connectClientId ? 'connect' : 'external-link'` —
+      // a TRUTHINESS test. So an EMPTY-STRING client id projected as `null`
+      // before, and `?? null` would newly project it as `''`. `|| null` keeps
+      // the wire value byte-identical for every input.
+      connectClientId: row.connectClientId || null,
     };
   }
   return {
@@ -506,10 +502,13 @@ export function listingMatureFilter(redCapable: boolean): Prisma.Sql {
  * public external App-store GA. Mirrors `listingMatureFilter`'s pure-`Prisma.Sql`
  * shape (uses the `al` alias, safe to AND into the keyset WHERE):
  *   - `full`            → `TRUE` (no kind restriction — byte-identical to today).
- *   - `public-external` → `al.kind = 'offsite'` — the offsite subset ONLY, for BOTH
- *     sub-kinds (`connect` AND `external-link`). Onsite App Blocks are excluded.
+ *   - `public-external` → `al.kind = 'offsite'` — the offsite subset ONLY, whether
+ *     or not the listing links an OAuth client. Onsite App Blocks are excluded.
  *     🔴 The kind gate is `kind='offsite'`, NOT `connect_client_id IS NULL` — an
  *     offsite listing is public whether or not it links an OAuth connect client.
+ *     (This used to say "for BOTH sub-kinds (`connect` AND `external-link`)";
+ *     that display taxonomy is gone — offsite is one kind — but the gate itself
+ *     is unchanged, because it never keyed on the sub-kind in the first place.)
  *   - `none`            → `FALSE` — fail-closed. (The router short-circuits `none`
  *     before reaching SQL, so this is defense-in-depth, never the live path.)
  *
@@ -690,8 +689,8 @@ export async function getListingDetail(
   if (!row || row.status !== 'approved') return null;
   // STORE-SCOPE kind gate (the public/onsite security boundary): under
   // `public-external` an ONSITE listing is indistinguishable from a missing one —
-  // return null so no crafted id/slug can reach an onsite listing's detail. Both
-  // offsite sub-kinds (connect + external-link) remain visible (gate on `kind`,
+  // return null so no crafted id/slug can reach an onsite listing's detail. EVERY
+  // offsite listing remains visible, OAuth-connected or not (gate on `kind`,
   // never `connectClientId`). `full` imposes no kind restriction (unchanged).
   if (scope === 'public-external' && row.kind !== 'offsite') return null;
   // DEPLOY-GATE (generic, all app-blocks): an ONSITE listing whose backing

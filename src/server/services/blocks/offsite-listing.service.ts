@@ -2270,11 +2270,20 @@ export async function approveExternalRequest(opts: {
       tx
     );
     // AUTHORITATIVE go-live ACTIONABILITY gate on the PRIMARY (`tx`) — row-consistent
-    // with the flip below. `externalUrl` / `connectClientId` are owner-editable in
-    // place while the request sits pending, so an owner who cleared the URL (or
-    // linked an OAuth client) after the replica read in (4c) is caught HERE and the
-    // whole tx rolls back BEFORE anything is approved. Upholds the invariant: no
-    // approved off-site listing may render a primary CTA the viewer cannot click.
+    // with the flip below. `externalUrl` is owner-editable in place while the request
+    // sits pending, so an owner who cleared the URL after the replica read in (4c) is
+    // caught HERE and the whole tx rolls back BEFORE anything is approved. Upholds the
+    // invariant: no approved off-site listing may render a primary CTA the viewer
+    // cannot click.
+    //
+    // 🔴 `connectClientId` IS NOT EDITABLE IN PLACE, and this comment used to say it
+    // was — one of the seven false-mechanism comments #4126 corrected. `buildListingPatchData`
+    // never assigns the column and `updateListingPatchSchema` has no such key, so "or
+    // linked an OAuth client" named a mutation no code path can perform. It was also
+    // backwards about direction: `assertOffsiteListingActionable` fails on a connect
+    // listing with NO usable `href`, so ACQUIRING a client alongside a valid URL would
+    // not break actionability anyway. The column is still passed to the gate because it
+    // selects the sub-kind the CTA is derived from — a real input, just not a mutable one.
     assertOffsiteListingActionable(primaryListing);
     // Validate the stored externalUrl ONLY WHEN present (it's optional in the merged
     // model); a null URL approves fine. See step (4).
@@ -2573,8 +2582,17 @@ async function applyApprovedRevision(opts: {
     // (2c) 🔴 GO-LIVE ACTIONABILITY gate on the POST-COPY state. A revision is a
     // CONTENT go-live: it writes no `status`, but the off-site branch below copies
     // the shadow's `externalUrl` + `connectClientId` straight onto an ALREADY-LIVE
-    // parent — so a revision that clears the URL (or links an OAuth client) is
-    // precisely how a working listing becomes a dead CTA without any status write.
+    // parent — so a revision that clears the URL is precisely how a working listing
+    // becomes a dead CTA without any status write.
+    //
+    // 🔴 ONLY THE URL. This comment used to add "(or links an OAuth client)" — one of
+    // the seven false-mechanism comments #4126 corrected. The shadow's
+    // `connectClientId` is `parent.connectClientId` verbatim: `beginListingRevision`
+    // copies it in, nothing on the revision edit path can change it
+    // (`buildListingPatchData` never assigns it, `updateListingPatchSchema` has no such
+    // key), and the copy below writes the same value back. So this copy CANNOT link a
+    // client; the round trip is an identity on that column. The column is still passed
+    // to the gate because it selects the sub-kind the CTA is derived from.
     //
     // 🔴 Asserted on the PROJECTED result of the copy — the parent's `kind`/`slug`
     // (neither is copied) with the SHADOW's URL/client (which are) — NOT on the

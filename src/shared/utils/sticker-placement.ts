@@ -193,6 +193,14 @@ export const normalizeStickerComment = (comment?: string | null): string | undef
  */
 export const STICKER_REMOVAL_LOCK_HOURS = 24 * 7;
 
+/**
+ * How many of your own placements the "placed" list carries.
+ *
+ * The same cap the remix gallery's sent queue uses, and for the same reason: the
+ * list does not page, so it has to stop somewhere and say that it did.
+ */
+export const STICKER_PLACEMENT_QUEUE_LIMIT = 50;
+
 /** When a sticker approved at `approvedAt` may be removed by the content owner. */
 export const stickerRemovableAt = (approvedAt: Date | string) =>
   new Date(new Date(approvedAt).getTime() + STICKER_REMOVAL_LOCK_HOURS * 60 * 60 * 1000);

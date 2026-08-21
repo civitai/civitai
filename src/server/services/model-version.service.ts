@@ -62,7 +62,6 @@ import type {
   ModelVersionsGeneratedImagesOnTimeframeSchema,
   ModelVersionUpsertInput,
   PublishVersionInput,
-  QueryModelVersionSchema,
   RecommendedSettingsSchema,
   AddLinkedComponentInput,
   LinkedComponentSettings,
@@ -2525,39 +2524,6 @@ export const modelVersionDonationGoal = async ({
   // can't leak into the shared key. Ownership was authorized above (`canSeeAllGoals`).
   return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
-
-export async function queryModelVersions<TSelect extends Prisma.ModelVersionSelect & { id: true }>({
-  user,
-  query,
-  select,
-}: {
-  user?: SessionUser;
-  query: QueryModelVersionSchema;
-  select: TSelect;
-}) {
-  const { cursor, limit, trainingStatus } = query;
-  const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [];
-  if (trainingStatus) AND.push({ trainingStatus });
-
-  const where: Prisma.ModelVersionWhereInput = { AND };
-
-  // TODO(replica-toast): moderator-only training-review caller reads ModelFile.metadata; revert to dbRead once replication fixed.
-  const items = await dbWrite.modelVersion.findMany({
-    where,
-    cursor: cursor ? { id: cursor } : undefined,
-    take: limit + 1,
-    select: select,
-    orderBy: { id: 'desc' },
-  });
-
-  let nextCursor: number | undefined;
-  if (items.length > limit) {
-    const nextItem = (items as { id: number }[]).pop();
-    nextCursor = nextItem?.id;
-  }
-
-  return { items, nextCursor };
-}
 
 // Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
 // only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).

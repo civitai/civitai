@@ -63,7 +63,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
             hasPage: false,
             liveUrl: `https://slug-${id}.civit.ai`,
           }
-        : { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://x.app' },
+        : { kind: 'offsite', externalUrl: 'https://x.app' },
   };
 }
 
@@ -196,7 +196,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     // so a name query is a strict-mode violation whenever both are on screen.)
     await userEvent.click(page.getByTestId('apps-store-filters-dropdown'));
     await expect
-      .element(page.getByRole('button', { name: 'Off-site' }))
+      .element(page.getByRole('button', { name: 'Standalone' }))
       .toHaveAttribute('aria-pressed', 'true');
   });
 

@@ -357,11 +357,17 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
     await expect.element(page.getByText('Content rating', { exact: true })).toBeInTheDocument();
     // The badge value the Category field labels is still rendered — scoped out of the
     // preview pane, which now also prints the category in its Details row.
+    // 🔴 The DISPLAY label: the fixture stores `utility`, the badge says `Utility` (the
+    // same word the store card and the store detail rail print).
     const formCategoryValues = page
-      .getByText('utility', { exact: true })
+      .getByText('Utility', { exact: true })
       .elements()
       .filter((el) => !el.closest('[data-testid="apps-listing-preview-detail"]'));
     expect(formCategoryValues.length).toBeGreaterThan(0);
+    // …and the raw stored value is gone from this surface entirely. `.not.toBeInTheDocument()`
+    // is INERT in this repo (#4197), so query for null instead — controlled against the
+    // label assertion above, which has just proved this query CAN find a match.
+    expect(page.getByText('utility', { exact: true }).query()).toBeNull();
     // #3412 added the listing-preview detail pane (`apps-listing-preview-detail`), which
     // renders its OWN content-rating badge — so a bare exact 'g' now matches 2 elements and
     // the strict query throws. Scope to the Content-rating FIELD GROUP this test is about,
@@ -369,7 +375,9 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
     // badge value is wrong or missing, rather than being satisfied by the preview's copy.
     const ratingLabel = page.getByText('Content rating', { exact: true });
     await expect.element(ratingLabel).toBeInTheDocument();
-    expect(ratingLabel.element().parentElement?.textContent).toBe('Content ratinggdeclared');
+    // 🔴 `G`, not the stored `g`. The whole normalised group text is pinned, so a
+    // reworded badge cannot be walked past by a looser substring check.
+    expect(ratingLabel.element().parentElement?.textContent).toBe('Content ratingGdeclared');
   });
 });
 
@@ -458,10 +466,13 @@ describe('OffsiteReviewModal — content-rating derive + mod override', () => {
   test('surfaces the DERIVED rating and FLAGS it as higher than the declared rating', async () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    // Derived from the assets (max R) → 'r', shown alongside the declared 'g'.
-    await expect
-      .element(page.getByTestId('apps-offsite-derived-rating'))
-      .toHaveTextContent('r');
+    // Derived from the assets (max R) → stored `r`, DISPLAYED as `R` alongside the
+    // declared `g`'s `G`. 🔴 Asserted as EXACT text content, not `toHaveTextContent`:
+    // that matcher is a substring match and 'r' is a substring of most words, so it
+    // could not tell the label from the raw value.
+    const derived = page.getByTestId('apps-offsite-derived-rating');
+    await expect.element(derived).toBeInTheDocument();
+    expect(derived.element().textContent).toBe('R');
     // Assets more mature than declared → the mismatch warning renders.
     await expect
       .element(page.getByTestId('apps-offsite-rating-mismatch'))
@@ -475,7 +486,18 @@ describe('OffsiteReviewModal — content-rating derive + mod override', () => {
     // The Select is present (defaulting to the derived rating), and confirming approve
     // forwards the chosen rating to the mutation.
     await expect.element(page.getByTestId('apps-offsite-approve-rating')).toBeInTheDocument();
+    // 🔴 CALL-SITE ASSERTION for the option list's LABEL half. Mantine renders the
+    // selected option's label in the input, so this reads what the moderator reads.
+    // Was `label: r`, i.e. the raw key.
+    const ratingInput = page
+      .getByTestId('apps-offsite-approve-rating')
+      .element() as HTMLInputElement;
+    expect(ratingInput.value).toBe('R');
+    expect(ratingInput.value).not.toBe('r');
     await page.getByTestId('apps-offsite-approve-confirm').click();
+    // 🔴 …and the VALUE half is unchanged: the mutation still receives the stored
+    // key. The pair is the point — a mutant that mapped the value instead of the
+    // label would satisfy the assertion above and break this one.
     expect(mocks.approveMutate).toHaveBeenCalledWith(
       expect.objectContaining({ publishRequestId: 'req-1', contentRating: 'r' })
     );

@@ -30,7 +30,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     kindData:
       kind === 'onsite'
         ? { kind: 'onsite', appBlockId: `blk-${id}`, hasPage: false, liveUrl: `https://slug-${id}.civit.ai` }
-        : { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://x.app' },
+        : { kind: 'offsite', externalUrl: 'https://x.app' },
   };
 }
 
@@ -243,7 +243,7 @@ describe('AppListingsMarketplaceBody', () => {
   test('clicking a kind toggle WRITES kind to the URL (shallow, no scroll)', async () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Off-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
 
     expect(router.replace).toHaveBeenCalled();
     const [url, , options] = vi.mocked(router.replace).mock.calls.at(-1)!;

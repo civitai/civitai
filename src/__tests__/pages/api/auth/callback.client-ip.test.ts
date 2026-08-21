@@ -43,10 +43,8 @@ const { bridgeSpy } = vi.hoisted(() => ({ bridgeSpy: vi.fn() }));
 vi.mock('~/server/auth/oauth-bridge', () => ({
   HUB_BASE_URL: 'https://hub.test',
   OAUTH_BRIDGE_COOKIE: 'civ-bridge',
-  BRIDGE_PROBE_COOKIE: 'civ-probe',
   resolveSelfOrigin: vi.fn(() => 'https://spoke.test'),
   clearBridgeCookie: vi.fn(() => 'civ-bridge=; Max-Age=0'),
-  readBridgeProbe: vi.fn(() => undefined),
   completeFirstPartyCallback: (opts: unknown) => bridgeSpy(opts),
 }));
 vi.mock('@civitai/auth', () => ({ sessionCookieName: () => 'civ-token' }));

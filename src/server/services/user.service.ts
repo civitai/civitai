@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -458,14 +459,49 @@ export async function clearUserProfileFields({
 /**
  * Mod-driven: explicit mute/unmute (vs. legacy toggle).
  */
-export async function setUserMuted({ userId, muted }: { userId: number; muted: boolean }) {
+/**
+ * A moderator's mute, timed or not.
+ *
+ * `mutedAt` is what marks it as a person's decision: every automatic path (strike escalation, prompt
+ * auditing, scam auto-mute) leaves it null, and `evaluateStrikeEscalation` will neither lift nor shorten
+ * a mute that has it. `processTimedUnmutes` still lifts an expiry on time — that is the point of a timed
+ * mute — and clears `mutedAt` with it.
+ *
+ * This used to need a `meta.manualMute` flag. It did not: `mutedAt` already carried exactly this
+ * meaning for `confirm-mutes`, `entity-moderation` and `prepare-leaderboard`, and the flag was written
+ * by two apps and read by none.
+ */
+export async function setUserMuted({
+  userId,
+  muted,
+  expiresAt,
+}: {
+  userId: number;
+  muted: boolean;
+  expiresAt?: Date | null;
+}) {
   const date = new Date();
+
+  // The unmute half clears the provenance too; the mute half only sets an expiry when the caller asked
+  // for one, so an ordinary mute keeps today's indefinite behaviour.
+  let data: Prisma.UserUpdateInput;
+  if (muted) {
+    data = {
+      muted: true,
+      mutedAt: date,
+      ...(expiresAt !== undefined ? { muteExpiresAt: expiresAt } : {}),
+    };
+  } else {
+    const existing = await dbRead.user.findUnique({
+      where: { id: userId },
+      select: { meta: true },
+    });
+    data = clearedMuteFields(existing?.meta as UserMeta | null);
+  }
+
   const user = await updateUserById({
     id: userId,
-    data: {
-      muted,
-      mutedAt: muted ? date : null,
-    },
+    data,
     updateSource: muted ? 'retool:mute' : 'retool:unmute',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
@@ -2640,19 +2676,6 @@ export async function updateContentSettings({
   });
 }
 
-export const getUserByPaddleCustomerId = async ({
-  paddleCustomerId,
-}: {
-  paddleCustomerId: string;
-}) => {
-  const user = await dbRead.user.findFirst({
-    where: { paddleCustomerId },
-    select: { id: true, username: true },
-  });
-
-  return user;
-};
-
 // #region [user settings]
 // User-level content preference columns that we cache alongside the settings
 // JSON so the client can patch them in one place (see getUserContentSettings).
@@ -2833,10 +2856,27 @@ export async function patchUserSettings(
   for (const [key, value] of mergeInto) {
     // `settings->$key` reads the CURRENT column inside the same statement — that is
     // what makes the nested merge atomic rather than a read-modify-write.
+    //
+    // 🔴 The `jsonb_typeof` test is the same guard, and for the same reason, as the one
+    // in `setAlertDismissed` below. Nothing enforces a shape on a JSON column, and
+    // `jsonb || jsonb` does NOT raise on a non-object — it CONCATENATES, so a stored
+    // `{"chat": 7}` merges to `{"chat": [7, {...}]}` and every later write appends
+    // another element. That is unbounded growth in the column plus permanently
+    // undefined reads for that key, from a value no statement here would reject.
+    //
+    // The direction matters: a plain `COALESCE` would make this primitive SELF-WORSENING
+    // where the whole-key `set` it replaced was self-healing (a rewrite overwrote the bad
+    // value). Treating a non-object as absent restores that property — the next write
+    // repairs the row. This is hardening, not a live fix: sampled prod rows are 100%
+    // objects for every key written this way, but `mergeInto` is now the designated
+    // nested-write primitive for `chat`, `features`, `creatorShop`, `gallerySettings`
+    // and `tourSettings`, so the gap would be inherited five times over.
     const k = bind(key);
     expr =
       `(${expr} || jsonb_build_object(${k}::text, ` +
-      `COALESCE(settings->${k}::text, '{}'::jsonb) || ${bind(JSON.stringify(value))}::jsonb))`;
+      `CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
+      `THEN settings->${k}::text ELSE '{}'::jsonb END ` +
+      `|| ${bind(JSON.stringify(value))}::jsonb))`;
   }
   // `jsonb - text[]` drops every listed key in one go, so the names bind as one array.
   if (remove) expr = `(${expr} - ${bind(remove)}::text[])`;

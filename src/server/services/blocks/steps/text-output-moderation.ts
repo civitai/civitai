@@ -1,6 +1,10 @@
 import { createHash } from 'crypto';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  missingRequestedLabels as missingRequestedLabelsShared,
+  normalizeLabel,
+} from '~/server/services/moderation-label-helpers';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE `'textOutput'` MODERATION POLICY — scanning GENERATED text before it
@@ -113,20 +117,19 @@ export const NOT_ACTED_ON_LABELS: readonly string[] = [
 ] as const;
 
 /**
- * Normalize a label for comparison.
+ * 🔴 LABEL COMPARISON IS CASE-INSENSITIVE ON PURPOSE, AND THAT IS NOT TIDINESS.
+ * The label strings that come back on `triggeredLabels` / `results[].label` are
+ * orchestrator-side configuration, not a code-owned enum — the debug endpoint's
+ * own documented example passes `"labels": ["young"]` while its `labelOverrides`
+ * example writes `"label": "Young"`. An exact-match policy would therefore
+ * silently match NOTHING for a casing this side does not control, and a policy
+ * that matches nothing withholds nothing. Comparing on a normalized key removes
+ * a fail-OPEN mode whose only symptom is that everything passes.
  *
- * 🔴 CASE-INSENSITIVE ON PURPOSE, AND THAT IS NOT TIDINESS. The label strings
- * that come back on `triggeredLabels` / `results[].label` are orchestrator-side
- * configuration, not a code-owned enum — the debug endpoint's own documented
- * example passes `"labels": ["young"]` while its `labelOverrides` example writes
- * `"label": "Young"`. An exact-match policy would therefore silently match
- * NOTHING for a casing this side does not control, and a policy that matches
- * nothing withholds nothing. Comparing on a normalized key removes a fail-OPEN
- * mode whose only symptom is that everything passes.
+ * `normalizeLabel` is imported rather than defined here: it is shared with every
+ * other XGuard consumer, and a per-file copy is how a hardening reaches one
+ * caller and not the rest.
  */
-function normalizeLabel(label: string): string {
-  return label.trim().toLowerCase();
-}
 
 const ALWAYS_WITHHOLD_KEYS: ReadonlySet<string> = new Set(
   ALWAYS_WITHHOLD_LABELS.map(normalizeLabel)
@@ -285,17 +288,7 @@ export function missingRequestedLabels(
   output: XGuardScanOutputLike | null | undefined,
   requestedLabels: readonly string[]
 ): string[] {
-  const evaluated = new Set<string>();
-  const rawResults = output?.results;
-  if (Array.isArray(rawResults)) {
-    for (const entry of rawResults as XGuardLabelResultLike[]) {
-      if (!entry || typeof entry !== 'object') continue;
-      if (typeof entry.label === 'string' && entry.label.trim().length > 0) {
-        evaluated.add(normalizeLabel(entry.label));
-      }
-    }
-  }
-  return requestedLabels.filter((label) => !evaluated.has(normalizeLabel(label)));
+  return missingRequestedLabelsShared(output, requestedLabels);
 }
 
 /**

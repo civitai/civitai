@@ -12,7 +12,6 @@ import {
   filterGroups,
   groupSubmissionsByApp,
   matchesQuery,
-  MY_SUBMISSIONS_CONTAINER_SIZE,
   nextSortState,
   OWNER_STATUS_BUCKETS,
   sortGroups,
@@ -665,36 +664,14 @@ describe('SUBMISSIONS_TABLE_MIN_WIDTH', () => {
   });
 });
 
-describe('MY_SUBMISSIONS_CONTAINER_SIZE', () => {
-  it('is wide enough that the table does NOT scroll at desktop width', () => {
-    // This is the invariant the scroll container alone did not give us. The page's
-    // old container (`AppsPageLayout` default `'xl'` = 1320) is a MAX-width, so the
-    // card was a CONSTANT 1286 px at every viewport >= 1320 — always below the
-    // floor, i.e. a permanent scrollbar on every desktop. The container must clear
-    // the floor plus the Container padding + Card border it loses on the way in.
-    expect(MY_SUBMISSIONS_CONTAINER_SIZE - SUBMISSIONS_CONTAINER_CHROME).toBeGreaterThanOrEqual(
-      SUBMISSIONS_TABLE_MIN_WIDTH
-    );
-  });
-
-  it('is a raw px number, not a Mantine size token (tokens cap at xl = 1320)', () => {
-    expect(typeof MY_SUBMISSIONS_CONTAINER_SIZE).toBe('number');
-    expect(Number.isFinite(MY_SUBMISSIONS_CONTAINER_SIZE)).toBe(true);
-  });
-});
-
-describe('/apps/my-submissions consumes the widened container (S3)', () => {
-  const PAGE = path.resolve(__dirname, '../../../pages/apps/my-submissions.tsx');
-  const src = () => readFileSync(PAGE, 'utf8');
-
-  it('passes MY_SUBMISSIONS_CONTAINER_SIZE to AppsPageLayout, not the layout default', () => {
-    // Dropping the prop silently falls back to the layout default `'xl'`, which is
-    // exactly the state that made the clip permanent — nothing else would fail.
-    // Anchored to the ELEMENT, not the file (see the `type="native"` guard below for
-    // why a whole-file regex is not a guard at all).
-    expect(src()).toMatch(/<AppsPageLayout\b[^>]*?\ssize=\{MY_SUBMISSIONS_CONTAINER_SIZE\}/s);
-  });
-});
+/**
+ * 🔴 THE `MY_SUBMISSIONS_CONTAINER_SIZE` BLOCK THAT LIVED HERE MOVED WITH ITS PAGE.
+ * `/apps/my-submissions` merged into `/apps/mine` and 301s there, so the container-width
+ * alias is now `MY_APPS_CONTAINER_SIZE` in `myAppsView.ts` and its assertions live in
+ * `myAppsView.test.ts` (plus the consumption walk in `appsPageWidths.test.ts`, whose
+ * ALIASES map now names it). The scroll-floor arithmetic below stays here because it is
+ * still about THESE two tables.
+ */
 
 describe('both my-submissions tables scroll rather than clip (S3, structural)', () => {
   const APPS_DIR = path.resolve(__dirname, '..');

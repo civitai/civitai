@@ -26,14 +26,21 @@
  * caller is required to carry. Under-stripping is the direction that produces a silent
  * vacuous pass.
  */
+/**
+ * Comments only, strings kept.
+ *
+ * For scans whose subject IS a string literal — an import specifier, a route
+ * path — where `stripCommentsAndStrings` would remove the very thing being
+ * looked for. Prose is still excluded, so a commented-out import does not count
+ * as an edge, which is the false-pass direction that matters for a graph walk.
+ */
+export function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
 export function stripCommentsAndStrings(source: string): string {
   return (
-    source
-      // Block comments (incl. JSDoc). Non-greedy so adjacent blocks stay separate.
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      // Line comments. The `[^:]` guard is the ledger's, and it is there so a `://` inside
-      // a URL is not treated as the start of a comment.
-      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+    stripComments(source)
       // Template literals (may span lines; an interpolation is stripped with them).
       .replace(/`(?:[^`\\]|\\[\s\S])*`/g, ' ')
       // Single- and double-quoted strings. `\n` is excluded so an unterminated quote

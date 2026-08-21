@@ -499,6 +499,7 @@ model User {
   receivedReports            UserReport[]
   engagedImages              ImageEngagement[]
   collections                Collection[]
+  hubs                       UserHub[]
   collectionItems            CollectionItem[]
   reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
   contributingCollections    CollectionContributor[]
@@ -1204,6 +1205,9 @@ enum ModelHashType {
   SHA256
   CRC32
   BLAKE3
+  // SHA256 truncated to 12 — the width A1111/Forge write for LoRAs, which no other stored
+  // hash matches. Same kind of derived truncation as AutoV2 (sha256[0:10]).
+  SHA256_12
 }
 
 model RecommendedResource {
@@ -1403,6 +1407,9 @@ model DownloadHistory {
   @@index([userId, downloadAt])
 }
 
+/// Append-only moderator action trail. Deliberately NOT unique on (activity, entityType, entityId): the
+/// same action on the same entity happening twice is two events, and collapsing them loses the history the
+/// "who did what, when" panels are built on.
 model ModActivity {
   id         Int      @id @default(autoincrement())
   userId     Int?
@@ -1411,7 +1418,8 @@ model ModActivity {
   entityId   Int?
   createdAt  DateTime @default(now())
 
-  @@unique([activity, entityType, entityId])
+  @@index([entityType, entityId, createdAt])
+  @@index([userId, createdAt])
   @@index([createdAt])
 }
 
@@ -4167,6 +4175,10 @@ enum CosmeticType {
   ProfileDecoration
   ProfileBackground
   Sticker
+  // Applied, unused. Chat themes come with a membership; a cosmetic-granted
+  // theme is the shape a later pass would want, and an enum value cannot be
+  // dropped without recreating the type.
+  ChatTheme
 }
 
 enum CosmeticSource {
@@ -5285,6 +5297,12 @@ enum ChatMemberStatus {
   Kicked
 }
 
+enum ChatNotifyLevel {
+  All
+  Mentions
+  None
+}
+
 model ChatMember {
   id                  Int              @id @default(autoincrement())
   createdAt           DateTime         @default(now()) // doubles as invited_at
@@ -5299,12 +5317,17 @@ model ChatMember {
   leftAt              DateTime? // do we need a rejoin option?
   kickedAt            DateTime?
   unkickedAt          DateTime? // TODO maybe remove
+  filteredAt          DateTime? // reached this member via Requests rather than their inbox
+  notifyLevel         ChatNotifyLevel @default(All)
+  pinnedAt            DateTime?
+  clearedAt           DateTime? // this member's clean-slate watermark; messages before it are hidden from them only
 
   user              User         @relation(fields: [userId], references: [id])
   chat              Chat         @relation(fields: [chatId], references: [id])
   lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
 
   @@index([userId, status, isMuted])
+  @@index([userId, status, filteredAt])
 }
 
 enum ChatMessageType {
@@ -5324,7 +5347,7 @@ model ChatMessage {
   contentType        ChatMessageType @default(Markdown)
   referenceMessageId Int?
   editedAt           DateTime?
-  // TODO deletedAt DateTime
+  deletedAt          DateTime? // hidden from both sides; the row is retained for moderation
 
   user             User         @relation(fields: [userId], references: [id])
   chat             Chat         @relation(fields: [chatId], references: [id])
@@ -5332,6 +5355,8 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+
+  @@index([chatId, id])
 }
 
 model BuildGuide {
@@ -6437,57 +6462,12 @@ model UserStat {
 /// @view
 
 model UserRank {
-  user                         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId                       Int     @id
-  downloadCountDayRank         Int?    @default(0)
-  downloadCountWeekRank        Int?    @default(0)
-  downloadCountMonthRank       Int?    @default(0)
-  downloadCountYearRank        Int?    @default(0)
-  downloadCountAllTimeRank     Int?    @default(0)
-  ratingCountDayRank           Int?    @default(0)
-  ratingCountWeekRank          Int?    @default(0)
-  ratingCountMonthRank         Int?    @default(0)
-  ratingCountYearRank          Int?    @default(0)
-  ratingCountAllTimeRank       Int?    @default(0)
-  followerCountDayRank         Int?    @default(0)
-  followerCountWeekRank        Int?    @default(0)
-  followerCountMonthRank       Int?    @default(0)
-  followerCountYearRank        Int?    @default(0)
-  followerCountAllTimeRank     Int?    @default(0)
-  ratingDayRank                Int?    @default(0)
-  ratingWeekRank               Int?    @default(0)
-  ratingMonthRank              Int?    @default(0)
-  ratingYearRank               Int?    @default(0)
-  ratingAllTimeRank            Int?    @default(0)
-  favoriteCountDayRank         Int?    @default(0)
-  favoriteCountWeekRank        Int?    @default(0)
-  favoriteCountMonthRank       Int?    @default(0)
-  favoriteCountYearRank        Int?    @default(0)
-  favoriteCountAllTimeRank     Int?    @default(0)
-  answerCountDayRank           Int?    @default(0)
-  answerCountWeekRank          Int?    @default(0)
-  answerCountMonthRank         Int?    @default(0)
-  answerCountYearRank          Int?    @default(0)
-  answerCountAllTimeRank       Int?    @default(0)
-  answerAcceptCountDayRank     Int?    @default(0)
-  answerAcceptCountWeekRank    Int?    @default(0)
-  answerAcceptCountMonthRank   Int?    @default(0)
-  answerAcceptCountYearRank    Int?    @default(0)
-  answerAcceptCountAllTimeRank Int?    @default(0)
-  thumbsUpCountDayRank         Int?    @default(0)
-  thumbsUpCountWeekRank        Int?    @default(0)
-  thumbsUpCountMonthRank       Int?    @default(0)
-  thumbsUpCountYearRank        Int?    @default(0)
-  thumbsUpCountAllTimeRank     Int?    @default(0)
-  thumbsDownCountDayRank       Int?    @default(0)
-  thumbsDownCountWeekRank      Int?    @default(0)
-  thumbsDownCountMonthRank     Int?    @default(0)
-  thumbsDownCountYearRank      Int?    @default(0)
-  thumbsDownCountAllTimeRank   Int?    @default(0)
-  leaderboardRank              Int?
-  leaderboardId                String?
-  leaderboardTitle             String?
-  leaderboardCosmetic          String?
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId              Int     @id
+  leaderboardRank     Int?
+  leaderboardId       String?
+  leaderboardTitle    String?
+  leaderboardCosmetic String?
 }
 
 /// @view
@@ -7390,19 +7370,6 @@ enum UserRestrictionStatus {
 }
 
 // Moderator-curated allowlist for false-positive prompt triggers
-model PromptAllowlist {
-  id        Int      @id @default(autoincrement())
-  trigger   String
-  category  String
-  addedBy   Int
-  reason    String?
-  userRestrictionId Int?
-  createdAt DateTime @default(now())
-
-  @@unique([trigger, category])
-  @@index([category])
-}
-
 // Strike system — graduated user enforcement with points-based escalation
 enum StrikeReason {
   BlockedContent
@@ -7896,6 +7863,21 @@ model Outbox {
   attempts   Int?
 }
 
+/// Per-app, per-page list of the roles allowed to reach a page, keyed by the app's own path strings.
+/// `roles` is authoritative wherever a row exists — an empty array means nobody, which is why this is one
+/// row per page rather than one per grant. A missing row means the app has never been told about the page
+/// and falls back to whatever its code declares. Roles are bare strings and `updatedById` has no FK on
+/// purpose: any app on this database can use the table with its own role vocabulary.
+model AppPageAccess {
+  app         String
+  path        String
+  roles       String[]
+  updatedById Int?
+  updatedAt   DateTime @default(now())
+
+  @@id([app, path])
+}
+
 /// A creator-owned space someone pays to occupy. `surface` and the entity columns are
 /// TEXT rather than enums so a new surface is a code change instead of a DDL migration —
 /// the same reasoning `entityMetricEvents.entityType` already runs on. Absent rows are
@@ -8090,4 +8072,49 @@ model PlacementSuspension {
   createdById Int?
 
   @@index([createdAt])
+}
+
+enum UserHubSourceType {
+  User
+  Model
+  ModelVersion
+  Collection
+}
+
+/// A user-composed image feed: a named set of creators, models, versions and
+/// collections merged into one stream. The source list is resolved server-side
+/// from the hub id — a client-supplied id list would be an unbounded-cost query
+/// anyone could post, which is why `image.getInfinite` takes `hubId` and not the
+/// ids themselves.
+model UserHub {
+  id        Int             @id @default(autoincrement())
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  index     Int             @default(0)
+  sort      String          @default("Newest")
+  period    MetricTimeframe @default(AllTime)
+  mediaTypes MediaType[]
+  metadata  Json            @default("{}")
+
+  sources   UserHubSource[]
+
+  @@index([userId])
+}
+
+model UserHubSource {
+  id       Int               @id @default(autoincrement())
+  hubId    Int
+  hub      UserHub           @relation(fields: [hubId], references: [id], onDelete: Cascade)
+  type     UserHubSourceType
+  targetId Int
+  alias    String?
+  enabled  Boolean           @default(true)
+  index    Int               @default(0)
+
+  @@unique([hubId, type, targetId])
+  @@index([hubId])
+  @@index([type, targetId])
 }

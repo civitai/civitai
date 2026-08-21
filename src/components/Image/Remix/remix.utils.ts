@@ -179,6 +179,11 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
       workflow: engine.workflow,
       ecosystem: engine.ecosystemKey,
       images: [{ url: sourceUrl, width, height }],
+      // `data.params` describes the engine's model version, not this image, so
+      // nothing else here carries the source's shape. Workflows whose graph has
+      // no aspectRatio node ignore the key; the ones that have it snap to the
+      // nearest supported bucket rather than the 1:1 default.
+      aspectRatio: { value: `${width}:${height}`, width, height },
     },
     resources: data.resources,
     runType: 'remix',

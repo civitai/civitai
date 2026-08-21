@@ -1,6 +1,11 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import {
+  narrowStoreScope,
+  scopeAdmitsListingKind,
+  type StoreListingKind,
+} from '~/shared/utils/store-visibility-scope';
+import {
   LISTING_REVIEW_DETAILS_MAX,
   type AppListingReviewListItem,
   type ListAppListingReviewsInput,
@@ -58,6 +63,44 @@ function reviewKey(appListingId: string, userId: number) {
   return { appListingId_userId: { appListingId, userId } };
 }
 
+/**
+ * The store-scope KIND gate as a Prisma relation fragment on `appListingReview`.
+ *
+ * The DB-filter twin of the shared boolean {@link scopeAdmitsListingKind}: the
+ * predicate form is what the client affordance gate and the write path branch on,
+ * this is what the two review READS filter with. Prisma's filter types cannot reach
+ * the dependency-free shared module, so the two forms cannot literally be one
+ * function — but they can be one *decision*, written once each. Both were open-coded
+ * inline before; a third copy is the bug.
+ *
+ * 🔴 EXHAUSTIVE, mirroring {@link scopeAdmitsListingKind}'s switch rather than
+ * testing one scope and letting everything else fall through. The `=== 'public-external'
+ * ? … : {}` shape it replaces returned `{}` — NO kind restriction — for every scope
+ * that was not literally `public-external`, `none` included. `none` is not supposed
+ * to reach here (both callers short-circuit at the proc, and the write middleware
+ * rejects it), but "is not supposed to" is precisely the reasoning civitai#3983
+ * disproved one file over. A scope that means "sees nothing" must never be spelled
+ * as the same fragment as "sees everything".
+ *
+ * `none` maps to an impossible predicate so the relation can never match; `full`
+ * imposes no restriction; `public-external` restricts to offsite.
+ */
+function listingKindFilterForScope(scope: StoreVisibilityScope) {
+  switch (scope) {
+    case 'full':
+      return {};
+    case 'public-external':
+      return { kind: 'offsite' } as const;
+    case 'none':
+      // Matches no row. `app_listings.kind` is `text` (verified against the live
+      // column type, not the Prisma type) — so this renders as `kind = '__none__'`
+      // and returns EMPTY. That distinction is load-bearing: against a Postgres
+      // ENUM column an out-of-domain literal would make the query ERROR, and a 500
+      // is not "fail closed", it is a different failure.
+      return { kind: '__none__' } as const;
+  }
+}
+
 export type UpsertAppListingReviewResult = {
   review: {
     id: number;
@@ -96,8 +139,24 @@ export type UpsertAppListingReviewResult = {
 export async function upsertAppListingReview(opts: {
   userId: number;
   input: UpsertAppListingReviewInput;
+  /**
+   * The caller's resolved store scope.
+   *
+   * 🔴 FAIL CLOSED on an absent / unrecognized value — `narrowStoreScope`, never
+   * `?? 'full'`. An earlier revision of this parameter defaulted to `full` on the
+   * reasoning that "the router ALWAYS passes an explicit scope". That is the exact
+   * sentence `listAvailableListings` (app-listing.service.ts) records as
+   * EMPIRICALLY FALSE: every caller did pass one there too, and production still
+   * reached it with `undefined`, so the `??` fired and served the whole approved
+   * catalogue to anonymous callers (civitai#3983). A default is an authorization
+   * decision, and on a WRITE path it is a worse one. Latent here only because
+   * `applyStoreScope` narrows `undefined` → `none` before the router calls us —
+   * i.e. one refactor away from live.
+   */
+  scope?: StoreVisibilityScope;
 }): Promise<UpsertAppListingReviewResult> {
   const { userId, input } = opts;
+  const scope = narrowStoreScope(opts.scope);
   const { appListingId, recommended } = input;
 
   // Gate 3: trim + re-assert the cap (defense-in-depth). Whitespace-only → null.
@@ -112,13 +171,39 @@ export async function upsertAppListingReview(opts: {
   // Gate 1+2: the listing must exist, be approved, and NOT be owned by the caller.
   const listing = await dbRead.appListing.findUnique({
     where: { id: appListingId },
-    select: { id: true, userId: true, status: true },
+    select: { id: true, userId: true, status: true, kind: true },
   });
   if (!listing) throw throwNotFoundError('Listing not found');
+
+  // Gate 0 — the STORE-SCOPE kind gate, and it runs FIRST of the three below on
+  // purpose. A caller whose scope does not admit this listing's kind cannot see the
+  // row at all, so they must not be able to distinguish "not yours", "not approved"
+  // and "does not exist" through it: all three collapse into the same NOT_FOUND the
+  // read path (`getListingDetail` → null → NOT_FOUND) already gives them. Ordering
+  // it after the owner/status checks would turn this proc into an existence oracle
+  // over the onsite catalogue for the external-only cohort.
+  //
+  // This is the WRITE-side twin of `listAppListingReviews`'s relation filter
+  // (`scope === 'public-external' ? { kind: 'offsite' } : {}`); both call the ONE
+  // shared rule so they cannot drift.
+  if (!scopeAdmitsListingKind(scope, listing.kind as StoreListingKind)) {
+    throw throwNotFoundError('Listing not found');
+  }
+
   if (listing.userId === userId) {
     throw throwAuthorizationError('You cannot review your own app');
   }
   if (listing.status !== 'approved') {
+    // 🟡 KNOWN, DELIBERATELY NOT FIXED HERE — a narrow status oracle. A
+    // `public-external` caller naming a non-approved OFFSITE listing gets
+    // BAD_REQUEST, while a nonexistent id gets NOT_FOUND, so the pair distinguishes
+    // "exists but unapproved" from "does not exist" for a population the read path
+    // deliberately collapses. Blast radius today is 2 rows (offsite drafts) and
+    // AppListing ids are ULIDs, so they are not enumerable — hence out of scope for
+    // a fix aimed at the review-gate defect rather than folded in silently.
+    // One-line fix when someone wants it: `if (scope !== 'full') throw
+    // throwNotFoundError('Listing not found');` ahead of this line, so only a
+    // full-scope caller ever learns the difference.
     throw throwBadRequestError('This app is not available for review');
   }
 
@@ -210,13 +295,44 @@ export async function upsertAppListingReview(opts: {
   return { review: review.saved, isNewReview: review.isNewReview };
 }
 
-/** The caller's OWN review for a listing (form prefill), or null. */
+/**
+ * The caller's OWN review for a listing (form prefill), or null.
+ *
+ * The STORE-SCOPE kind gate ANDs onto the lookup exactly as it does in
+ * {@link listAppListingReviews}: under `public-external` the target listing must
+ * ITSELF be offsite, else the relation filter matches nothing → `null`. A viewer
+ * must not read back their own review of a listing their scope hides — the row can
+ * predate a scope change, so "they wrote it once" is not evidence they may see it
+ * now.
+ *
+ * 🔴 `findFirst`, not `findUnique`: a relation filter cannot be expressed on a
+ * unique-key lookup. The (appListingId, userId) pair is still the DB unique, so at
+ * most one row can match and the result is identical whenever the gate passes.
+ *
+ * 🟡 COST, recorded rather than hidden: `findUnique` participates in Prisma's
+ * dataloader batching and `findFirst` does not, so this gives up per-request
+ * coalescing on EVERY review-form prefill — including `full` scope, where the added
+ * filter is a no-op. One prefill per opened modal, so it is not a hot path, but if
+ * this ever moves onto one, the fix is to branch: `findUnique` for `full`,
+ * `findFirst` only when the scope actually restricts.
+ *
+ * 🟡 The `{ is: {} }` / `{ is: { kind: 'offsite' } }` shapes below are asserted only
+ * against `dbMock` — no test in this repo exercises real Prisma — so they are pinned
+ * as CALL SHAPES, not as queries known to execute. A Prisma upgrade that changed
+ * relation-filter syntax would pass these tests and fail in production.
+ */
 export async function getMyAppListingReview(
   appListingId: string,
-  userId: number
+  userId: number,
+  opts: { scope?: StoreVisibilityScope } = {}
 ): Promise<MyAppListingReview> {
-  const row = await dbRead.appListingReview.findUnique({
-    where: reviewKey(appListingId, userId),
+  const scope = narrowStoreScope(opts.scope);
+  const row = await dbRead.appListingReview.findFirst({
+    where: {
+      appListingId,
+      userId,
+      appListing: { is: listingKindFilterForScope(scope) },
+    },
     select: { id: true, recommended: true, details: true, createdAt: true },
   });
   return row ?? null;
@@ -239,7 +355,7 @@ export async function listAppListingReviews(
   // page at the proc). Under `public-external` the target listing must ITSELF be
   // offsite, else the relation filter matches nothing → empty: a public viewer must
   // not read the reviews of an onsite listing even by a crafted appListingId.
-  const scope = opts.scope ?? 'full';
+  const scope = narrowStoreScope(opts.scope);
   const rows = await dbRead.appListingReview.findMany({
     where: {
       appListingId: input.appListingId,
@@ -250,7 +366,7 @@ export async function listAppListingReviews(
       // The STORE-SCOPE kind gate ANDs onto that relation filter under
       // `public-external` (offsite-only), so an onsite listing's reviews are empty.
       appListing: {
-        is: { status: 'approved', ...(scope === 'public-external' ? { kind: 'offsite' } : {}) },
+        is: { status: 'approved', ...listingKindFilterForScope(scope) },
       },
       exclude: false,
       tosViolation: false,

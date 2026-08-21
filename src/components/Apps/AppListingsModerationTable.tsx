@@ -41,6 +41,7 @@ import {
   type SubmissionGroup,
 } from '~/components/Apps/submissionsTable';
 import { SortableTh, StatusSections, SubmissionSearch } from '~/components/Apps/submissionsTableUi';
+import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import type { ModerationListingRow } from '~/server/services/blocks/app-listing.service';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -315,8 +316,11 @@ export function AppListingsModerationTable({
                   </Table.Td>
                   <Table.Td>
                     {row.category ? (
-                      <Badge size="sm" variant="light">
-                        {row.category}
+                      // testid so the display-label assertion can select this badge
+                      // STRUCTURALLY — a text search for a category word would also
+                      // match the app's name or a status chip.
+                      <Badge size="sm" variant="light" data-testid="apps-listing-mod-category">
+                        {marketplaceCategoryLabel(row.category)}
                       </Badge>
                     ) : (
                       <Text size="xs" c="dimmed">
