@@ -1,10 +1,10 @@
 import * as z from 'zod';
 import { trackedReasons } from '~/utils/login-helpers';
 
-// Both lists mirror the `views` / `daily_views` Enum8 columns in ClickHouse, in
-// their stored order. A value the columns carry but these omit is unreachable:
-// `TrackView` is typed from this schema, and the `/api/internal/pulse` beacon
-// rejects it 400 into a fire-and-forget catch. `Tracker`'s ViewType /
+// Both lists mirror the `views` / `daily_views` Enum8 columns, ordered by the ordinal the column stores —
+// so index + 1 is that ordinal, and the test's snapshot pins it. A value the columns carry but these omit is
+// unreachable: `TrackView` is typed from this schema, and a payload the `/api/internal/pulse` beacon rejects
+// gets a 400 nobody looks at, since `sendView` never inspects the response. `Tracker`'s ViewType /
 // ViewEntityType derive from these, so the two cannot drift apart.
 export const VIEW_TYPES = [
   'ProfileView',
@@ -16,9 +16,9 @@ export const VIEW_TYPES = [
   'CollectionView',
   'BountyView',
   'BountyEntryView',
-  'Model3DView',
   'ComicProjectView',
   'ComicChapterView',
+  'Model3DView',
 ] as const;
 
 export const VIEW_ENTITY_TYPES = [
@@ -31,9 +31,9 @@ export const VIEW_ENTITY_TYPES = [
   'Collection',
   'Bounty',
   'BountyEntry',
-  'Model3D',
   'ComicProject',
   'ComicChapter',
+  'Model3D',
 ] as const;
 
 export const addViewSchema = z.object({
