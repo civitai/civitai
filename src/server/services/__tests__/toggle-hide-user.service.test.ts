@@ -517,4 +517,15 @@ describe('cache invalidation on the follow set', () => {
 
     expect(follows).toHaveBeenCalledWith(userId);
   });
+
+  // The live path — `toggleHidden({ kind: 'user' })` is the one 868kun67j is
+  // about, and its own follow-set refresh was the last call site in the diff's
+  // blast radius that nothing asserted.
+  it.each([true, false])('refreshes it on the toggleHidden path (hidden=%s)', async (hidden) => {
+    const follows = vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+
+    await hide(hidden);
+
+    expect(follows).toHaveBeenCalledWith(userId);
+  });
 });
