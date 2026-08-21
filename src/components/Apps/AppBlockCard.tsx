@@ -17,7 +17,7 @@ import {
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
   isMarketplaceCategory,
-  MARKETPLACE_CATEGORY_LABELS,
+  marketplaceCategoryLabel,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
@@ -61,15 +61,6 @@ export interface AppBlockCardProps {
    * track recents are unaffected.
    */
   onRecentOpen?: (block: AvailableBlock) => void;
-}
-
-/**
- * Maps a stored category value to its display label. Falls back to the raw
- * value for an unrecognised category (soft contract — adding a category is a
- * one-line const edit, and an older client won't crash on a newer category).
- */
-function categoryLabel(category: string): string {
-  return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
 }
 
 /**
@@ -240,7 +231,7 @@ export function AppBlockCard({
                     size="sm"
                     leftSection={<CategoryIcon size={12} />}
                   >
-                    {categoryLabel(block.category)}
+                    {marketplaceCategoryLabel(block.category)}
                   </Badge>
                 );
               })()}

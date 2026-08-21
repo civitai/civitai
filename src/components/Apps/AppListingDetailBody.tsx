@@ -77,7 +77,10 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
+import {
+  isMarketplaceCategory,
+  marketplaceCategoryLabel,
+} from '~/server/services/blocks/marketplace-categories.constants';
 import { formatDate } from '~/utils/date-helpers';
 import detailClasses from '~/components/Model/ModelVersions/ModelVersionDetails.module.scss';
 import galleryClasses from '~/components/Apps/AppListingDetailBody.module.scss';
@@ -1021,7 +1024,7 @@ export function AppListingDetailBody({
                     holds its category filter in client state, not in the URL — so a
                     link here would either 404 or land on an unfiltered grid. */}
                 <Badge size="sm" color="blue" data-testid="apps-listing-category">
-                  {detail.category}
+                  {marketplaceCategoryLabel(detail.category)}
                 </Badge>
               </>
             )}

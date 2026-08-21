@@ -276,6 +276,35 @@ describe('AppListingsModerationTable — sections + kind-aware visibility', () =
     await expect.element(page.getByText('gone-ext')).toBeInTheDocument();
   });
 
+  /**
+   * 🔴 CALL-SITE ASSERTION for the Category column, which shipped the raw stored
+   * value while the store card one component over was already mapping it.
+   *
+   * ⚠️ FIXTURE LIMIT, stated rather than hidden: every marketplace label is a plain
+   * capitalisation of its key, so `utility` → `Utility` differs only in CASE and
+   * that is the maximum discrimination this taxonomy allows — unlike the rating
+   * ladder, where `pg13` → `PG-13` separates the map from every transformation.
+   * Case is still enough to kill the mutant that matters here (the call site
+   * reverting to `{row.category}`), which is what this assertion is for.
+   */
+  test('🔴 the Category column renders the display LABEL, never the stored value', async () => {
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    // 🔴 Await the render BEFORE reading `.elements()`, which is a synchronous
+    // snapshot: without this the read runs against an empty DOM and every
+    // assertion below passes or fails for reasons that have nothing to do with
+    // the label. (Caught by the positive control on the first run — it reported
+    // 0 badges.)
+    const badges = page.getByTestId('apps-listing-mod-category');
+    await expect.element(badges.first()).toBeInTheDocument();
+    // Positive control: the column really does render, so the "no raw value"
+    // assertion below is a discrimination and not a query wired to nothing.
+    const texts = badges.elements().map((el) => el.textContent);
+    expect(texts.length).toBeGreaterThan(0);
+    // Every fixture row stores `utility`; every badge must read `Utility`.
+    expect(new Set(texts)).toEqual(new Set(['Utility']));
+    expect(texts).not.toContain('utility');
+  });
+
   test('off-site-only actions are hidden on an on-site row (kind-aware)', async () => {
     renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Off-site approved → BOTH reset-to-pending + hide.

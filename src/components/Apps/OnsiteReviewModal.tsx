@@ -46,8 +46,10 @@ import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants'
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
+  marketplaceCategoryLabel,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
@@ -1042,7 +1044,7 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
               {category && (
                 <Tooltip label="Marketplace category">
                   <Badge color="gray" variant="light">
-                    {category}
+                    {marketplaceCategoryLabel(category)}
                   </Badge>
                 </Tooltip>
               )}
@@ -1052,7 +1054,7 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
             {contentRating && (
               <Tooltip label="Content rating">
                 <Badge color={ratingColor(contentRating)} variant="filled">
-                  {contentRating}
+                  {offsiteContentRatingLabel(contentRating)}
                 </Badge>
               </Tooltip>
             )}

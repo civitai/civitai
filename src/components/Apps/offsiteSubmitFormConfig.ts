@@ -14,8 +14,10 @@ import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import {
   MARKETPLACE_CATEGORIES,
   isMarketplaceCategory,
+  marketplaceCategoryLabel,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   SCOPE_JUSTIFICATION_MAX_LENGTH,
   SENSITIVE_TOKEN_SCOPES,
@@ -80,16 +82,31 @@ export type OffsiteSubmitFormValues = {
 
 export type OffsiteSubmitFormErrors = Partial<Record<keyof OffsiteSubmitFormValues, string>>;
 
-/** Category `<Select>` data (value + human label). */
+/**
+ * Category `<Select>` data (value + human label).
+ *
+ * 🔴 The label comes from the SHARED map, not from re-deriving it here. This used
+ * to title-case the key (`c.charAt(0).toUpperCase() + c.slice(1)`), which happens
+ * to agree with `MARKETPLACE_CATEGORY_LABELS` for today's seven values and would
+ * silently stop agreeing for the first label that is not a plain capitalisation.
+ * An author picking "Analytics" here and a reader seeing something else in the
+ * store is the same one-rule-N-sites defect this whole change closes.
+ */
 export const OFFSITE_CATEGORY_OPTIONS: Array<{ value: MarketplaceCategory; label: string }> =
   MARKETPLACE_CATEGORIES.map((c) => ({
     value: c,
-    label: c.charAt(0).toUpperCase() + c.slice(1),
+    label: marketplaceCategoryLabel(c),
   }));
 
-/** Content-rating `<Select>` data. */
+/**
+ * Content-rating `<Select>` data.
+ *
+ * 🔴 Was `r.toUpperCase()`, which spelled the middle rung `PG13` — a spelling that
+ * exists nowhere else on the site (`browsingLevelLabels` says `PG-13`). The author
+ * picking the rating and the visitor reading it now see the same word.
+ */
 export const OFFSITE_CONTENT_RATING_OPTIONS: Array<{ value: OffsiteContentRating; label: string }> =
-  OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: r.toUpperCase() }));
+  OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: offsiteContentRatingLabel(r) }));
 
 /** The blank initial form state (SFW default, no category, no client / scopes). */
 export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {

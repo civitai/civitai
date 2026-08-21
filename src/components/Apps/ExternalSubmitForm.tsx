@@ -50,6 +50,7 @@ import type { ListingEditContext } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -791,7 +792,7 @@ function ExternalCreateForm() {
                       <Code>{submitted.slug}</Code> is a pending standalone submission. Attach an
                       icon and a cover below to be approved — screenshots are recommended but
                       optional and can be added later. Content rating:{' '}
-                      <Badge size="xs">{values.contentRating}</Badge>
+                      <Badge size="xs">{offsiteContentRatingLabel(values.contentRating)}</Badge>
                     </Text>
                   </Alert>
                 }
