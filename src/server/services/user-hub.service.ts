@@ -479,8 +479,10 @@ export async function getHubSourceSuggestions({
       where: {
         id: { in: follows.map((f) => f.targetUserId) },
         deletedAt: null,
-        // citext, so this is case-insensitive without asking for ILIKE.
-        ...(term ? { username: { contains: term } } : {}),
+        // citext overloads equality, NOT `LIKE` — a plain `contains` here is
+        // case-SENSITIVE. Safe to ask for ILIKE now only because the id list
+        // above bounds it; unbounded, this is the 4.7GB scan.
+        ...(term ? { username: { contains: term, mode: 'insensitive' as const } } : {}),
       },
       select: { id: true, username: true },
       take: SUGGESTIONS_LIMIT,

@@ -570,8 +570,11 @@ describe('source suggestions stay inside the viewer', () => {
 
     const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
     expect(names.where.id).toEqual({ in: [11] });
-    // citext: asking for `insensitive` here is what forced the seq scan.
-    expect(names.where.username).toEqual({ contains: 'some' });
+    // citext overloads `=`, not `LIKE`, so the substring match needs `insensitive`
+    // — measured live: without it, searching "A" missed a username with a lowercase
+    // "a". Bounded by the id list above, so it is not the scan that ILIKE was on
+    // the unbounded query.
+    expect(names.where.username).toEqual({ contains: 'some', mode: 'insensitive' });
   });
 
   it('scopes every models arm to the viewer, and filters names once over the union', async () => {
