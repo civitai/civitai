@@ -9,6 +9,7 @@
   } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { reportStatuses } from '$lib/reports';
   import { urlWith, urlWithMulti } from '$lib/url';
+  import { clearPaging } from '$lib/paging';
 
   let {
     statuses,
@@ -37,10 +38,14 @@
     draftReporter = null;
   });
 
-  // Every filter change resets to page 1 and drops the cursor: both index a queue that no longer
-  // exists once the filter moved. `user` survives — the open account is not part of the filter.
-  const navigate = (href: string) =>
-    goto(urlWith(new URL(href, pageState.url), { page: 1, cursor: null }), { keepFocus: true });
+  // A filter change invalidates both the queue's page and the open account's image position, so it
+  // clears both schemes — `clearPaging` owns which params those are. `user` survives: the open account
+  // is not part of the filter.
+  const navigate = (href: string) => {
+    const url = new URL(href, pageState.url);
+    clearPaging(url.searchParams);
+    return goto(urlWith(url, { page: 1 }), { keepFocus: true });
+  };
 
   function setStatuses(next: string[]) {
     draftStatuses = next;
@@ -90,11 +95,13 @@
 
   <label class="flex items-center gap-1 text-dark-2">
     From
+    <!-- Function binding, not a one-way prop: `Input.value` is `$bindable()` and the primitive writes
+         to it, so a change whose resulting prop value is unchanged (clearing an already-absent param)
+         latches the child's copy and the field keeps showing a value the query has dropped. -->
     <Input
       type="date"
-      value={reportedFrom}
+      bind:value={() => reportedFrom, (v) => setParam('reportedFrom', v)}
       class="h-7 w-36"
-      onchange={(e) => setParam('reportedFrom', e.currentTarget.value)}
     />
   </label>
 
@@ -102,9 +109,8 @@
     To
     <Input
       type="date"
-      value={reportedTo}
+      bind:value={() => reportedTo, (v) => setParam('reportedTo', v)}
       class="h-7 w-36"
-      onchange={(e) => setParam('reportedTo', e.currentTarget.value)}
     />
   </label>
 

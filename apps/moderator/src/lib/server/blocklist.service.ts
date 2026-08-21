@@ -51,7 +51,6 @@ async function readBlocklistRow(type: string): Promise<BlocklistDTO> {
       message:
         'More than one Blocklist row for a type; entries on the ignored rows are not enforced',
       details: {
-        app: 'moderator',
         blocklistType: type,
         usedId: rows[0].id,
         ignoredIds: rows.slice(1).map((row) => row.id),

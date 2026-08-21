@@ -1,7 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import type { MediaType } from '$lib/media/edge-url';
-import type { Capped } from './user-account.service';
 
 // The suspect's own content, for reviewing a report against an account without leaving the queue
 // (Retool's TOSImages + GetImageCount).
@@ -86,10 +85,15 @@ export const EMPTY_SUSPECT_FILTERS: SuspectImageFilters = {
 export async function getSuspectImages(
   userId: number,
   filters: SuspectImageFilters = EMPTY_SUSPECT_FILTERS,
-  { limit = 60, cursor }: { limit?: number; cursor?: number } = {}
-): Promise<
-  Capped<SuspectImage> & { total: number; blocked: number; matched: number; nextCursor?: number }
-> {
+  { limit = 60, page = 1 }: { limit?: number; page?: number } = {}
+): Promise<{
+  items: SuspectImage[];
+  page: number;
+  perPage: number;
+  total: number;
+  blocked: number;
+  matched: number;
+}> {
   const base = dbRead.selectFrom('Image').where('userId', '=', userId);
 
   const filtered = (() => {
@@ -117,7 +121,7 @@ export async function getSuspectImages(
   })();
 
   const [rows, counts, matchedRow] = await Promise.all([
-    (cursor ? filtered.where('id', '<', cursor) : filtered)
+    filtered
       .select([
         'id',
         'url',
@@ -143,7 +147,8 @@ export async function getSuspectImages(
         ),
       ])
       .orderBy('id', 'desc')
-      .limit(limit + 1)
+      .limit(limit)
+      .offset((page - 1) * limit)
       .execute(),
     base
       .select((eb) => [
@@ -154,12 +159,10 @@ export async function getSuspectImages(
     filtered.select((eb) => eb.fn.countAll<string>().as('matched')).executeTakeFirst(),
   ]);
 
-  const items = rows.slice(0, limit) as unknown as SuspectImage[];
-  const truncated = rows.length > limit;
   return {
-    items,
-    truncated,
-    nextCursor: truncated ? items[items.length - 1]?.id : undefined,
+    items: rows as unknown as SuspectImage[],
+    page,
+    perPage: limit,
     total: Number(counts?.total ?? 0),
     blocked: Number(counts?.blocked ?? 0),
     matched: Number(matchedRow?.matched ?? 0),

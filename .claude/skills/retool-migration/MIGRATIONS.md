@@ -355,8 +355,8 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
 - [x] **Mutes** — `ActivateSystemMute`, `RevokeTimedMutes`, `ViewMutes`. **Rebuilt onto the account,
       2026-08-20.** A timed mute is `User.muteExpiresAt` plus `meta.{muteReason, mutedBy}`, with `mutedAt`
       marking it as a moderator's rather than the strike engine's;
-      the moderator DB's `TimedMutes` is read and written by nothing here and is gone from
-      `moderator-db-types.ts`. `getTimedMute` returns one nullable mute — a single column cannot hold
+      the moderator DB's `TimedMutes` is read and written by nothing here, and its schema model says so.
+      `getTimedMute` returns one nullable mute — a single column cannot hold
       two, which is why `hasOtherActiveTimedMute` no longer exists. Expiry is not missing:
       `processTimedUnmutesJob` (`0 * * * *`) drains `muteExpiresAt` hourly, and strike escalation will
       neither lift nor shorten a mute whose `mutedAt` is set — that column, not a `meta` flag, is what

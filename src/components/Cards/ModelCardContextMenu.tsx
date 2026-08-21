@@ -1,5 +1,5 @@
 import { Menu } from '@mantine/core';
-import { IconBabyCarriage, IconTagOff } from '@tabler/icons-react';
+import { IconBabyCarriage, IconInfoCircle, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
@@ -20,6 +20,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { env } from '~/env/client';
+import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
 
 export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[number] }) {
   const currentUser = useCurrentUser();
@@ -147,6 +149,26 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
 
   if (currentUser?.isModerator) {
+    // Unshifted to the top rather than appended: the moderator items land after every user action, and
+    // the lookup is the one a moderator opens this menu FOR — it is the way out to the moderator app,
+    // not another action on the card. Moderator-gated, so nobody else's menu moves.
+    contextMenuItems.unshift({
+      key: 'lookup-model',
+      component: (
+        <Menu.Item
+          key="lookup-model"
+          component="a"
+          target="_blank"
+          leftSection={<IconInfoCircle size={14} stroke={1.5} />}
+          href={`${env.NEXT_PUBLIC_MODERATOR_APP_URL}${moderatorBulkImageManagerPath(
+            'model',
+            data.id
+          )}`}
+        >
+          Lookup Model
+        </Menu.Item>
+      ),
+    });
     contextMenuItems.push({
       key: 'set-minor',
       component: (

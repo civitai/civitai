@@ -145,6 +145,6 @@ existing rows were repointed by hand; an un-repointed row is not revoked, it sim
       one person; staff could grant badges under our port.
 - [ ] Whether **payouts** stay visible to every moderator (2026-08-14, 3:51 — *"I'm not sure about
       payouts"*). Ungated today.
-- [ ] The rest of the Admin section — ban, purge, force-logout, rewards eligibility, Paddle re-linking,
+- [ ] The rest of the Admin section — ban, purge, force-logout, rewards eligibility,
       restriction rulings — is still on `/users` alone. §12i asked for "the entire Admin section"; only
       `user.moderator.toggle` was carved out. Needs a decision on who should hold each.

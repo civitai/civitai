@@ -9,6 +9,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
   import type { ActionData, PageData } from './$types';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -66,9 +67,7 @@
 {/if}
 
 {#if form?.error}
-  <div class="mb-4 max-w-xl rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4 max-w-xl" message={form.error} />
 {:else if form?.success}
   <div class="mb-4 max-w-xl rounded-md border border-teal-500/30 bg-teal-500/10 p-2 text-sm text-teal-300">
     {form.action === 'add' ? 'Added' : 'Removed'} {form.count} item{form.count === 1 ? '' : 's'}.

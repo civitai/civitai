@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./basemodel.constants": "./src/basemodel.constants.ts",
     "./lazy": "./src/lazy.ts",
-    "./type-guards": "./src/type-guards.ts"
+    "./type-guards": "./src/type-guards.ts",
+    "./moderator-paths": "./src/moderator-paths.ts"
   },
   "dependencies": {
     "@civitai/db-schema": "workspace:*"

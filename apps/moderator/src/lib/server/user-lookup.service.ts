@@ -30,16 +30,15 @@ export type UserIdentity = {
   banReason: string | null;
   banDetails: string | null;
   customerId: string | null;
-  paddleCustomerId: string | null;
   rewardsEligibility: string | null;
   /** Retool showed both as header chips on every section. */
   csamReportCount: number;
   /** Pending + Processing reports filed AGAINST this account. */
   openReportCount: number;
-  /** The avatar behind `profilePictureId`. `image` above is the legacy URL and is not the same thing. */
   browsingLevel: number | null;
   /** Comma-separated moderator usernames who filed an OPEN report on this account, or null. */
   openReportModerators: string | null;
+  /** The avatar behind `profilePictureId`. `image` above is the legacy URL and is not the same thing. */
   profilePictureUrl: string | null;
   profilePictureType: string | null;
   profilePictureNsfwLevel: number | null;
@@ -359,7 +358,6 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
       'u.mutedAt',
       'u.bannedAt',
       'u.customerId',
-      'u.paddleCustomerId',
       'u.rewardsEligibility',
       'u.onboarding',
       'u.excludeFromLeaderboards',

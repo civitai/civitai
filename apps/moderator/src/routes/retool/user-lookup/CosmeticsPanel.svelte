@@ -5,6 +5,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import type { Account } from './user-account';
   import ListCard from './ListCard.svelte';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let {
     account,
@@ -24,12 +25,7 @@
 </script>
 
 {#if form.error}
-  <div
-    class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-    role="alert"
-  >
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {/if}
 
 {#await account}

@@ -3,6 +3,9 @@
 Retool's own Postgres (`retool_db` in the app exports) holds moderation data that never existed in
 Civitai's database.
 
+> **Superseded 2026-08-21.** The two databases were consolidated. `getModeratorDb()` reads
+> `MODERATOR_DATABASE_URL`; `RETOOL_DATABASE_URL` is retired. Every mention of it below is historical.
+
 **The moderator app reads and writes it directly**, through `getModeratorDb()` — `RETOOL_DATABASE_URL`
 points here for now. So porting a `retool_db`-backed feature needs no data migration first: Retool and
 the moderator app share these tables during the transition, which is what allows an incremental cutover.
@@ -144,12 +147,12 @@ before discarding.
 
 ```bash
 cd .claude/skills/retool-migration && npm install   # once
-cp .env.example .env                                # add RETOOL_DATABASE_URL
+cp .env.example .env                                # add MODERATOR_DATABASE_URL
 node retool-db.mjs --tables
 node retool-db.mjs --describe UserStrikes
 node retool-db.mjs "SELECT * FROM \"UserNotes\" LIMIT 5"
 ```
 
 `retool-db.mjs` is read-only — it exists for scoping and schema questions. **The app itself reads *and
-writes* this database** through `getModeratorDb()`; that is the point of pointing `RETOOL_DATABASE_URL`
-here. See the skill's moderator-database section.
+writes* this database** through `getModeratorDb()`, on the same `MODERATOR_DATABASE_URL`. See the
+skill's moderator-database section.

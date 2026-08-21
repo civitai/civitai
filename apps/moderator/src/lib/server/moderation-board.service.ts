@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import type { task_enum_0648e184 } from './moderator-db/enums';
 import { dbRead } from './db';
 import { getModeratorDb } from './moderator-db';
 import { REPORT_ENTITIES } from './report-entities';
@@ -181,7 +182,15 @@ export async function getTaskLag(): Promise<TaskLag[]> {
 // `articles` and `bounties` are Retool's own task names, and both are LIVE — 2,028 and 1,213
 // acknowledgements, the most recent written the same day the port was measured. So these are not new
 // queues, they are two the port simply never rendered.
-export const SWEEP_TASKS = ['blockedImages', 'civitaiModels', 'articles', 'bounties'] as const;
+// Typed against the COLUMN's enum, so a typo here is a compile error rather than a Postgres error at
+// the moment a moderator presses the button. `Mods_TaskTimers.task` accepts more values than these —
+// this is the subset the board offers.
+export const SWEEP_TASKS = [
+  'blockedImages',
+  'civitaiModels',
+  'articles',
+  'bounties',
+] as const satisfies readonly task_enum_0648e184[];
 export type SweepTask = (typeof SWEEP_TASKS)[number];
 
 async function getSweepAt(task: SweepTask): Promise<Date | null> {
@@ -267,7 +276,7 @@ export async function getSweepCounts(): Promise<SweepCount[]> {
  * writer the mark never advances and every "since last sweep" count grows forever — the same
  * consumer-with-no-producer trap the help-request queue had.
  */
-export async function acknowledgeSweep(task: string, by: string): Promise<void> {
+export async function acknowledgeSweep(task: SweepTask, by: string): Promise<void> {
   await getModeratorDb()
     .insertInto('Mods_TaskTimers')
     .values({ task, lastUpdate: sql`now()`, lastUpdateBy: by })

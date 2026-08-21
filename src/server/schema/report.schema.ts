@@ -19,9 +19,41 @@ export const reportOwnershipDetailsSchema = baseDetailSchema.extend({
   establishInterest: z.boolean().optional(),
 });
 
-export const reportTosViolationDetailsSchema = baseDetailSchema.extend({
-  violation: z.string(),
-});
+/**
+ * The violations the TOS report form offers, in display order.
+ *
+ * Here rather than in the form because the rule below keys on one of these strings: with the list in
+ * the component, "require a comment on real-person reports" would be a literal duplicated across a
+ * component and a schema, and renaming the option in one place would silently switch the rule off.
+ */
+export const TOS_VIOLATIONS = [
+  'Depiction of real-person likeness',
+  'Graphic violence',
+  'False impersonation',
+  'Deceptive content',
+  'Sale of illegal substances',
+  'Child abuse and exploitation',
+  'Photorealistic depiction of a minor',
+  'Prohibited concepts',
+] as const;
+
+export const REAL_PERSON_VIOLATION = TOS_VIOLATIONS[0];
+
+export const reportTosViolationDetailsSchema = baseDetailSchema
+  .extend({
+    violation: z.string(),
+  })
+  // A real-person report with no comment names nobody, and a moderator cannot act on "this is someone
+  // real" — they need who. Enforced here, not only in the form, because the form is not the only way
+  // this shape arrives.
+  .superRefine((details, ctx) => {
+    if (details.violation === REAL_PERSON_VIOLATION && !details.comment?.trim())
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['comment'],
+        message: 'Tell us who this depicts — a name, a profile, or how you recognise them.',
+      });
+  });
 
 export const reportClaimDetailsSchema = baseDetailSchema.extend({
   email: z.string().email(),

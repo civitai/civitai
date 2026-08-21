@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
+import { getModeratorDb } from './moderator-db';
 import { voteOnImageTags } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -72,7 +73,8 @@ const extras = [
  * disagreed about what "X" meant. Both orderings here take the same filter.
  */
 export async function getSweep(input: {
-  nsfwLevel: number;
+  /** One or more. The limit is over the UNION, so a wider selection is a shorter view of each. */
+  nsfwLevels: number[];
   order: SweepOrder;
   media: SweepMedia;
   since: Date;
@@ -82,7 +84,7 @@ export async function getSweep(input: {
   let q = dbRead
     .selectFrom('Image as i')
     .select([...columns, ...extras])
-    .where('i.nsfwLevel', '=', input.nsfwLevel)
+    .where('i.nsfwLevel', 'in', input.nsfwLevels)
     .where('i.ingestion', '=', 'Scanned')
     .where('i.nsfwLevelLocked', '=', false)
     .where('i.type', '=', input.media)
@@ -133,14 +135,16 @@ export async function voteOnTag(input: {
   imageId: number;
   tagId: number;
   direction: 'up' | 'down';
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; error?: string; tagNsfwLevel?: number }> {
   // The tag must be a Moderation tag — Retool trusted the client with both ids, so a forged tagId
   // wrote a vote for an unrelated tag. It must NOT also be attached to this image: requiring that
   // made the tag palette unusable, since ADDING a tag the tagger missed is the whole point of it.
   // `type = 'Moderation'` is the security property; attachment was never part of it.
+  // `nsfwLevel` comes back with it because `LogNsfwLevel2` records the TAG's level as the rating, and
+  // this is already the query that proves the tag is a moderation tag.
   const moderationTag = await dbRead
     .selectFrom('Tag as t')
-    .select('t.id')
+    .select(['t.id', 't.nsfwLevel'])
     .where('t.id', '=', input.tagId)
     .where('t.type', '=', 'Moderation')
     .executeTakeFirst();
@@ -149,7 +153,9 @@ export async function voteOnTag(input: {
   const result = await voteOnImageTags([
     { imageId: input.imageId, tagId: input.tagId, vote: input.direction === 'up' ? 1 : -1 },
   ]);
-  return result.ok ? { ok: true } : { ok: false, error: result.error };
+  return result.ok
+    ? { ok: true, tagNsfwLevel: moderationTag.nsfwLevel }
+    : { ok: false, error: result.error };
 }
 
 /**
@@ -183,4 +189,106 @@ export async function recordResearchRating(input: {
   } catch (e) {
     console.error('[front-page-audit] research rating not recorded', e);
   }
+}
+
+/**
+ * The rating this sweep is about to replace. Read BEFORE the update, because it is the whole value of
+ * the audit row — `recordModActivity` stores no before/after, so without this "who changed this image
+ * from X to XXX" stays answerable for the Retool era and not for ours.
+ */
+export async function getImageRating(imageId: number): Promise<number | null> {
+  const row = await dbRead
+    .selectFrom('Image')
+    .select('nsfwLevel')
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  return row?.nsfwLevel ?? null;
+}
+
+/**
+ * Retool's `LogNsfwLevel` and `LogNsfwLevel2` — the rating audit trail in the moderator database's
+ * `RatingChanges`, and the last two Front Page Audit writes that were never ported.
+ *
+ * Both are `UPDATE_OR_INSERT_BY` keyed on `imageId`, read out of the app export
+ * (`retool-exports/raw/front-page-audit.json`, plugins → LogNsfwLevel / LogNsfwLevel2). Two things in
+ * that export contradict what `parity-findings.md` recorded from the audit, and both matter:
+ *
+ *  - `LogNsfwLevel` is NOT a plain INSERT. Both writes upsert by `imageId`, so the table holds the
+ *    LATEST change per image rather than a history of every change. Kept that way deliberately: it is
+ *    the shape the Retool-era rows are already in, and an append-only trail is a different dataset
+ *    wearing the same table.
+ *  - `originalRating` is the SWEEP'S selected rating (`selectedAge.value`), not a lookup of the image's
+ *    own previous level. On this page they are the same number — the sweep query is
+ *    `where i.nsfwLevel = <selected>` — which is why reading the image's current level is a faithful
+ *    port and not a reinterpretation.
+ *
+ * `updatedBy` is a NAME (Retool wrote `current_user.fullName`), matching every historical row. New rows
+ * write the Civitai username, which is at least resolvable — see `moderator-db-backfill-tasks.md`.
+ *
+ * Best-effort, like `recordResearchRating` beside them: an audit row must not fail the moderation action
+ * it describes, which has already committed by the time these run.
+ */
+async function upsertRatingChange(input: {
+  imageId: number;
+  originalRating: number;
+  rating: number;
+  updatedBy: string | null;
+}): Promise<void> {
+  try {
+    const db = getModeratorDb();
+    // Retool's UPDATE_OR_INSERT_BY: update the image's row, insert only when there was none. Not an
+    // `ON CONFLICT` — `RatingChanges` has no unique constraint on `imageId` to conflict against.
+    const updated = await db
+      .updateTable('RatingChanges')
+      .set({
+        originalRating: input.originalRating,
+        rating: input.rating,
+        updatedBy: input.updatedBy,
+      })
+      .where('imageId', '=', input.imageId)
+      .executeTakeFirst();
+
+    if (Number(updated.numUpdatedRows ?? 0) > 0) return;
+
+    await db
+      .insertInto('RatingChanges')
+      .values({
+        imageId: input.imageId,
+        originalRating: input.originalRating,
+        rating: input.rating,
+        updatedBy: input.updatedBy,
+      })
+      .execute();
+  } catch (e) {
+    console.error('[front-page-audit] rating change not logged', e);
+  }
+}
+
+/** `LogNsfwLevel` — a moderator setting the rating. `rating` is the level set. */
+export const recordRatingChange = upsertRatingChange;
+
+/**
+ * `LogNsfwLevel2` — a moderator voting a moderation tag ONTO an image. The rating recorded is the
+ * TAG's own `nsfwLevel`, i.e. what the tag would make the image, not what the image is.
+ *
+ * Additions only: Retool disabled this write when the vote was a downvote
+ * (`queryDisabled: voteParams.vote === -10`), so removing a tag records nothing. The caller passes the
+ * direction rather than filtering, so that rule stays here with the write it belongs to.
+ */
+export async function recordTagVoteRatingChange(input: {
+  imageId: number;
+  originalRating: number;
+  tagNsfwLevel: number | null;
+  direction: 'up' | 'down';
+  updatedBy: string | null;
+}): Promise<void> {
+  if (input.direction !== 'up') return;
+  // A tag with no level of its own says nothing about what the image should be rated.
+  if (input.tagNsfwLevel === null) return;
+  await upsertRatingChange({
+    imageId: input.imageId,
+    originalRating: input.originalRating,
+    rating: input.tagNsfwLevel,
+    updatedBy: input.updatedBy,
+  });
 }

@@ -8,6 +8,7 @@
       import ListCard from './ListCard.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   // Retool's comment search. Matched against the PLAIN text, not the stored HTML — searching the markup
   // meant "p" hit every row.
@@ -44,12 +45,7 @@
 </script>
 
 {#if form.error}
-  <div
-    class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-    role="alert"
-  >
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {/if}
 
 <section class="mb-4 grid gap-4 lg:grid-cols-2">

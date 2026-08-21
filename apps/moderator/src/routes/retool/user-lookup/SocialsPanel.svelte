@@ -8,6 +8,7 @@
   import { LINK_CLASS } from '$lib/format';
       import { safeHref, type Signals } from './signals';
   import { LINK_TYPES } from './enforcement-options';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let {
     signals,
@@ -38,12 +39,7 @@
   </div>
 
   {#if form.error}
-    <div
-      class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-      role="alert"
-    >
-      {form.error}
-    </div>
+    <ErrorAlert class="mb-3" message={form.error} />
   {/if}
 
   {#if adding}

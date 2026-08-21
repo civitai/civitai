@@ -13,6 +13,7 @@
     BUZZ_ENTITY_TYPES,
     BUZZ_SEND_REASONS,
   } from './enforcement-options';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { userId, onSuccess }: { userId: number; onSuccess: () => void } = $props();
 
@@ -101,12 +102,7 @@
 <div class="space-y-4">
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     {#if buzz.error}
-      <div
-        class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-        role="alert"
-      >
-        {buzz.error}
-      </div>
+      <ErrorAlert class="mb-3" message={buzz.error} />
     {/if}
 
     <form method="POST" action="?/sendBuzz" use:enhance={buzz.enhance} class="space-y-3">

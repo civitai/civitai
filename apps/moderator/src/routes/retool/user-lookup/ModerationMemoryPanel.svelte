@@ -10,6 +10,7 @@
   import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
   import StrikeList from '$lib/components/StrikeList.svelte';
   import { STRIKE_REASONS } from '$lib/moderation-reasons';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let {
     userId,
@@ -72,12 +73,7 @@
     </div>
 
     {#if notesForm.error}
-      <div
-        class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-        role="alert"
-      >
-        {notesForm.error}
-      </div>
+      <ErrorAlert class="mb-3" message={notesForm.error} />
     {/if}
 
     {#if adding}
@@ -179,12 +175,7 @@
     <p class="mb-3 text-xs text-dark-2">Issuing a strike notifies the user.</p>
 
     {#if strikeForm.error}
-      <div
-        class="mb-3 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-        role="alert"
-      >
-        {strikeForm.error}
-      </div>
+      <ErrorAlert class="mb-3" message={strikeForm.error} />
     {/if}
 
     {#if striking}

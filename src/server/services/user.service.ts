@@ -585,16 +585,8 @@ export async function forceUpdateUserIdentity({
   }
   userUpdateCounter?.inc({ location: 'user.service:forceUpdateUserIdentity' });
 
-  // Cache-invalidate for any field on User that downstream caches key off of.
-  // (Username changes drop basic data; name/email touch profile + paddle.)
   if (data.username !== undefined || data.name !== undefined) {
     await deleteBasicDataForUser(userId);
-  }
-  if (data.email && user.paddleCustomerId) {
-    await updatePaddleCustomerEmail({
-      customerId: user.paddleCustomerId,
-      email: data.email as string,
-    });
   }
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');

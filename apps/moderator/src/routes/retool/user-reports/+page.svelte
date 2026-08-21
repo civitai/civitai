@@ -61,19 +61,14 @@
   </div>
 
   <div class="min-w-0 flex-1">
-    {#if data.suspectId && data.suspect && data.strikes}
+    {#if data.suspectId && data.suspect && data.accountHistory}
       <!-- Keyed so an open strike or notify form cannot survive moving to a different suspect. -->
       {#key data.suspectId}
         <SuspectPanel
           suspectId={data.suspectId}
           suspect={data.suspect}
           filters={data.filters}
-          strikes={data.strikes}
-          legacyStrikeCount={data.legacyStrikeCount}
-          modActivity={data.modActivity ?? []}
-          retoolActivity={data.retoolActivity ?? []}
-          reportsOnUser={data.reportsOnUser ?? []}
-          notes={data.notes ?? []}
+          accountHistory={data.accountHistory}
           canAct={data.canAct}
           civitaiUrl={data.civitaiUrl}
           strikeError={scoped('strike')}

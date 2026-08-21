@@ -4,15 +4,16 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import { cn } from '@civitai/ui/utils.js';
-  import { TAG_CATEGORIES } from './moderation-tags';
+  import { TAG_CATEGORIES } from '../moderation-tags';
   import type { ActionData, PageData } from './$types';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime, num } from '$lib/format';
   import { getBrowsingLevelLabel } from '@civitai/shared';
-  import { SWEEP_LEVELS } from './sweep';
+  import { SWEEP_LEVELS } from '../sweep';
   import RatingBar from './RatingBar.svelte';
   import SweepFilterBar from './SweepFilterBar.svelte';
   import SweepCheckpointBar from './SweepCheckpointBar.svelte';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -28,27 +29,16 @@
   // The heading names what is actually LOADED; the pickers, which show a pending selection, live in
   // SweepFilterBar.
   const loadedLevelLabel = $derived(
-    SWEEP_LEVELS.find((l) => l.value === data.nsfwLevel)?.label ?? String(data.nsfwLevel)
+    data.nsfwLevels
+      .map((v) => SWEEP_LEVELS.find((l) => l.value === v)?.label ?? String(v))
+      .join(' + ')
   );
 </script>
-
-<header class="page-header">
-  <h1>Front Page Audit</h1>
-  <p>
-    Sweep newly scanned content carrying one rating and correct what is wrong. Unlike the ratings
-    queue, nothing here was reported — this is the patrol.
-  </p>
-</header>
 
 <SweepFilterBar {data} />
 
 {#if form?.error}
-  <div
-    class="mb-4 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300"
-    role="alert"
-  >
-    {form.error}
-  </div>
+  <ErrorAlert class="mb-4" message={form.error} />
 {/if}
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">

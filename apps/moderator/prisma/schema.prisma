@@ -1,0 +1,772 @@
+generator kysely {
+  provider     = "prisma-kysely"
+  output       = "../src/lib/server/moderator-db"
+  enumFileName = "enums.ts"
+  fileName     = "types.ts"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("MODERATOR_DATABASE_URL")
+}
+
+model AutomatedWeeklyStats {
+  id                     Int       @id @default(autoincrement())
+  runDate                DateTime? @default(now()) @db.Timestamptz(6)
+  TotalReviews           Int?      @default(0)
+  ReviewsWeek            Int?      @default(0)
+  TotalModels            Int?      @default(0)
+  NewModelsWeek          Int?      @default(0)
+  TotalComments          Int?      @default(0)
+  CommentsWeek           Int?      @default(0)
+  TotalPosts             Int?      @default(0)
+  CreatorsWeek           Int?      @default(0)
+  TotalCreators          Int?      @default(0)
+  TotalImages            Int?      @default(0)
+  ImagesWeek             Int?      @default(0)
+  TotalImgReactions      Int?      @default(0)
+  ImgReactionsWeek       Int?      @default(0)
+  TotalCollectionItems   Int?      @default(0)
+  CollectionItemsWeek    Int?      @default(0)
+  TotalCollections       Int?      @default(0)
+  CollectionsWeek        Int?      @default(0)
+  TotalArticles          Int?      @default(0)
+  ArticlesWeek           Int?      @default(0)
+  TotalUsers             Int?      @default(0)
+  UsersWeek              Int?      @default(0)
+  TBDownloadedWeek       Float?    @default(0)
+  PostsWeek              Int?      @default(0)
+  TotalDownloadCountWeek Int?      @default(0)
+  PersonalizedHomepages  Int?      @default(0)
+}
+
+model BuzzCodes {
+  id        Int     @id @default(autoincrement())
+  createdBy String
+  code      String?
+}
+
+model CivBot_Review {
+  requires_escalation    Boolean?  @default(false)
+  mod_status             String?   @default("Unreviewed")
+  id                     Int       @id @default(autoincrement())
+  mod_reviewed_at        DateTime? @db.Timestamptz(6)
+  mod_notes              String?
+  user_conversation_uuid String?
+  issue_category         String?
+  user_session_uuid      String?
+  raised_clickup         Boolean?  @default(false)
+  clickup_task_link      String?
+}
+
+model CivBot_SourcesList {
+  id          Int     @id @default(autoincrement())
+  created_at  String?
+  file_name   String?
+  file_size   Int?    @default(0)
+  meta_json   String?
+  modified_at String?
+  status      String?
+  title       String?
+  tokens      Int?    @default(0)
+  type        String?
+  uuid        String?
+}
+
+model CivBot_TemporaryContext {
+  id               Int      @id @default(autoincrement())
+  context_name     String?
+  context_question String?
+  context_response String?
+  active           Boolean? @default(false)
+}
+
+model CivBot_UserConversations {
+  created_at       String?
+  modified_at      String?
+  id               Int     @id @default(autoincrement())
+  finish_reason    String?
+  cite_data_json   String?
+  query            String?
+  uuid             String?
+  meta_json        String?
+  response         String?
+  usersession_uuid String?
+}
+
+model CivBot_UserSessions {
+  uuid        String?
+  created_at  String?
+  modified_at String?
+  id          Int     @id @default(autoincrement())
+  user_id     String?
+  username    String?
+  email       String?
+}
+
+model CollectionContestWinners {
+  id             Int       @id @default(autoincrement())
+  imageId        Int       @default(0)
+  username       String?
+  collectionId   Int       @default(0)
+  tagId          Int?      @default(0)
+  tagName        String?
+  createdAt      DateTime? @default(now()) @db.Timestamptz(6)
+  userId         Int       @default(0)
+  collectionName String?
+  url            String
+}
+
+model Community_DailyTaskLog {
+  id                              Int       @id @default(autoincrement())
+  date_updated                    DateTime? @default(now()) @db.Timestamptz(6)
+  missive                         String?   @default("Not Cleared")
+  featurebase                     String?   @default("Not Cleared")
+  civbot                          String?   @default("Not Cleared")
+  dms_discord                     String?   @default("Not Cleared")
+  dms_onsite                      String?   @default("Not Cleared")
+  reddit                          String?   @default("Not Cleared")
+  metabase                        String?   @default("Not Cleared")
+  model_train_status              String?   @default("Not Cleared")
+  site_showcase_form              String?   @default("Not Cleared")
+  site_press_form                 String?   @default("Not Cleared")
+  site_advertiser_form            String?   @default("Not Cleared")
+  site_appeals_form               String?   @default("Not Cleared")
+  site_DMCA_form                  String?   @default("Not Cleared")
+  site_likeness_form              String?   @default("Not Cleared")
+  site_CSAM_submissions           String?   @default("Not Cleared")
+  date                            DateTime? @default(now()) @db.Date
+  missive_clearedby               String?
+  featurebase_clearedby           String?
+  civbot_clearedby                String?
+  dms_discord_clearedby           String?
+  dms_onsite_clearedby            String?
+  reddit_clearedby                String?
+  metabase_clearedby              String?
+  model_train_status_clearedby    String?
+  site_showcase_form_clearedby    String?
+  site_press_form_clearedby       String?
+  site_advertiser_form_clearedby  String?
+  site_appeals_form_clearedby     String?
+  site_dmca_form_clearedby        String?
+  site_likeness_form_clearedby    String?
+  site_csam_submissions_clearedby String?
+  missive_note                    String?
+  featurebase_note                String?
+  civbot_note                     String?
+  dms_discord_note                String?
+  dms_onsite_note                 String?
+  reddit_note                     String?
+  metabase_note                   String?
+  model_train_status_note         String?
+  site_showcase_form_note         String?
+  site_press_form_note            String?
+  site_advertiser_form_note       String?
+  site_appeals_form_note          String?
+  site_DMCA_form_note             String?
+  site_likeness_form_note         String?
+  site_CSAM_submissions_note      String?
+  curation                        String?   @default("Not Cleared")
+  curation_note                   String?
+  curation_clearedby              String?
+}
+
+model FeatureRequests {
+  id           Int                    @id @default(autoincrement())
+  userId       Int
+  url          String
+  createdAt    DateTime               @default(now()) @db.Timestamptz(6)
+  preferedTime DateTime               @default(now()) @db.Timestamptz(6)
+  statusSetBy  String?
+  statusSetAt  DateTime?              @db.Timestamptz(6)
+  status       status_enum_b63b87f7?  @default(pending)
+  package      package_enum_a2d24e36?
+  details      String?
+}
+
+model FrontPageTimers {
+  id                Int       @id @default(autoincrement())
+  nsfw              String?
+  lastCheckedAt     DateTime? @db.Timestamptz(6)
+  username          String?
+  buttonPressedTime DateTime? @default(now()) @db.Timestamptz(6)
+  numberOfImages    Int?      @default(0)
+}
+
+/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
+// model FrontPageTimers__preimage_20260818205928 {
+// }
+
+model FrontPageTimers_catchup {
+  id                Int       @id @default(autoincrement())
+  nsfw              String?
+  lastCheckedAt     DateTime? @default(now()) @db.Timestamptz(6)
+  buttonPressedTime DateTime? @default(now()) @db.Timestamptz(6)
+  username          String?
+  numberOfImages    Int?      @default(0)
+}
+
+model HivePromptDefinitions {
+  id                 Int                  @id @default(autoincrement())
+  name               String               @unique
+  createdAt          DateTime             @default(now()) @db.Timestamptz(6)
+  createdBy          String
+  HivePromptVersions HivePromptVersions[]
+}
+
+model HivePromptVersions {
+  id                    Int                   @id @default(autoincrement())
+  promptId              Int
+  prompt                String?
+  createdAt             DateTime              @default(now()) @db.Timestamptz(6)
+  createdBy             String
+  versionTag            String?
+  changeNote            String?
+  HivePromptDefinitions HivePromptDefinitions @relation(fields: [promptId], references: [id], onDelete: Cascade)
+}
+
+model ModBot_Review {
+  id                     Int       @id @default(autoincrement())
+  mod_status             String?   @default("Unreviewed")
+  mod_notes              String?
+  mod_reviewed_at        DateTime? @db.Timestamptz(6)
+  requires_escalation    Boolean?  @default(false)
+  user_conversation_uuid String?
+}
+
+model ModBot_SourcesList {
+  file_name   String?
+  modified_at String?
+  meta_json   String?
+  id          Int     @id @default(autoincrement())
+  title       String?
+  tokens      Int?    @default(0)
+  file_size   Int?    @default(0)
+  status      String?
+  created_at  String?
+  type        String?
+  uuid        String?
+}
+
+model ModBot_UserConversations {
+  id               Int     @id @default(autoincrement())
+  uuid             String?
+  created_at       String?
+  modified_at      String?
+  finish_reason    String?
+  cite_data_json   String?
+  meta_json        String?
+  query            String?
+  response         String?
+  usersession_uuid String?
+}
+
+model ModBot_UserSessions {
+  id          Int     @id @default(autoincrement())
+  created_at  String?
+  modified_at String?
+  uuid        String?
+}
+
+model ModNotes {
+  id        Int       @id @default(autoincrement())
+  createdBy String?
+  createdAt DateTime? @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime? @default(now()) @db.Timestamptz(6)
+  userId    String?
+  userName  String?
+  modelId   String?
+  imageId   String?
+  commentId String?
+  modNotes  String?
+}
+
+model ModelNotes {
+  id        Int      @id @default(autoincrement())
+  modelId   Int      @default(0)
+  createdBy String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  content   String
+}
+
+/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
+// model ModelNotes__preimage_20260818205928 {
+// }
+
+model ModerationImageHelp {
+  id        Int                 @id @default(autoincrement())
+  createdBy String
+  imageIds  Json                @default("{}")
+  type      type_enum_cf5f15bb?
+  createdAt DateTime            @default(now()) @db.Timestamptz(6)
+  isHandled Boolean?            @default(false)
+  handledBy String              @default("")
+  handledAt DateTime?           @db.Timestamptz(6)
+}
+
+model ModerationQueueMetrics {
+  id            Int      @id @default(autoincrement())
+  Minor         Int?     @default(0)
+  PoI           Int?     @default(0)
+  ImageReport   Int?     @default(0)
+  TagReview     Int?     @default(0)
+  Model         Int?     @default(0)
+  Comment       Int?     @default(0)
+  CommentV2     Int?     @default(0)
+  Review        Int?     @default(0)
+  Article       Int?     @default(0)
+  Post          Int?     @default(0)
+  User          Int?     @default(0)
+  Collection    Int?     @default(0)
+  Bounty        Int?     @default(0)
+  BountyEntry   Int?     @default(0)
+  Chat          Int?     @default(0)
+  ModelReview   Int?     @default(0)
+  FrontPageSafe Int?     @default(0)
+  Mutes         Int?     @default(0)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model ModerationSHA {
+  id             Int     @id @default(autoincrement())
+  SHA256         String?
+  ModelVersionId Int?    @default(0)
+}
+
+model ModerationWorkloadMetrics {
+  id           Int      @id @default(autoincrement())
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  FrontPageSfw Decimal  @default(0) @db.Decimal
+  MinorPoI     Decimal  @default(0) @db.Decimal
+  TagReview    Decimal  @default(0) @db.Decimal
+  Mutes        Decimal  @default(0) @db.Decimal
+  Collection   Decimal  @default(0) @db.Decimal
+  Image        Decimal  @default(0) @db.Decimal
+  Comment      Decimal  @default(0) @db.Decimal
+  User         Decimal  @default(0) @db.Decimal
+  Post         Decimal  @default(0) @db.Decimal
+  Article      Decimal  @default(0) @db.Decimal
+  Review       Decimal  @default(0) @db.Decimal
+  Model        Decimal  @default(0) @db.Decimal
+  BountyEntry  Decimal  @default(0) @db.Decimal
+  Bounty       Decimal  @default(0) @db.Decimal
+  Chat         Decimal  @default(0) @db.Decimal
+}
+
+model Mods_TaskTimers {
+  id           Int                 @id @default(autoincrement())
+  lastUpdateBy String?
+  lastUpdate   DateTime?           @default(now()) @db.Timestamptz(6)
+  task         task_enum_0648e184?
+}
+
+/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
+// model Mods_TaskTimers__preimage_20260818205928 {
+// }
+
+model RatingChanges {
+  id             Int       @id @default(autoincrement())
+  imageId        Int?      @default(0)
+  createdAt      DateTime? @default(now()) @db.Timestamptz(6)
+  updatedBy      String?
+  rating         Int?      @default(0)
+  originalRating Int       @default(0)
+}
+
+/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
+// model RatingChanges__preimage_20260818205928 {
+// }
+
+model ReToolActions {
+  id         Int      @id @default(autoincrement())
+  Event      DateTime @default(now()) @db.Timestamptz(6)
+  User       String?
+  App        String?
+  ActionType String?
+}
+
+/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
+// model ReToolActions__preimage_20260818205928 {
+// }
+
+model Temp_AllRefundsGreater500 {
+  id              Int     @id @default(autoincrement())
+  LeftAccountId   String?
+  TransactionDate String?
+  TransactionId   String?
+  Amount          String?
+  RightAccountId  String?
+}
+
+model Temp_FailedLoRATrain {
+  id         Int     @id(map: "Temp_FailedLoRANoRefund_pkey") @default(autoincrement())
+  username   String?
+  userId     String?
+  modelId    String?
+  start_time String?
+  end_time   String?
+}
+
+/// Retool-era history, and the app must not read or write it. A timed mute is `User.muteExpiresAt` in
+/// the MAIN database, drained hourly by `processTimedUnmutesJob`; a mute recorded only here never lifts.
+model TimedMutes {
+  id         Int       @id @default(autoincrement())
+  userId     String?
+  muteStart  DateTime? @default(now()) @db.Timestamptz(6)
+  muteEnd    DateTime? @default(now()) @db.Timestamptz(6)
+  createdBy  String?
+  createdAt  DateTime? @default(now()) @db.Timestamptz(6)
+  muteReason String?
+  isMuted    Boolean?  @default(false)
+}
+
+model TrainingDataReview {
+  id             Int                   @id @default(autoincrement())
+  modelId        Int?                  @default(0)
+  modelVersionId Int?                  @default(0)
+  reviewedBy     String?
+  reviewedAt     DateTime?             @default(now()) @db.Timestamptz(6)
+  createdAt      DateTime?             @default(now()) @db.Timestamptz(6)
+  action         action_enum_7d6c4187?
+}
+
+model User {
+  id            Int      @id @default(autoincrement())
+  deservedMute  Boolean? @default(false)
+  spamWhitelist Boolean? @default(false)
+  userId        Int      @unique
+}
+
+model UserNotes {
+  id            Int       @id @default(autoincrement())
+  userId        Int?      @default(0)
+  notes         String?
+  lastUpdate    DateTime? @default(now()) @db.Timestamptz(6)
+  lastUpdateBy  String?
+  spamWhitelist Boolean?  @default(false)
+  deservedMute  Boolean?  @default(false)
+}
+
+/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
+// model UserNotes__preimage_20260818223229 {
+// }
+
+model UserStrikes {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @default(0)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  createdBy String
+  reason    String
+}
+
+/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
+// model UserStrikes__preimage_20260818205928 {
+// }
+
+/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
+// model User__preimage_20260818205928 {
+// }
+
+model VigilanteNameChangeTest {
+  id       Int     @id(map: "Vigilante_pkey") @default(autoincrement())
+  userid   Int?    @default(0)
+  username String?
+  count    Int?    @default(0)
+}
+
+model communityDevForm {
+  toolExperience       Json?                 @default("{}")
+  openSourceExperience String?
+  motivation           String?
+  toImprove            String?
+  featureWishlist      String?
+  familiar             String?
+  username             String?
+  github               String?
+  discord              String?
+  devExperience        String?
+  status               status_enum_120e0323? @default(Pending)
+  preferredRole        String?
+  availablity          String?
+  communityExperience  String?
+  notes                String?
+  createdAt            DateTime?             @default(now()) @db.Timestamp(6)
+  id                   Int                   @id @default(autoincrement())
+}
+
+/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+// model cutover_recovered_app_UserNotes {
+// }
+
+model eval_result {
+  id        BigInt   @id @default(autoincrement())
+  run_id    BigInt
+  sample_id BigInt
+  score     Float?   @db.Real
+  predicted Boolean?
+  expected  Boolean
+  bucket    String?
+  reason    String?
+  error     String?
+  eval_run  eval_run @relation(fields: [run_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  sample    sample   @relation(fields: [sample_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([run_id, sample_id])
+  @@index([run_id, bucket], map: "eval_result_run_bucket_idx")
+}
+
+model eval_run {
+  id           BigInt        @id @default(autoincrement())
+  label        String
+  policy_id    BigInt?
+  policy_label String
+  threshold    Float         @db.Real
+  batch        String?
+  status       String        @default("running")
+  total        Int           @default(0)
+  scored       Int           @default(0)
+  errors       Int           @default(0)
+  tp           Int           @default(0)
+  fp           Int           @default(0)
+  tn           Int           @default(0)
+  fn           Int           @default(0)
+  precision    Float?        @db.Real
+  recall       Float?        @db.Real
+  f1           Float?        @db.Real
+  note         String?
+  started_at   DateTime      @default(now()) @db.Timestamptz(6)
+  finished_at  DateTime?     @db.Timestamptz(6)
+  eval_result  eval_result[]
+  label_policy label_policy? @relation(fields: [policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([label, started_at(sort: Desc)], map: "eval_run_label_idx")
+}
+
+model human_judgement {
+  id                    BigInt             @id @default(autoincrement())
+  sample_id             BigInt
+  label                 String
+  reviewed_judgement_id BigInt?
+  agreed                Boolean?
+  verdict               Boolean
+  note                  String?
+  reviewer_id           Int
+  duration_ms           Int?
+  created_at            DateTime           @default(now()) @db.Timestamptz(6)
+  excluded_reason       String?
+  label_def             label_def          @relation(fields: [label], references: [name], onUpdate: NoAction)
+  machine_judgement     machine_judgement? @relation(fields: [reviewed_judgement_id], references: [id], onUpdate: NoAction)
+  sample                sample             @relation(fields: [sample_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([sample_id, label, reviewer_id])
+  @@index([label, created_at(sort: Desc)], map: "human_judgement_label_idx")
+}
+
+model label_def {
+  name              String              @id
+  description       String
+  status            String              @default("active")
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  human_judgement   human_judgement[]
+  label_policy      label_policy[]
+  label_term        label_term[]
+  machine_judgement machine_judgement[]
+}
+
+model label_policy {
+  id                BigInt              @id @default(autoincrement())
+  label             String
+  version           Int
+  policy            String
+  threshold         Float               @db.Real
+  action            String              @default("Scan")
+  note              String?
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  eval_run          eval_run[]
+  label_def         label_def           @relation(fields: [label], references: [name], onDelete: Cascade, onUpdate: NoAction)
+  machine_judgement machine_judgement[]
+
+  @@unique([label, version])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model label_term {
+  id         BigInt    @id @default(autoincrement())
+  label      String
+  term       String
+  kind       String
+  note       String?
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  label_def  label_def @relation(fields: [label], references: [name], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([label, term])
+  @@index([label])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model machine_judgement {
+  id              BigInt            @id @default(autoincrement())
+  sample_id       BigInt
+  label           String
+  source          String
+  model           String?
+  score           Float?            @db.Real
+  verdict         Boolean
+  reason          String?
+  highlights      Json?
+  policy_id       BigInt?
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  human_judgement human_judgement[]
+  label_def       label_def         @relation(fields: [label], references: [name], onUpdate: NoAction)
+  label_policy    label_policy?     @relation(fields: [policy_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sample          sample            @relation(fields: [sample_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([label, source, created_at(sort: Desc)], map: "machine_judgement_lookup_idx")
+  @@index([sample_id, label], map: "machine_judgement_sample_idx")
+}
+
+model mobile_app_sample_data {
+  id    BigInt  @id
+  name  String?
+  email String?
+  sales BigInt?
+  image String?
+}
+
+model products {
+  id               BigInt    @id
+  name             String?
+  quantity         Int?
+  unit_price_cents Int?
+  created_at       DateTime? @db.Timestamp(6)
+  updated_at       DateTime? @db.Timestamp(6)
+  image_url        String?
+  part_number      String?
+}
+
+model sample {
+  id                BigInt              @id @default(autoincrement())
+  prompt_hash       BigInt?
+  source            String              @default("xguardPromptResults")
+  batch             String
+  user_id           Int?
+  positive_prompt   String
+  negative_prompt   String?
+  live_scores       Json?
+  prompt_created_at DateTime?           @db.Timestamptz(6)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  eval_result       eval_result[]
+  human_judgement   human_judgement[]
+  machine_judgement machine_judgement[]
+
+  @@unique([batch, prompt_hash])
+  @@index([batch])
+  @@index([prompt_hash])
+}
+
+model sample_orders {
+  id               Int       @id @default(autoincrement())
+  name             String?
+  email            String?
+  product_id       String?
+  quantity         Int?
+  order_requested  DateTime? @db.Timestamp(6)
+  order_completed  DateTime? @db.Timestamp(6)
+  received_payment Boolean?
+}
+
+model sample_users {
+  id          Int       @id @default(autoincrement())
+  name        String?
+  email       String?
+  signup_date DateTime? @db.Timestamp(6)
+  role        String?
+  enabled     Boolean?
+}
+
+model testForm {
+  id Int @id @default(autoincrement())
+}
+
+model test_import {
+  id                Int                   @id(map: "untitled spreadsheet - 2024-09-20t16_42_47.191z civitai - _pkey") @default(autoincrement())
+  task_name         String?
+  status            status_enum_b63b87f7?
+  package_drop_down String?
+  model_url         String?
+  due_date          String?
+  date_created      String?
+}
+
+model users {
+  id          Int     @id(map: "userstest_pkey") @default(autoincrement())
+  FirstName   String?
+  LastName    String?
+  CivitUserId Int?    @default(-1)
+  Username    String?
+}
+
+enum action_enum_7d6c4187 {
+  approve
+  decline
+  checkIn
+  checkOut
+}
+
+enum package_enum_a2d24e36 {
+  k_feature_request @map("10k-feature-request")
+}
+
+enum status_enum_120e0323 {
+  Pending
+  Reviewing
+  Interviewing
+  Accepted
+  Declined
+}
+
+enum status_enum_b63b87f7 {
+  pending
+  accepted
+  rejected
+}
+
+enum status_enum_da2164f6 {
+  pending
+  accepted
+}
+
+enum task_enum_0648e184 {
+  bounties
+  articles
+  minor
+  poi
+  // Five values start with a digit and one is a bare digit, so Prisma cannot name them from the
+  // database. The `level_*` names below are OURS — the mapped strings are what Postgres stores, and
+  // `db pull` preserves a manual member name as long as its @map is unchanged. Renaming one here
+  // without renaming it in the database silently re-collides on the next pull.
+  level_1       @map("1")
+  level_2       @map("2")
+  level_4       @map("4")
+  level_8       @map("8")
+  level_16      @map("16")
+  models
+  blockedImages
+  civitaiModels
+  modelNames
+  blockedTag
+  catchup_1     @map("1_catchup")
+  catchup_2     @map("2_catchup")
+  catchup_4     @map("4_catchup")
+  catchup_8     @map("8_catchup")
+  catchup_16    @map("16_catchup")
+  newUser
+}
+
+enum type_enum_cf5f15bb {
+  minor
+  poi
+  reported
+  restore
+}

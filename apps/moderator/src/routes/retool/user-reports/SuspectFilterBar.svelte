@@ -8,6 +8,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { browsingLevels, browsingLevelLabels, NsfwLevel } from '@civitai/shared';
   import type { PageData } from './$types';
+  import { clearPaging } from '$lib/paging';
 
   let { filters }: { filters: PageData['filters'] } = $props();
 
@@ -50,8 +51,7 @@
     set('to', to);
     set('prompt', prompt.trim());
     set('negativePrompt', negativePrompt.trim());
-    // A cursor from the previous filter set points into a batch that no longer exists.
-    url.searchParams.delete('cursor');
+    clearPaging(url.searchParams);
     goto(url.pathname + url.search, { keepFocus: true });
   }
 

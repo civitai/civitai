@@ -24,10 +24,12 @@ if (fs.existsSync(envFile)) {
   }
 }
 
-const connectionString = process.env.RETOOL_DATABASE_URL;
+// MODERATOR_DATABASE_URL first: the Retool and moderator databases were consolidated into one, so that
+// is the surviving name. RETOOL_DATABASE_URL still works for a checkout whose .env predates the merge.
+const connectionString = process.env.MODERATOR_DATABASE_URL ?? process.env.RETOOL_DATABASE_URL;
 if (!connectionString) {
   console.error(
-    'RETOOL_DATABASE_URL is not set.\n' +
+    'MODERATOR_DATABASE_URL is not set.\n' +
       `Copy ${path.relative(process.cwd(), path.join(dir, '.env.example'))} to .env and fill it in.`
   );
   process.exit(1);

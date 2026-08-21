@@ -12,15 +12,15 @@ scripts are committed at [`apps/moderator/moderator-db/cutover/`](../../apps/mod
 
 ---
 
-## The two databases
+## The two databases — now one
 
 | | Points at | Holds |
 | --- | --- | --- |
-| `RETOOL_DATABASE_URL` | Retool's own Postgres (15.18) | the live tables, **still taking writes** |
-| `MODERATOR_DATABASE_URL` | the moderator database (18.4) | the copy, plus the xguard-lab tables |
+| `MODERATOR_DATABASE_URL` | the moderator database (18.4) | the moderation tables **and** the xguard-lab tables |
+| ~~`RETOOL_DATABASE_URL`~~ | ~~Retool's own Postgres (15.18)~~ | **Retired 2026-08-21.** Gone from `.env.example`; `getModeratorDb()` reads `MODERATOR_DATABASE_URL`. |
 
-They are **different instances** and must never be conflated. `getModeratorDb()` currently reads
-`RETOOL_DATABASE_URL`, so the moderator app is still writing to Retool.
+They were different instances and the app used to write to Retool's. As of 2026-08-21 it does not: one
+variable serves both uses, which is what the rest of this document was planning for.
 
 `MODERATOR_DATABASE_URL` is already the xguard lab's connection string, and the xguard tables
 (`label_def`, `eval_run`, `human_judgement`, …) live in that same database. So the two uses converge
@@ -153,13 +153,20 @@ on re-run, verify passing on a good state and **failing with a non-zero exit** o
 same-`userId` conflict, rollback restoring the exact pre-merge state while leaving the app's own rows
 untouched, and rollback refusing after a simulated post-cutover write.
 
+> ⚠️ **Measured 2026-08-21: this pipeline HAS been run, at least through step 3.** The moderator
+> database carries a populated `cutover` schema (12,902 staged `UserStrikes`, 57,914 staged `UserNotes`)
+> with `cutover.id_remap` and `cutover.conflict_review` both empty, i.e. `04-verify.sql`’s first gate
+> passes. Live `UserNotes` (58,226) exceeds the staged count, consistent with a completed merge plus
+> later app writes. **The paragraph below is the pre-cutover state and is retained as the record of what
+> was planned, not of what is true.** Confirm against the environment before running anything here again.
+
 No statement in this pipeline has been run against Retool or the moderator database. Both were read
 from only.
 
 ## After the data lands
 
-1. Point `getModeratorDb()` at `MODERATOR_DATABASE_URL` — `apps/moderator/src/lib/server/moderator-db.ts`
-   is the only place that reads `RETOOL_DATABASE_URL`.
+1. ~~Point `getModeratorDb()` at `MODERATOR_DATABASE_URL`~~ **Done 2026-08-21** —
+   `apps/moderator/src/lib/server/moderator-db.ts` reads it and `RETOOL_DATABASE_URL` is deleted.
 2. Set `MODERATOR_DATABASE_URL` in every deployed environment. This replaces handover item 2, which asked
    for `RETOOL_DATABASE_URL` — that variable is retired by this cutover, not configured.
 3. Turn Retool's write access off before anyone uses the app again, or the two diverge from that moment.
@@ -171,12 +178,12 @@ from only.
 
 Migrate it. It is in the pipeline.
 
-It is not in `moderator-db-types.ts` and nothing in the app reads it, so it is tempting to drop — but
+Nothing in the app reads it, so it is tempting to drop — but
 the data was exported *into* Retool rather than produced by it, no Retool app writes it, and subtask
 `868kn8aa0` asks for these notes surfaced on model pages with add/edit-own. Dropping 935 rows to save
 copying 935 rows would only mean sourcing them again later.
 
-It needs a `ModelNotes` entry in `moderator-db-types.ts` when that feature is built; the live columns are
+It needs no type work: `ModelNotes` is introspected like every other table, with the live columns
 `id, modelId, createdBy, createdAt, content`, all `NOT NULL` except `id`'s default.
 
 ## `ReToolActions` vs `ModActivity` — handover decision #9
@@ -203,8 +210,8 @@ in the database. Nothing reads it today.
 ## Open questions
 
 1. **The two colliding `UserNotes` rows.** Which write created them, and was it deliberate? Something
-   pointed the moderator app (or a script) at the moderator database on 2026-08-07 while
-   `getModeratorDb()` reads `RETOOL_DATABASE_URL`. Worth knowing before cutover, because whatever did it
+   pointed the moderator app (or a script) at the moderator database on 2026-08-07, while
+   `getModeratorDb()` still read `RETOOL_DATABASE_URL`. Worth knowing anyway, because whatever did it
    could do it again and produce more collisions. The scripts handle it either way.
 2. **`spamWhitelist` / `deservedMute` live in two places** — as columns on `UserNotes` and as a whole
    `User` table in the same database. Which is authoritative is undecided, and the app reads neither.

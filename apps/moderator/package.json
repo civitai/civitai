@@ -10,6 +10,7 @@
     "prepare": "svelte-kit sync",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "test": "vitest run",
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata"
   },

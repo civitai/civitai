@@ -6,6 +6,7 @@ import { getBuzz } from './buzz';
 import { getNotifications } from './notifications';
 import { getModeratorDb } from './moderator-db';
 import { usersByIds } from './users.service';
+import { RATING_ACTIVITIES } from '$lib/mod-activity';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
@@ -596,7 +597,13 @@ const ACTIVITY_CONTENT = [
   ['article', 'Article'],
 ] as const;
 
-export async function getModActivity(userId: number, limit = 40): Promise<ModActivityRow[]> {
+/** `bucket` filters in SQL, never over the result: the queries below are each limited and then
+ *  merged, so narrowing afterwards shrinks a window the discarded rows already truncated. */
+export async function getModActivity(
+  userId: number,
+  limit = 40,
+  bucket?: 'enforcement' | 'rating'
+): Promise<ModActivityRow[]> {
   const select = [
     // `id` is selected purely so the UI has a stable key — ModActivity is append-only now, so two rows
     // can share (createdAt, activity, entityId) and a composite key would collide.
@@ -613,6 +620,8 @@ export async function getModActivity(userId: number, limit = 40): Promise<ModAct
     .select(select)
     .where('ma.entityType', 'in', ['user', 'impersonate'])
     .where('ma.entityId', '=', userId)
+    .$if(bucket === 'enforcement', (qb) => qb.where('ma.activity', 'not in', RATING_ACTIVITIES))
+    .$if(bucket === 'rating', (qb) => qb.where('ma.activity', 'in', RATING_ACTIVITIES))
     .orderBy('ma.createdAt', 'desc')
     .limit(limit)
     .execute();
@@ -624,6 +633,8 @@ export async function getModActivity(userId: number, limit = 40): Promise<ModAct
       .select(select)
       .where('ma.entityType', '=', entityType)
       .where('c.userId', '=', userId)
+      .$if(bucket === 'enforcement', (qb) => qb.where('ma.activity', 'not in', RATING_ACTIVITIES))
+      .$if(bucket === 'rating', (qb) => qb.where('ma.activity', 'in', RATING_ACTIVITIES))
       .orderBy('ma.createdAt', 'desc')
       .limit(limit)
       .execute()

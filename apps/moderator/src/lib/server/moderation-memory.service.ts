@@ -1,4 +1,6 @@
 import { getModeratorDb } from './moderator-db';
+import { dbRead } from './db';
+import { LEGACY_STRIKE_MARKER, legacyStrikeId } from '$lib/legacy-strike-import';
 import { getNotifications } from './notifications';
 import { recordModActivity } from './mod-activity';
 import { isInt4Id } from './users.service';
@@ -59,31 +61,88 @@ export async function getModerationFlags(userId: number): Promise<ModerationFlag
   };
 }
 
+/**
+ * Legacy ids that have ALREADY been copied into the main store by `migrate-legacy-strikes.ts`.
+ *
+ * Both legacy readers below subtract these, which is what lets the import run at any time without a
+ * second deploy behind it: before it, history comes from here; after it, from `UserStrike`; part-way
+ * through, each row is counted on exactly one side. Without this the two stores would both report the
+ * same strike and the panel would say "plus N from the Retool era" about rows sitting directly above it.
+ */
+async function importedLegacyIds(userIds: number[]): Promise<Set<number>> {
+  if (!userIds.length) return new Set();
+  const rows = await dbRead
+    .selectFrom('UserStrike')
+    .select('internalNotes')
+    .where('userId', 'in', userIds)
+    .where('internalNotes', 'like', `${LEGACY_STRIKE_MARKER}%`)
+    .execute();
+
+  return new Set(
+    rows.flatMap((r) => {
+      const id = legacyStrikeId(r.internalNotes);
+      return id === null ? [] : [id];
+    })
+  );
+}
+
 // READ ONLY, deliberately. `UserStrikes` in the moderator database is Retool-era history; strikes are
 // issued against the main app's system (`issueStrike`), which has escalation, points, expiry, the typed
 // notification and a void path. Nothing here writes this table.
+//
+// Returns only what the main store does NOT already hold — see `importedLegacyIds`.
 export async function getUserStrikes(userId: number): Promise<UserStrike[]> {
-  return getModeratorDb()
-    .selectFrom('UserStrikes')
-    .select(['id', 'reason', 'createdAt', 'createdBy'])
-    .where('userId', '=', userId)
-    .orderBy('createdAt', 'desc')
-    .execute();
+  const [rows, imported] = await Promise.all([
+    getModeratorDb()
+      .selectFrom('UserStrikes')
+      .select(['id', 'reason', 'createdAt', 'createdBy'])
+      .where('userId', '=', userId)
+      .orderBy('createdAt', 'desc')
+      .execute(),
+    importedLegacyIds([userId]),
+  ]);
+  return rows.filter((r) => !imported.has(r.id));
 }
 
-// Strike counts for a SET of accounts (Retool's SimilarIpStrikes), for the linked-account lists. Empty
-// in / empty out, and accounts with no strikes are absent from the map rather than present as 0.
+/**
+ * Strike counts for a SET of accounts (Retool's SimilarIpStrikes), for the linked-account lists. Empty
+ * in / empty out, and accounts with no strikes are absent from the map rather than present as 0.
+ *
+ * 🔴 This spans BOTH stores, and it has to. Its consumers — the shared-IP and shared-link panels — are
+ * the only place their number appears: they render `{#if acct.strikes > 0}` and have no `getLiveStrikes`
+ * beside them, unlike the strike panels. Counting the legacy table alone made a struck alt read as clean
+ * the moment the import moved its rows, and under-reported every strike issued since the cutover even
+ * before that.
+ *
+ * Legacy rows are counted by id rather than with `count(*)` because the imported ones have to come off
+ * the total and an aggregate cannot tell which rows they were.
+ */
 export async function strikeCountsByUserIds(ids: number[]): Promise<Map<number, number>> {
   const unique = [...new Set(ids)].filter(isInt4Id);
   if (!unique.length) return new Map();
 
-  const rows = await getModeratorDb()
-    .selectFrom('UserStrikes')
-    .select((eb) => ['userId', eb.fn.countAll<string>().as('count')])
-    .where('userId', 'in', unique)
-    .groupBy('userId')
-    .execute();
-  return new Map(rows.flatMap((r) => (r.userId === null ? [] : [[r.userId, Number(r.count)]])));
+  const [legacy, live, imported] = await Promise.all([
+    getModeratorDb()
+      .selectFrom('UserStrikes')
+      .select(['id', 'userId'])
+      .where('userId', 'in', unique)
+      .execute(),
+    dbRead
+      .selectFrom('UserStrike')
+      .select((eb) => ['userId', eb.fn.countAll<string>().as('count')])
+      .where('userId', 'in', unique)
+      .groupBy('userId')
+      .execute(),
+    importedLegacyIds(unique),
+  ]);
+
+  const counts = new Map<number, number>();
+  for (const row of live) counts.set(row.userId, Number(row.count));
+  for (const row of legacy) {
+    if (row.userId === null || imported.has(row.id)) continue;
+    counts.set(row.userId, (counts.get(row.userId) ?? 0) + 1);
+  }
+  return counts;
 }
 
 // A moderator-authored notification (Retool's SendNotification, which POSTed the main app's

@@ -2,7 +2,7 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { SWEEP_LEVELS } from './sweep';
+  import { SWEEP_LEVELS } from '../sweep';
 
   let {
     imageId,
