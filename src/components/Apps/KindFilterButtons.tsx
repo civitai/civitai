@@ -1,5 +1,6 @@
 import { Button, Group } from '@mantine/core';
 import { IconApps, IconExternalLink, IconLayoutGrid } from '@tabler/icons-react';
+import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import type { ListingKindFilter } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -17,8 +18,8 @@ import type { ListingKindFilter } from '~/server/schema/blocks/app-listing-read.
  */
 const KIND_OPTIONS: { value: ListingKindFilter; label: string; icon: typeof IconApps }[] = [
   { value: 'all', label: 'All apps', icon: IconLayoutGrid },
-  { value: 'onsite', label: 'On-site', icon: IconApps },
-  { value: 'offsite', label: 'Standalone', icon: IconExternalLink },
+  { value: 'onsite', label: LISTING_KIND_LABELS.onsite, icon: IconApps },
+  { value: 'offsite', label: LISTING_KIND_LABELS.offsite, icon: IconExternalLink },
 ];
 
 export interface KindFilterButtonsProps {

@@ -505,17 +505,6 @@ export const migrateResourceToCollectionSchema = z.object({
   collectionName: z.string().optional(),
 });
 
-export type IngestModelInput = z.input<typeof ingestModelSchema>;
-export const ingestModelSchema = z.object({
-  id: z.number(),
-  name: z.string(),
-  description: z.coerce.string(),
-  poi: z.coerce.boolean(),
-  nsfw: z.coerce.boolean(),
-  minor: z.coerce.boolean(),
-  sfwOnly: z.coerce.boolean(),
-});
-
 export type LimitOnly = z.input<typeof limitOnly>;
 export const limitOnly = z.object({
   take: z.number().optional(),
