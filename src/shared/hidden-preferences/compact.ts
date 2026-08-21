@@ -209,11 +209,14 @@ export function applyOptimisticHiddenToggle(
 }
 
 /**
- * Reconcile the cache with the server's authoritative `added`/`removed` diff
- * (the `toggleHidden` mutation result). Same shape-branching as the optimistic
+ * Apply the server's `added`/`removed` diff. Same shape-branching as the optimistic
  * path; object sets replace-in-place to pick up server-provided fields.
+ *
+ * Module-private on purpose: it ignores `hidden`, so a caller that reaches for it
+ * instead of `reconcileHiddenToggle` silently keeps an optimistic write the server
+ * refused. Go through `reconcileHiddenToggle`.
  */
-export function applyServerHiddenToggle(
+function applyServerHiddenToggle(
   cache: HiddenCache,
   key: string,
   added: Array<{ id: number }>,
@@ -236,4 +239,40 @@ export function applyServerHiddenToggle(
       if (index > -1) draft[key].splice(index, 1);
     }
   });
+}
+
+export const HIDDEN_KIND_TO_KEY = {
+  image: 'hiddenImages',
+  model: 'hiddenModels',
+  model3d: 'hiddenModel3Ds',
+  tag: 'hiddenTags',
+  user: 'hiddenUsers',
+  blockedUser: 'blockedUsers',
+} as const;
+
+export type HiddenToggleKind = keyof typeof HIDDEN_KIND_TO_KEY;
+
+/**
+ * Fold a `toggleHidden` response into the cache. `hidden`, when the toggle sends
+ * one, is the server's authoritative outcome and overrides the optimistic write
+ * from `onMutate` — the `added`/`removed` diff cannot, because five of the six
+ * kinds return both empty on every call.
+ *
+ * Takes the whole `result` rather than a destructured `hidden` so a caller cannot
+ * drop the field and silently make the override inert.
+ *
+ * `hidden` is one flag for the whole batch, matching the server, which inspects
+ * only `data[0]` for the kinds that send it. Both current senders pass a single
+ * id; a multi-select hide would need it keyed by id first.
+ */
+export function reconcileHiddenToggle(
+  cache: HiddenCache,
+  kind: HiddenToggleKind,
+  items: Array<{ id: number }>,
+  result: { added: Array<{ id: number }>; removed: Array<{ id: number }>; hidden?: boolean }
+): HiddenCache {
+  const key = HIDDEN_KIND_TO_KEY[kind];
+  const next = applyServerHiddenToggle(cache, key, result.added, result.removed);
+  if (result.hidden === undefined) return next;
+  return applyOptimisticHiddenToggle(next, key, items, result.hidden);
 }

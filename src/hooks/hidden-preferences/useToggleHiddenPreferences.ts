@@ -1,18 +1,10 @@
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import {
   applyOptimisticHiddenToggle,
-  applyServerHiddenToggle,
+  HIDDEN_KIND_TO_KEY,
+  reconcileHiddenToggle,
 } from '~/shared/hidden-preferences/compact';
 import { trpc } from '~/utils/trpc';
-
-const kindMap = {
-  image: 'hiddenImages',
-  model: 'hiddenModels',
-  model3d: 'hiddenModel3Ds',
-  tag: 'hiddenTags',
-  user: 'hiddenUsers',
-  blockedUser: 'blockedUsers',
-} as const;
 
 // Legacy (object-wrapped) empty cache — used only when the query cache is empty
 // during an optimistic write (rare; getHidden is prefetched). A real fetch
@@ -41,12 +33,9 @@ export const useToggleHiddenPreferences = () => {
 
       return { previous };
     },
-    onSuccess: async ({ added, removed }, { kind }) => {
-      const key = kindMap[kind];
-      // Shape-aware: `applyServerHiddenToggle` writes bare ids for the compact
-      // id-only sets and `{ id, hidden }` objects for the legacy / object sets.
+    onSuccess: async (result, { kind, data }) => {
       queryUtils.hiddenPreferences.getHidden.setData(undefined, (old = emptyLegacy as any) =>
-        applyServerHiddenToggle(old, key, added, removed)
+        reconcileHiddenToggle(old, kind, data, result)
       );
 
       // Invalidate user lists when user or blockedUser preferences change
@@ -65,7 +54,7 @@ export const useToggleHiddenPreferences = () => {
 export const useUpdateHiddenPreferences = () => {
   const queryUtils = trpc.useUtils();
   const updateHiddenPreferences = ({ kind, data, hidden }: ToggleHiddenSchemaOutput) => {
-    const key = kindMap[kind];
+    const key = HIDDEN_KIND_TO_KEY[kind];
     queryUtils.hiddenPreferences.getHidden.setData(undefined, (old = emptyLegacy as any) =>
       applyOptimisticHiddenToggle(old, key, data, hidden)
     );

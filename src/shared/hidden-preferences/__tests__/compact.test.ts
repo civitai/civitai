@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { HiddenPreferenceTypes } from '~/server/services/user-preferences.service';
 import {
   applyOptimisticHiddenToggle,
-  applyServerHiddenToggle,
   expandHiddenPreferences,
+  reconcileHiddenToggle,
   HIDDEN_PREFS_COMPACT_VERSION,
   isCompactHiddenPreferences,
   toCompactHiddenPreferences,
@@ -175,14 +175,69 @@ describe('optimistic cache mutation — shape parity (compact vs legacy)', () =>
     expect(res.hiddenUsers).toContainEqual({ id: 30, username: 'dave', hidden: true });
   });
 
+  // 868kurj0y. The click optimistically hides the target; the server can refuse a
+  // hide it ranks below an existing block. `added`/`removed` cannot express that
+  // refusal — five of the six kinds return both empty on every call — so `hidden`
+  // carries it, and without this the phantom state survives until the next refetch.
+  it('a REFUSED hide (hidden=false) drops the optimistic entry across shapes', () => {
+    const res = bothShapesAgree('hiddenUsers', (cache) =>
+      reconcileHiddenToggle(
+        applyOptimisticHiddenToggle(cache, 'hiddenUsers', [{ id: 30 }], true),
+        'user',
+        [{ id: 30 }],
+        { added: [], removed: [], hidden: false }
+      )
+    );
+    expect(res.hiddenUsers.map((x) => x.id)).not.toContain(30);
+  });
+
+  it('a GRANTED hide (hidden=true) keeps the optimistic entry across shapes', () => {
+    const res = bothShapesAgree('hiddenUsers', (cache) =>
+      reconcileHiddenToggle(
+        applyOptimisticHiddenToggle(cache, 'hiddenUsers', [{ id: 30 }], true),
+        'user',
+        [{ id: 30 }],
+        { added: [], removed: [], hidden: true }
+      )
+    );
+    expect(res.hiddenUsers.map((x) => x.id)).toContain(30);
+  });
+
+  // The five kinds that never report an outcome must keep the optimistic write,
+  // or every model/image hide would revert on its own success.
+  it('an omitted `hidden` leaves the optimistic entry alone across shapes', () => {
+    const res = bothShapesAgree('hiddenModels', (cache) =>
+      reconcileHiddenToggle(
+        applyOptimisticHiddenToggle(cache, 'hiddenModels', [{ id: 999 }], true),
+        'model',
+        [{ id: 999 }],
+        { added: [], removed: [] }
+      )
+    );
+    expect(res.hiddenModels.map((x) => x.id)).toContain(999);
+  });
+
+  // The add-direction twin above is idempotent under `hidden ?? true`, so it cannot
+  // catch that coercion. This one can: re-applying `true` to an optimistic un-hide
+  // puts the entry back, which is the same phantom-state bug one direction over.
+  it('an omitted `hidden` leaves an optimistic UN-hide alone across shapes', () => {
+    const res = bothShapesAgree('hiddenModels', (cache) =>
+      reconcileHiddenToggle(
+        applyOptimisticHiddenToggle(cache, 'hiddenModels', [{ id: 100 }], false),
+        'model',
+        [{ id: 100 }],
+        { added: [], removed: [] }
+      )
+    );
+    expect(res.hiddenModels.map((x) => x.id)).not.toContain(100);
+  });
+
   it('server-diff reconcile (added/removed) matches across shapes', () => {
     const res = bothShapesAgree('hiddenModels', (cache) =>
-      applyServerHiddenToggle(
-        cache,
-        'hiddenModels',
-        [{ kind: 'model', id: 500, hidden: true }],
-        [{ kind: 'model', id: 100, hidden: true }]
-      )
+      reconcileHiddenToggle(cache, 'model', [], {
+        added: [{ kind: 'model', id: 500, hidden: true }],
+        removed: [{ kind: 'model', id: 100, hidden: true }],
+      })
     );
     const ids = res.hiddenModels.map((x) => x.id);
     expect(ids).toContain(500);

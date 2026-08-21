@@ -11,8 +11,9 @@ import { showSuccessNotification } from '~/utils/notifications';
 export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
 
-  const users = useHiddenPreferencesData().hiddenUsers;
-  const alreadyHiding = users.some((x) => x.id === userId);
+  const { hiddenUsers, blockedUsers } = useHiddenPreferencesData();
+  const alreadyHiding = hiddenUsers.some((x) => x.id === userId);
+  const blocked = blockedUsers.some((x) => x.id === userId);
   const toggleHiddenMutation = useToggleHiddenPreferences();
 
   const handleHideClick: MouseEventHandler<HTMLElement> = (e) => {
@@ -25,12 +26,13 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
         data: [{ id: userId }],
         hidden: !alreadyHiding,
       })
-      .then(() => {
+      .then(({ hidden }) => {
+        // The server refuses a hide it ranks below an existing block, so report its
+        // outcome rather than the one we asked for.
+        const nowHidden = hidden ?? !alreadyHiding;
         showSuccessNotification({
-          title: `User marked as ${alreadyHiding ? 'show' : 'hidden'}`,
-          message: `Content from this user will${
-            alreadyHiding ? ' ' : ' not'
-          } show up in your feed`,
+          title: `User marked as ${nowHidden ? 'hidden' : 'show'}`,
+          message: `Content from this user will${nowHidden ? ' not' : ''} show up in your feed`,
         });
       });
 
@@ -38,6 +40,9 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
   };
 
   if (currentUser != null && userId === currentUser.id) return null;
+  // Block outranks Hide, so the server refuses a hide over one and this control
+  // would report a change it cannot make.
+  if (blocked) return null;
 
   return as === 'button' ? (
     <LoginRedirect reason="hide-content">
