@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const blockedPairIds = vi.fn(async () => [] as number[]);
 
@@ -32,7 +31,12 @@ const placementFindMany = dbMock.dbRead.placement.findMany;
 const imageFindMany = dbMock.dbRead.image.findMany;
 const queryRaw = dbMock.dbRead.$queryRaw;
 
-const levels = { domainLevels: allBrowsingLevelsFlag, viewerLevels: allBrowsingLevelsFlag };
+/**
+ * Kept as an empty spread so every call reads the same. The service takes no
+ * browsing level any more — it returns ids, and the page's own image query is
+ * where levels apply.
+ */
+const levels = {};
 
 /** The profile whose book is being asked for. */
 const creatorWithSettings = (settings: Record<string, unknown> | null) =>
@@ -220,23 +224,21 @@ describe('getStickerBook — what leaves the server', () => {
     expect(book.received[0].counterparts).toHaveLength(1);
   });
 
-  it('applies the public image rules on its own read', async () => {
-    await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
+  it('sends image IDS and no image payload', async () => {
+    const book = await getStickerBook({ username: 'creator', viewerId: CREATOR, ...levels });
 
-    const { where } = imageFindMany.mock.calls.at(-1)?.[0] as { where: Record<string, unknown> };
-    // Written literally rather than imported from the selector: importing the
-    // constant and comparing it to itself passes however the constant changes,
-    // and the whole risk here is the SHARED rule being right while this surface
-    // fails to apply it. The queue's suite pins the same fields for its own read.
-    expect(where).toMatchObject({
-      post: { publishedAt: { not: null, lte: expect.any(Date) } },
-      ingestion: 'Scanned',
-      tosViolation: false,
-      minor: false,
-      poi: false,
-      needsReview: null,
-      acceptableMinor: false,
-    });
+    // 🔴 The invariant that keeps the visibility rules in ONE place. This service
+    // decides which images and in what order; whether an image may be SHOWN —
+    // browsing level, domain ceiling, publish state, moderation flags, the
+    // viewer's hidden users and tags — belongs to `image.getInfinite`, which the
+    // page calls with these ids. A url appearing in this payload means a second
+    // copy of those rules has grown here, and it is the copy that will drift.
+    expect(book.received[0]).not.toHaveProperty('image');
+    expect(JSON.stringify(book)).not.toMatch(/"url"/);
+    expect(book.received[0].imageId).toBe(IMAGE);
+
+    // And this service asks the image table for nothing at all.
+    expect(imageFindMany).not.toHaveBeenCalled();
   });
 
   it('reports the Buzz the ledger actually paid the owner', async () => {
@@ -314,45 +316,6 @@ describe('getStickerBook — what leaves the server', () => {
     expect(wheres).toContainEqual(
       expect.objectContaining({ ownerId: CREATOR, placerId: { notIn: [STRANGER] } })
     );
-  });
-
-  it('drops an image this domain may not serve rather than sending it withheld', async () => {
-    imageFindMany.mockResolvedValue([
-      {
-        id: IMAGE,
-        url: 'abc',
-        name: null,
-        width: 1,
-        height: 1,
-        type: 'image',
-        metadata: {},
-        nsfwLevel: 8,
-      },
-    ]);
-
-    const book = await getStickerBook({
-      username: 'creator',
-      viewerId: CREATOR,
-      domainLevels: 1,
-      viewerLevels: 1,
-    });
-
-    expect(book.placed).toEqual([]);
-    expect(book.received).toEqual([]);
-  });
-
-  it('drops an image outside the viewer own band', async () => {
-    // Servable by the domain, above what this viewer asked for. A queue marks
-    // this and keeps the row because the owner still has to act on it; a book
-    // has nothing to act on.
-    const book = await getStickerBook({
-      username: 'creator',
-      viewerId: CREATOR,
-      domainLevels: allBrowsingLevelsFlag,
-      viewerLevels: 8,
-    });
-
-    expect(book.received).toEqual([]);
   });
 
   it('closes a banned creator book to visitors and opens it to moderators', async () => {
@@ -476,15 +439,14 @@ describe('getStickerBookSection — the drill-in page', () => {
     expect(placementGroupBy.mock.calls[0][0].skip).toBe(0);
   });
 
-  it('reports another page even when this one came back empty after filtering', async () => {
-    // Two groups for a page of one, and the image on both is unpublished. The
-    // page is empty and the walk is NOT over — deciding `hasMore` from what
-    // survived the filter would end it here.
+  it('reports another page from the lookahead row, not from what survived', async () => {
+    // Two groups for a page of one. `hasMore` is the extra row the query asked
+    // for, so a walk continues on the group count rather than on anything the
+    // page happened to render.
     placementGroupBy.mockResolvedValue([
       { targetId: IMAGE, _max: { createdAt: new Date('2026-08-20') } },
       { targetId: IMAGE + 1, _max: { createdAt: new Date('2026-08-19') } },
     ]);
-    imageFindMany.mockResolvedValue([]);
 
     const section = await getStickerBookSection({
       username: 'creator',
@@ -494,7 +456,7 @@ describe('getStickerBookSection — the drill-in page', () => {
       ...levels,
     });
 
-    expect(section.items).toEqual([]);
+    expect(section.items).toHaveLength(1);
     expect(section.hasMore).toBe(true);
   });
 });

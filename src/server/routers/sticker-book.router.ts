@@ -4,7 +4,6 @@ import {
 } from '~/server/schema/sticker-book.schema';
 import { getStickerBook, getStickerBookSection } from '~/server/services/sticker-book.service';
 import { publicProcedure, router } from '~/server/trpc';
-import { domainServableLevels, viewerBrowsingLevel } from '~/server/utils/browsing-level';
 
 export const stickerBookRouter = router({
   /**
@@ -23,8 +22,6 @@ export const stickerBookRouter = router({
       limit: input.limit,
       viewerId: ctx.user?.id,
       isModerator: !!ctx.user?.isModerator,
-      domainLevels: domainServableLevels(ctx),
-      viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
     })
   ),
 
@@ -41,8 +38,6 @@ export const stickerBookRouter = router({
       page: input.page,
       viewerId: ctx.user?.id,
       isModerator: !!ctx.user?.isModerator,
-      domainLevels: domainServableLevels(ctx),
-      viewerLevels: viewerBrowsingLevel(ctx, input.browsingLevel),
     })
   ),
 });

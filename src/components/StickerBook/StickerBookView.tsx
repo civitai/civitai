@@ -1,10 +1,26 @@
-import { ActionIcon, Alert, Card, Group, Loader, Text, Title, Tooltip } from '@mantine/core';
-import { IconLock, IconSettings, IconShieldCheck } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Alert,
+  Card,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+  Tooltip,
+} from '@mantine/core';
+import {
+  IconLock,
+  IconPhoto,
+  IconSettings,
+  IconShieldCheck,
+  IconSticker,
+} from '@tabler/icons-react';
 import { useState } from 'react';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { StickerBookSection } from '~/components/StickerBook/StickerBookSection';
+import { StickerBookBand, StickerBookSection } from '~/components/StickerBook/StickerBookSection';
 import { StickerBookSettingsModal } from '~/components/StickerBook/StickerBookSettingsModal';
 import { StickerBookStickers } from '~/components/StickerBook/StickerBookStickers';
 import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
@@ -24,9 +40,8 @@ import { trpc } from '~/utils/trpc';
  * from being wrong.
  */
 export function StickerBookView({ username }: { username: string }) {
-  const browsingLevel = useBrowsingLevelDebounced();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { data, isLoading, isError } = trpc.stickerBook.get.useQuery({ username, browsingLevel });
+  const { data, isLoading, isError } = trpc.stickerBook.get.useQuery({ username });
 
   if (isLoading)
     return (
@@ -57,9 +72,9 @@ export function StickerBookView({ username }: { username: string }) {
   const receivedCopy = stickerBookSectionCopy('owner', { username, isOwner });
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col">
       {access.moderatorOverride && (
-        <Alert color="yellow" icon={<IconShieldCheck size={18} />}>
+        <Alert color="yellow" icon={<IconShieldCheck size={18} />} mb="md">
           <Text size="sm">
             {username} has hidden some or all of this. You can see it because you&rsquo;re a
             moderator; other visitors cannot.
@@ -67,15 +82,37 @@ export function StickerBookView({ username }: { username: string }) {
         </Alert>
       )}
 
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <Title order={2}>Sticker book</Title>
-          <Text size="sm" c="dimmed">
-            {isOwner
-              ? 'Your stickers, where you have put them, and what people have put on your work.'
-              : `Stickers ${username} owns and the images they have been part of.`}
-          </Text>
-        </div>
+      {/* The shop page's header shape: an icon, the creator's name for the thing,
+          and the one number worth stating — with no page title above it, because
+          no other profile tab carries one. */}
+      <Group justify="space-between" align="flex-start" wrap="nowrap" py="md">
+        <Group gap="md" align="center" wrap="nowrap" className="min-w-0">
+          <ThemeIcon size={48} radius="xl" variant="light" color="yellow">
+            <IconSticker size={28} />
+          </ThemeIcon>
+          <Stack gap={2} className="min-w-0">
+            <Title order={1} size="h2">
+              {username}&apos;s Sticker Book
+            </Title>
+            {access.canViewEarnings && data.earnedBuzz !== null ? (
+              <Group gap={4} wrap="nowrap">
+                <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                <Text size="sm">
+                  <Text span fw={700}>
+                    {numberWithCommas(data.earnedBuzz)} Buzz
+                  </Text>{' '}
+                  earned from stickers on {isOwner ? 'your' : 'their'} images
+                </Text>
+              </Group>
+            ) : (
+              <Text size="sm" c="dimmed">
+                {isOwner
+                  ? 'Your stickers, where you have put them, and what people have put on your work.'
+                  : `Stickers ${username} owns and the images they have been part of.`}
+              </Text>
+            )}
+          </Stack>
+        </Group>
 
         {isOwner && (
           <Tooltip label="Sticker settings">
@@ -89,58 +126,52 @@ export function StickerBookView({ username }: { username: string }) {
             </ActionIcon>
           </Tooltip>
         )}
-      </div>
-
-      {access.canViewEarnings && data.earnedBuzz !== null && (
-        <Card withBorder p="sm">
-          <Group gap={6} wrap="nowrap">
-            <CurrencyIcon currency={Currency.BUZZ} size={18} />
-            <Text size="sm">
-              <Text span fw={700}>
-                {numberWithCommas(data.earnedBuzz)} Buzz
-              </Text>{' '}
-              earned from stickers on {isOwner ? 'your' : 'their'} images
-            </Text>
-          </Group>
-          {/* Said out loud because the number is smaller than what placers paid:
-              the creator's share is a split, and a decline pays a fee rather
-              than a share. Both are Buzz that reached the account. */}
-          <Text size="xs" c="dimmed" mt={4}>
-            What actually reached the account, not what placers paid.
-          </Text>
-        </Card>
-      )}
+      </Group>
 
       {access.canViewStickers && !!data.stickers.length && (
-        <section className="flex flex-col gap-3">
-          <div className="flex items-baseline justify-between gap-2">
-            <Title order={3}>{isOwner ? 'Your stickers' : `${username}'s stickers`}</Title>
+        <StickerBookBand
+          title={isOwner ? 'Your stickers' : `${username}'s stickers`}
+          icon={<IconSticker size={24} />}
+          shaded
+        >
+          {/* In a panel rather than loose on the page: a wrapping row of small
+              artwork with nothing containing it reads as debris between two
+              bands of cards. */}
+          <Card withBorder p="md">
+            <StickerBookStickers
+              stickers={data.stickers}
+              showQuantities={access.canViewQuantities}
+            />
             {isOwner && (
-              <Text size="sm" component={Link} href="/shop" c="blue.4">
+              <Text size="sm" component={Link} href="/shop" c="blue.4" mt="sm">
                 Get more in the shop
               </Text>
             )}
-          </div>
-          <StickerBookStickers stickers={data.stickers} showQuantities={access.canViewQuantities} />
-        </section>
+          </Card>
+        </StickerBookBand>
       )}
 
       <StickerBookSection
         title={placedCopy.title}
+        icon={<IconSticker size={24} />}
         emptyMessage={placedCopy.empty}
         items={data.placed}
+        side="placer"
         viewAllHref={`${bookHref}?view=placer`}
       />
 
       <StickerBookSection
         title={receivedCopy.title}
+        icon={<IconPhoto size={24} />}
         emptyMessage={receivedCopy.empty}
         items={data.received}
+        side="owner"
         viewAllHref={`${bookHref}?view=owner`}
+        shaded
       />
 
       {nothingYet && isOwner && (
-        <Alert color="blue">
+        <Alert color="blue" mt="md">
           <Text size="sm">
             Nothing in your book yet. Buy a sticker in the{' '}
             <Text component={Link} href="/shop" c="blue.4" inherit>

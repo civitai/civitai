@@ -1,9 +1,8 @@
 import { Alert, Anchor, Button, Group, Loader, Text, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 import { useState } from 'react';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { StickerBookGrid } from '~/components/StickerBook/StickerBookSection';
+import { StickerBookGrid } from '~/components/StickerBook/StickerBookGrid';
 import type { StickerBookSide } from '~/components/StickerBook/sticker-book.util';
 import { stickerBookSectionCopy } from '~/components/StickerBook/sticker-book.util';
 import { trpc } from '~/utils/trpc';
@@ -24,10 +23,9 @@ export function StickerBookSectionPage({
   username: string;
   side: StickerBookSide;
 }) {
-  const browsingLevel = useBrowsingLevelDebounced();
   const [page, setPage] = useState(1);
   const { data, isLoading, isError, isFetching } = trpc.stickerBook.getSection.useQuery(
-    { username, side, page, browsingLevel },
+    { username, side, page },
     // The accumulated pages are what is on screen, so a page that is refetching
     // must keep showing the one before it rather than blanking the feed.
     { placeholderData: (previous) => previous }
@@ -70,7 +68,7 @@ export function StickerBookSectionPage({
         </Title>
       </div>
 
-      <StickerBookGrid items={data.items} />
+      <StickerBookGrid items={data.items} side={side} />
 
       {/* Two different empty states, because `hasMore` is decided before the
           image filter runs: page 3 of a walk whose images were all unpublished

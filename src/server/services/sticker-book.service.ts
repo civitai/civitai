@@ -1,12 +1,4 @@
-import type { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
-import {
-  placementImageSelect,
-  publishedPlacementImageWhere,
-} from '~/server/selectors/placement-image.selector';
-import type { QueueImage } from '~/server/utils/queue-image';
-import { toQueueImage } from '~/server/utils/queue-image';
-import type { MediaType } from '~/shared/utils/prisma/enums';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import type { StickerBookSettings } from '~/shared/utils/sticker-book';
 import { getStickerBalances } from '~/server/services/sticker.service';
@@ -26,54 +18,6 @@ const TARGET_TYPE = 'image' as const;
  * images were all unpublished is an unbounded scan for an empty answer.
  */
 const MAX_SECTION_LIMIT = 60;
-
-type StickerBookImageRow = {
-  id: number;
-  url: string;
-  name: string | null;
-  width: number | null;
-  height: number | null;
-  type: MediaType;
-  metadata: Prisma.JsonValue;
-  nsfwLevel: number;
-};
-
-/**
- * Only the servable arm of `QueueImage`. A queue keeps the withheld variant so
- * the owner can still act on the row; a book has nothing to act on, so an image
- * this domain may not serve is simply not in the section — and the payload
- * cannot carry a url it was not allowed to send.
- */
-export type StickerBookImage = Extract<QueueImage<StickerBookImageRow>, { viewable: true }>;
-
-async function viewableImages({
-  imageIds,
-  domainLevels,
-  viewerLevels,
-}: {
-  imageIds: number[];
-  domainLevels: number;
-  viewerLevels: number;
-}) {
-  if (!imageIds.length) return new Map<number, StickerBookImage>();
-
-  const images = await dbRead.image.findMany({
-    where: { id: { in: [...new Set(imageIds)] }, ...publishedPlacementImageWhere() },
-    select: placementImageSelect,
-  });
-
-  const result = new Map<number, StickerBookImage>();
-  for (const image of images) {
-    const queued = toQueueImage(image, domainLevels, viewerLevels);
-    // Both halves matter and they are different rules. `viewable: false` is the
-    // domain refusing to serve the asset at all; `withinViewerLevel` is the
-    // viewer's own band, which a feed drops rather than blurs — and this is a
-    // feed, not a queue somebody has to answer.
-    if (queued?.viewable && queued.withinViewerLevel) result.set(image.id, queued);
-  }
-
-  return result;
-}
 
 /**
  * One section of the book: images carrying approved sticker placements, one card
@@ -104,8 +48,6 @@ async function getPlacementSection({
   limit,
   skip = 0,
   blockedIds,
-  domainLevels,
-  viewerLevels,
 }: {
   userId: number;
   side: 'placer' | 'owner';
@@ -129,8 +71,6 @@ async function getPlacementSection({
    * because the two are one word apart and only one of them is a safety control.
    */
   blockedIds: number[];
-  domainLevels: number;
-  viewerLevels: number;
 }) {
   const blocked = blockedIds.length ? { notIn: blockedIds } : undefined;
   // Written out per side rather than with a computed key. A computed key that
@@ -172,28 +112,23 @@ async function getPlacementSection({
 
   const targetIds = page.map((group) => group.targetId);
 
-  const [images, rows] = await Promise.all([
-    viewableImages({ imageIds: targetIds, domainLevels, viewerLevels }),
-    // The counterpart on each row — who owns the image on the placed side, who
-    // placed on the received side — for the name under the card. Bounded by the
-    // page, not by the creator's history.
-    dbRead.placement.findMany({
-      where: { ...where, targetId: { in: targetIds } },
-      select: {
-        targetId: true,
-        createdAt: true,
-        owner: { select: { id: true, username: true, deletedAt: true } },
-        placer: { select: { id: true, username: true, deletedAt: true } },
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      // Deliberately NOT capped with a `take`. The rows are ordered newest-first
-      // across the whole page, so a cap is spent in that order too — one image
-      // carrying a burst of recent placements would eat the budget and leave the
-      // other cards on the page with no name under them at all. A missing
-      // caption on an arbitrary card is a worse outcome than reading rows we
-      // discard, and the bucketing below is what made the discarding cheap.
-    }),
-  ]);
+  // The counterpart on each row — who owns the image on the placed side, who
+  // placed on the received side — for the avatar under the card. Bounded by the
+  // page, not by the creator's history.
+  const rows = await dbRead.placement.findMany({
+    where: { ...where, targetId: { in: targetIds } },
+    select: {
+      targetId: true,
+      createdAt: true,
+      owner: { select: { id: true, username: true, deletedAt: true, image: true } },
+      placer: { select: { id: true, username: true, deletedAt: true, image: true } },
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    // Deliberately NOT capped with a `take`. The rows are ordered newest-first
+    // across the whole page, so a cap is spent in that order too — one image
+    // carrying a burst of recent placements would eat the budget and leave the
+    // other cards on the page with nobody named under them.
+  });
 
   // Bucketed once rather than rescanned per group: filtering `rows` inside the
   // loop below is |page| x |rows|.
@@ -205,9 +140,6 @@ async function getPlacementSection({
   }
 
   const items = page.flatMap((group) => {
-    const image = images.get(group.targetId);
-    if (!image) return [];
-
     // Newest first from the query, de-duplicated by a Set: one person stickering
     // an image three times is one name, and `findIndex` inside a filter is
     // quadratic in a number the placer controls.
@@ -218,13 +150,12 @@ async function getPlacementSection({
       // sticker — but it is not somebody to name or link to.
       if (!user || user.deletedAt || !user.username || seen.has(user.id)) return [];
       seen.add(user.id);
-      return [{ id: user.id, username: user.username }];
+      return [{ id: user.id, username: user.username, image: user.image }];
     });
 
     return [
       {
         imageId: group.targetId,
-        image,
         latestAt: group._max.createdAt,
         counterparts,
       },
@@ -318,8 +249,6 @@ export async function getStickerBookSection({
   limit = 30,
   viewerId,
   isModerator = false,
-  domainLevels,
-  viewerLevels,
 }: {
   username: string;
   side: 'placer' | 'owner';
@@ -327,8 +256,6 @@ export async function getStickerBookSection({
   limit?: number;
   viewerId?: number;
   isModerator?: boolean;
-  domainLevels: number;
-  viewerLevels: number;
 }) {
   const { user, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
 
@@ -345,8 +272,6 @@ export async function getStickerBookSection({
     limit: sectionLimit,
     skip: Math.max(page - 1, 0) * sectionLimit,
     blockedIds,
-    domainLevels,
-    viewerLevels,
   });
 
   return { items, hasMore, isOwner, access };
@@ -357,15 +282,11 @@ export async function getStickerBook({
   viewerId,
   isModerator = false,
   limit = 12,
-  domainLevels,
-  viewerLevels,
 }: {
   username: string;
   viewerId?: number;
   isModerator?: boolean;
   limit?: number;
-  domainLevels: number;
-  viewerLevels: number;
 }) {
   const { user, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
 
@@ -395,16 +316,12 @@ export async function getStickerBook({
       side: 'placer',
       limit: sectionLimit,
       blockedIds,
-      domainLevels,
-      viewerLevels,
     }),
     getPlacementSection({
       userId: user.id,
       side: 'owner',
       limit: sectionLimit,
       blockedIds,
-      domainLevels,
-      viewerLevels,
     }),
     access.canViewEarnings ? getEarnedBuzz(user.id) : Promise.resolve(null),
   ]);
