@@ -3,7 +3,6 @@ import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { DomainColor } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { isModerator } from '~/server/routers/base.router';
 import type {
   GetLeaderboardInput,
   GetLeaderboardPositionsInput,
@@ -74,7 +73,11 @@ export async function getLeaderboards(input: GetLeaderboardsInput) {
       description: true,
       scoringDescription: true,
       domain: true,
-      public: isModerator ? true : undefined,
+      // Unconditional: the `where` above already limits non-moderators to public
+      // boards, and UserProfileEditModal filters its showcase options on this
+      // field — selecting it only for moderators would blank that list for
+      // everyone else.
+      public: true,
     },
     orderBy: {
       index: 'asc',

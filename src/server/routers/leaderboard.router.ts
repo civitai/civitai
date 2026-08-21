@@ -19,9 +19,9 @@ const leaderboardEdgeCache = edgeCacheIt({
   ttl: CacheTTL.xs,
 });
 
-// `applyRequestDomainColor` must be `.use()`d BEFORE `cacheIt` on every procedure
-// here: cacheIt hashes the input to build its Redis key, so a domain stamped
-// after it would leave one entry shared across colors.
+// `applyRequestBoardDomainColor` must be `.use()`d BEFORE `cacheIt` on every
+// procedure here: cacheIt hashes the input to build its Redis key, so a domain
+// stamped after it would leave one entry shared across colors.
 export const leaderboardRouter = router({
   getLeaderboards: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -34,7 +34,13 @@ export const leaderboardRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getLeaderboardPositionsSchema)
     .use(applyRequestBoardDomainColor)
-    .use(cacheIt({ ttl: CacheTTL.day, tags: () => ['leaderboard', 'leaderboard-positions'] }))
+    .use(
+      cacheIt({
+        ttl: CacheTTL.day,
+        tags: () => ['leaderboard', 'leaderboard-positions'],
+        varyBy: (ctx) => ({ isModerator: ctx.user?.isModerator ?? false }),
+      })
+    )
     .query(({ input, ctx }) =>
       getLeaderboardPositions({
         ...input,
@@ -50,6 +56,7 @@ export const leaderboardRouter = router({
       cacheIt({
         ttl: CacheTTL.day,
         tags: (input: GetLeaderboardInput) => ['leaderboard', `leaderboard-${input.id}`],
+        varyBy: (ctx) => ({ isModerator: ctx.user?.isModerator ?? false }),
       })
     )
     .use(leaderboardEdgeCache)

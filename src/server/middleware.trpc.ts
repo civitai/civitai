@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hSetWithTTL, sAddWithExpireGe } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
@@ -56,12 +57,17 @@ type CacheItProps<TInput extends object> = {
   key?: string;
   ttl?: number;
   excludeKeys?: (keyof TInput)[];
+  // Response dimensions that live on ctx rather than on the input — the `Vary`
+  // header's job. A procedure whose output varies on something the input never
+  // carries has to declare it here or the key cannot tell two callers apart.
+  varyBy?: (ctx: Context) => Record<string, unknown>;
   tags?: (input: TInput) => string[];
 };
 export function cacheIt<TInput extends object>({
   key,
   ttl,
   excludeKeys,
+  varyBy,
   tags,
 }: CacheItProps<TInput> = {}) {
   ttl ??= 60 * 3;
@@ -72,10 +78,14 @@ export function cacheIt<TInput extends object>({
     if (_input) {
       for (const [key, value] of Object.entries(_input)) {
         if (excludeKeys?.includes(key as keyof TInput)) continue;
-        if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value.sort())];
-
-        if (value) cacheKeyObj[key] = value;
+        if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value)].sort();
+        else if (value) cacheKeyObj[key] = value;
       }
+    }
+    for (const [varyKey, varyValue] of Object.entries(varyBy?.(ctx) ?? {})) {
+      if (_input && Object.prototype.hasOwnProperty.call(_input, varyKey))
+        throw new Error(`cacheIt: varyBy key "${varyKey}" collides with an input key on ${path}`);
+      cacheKeyObj[varyKey] = varyValue;
     }
     const hash = withSpan('trpc:middleware:cacheIt:hash', () => hashifyObject(cacheKeyObj));
     const cacheKey = `${REDIS_KEYS.TRPC.BASE}:${key ?? path.replace('.', ':')}:${hash}` as const;
