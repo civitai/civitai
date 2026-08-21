@@ -265,6 +265,14 @@ async function getFlag(key) {
   console.log(`Flag: ${data.key}`);
   console.log(`Status: ${statusColor}${status}\x1b[0m`);
   console.log(`Type: ${data.type}`);
+  // `enabled` on a boolean flag is the value returned when NO rollout matches, so
+  // enabled:true beside a segment rollout is public, not scoped to that segment.
+  if (data.type === 'BOOLEAN_FLAG_TYPE') {
+    const reach = data.enabled
+      ? '\x1b[33mPUBLIC — everyone no rollout matches gets true\x1b[0m'
+      : 'off for everyone no rollout matches';
+    console.log(`Default: ${data.enabled} — ${reach}`);
+  }
   if (data.description) {
     console.log(`Description: ${data.description}`);
   }
