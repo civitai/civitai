@@ -79,15 +79,17 @@ describe('getImagesForModelVersion withholds meta the creator chose to hide', ()
       const where = `include: ${JSON.stringify(include)}`;
       const rest = stripMetaReaders(await captureQuery(include));
 
-      expect(rest, `${where} — selects the meta column ungated, which ships to the client`).not.toMatch(
-        /\bmeta\b/
-      );
+      expect(
+        rest,
+        `${where} — selects the meta column ungated, which ships to the client`
+      ).not.toMatch(/\bmeta\b/);
 
       // A wildcard names no column, so the assertion above passes over `i.*`
       // while every column including meta ships.
-      expect(rest, `${where} — selects whole rows, which carries meta past the check above`).not.toMatch(
-        /\bi\.\*/
-      );
+      expect(
+        rest,
+        `${where} — selects whole rows, which carries meta past the check above`
+      ).not.toMatch(/\bi\.\*/);
     }
   });
 
