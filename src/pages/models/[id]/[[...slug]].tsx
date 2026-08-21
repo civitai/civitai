@@ -80,6 +80,7 @@ const TransferModelOwnership = dynamic(
   { ssr: false }
 );
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
@@ -1136,6 +1137,7 @@ export default function ModelDetailsV2({
                           <>
                             <Menu.Label>Moderation</Menu.Label>
                             <HideUserButton as="menu-item" userId={model.user.id} />
+                            <BlockUserButton as="menu-item" userId={model.user.id} />
                             <HideModelButton as="menu-item" modelId={model.id} />
                             <Menu.Item
                               leftSection={<IconTagOff size={14} stroke={1.5} />}

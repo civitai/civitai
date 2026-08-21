@@ -291,7 +291,7 @@ export interface HiddenImage extends HiddenPreferenceBase {
   hidden?: boolean;
 }
 
-type HiddenPreferencesKind =
+export type HiddenPreferencesKind =
   | ({ kind: 'tag' } & HiddenTag)
   | ({ kind: 'model' } & HiddenModel)
   | ({ kind: 'model3d' } & HiddenModel3D)
@@ -302,6 +302,14 @@ type HiddenPreferencesKind =
 interface HiddenPreferencesDiff {
   added: Array<HiddenPreferencesKind>;
   removed: Array<HiddenPreferencesKind>;
+  /**
+   * Whether the entity ends up in the corresponding hidden list. Set only by
+   * toggles the server can REFUSE, where the client's optimistic write would
+   * otherwise stand as a state that does not exist. `added`/`removed` cannot
+   * carry this: five of the six kinds return them empty on every call, so an
+   * empty diff means "this kind does not report", not "nothing happened".
+   */
+  hidden?: boolean;
 }
 
 export type HiddenPreferenceTypes = {
@@ -517,11 +525,11 @@ export async function toggleHidden({
 }: ToggleHiddenSchemaOutput & { userId: number }): Promise<HiddenPreferencesDiff> {
   switch (kind) {
     case 'image':
-      return await toggleHideImage({ userId, imageId: data[0].id });
+      return await toggleHideImage({ userId, imageId: data[0].id, setTo: hidden });
     case 'model':
-      return await toggleHideModel({ userId, modelId: data[0].id });
+      return await toggleHideModel({ userId, modelId: data[0].id, setTo: hidden });
     case 'model3d':
-      return await toggleHideModel3D({ userId, model3dId: data[0].id });
+      return await toggleHideModel3D({ userId, model3dId: data[0].id, setTo: hidden });
     case 'user':
       return await toggleHideUser({ userId, targetUserId: data[0].id, setTo: hidden });
     case 'tag':
@@ -626,16 +634,26 @@ async function toggleHiddenTags({
 async function toggleHideModel({
   userId,
   modelId,
+  setTo,
 }: {
   userId: number;
   modelId: number;
+  setTo?: boolean;
 }): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.modelEngagement.findUnique({
     where: { userId_modelId: { userId, modelId } },
     select: { type: true },
   });
+  // `setTo` carries the caller's INTENT; fall back to flipping only when none was
+  // supplied, which is what every in-app caller does today. Without it, an explicit
+  // un-hide of a model with no row CREATED one, and an explicit hide of an
+  // already-hidden model deleted it — both the inverse of what was asked.
+  const hiding = setTo ?? engagement?.type !== 'Hide';
 
-  if (!engagement)
+  if (!hiding) {
+    if (engagement?.type === 'Hide')
+      await dbWrite.modelEngagement.delete({ where: { userId_modelId: { userId, modelId } } });
+  } else if (!engagement)
     await dbWrite.modelEngagement
       .create({ data: { userId, modelId, type: 'Hide' } })
       // Toggle racing itself → P2002 on the (userId, modelId) PK. The Hide row
@@ -643,9 +661,7 @@ async function toggleHideModel({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else if (engagement.type === 'Hide')
-    await dbWrite.modelEngagement.delete({ where: { userId_modelId: { userId, modelId } } });
-  else
+  else if (engagement.type !== 'Hide')
     await dbWrite.modelEngagement.update({
       where: { userId_modelId: { userId, modelId } },
       data: { type: 'Hide' },
@@ -659,6 +675,7 @@ async function toggleHideModel({
   return {
     added: [],
     removed: [],
+    hidden: hiding,
   };
 }
 
@@ -669,16 +686,24 @@ async function toggleHideModel({
 async function toggleHideModel3D({
   userId,
   model3dId,
+  setTo,
 }: {
   userId: number;
   model3dId: number;
+  setTo?: boolean;
 }): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.model3DEngagement.findUnique({
     where: { userId_model3dId: { userId, model3dId } },
     select: { type: true },
   });
+  const hiding = setTo ?? engagement?.type !== 'Hide';
 
-  if (!engagement)
+  if (!hiding) {
+    if (engagement?.type === 'Hide')
+      await dbWrite.model3DEngagement.delete({
+        where: { userId_model3dId: { userId, model3dId } },
+      });
+  } else if (!engagement)
     await dbWrite.model3DEngagement
       .create({ data: { userId, model3dId, type: 'Hide' } })
       // Toggle racing itself → P2002 on the (userId, model3dId) PK. Idempotent
@@ -686,11 +711,7 @@ async function toggleHideModel3D({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else if (engagement.type === 'Hide')
-    await dbWrite.model3DEngagement.delete({
-      where: { userId_model3dId: { userId, model3dId } },
-    });
-  else
+  else if (engagement.type !== 'Hide')
     await dbWrite.model3DEngagement.update({
       where: { userId_model3dId: { userId, model3dId } },
       data: { type: 'Hide' },
@@ -701,6 +722,7 @@ async function toggleHideModel3D({
   return {
     added: [],
     removed: [],
+    hidden: hiding,
   };
 }
 
@@ -728,7 +750,9 @@ async function toggleHideUser({
   // type a hide must never overwrite. Un-hiding removes a Hide and only a Hide:
   // unqualified, it deleted whatever Follow or Block held the pair, and unfiltered
   // on intent it created a Hide row when asked to un-hide a pair that had none.
-  if (hiding) await setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
+  let hidden = false;
+  if (hiding)
+    hidden = await setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
   else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
 
   await userFollowsCache.refresh(userId);
@@ -737,6 +761,7 @@ async function toggleHideUser({
   return {
     added: [],
     removed: [],
+    hidden,
   };
 }
 
@@ -870,15 +895,24 @@ async function toggleBlockUser({
 async function toggleHideImage({
   userId,
   imageId,
+  setTo,
 }: {
   userId: number;
   imageId: number;
+  setTo?: boolean;
 }): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.imageEngagement.findUnique({
     where: { userId_imageId: { userId, imageId } },
     select: { type: true },
   });
-  if (!engagement)
+  const hiding = setTo ?? engagement?.type !== 'Hide';
+
+  if (!hiding) {
+    if (engagement?.type === 'Hide')
+      await dbWrite.imageEngagement.delete({
+        where: { userId_imageId: { userId, imageId } },
+      });
+  } else if (!engagement)
     await dbWrite.imageEngagement
       .create({ data: { userId, imageId, type: 'Hide' } })
       // Toggle racing itself → P2002 on the (userId, imageId) PK. Idempotent
@@ -886,11 +920,7 @@ async function toggleHideImage({
       .catch((error) => {
         if (!isPrismaUniqueViolation(error)) throw error;
       });
-  else if (engagement.type === 'Hide')
-    await dbWrite.imageEngagement.delete({
-      where: { userId_imageId: { userId, imageId } },
-    });
-  else
+  else if (engagement.type !== 'Hide')
     await dbWrite.imageEngagement.update({
       where: { userId_imageId: { userId, imageId } },
       data: { type: 'Hide' },
@@ -904,5 +934,6 @@ async function toggleHideImage({
   return {
     added: [],
     removed: [],
+    hidden: hiding,
   };
 }

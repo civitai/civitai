@@ -91,7 +91,7 @@ import {
   HiddenModels,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
-import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
+import { clearUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
 import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
@@ -867,6 +867,11 @@ export const toggleModelEngagement = async ({
         where: { userId_modelId: { userId, modelId } },
         data: { type, createdAt: new Date() },
       });
+      // EITHER side of the conversion changes hidden-ness, so the other branches'
+      // `type === 'Hide'` test is not enough here: converting away from Hide leaves
+      // the model filtered out of the feed, and converting to it leaves it showing.
+      if (type === 'Hide' || engagement.type === 'Hide')
+        await HiddenModels.refreshCache({ userId });
       return true;
     }
     return true; // no change
@@ -885,9 +890,6 @@ export const toggleModelEngagement = async ({
 
 export const toggleModelNotify = async ({ userId, modelId }: { userId: number; modelId: number }) =>
   toggleModelEngagement({ userId, modelId, type: 'Notify' });
-
-export const toggleModelHide = async ({ userId, modelId }: { userId: number; modelId: number }) =>
-  toggleModelEngagement({ userId, modelId, type: 'Hide' });
 
 export const toggleFollowUser = async ({
   userId,
@@ -970,37 +972,6 @@ export const toggleFollowUser = async ({
   }
 
   return true;
-};
-
-export const toggleHideUser = async ({
-  userId,
-  targetUserId,
-}: {
-  userId: number;
-  targetUserId: number;
-}) => {
-  const engagement = await dbWrite.userEngagement.findUnique({
-    where: { userId_targetUserId: { targetUserId, userId } },
-    select: { type: true },
-  });
-
-  // A Block already hides the target and is strictly stronger, so a hide over one
-  // leaves it alone and reports the target as hidden — which it is. Previously
-  // this matched neither branch, wrote nothing, and returned falsy, so the caller
-  // logged the hide as a removal.
-  if (engagement?.type === UserEngagementType.Block) return true;
-
-  const hiding = engagement?.type !== UserEngagementType.Hide;
-
-  // Scoped by `type`, never by the PK alone: the row read above may already be a
-  // Block, and an unqualified `delete`/`update` would destroy it while reporting
-  // success.
-  if (hiding) await setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
-  else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
-
-  await userFollowsCache.refresh(userId);
-  await HiddenUsers.refreshCache({ userId });
-  return hiding;
 };
 
 export const getUserList = async ({ username, type, limit, page }: GetUserListSchema) => {

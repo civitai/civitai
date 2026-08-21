@@ -103,9 +103,7 @@ import {
   toggleBookmarked,
   toggleContestBan,
   toggleFollowUser,
-  toggleHideUser,
   toggleModelEngagement,
-  toggleModelHide,
   toggleModelNotify,
   toggleReview,
   toggleUserArticleEngagement,
@@ -878,63 +876,6 @@ export const getUserHiddenListHandler = async ({ ctx }: { ctx: ProtectedContext 
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
-  }
-};
-
-// Registered on no router: every hide in the product goes through
-// `toggleHidden({ kind: 'user' })`. Kept and fixed rather than deleted, but the
-// second writer on that table is a hazard in itself — 868kurrfj weighs removing
-// this and `toggleHideUser` in user.service together.
-export const toggleHideUserHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ToggleFollowUserSchema;
-  ctx: ProtectedContext;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-    const result = await toggleHideUser({ ...input, userId });
-    if (result) {
-      await ctx.track.userEngagement({
-        type: 'Hide',
-        targetUserId: input.targetUserId,
-      });
-    } else {
-      await ctx.track.userEngagement({
-        type: 'Delete',
-        targetUserId: input.targetUserId,
-      });
-    }
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const toggleHideModelHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ToggleModelEngagementInput;
-  ctx: ProtectedContext;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-    const result = await toggleModelHide({ ...input, userId });
-    if (result) {
-      await ctx.track.modelEngagement({
-        type: 'Hide',
-        modelId: input.modelId,
-      });
-    } else {
-      await ctx.track.modelEngagement({
-        type: 'Delete',
-        modelId: input.modelId,
-      });
-    }
-    await redis.del(`${REDIS_KEYS.USER.BASE}:${userId}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`);
-  } catch (error) {
-    throw throwDbError(error);
   }
 };
 
