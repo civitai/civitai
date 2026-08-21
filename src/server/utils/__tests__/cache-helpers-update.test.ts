@@ -49,7 +49,11 @@ const makeCache = (dontCacheFn?: (data: Row) => boolean) =>
     dontCacheFn,
   });
 
-const addMember = (current: Row) => ({ ...current, members: [...current.members, 9] });
+// Tolerant of a missing `members` ON PURPOSE. An updater that throws on a marker
+// entry makes the marker guards look tested when what actually stops the write is the
+// exception — verified by mutation: dropping the guards left this suite green until
+// the updater stopped throwing.
+const addMember = (current: Row) => ({ ...current, members: [...(current.members ?? []), 9] });
 
 beforeEach(() => {
   vi.clearAllMocks();
