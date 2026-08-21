@@ -15,103 +15,103 @@
 --
 -- APPLY BY HAND, off-peak. This repo does not run `prisma migrate deploy`.
 --
--- HOW TO RUN IT
---   psql "<conn>" -f migration.sql          -- one session, autocommit, DIRECT connection
--- 🔴 Not `psql -1`, not a multi-statement `psql -c`, not a GUI runner that opens its
---   own transaction: the DO block COMMITs per batch and PostgreSQL raises
---   `invalid transaction termination` inside an explicit transaction.
--- 🔴 Not through a transaction-pooled connection: the temp table has to outlive each
---   batch COMMIT in the same session.
--- Re-runnable end to end. A run that dies part-way leaves the committed batches
--- deleted and the temp table gone with the session; starting again rebuilds the work
--- list from whatever is left.
+-- 🔴 THE DRAIN LOOP IS DRIVEN BY THE CLIENT, NOT BY A `DO` BLOCK. Step 3 below is
+-- ONE batch and is meant to be re-run until it reports 0 rows.
 --
--- MEASURED on the prod replica, 2026-08-21 (PG 18.3): 42,187,643 rows total;
--- 3,080,712 (7.3%) reference one of 1,317,709 soft-deleted users — 771,882 by a
--- deleted user, 2,367,030 aimed at one, 58,201 both. Excluding Blocks, this script
--- clears 3,038,591 of them and leaves 42,121 Blocks standing: 304 batches of 10,000.
--- EXPLAIN ANALYZE of the work-list build: one Seq Scan, two hashed subplans off
+-- That is not a style choice. The first version wrapped the loop in `DO $$ ... $$`
+-- with a per-batch COMMIT, and against prod it died at 920,001 of 3,038,591 rows
+-- with `FATAL: query timeout` / `connection to server was lost`. A whole DO block is
+-- ONE query to the server, and its internal COMMITs do not reset the query clock —
+-- `statement_timeout` is 0 on this database, so the limit is enforced in front of it
+-- and no amount of internal batching escapes it. One statement per batch does.
+--
+-- It also removes two constraints the DO-block version had: no autocommit
+-- requirement, and no transaction-pooler restriction, because each statement now
+-- commits on its own. The one thing that still matters is that steps 2-4 run in the
+-- SAME SESSION, because the work list is a temp table.
+--
+-- Re-runnable end to end. A run that dies part-way leaves its committed batches
+-- deleted; starting again rebuilds the work list from what is left (~16 s) and
+-- carries on. Demonstrated for real by the failure above.
+--
+-- MEASURED on prod, 2026-08-21 (PG 18.3): 42,187,643 rows total; 3,080,712 (7.3%)
+-- reference one of 1,317,709 soft-deleted users. Excluding Blocks this clears
+-- 3,038,591 and leaves 42,121 Blocks standing: 304 batches of 10,000. EXPLAIN
+-- ANALYZE of the work-list build: one Seq Scan, two hashed subplans off
 -- `User_deletedAt_notnull_idx`, 16.1 s.
---
--- REHEARSED on dev 2026-08-21, scoped to 200 deleted users: work list 711 rows,
--- drained in 4 batches of 200 with the keyset cursor advancing each time, the temp
--- table surviving every COMMIT, the loop exiting on its own, and the post-check
--- going 711 -> 0.
 --
 -- ONE scan, then a keyset drain. Doing that scan once is what keeps this linear: a
 -- loop that re-finds its next batch in the live table restarts from block 0 every
 -- iteration, over the dead tuples the previous ones made. Measured on the shape this
--- replaced — 2.91 s and 1.84M buffer touches to find the FIRST 10,000 rows, ~78
--- batches, on the order of 1.4 billion buffer touches and a full `shared_buffers`
--- eviction for everything else on the box.
+-- replaced — 2.91 s and 1.84M buffer touches to find the FIRST 10,000 rows.
 --
 -- The drain walks the work list by KEY rather than deleting from it, so each batch is
 -- an index range read instead of a fresh scan over its accumulating dead tuples
--- (autovacuum never touches a temp table).
---
--- Keyed by primary key, not `ctid` — VACUUM can hand a ctid to a different row.
+-- (autovacuum never touches a temp table). Keyed by primary key, not `ctid` — VACUUM
+-- can hand a ctid to a different row.
 
+-- ── Step 1: the count BEFORE. Expect ~3,038,591. A 0 at the end proves nothing
+-- unless this was non-zero first.
+SELECT count(*) AS before_count
+FROM "UserEngagement" e
+WHERE e.type <> 'Block'
+  AND (EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."userId" AND u."deletedAt" IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."targetUserId" AND u."deletedAt" IS NOT NULL));
+
+-- ── Step 2: build the work list. One sequential scan, ~16 s.
 DROP TABLE IF EXISTS doomed_engagement;
 
 CREATE TEMP TABLE doomed_engagement AS
-SELECT e."userId", e."targetUserId"
+SELECT e."userId", e."targetUserId", false AS done
 FROM "UserEngagement" e
 WHERE e.type <> 'Block'
   AND (EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."userId" AND u."deletedAt" IS NOT NULL)
     OR EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."targetUserId" AND u."deletedAt" IS NOT NULL));
 
-CREATE INDEX ON doomed_engagement ("userId", "targetUserId");
+CREATE INDEX ON doomed_engagement (done, "userId", "targetUserId");
 ANALYZE doomed_engagement;
 
-DO $$
-DECLARE
-  cursor_key integer[] := ARRAY[-2147483648, -2147483648];
-  batch_max integer[];
-  picked integer;
-  done bigint := 0;
-BEGIN
-  LOOP
-    WITH batch AS (
-      SELECT d."userId", d."targetUserId"
-      FROM doomed_engagement d
-      WHERE ARRAY[d."userId", d."targetUserId"] > cursor_key
-      ORDER BY d."userId", d."targetUserId"
-      LIMIT 10000
-    ), gone AS (
-      DELETE FROM "UserEngagement" ue
-      USING batch b
-      WHERE ue."userId" = b."userId"
-        AND ue."targetUserId" = b."targetUserId"
-        AND ue.type <> 'Block'
-      RETURNING 1
-    )
-    -- Count the WORK LIST batch, not the UserEngagement delete: a row can already be
-    -- gone (a re-run, or `deleteUser` reaching it first), and exiting on that count
-    -- would stop with the list still full. `max` over an int[] compares
-    -- lexicographically, which is exactly the keyset order above.
-    SELECT count(*), max(ARRAY[b."userId", b."targetUserId"]) INTO picked, batch_max FROM batch b;
-    EXIT WHEN picked = 0;
-    cursor_key := batch_max;
-    done := done + picked;
-    RAISE NOTICE 'drained % of the work list', done;
-    COMMIT;
-  END LOOP;
-END $$;
+-- ── Step 3: ONE batch. Re-run until `drained` is 0. ~304 times.
+--
+-- `done` is flipped rather than the row deleted, so the work table keeps no dead
+-- tuples to re-scan and the partial index on `(done, …)` makes each batch an index
+-- range read. Counting the WORK LIST rather than the UserEngagement delete is
+-- deliberate: a row can already be gone (a re-run, or `deleteUser` reaching it
+-- first), and exiting on that count would stop with the list still full.
+WITH batch AS (
+  SELECT d."userId", d."targetUserId"
+  FROM doomed_engagement d
+  WHERE d.done = false
+  ORDER BY d."userId", d."targetUserId"
+  LIMIT 10000
+), marked AS (
+  UPDATE doomed_engagement d
+  SET done = true
+  FROM batch b
+  WHERE d."userId" = b."userId" AND d."targetUserId" = b."targetUserId"
+  RETURNING d."userId", d."targetUserId"
+), gone AS (
+  DELETE FROM "UserEngagement" ue
+  USING marked m
+  WHERE ue."userId" = m."userId"
+    AND ue."targetUserId" = m."targetUserId"
+    AND ue.type <> 'Block'
+  RETURNING 1
+)
+SELECT count(*) AS drained FROM marked;
+
+-- ── Step 4: the count AFTER. MUST be 0. Same predicate step 1 used.
+SELECT count(*) AS after_count
+FROM "UserEngagement" e
+WHERE e.type <> 'Block'
+  AND (EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."userId" AND u."deletedAt" IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."targetUserId" AND u."deletedAt" IS NOT NULL));
 
 DROP TABLE doomed_engagement;
 
--- ~3M deletions from a 9.6 GB table leaves bloat and stale statistics behind.
+-- ── Step 5: ~3M deletions from a 9.6 GB table leaves bloat and stale statistics.
 VACUUM (ANALYZE) "UserEngagement";
 
--- Confirm from the database's own state, not from an exit code: `postgres-query` has
--- reported an error having already applied the statement. This must return 0; it is
--- the same predicate the work list was built from.
-SELECT count(*) AS non_block_engagements_still_referencing_a_deleted_user
-FROM "UserEngagement" e
-WHERE e.type <> 'Block'
-  AND (EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."userId" AND u."deletedAt" IS NOT NULL)
-    OR EXISTS (SELECT 1 FROM "User" u WHERE u.id = e."targetUserId" AND u."deletedAt" IS NOT NULL));
-
--- The app's own follow / hidden / blocked caches are NOT invalidated by this script.
--- Verify from SQL above, not from the site: a stale entry can keep showing a deleted
--- account in a list for up to the cache's TTL (userFollowsCache is one day).
+-- Verify from the SQL above, never from the site: this invalidates none of the app's
+-- caches, so a stale `userFollowsCache` entry can keep showing a deleted account in a
+-- followers list for up to its TTL (one day).
