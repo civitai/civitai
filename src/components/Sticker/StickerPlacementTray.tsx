@@ -12,11 +12,7 @@ import {
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import {
-  remainingStickerUses,
-  useOwnedSticker,
-  useStickerRefill,
-} from '~/components/Sticker/sticker.util';
+import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { trpc } from '~/utils/trpc';
@@ -81,15 +77,6 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // below, because the pickup gesture is a hook and cannot be conditional.
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
   const { grab, dragging } = useStickerDragOut(maxScale);
-
-  /**
-   * What a spent sticker's draft may be refilled with, shared with the draft
-   * layer so both ask the same question of the same cache key. It was two copies
-   * of this rule keyed on two different id lists — the layer's refetched
-   * mid-arrangement, which is exactly what the comment that used to live here
-   * warned against.
-   */
-  const refillFor = useStickerRefill();
 
   if (!showing) return null;
 
@@ -221,15 +208,13 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   <button
                     key={option.id}
                     type="button"
-                    // An exhausted sticker drags out like any other. What is
-                    // different is the draft it makes: it carries the price of
-                    // one more use, and asks for that before it can be placed.
-                    // Arranging it first is the point — the same argument as
-                    // buying one from the shop, and the same gesture.
-                    onPointerDown={grab(
-                      option.id,
-                      exhausted ? refillFor(option.id, option.pricePerUse) : undefined
-                    )}
+                    // 🔴 NO GATE IS STORED HERE, DELIBERATELY. An exhausted
+                    // sticker drags out like any other and the draft layer
+                    // decides what it owes, because that answer changes as other
+                    // drafts come and go: freezing "you must buy this" onto the
+                    // draft is what left a sticker asking to be bought for a use
+                    // another draft had just handed back.
+                    onPointerDown={grab(option.id)}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
                       drafts.some((draft) => draft.cosmeticId === option.id) ||

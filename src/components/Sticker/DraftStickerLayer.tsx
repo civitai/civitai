@@ -9,7 +9,7 @@ import {
 } from '~/components/Sticker/placement.util';
 import {
   allocateDraftEntitlements,
-  duplicateGateFor,
+  unownedGateFor,
   useOwnedSticker,
   useStickerCosmetics,
   useStickerRefill,
@@ -109,20 +109,12 @@ export function DraftStickerLayer() {
       const source = current.find((draft) => draft.id === id);
       if (!source) return null;
 
-      return duplicateDraft(
-        id,
-        duplicateGateFor({
-          source,
-          drafts: current,
-          balances,
-          refillFor,
-          // The owned payload's price, so a copy made before the offers query
-          // lands is not frozen on "this sticker sells no extra uses".
-          ownedPricePerUse: sticker.find((option) => option.id === source.cosmeticId)?.pricePerUse,
-        })
-      );
+      // Only the sticker-not-owned-yet gate travels with a copy. Whether an
+      // owned sticker still has a use is decided across the whole set on every
+      // render — storing that answer here is exactly what froze it before.
+      return duplicateDraft(id, unownedGateFor(source));
     },
-    [balances, refillFor, duplicateDraft, sticker]
+    [duplicateDraft]
   );
 
   const gesture = useRef<Gesture | null>(null);

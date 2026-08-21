@@ -297,47 +297,27 @@ export function remainingStickerUses({
 }
 
 /**
- * Whether a duplicated draft has to be bought before it can be placed.
+ * The gate a copy inherits: the sticker-not-owned-yet one, and nothing else.
  *
- * 🔴 THE MONEY DECISION, LIFTED OUT OF THE COMPONENT SO IT CAN BE TESTED. Every
- * branch below is a case that was live and unasserted while this was an inline
- * closure in the layer, and two of them were wrong.
+ * 🔴 WHAT IS **NOT** HERE IS THE POINT. This used to decide the refill gate too —
+ * "you are out of uses, so this copy must be topped up" — and write it onto the
+ * copy. That is a fact about the moment the copy was made, not about the copy,
+ * and it went stale the instant another draft was deleted: the use came back and
+ * the copy carried on asking to be bought for it. Justin found it by using it,
+ * twice, because the first fix left this path still writing one.
  *
- * The gate is not copied from the source draft, because it says "this sticker is
- * not bought yet" — a fact about the viewer's inventory at the moment the copy
- * is made, not a property of the draft. But it is not discarded either:
+ * Whether an owned sticker has a use left is now decided across every draft on
+ * the image, on every render, by `allocateDraftEntitlements`. Nothing stores it.
  *
- * - **Not owned at all** (no balance row) — a sticker dragged from the shop and
- *   still unbought. The copy needs the SAME gate, because one purchase grants
- *   the sticker and `markPurchased` then clears every draft of it. Dropping the
- *   gate here was the bug: it produced a Place button the server refuses at
- *   `assertHasUse`, from the one direction the original code did not consider.
- * - **Not loaded yet** — indistinguishable from the above at this layer, and the
- *   honest answer is the same: carry the source's gate rather than invent one.
- *   Guessing "has uses" hands out a draft that cannot be placed; guessing
- *   "spent" offers to sell a top-up to someone with plenty.
- * - **Unlimited, or uses left after every draft** — no gate.
- * - **Spent** — the top-up offer a fresh pickup of a spent sticker would get.
+ * A sticker that is not owned at all is different: it must be bought before it
+ * can be placed, one purchase grants it, and `markPurchased` then frees every
+ * draft of it. That is a property of the draft and it travels with the copy.
  */
-export function duplicateGateFor({
-  source,
-  drafts,
-  balances,
-  refillFor,
-  ownedPricePerUse,
-}: {
-  source: { cosmeticId: number; purchase?: DraftPurchase };
-  drafts: { cosmeticId: number }[];
-  balances: { cosmeticId: number; remaining: number | null }[] | undefined;
-  refillFor: (cosmeticId: number, ownedPricePerUse?: number) => DraftPurchase;
-  ownedPricePerUse?: number;
-}): DraftPurchase | undefined {
-  const remaining = remainingStickerUses({ balances, drafts, cosmeticId: source.cosmeticId });
+export function unownedGateFor(source: { purchase?: DraftPurchase }): DraftPurchase | undefined {
+  const purchase = source.purchase;
+  if (!purchase?.pack || purchase.refill) return undefined;
 
-  if (remaining === undefined) return source.purchase;
-  if (remaining === null || remaining > 0) return undefined;
-
-  return refillFor(source.cosmeticId, ownedPricePerUse);
+  return purchase;
 }
 
 /**
