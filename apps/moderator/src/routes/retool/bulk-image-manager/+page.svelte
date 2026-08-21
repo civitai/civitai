@@ -14,7 +14,7 @@
   import type { ActionData, PageData } from './$types';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
   import { BULK_SOURCE_LABELS, BULK_SOURCES } from './sources';
   import { DEFAULT_LIMIT, LIMIT_OPTIONS } from './limits';
@@ -385,6 +385,7 @@
 {/if}
 
 {#snippet imageCard(img: {
+  id: number;
   ingestion?: string;
   blockedFor?: string | null;
   needsReview?: string | null;
@@ -408,6 +409,10 @@
         minor={img.minor}
       />
       <span>{dateTime(img.createdAt ?? null)}</span>
+      <!-- New tab: this page's whole job is assembling a selection, and navigating away loses it. -->
+      <a href={imageLookupUrl(img.id)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+        Lookup #{img.id}
+      </a>
     </div>
 
     <!-- Removing either of these breaks something the owner did not upload: an account's avatar, or

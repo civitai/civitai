@@ -1,5 +1,6 @@
 import {
   moderatorBulkImageManagerPath,
+  moderatorImageLookupPath,
   moderatorUserLookupPath,
 } from '@civitai/shared/moderator-paths';
 
@@ -61,6 +62,7 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
 // moves, the copy nobody updated is the one that becomes a dead link.
 export const userLookupUrl = moderatorUserLookupPath;
 export const bulkImageManagerUrl = moderatorBulkImageManagerPath;
+export const imageLookupUrl = moderatorImageLookupPath;
 
 export const chatAuditChatUrl = (chatId: number) => `/retool/chat-audit/chats?chat=${chatId}`;
 

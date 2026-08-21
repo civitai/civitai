@@ -48,13 +48,13 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // Reaching the page is an investigation permission; removing content is not.
   const canAct = canAccess(locals.user, '/users');
 
+  // Every branch below returns these, including `wide` — this page is one image grid whatever the
+  // source resolved to, and a sixth early return that forgot it would render the grid capped.
+  const shell = { source, q, limit, offset, canAct, wide: true };
+
   if (!q)
     return {
-      source,
-      q,
-      limit,
-      offset,
-      canAct,
+      ...shell,
       batch: null,
       notFound: false,
       owners: [],
@@ -70,11 +70,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
     const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
     return {
-      source,
-      q,
-      limit,
-      offset,
-      canAct,
+      ...shell,
       batch,
       notFound: batch.items.length === 0 && offset === 0,
       owners,
@@ -88,11 +84,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // fat-fingered extra digit errored out of `load` and rendered a 500 instead of "no images found".
   if (/^\d+$/.test(q) && Number(q) > MAX_INT4)
     return {
-      source,
-      q,
-      limit,
-      offset,
-      canAct,
+      ...shell,
       batch: null,
       notFound: true,
       owners: [],
@@ -103,11 +95,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const id = byUser ? await resolveUserId(q) : /^\d+$/.test(q) ? Number(q) : null;
   if (!id || id > MAX_INT4)
     return {
-      source,
-      q,
-      limit,
-      offset,
-      canAct,
+      ...shell,
       batch: null,
       notFound: true,
       owners: [],
@@ -137,11 +125,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // The RESOLVED account, not the term that was typed: the removal is scoped by id, and `q` may be a
   // username, a display name or a stale id.
   return {
-    source,
-    q,
-    limit,
-    offset,
-    canAct,
+    ...shell,
     batch,
     notFound: batch.items.length === 0 && offset === 0,
     owners,
