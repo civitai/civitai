@@ -30,9 +30,7 @@ export function stickerBookSectionCopy(
     };
 
   return {
-    title: isOwner
-      ? 'Your images that got stickered'
-      : `${username}'s images that got stickered`,
+    title: isOwner ? 'Your images that got stickered' : `${username}'s images that got stickered`,
     empty: isOwner
       ? 'Nobody has put a sticker on your work yet. Accepted placements show up here.'
       : 'Nothing here yet.',

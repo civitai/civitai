@@ -90,11 +90,7 @@ function StickerBookCard({ item }: { item: BookItem }) {
         {/* The routed dialog, like every other image grid: a sticker book is a
             place you browse, and navigating away from the tab to come back for
             the next one is not browsing. */}
-        <RoutedDialogLink
-          name="imageDetail"
-          state={{ imageId: item.imageId }}
-          className="block"
-        >
+        <RoutedDialogLink name="imageDetail" state={{ imageId: item.imageId }} className="block">
           {/* The card is the picture's own shape rather than a fixed square: the
               sticker's position is a fraction of the ARTWORK, and a crop moves
               the artwork inside the box. `CardStickerOverlay` measures the drawn
