@@ -1,33 +1,44 @@
 import * as z from 'zod';
 import { trackedReasons } from '~/utils/login-helpers';
 
+// Both lists mirror the `views` / `daily_views` Enum8 columns in ClickHouse, in
+// their stored order. A value the columns carry but these omit is unreachable:
+// `TrackView` is typed from this schema, and the `/api/internal/pulse` beacon
+// rejects it 400 into a fire-and-forget catch. `Tracker`'s ViewType /
+// ViewEntityType derive from these, so the two cannot drift apart.
+export const VIEW_TYPES = [
+  'ProfileView',
+  'ImageView',
+  'PostView',
+  'ModelView',
+  'ModelVersionView',
+  'ArticleView',
+  'CollectionView',
+  'BountyView',
+  'BountyEntryView',
+  'Model3DView',
+  'ComicProjectView',
+  'ComicChapterView',
+] as const;
+
+export const VIEW_ENTITY_TYPES = [
+  'User',
+  'Image',
+  'Post',
+  'Model',
+  'ModelVersion',
+  'Article',
+  'Collection',
+  'Bounty',
+  'BountyEntry',
+  'Model3D',
+  'ComicProject',
+  'ComicChapter',
+] as const;
+
 export const addViewSchema = z.object({
-  type: z.enum([
-    'ProfileView',
-    'ImageView',
-    'PostView',
-    'ModelView',
-    'ModelVersionView',
-    'ArticleView',
-    'BountyView',
-    'BountyEntryView',
-    'Model3DView',
-    'ComicProjectView',
-    'ComicChapterView',
-  ]),
-  entityType: z.enum([
-    'User',
-    'Image',
-    'Post',
-    'Model',
-    'ModelVersion',
-    'Article',
-    'Bounty',
-    'BountyEntry',
-    'Model3D',
-    'ComicProject',
-    'ComicChapter',
-  ]),
+  type: z.enum(VIEW_TYPES),
+  entityType: z.enum(VIEW_ENTITY_TYPES),
   entityId: z.number(),
   ads: z.enum(['Member', 'Blocked', 'Served', 'Off']).optional(),
   nsfw: z.boolean().optional(),
