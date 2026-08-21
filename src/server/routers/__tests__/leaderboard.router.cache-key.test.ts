@@ -37,7 +37,9 @@ async function readKey(mw: Middleware, path: string, input: unknown, isModerator
     path,
   });
   const needle = `:${path.replace('.', ':')}:`;
-  return redisFake.packed.get.mock.calls.map((call) => call[0] as string).find((k) => k.includes(needle));
+  return redisFake.packed.get.mock.calls
+    .map((call) => call[0] as string)
+    .find((k) => k.includes(needle));
 }
 
 // By behaviour, not position: these chains also carry a domain middleware and an
