@@ -1,11 +1,14 @@
 import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { unlockTokensForUser } from '~/server/services/subscriptions.service';
-import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
-const schema = z.object({
+export const schema = z.object({
   userIds: commaDelimitedNumberArray(),
-  force: z.coerce.boolean().optional(),
+  // booleanString, not z.coerce.boolean: this schema is parsed against req.query, where
+  // coerce runs JS Boolean() and makes `&force=false` TRUE — unlocking every locked token
+  // for each user instead of one, across the whole batch.
+  force: booleanString().optional(),
 });
 
 type UnlockResult = {
