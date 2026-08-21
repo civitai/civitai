@@ -1,4 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import type * as ModelCardContext from '~/components/Cards/ModelCardContext';
+import type * as TrpcModule from '~/utils/trpc';
 
 // =============================================================================
 // ModelCard — feed review-indicator now reads batched membership, not the
@@ -39,7 +41,15 @@ vi.mock('~/hooks/useEngagedModelMembership', () => ({
 }));
 
 // --- legacy endpoint spy (must never fire) ----------------------------------
-vi.mock('~/utils/trpc', () => ({
+// The `trpc` export is still replaced wholesale — that object IS the spy, and
+// keeping it bare is what makes "the card touched no other endpoint" observable
+// rather than merely unasserted. What changed is that the MODULE is spread, so
+// its other exports (`trpcVanilla`, `setTrpcBatchingEnabled`, …) survive. A
+// factory that omitted them handed `undefined` to every importer in this file's
+// module graph — the failure mode `local-rules/no-wholesale-module-mock` exists
+// to stop, which has silently disabled ~36 tests here before.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
   trpc: { user: { getEngagedModels: { useQuery: mocks.getEngagedModelsUseQuery } } },
 }));
 
@@ -61,8 +71,26 @@ vi.mock('~/components/Metrics', () => ({
   Metrics: ({ children, initial }: any) => children(initial),
   AnimatedCount: ({ value }: any) => <>{value}</>,
 }));
-vi.mock('~/components/Cards/ModelCardContext', () => ({
+// Spreads the real module rather than listing its exports, and that is the whole
+// point rather than tidiness. The hand-listed version of this mock supplied only
+// `useModelCardContext`; when #4112 gave `ModelCard.tsx` a second import from
+// here — `useModelSaleBadge` — the module the card linked against no longer had
+// it, and the file died at IMPORT with "does not provide an export named
+// 'useModelSaleBadge'". That reports as `Tests no tests`, not as a failure count,
+// so the whole component tier went red with nothing naming a broken assertion.
+// A spread cannot go stale the same way: a new export arrives on its own.
+//
+// The two sale hooks are then stubbed back out deliberately. Both route through
+// `trpc.model.getActiveSales.useQuery`, and the `~/utils/trpc` mock above is a
+// deliberately minimal spy that carries only `user.getEngagedModels` — so
+// running the real hooks would reach an undefined namespace. Stubbing them keeps
+// the spread from ever touching it. `undefined` is "no sale", the default state,
+// and the sale badge is shadowed here rather than under test.
+vi.mock('~/components/Cards/ModelCardContext', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelCardContext>()),
   useModelCardContext: () => ({ useModelVersionRedirect: false, activeBaseModels: undefined }),
+  useModelSaleBadge: () => undefined,
+  useModelSaleBadges: () => undefined,
 }));
 vi.mock('~/components/Cards/ModelCardContextMenu', () => ({ ModelCardContextMenu: () => null }));
 vi.mock('~/components/Cards/components/RemixButton', () => ({ RemixButton: () => null }));
