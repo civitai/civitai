@@ -9,6 +9,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { badgeVariants } from '@civitai/ui/components/ui/badge/index.js';
   import ListFilterBar from '$lib/components/ListFilterBar.svelte';
+  import { num } from '$lib/format';
   import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
   import { visibleBlocklistItems } from './filter';
   import type { ActionData, PageData } from './$types';
@@ -20,6 +21,7 @@
   let text = $state('');
   let filters = $state<Record<string, string>>({});
   let removing = $state<string | null>(null);
+  let confirming = $state<string | null>(null);
 
   // EmailDomain is 8295 entries in production. Rendering the whole list is both unusable and
   // enough DOM to stall the tab, so the list is filtered first and then capped.
@@ -38,6 +40,7 @@
     text = '';
     mode = 'add';
     filters = {};
+    confirming = null;
   }
 
   function setMode(next: 'add' | 'remove') {
@@ -69,9 +72,21 @@
       return async ({ update }) => {
         await update();
         removing = null;
+        // Cleared here rather than in the confirm button's own click handler. Svelte flushes effects
+        // synchronously after a DOM event handler, so clearing it there unmounts the submitter through
+        // its `{#if}` before the browser runs the form's activation behaviour — the submit never fires
+        // and "Remove" behaves exactly like "Cancel", silently. Same trap as `ConfirmSubmit.svelte`.
+        confirming = null;
       };
     };
 </script>
+
+<!-- One window listener rather than one per chip: at CHIP_LIMIT that would be 200 of them. -->
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape') confirming = null;
+  }}
+/>
 
 <header class="page-header">
   <h1>Blocklists</h1>
@@ -165,29 +180,52 @@
               method="POST"
               action="?/remove"
               use:enhance={submitChip(item)}
-              class="{badgeVariants({ variant: 'secondary' })} gap-1 py-1 pl-3 pr-1"
+              class="{badgeVariants({ variant: 'secondary' })} relative gap-1 py-1 pl-3 pr-1"
             >
               <input type="hidden" name="id" value={data.blocklist.id} />
               <input type="hidden" name="blocklist" value={item} />
               {item}
               <Button
-                type="submit"
+                type="button"
                 variant="ghost"
                 size="icon"
                 class="size-4"
                 disabled={removing !== null}
                 aria-label="Remove {item}"
                 title="Remove {item}"
+                onclick={() => (confirming = item)}
               >
                 &times;
               </Button>
+
+              <!-- Anchored inside the form rather than portalled: a portalled confirm is outside the
+                   <form> in the DOM, so its submit button loses the implicit association and posts
+                   nothing. Absolute so opening it cannot reflow a 200-chip wrapped list. -->
+              {#if confirming === item}
+                <div
+                  class="absolute bottom-full left-0 z-10 mb-1 flex w-max items-center gap-2 rounded-md border bg-popover p-2 text-popover-foreground shadow-md"
+                >
+                  <span class="text-xs">Remove <strong>{item}</strong>?</span>
+                  <Button type="submit" size="sm" variant="destructive" disabled={removing !== null}>
+                    Remove
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onclick={() => (confirming = null)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              {/if}
             </form>
           {/each}
         </div>
         {#if shown.matches.length > shown.visible.length}
           <p class="text-xs text-dark-2">
-            Showing {shown.visible.length} of {shown.matches.length} matches. Narrow the filter to
-            reach the rest.
+            Showing {num(shown.visible.length)} of {num(shown.matches.length)} matches. Narrow the
+            filter to reach the rest.
           </p>
         {/if}
       {/if}
