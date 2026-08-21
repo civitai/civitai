@@ -215,3 +215,57 @@ describe('toggleUserBountyEngagement — idempotent on P2002 race (sibling)', ()
     ).rejects.toThrow('boom');
   });
 });
+
+/**
+ * The update branch (`setTo && engagement.type !== type`) converts a row in place and
+ * was the only branch that never refreshed the hidden-models cache. Both directions
+ * change hidden-ness, and the delete/create branches' `type === 'Hide'` test only sees
+ * the NEW type — so copying it here would have fixed one direction and left the other.
+ *
+ * Reachable from the live `user.toggleNotifyModel`: `toggleModelEngagementInput`
+ * declares `type` as the full `ModelEngagementType` enum, Hide included, plus `setTo`.
+ */
+describe('toggleModelEngagement — the update branch refreshes the hidden-models cache', () => {
+  it('Notify -> Hide refreshes it, or the model keeps showing in the feed', async () => {
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+
+    const result = await toggleModelEngagement({
+      userId: 42,
+      modelId: 10,
+      type: 'Hide',
+      setTo: true,
+    });
+
+    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
+    expect(refreshCache).toHaveBeenCalledWith({ userId: 42 });
+    expect(result).toBe(true);
+  });
+
+  it('Hide -> Notify refreshes it, or the model stays filtered out', async () => {
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Hide' });
+
+    const result = await toggleModelEngagement({
+      userId: 42,
+      modelId: 10,
+      type: 'Notify',
+      setTo: true,
+    });
+
+    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
+    // The new type is not Hide — only the OLD one is, which is why the guard has to
+    // read both sides.
+    expect(refreshCache).toHaveBeenCalledWith({ userId: 42 });
+    expect(result).toBe(true);
+  });
+
+  // Negative control: refreshing unconditionally would pass both cases above and
+  // spend a Redis round-trip on every favourite/notify conversion.
+  it('Favorite -> Notify does NOT refresh it — neither side is Hide', async () => {
+    mockDbWrite.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Favorite' });
+
+    await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify', setTo: true });
+
+    expect(mockDbWrite.modelEngagement.update).toHaveBeenCalledTimes(1);
+    expect(refreshCache).not.toHaveBeenCalled();
+  });
+});

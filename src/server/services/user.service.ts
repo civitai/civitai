@@ -875,6 +875,11 @@ export const toggleModelEngagement = async ({
         where: { userId_modelId: { userId, modelId } },
         data: { type, createdAt: new Date() },
       });
+      // EITHER side of the conversion changes hidden-ness, so the other branches'
+      // `type === 'Hide'` test is not enough here: converting away from Hide leaves
+      // the model filtered out of the feed, and converting to it leaves it showing.
+      if (type === 'Hide' || engagement.type === 'Hide')
+        await HiddenModels.refreshCache({ userId });
       return true;
     }
     return true; // no change
