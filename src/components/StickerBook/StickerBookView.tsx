@@ -177,7 +177,7 @@ export function StickerBookView({ username }: { username: string }) {
             <Text component={Link} href="/shop" c="blue.4" inherit>
               shop
             </Text>{' '}
-            and put one on an image, or turn stickers on for your own images in the settings above.
+            and put one on an image, or turn stickers on for your own images from the gear above.
           </Text>
         </Alert>
       )}
