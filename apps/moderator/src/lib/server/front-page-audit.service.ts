@@ -1,5 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import { dbRead } from './db';
+import { dbRead, dbWrite } from './db';
 import { voteOnImageTags } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -150,4 +150,37 @@ export async function voteOnTag(input: {
     { imageId: input.imageId, tagId: input.tagId, vote: input.direction === 'up' ? 1 : -1 },
   ]);
   return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+/**
+ * Retool's `InsertRatingGame`: every rating set on this sweep also lands in `research_ratings`, the
+ * dataset behind Queue Stats' "Research ratings" board.
+ *
+ * Unported, this was not a silent omission — `/retool/queue-stats` renders that board directly beside
+ * "Ratings set", which is `ModActivity`-backed and keeps counting. One list grew and the other could
+ * not, with nothing on screen saying why.
+ *
+ * The upsert is Retool's, verbatim including the conflict target (`research_ratings_pkey` is
+ * `(userId, imageId)`): re-rating an image REPLACES that moderator's row rather than adding a second,
+ * so the board counts images judged, not judgements made. `sane` is left alone — Retool never set it.
+ *
+ * Best-effort by design. This is a research dataset, not the moderation record, so a failure here must
+ * not fail the rating that already committed.
+ */
+export async function recordResearchRating(input: {
+  userId: number;
+  imageId: number;
+  nsfwLevel: number;
+}): Promise<void> {
+  // Raw `sql` because the table is not in the Prisma schema and so not in the generated Kysely types —
+  // the same treatment `queue-stats.service.ts` gives it on the read side.
+  try {
+    await sql`
+      INSERT INTO "research_ratings" ("userId", "imageId", "nsfwLevel")
+      VALUES (${input.userId}, ${input.imageId}, ${input.nsfwLevel})
+      ON CONFLICT ("userId", "imageId") DO UPDATE SET "nsfwLevel" = EXCLUDED."nsfwLevel"
+    `.execute(dbWrite);
+  } catch (e) {
+    console.error('[front-page-audit] research rating not recorded', e);
+  }
 }

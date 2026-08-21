@@ -7,6 +7,9 @@ import { createNotification } from '~/server/services/notification.service';
 import { resetProhibitedRequestCount } from '~/server/services/orchestrator/promptAuditing';
 import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
 import { updateUserById } from '~/server/services/user.service';
+import { clearedMuteFields } from '~/server/services/mute-provenance';
+import { dbRead } from '~/server/db/client';
+import type { UserMeta } from '~/server/schema/user.schema';
 import { PROTECTED_USER_IDS } from '~/server/services/user-restriction.service';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
@@ -62,9 +65,16 @@ export async function resolveUserRestriction({
     );
     await refreshSession(restriction.userId, { caller: 'moderation' });
   } else if (status === UserRestrictionStatus.Overturned) {
+    // Overturning clears the whole mute, not just the flag: an uphold sets `mutedAt` (line above), and
+    // leaving it behind on an overturn keeps the account off every leaderboard and makes the next
+    // automatic mute read as a moderator's.
+    const existing = await dbRead.user.findUnique({
+      where: { id: restriction.userId },
+      select: { meta: true },
+    });
     await updateUserById({
       id: restriction.userId,
-      data: { muted: false },
+      data: clearedMuteFields(existing?.meta as UserMeta | null),
       updateSource: 'moderator:generationRestrictionOverturned',
     });
     await reinstateSubscription({ userId: restriction.userId }).catch((error) =>

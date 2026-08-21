@@ -23,10 +23,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
-import {
-  useTipaltiConfigurationUrl,
-  useUserPaymentConfiguration,
-} from '~/components/UserPaymentConfiguration/util';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import dynamic from 'next/dynamic';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -277,7 +274,6 @@ const TipaltiConfigurationCard = () => {
   if (!userPaymentConfiguration) return null;
 
   if (!userPaymentConfiguration?.tipaltiAccountId) {
-    // True as of now, we don't support stripe anymore
     return (
       <Stack>
         <Group justify="space-between">
@@ -303,10 +299,8 @@ const TipaltiConfigurationCard = () => {
 
       <Divider my="xs" />
 
-      {userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() ===
-        TipaltiStatus.PendingOnboarding ||
-      userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() ===
-        TipaltiStatus.InternalValue ? (
+      {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ||
+      userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.InternalValue ? (
         <>
           <Stack>
             <Text>
@@ -315,7 +309,7 @@ const TipaltiConfigurationCard = () => {
             </Text>
           </Stack>
         </>
-      ) : userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() === TipaltiStatus.Active ? (
+      ) : userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.Active ? (
         <>
           {userPaymentConfiguration?.tipaltiPaymentsEnabled ? (
             <Text>
@@ -347,7 +341,7 @@ const TipaltiConfigurationCard = () => {
 
       <Divider my="xs" />
 
-      {![TipaltiStatus.Blocked, TipaltiStatus.BlockedByTipalti].some(
+      {![TipaltiStatus.Blocked, TipaltiStatus.BlockedByProvider].some(
         (s) => s === userPaymentConfiguration?.tipaltiAccountStatus
       ) && (
         <Button
@@ -379,11 +373,13 @@ export function UserPaymentConfigurationCard() {
           <Loader />
         </Stack>
       )}
-      {userPaymentConfiguration?.stripeAccountId && <StripeConnectConfigurationCard />}
-      {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
-        <Divider my="xl" />
+      {userPaymentConfiguration?.stripeAccountId && (
+        <>
+          <StripeConnectConfigurationCard />
+          <Divider my="xl" />
+        </>
       )}
-      {!userPaymentConfiguration?.tipaltiAccountId && <TipaltiConfigurationCard />}
+      <TipaltiConfigurationCard />
     </Card>
   );
 }

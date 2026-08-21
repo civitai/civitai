@@ -75,9 +75,12 @@ import {
   type OffsiteContentRating,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
+import { OFFSITE_CONTENT_RATING_OPTIONS } from '~/components/Apps/offsiteSubmitFormConfig';
+import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   deriveContentRatingFromAssets,
   nsfwLevelFromContentRating,
+  offsiteContentRatingLabel,
 } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
@@ -621,7 +624,7 @@ export function OffsiteReviewModalBody({
                     Category
                   </Text>
                   <Badge size="sm" variant="light">
-                    {request.appListing.category}
+                    {marketplaceCategoryLabel(request.appListing.category)}
                   </Badge>
                 </Group>
               )}
@@ -631,7 +634,7 @@ export function OffsiteReviewModalBody({
                     Content rating
                   </Text>
                   <Badge size="sm" color="gray" variant="light">
-                    {request.appListing.contentRating}
+                    {offsiteContentRatingLabel(request.appListing.contentRating)}
                   </Badge>
                   <Text size="xs" c="dimmed">
                     {isOnsite ? 'app rating (cap)' : 'declared'}
@@ -649,7 +652,7 @@ export function OffsiteReviewModalBody({
                     variant="light"
                     data-testid="apps-offsite-derived-rating"
                   >
-                    {derivedRating}
+                    {offsiteContentRatingLabel(derivedRating)}
                   </Badge>
                 </Group>
               )}
@@ -784,15 +787,18 @@ export function OffsiteReviewModalBody({
           >
             {isOnsite ? (
               <Text size="sm">
-                Media assets are rated higher ({derivedRating}) than the app’s rating (
-                {declaredRating ?? '—'}). Listing media must not exceed the app’s rating — reject
-                this revision or ask the author to trim the over-rated assets.
+                Media assets are rated higher ({offsiteContentRatingLabel(derivedRating)}) than
+                the app’s rating (
+                {declaredRating ? offsiteContentRatingLabel(declaredRating) : '—'}). Listing media
+                must not exceed the app’s rating — reject this revision or ask the author to trim
+                the over-rated assets.
               </Text>
             ) : (
               <Text size="sm">
-                Assets contain higher-maturity content ({derivedRating}) than the declared rating (
-                {declaredRating ?? '—'}). The final rating defaults to the detected value; rate it at
-                least that high.
+                Assets contain higher-maturity content (
+                {offsiteContentRatingLabel(derivedRating)}) than the declared rating (
+                {declaredRating ? offsiteContentRatingLabel(declaredRating) : '—'}). The final
+                rating defaults to the detected value; rate it at least that high.
               </Text>
             )}
           </Alert>
@@ -840,7 +846,10 @@ export function OffsiteReviewModalBody({
                   ? 'Defaults to the app’s rating (the cap). Listing media must not exceed the app’s rating; assets rated higher are a reject reason.'
                   : 'Defaults to the rating detected from the assets. You may rate up; an under-rating is floored to the detected value on save.'
               }
-              data={OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: r }))}
+              // Same display map as the store rail and the submit form — the mod
+              // picks the rating a visitor will read, so it must be spelled the
+              // same. (Was `label: r`, i.e. the raw lowercase key.)
+              data={OFFSITE_CONTENT_RATING_OPTIONS}
               value={selectedRating}
               onChange={(v) => setRatingOverride((v as OffsiteContentRating) ?? null)}
               disabled={busy}

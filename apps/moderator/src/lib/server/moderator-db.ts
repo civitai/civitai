@@ -2,7 +2,7 @@ import { createKyselyClients } from '@civitai/db/kysely';
 import { env } from '$env/dynamic/private';
 import type { ModeratorDB } from './moderator-db-types';
 
-// User notes, strikes, timed mutes and image help requests — still in Retool's own database, which is
+// User notes, strikes and image help requests — still in Retool's own database, which is
 // why this reads RETOOL_DATABASE_URL and not MODERATOR_DATABASE_URL. Those name different instances:
 // pointing both at one database aims these tables at the XGuard lab, where they do not exist. They
 // collapse into a single var only once the tables migrate.

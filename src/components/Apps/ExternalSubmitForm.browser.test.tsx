@@ -247,6 +247,57 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * 🔴 CALL-SITE ASSERTION for the two rating surfaces this wizard owns: the
+   * Details step's Content-rating `<Select>` option list, and the "Draft created"
+   * summary badge that echoes the chosen value back to the author.
+   *
+   * End-to-end on purpose — option LABEL → selection → summary badge. Picking the
+   * option by its accessible name IS the option-list guard: had the list still
+   * shipped `label: r` (or the `PG13` its `toUpperCase()` produced), this
+   * `getByRole('option', { name: 'PG-13' })` would not resolve and the test would
+   * die before ever reaching the badge.
+   *
+   * `pg13` is chosen over the form's default `g` deliberately: `g` → `G` differs
+   * only in CASE, while `PG-13` is a string no transformation of its key yields.
+   */
+  test('🔴 the rating Select and the Draft-created badge both show the LABEL, not the key', async () => {
+    mocks.clients = {
+      data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 0 }],
+      isLoading: false,
+    };
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+
+    // Positive control BEFORE touching anything: the form starts at `g`, and the
+    // closed Select must already read its label rather than the key.
+    const ratingSelect = page.getByRole('textbox', { name: 'Content rating' });
+    await expect.element(ratingSelect).toBeInTheDocument();
+    expect((ratingSelect.element() as HTMLInputElement).value).toBe('G');
+
+    await ratingSelect.click();
+    await page.getByRole('option', { name: 'PG-13' }).click();
+    expect((ratingSelect.element() as HTMLInputElement).value).toBe('PG-13');
+
+    await page.getByRole('button', { name: 'Create draft' }).click();
+    // 🔴 The VALUE half is untouched: the mutation still carries the stored key.
+    // The pair is the point — a mutant that mapped the value instead of the label
+    // would satisfy the assertion above and break this one.
+    expect(mocks.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ contentRating: 'pg13' })
+    );
+
+    // The "Draft created" summary badge echoes the same LABEL back to the author.
+    const assets = page.getByTestId('apps-offsite-wizard-assets-panel');
+    await expect.element(assets).toBeInTheDocument();
+    const text = assets.element().textContent ?? '';
+    expect(text).toContain('PG-13');
+    expect(text).not.toContain('Content rating: pg13');
+  });
+
   test('the page <title> (not the host) fills the Name; slug still derives from the host; og:description autofills the Description', async () => {
     // Regression (bug report): cosmetic-studio.civitai.com must show the real page
     // <title> "Civitai Cosmetic Studio" in Name, NOT the host-derived "Cosmetic Studio".

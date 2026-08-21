@@ -683,7 +683,8 @@ export const CollectionItemRejectionReason = {
   Automated: 'Automated',
 } as const;
 
-export type CollectionItemRejectionReason = (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
+export type CollectionItemRejectionReason =
+  (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
 
 export const CollectionContributorPermission = {
   VIEW: 'VIEW',
@@ -789,6 +790,13 @@ export const PaidAccessEntityType = {
 } as const;
 
 export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
+
+export const SaleDiscountType = {
+  Fixed: 'Fixed',
+  Percent: 'Percent',
+} as const;
+
+export type SaleDiscountType = (typeof SaleDiscountType)[keyof typeof SaleDiscountType];
 
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',

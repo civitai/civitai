@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
-import { getModeratorDb } from './moderator-db';
+export { getSplitPoint, splitFrontPageQueue } from './front-page-timers';
 
 // Retool's Graphs tab (`button43` "Load Graphs" → four queries at once) plus the Split control that
 // sat beside it. Its own route rather than the dashboard, because Retool put it behind an explicit
@@ -79,89 +79,4 @@ export async function getQueueStats({ hours = 200, raterDays = 30 } = {}): Promi
     researchRaters().catch(() => []),
   ]);
   return { images, models, raters, researchRaters: research, raterDays, hours };
-}
-
-// THE SPLIT CONTROL (Retool's `GetSplitQueue` / `SplitCurrent` / `SplitCatchup`).
-//
-// When the front-page rating sweep falls behind, it is forked: one stream keeps working the newest
-// images while a catch-up stream works the backlog. The fork point is a row in each timers table.
-//
-// `button69`'s tooltip was **"Only do this if it's 4 or more hours behind"** — an operating rule that
-// exists in no query, so it is stated on the page. Splitting a queue that is keeping up just creates a
-// second stream with nothing in it.
-const SPLIT_USERNAME = 'splitQueue';
-
-/** Retool's `GetSplitQueue`: where the queue was last forked. */
-export async function getSplitPoint(): Promise<Date | null> {
-  const row = await getModeratorDb()
-    .selectFrom('FrontPageTimers')
-    .select('lastCheckedAt')
-    .where('username', '=', SPLIT_USERNAME)
-    .orderBy('lastCheckedAt', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  return row?.lastCheckedAt ? new Date(row.lastCheckedAt as unknown as string) : null;
-}
-
-/**
- * The two tables get DIFFERENT resume points, and getting this wrong drops the backlog silently.
- *
- * - `FrontPageTimers` (current stream) → `now - 3h`, the fork point. Retool's offset: placed slightly
- *   in the past so images uploaded around the split are caught by one stream rather than missed by both.
- * - `FrontPageTimers_catchup` → **where the sweep actually is now**: the newest `nsfw = '1'` row
- *   already in `FrontPageTimers`. Retool read this from `TagTimer` and filtered to level 1.
- *
- * The catch-up consumer (`ImageSfwDataCatchup`) reads
- * `createdAt > <catchup resume> AND createdAt < <fork point>`. Writing the fork point into BOTH makes
- * those bounds equal, so the catch-up window is empty and everything between the real checkpoint and
- * the fork — the backlog that justified pressing the button — is worked by neither stream.
- *
- * No attribution: `username` is the sentinel identifying the fork row, so the table has nowhere to
- * record who pressed it. The ModActivity row the caller writes is the audit trail.
- */
-export async function splitFrontPageQueue(): Promise<{
-  at: Date;
-  catchupFrom: Date | null;
-  /** The new fork row. `recordModActivity` de-duplicates on (activity, entityType, entityId), so a
-   *  constant id there records the FIRST split ever and silently drops every one after it. */
-  forkId: number;
-}> {
-  const at = new Date(Date.now() - 3 * 60 * 60 * 1000);
-  const db = getModeratorDb();
-
-  // NO username filter — Retool's `TagTimer` has none, and the sentinel row IS a position write for
-  // the current stream. Excluding it was only equivalent on the first split ever: on the second it
-  // resurrected a checkpoint the previous catch-up run had already worked, re-opening that window.
-  const current = await db
-    .selectFrom('FrontPageTimers')
-    .select('lastCheckedAt')
-    .where('nsfw', '=', '1')
-    .orderBy('lastCheckedAt', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  const catchupFrom = current?.lastCheckedAt
-    ? new Date(current.lastCheckedAt as unknown as string)
-    : null;
-
-  const base = { username: SPLIT_USERNAME, nsfw: '1', buttonPressedTime: at };
-
-  // Both or neither: one table forked and the other not is a queue that silently skips a window.
-  let forkId = 0;
-  await db.transaction().execute(async (trx) => {
-    await trx
-      .insertInto('FrontPageTimers')
-      .values({ ...base, lastCheckedAt: at })
-      .returning('id')
-      .executeTakeFirst()
-      .then((r) => {
-        forkId = r?.id ?? 0;
-      });
-    await trx
-      .insertInto('FrontPageTimers_catchup')
-      // No prior checkpoint means no backlog to catch up on, so the catch-up stream starts at the fork.
-      .values({ ...base, lastCheckedAt: catchupFrom ?? at })
-      .execute();
-  });
-
-  return { at, catchupFrom, forkId };
 }

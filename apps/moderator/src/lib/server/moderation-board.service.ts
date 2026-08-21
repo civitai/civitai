@@ -72,16 +72,25 @@ const MOD_ACTIVITY_LABELS: Record<string, string> = {
   ratingReview: 'rating disputes',
 };
 
-/** Flag writes are stored as `minor:true` / `poi:false`; the direction is per-row and this panel is
- *  about who worked the queue, not which way they went. Anything unmapped is humanised rather than
- *  enumerated — the log gains values from the main app without passing through here. */
+/** Membership is named, not inferred from the `:` — a colon is the separator every parameterised
+ *  activity uses, so `buzz:send:yellow:…` read as a flag write too. */
+const FLAG_ACTIVITIES = new Set(['minor', 'poi', 'spamWhitelist', 'deservedMute']);
+
+/** Activities whose second segment is a verb rather than a value, a count or an id — `buzz:send` and
+ *  `buzz:deduct` are two decisions and must not share a row. */
+const DIRECTIONAL_ACTIVITIES = new Set(['buzz', 'comments', 'reviews']);
+
+/** Anything unmapped is humanised rather than enumerated — the log gains values from the main app
+ *  without passing through here. */
 function modActivityLabel(entityType: string | null, activity: string): string {
   const entity = (entityType ?? 'other').replace(/^./, (c) => c.toUpperCase());
-  const [name] = activity.split(':');
+  const [name, second] = activity.split(':');
   const known = MOD_ACTIVITY_LABELS[activity];
   if (known) return `${entity} ${known}`;
   const words = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
-  return activity.includes(':') ? `${entity} ${words} flags` : `${entity} ${words}`;
+  if (FLAG_ACTIVITIES.has(name)) return `${entity} ${words} flags`;
+  if (second && DIRECTIONAL_ACTIVITIES.has(name)) return `${entity} ${words} ${second}`;
+  return `${entity} ${words}`;
 }
 
 export async function getRecentModActivity(): Promise<QueueActivity[]> {

@@ -73,6 +73,12 @@ export function StickerPlacementActions({
           : `Actioned ${result.settled}.`,
       });
       await utils.placement.invalidate();
+      // The user-menu badge counts these, and it rides on `checkNotifications`,
+      // which is `staleTime: Infinity` with no invalidation anywhere — so
+      // without this an owner who just cleared their whole queue keeps a badge
+      // advertising the number they started the session with, pointing at
+      // nothing. Answering a placement is the one event that changes it.
+      await utils.user.checkNotifications.invalidate();
       setConfirming(false);
       setApproving(false);
       onDone?.();

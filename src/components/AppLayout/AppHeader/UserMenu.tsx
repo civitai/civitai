@@ -43,6 +43,7 @@ import {
 } from '~/components/CivitaiWrapped/AccountProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { HeaderUserBuzz } from '~/components/AppLayout/AppHeader/HeaderUserBuzz';
@@ -249,11 +250,15 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
               <item.icon stroke={1.5} color={item.color} />
               <span className="text-sm leading-none">{item.label}</span>
               {item.currency && <CurrencyIcon currency={Currency.BUZZ} size={16} />}
+              {/* NEW first, then the count, both immediately after the label
+                  rather than pushed to the right edge — the two badges read as
+                  one group belonging to the entry. */}
               {!!item.newUntil && Date.now() < item.newUntil.getTime() && (
                 <Badge color="green.8" variant="filled" size="sm" ml={4}>
                   NEW
                 </Badge>
               )}
+              <QueueCountBadge count={item.badge ?? 0} max={99} ml={4} />
             </>
           );
           const linkOrButton = item.href ? (

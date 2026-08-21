@@ -1,5 +1,9 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  REMIX_QUEUE_RECEIVED_URL,
+  STICKER_QUEUE_RECEIVED_URL,
+} from '~/components/Placement/queue-routes';
 
 /**
  * A pending placement is invisible to the creator until something tells them.
@@ -9,9 +13,23 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
  * resolves it is the 48-hour expiry — which reads to both sides as the feature
  * being broken rather than as nobody having looked.
  *
- * The link goes to the **image**, not to the queue. Answering means seeing the
- * sticker on the work it was placed on; a list can tell you something is waiting
- * but not whether you want it there.
+ * The two sticker notifications link to the **queue**, not to the image.
+ *
+ * They used to link to the image, on the reasoning that answering means seeing
+ * the sticker on the work it was placed on. That reasoning is still true and it
+ * still lost: measured on prod 2026-08-20, 96 placements sat `pending` against
+ * 251 approved while the feature took 306,819 Buzz across 461 purchases. People
+ * were not refusing to answer — they were answering one placement, landing on an
+ * image, and never learning that a queue existed. The queue page carries the
+ * artwork per row and links each one to its image, so the in-situ view is one
+ * click away rather than absent, and the owner sees the other fifteen.
+ *
+ * The remix ones go the same way, to the same page's remix surface. They were
+ * left alone the first time round, correctly — one surface's fix should not
+ * silently become another's. That stopped being a widening the moment the two
+ * queues became one page: a remix notification landing on an image, when the
+ * queue it belongs to is a tab away from the sticker queue, is the same trap
+ * this change exists to close.
  */
 export const placementNotifications = createNotificationProcessor({
   'sticker-placement-pending': {
@@ -19,7 +37,10 @@ export const placementNotifications = createNotificationProcessor({
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
       message: `${details.placerUsername} wants to place a sticker on your image for ${details.amount} Buzz`,
-      url: `/images/${details.imageId}`,
+      // The queue, not `/images/${details.imageId}` — see the note at the top of
+      // this file. Static, because the whole point is the rows this owner has
+      // not seen; a per-placement URL would land them back on one image.
+      url: STICKER_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
@@ -96,7 +117,10 @@ export const placementNotifications = createNotificationProcessor({
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
       message: `${details.placerUsername} wants to place a free sticker on your image`,
-      url: `/images/${details.imageId}`,
+      // Same queue as the paid one: a free placement holds a slot and expires
+      // the same way, and splitting the two destinations would teach an owner
+      // two different routes for one job.
+      url: STICKER_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
@@ -146,7 +170,7 @@ export const placementNotifications = createNotificationProcessor({
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
       message: `${details.placerUsername} wants to add a remix to your gallery for ${details.amount} Buzz`,
-      url: `/images/${details.imageId}`,
+      url: REMIX_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
@@ -212,7 +236,7 @@ export const placementNotifications = createNotificationProcessor({
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
       message: `${details.placerUsername} submitted a free remix to your gallery`,
-      url: `/images/${details.imageId}`,
+      url: REMIX_QUEUE_RECEIVED_URL,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (

@@ -71,6 +71,7 @@
           strikes={data.strikes}
           legacyStrikeCount={data.legacyStrikeCount}
           modActivity={data.modActivity ?? []}
+          retoolActivity={data.retoolActivity ?? []}
           reportsOnUser={data.reportsOnUser ?? []}
           notes={data.notes ?? []}
           canAct={data.canAct}

@@ -1,5 +1,5 @@
 import { ReportReason, ReportStatus } from '@civitai/db-schema/enums';
-import { entityUrl } from './entity-url';
+import { chatAuditChatUrl, entityUrl } from './entity-url';
 
 export { ReportReason, ReportStatus };
 
@@ -112,6 +112,9 @@ export const reportEntityForSlug = (slug: string): ReportEntity | undefined =>
 
 export const reportPath = (entity: ReportEntity) => `/reports/${reportEntitySlugs[entity]}`;
 
+export const reportActionPath = (entity: ReportEntity, reportId: number) =>
+  `${reportPath(entity)}?report=${reportId}`;
+
 export const reportCountKey = (entity: ReportEntity) => `report:${entity}`;
 
 /** `Report.details` is jsonb. Retool's CASE picked `violation` over `reason` and showed `comment`
@@ -178,7 +181,7 @@ export const getReportItemUrl = (
 ) =>
   type === 'chat'
     ? entityId
-      ? `/retool/chat-audit/chats?chat=${entityId}`
+      ? chatAuditChatUrl(entityId)
       : null
     : contextUrl
     ? `${base}${contextUrl}`

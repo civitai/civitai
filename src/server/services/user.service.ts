@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -88,7 +89,9 @@ import {
   BlockedByUsers,
   BlockedUsers,
   HiddenModels,
+  HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
 import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
@@ -459,14 +462,16 @@ export async function clearUserProfileFields({
  * Mod-driven: explicit mute/unmute (vs. legacy toggle).
  */
 /**
- * `muteExpiresAt` carries two meanings that used to be the same one: "this mute has an expiry" and
- * "this mute came from strikes". A moderator setting a timed mute needs the first without the second —
- * otherwise `evaluateStrikeEscalation` clears their mute early the moment strike points decay, because
- * its de-escalation branch treats any non-null `muteExpiresAt` as strike-owned.
+ * A moderator's mute, timed or not.
  *
- * So a moderator-set expiry also stamps `meta.manualMute`, which that branch refuses to touch.
- * `processTimedUnmutes` still lifts it on time — that is the point of a timed mute — and clears the
- * flag with it.
+ * `mutedAt` is what marks it as a person's decision: every automatic path (strike escalation, prompt
+ * auditing, scam auto-mute) leaves it null, and `evaluateStrikeEscalation` will neither lift nor shorten
+ * a mute that has it. `processTimedUnmutes` still lifts an expiry on time — that is the point of a timed
+ * mute — and clears `mutedAt` with it.
+ *
+ * This used to need a `meta.manualMute` flag. It did not: `mutedAt` already carried exactly this
+ * meaning for `confirm-mutes`, `entity-moderation` and `prepare-leaderboard`, and the flag was written
+ * by two apps and read by none.
  */
 export async function setUserMuted({
   userId,
@@ -478,26 +483,27 @@ export async function setUserMuted({
   expiresAt?: Date | null;
 }) {
   const date = new Date();
-  const existing = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });
-  const currentMeta = (existing?.meta ?? {}) as UserMeta & { manualMute?: boolean };
-  // Only a muted-with-expiry is manual-and-timed. An indefinite mute has no expiry to protect, and an
-  // unmute ends the whole question, so both clear the flag.
-  const manualMute = muted && !!expiresAt;
+
+  // The unmute half clears the provenance too; the mute half only sets an expiry when the caller asked
+  // for one, so an ordinary mute keeps today's indefinite behaviour.
+  let data: Prisma.UserUpdateInput;
+  if (muted) {
+    data = {
+      muted: true,
+      mutedAt: date,
+      ...(expiresAt !== undefined ? { muteExpiresAt: expiresAt } : {}),
+    };
+  } else {
+    const existing = await dbRead.user.findUnique({
+      where: { id: userId },
+      select: { meta: true },
+    });
+    data = clearedMuteFields(existing?.meta as UserMeta | null);
+  }
 
   const user = await updateUserById({
     id: userId,
-    data: {
-      muted,
-      mutedAt: muted ? date : null,
-      // Unmuting always clears the expiry; muting only sets one when the caller asked for it, so an
-      // ordinary mute keeps today's indefinite behaviour.
-      ...(muted
-        ? expiresAt !== undefined
-          ? { muteExpiresAt: expiresAt }
-          : {}
-        : { muteExpiresAt: null }),
-      meta: { ...currentMeta, manualMute },
-    },
+    data,
     updateSource: muted ? 'retool:mute' : 'retool:unmute',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
@@ -903,20 +909,29 @@ export const toggleFollowUser = async ({
     select: { type: true },
   });
 
+  // Every write below is scoped by `type`. The row read a moment ago may already
+  // be a different type — a block applied from another tab, say — and an
+  // unqualified `delete`/`update` on the PK would take that block with it while
+  // reporting success.
   if (engagement) {
     if (engagement.type === 'Follow') {
-      await dbWrite.userEngagement.delete({
-        where: { userId_targetUserId: { userId, targetUserId } },
-      });
+      await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Follow });
       await userFollowsCache.refresh(userId);
       return false;
     } else if (engagement.type === 'Hide') {
-      await dbWrite.userEngagement.update({
-        where: { userId_targetUserId: { userId, targetUserId } },
-        data: { type: 'Follow' },
+      const { count } = await dbWrite.userEngagement.updateMany({
+        where: { userId, targetUserId, type: UserEngagementType.Hide },
+        data: { type: UserEngagementType.Follow },
       });
       await userFollowsCache.refresh(userId);
-      return true;
+      // This branch REMOVES a Hide, and `HiddenUsers` is keyed on `type = 'Hide'`.
+      // Without this the target stays hidden from the feed of the user who just
+      // followed them, until the hash TTL expires.
+      await HiddenUsers.refreshCache({ userId });
+      // Zero rows means the Hide is gone — replaced by a Block, most likely — so
+      // no follow was established and saying otherwise would be a lie the caller
+      // acts on (reward, notification, tracking event).
+      return count > 0;
     }
 
     return false;
@@ -928,17 +943,27 @@ export const toggleFollowUser = async ({
       select: { user: { select: { username: true } } },
     })
     .catch((error) => {
-      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
-      // constraint (P2002). The follow already exists — idempotent, so return
-      // null and fall through to the cache refresh. The racing winner already
-      // created the follow-notification (deduped by `key`), so we skip it here
-      // rather than bubble a 500.
+      // Something took the (userId, targetUserId) PK between the read and the
+      // insert. Which type it is decides the answer, so read it back below rather
+      // than bubble a 500.
       if (!isPrismaUniqueViolation(error)) throw error;
       return null;
     });
   await userFollowsCache.refresh(userId);
 
-  if (ret) {
+  if (!ret) {
+    const winner = await dbWrite.userEngagement.findUnique({
+      where: { userId_targetUserId: { userId, targetUserId } },
+      select: { type: true },
+    });
+    // Usually the toggle racing itself, and the winner already sent the
+    // follow-notification (deduped by `key`) — but the row can equally be a Block,
+    // which outranks a Follow. Returning true there tells the user they follow
+    // someone they do not, and pays a follow reward for it.
+    return winner?.type === UserEngagementType.Follow;
+  }
+
+  {
     const details: NotifDetailsFollowedBy = {
       username: ret.user.username,
       userId,
@@ -967,30 +992,23 @@ export const toggleHideUser = async ({
     select: { type: true },
   });
 
-  if (engagement) {
-    if (engagement.type === 'Hide')
-      await dbWrite.userEngagement.delete({
-        where: { userId_targetUserId: { userId, targetUserId } },
-      });
-    else if (engagement.type === 'Follow')
-      await dbWrite.userEngagement.update({
-        where: { userId_targetUserId: { userId, targetUserId } },
-        data: { type: 'Hide' },
-      });
+  // A Block already hides the target and is strictly stronger, so a hide over one
+  // leaves it alone and reports the target as hidden — which it is. Previously
+  // this matched neither branch, wrote nothing, and returned falsy, so the caller
+  // logged the hide as a removal.
+  if (engagement?.type === UserEngagementType.Block) return true;
 
-    return false;
-  }
+  const hiding = engagement?.type !== UserEngagementType.Hide;
 
-  await dbWrite.userEngagement
-    .create({ data: { type: 'Hide', targetUserId, userId } })
-    .catch((error) => {
-      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
-      // constraint (P2002). The engagement now exists — idempotent, so still
-      // refresh the cache + return true instead of bubbling a 500.
-      if (!isPrismaUniqueViolation(error)) throw error;
-    });
+  // Scoped by `type`, never by the PK alone: the row read above may already be a
+  // Block, and an unqualified `delete`/`update` would destroy it while reporting
+  // success.
+  if (hiding) await setUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
+  else await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Hide });
+
   await userFollowsCache.refresh(userId);
-  return true;
+  await HiddenUsers.refreshCache({ userId });
+  return hiding;
 };
 
 export const getUserList = async ({ username, type, limit, page }: GetUserListSchema) => {

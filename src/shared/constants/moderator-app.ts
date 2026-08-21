@@ -9,3 +9,17 @@
  */
 export const moderatorUserLookupPath = (idOrUsername: string | number) =>
   `/retool/user-lookup?q=${encodeURIComponent(String(idOrUsername))}`;
+
+export const moderatorImageLookupPath = (imageId: number) =>
+  `/retool/image-lookup?q=${encodeURIComponent(String(imageId))}`;
+
+export const moderatorArticleLookupPath = (articleId: number) =>
+  `/retool/article-lookup?q=${encodeURIComponent(String(articleId))}`;
+
+/**
+ * Bulk Image Manager takes the entity it lists images for as `source` + `q`, not a per-entity param.
+ */
+export const moderatorBulkImageManagerPath = (
+  source: 'post' | 'model' | 'modelVersion' | 'collection' | 'user',
+  idOrUsername: string | number
+) => `/retool/bulk-image-manager?source=${source}&q=${encodeURIComponent(String(idOrUsername))}`;

@@ -60,6 +60,22 @@ export const userLookupUrl = (idOrUsername: number | string, section?: string) =
   return section ? `/retool/user-lookup/${section}${q}` : `/retool/user-lookup${q}`;
 };
 
+export const chatAuditChatUrl = (chatId: number) => `/retool/chat-audit/chats?chat=${chatId}`;
+
+/**
+ * Chat Audit searched for one account's chats.
+ *
+ * The leading `@` is a contract with `classifySearch`, not decoration: a bare term is classified by
+ * SHAPE, so an all-digit username reads as a chat id and a non-matching one falls through to
+ * message-content search.
+ *
+ * 🔴 This finds chats the account **posted in**, not chats it is a member of — the search joins
+ * `ChatMessage`, while membership lives in `ChatMember`. An account that received DMs and never
+ * replied is in N chats and matches none of them, so do not label a link to this "every chat".
+ */
+export const chatAuditUserUrl = (username: string) =>
+  `/retool/chat-audit/chats?q=${encodeURIComponent('@' + username)}`;
+
 /** A model page pinned to one version. Built inline at four sites before this; the version is the whole
  *  point on the moderation pages, and dropping it lands the reviewer on whichever version is current. */
 export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: number) =>

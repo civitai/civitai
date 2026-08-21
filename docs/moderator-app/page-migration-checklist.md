@@ -3,6 +3,12 @@
 Tracking the migration of moderator pages from the main Civitai Next.js app
 (`src/pages/moderator/**`) into the standalone SvelteKit app (`apps/moderator`).
 
+**This file is the tracker; the process is the
+[`moderator-page-migration`](../../.claude/skills/moderator-page-migration/SKILL.md) skill.** Read the
+skill before porting a page — it carries the inventory method, the side-effect classification, the
+cutover (delete the legacy page, redirect its URL, trim what it orphans) and the review gates. Read this
+file for how far each page has got and what earlier ports deferred.
+
 ## How to read this
 
 The new app uses **Kysely** (via `@civitai/db/kysely`) — **no tRPC, no Prisma engine**. So
@@ -104,10 +110,10 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 > Most of this cluster funnels through **`image.service.ts`** (~7.9K lines) and **`report.service.ts`** — port those shared services once (see [Shared backend services](#shared-backend-services)).
 
-- [x] **`/moderator/images`** — **Migrated.** All 9 views (minor/poi/tag/newUser/modRule/remixSource/csam/reported/appeals) live under the spoke's `/images/[slug]` (kind-discriminated payload; per-card immediate actions with optimistic dimming). Main-app page deleted; `/moderator/images` + subtree redirect via the catchall (`MIGRATED_PREFIXES` includes `images`). Access gated per-slug in the spoke's `hooks.server.ts` (pathname).
+- [x] **`/moderator/images`** — **Migrated.** All 9 views (minor/poi/tag/newUser/modRule/remixSource/csam/reported/appeals) live under the spoke's `/images/[slug]` (kind-discriminated payload; per-card immediate actions with optimistic dimming). Main-app page deleted; `/moderator/images` + subtree redirect via the catchall (`MIGRATED_ROUTES` in `src/shared/constants/migrated-moderator-routes.ts` includes `images`; longest matching key wins, so one entry covers the subtree). Access gated per-slug in the spoke's `hooks.server.ts` (pathname).
   - Spoke queries: `image-review.service.ts` (`getImageReviewQueue`, `getReportedImageQueue`, `getAppealImageQueue`, `getImageReviewCounts`, `getModerationRuleDefinitions`) — all Kysely.
   - Spoke mutations: `image-moderation.service.ts` (`acceptImage`=unblock, `blockImage`=TOS, `resolveImageAppeal`) + `reports.service.ts` `setReportStatus`. Spoke owns writes; only main-app call is the Meilisearch enqueue.
-  - **Main-app trim:** deleted `images.tsx`; removed orphaned `report.bulkUpdateStatus` (+ handler + `bulkUpdateReportStatusSchema`), `report.resolveAppeal` procedure (+ handler; **kept** `resolveAppealSchema`/`resolveEntityAppeal` service — still used by `handleUnblockImages`), and `image.getModeratorPOITags` (+ service + `POITag` type). **Kept** `image.moderate` (shared with NeedsReviewBadge/UnblockImage/comics) and the review-queue procedures (`getModeratorReviewQueue`/`Counts` — their output type is still referenced by `src/types/router.ts`; trim in a follow-up).
+  - **Main-app trim:** deleted `images.tsx`; removed orphaned `report.bulkUpdateStatus` (+ handler + `bulkUpdateReportStatusSchema`), `report.resolveAppeal` procedure (+ handler; **kept** `resolveAppealSchema`/`resolveEntityAppeal` service — still used by `handleUnblockImages`), and `image.getModeratorPOITags` (+ service + `POITag` type). **Kept** `image.moderate` (shared with NeedsReviewBadge/UnblockImage/comics). The review-queue procedures were kept at the time for an output type referenced by `src/types/router.ts`; that follow-up trim has since landed and neither the procedures nor the reference remain.
   - **Deferred infra (TODO moderator-migration):** pHash blocklist add on block, tos-violation + appeal notifications/emails, buzz (report reward, appeal refund), the DeleteTOS ClickHouse event (feeds appeal `tosReason` — becomes load-bearing once the spoke is the primary block path), Redis post-cache busts, comics re-queue, and Delete's violationType/violationDetails.
 
 - [x] **`/moderator/images/to-ingest`** — `src/pages/moderator/images/to-ingest.tsx` — flag: none — **Migrated** (commit e087b20f7, ingestion pages cutover).
@@ -116,7 +122,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Infra: **Postgres only.** Simplest of the image pages.
 
 - [x] **`/moderator/image-tags`** — `src/pages/moderator/image-tags.tsx` — flag: none — **Migrated.** tagReview queue ported to Kysely (match the `TagsOnImageNew` partial-index predicate EXACTLY incl. the `::integer` cast — a mismatched form seq-scans the table; no Tag join in the CTE); tags read from `TagsOnImageDetails` + a `TagsOnImageVote` hash-index vote count, NOT the expensive `ImageTag` view. Moderator decisions are authoritative → direct `upsert_tag_on_image` (disabled/keep) via the ported `upsertTagsOnImageNew` helper, NOT the weighted-vote system. Per-tag + per-card Remove/Keep instead of multi-select bulk. Trimmed orphaned `tag.moderateTags`. New shared spoke helpers: `tags-on-image.service.ts` (Kysely `upsertTagsOnImageNew` + `applyTagRules`), `cache.ts` (`bustCachedObject`/`bustImageTagCaches`).
-  - Procedures: `image.getModeratorReviewQueue` (with `tagReview: true`); `tag.moderateTags` (mutation) — **STAYS in main:** `getImageModerationReviewQueue` is shared with `images.tsx`; the vote plumbing (`getVotableTags`/`addTagVotes`/`removeTagVotes`) is app-wide.
+  - Procedures at the time of the port: `image.getModeratorReviewQueue` (with `tagReview: true`) and `tag.moderateTags`, both since removed from main along with `images.tsx` and `getImageModerationReviewQueue`. The vote plumbing (`getVotableTags`/`addTagVotes`/`removeTagVotes`) is app-wide and **stays in main**.
   - Infra: **Postgres** (TagsOnImageNew/Details/Vote) + Redis (imageTags/tagIds/thumbnail cache busts, shared `system:tag-rules`) + search-index enqueue
 
 - [x] **`/moderator/image-rating-review`** — `src/pages/moderator/image-rating-review.tsx` — flag: none — **Migrated.** Deferred: VotableTags (needs the tag-voting slice, shared with image-tags), `imageMetadataCache.refresh` (Wave 3 Redis). Model3D nsfwLevel sync is no longer a deferral — the main app now derives it from the thumbnail via the connected-entity cascade (`docs/model3d-thumbnail-nsfw-propagation.md` in the main repo), so the spoke's direct `nsfwLevel` write drives it automatically. Main-app `getImageRatingRequests`/`updateImageNsfwLevel` left in place (image.service migrates with the image cluster; `updateImageNsfwLevel` still backs downleveled-review + user voting).

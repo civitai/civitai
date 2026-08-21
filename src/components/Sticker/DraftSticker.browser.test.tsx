@@ -7,6 +7,7 @@ import type * as Trpc from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
+import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 
 /**
@@ -290,31 +291,40 @@ describe('what a draft sends when it is placed', () => {
 });
 
 /**
- * The mode belongs to the free option, not to the button upstream, so it has to
- * be readable here — and the two modes have to read differently or the placer
- * cannot tell an instant placement from one that spends their day on a review
- * they may lose.
+ * The free option is a price; the review is a property of the SPACE.
+ *
+ * 🔴 The option used to read `Free · instant` / `Free · needs review` beside a
+ * plain `100 Buzz`, which says the paid one does not get reviewed — and on a
+ * review space both do. Justin, on seeing it: "it makes it seem like the other
+ * one's not going to need review". So the segment says `Free`, and what a
+ * decline costs is said once, under the button that spends the placement, where
+ * it applies to whichever option is selected.
  */
-describe('the free option carries the mode', () => {
-  test('says instant on an auto-accept space, with no review caveat', async () => {
+describe('the free option is a price, not a process', () => {
+  test('says nothing about review on an auto-accept space, and warns of nothing', async () => {
     await renderDraft({ instant: true });
 
-    await expect.element(page.getByText('Free · instant')).toBeInTheDocument();
-    expect(page.getByText(/spent even if they decline/).elements()).toHaveLength(0);
+    // `exact`, because "Place free" on the button below also contains the word.
+    await expect.element(page.getByText('Free', { exact: true })).toBeInTheDocument();
+    // Nothing to warn about: an auto space places it live, so there is no
+    // decline that could take the day with it.
+    expect(page.getByText(/Spends your free placement/).elements()).toHaveLength(0);
   });
 
-  test('says needs review, and warns the day is spent regardless', async () => {
+  test('says the same on a review space, and warns under the button instead', async () => {
     await renderDraft({ instant: false });
 
-    await expect.element(page.getByText('Free · needs review')).toBeInTheDocument();
-    await expect.element(page.getByText(/spent even if they decline/)).toBeInTheDocument();
+    await expect.element(page.getByText('Free', { exact: true })).toBeInTheDocument();
+    // The label does not carry the mode; this line does, and it says the thing
+    // that actually costs the reader something.
+    await expect.element(page.getByText(/Spends your free placement/)).toBeInTheDocument();
   });
 
   test('offers no choice at all where there is no free offer', async () => {
     await renderDraft(null);
 
-    expect(page.getByText(/^Free ·/).elements()).toHaveLength(0);
     expect(page.getByRole('button', { name: 'Place free' }).elements()).toHaveLength(0);
+    expect(page.getByText(/Spends your free placement/).elements()).toHaveLength(0);
   });
 
   /**
@@ -332,5 +342,37 @@ describe('the free option carries the mode', () => {
     await renderDraft(null, { ownerShare: 1 });
 
     await expect.element(page.getByText(/proceeds go to/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The glyph on the flip control has to name the axis the transform mirrors
+ * across, and Tabler's names run the other way: `IconFlipHorizontal` draws a
+ * HORIZONTAL mirror line, which reads as a top-to-bottom flip. Picking the icon
+ * by its name is how this control ended up showing the wrong one twice.
+ *
+ * So this asserts the geometry rather than the icon's name or its path data: the
+ * mirror line is the one sub-path of the glyph that is a straight line, and a
+ * vertical line has zero width. That survives a Tabler version bump redrawing
+ * the arrows, and still fails if someone swaps the pair back.
+ */
+describe('the flip control draws the axis it mirrors across', () => {
+  test('mirror line is vertical, matching the artwork transform', async () => {
+    // The claim the glyph has to agree with. `scaleX(-1)` mirrors left-to-right,
+    // i.e. across a VERTICAL axis — read it here rather than restating it, so
+    // changing the transform to `scaleY` fails this test instead of silently
+    // making the icon wrong again.
+    expect(stickerArtworkStyle({ flip: true, opacity: 1 }).transform).toBe('scaleX(-1)');
+
+    await renderDraft(null);
+
+    const button = (await page
+      .getByRole('button', { name: 'Flip this sticker' })
+      .element()) as HTMLElement;
+    const boxes = Array.from(button.querySelectorAll('path')).map((path) => path.getBBox());
+
+    expect(boxes.length).toBeGreaterThan(0);
+    expect(boxes.some((box) => box.width === 0 && box.height > 0)).toBe(true);
+    expect(boxes.some((box) => box.height === 0 && box.width > 0)).toBe(false);
   });
 });

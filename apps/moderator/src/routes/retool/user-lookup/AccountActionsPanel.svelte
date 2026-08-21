@@ -261,7 +261,7 @@
       <div class="mt-5">
         <!-- The timed-mute list moved to its own section; an active one still needs saying here,
              because this is the screen a ban or an unmute is decided on. -->
-        {#if result.timedMutes.some((m) => m.active)}
+        {#if result.timedMute}
           <p class="mb-4 text-sm text-amber-300">
             This account has an active timed mute — see
             <a href={mutesUrl} class={LINK_CLASS}>Timed Mutes</a>.

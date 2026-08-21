@@ -73,6 +73,7 @@ vi.mock('~/server/services/bountyEntry.service', () => ({
 const getPaidAccessMock = vi.fn();
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: getPaidAccessMock,
+  bustModelSaleCache: vi.fn(),
 }));
 
 // Control whether the delivery URL resolves. A throw here is the

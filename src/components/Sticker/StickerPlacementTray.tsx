@@ -1,9 +1,9 @@
 import { Button, CloseButton, Group, ScrollArea, Text, ThemeIcon } from '@mantine/core';
-import { IconPlus, IconSticker } from '@tabler/icons-react';
+import { IconAlertTriangle, IconInfoCircle, IconPlus, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import { freeOfferFor, trayPriceLine, trayReviewLine } from '~/components/Sticker/free-offer';
+import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
@@ -145,6 +145,23 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // The same predicate the draft's own control uses, so the sentence here and
   // the button down there cannot disagree about what is on offer.
   const freeAvailable = !!freeOfferFor(space, standing);
+
+  /**
+   * Why free is off the table, said while the choice is still being made rather
+   * than after the server has refused it.
+   *
+   * Every branch of that decision is in `free-offer.ts`, where a test can put
+   * all four states to it — inline here, the guards that keep the sentence from
+   * appearing on ordinary paid images are two `&&`s nothing can observe.
+   */
+  const freeUnavailableReason = preCommitFreeReason(freeAvailable, standing, space);
+
+  const notes = trayNotes({
+    freeAvailable,
+    price,
+    review: space?.mode === 'review',
+    reason: freeUnavailableReason,
+  });
   // Says the panel can be got out of the way, and that more than one is allowed,
   // only once there is something that would survive it. Before that both are
   // instructions about nothing.
@@ -167,18 +184,32 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
               <Text size="sm" fw={600}>
                 {instruction}
               </Text>
-              <Text size="xs" c="dimmed">
-                {/* Both sentences come from `free-offer.ts`, where their
-                    branches are covered — inline here, dropping either ternary
-                    is a mutation nothing in the suite can observe, and what it
-                    produces is the exact contradiction these lines exist to
-                    prevent. The free half of the decline warning is
-                    FREE_REVIEW_CAVEAT itself rather than a paraphrase. */}
-                {trayPriceLine(freeAvailable, price)}
-                {space?.mode === 'review' &&
-                  ' · this creator reviews placements, so only you will see it until they approve.'}
-                {space?.mode === 'review' && trayReviewLine(freeAvailable)}
-              </Text>
+              {/* One short line each, with an icon, rather than one sentence
+                  spanning the panel. Which lines exist and what they say is
+                  decided in `free-offer.ts`, where every branch is covered;
+                  this only draws them. */}
+              <div className="mt-0.5 flex flex-col gap-0.5">
+                {notes.map((note) => (
+                  <div key={note.id} className="flex items-start gap-1.5">
+                    {note.tone === 'warn' ? (
+                      <IconAlertTriangle
+                        size={13}
+                        className="mt-0.5 shrink-0 text-yellow-6"
+                        aria-hidden
+                      />
+                    ) : (
+                      <IconInfoCircle
+                        size={13}
+                        className="mt-0.5 shrink-0 opacity-60"
+                        aria-hidden
+                      />
+                    )}
+                    <Text size="xs" c={note.tone === 'warn' ? 'yellow.6' : 'dimmed'}>
+                      {note.text}
+                    </Text>
+                  </div>
+                ))}
+              </div>
             </div>
             <CloseButton
               onClick={closeTray}

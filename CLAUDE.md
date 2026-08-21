@@ -135,6 +135,34 @@ The vitest suites are projects in `vitest.config.mts`. The unit suite is **two**
 `No test files found`. A selector matching one project and not the other is a green run over a
 suite you did not run — the scripts above already use `'unit*'` for this reason.
 
+#### Run the suites that cover your change; run the WHOLE suite once, at the end
+
+The full unit suite is ~19,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
+queue — so running it between edits blocks everyone else's runs for minutes at a time. Name the covering
+suites before you start editing and run those on each iteration:
+
+```bash
+pnpm exec vitest run --project 'unit*' src/server/services/__tests__/strike.service.test.ts
+```
+
+Find them by grepping for the symbol, not by intuition — `grep -rln '<fn>' src --include=*.test.ts`.
+Add `pnpm run test:lint-rules` (~1s) whenever you touch a transaction, a mock, or a module-scope
+constant, since those guards are tests rather than eslint rules.
+
+Then run the full suite **once** before committing. That last run is not optional — a service in
+`src/server/services/` is imported widely enough that a behaviour change can surface anywhere — but one
+run is what it is for.
+
+🔴 **`vitest related` does NOT narrow this codebase — do not reach for it.** It walks the *importer*
+graph transitively, and `user.service.ts` is a hub, so almost everything is related to almost
+everything. Measured 2026-08-20: `src/server/services/mute-provenance.ts`, a **new leaf module imported
+by three files**, selected **473 test files / 7,889 tests** — 40% of the suite, for the same wall-clock
+as running all of it. Two source files gave the identical number.
+
+⚠️ **A green full-suite run can still hide a failure you caused.** Read the failing-file list, not the
+count: when 17 tests fail across 7 files, `git stash` and re-run those same files to see whether they
+already failed on `main`. On Windows several do — see the portability notes below.
+
 #### Worker count: uncapped by default, `VITEST_MAX_WORKERS` / `--max-workers` to size it
 A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`).
 
@@ -396,6 +424,8 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 
 **Clean up as you go.** When you edit code that already has stale, redundant, or what-narrating comments, delete or fix them — don't preserve them just because they were there. The repo already has many such comments (a lot of them mine); treat touching nearby code as license to remove the noise, but keep edits scoped to what you're already working on rather than going on a separate comment-cleanup sweep.
 
+**Nothing in the toolchain checks any of this** — comments aren't type-checked, so typecheck, lint, prettier and every test suite pass over a comment that is actively false. The `comment-review` agent is the only gate: it applies the keep test above, flags comments whose claims no longer resolve, trims the survivors to the fewest words that carry the fact, and calls out the ones whose real fix is a better name rather than a better comment.
+
 ## Environment Setup
 
 ### Required Environment Variables
@@ -445,17 +475,51 @@ In an existing checkout that already works:
 
 ### Git Worktrees
 
-Create one with (place it under the repos root — `scripts/defender-exclusions.ps1` excludes that path
-from Defender real-time scanning, and a tree outside it silently runs slow):
+Worktrees live in `<repos-root>/worktrees/<name>` — all of them, no prefix on the directory name. Keep
+them under the repos root: `.claude/skills/dev-server/scripts/defender-exclusions.ps1` excludes that
+path from Defender real-time scanning, and a tree outside it silently runs slow. (Run it once with
+`-ReposRoot <repos-root>` to cover the parent; its default only covers the single checkout it lives in.)
 
 ```bash
 git fetch origin main
-git worktree add <repos-root>/wt-<name> -b <branch> origin/main   # origin/main, not a stale local main
-git -C <repos-root>/model-share submodule sync --recursive
-git -C <repos-root>/wt-<name> submodule update --init event-engine-common
-printf 'use flake\n' > <repos-root>/wt-<name>/.envrc && direnv allow   # from inside the worktree
+git worktree add <repos-root>/worktrees/<name> -b <branch> --no-track origin/main   # all three — see below
+git -C <repos-root>/<primary-checkout> submodule sync --recursive
+git -C <repos-root>/worktrees/<name> submodule update --init event-engine-common
+printf 'use flake\n' > <repos-root>/worktrees/<name>/.envrc && direnv allow   # from inside the worktree
 pnpm install
 ```
+
+**Always `-b <branch> --no-track origin/main`. Never the shorthand.** All three parts are
+load-bearing and none is optional:
+
+- **`-b <branch>`** creates a new branch and **refuses if the name already exists**, which is the
+  property that makes this safe to run without checking first. Without `-b`,
+  `git worktree add <path> <existing-branch>` checks out a branch someone else may be building on.
+- **`origin/main`** is the base. Without it the new branch forks from *this* worktree's `HEAD` — the
+  local `main` you last pulled, not the real one.
+- **`--no-track`** stops that base from also becoming the branch's *upstream*. `branch.autoSetupMerge`
+  defaults to `true`, so `-b <branch> origin/main` sets `branch.<branch>.merge = refs/heads/main`
+  behind your back — a base and an upstream are different things and git conflates them here.
+
+🔴 **Without `--no-track` your feature branch tracks `main` forever.** `git status` then reports it as
+"diverged from 'origin/main' … ahead N, behind M" and offers to reconcile — which is confusing but
+harmless — while `git pull` on the branch is the actual hazard: it **merges `origin/main` into your
+feature branch**, and since this repo squash-merges PRs, that merge commit is pure noise in the diff.
+Tell with `git status -sb`: a healthy feature branch prints `## <branch>` alone, or `## <branch>...origin/<branch>`
+once pushed. `## <branch>...origin/main` is the broken state. Fix an existing one with
+`git branch --unset-upstream`, then `git push -u origin <branch>` when you first push, which sets the
+upstream that should have been there.
+
+🔴 **`git worktree add <path>` with no branch and no base is the other trap**, because it looks like it worked: git
+silently invents a branch named after the directory's basename and forks it from local `HEAD`. You
+get a new branch, so nothing errors, and the staleness only surfaces later as conflicts against a
+`main` that moved. Tell from the outside: **branch name identical to the directory name** is the
+signature. That is how `worktrees/moderator-feedback` was created (2026-08-20) — branch `moderator-feedback`
+based at `74bd61e6d8`, which was the primary worktree's `main`, while `origin/main` was already three
+commits further on at `e21fc62eea`.
+
+`git fetch origin main` on the first line is what keeps `origin/main` honest — the trap is not
+avoided by remembering the flags if the ref they name is itself stale.
 
 **Remove one when its PR merges** — don't hand-roll this, and don't reach for `git worktree remove`
 (it refuses whenever `event-engine-common` is checked out):
@@ -589,11 +653,34 @@ A useful tell: if you are documenting **why** a guard exists and **what it stops
 4. Run the unit suite: `pnpm run test:unit:run`
 5. If you touched `schema.full.prisma`: `pnpm run db:check-generated`
 6. Test changes locally
+7. Run `comment-review` over the diff, and `docs-drift-review` over the commits — the two lanes with no
+   automated gate. Neither is optional on a change that moved a file, renamed a script or command,
+   retired an env var, or completed a tracked checklist item: those are what go stale silently, and a
+   `CLAUDE.md` that is wrong is an instruction that gets followed.
 
 ### Stacked PRs — don't
 - **NEVER use stacked PRs** — base every PR directly on the integration branch (`main`, or a feature integration branch like `feat/...`), never on another open PR's branch. Stacked PRs silently mis-merge: a squash-merged parent doesn't retarget the child, so the child lands on the orphaned parent branch instead of the real base and its changes go missing.
 - If a change depends on an unmerged PR, **wait for that PR to merge, then branch off the updated base** — or fold both changes into a single PR.
 - (Bit us 2026-06-13: PR #2520's App Blocks W11 F5 was stacked on #2518 (F6) → #2520 squash-merged into the #2518 branch instead of `feat/app-blocks-main-v1`; corrected via #2525.)
+
+### Filing follow-up work: two lists, and the line between them
+
+Work you generate about your own work — the deferred half of a review, a duplicate you noticed, a missing
+index, a test you did not write — goes in the **`Agent Follow-ups`** list, not the team list. Resolve the
+id with `find-list "Agent Follow-ups"`.
+
+**`Synced Team`** stays what a human would recognise as the team's work: anything a person asked for out
+loud, and anything security-shaped or user-facing-broken, filed at its real priority. Those never go in
+the follow-ups list — the line exists so the new list does not become where real bugs go to be quiet.
+
+Two rules for anything you file:
+
+- **File as the human whose session you are running in**, not as the meta agent. Their name on it is what
+  makes it findable by the person who has to decide it.
+- **Name the PR or commit it fell out of.** A follow-up without that is a sentence nobody can act on six
+  weeks later.
+
+The follow-ups list is a queue to be worked down, not an archive.
 
 ## Common Patterns
 

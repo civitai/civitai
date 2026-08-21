@@ -29,6 +29,9 @@ export type ArticleRow = {
   lockedProperties: string[];
   metadata: unknown;
   coverId: number | null;
+  /** The pre-`coverId` cover, held as a URL string. 7 of 26,505 articles have only this one. */
+  cover: string | null;
+  moderatorNsfwLevelBasis: number | null;
   userId: number;
   username: string | null;
   userBannedAt: Date | null;
@@ -69,9 +72,11 @@ export async function getArticle(articleId: number): Promise<ArticleRow | null> 
       // The cover image drives the article's effective nsfwLevel, which is this page's headline badge —
       // so "which image is the cover" is a question the page invites and could not answer.
       'a.coverId',
+      'a.cover',
       'a.nsfwLevel',
       'a.userNsfwLevel',
       'a.moderatorNsfwLevel',
+      'a.moderatorNsfwLevelBasis',
       'a.ingestion',
       'a.contentScannedAt',
       'a.scanRequestedAt',
